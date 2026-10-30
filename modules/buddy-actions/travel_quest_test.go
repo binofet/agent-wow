@@ -85,6 +85,53 @@ func TestQuestTravelObservedMillyUsesActualPositionWithoutOwner(t *testing.T) {
 	}
 }
 
+func TestQuestTravelObservedGiverCanUseGroundStandoffButLandmarkCannot(t *testing.T) {
+	for _, landmark := range []bool{false, true} {
+		s, f, _, r := travelRig(t)
+		center := position{x: f.world.QuestGivers[0].X, y: f.world.QuestGivers[0].Y, z: f.world.QuestGivers[0].Z}
+		if landmark {
+			f.world.QuestGivers = nil
+			center, _, _ = northshireQuestLandmark(r.NpcGuid)
+		}
+		calls := 0
+		s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+			calls++
+			if to == center {
+				return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+			}
+			return []position{from, to}, nil
+		}
+		got, err := s.TravelQuest(context.Background(), r)
+		if err != nil || got.Moving || got.Traveling {
+			t.Fatal(got, err)
+		}
+		if landmark {
+			if calls != 1 || got.NavAvailable || len(f.packets) != 0 || got.Reason != "quest_travel_navigation_unavailable" {
+				t.Fatal("unobserved landmark gained interaction fallback", got, calls)
+			}
+		} else if calls != 2 || !got.NavAvailable || got.Reason != "quest_travel_within_distance" || distance(s.pos, center) > 3 || countPackets(f, opcode.MSGMoveStop) != 1 {
+			t.Fatal(got, calls, s.pos)
+		}
+	}
+}
+
+func TestQuestStandoffRevalidatesActualGiverBeforeFirstMovementWrite(t *testing.T) {
+	s, f, _, r := travelRig(t)
+	npc := f.world.QuestGivers[0]
+	center := position{x: npc.X, y: npc.Y, z: npc.Z}
+	s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+		if to == center {
+			return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+		}
+		npc.PositionRevision++
+		return []position{from, to}, nil
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || got.Moving || got.Traveling || got.Reason != "quest_travel_giver_position_changed" || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
 func TestQuestTravelUnobservedMillyNeverGetsLandmarkFallback(t *testing.T) {
 	s, f, _, r := travelRig(t)
 	r.NpcGuid = 0xf130002450000123

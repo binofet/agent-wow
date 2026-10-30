@@ -111,7 +111,7 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	}
 	s.state.Reason = "trainer_travel_planning_client_navmesh"
 	s.mu.Unlock()
-	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
+	path, planErr := s.interactionNavigationPath(call, root, mapID, from, to)
 	s.mu.Lock()
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "trainer_travel_navigation_unavailable"

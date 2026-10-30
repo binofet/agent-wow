@@ -64,6 +64,8 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		return nil, status.Error(codes.FailedPrecondition, "exclusive owned exploration lease is required")
 	}
 	s.questApproaching, s.state.Traveling, s.state.TravelNpcGuid = true, true, 0
+	phase, moving := "exploration_planning_client_navmesh", s.state.Moving
+	s.state.Reason = phase
 	s.mu.Unlock()
 	defer func() {
 		stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
@@ -73,16 +75,29 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		if s.ownsExploration(token) {
 			s.stopLocked(stop)
 		}
-		s.questApproaching, s.state.Traveling = false, false
+		if s.ownsExploration(token) || s.state.InteractionOwner == "" {
+			s.state.Traveling = false
+		}
+		s.questApproaching = false
 		result = s.stateLocked()
 	}()
 	call, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s.mu.Lock()
+	if !s.ownsExploration(token) {
+		s.mu.Unlock()
+		return nil, nil
+	}
 	reason := s.explorationContextLocked(call, token, mapID)
+	if reason == "" && (s.state.Reason != phase || s.state.Moving != moving) {
+		reason = "exploration_interrupted_by_controller_change"
+	}
 	if reason != "" {
 		s.state.Reason = reason
 		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
 		return nil, nil
 	}
 	from, revision, root := s.pos, s.positionRevision, s.navDataDir
@@ -96,10 +111,25 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		s.mu.Unlock()
 		return nil, nil
 	}
-	s.state.Reason = "exploration_planning_client_navmesh"
 	s.mu.Unlock()
 	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
 	s.mu.Lock()
+	// Planning runs without the controller lock. Neither a revoked token nor
+	// an accepted explicit stop may publish a plan or restart movement.
+	if !s.ownsExploration(token) {
+		s.mu.Unlock()
+		return nil, nil
+	}
+	if s.state.Reason != phase || s.state.Moving != moving {
+		s.state.Reason = "exploration_interrupted_by_controller_change"
+		s.mu.Unlock()
+		return nil, nil
+	}
+	if call.Err() != nil {
+		s.state.Reason = "exploration_canceled_or_time_limit"
+		s.mu.Unlock()
+		return nil, status.FromContextError(call.Err()).Err()
+	}
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "exploration_navigation_unavailable"
 		s.mu.Unlock()
@@ -113,7 +143,14 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	expected, index := from, 0
 	for step := 0; step < 150; step++ {
 		s.mu.Lock()
+		if !s.ownsExploration(token) {
+			s.mu.Unlock()
+			return nil, nil
+		}
 		why := s.explorationContextLocked(call, token, mapID)
+		if why == "" && (s.state.Reason != phase || s.state.Moving != moving) {
+			why = "exploration_interrupted_by_controller_change"
+		}
 		if why == "" && (s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
 			why = "exploration_position_changed_after_planning"
 		}
@@ -143,13 +180,21 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			return nil, nil
 		}
 		s.state.Reason = "exploration_following_client_navmesh_estimate"
+		moving, phase = s.state.Moving, s.state.Reason
 		s.mu.Unlock()
 		if err := s.approachDelay(call, 200*time.Millisecond); err != nil {
+			s.mu.Lock()
+			if s.ownsExploration(token) {
+				s.state.Reason = "exploration_canceled_or_time_limit"
+			}
+			s.mu.Unlock()
 			return nil, status.FromContextError(err).Err()
 		}
 	}
 	s.mu.Lock()
-	s.state.Reason = "exploration_step_limit"
+	if s.ownsExploration(token) {
+		s.state.Reason = "exploration_step_limit"
+	}
 	s.mu.Unlock()
 	return nil, nil
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -255,10 +257,12 @@ func TestExplorationCleanupNeverStopsReplacementLeaseAndRejectsConcurrentTravel(
 		replacement = lease.Token
 		// A different owned controller's new movement is outside old cleanup authority.
 		s.state.Moving = true
+		s.state.Traveling = false
+		s.state.TravelNpcGuid = 777
 		return nil
 	}
 	got, err := s.TravelTo(context.Background(), r)
-	if err != nil || got.Traveling || !got.Moving || got.InteractionOwner != "quests" || s.interactionToken != replacement || countPackets(f, opcode.MSGMoveStop) != 1 {
+	if err != nil || got.Traveling || got.TravelNpcGuid != 777 || !got.Moving || got.InteractionOwner != "quests" || s.interactionToken != replacement || countPackets(f, opcode.MSGMoveStop) != 1 {
 		t.Fatal(got, err, f.packets)
 	}
 }
@@ -320,5 +324,304 @@ func TestExplorationLeaseExpiringDuringClockNeverWritesFurtherTravel(t *testing.
 		if err != nil || got.Moving || got.Traveling || countPackets(f, opcode.MSGMoveStartForward) != want || countPackets(f, opcode.MSGMoveStop) != want || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || got.Reason == "exploration_within_distance" {
 			t.Fatal(afterStart, got, err, f.packets)
 		}
+	}
+}
+
+func TestExplorationExplicitStopDuringPlanningNeverStarts(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		for _, planFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("assist=%t/plan_error=%t", assist, planFails), func(t *testing.T) {
+				s, f, _, r := explorationRig(t)
+				s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					var got *actionsv1.State
+					var err error
+					if assist {
+						got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					} else {
+						got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					}
+					if err != nil || got.Moving {
+						t.Fatal("explicit stop failed", got, err)
+					}
+					if planFails {
+						return nil, errors.New("late planner failure")
+					}
+					return []position{a, b}, nil
+				}
+				got, err := s.TravelTo(context.Background(), r)
+				if err != nil || got.Reason != "exploration_interrupted_by_controller_change" || got.Moving || got.Traveling || got.NavAvailable || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+func TestExplorationExplicitStopBetweenStepsNeverRestarts(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
+			s, f, advance, r := explorationRig(t)
+			s.approachDelay = func(ctx context.Context, d time.Duration) error {
+				advance(d)
+				var got *actionsv1.State
+				var err error
+				if assist {
+					got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				} else {
+					got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				}
+				if err != nil || got.Moving {
+					t.Fatal("explicit stop failed", got, err)
+				}
+				return ctx.Err()
+			}
+			got, err := s.TravelTo(context.Background(), r)
+			if err != nil || got.Reason != "exploration_interrupted_by_controller_change" || got.Moving || got.Traveling || got.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestExplorationPlannerDoesNotOverwriteReplacementOwner(t *testing.T) {
+	for _, owner := range []string{"quests", "exploration"} {
+		for _, planFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("owner=%s/plan_error=%t", owner, planFails), func(t *testing.T) {
+				s, f, _, r := explorationRig(t)
+				replacement := ""
+				s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					if _, err := s.ReleaseInteraction(ctx, &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					lease, err := s.AcquireInteraction(ctx, &actionsv1.InteractionRequest{Owner: owner, LeaseMs: 30000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					replacement = lease.Token
+					s.state.Reason = "replacement_reason"
+					s.state.NavReason = "replacement_nav"
+					s.state.NavAvailable = true
+					s.state.Moving = true
+					s.state.Traveling = true
+					s.state.TravelNpcGuid = 778
+					if planFails {
+						return nil, errors.New("old planner failure")
+					}
+					return []position{a, b}, nil
+				}
+				got, err := s.TravelTo(context.Background(), r)
+				if err != nil || got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 778 || got.InteractionOwner != owner || s.interactionToken != replacement || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+type explorationSetupContext struct {
+	context.Context
+	once      sync.Once
+	interrupt func()
+}
+
+func (c *explorationSetupContext) Deadline() (time.Time, bool) {
+	c.once.Do(c.interrupt)
+	return c.Context.Deadline()
+}
+
+func TestExplorationReservationHonorsStopAndReplacement(t *testing.T) {
+	for _, mode := range []string{"follow", "assist", "replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := explorationRig(t)
+			replacement := ""
+			ctx := &explorationSetupContext{Context: context.Background(), interrupt: func() {
+				if mode == "replacement" {
+					if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "exploration", LeaseMs: 30000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					replacement = lease.Token
+					s.state.Reason = "replacement_reason"
+					s.state.NavReason = "replacement_nav"
+					s.state.NavAvailable = true
+					s.state.Moving = true
+					s.state.Traveling = true
+					s.state.TravelNpcGuid = 779
+				} else if mode == "assist" {
+					if _, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if _, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}}
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("interrupted reservation reached planner")
+				return nil, nil
+			}
+			got, err := s.TravelTo(ctx, r)
+			if err != nil || len(f.packets) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+			if mode == "replacement" {
+				if got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 779 || s.interactionToken != replacement {
+					t.Fatal(got)
+				}
+			} else if got.Moving || got.Traveling || got.Reason != "exploration_interrupted_by_controller_change" {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestExplorationCanceledPlannerAndDelayKeepCancellationAndCleanup(t *testing.T) {
+	for _, planning := range []bool{false, true} {
+		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {
+			s, f, advance, r := explorationRig(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if planning {
+				s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+					cancel()
+					return nil, context.Canceled
+				}
+			} else {
+				s.approachDelay = func(call context.Context, d time.Duration) error { advance(d); cancel(); return call.Err() }
+			}
+			got, err := s.TravelTo(ctx, r)
+			want := 0
+			if !planning {
+				want = 1
+			}
+			if status.Code(err) != codes.Canceled || got.Reason != "exploration_canceled_or_time_limit" || got.Moving || got.Traveling || got.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStartForward) != want || countPackets(f, opcode.MSGMoveStop) != want {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestExplorationIdleStopBetweenStepsDoesNotRestart(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
+			s, f, advance, r := explorationRig(t)
+			s.approachDelay = func(ctx context.Context, d time.Duration) error {
+				advance(d)
+				// Model a frame that is already stopped before the explicit disable.
+				// The subsequent stop writes no packet and must still revoke travel.
+				s.mu.Lock()
+				stopped := s.stopLocked(ctx)
+				s.mu.Unlock()
+				if !stopped {
+					t.Fatal("initial frame stop failed")
+				}
+				var got *actionsv1.State
+				var err error
+				if assist {
+					got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				} else {
+					got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				}
+				if err != nil || got.Moving {
+					t.Fatal(got, err)
+				}
+				return ctx.Err()
+			}
+			got, err := s.TravelTo(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || got.Reason != "exploration_interrupted_by_controller_change" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestExplorationCancellationAfterReplacementPreservesNewController(t *testing.T) {
+	s, f, advance, r := explorationRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	replacement := ""
+	s.approachDelay = func(call context.Context, d time.Duration) error {
+		advance(d)
+		if _, err := s.ReleaseInteraction(call, &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := s.AcquireInteraction(call, &actionsv1.InteractionRequest{Owner: "quests", LeaseMs: 30000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replacement = lease.Token
+		s.state.Moving = true
+		s.state.Traveling = true
+		s.state.TravelNpcGuid = 780
+		s.state.Reason = "replacement_reason"
+		s.state.NavReason = "replacement_nav"
+		s.state.NavAvailable = true
+		cancel()
+		return call.Err()
+	}
+	got, err := s.TravelTo(ctx, r)
+	if status.Code(err) != codes.Canceled || got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 780 || s.interactionToken != replacement || s.questApproaching || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
+func TestExplorationReleasedOrExpiredIdleReservationReturnsIdle(t *testing.T) {
+	for _, duringPlan := range []bool{false, true} {
+		for _, expire := range []bool{false, true} {
+			t.Run(fmt.Sprintf("planning=%t/expiry=%t", duringPlan, expire), func(t *testing.T) {
+				s, f, advance, r := explorationRig(t)
+				interrupt := func() {
+					if expire {
+						advance(31 * time.Second)
+						s.Tick(context.Background())
+					} else {
+						if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				var ctx context.Context = context.Background()
+				if duringPlan {
+					s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+						interrupt()
+						return nil, errors.New("old planner stopped")
+					}
+				} else {
+					ctx = &explorationSetupContext{Context: ctx, interrupt: interrupt}
+					s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+						t.Fatal("revoked reservation reached planner")
+						return nil, nil
+					}
+				}
+				got, err := s.TravelTo(ctx, r)
+				if err != nil || got.Traveling || got.Moving || s.questApproaching || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+				s.Tick(context.Background())
+				after := state(t, s)
+				if after.InteractionOwner != "" || after.Traveling || after.Moving {
+					t.Fatal("released or expired operation did not become idle", after)
+				}
+			})
+		}
+	}
+}
+
+func TestExplorationCanceledInitialReservationReturnsCanceled(t *testing.T) {
+	s, f, _, r := explorationRig(t)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &explorationSetupContext{Context: parent, interrupt: cancel}
+	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+		t.Fatal("canceled reservation reached planner")
+		return nil, nil
+	}
+	got, err := s.TravelTo(ctx, r)
+	if status.Code(err) != codes.Canceled || got.Reason != "exploration_canceled_or_time_limit" || got.Moving || got.Traveling || s.questApproaching || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
 	}
 }

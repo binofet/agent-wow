@@ -133,21 +133,90 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	}
 }
 
-func TestFormationCatchUpUsesVerifiedRoutesUpTo120Yards(t *testing.T) {
-	for _, gap := range []float32{90, 121} {
+func TestFormationCatchUpUsesVerifiedRoutesUpTo200Yards(t *testing.T) {
+	for _, gap := range []float32{90, 150, 200, 201} {
 		s, f, advance := formationRig(t, 4, 8)
 		f.world.Owner.X += gap
+		plans := 0
+		s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
+			if mapID != f.world.Self.MapId {
+				t.Fatal("follow planned on a different map", mapID)
+			}
+			plans++
+			// The route first goes sideways. Movement must use this verified
+			// segment rather than a direct chord toward the distant owner.
+			return []position{from, {x: from.x + 3, y: from.y + 5, z: from.z}, {x: to.x, y: from.y + 5, z: to.z}, to}, nil
+		}
 		toggle(t, s, true)
 		for i := 0; i < 5; i++ {
 			s.Tick(context.Background())
 			advance(200 * time.Millisecond)
 		}
-		if gap == 90 && !s.state.Moving {
-			t.Fatal("observed owner could not be caught along a verified route", s.stateLocked())
+		dx, dy := float64(s.pos.x-f.world.Self.X), float64(s.pos.y-f.world.Self.Y)
+		if gap <= 200 && (plans != 1 || !s.state.Moving || !s.state.NavAvailable || dx <= 0 || dy <= 0 || math.Abs(dx*5-dy*3) > .01 || distance(s.pos, playerPosition(f.world.Self)) > 5.6) {
+			t.Fatal("observed owner was not followed along the bounded verified segment", gap, s.stateLocked(), s.pos, plans)
 		}
-		if gap == 121 && (s.state.Moving || s.state.Reason != "formation_owner_outside_supported_range") {
-			t.Fatal("follow exceeded its catch-up bound", s.stateLocked())
+		if gap > 200 && (plans != 0 || s.state.Moving || len(f.packets) != 0 || s.state.Reason != "formation_owner_outside_supported_range") {
+			t.Fatal("follow exceeded its catch-up bound", gap, s.stateLocked(), plans)
 		}
+	}
+}
+
+func TestDistantFormationCatchUpNeverMovesOnPartialOrOverBudgetRoute(t *testing.T) {
+	for _, mode := range []string{"partial_error", "partial_endpoint", "over_budget_detour", "missing_assets"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance := formationRig(t, 4, 8)
+			f.world.Owner.X += 150
+			plans := 0
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+				plans++
+				switch mode {
+				case "partial_error":
+					return nil, errors.New("find navigation path: navigation polygon path is partial, exhausted, or unavailable")
+				case "partial_endpoint":
+					to.x -= 10
+					return []position{from, to}, nil
+				case "over_budget_detour":
+					return []position{from, {x: from.x, y: from.y + 200, z: from.z}, to}, nil
+				default:
+					return nil, errors.New("installed navigation tile window missing")
+				}
+			}
+			toggle(t, s, true)
+			for range 7 {
+				s.Tick(context.Background())
+				advance(200 * time.Millisecond)
+			}
+			if plans == 0 || s.state.Moving || s.state.NavAvailable || len(f.packets) != 0 || distance(s.pos, playerPosition(f.world.Self)) != 0 {
+				t.Fatal("unverified distant follow produced movement", mode, s.stateLocked(), f.packets, plans)
+			}
+		})
+	}
+}
+
+func TestDistantFormationCatchUpCrossesFormerNorthshireFenceOnVerifiedRoute(t *testing.T) {
+	s, f, advance := formationRig(t, 4, 8)
+	f.world.Self.X = -9590
+	f.world.Owner.X = -9740
+	plans := 0
+	s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
+		if mapID != 0 {
+			t.Fatal("wrong observed map", mapID)
+		}
+		plans++
+		return []position{from, to}, nil
+	}
+	s.planPath = func(context.Context, string, position, position) ([]position, error) {
+		t.Fatal("normal catch-up used the regional planner")
+		return nil, nil
+	}
+	toggle(t, s, true)
+	for range 24 {
+		s.Tick(context.Background())
+		advance(200 * time.Millisecond)
+	}
+	if plans != 1 || !s.state.Moving || !s.state.NavAvailable || s.pos.x >= -9599 || countPackets(f, opcode.MSGMoveHeartbeat) == 0 {
+		t.Fatal("normal verified catch-up retained the former area fence", s.stateLocked(), s.pos, plans)
 	}
 }
 

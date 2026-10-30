@@ -18,8 +18,9 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 	}
 	owner := playerPosition(world.Owner)
 	// A complete verified ground route can include stairs between floors.
-	// The three-dimensional catch-up bound still limits the observed owner.
-	if distance(s.pos, owner) > 120 {
+	// The observed-owner catch-up bound leaves room for a verified detour
+	// inside the planner's independent 240-yard route budget.
+	if distance(s.pos, owner) > 200 {
 		pause("formation_owner_outside_supported_range")
 		return
 	}

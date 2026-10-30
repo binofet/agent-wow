@@ -45,6 +45,63 @@ func TestTrainerTravelUsesObservedProfessionTrainerWithoutQuestFlagOrOwner(t *te
 	}
 }
 
+func TestTrainerTravelUsesVerifiedNearbyStandoffWithoutMovingObservedTeacher(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	npc := playerPosition(f.world.Self)
+	npc.x, npc.y, npc.z = f.world.NearbyCreatures[0].X, f.world.NearbyCreatures[0].Y, f.world.NearbyCreatures[0].Z
+	calls := 0
+	s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
+		calls++
+		if mapID != f.world.Self.MapId || distance(to, npc) > 2.501 || to.z != npc.z {
+			t.Fatal("standoff changed observed layer/map", mapID, to, npc)
+		}
+		if to == npc {
+			return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+		}
+		return []position{from, {x: from.x, y: from.y + 6, z: from.z}, {x: to.x, y: from.y + 6, z: from.z}, to}, nil
+	}
+	got, err := s.TravelTrainer(context.Background(), r)
+	if err != nil || calls != 2 || got.Moving || got.Traveling || got.Reason != "trainer_travel_within_distance" || !got.NavAvailable || distance(s.pos, npc) > 3 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, calls, s.pos)
+	}
+	if f.world.NearbyCreatures[0].X != npc.x || f.world.NearbyCreatures[0].PositionRevision != 1 {
+		t.Fatal("standoff fabricated teacher observation")
+	}
+}
+
+func TestTrainerStandoffStillRejectsChangedActualNPCMapSelfOrLeaseAfterPlanning(t *testing.T) {
+	for _, mode := range []string{"npc", "self", "map", "lease"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			npc := f.world.NearbyCreatures[0]
+			center := position{x: npc.X, y: npc.Y, z: npc.Z}
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+				if to == center {
+					return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+				}
+				switch mode {
+				case "npc":
+					npc.X++
+					npc.PositionRevision++
+				case "self":
+					f.world.Self.X++
+					f.world.Self.PositionRevision++
+				case "map":
+					f.world.Self.MapId = 1
+					f.world.Self.PositionRevision++
+				case "lease":
+					advance(31 * time.Second)
+				}
+				return []position{from, to}, nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || got.Reason == "trainer_travel_within_distance" || len(f.packets) != 0 {
+				t.Fatal(mode, got, err, f.packets)
+			}
+		})
+	}
+}
+
 func TestTrainerTravelExactLookupRetainsRealTrainerOutsideNearbyRanking(t *testing.T) {
 	s, f, _, r := trainerTravelRig(t)
 	f.lookupCreatures = map[uint64]*worldv1.CreatureState{r.NpcGuid: f.world.NearbyCreatures[0]}

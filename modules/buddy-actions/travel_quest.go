@@ -139,7 +139,14 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 	}
 	s.state.Reason = planningReason
 	s.mu.Unlock()
-	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
+	var path []position
+	var planErr error
+	if landmark {
+		// Remembered landmarks do not assert an actual interaction point.
+		path, planErr = s.mapNavigationPath(call, root, mapID, from, to)
+	} else {
+		path, planErr = s.interactionNavigationPath(call, root, mapID, from, to)
+	}
 	s.mu.Lock()
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "quest_travel_navigation_unavailable"

@@ -80,6 +80,32 @@ func (s *Service) mapNavigationPath(ctx context.Context, root string, mapID uint
 	return path, nil
 }
 
+// Interaction goals come only from each caller's current observed NPC. Nearby
+// standoffs still use the exact same actual-map planner and complete route
+// checks; they grant neither NPC presence nor interaction success.
+func (s *Service) interactionNavigationPath(ctx context.Context, root string, mapID uint32, from, npc position) ([]position, error) {
+	point := func(p position) buddynav.Point { return buddynav.Point{X: p.x, Y: p.y, Z: p.z} }
+	points, err := buddynav.PlanInteractionWith(ctx, point(from), point(npc), func(call context.Context, a, b buddynav.Point) ([]buddynav.Point, error) {
+		path, err := s.mapNavigationPath(call, root, mapID, position{x: a.X, y: a.Y, z: a.Z}, position{x: b.X, y: b.Y, z: b.Z})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]buddynav.Point, len(path))
+		for i, p := range path {
+			out[i] = point(p)
+		}
+		return out, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	path := make([]position, len(points))
+	for i, p := range points {
+		path[i] = position{x: p.X, y: p.Y, z: p.Z}
+	}
+	return path, nil
+}
+
 func (s *Service) mapNavigationStepLocked(ctx context.Context, path []position, index *int) bool {
 	return s.navigationStepWithinLocked(ctx, path, index, finite)
 }
