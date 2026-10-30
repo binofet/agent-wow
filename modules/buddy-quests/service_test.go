@@ -581,7 +581,7 @@ func TestGeneratedGRPCAndSessionCallbacks(t *testing.T) {
 
 func TestManifestDescriptorAndDependencies(t *testing.T) {
 	root := t.TempDir()
-	for _, module := range []string{"buddy-world", "buddy-actions", "buddy-quests"} {
+	for _, module := range []string{"buddy-world", "buddy-party", "buddy-actions", "buddy-quests"} {
 		dir := filepath.Join(root, module)
 		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)

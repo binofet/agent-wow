@@ -338,7 +338,7 @@ func TestGRPCDiscoveryAndList(t *testing.T) {
 
 func TestManifestDescriptorAndDependencies(t *testing.T) {
 	root := t.TempDir()
-	for _, module := range []string{"buddy-world", "buddy-actions", "buddy-trade", "buddy-training"} {
+	for _, module := range []string{"buddy-world", "buddy-party", "buddy-actions", "buddy-trade", "buddy-training"} {
 		dir := filepath.Join(root, module)
 		if e := os.Mkdir(dir, 0700); e != nil {
 			t.Fatal(e)
