@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-€#
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"¾	
+—*
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -79,8 +79,33 @@ walk_speed (R	walkSpeed
 targetGuid)
 faction_template$ (RfactionTemplate 
 unit_flags_2% (R
-unitFlags2"
-SnapshotRequest"û	
+unitFlags2
+class_known& (R
+classKnown
+class_id' (RclassId
+level_known( (R
+levelKnown
+level) (Rlevel&
+base_mana_known* (RbaseManaKnown
+	base_mana+ (RbaseMana,
+combat_reach_known, (RcombatReachKnown!
+combat_reach- (RcombatReach3
+base_attack_time_known. (RbaseAttackTimeKnown-
+base_attack_time_ms/ (RbaseAttackTimeMsB
+mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand"û
+EquippedWeapon
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability (RmaxDurability"
+SnapshotRequest"Ì
+
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -123,7 +148,9 @@ unitFlags2.
 attack_age_ms! (RattackAgeMsJ
 
 trajectory" (2*.warcraftbuddy.world.v1.CreatureTrajectoryR
-trajectory"Ã
+trajectory,
+combat_reach_known# (RcombatReachKnown!
+combat_reach$ (RcombatReach"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -139,10 +166,16 @@ durationMs
  (RtransportGuid%
 transport_seat (RtransportSeat
 stopped (Rstopped
-flags (Rflags">
+flags (Rflags"Ô
 QuestLogEntry
 slot (Rslot
-quest_id (RquestId"¯
+quest_id (RquestId
+state (Rstate
+complete (Rcomplete
+failed (Rfailed)
+objective_counts (RobjectiveCounts
+expire_time (R
+expireTime"¯
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -174,7 +207,7 @@ lastOpcode(
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-ÿ
+ž5
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"›
 Quest
 quest_id (RquestId
@@ -218,7 +251,7 @@ Acceptance
 server_reason	 (RserverReason"@
 GiverStatus
 npc_guid (RnpcGuid
-status (Rstatus"ï
+status (Rstatus"‚
 StateResponse
 
 session_id (	R	sessionId
@@ -233,7 +266,110 @@ session_id (	R	sessionId
 	quest_log
  (2%.warcraftbuddy.world.v1.QuestLogEntryRquestLog+
 malformed_packets (RmalformedPackets'
-ignored_packets (RignoredPackets"H
+ignored_packets (RignoredPacketsH
+turn_in_offer (2$.warcraftbuddy.quests.v1.TurnInOfferRturnInOfferG
+last_reward (2&.warcraftbuddy.quests.v1.RewardReceiptR
+lastReward"Ü
+QuestObjective
+kind (	Rkind
+index (Rindex
+	target_id (RtargetId%
+required_count (RrequiredCount
+text (	Rtext#
+current_known (RcurrentKnown#
+current_count (RcurrentCount"ù
+QuestJournalEntry
+quest_id (RquestId
+slot (Rslot
+title (	Rtitle
+details (	Rdetails
+
+objectives (	R
+objectives)
+area_description (	RareaDescription%
+template_known (RtemplateKnown
+failure (	RfailureA
+targets	 (2'.warcraftbuddy.quests.v1.QuestObjectiveRtargets&
+log_state_known
+ (RlogStateKnown
+	log_state (RlogState
+complete (Rcomplete
+failed (Rfailed)
+objective_counts (RobjectiveCounts
+expire_time (R
+expireTime8
+observed_questgiver_guid (RobservedQuestgiverGuid7
+observed_reward_npc_guid (RobservedRewardNpcGuid"*
+JournalRequest
+refresh (Rrefresh"¤
+JournalResponse
+
+session_id (	R	sessionId,
+quest_log_revision (RquestLogRevisionD
+entries (2*.warcraftbuddy.quests.v1.QuestJournalEntryRentries"p
+
+RewardItem
+index (Rindex
+item_id (RitemId
+count (Rcount
+
+display_id (R	displayId"Ú
+TurnInOffer
+revision (Rrevision
+npc_guid (RnpcGuid
+quest_id (RquestId
+title (	Rtitle
+text (	Rtext
+source (	Rsource!
+can_complete (RcanComplete"
+expires_in_ms (RexpiresInMs=
+choices	 (2#.warcraftbuddy.quests.v1.RewardItemRchoices=
+rewards
+ (2#.warcraftbuddy.quests.v1.RewardItemRrewardsJ
+required_items (2#.warcraftbuddy.quests.v1.RewardItemRrequiredItems%
+required_money (RrequiredMoney!
+reward_money (RrewardMoney
+	reward_xp (RrewardXp
+flags (Rflags)
+reward_requested (RrewardRequested"Ë
+RewardReceipt
+npc_guid (RnpcGuid
+quest_id (RquestId%
+offer_revision (RofferRevision=
+status (2%.warcraftbuddy.quests.v1.RewardStatusRstatus+
+transport_written (RtransportWritten4
+server_reward_observed (RserverRewardObserved2
+log_removal_confirmed (RlogRemovalConfirmed2
+baseline_log_revision (RbaselineLogRevision4
+confirmed_log_revision	 (RconfirmedLogRevision
+	reward_xp
+ (RrewardXp!
+reward_money (RrewardMoney!
+reward_honor (RrewardHonor%
+reward_talents (RrewardTalents!
+reward_arena (RrewardArena
+failure (	Rfailure#
+server_reason (RserverReason6
+backpack_evidence_known (RbackpackEvidenceKnownH
+!reward_items_observed_in_backpack (RrewardItemsObservedInBackpack<
+baseline_backpack_revision (RbaselineBackpackRevision>
+confirmed_backpack_revision (RconfirmedBackpackRevision1
+inventory_limitation (	RinventoryLimitation"’
+TurnInRequest
+
+session_id (	R	sessionId
+npc_guid (RnpcGuid
+quest_id (RquestId,
+quest_log_revision (RquestLogRevision"õ
+RewardRequest
+
+session_id (	R	sessionId%
+offer_revision (RofferRevision
+npc_guid (RnpcGuid
+quest_id (RquestId!
+choice_index (RchoiceIndex(
+expected_item_id (RexpectedItemId
+	no_choice (RnoChoice"H
 OfferRequest
 
 session_id (	R	sessionId
@@ -254,11 +390,21 @@ session_id (	R	sessionId%
 CONFIRMED_IN_LOG
 UNCONFIRMED_TIMEOUT
 SERVER_REJECTED
-WRITE_UNCONFIRMED2ø
+WRITE_UNCONFIRMED*–
+RewardStatus
+REWARD_NONE 
+REWARD_REQUESTED
+REWARD_CONFIRMED
+REWARD_UNCONFIRMED
+REWARD_REJECTED
+REWARD_WRITE_UNCONFIRMED2“
 BuddyQuestsJ
 Discover.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseG
 State.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseX
 Offer%.warcraftbuddy.quests.v1.OfferRequest(.warcraftbuddy.quests.v1.OperationResultZ
 Details%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResultY
-Accept%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResultC
+Accept%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResult\
+Journal'.warcraftbuddy.quests.v1.JournalRequest(.warcraftbuddy.quests.v1.JournalResponseZ
+TurnIn&.warcraftbuddy.quests.v1.TurnInRequest(.warcraftbuddy.quests.v1.OperationResult_
+ClaimReward&.warcraftbuddy.quests.v1.RewardRequest(.warcraftbuddy.quests.v1.OperationResultC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyBBZ@github.com/agent-wow/agent-wow/modules/buddy-quests/api;questsv1bproto3

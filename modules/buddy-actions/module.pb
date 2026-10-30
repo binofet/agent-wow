@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-©
+Ç
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -60,8 +60,7 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 corpseGuid"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"œ
-
+state (2.warcraftbuddy.actions.v1.StateRstate"º
 State
 	following (R	following
 healing (Rhealing
@@ -96,7 +95,31 @@ knownSmite'
 server_assist_go (RserverAssistGo#
 assist_reason (	RassistReason.
 smite_damage_events (RsmiteDamageEvents,
-smite_damage_total (RsmiteDamageTotal2Í
+smite_damage_total (RsmiteDamageTotal
+class_known (R
+classKnown
+class_id  (RclassId
+
+class_name! (	R	className%
+known_fireball" (RknownFireball2
+known_sinister_strike# (RknownSinisterStrike*
+known_auto_attack$ (RknownAutoAttack&
+combat_spell_id% (RcombatSpellId!
+combat_style& (	RcombatStyle0
+assist_damage_events' (RassistDamageEvents.
+assist_damage_total( (RassistDamageTotal4
+fireball_damage_events) (RfireballDamageEvents2
+fireball_damage_total* (RfireballDamageTotalA
+sinister_strike_damage_events+ (RsinisterStrikeDamageEvents?
+sinister_strike_damage_total, (RsinisterStrikeDamageTotal.
+melee_damage_events- (RmeleeDamageEvents,
+melee_damage_total. (RmeleeDamageTotal%
+auto_attacking/ (RautoAttacking5
+auto_attack_target_guid0 (RautoAttackTargetGuid2
+auto_attack_requested1 (RautoAttackRequested6
+auto_attack_unconfirmed2 (RautoAttackUnconfirmed=
+sinister_strike_energy_cost3 (RsinisterStrikeEnergyCost8
+mainhand_weapon_verified4 (RmainhandWeaponVerified2Í
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

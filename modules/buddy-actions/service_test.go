@@ -66,7 +66,7 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	player := func(guid uint64, x float32) *worldv1.PlayerState {
-		return &worldv1.PlayerState{Guid: guid, Present: true, MapKnown: true, PositionKnown: true, X: x, PositionRevision: 1, MovementFlagsKnown: true, HealthKnown: true, Health: 50, MaxHealth: 100, PowerKnown: true, Power: 128, MaxPower: 128, PowerType: 0, UnitFlagsKnown: true, AliveKnown: true, Alive: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7}
+		return &worldv1.PlayerState{Guid: guid, ClassKnown: true, ClassId: 5, Present: true, MapKnown: true, PositionKnown: true, X: x, PositionRevision: 1, MovementFlagsKnown: true, HealthKnown: true, Health: 50, MaxHealth: 100, PowerKnown: true, Power: 128, MaxPower: 128, PowerType: 0, UnitFlagsKnown: true, AliveKnown: true, Alive: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7}
 	}
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: player(1, 0), Owner: player(3, 10)}}
 	s := NewService(f, 1)

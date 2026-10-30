@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start, stop, or inspect the project's first buddy (Arlen) on Linux."""
+"""Start, stop, or inspect one independently tracked buddy profile on Linux."""
 
 import argparse
 import fcntl
@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import shutil
 import signal
@@ -26,6 +27,8 @@ LOG_FILE = ROOT / "config" / "buddy-live.log"
 LOCK_FILE = ROOT / "config" / "buddy.lock"
 CHARACTER = "Arlen"
 RPC_HOST, RPC_PORT = "127.0.0.1", 8086
+PROFILE = "default"
+CONFIG_DIR = DATA_DIR = MODULE_DIR = CHARACTER_GUID = None
 START_TIMEOUT, STOP_TIMEOUT = 330, 45
 MAX_LINE = 64 << 10
 
@@ -37,6 +40,38 @@ class BuddyError(Exception):
 def command_line():
     return [str(BINARY), "--config", str(CONFIG), "char", "play", CHARACTER,
             "--timeout", "15s", "--module-timeout", "5m"]
+
+
+def profile_identity():
+    return {"profile": PROFILE, "character": CHARACTER, "character_guid": CHARACTER_GUID,
+            "rpc_port": RPC_PORT, "config_dir": str(CONFIG_DIR) if CONFIG_DIR else None,
+            "data_dir": str(DATA_DIR) if DATA_DIR else None,
+            "module_dir": str(MODULE_DIR) if MODULE_DIR else None}
+
+
+def configure(args):
+    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR
+    global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", args.profile):
+        raise BuddyError("Profile must be a short lowercase slug")
+    custom = args.profile != "default"
+    if custom and (not args.character_name or not args.character_guid or args.rpc_port is None):
+        raise BuddyError("Named profiles require --character-name, --character-guid, and --rpc-port")
+    name = args.character_name or "Arlen"
+    if not 2 <= len(name) <= 12 or not name.isalpha():
+        raise BuddyError("Character name must contain2..12 letters")
+    if args.character_guid is not None and not 0 < args.character_guid < 2**48:
+        raise BuddyError("Character GUID must be a player GUID")
+    if args.rpc_port is not None and not 1024 <= args.rpc_port <= 65535:
+        raise BuddyError("RPC port must be1024..65535")
+    PROFILE, CHARACTER, CHARACTER_GUID = args.profile, name, args.character_guid
+    directory = ROOT / "config" / "buddies" / PROFILE if custom else ROOT / "config"
+    CONFIG = (args.config or directory / "buddy.yaml").absolute()
+    CONFIG_DIR = (args.config_dir or directory).absolute() if custom or args.config_dir else None
+    DATA_DIR = (args.data_dir or ROOT / "data" / "buddies" / PROFILE).absolute() if custom or args.data_dir else None
+    MODULE_DIR = args.module_dir.absolute() if args.module_dir else None
+    PID_FILE, LOG_FILE, LOCK_FILE = (directory / name for name in ("buddy.pid", "buddy-live.log", "buddy.lock"))
+    RPC_PORT = args.rpc_port if args.rpc_port is not None else 8086
 
 
 def private_file(path, flags):
@@ -59,6 +94,8 @@ def load_record():
         raise BuddyError(f"Unrecognized PID file; left untouched: {PID_FILE}") from None
     keys = ("pid", "start_ticks", "exe_device", "exe_inode", "log_device", "log_inode")
     if (not isinstance(record, dict) or record.get("argv") != command_line()
+            or (record.get("profile_identity") is not None and record["profile_identity"] != profile_identity())
+            or (record.get("profile_identity") is None and profile_identity() != {"profile":"default", "character":"Arlen", "character_guid":None, "rpc_port":8086, "config_dir":None, "data_dir":None, "module_dir":None})
             or any(type(record.get(key)) is not int or record[key] < 0 for key in keys)
             or record["pid"] <= 1
             or (record.get("ready_offset") is not None and
@@ -135,7 +172,8 @@ def ready_line(line, pid):
     fields = log_fields(line)
     return (fields.get("msg") == "world session ready" and fields.get("event") == "ready"
             and fields.get("pid") == str(pid) and fields.get("character.name") == CHARACTER
-            and fields.get("rpc_url") == f"http://{RPC_HOST}:{RPC_PORT}/rpc")
+            and fields.get("rpc_url") == f"http://{RPC_HOST}:{RPC_PORT}/rpc"
+            and (CHARACTER_GUID is None or fields.get("character.guid") == str(CHARACTER_GUID)))
 
 
 def logout_line(line):
@@ -213,8 +251,14 @@ def start():
         except OSError:
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
-    environment.update(AGENT_WOW_MODULE_DIR=str(ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
+    environment.update(AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
                        AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))
+    if CONFIG_DIR is not None:
+        environment.update(AGENT_WOW_CONFIG_DIR=str(CONFIG_DIR),
+                           AGENT_WOW_AUTH_FILE_PATH=str(CONFIG_DIR / "auth.json"),
+                           AGENT_WOW_REALM_FILE_PATH=str(CONFIG_DIR / "realm.json"))
+    if DATA_DIR is not None:
+        environment["AGENT_WOW_DATA_DIR"] = str(DATA_DIR)
     with os.fdopen(private_file(LOG_FILE, os.O_WRONLY | os.O_CREAT), "wb") as log:
         log.truncate()
         child = subprocess.Popen(command_line(), cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
@@ -230,7 +274,7 @@ def start():
             raise BuddyError(f"PID {child.pid} did not execute the exact project command; it was left untouched. Log: {LOG_FILE}")
         log_info = os.fstat(log.fileno())
         record = dict(info, pid=child.pid, log_device=log_info.st_dev, log_inode=log_info.st_ino,
-                      ready_offset=None)
+                      ready_offset=None, profile_identity=profile_identity())
         save_record(record)
     offset = 0
     while time.monotonic() < deadline:
@@ -291,15 +335,24 @@ def status():
     return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__ + " Uses config/buddy.yaml and 127.0.0.1:8086.")
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("start", "stop", "status"))
-    args = parser.parse_args()
+    parser.add_argument("--profile", default="default")
+    parser.add_argument("--character-name")
+    parser.add_argument("--character-guid", type=int)
+    parser.add_argument("--rpc-port", type=int)
+    for flag in ("config", "config-dir", "data-dir", "module-dir"):
+        parser.add_argument("--" + flag, type=Path)
+    args = parser.parse_args(argv)
+    configure(args)
     if platform.system() != "Linux":
         raise BuddyError("Run dev/buddy from a fresh Linux SSH session with Docker access.")
-    PID_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if PID_FILE.parent.is_symlink() or PID_FILE.parent.stat().st_mode & 0o022:
-        raise BuddyError("config must be a real directory without group/other write access.")
+    for directory in {PID_FILE.parent, CONFIG_DIR, DATA_DIR} - {None}:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = directory.stat()
+        if directory.is_symlink() or not directory.is_dir() or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise BuddyError("Profile directories must be real, owned, and without group/other write access")
     with os.fdopen(private_file(LOCK_FILE, os.O_WRONLY | os.O_CREAT), "w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

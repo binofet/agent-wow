@@ -82,6 +82,64 @@ func (AcceptanceStatus) EnumDescriptor() ([]byte, []int) {
 	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{0}
 }
 
+type RewardStatus int32
+
+const (
+	RewardStatus_REWARD_NONE              RewardStatus = 0
+	RewardStatus_REWARD_REQUESTED         RewardStatus = 1
+	RewardStatus_REWARD_CONFIRMED         RewardStatus = 2
+	RewardStatus_REWARD_UNCONFIRMED       RewardStatus = 3
+	RewardStatus_REWARD_REJECTED          RewardStatus = 4
+	RewardStatus_REWARD_WRITE_UNCONFIRMED RewardStatus = 5
+)
+
+// Enum value maps for RewardStatus.
+var (
+	RewardStatus_name = map[int32]string{
+		0: "REWARD_NONE",
+		1: "REWARD_REQUESTED",
+		2: "REWARD_CONFIRMED",
+		3: "REWARD_UNCONFIRMED",
+		4: "REWARD_REJECTED",
+		5: "REWARD_WRITE_UNCONFIRMED",
+	}
+	RewardStatus_value = map[string]int32{
+		"REWARD_NONE":              0,
+		"REWARD_REQUESTED":         1,
+		"REWARD_CONFIRMED":         2,
+		"REWARD_UNCONFIRMED":       3,
+		"REWARD_REJECTED":          4,
+		"REWARD_WRITE_UNCONFIRMED": 5,
+	}
+)
+
+func (x RewardStatus) Enum() *RewardStatus {
+	p := new(RewardStatus)
+	*p = x
+	return p
+}
+
+func (x RewardStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RewardStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_modules_buddy_quests_quests_proto_enumTypes[1].Descriptor()
+}
+
+func (RewardStatus) Type() protoreflect.EnumType {
+	return &file_modules_buddy_quests_quests_proto_enumTypes[1]
+}
+
+func (x RewardStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RewardStatus.Descriptor instead.
+func (RewardStatus) EnumDescriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{1}
+}
+
 type Quest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	QuestId         uint32                 `protobuf:"varint,1,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
@@ -532,6 +590,8 @@ type StateResponse struct {
 	QuestLog         []*api.QuestLogEntry   `protobuf:"bytes,10,rep,name=quest_log,json=questLog,proto3" json:"quest_log,omitempty"`
 	MalformedPackets uint64                 `protobuf:"varint,11,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
 	IgnoredPackets   uint64                 `protobuf:"varint,12,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
+	TurnInOffer      *TurnInOffer           `protobuf:"bytes,13,opt,name=turn_in_offer,json=turnInOffer,proto3" json:"turn_in_offer,omitempty"`
+	LastReward       *RewardReceipt         `protobuf:"bytes,14,opt,name=last_reward,json=lastReward,proto3" json:"last_reward,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -650,6 +710,984 @@ func (x *StateResponse) GetIgnoredPackets() uint64 {
 	return 0
 }
 
+func (x *StateResponse) GetTurnInOffer() *TurnInOffer {
+	if x != nil {
+		return x.TurnInOffer
+	}
+	return nil
+}
+
+func (x *StateResponse) GetLastReward() *RewardReceipt {
+	if x != nil {
+		return x.LastReward
+	}
+	return nil
+}
+
+type QuestObjective struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Index         uint32                 `protobuf:"varint,2,opt,name=index,proto3" json:"index,omitempty"`
+	TargetId      int32                  `protobuf:"varint,3,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`
+	RequiredCount uint32                 `protobuf:"varint,4,opt,name=required_count,json=requiredCount,proto3" json:"required_count,omitempty"`
+	Text          string                 `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
+	CurrentKnown  bool                   `protobuf:"varint,6,opt,name=current_known,json=currentKnown,proto3" json:"current_known,omitempty"`
+	CurrentCount  uint32                 `protobuf:"varint,7,opt,name=current_count,json=currentCount,proto3" json:"current_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuestObjective) Reset() {
+	*x = QuestObjective{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuestObjective) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuestObjective) ProtoMessage() {}
+
+func (x *QuestObjective) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuestObjective.ProtoReflect.Descriptor instead.
+func (*QuestObjective) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *QuestObjective) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *QuestObjective) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *QuestObjective) GetTargetId() int32 {
+	if x != nil {
+		return x.TargetId
+	}
+	return 0
+}
+
+func (x *QuestObjective) GetRequiredCount() uint32 {
+	if x != nil {
+		return x.RequiredCount
+	}
+	return 0
+}
+
+func (x *QuestObjective) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *QuestObjective) GetCurrentKnown() bool {
+	if x != nil {
+		return x.CurrentKnown
+	}
+	return false
+}
+
+func (x *QuestObjective) GetCurrentCount() uint32 {
+	if x != nil {
+		return x.CurrentCount
+	}
+	return 0
+}
+
+type QuestJournalEntry struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	QuestId                uint32                 `protobuf:"varint,1,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	Slot                   uint32                 `protobuf:"varint,2,opt,name=slot,proto3" json:"slot,omitempty"`
+	Title                  string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	Details                string                 `protobuf:"bytes,4,opt,name=details,proto3" json:"details,omitempty"`
+	Objectives             string                 `protobuf:"bytes,5,opt,name=objectives,proto3" json:"objectives,omitempty"`
+	AreaDescription        string                 `protobuf:"bytes,6,opt,name=area_description,json=areaDescription,proto3" json:"area_description,omitempty"`
+	TemplateKnown          bool                   `protobuf:"varint,7,opt,name=template_known,json=templateKnown,proto3" json:"template_known,omitempty"`
+	Failure                string                 `protobuf:"bytes,8,opt,name=failure,proto3" json:"failure,omitempty"`
+	Targets                []*QuestObjective      `protobuf:"bytes,9,rep,name=targets,proto3" json:"targets,omitempty"`
+	LogStateKnown          bool                   `protobuf:"varint,10,opt,name=log_state_known,json=logStateKnown,proto3" json:"log_state_known,omitempty"`
+	LogState               uint32                 `protobuf:"varint,11,opt,name=log_state,json=logState,proto3" json:"log_state,omitempty"`
+	Complete               bool                   `protobuf:"varint,12,opt,name=complete,proto3" json:"complete,omitempty"`
+	Failed                 bool                   `protobuf:"varint,13,opt,name=failed,proto3" json:"failed,omitempty"`
+	ObjectiveCounts        []uint32               `protobuf:"varint,14,rep,packed,name=objective_counts,json=objectiveCounts,proto3" json:"objective_counts,omitempty"`
+	ExpireTime             uint32                 `protobuf:"varint,15,opt,name=expire_time,json=expireTime,proto3" json:"expire_time,omitempty"`
+	ObservedQuestgiverGuid uint64                 `protobuf:"varint,16,opt,name=observed_questgiver_guid,json=observedQuestgiverGuid,proto3" json:"observed_questgiver_guid,omitempty"`
+	ObservedRewardNpcGuid  uint64                 `protobuf:"varint,17,opt,name=observed_reward_npc_guid,json=observedRewardNpcGuid,proto3" json:"observed_reward_npc_guid,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *QuestJournalEntry) Reset() {
+	*x = QuestJournalEntry{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuestJournalEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuestJournalEntry) ProtoMessage() {}
+
+func (x *QuestJournalEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuestJournalEntry.ProtoReflect.Descriptor instead.
+func (*QuestJournalEntry) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *QuestJournalEntry) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *QuestJournalEntry) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *QuestJournalEntry) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *QuestJournalEntry) GetDetails() string {
+	if x != nil {
+		return x.Details
+	}
+	return ""
+}
+
+func (x *QuestJournalEntry) GetObjectives() string {
+	if x != nil {
+		return x.Objectives
+	}
+	return ""
+}
+
+func (x *QuestJournalEntry) GetAreaDescription() string {
+	if x != nil {
+		return x.AreaDescription
+	}
+	return ""
+}
+
+func (x *QuestJournalEntry) GetTemplateKnown() bool {
+	if x != nil {
+		return x.TemplateKnown
+	}
+	return false
+}
+
+func (x *QuestJournalEntry) GetFailure() string {
+	if x != nil {
+		return x.Failure
+	}
+	return ""
+}
+
+func (x *QuestJournalEntry) GetTargets() []*QuestObjective {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
+func (x *QuestJournalEntry) GetLogStateKnown() bool {
+	if x != nil {
+		return x.LogStateKnown
+	}
+	return false
+}
+
+func (x *QuestJournalEntry) GetLogState() uint32 {
+	if x != nil {
+		return x.LogState
+	}
+	return 0
+}
+
+func (x *QuestJournalEntry) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *QuestJournalEntry) GetFailed() bool {
+	if x != nil {
+		return x.Failed
+	}
+	return false
+}
+
+func (x *QuestJournalEntry) GetObjectiveCounts() []uint32 {
+	if x != nil {
+		return x.ObjectiveCounts
+	}
+	return nil
+}
+
+func (x *QuestJournalEntry) GetExpireTime() uint32 {
+	if x != nil {
+		return x.ExpireTime
+	}
+	return 0
+}
+
+func (x *QuestJournalEntry) GetObservedQuestgiverGuid() uint64 {
+	if x != nil {
+		return x.ObservedQuestgiverGuid
+	}
+	return 0
+}
+
+func (x *QuestJournalEntry) GetObservedRewardNpcGuid() uint64 {
+	if x != nil {
+		return x.ObservedRewardNpcGuid
+	}
+	return 0
+}
+
+type JournalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Refresh       bool                   `protobuf:"varint,1,opt,name=refresh,proto3" json:"refresh,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JournalRequest) Reset() {
+	*x = JournalRequest{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JournalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JournalRequest) ProtoMessage() {}
+
+func (x *JournalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JournalRequest.ProtoReflect.Descriptor instead.
+func (*JournalRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *JournalRequest) GetRefresh() bool {
+	if x != nil {
+		return x.Refresh
+	}
+	return false
+}
+
+type JournalResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	QuestLogRevision uint64                 `protobuf:"varint,2,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
+	Entries          []*QuestJournalEntry   `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *JournalResponse) Reset() {
+	*x = JournalResponse{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JournalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JournalResponse) ProtoMessage() {}
+
+func (x *JournalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JournalResponse.ProtoReflect.Descriptor instead.
+func (*JournalResponse) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *JournalResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *JournalResponse) GetQuestLogRevision() uint64 {
+	if x != nil {
+		return x.QuestLogRevision
+	}
+	return 0
+}
+
+func (x *JournalResponse) GetEntries() []*QuestJournalEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+type RewardItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	ItemId        uint32                 `protobuf:"varint,2,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	Count         uint32                 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	DisplayId     uint32                 `protobuf:"varint,4,opt,name=display_id,json=displayId,proto3" json:"display_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RewardItem) Reset() {
+	*x = RewardItem{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewardItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewardItem) ProtoMessage() {}
+
+func (x *RewardItem) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewardItem.ProtoReflect.Descriptor instead.
+func (*RewardItem) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RewardItem) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *RewardItem) GetItemId() uint32 {
+	if x != nil {
+		return x.ItemId
+	}
+	return 0
+}
+
+func (x *RewardItem) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *RewardItem) GetDisplayId() uint32 {
+	if x != nil {
+		return x.DisplayId
+	}
+	return 0
+}
+
+type TurnInOffer struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Revision        uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	NpcGuid         uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	QuestId         uint32                 `protobuf:"varint,3,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	Title           string                 `protobuf:"bytes,4,opt,name=title,proto3" json:"title,omitempty"`
+	Text            string                 `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
+	Source          string                 `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
+	CanComplete     bool                   `protobuf:"varint,7,opt,name=can_complete,json=canComplete,proto3" json:"can_complete,omitempty"`
+	ExpiresInMs     uint64                 `protobuf:"varint,8,opt,name=expires_in_ms,json=expiresInMs,proto3" json:"expires_in_ms,omitempty"`
+	Choices         []*RewardItem          `protobuf:"bytes,9,rep,name=choices,proto3" json:"choices,omitempty"`
+	Rewards         []*RewardItem          `protobuf:"bytes,10,rep,name=rewards,proto3" json:"rewards,omitempty"`
+	RequiredItems   []*RewardItem          `protobuf:"bytes,11,rep,name=required_items,json=requiredItems,proto3" json:"required_items,omitempty"`
+	RequiredMoney   uint32                 `protobuf:"varint,12,opt,name=required_money,json=requiredMoney,proto3" json:"required_money,omitempty"`
+	RewardMoney     uint32                 `protobuf:"varint,13,opt,name=reward_money,json=rewardMoney,proto3" json:"reward_money,omitempty"`
+	RewardXp        uint32                 `protobuf:"varint,14,opt,name=reward_xp,json=rewardXp,proto3" json:"reward_xp,omitempty"`
+	Flags           uint32                 `protobuf:"varint,15,opt,name=flags,proto3" json:"flags,omitempty"`
+	RewardRequested bool                   `protobuf:"varint,16,opt,name=reward_requested,json=rewardRequested,proto3" json:"reward_requested,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TurnInOffer) Reset() {
+	*x = TurnInOffer{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnInOffer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnInOffer) ProtoMessage() {}
+
+func (x *TurnInOffer) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnInOffer.ProtoReflect.Descriptor instead.
+func (*TurnInOffer) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TurnInOffer) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetNpcGuid() uint64 {
+	if x != nil {
+		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *TurnInOffer) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TurnInOffer) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *TurnInOffer) GetCanComplete() bool {
+	if x != nil {
+		return x.CanComplete
+	}
+	return false
+}
+
+func (x *TurnInOffer) GetExpiresInMs() uint64 {
+	if x != nil {
+		return x.ExpiresInMs
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetChoices() []*RewardItem {
+	if x != nil {
+		return x.Choices
+	}
+	return nil
+}
+
+func (x *TurnInOffer) GetRewards() []*RewardItem {
+	if x != nil {
+		return x.Rewards
+	}
+	return nil
+}
+
+func (x *TurnInOffer) GetRequiredItems() []*RewardItem {
+	if x != nil {
+		return x.RequiredItems
+	}
+	return nil
+}
+
+func (x *TurnInOffer) GetRequiredMoney() uint32 {
+	if x != nil {
+		return x.RequiredMoney
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetRewardMoney() uint32 {
+	if x != nil {
+		return x.RewardMoney
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetRewardXp() uint32 {
+	if x != nil {
+		return x.RewardXp
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *TurnInOffer) GetRewardRequested() bool {
+	if x != nil {
+		return x.RewardRequested
+	}
+	return false
+}
+
+type RewardReceipt struct {
+	state                         protoimpl.MessageState `protogen:"open.v1"`
+	NpcGuid                       uint64                 `protobuf:"varint,1,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	QuestId                       uint32                 `protobuf:"varint,2,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	OfferRevision                 uint64                 `protobuf:"varint,3,opt,name=offer_revision,json=offerRevision,proto3" json:"offer_revision,omitempty"`
+	Status                        RewardStatus           `protobuf:"varint,4,opt,name=status,proto3,enum=warcraftbuddy.quests.v1.RewardStatus" json:"status,omitempty"`
+	TransportWritten              bool                   `protobuf:"varint,5,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	ServerRewardObserved          bool                   `protobuf:"varint,6,opt,name=server_reward_observed,json=serverRewardObserved,proto3" json:"server_reward_observed,omitempty"`
+	LogRemovalConfirmed           bool                   `protobuf:"varint,7,opt,name=log_removal_confirmed,json=logRemovalConfirmed,proto3" json:"log_removal_confirmed,omitempty"`
+	BaselineLogRevision           uint64                 `protobuf:"varint,8,opt,name=baseline_log_revision,json=baselineLogRevision,proto3" json:"baseline_log_revision,omitempty"`
+	ConfirmedLogRevision          uint64                 `protobuf:"varint,9,opt,name=confirmed_log_revision,json=confirmedLogRevision,proto3" json:"confirmed_log_revision,omitempty"`
+	RewardXp                      uint32                 `protobuf:"varint,10,opt,name=reward_xp,json=rewardXp,proto3" json:"reward_xp,omitempty"`
+	RewardMoney                   uint32                 `protobuf:"varint,11,opt,name=reward_money,json=rewardMoney,proto3" json:"reward_money,omitempty"`
+	RewardHonor                   uint32                 `protobuf:"varint,12,opt,name=reward_honor,json=rewardHonor,proto3" json:"reward_honor,omitempty"`
+	RewardTalents                 uint32                 `protobuf:"varint,13,opt,name=reward_talents,json=rewardTalents,proto3" json:"reward_talents,omitempty"`
+	RewardArena                   uint32                 `protobuf:"varint,14,opt,name=reward_arena,json=rewardArena,proto3" json:"reward_arena,omitempty"`
+	Failure                       string                 `protobuf:"bytes,15,opt,name=failure,proto3" json:"failure,omitempty"`
+	ServerReason                  uint32                 `protobuf:"varint,16,opt,name=server_reason,json=serverReason,proto3" json:"server_reason,omitempty"`
+	BackpackEvidenceKnown         bool                   `protobuf:"varint,17,opt,name=backpack_evidence_known,json=backpackEvidenceKnown,proto3" json:"backpack_evidence_known,omitempty"`
+	RewardItemsObservedInBackpack bool                   `protobuf:"varint,18,opt,name=reward_items_observed_in_backpack,json=rewardItemsObservedInBackpack,proto3" json:"reward_items_observed_in_backpack,omitempty"`
+	BaselineBackpackRevision      uint64                 `protobuf:"varint,19,opt,name=baseline_backpack_revision,json=baselineBackpackRevision,proto3" json:"baseline_backpack_revision,omitempty"`
+	ConfirmedBackpackRevision     uint64                 `protobuf:"varint,20,opt,name=confirmed_backpack_revision,json=confirmedBackpackRevision,proto3" json:"confirmed_backpack_revision,omitempty"`
+	InventoryLimitation           string                 `protobuf:"bytes,21,opt,name=inventory_limitation,json=inventoryLimitation,proto3" json:"inventory_limitation,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
+}
+
+func (x *RewardReceipt) Reset() {
+	*x = RewardReceipt{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewardReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewardReceipt) ProtoMessage() {}
+
+func (x *RewardReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewardReceipt.ProtoReflect.Descriptor instead.
+func (*RewardReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *RewardReceipt) GetNpcGuid() uint64 {
+	if x != nil {
+		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetOfferRevision() uint64 {
+	if x != nil {
+		return x.OfferRevision
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetStatus() RewardStatus {
+	if x != nil {
+		return x.Status
+	}
+	return RewardStatus_REWARD_NONE
+}
+
+func (x *RewardReceipt) GetTransportWritten() bool {
+	if x != nil {
+		return x.TransportWritten
+	}
+	return false
+}
+
+func (x *RewardReceipt) GetServerRewardObserved() bool {
+	if x != nil {
+		return x.ServerRewardObserved
+	}
+	return false
+}
+
+func (x *RewardReceipt) GetLogRemovalConfirmed() bool {
+	if x != nil {
+		return x.LogRemovalConfirmed
+	}
+	return false
+}
+
+func (x *RewardReceipt) GetBaselineLogRevision() uint64 {
+	if x != nil {
+		return x.BaselineLogRevision
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetConfirmedLogRevision() uint64 {
+	if x != nil {
+		return x.ConfirmedLogRevision
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetRewardXp() uint32 {
+	if x != nil {
+		return x.RewardXp
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetRewardMoney() uint32 {
+	if x != nil {
+		return x.RewardMoney
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetRewardHonor() uint32 {
+	if x != nil {
+		return x.RewardHonor
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetRewardTalents() uint32 {
+	if x != nil {
+		return x.RewardTalents
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetRewardArena() uint32 {
+	if x != nil {
+		return x.RewardArena
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetFailure() string {
+	if x != nil {
+		return x.Failure
+	}
+	return ""
+}
+
+func (x *RewardReceipt) GetServerReason() uint32 {
+	if x != nil {
+		return x.ServerReason
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetBackpackEvidenceKnown() bool {
+	if x != nil {
+		return x.BackpackEvidenceKnown
+	}
+	return false
+}
+
+func (x *RewardReceipt) GetRewardItemsObservedInBackpack() bool {
+	if x != nil {
+		return x.RewardItemsObservedInBackpack
+	}
+	return false
+}
+
+func (x *RewardReceipt) GetBaselineBackpackRevision() uint64 {
+	if x != nil {
+		return x.BaselineBackpackRevision
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetConfirmedBackpackRevision() uint64 {
+	if x != nil {
+		return x.ConfirmedBackpackRevision
+	}
+	return 0
+}
+
+func (x *RewardReceipt) GetInventoryLimitation() string {
+	if x != nil {
+		return x.InventoryLimitation
+	}
+	return ""
+}
+
+type TurnInRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	NpcGuid          uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	QuestId          uint32                 `protobuf:"varint,3,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	QuestLogRevision uint64                 `protobuf:"varint,4,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *TurnInRequest) Reset() {
+	*x = TurnInRequest{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnInRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnInRequest) ProtoMessage() {}
+
+func (x *TurnInRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnInRequest.ProtoReflect.Descriptor instead.
+func (*TurnInRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *TurnInRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TurnInRequest) GetNpcGuid() uint64 {
+	if x != nil {
+		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *TurnInRequest) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *TurnInRequest) GetQuestLogRevision() uint64 {
+	if x != nil {
+		return x.QuestLogRevision
+	}
+	return 0
+}
+
+type RewardRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	OfferRevision  uint64                 `protobuf:"varint,2,opt,name=offer_revision,json=offerRevision,proto3" json:"offer_revision,omitempty"`
+	NpcGuid        uint64                 `protobuf:"varint,3,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	QuestId        uint32                 `protobuf:"varint,4,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	ChoiceIndex    uint32                 `protobuf:"varint,5,opt,name=choice_index,json=choiceIndex,proto3" json:"choice_index,omitempty"`
+	ExpectedItemId uint32                 `protobuf:"varint,6,opt,name=expected_item_id,json=expectedItemId,proto3" json:"expected_item_id,omitempty"`
+	NoChoice       bool                   `protobuf:"varint,7,opt,name=no_choice,json=noChoice,proto3" json:"no_choice,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RewardRequest) Reset() {
+	*x = RewardRequest{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewardRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewardRequest) ProtoMessage() {}
+
+func (x *RewardRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewardRequest.ProtoReflect.Descriptor instead.
+func (*RewardRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *RewardRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RewardRequest) GetOfferRevision() uint64 {
+	if x != nil {
+		return x.OfferRevision
+	}
+	return 0
+}
+
+func (x *RewardRequest) GetNpcGuid() uint64 {
+	if x != nil {
+		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *RewardRequest) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *RewardRequest) GetChoiceIndex() uint32 {
+	if x != nil {
+		return x.ChoiceIndex
+	}
+	return 0
+}
+
+func (x *RewardRequest) GetExpectedItemId() uint32 {
+	if x != nil {
+		return x.ExpectedItemId
+	}
+	return 0
+}
+
+func (x *RewardRequest) GetNoChoice() bool {
+	if x != nil {
+		return x.NoChoice
+	}
+	return false
+}
+
 type OfferRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -660,7 +1698,7 @@ type OfferRequest struct {
 
 func (x *OfferRequest) Reset() {
 	*x = OfferRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +1710,7 @@ func (x *OfferRequest) String() string {
 func (*OfferRequest) ProtoMessage() {}
 
 func (x *OfferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +1723,7 @@ func (x *OfferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OfferRequest.ProtoReflect.Descriptor instead.
 func (*OfferRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *OfferRequest) GetSessionId() string {
@@ -714,7 +1752,7 @@ type QuestRequest struct {
 
 func (x *QuestRequest) Reset() {
 	*x = QuestRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +1764,7 @@ func (x *QuestRequest) String() string {
 func (*QuestRequest) ProtoMessage() {}
 
 func (x *QuestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +1777,7 @@ func (x *QuestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestRequest.ProtoReflect.Descriptor instead.
 func (*QuestRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *QuestRequest) GetSessionId() string {
@@ -782,7 +1820,7 @@ type OperationResult struct {
 
 func (x *OperationResult) Reset() {
 	*x = OperationResult{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -794,7 +1832,7 @@ func (x *OperationResult) String() string {
 func (*OperationResult) ProtoMessage() {}
 
 func (x *OperationResult) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -807,7 +1845,7 @@ func (x *OperationResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
 func (*OperationResult) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OperationResult) GetTransportWritten() bool {
@@ -878,7 +1916,7 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\rserver_reason\x18\t \x01(\rR\fserverReason\"@\n" +
 	"\vGiverStatus\x12\x19\n" +
 	"\bnpc_guid\x18\x01 \x01(\x04R\anpcGuid\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\rR\x06status\"\xef\x04\n" +
+	"\x06status\x18\x02 \x01(\rR\x06status\"\x82\x06\n" +
 	"\rStateResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -893,7 +1931,110 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\tquest_log\x18\n" +
 	" \x03(\v2%.warcraftbuddy.world.v1.QuestLogEntryR\bquestLog\x12+\n" +
 	"\x11malformed_packets\x18\v \x01(\x04R\x10malformedPackets\x12'\n" +
-	"\x0fignored_packets\x18\f \x01(\x04R\x0eignoredPackets\"H\n" +
+	"\x0fignored_packets\x18\f \x01(\x04R\x0eignoredPackets\x12H\n" +
+	"\rturn_in_offer\x18\r \x01(\v2$.warcraftbuddy.quests.v1.TurnInOfferR\vturnInOffer\x12G\n" +
+	"\vlast_reward\x18\x0e \x01(\v2&.warcraftbuddy.quests.v1.RewardReceiptR\n" +
+	"lastReward\"\xdc\x01\n" +
+	"\x0eQuestObjective\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x14\n" +
+	"\x05index\x18\x02 \x01(\rR\x05index\x12\x1b\n" +
+	"\ttarget_id\x18\x03 \x01(\x05R\btargetId\x12%\n" +
+	"\x0erequired_count\x18\x04 \x01(\rR\rrequiredCount\x12\x12\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\x12#\n" +
+	"\rcurrent_known\x18\x06 \x01(\bR\fcurrentKnown\x12#\n" +
+	"\rcurrent_count\x18\a \x01(\rR\fcurrentCount\"\xf9\x04\n" +
+	"\x11QuestJournalEntry\x12\x19\n" +
+	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x12\n" +
+	"\x04slot\x18\x02 \x01(\rR\x04slot\x12\x14\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12\x18\n" +
+	"\adetails\x18\x04 \x01(\tR\adetails\x12\x1e\n" +
+	"\n" +
+	"objectives\x18\x05 \x01(\tR\n" +
+	"objectives\x12)\n" +
+	"\x10area_description\x18\x06 \x01(\tR\x0fareaDescription\x12%\n" +
+	"\x0etemplate_known\x18\a \x01(\bR\rtemplateKnown\x12\x18\n" +
+	"\afailure\x18\b \x01(\tR\afailure\x12A\n" +
+	"\atargets\x18\t \x03(\v2'.warcraftbuddy.quests.v1.QuestObjectiveR\atargets\x12&\n" +
+	"\x0flog_state_known\x18\n" +
+	" \x01(\bR\rlogStateKnown\x12\x1b\n" +
+	"\tlog_state\x18\v \x01(\rR\blogState\x12\x1a\n" +
+	"\bcomplete\x18\f \x01(\bR\bcomplete\x12\x16\n" +
+	"\x06failed\x18\r \x01(\bR\x06failed\x12)\n" +
+	"\x10objective_counts\x18\x0e \x03(\rR\x0fobjectiveCounts\x12\x1f\n" +
+	"\vexpire_time\x18\x0f \x01(\rR\n" +
+	"expireTime\x128\n" +
+	"\x18observed_questgiver_guid\x18\x10 \x01(\x04R\x16observedQuestgiverGuid\x127\n" +
+	"\x18observed_reward_npc_guid\x18\x11 \x01(\x04R\x15observedRewardNpcGuid\"*\n" +
+	"\x0eJournalRequest\x12\x18\n" +
+	"\arefresh\x18\x01 \x01(\bR\arefresh\"\xa4\x01\n" +
+	"\x0fJournalResponse\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12,\n" +
+	"\x12quest_log_revision\x18\x02 \x01(\x04R\x10questLogRevision\x12D\n" +
+	"\aentries\x18\x03 \x03(\v2*.warcraftbuddy.quests.v1.QuestJournalEntryR\aentries\"p\n" +
+	"\n" +
+	"RewardItem\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x12\x17\n" +
+	"\aitem_id\x18\x02 \x01(\rR\x06itemId\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1d\n" +
+	"\n" +
+	"display_id\x18\x04 \x01(\rR\tdisplayId\"\xda\x04\n" +
+	"\vTurnInOffer\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x19\n" +
+	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12\x19\n" +
+	"\bquest_id\x18\x03 \x01(\rR\aquestId\x12\x14\n" +
+	"\x05title\x18\x04 \x01(\tR\x05title\x12\x12\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\x12\x16\n" +
+	"\x06source\x18\x06 \x01(\tR\x06source\x12!\n" +
+	"\fcan_complete\x18\a \x01(\bR\vcanComplete\x12\"\n" +
+	"\rexpires_in_ms\x18\b \x01(\x04R\vexpiresInMs\x12=\n" +
+	"\achoices\x18\t \x03(\v2#.warcraftbuddy.quests.v1.RewardItemR\achoices\x12=\n" +
+	"\arewards\x18\n" +
+	" \x03(\v2#.warcraftbuddy.quests.v1.RewardItemR\arewards\x12J\n" +
+	"\x0erequired_items\x18\v \x03(\v2#.warcraftbuddy.quests.v1.RewardItemR\rrequiredItems\x12%\n" +
+	"\x0erequired_money\x18\f \x01(\rR\rrequiredMoney\x12!\n" +
+	"\freward_money\x18\r \x01(\rR\vrewardMoney\x12\x1b\n" +
+	"\treward_xp\x18\x0e \x01(\rR\brewardXp\x12\x14\n" +
+	"\x05flags\x18\x0f \x01(\rR\x05flags\x12)\n" +
+	"\x10reward_requested\x18\x10 \x01(\bR\x0frewardRequested\"\xcb\a\n" +
+	"\rRewardReceipt\x12\x19\n" +
+	"\bnpc_guid\x18\x01 \x01(\x04R\anpcGuid\x12\x19\n" +
+	"\bquest_id\x18\x02 \x01(\rR\aquestId\x12%\n" +
+	"\x0eoffer_revision\x18\x03 \x01(\x04R\rofferRevision\x12=\n" +
+	"\x06status\x18\x04 \x01(\x0e2%.warcraftbuddy.quests.v1.RewardStatusR\x06status\x12+\n" +
+	"\x11transport_written\x18\x05 \x01(\bR\x10transportWritten\x124\n" +
+	"\x16server_reward_observed\x18\x06 \x01(\bR\x14serverRewardObserved\x122\n" +
+	"\x15log_removal_confirmed\x18\a \x01(\bR\x13logRemovalConfirmed\x122\n" +
+	"\x15baseline_log_revision\x18\b \x01(\x04R\x13baselineLogRevision\x124\n" +
+	"\x16confirmed_log_revision\x18\t \x01(\x04R\x14confirmedLogRevision\x12\x1b\n" +
+	"\treward_xp\x18\n" +
+	" \x01(\rR\brewardXp\x12!\n" +
+	"\freward_money\x18\v \x01(\rR\vrewardMoney\x12!\n" +
+	"\freward_honor\x18\f \x01(\rR\vrewardHonor\x12%\n" +
+	"\x0ereward_talents\x18\r \x01(\rR\rrewardTalents\x12!\n" +
+	"\freward_arena\x18\x0e \x01(\rR\vrewardArena\x12\x18\n" +
+	"\afailure\x18\x0f \x01(\tR\afailure\x12#\n" +
+	"\rserver_reason\x18\x10 \x01(\rR\fserverReason\x126\n" +
+	"\x17backpack_evidence_known\x18\x11 \x01(\bR\x15backpackEvidenceKnown\x12H\n" +
+	"!reward_items_observed_in_backpack\x18\x12 \x01(\bR\x1drewardItemsObservedInBackpack\x12<\n" +
+	"\x1abaseline_backpack_revision\x18\x13 \x01(\x04R\x18baselineBackpackRevision\x12>\n" +
+	"\x1bconfirmed_backpack_revision\x18\x14 \x01(\x04R\x19confirmedBackpackRevision\x121\n" +
+	"\x14inventory_limitation\x18\x15 \x01(\tR\x13inventoryLimitation\"\x92\x01\n" +
+	"\rTurnInRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
+	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12\x19\n" +
+	"\bquest_id\x18\x03 \x01(\rR\aquestId\x12,\n" +
+	"\x12quest_log_revision\x18\x04 \x01(\x04R\x10questLogRevision\"\xf5\x01\n" +
+	"\rRewardRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
+	"\x0eoffer_revision\x18\x02 \x01(\x04R\rofferRevision\x12\x19\n" +
+	"\bnpc_guid\x18\x03 \x01(\x04R\anpcGuid\x12\x19\n" +
+	"\bquest_id\x18\x04 \x01(\rR\aquestId\x12!\n" +
+	"\fchoice_index\x18\x05 \x01(\rR\vchoiceIndex\x12(\n" +
+	"\x10expected_item_id\x18\x06 \x01(\rR\x0eexpectedItemId\x12\x1b\n" +
+	"\tno_choice\x18\a \x01(\bR\bnoChoice\"H\n" +
 	"\fOfferRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
@@ -914,13 +2055,23 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x10CONFIRMED_IN_LOG\x10\x02\x12\x17\n" +
 	"\x13UNCONFIRMED_TIMEOUT\x10\x03\x12\x13\n" +
 	"\x0fSERVER_REJECTED\x10\x04\x12\x15\n" +
-	"\x11WRITE_UNCONFIRMED\x10\x052\xf8\x03\n" +
+	"\x11WRITE_UNCONFIRMED\x10\x05*\x96\x01\n" +
+	"\fRewardStatus\x12\x0f\n" +
+	"\vREWARD_NONE\x10\x00\x12\x14\n" +
+	"\x10REWARD_REQUESTED\x10\x01\x12\x14\n" +
+	"\x10REWARD_CONFIRMED\x10\x02\x12\x16\n" +
+	"\x12REWARD_UNCONFIRMED\x10\x03\x12\x13\n" +
+	"\x0fREWARD_REJECTED\x10\x04\x12\x1c\n" +
+	"\x18REWARD_WRITE_UNCONFIRMED\x10\x052\x93\x06\n" +
 	"\vBuddyQuests\x12J\n" +
 	"\bDiscover\x12\x16.google.protobuf.Empty\x1a&.warcraftbuddy.quests.v1.StateResponse\x12G\n" +
 	"\x05State\x12\x16.google.protobuf.Empty\x1a&.warcraftbuddy.quests.v1.StateResponse\x12X\n" +
 	"\x05Offer\x12%.warcraftbuddy.quests.v1.OfferRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12Z\n" +
 	"\aDetails\x12%.warcraftbuddy.quests.v1.QuestRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12Y\n" +
-	"\x06Accept\x12%.warcraftbuddy.quests.v1.QuestRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12C\n" +
+	"\x06Accept\x12%.warcraftbuddy.quests.v1.QuestRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12\\\n" +
+	"\aJournal\x12'.warcraftbuddy.quests.v1.JournalRequest\x1a(.warcraftbuddy.quests.v1.JournalResponse\x12Z\n" +
+	"\x06TurnIn\x12&.warcraftbuddy.quests.v1.TurnInRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12_\n" +
+	"\vClaimReward\x12&.warcraftbuddy.quests.v1.RewardRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyBBZ@github.com/agent-wow/agent-wow/modules/buddy-quests/api;questsv1b\x06proto3"
 
 var (
@@ -935,51 +2086,75 @@ func file_modules_buddy_quests_quests_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_quests_quests_proto_rawDescData
 }
 
-var file_modules_buddy_quests_quests_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_quests_quests_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_modules_buddy_quests_quests_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_modules_buddy_quests_quests_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_modules_buddy_quests_quests_proto_goTypes = []any{
 	(AcceptanceStatus)(0),     // 0: warcraftbuddy.quests.v1.AcceptanceStatus
-	(*Quest)(nil),             // 1: warcraftbuddy.quests.v1.Quest
-	(*Offer)(nil),             // 2: warcraftbuddy.quests.v1.Offer
-	(*NearbyGiver)(nil),       // 3: warcraftbuddy.quests.v1.NearbyGiver
-	(*Acceptance)(nil),        // 4: warcraftbuddy.quests.v1.Acceptance
-	(*GiverStatus)(nil),       // 5: warcraftbuddy.quests.v1.GiverStatus
-	(*StateResponse)(nil),     // 6: warcraftbuddy.quests.v1.StateResponse
-	(*OfferRequest)(nil),      // 7: warcraftbuddy.quests.v1.OfferRequest
-	(*QuestRequest)(nil),      // 8: warcraftbuddy.quests.v1.QuestRequest
-	(*OperationResult)(nil),   // 9: warcraftbuddy.quests.v1.OperationResult
-	(*api.CreatureState)(nil), // 10: warcraftbuddy.world.v1.CreatureState
-	(*api.QuestLogEntry)(nil), // 11: warcraftbuddy.world.v1.QuestLogEntry
-	(*emptypb.Empty)(nil),     // 12: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),    // 13: agentwow.module.v1.WorldPacket
+	(RewardStatus)(0),         // 1: warcraftbuddy.quests.v1.RewardStatus
+	(*Quest)(nil),             // 2: warcraftbuddy.quests.v1.Quest
+	(*Offer)(nil),             // 3: warcraftbuddy.quests.v1.Offer
+	(*NearbyGiver)(nil),       // 4: warcraftbuddy.quests.v1.NearbyGiver
+	(*Acceptance)(nil),        // 5: warcraftbuddy.quests.v1.Acceptance
+	(*GiverStatus)(nil),       // 6: warcraftbuddy.quests.v1.GiverStatus
+	(*StateResponse)(nil),     // 7: warcraftbuddy.quests.v1.StateResponse
+	(*QuestObjective)(nil),    // 8: warcraftbuddy.quests.v1.QuestObjective
+	(*QuestJournalEntry)(nil), // 9: warcraftbuddy.quests.v1.QuestJournalEntry
+	(*JournalRequest)(nil),    // 10: warcraftbuddy.quests.v1.JournalRequest
+	(*JournalResponse)(nil),   // 11: warcraftbuddy.quests.v1.JournalResponse
+	(*RewardItem)(nil),        // 12: warcraftbuddy.quests.v1.RewardItem
+	(*TurnInOffer)(nil),       // 13: warcraftbuddy.quests.v1.TurnInOffer
+	(*RewardReceipt)(nil),     // 14: warcraftbuddy.quests.v1.RewardReceipt
+	(*TurnInRequest)(nil),     // 15: warcraftbuddy.quests.v1.TurnInRequest
+	(*RewardRequest)(nil),     // 16: warcraftbuddy.quests.v1.RewardRequest
+	(*OfferRequest)(nil),      // 17: warcraftbuddy.quests.v1.OfferRequest
+	(*QuestRequest)(nil),      // 18: warcraftbuddy.quests.v1.QuestRequest
+	(*OperationResult)(nil),   // 19: warcraftbuddy.quests.v1.OperationResult
+	(*api.CreatureState)(nil), // 20: warcraftbuddy.world.v1.CreatureState
+	(*api.QuestLogEntry)(nil), // 21: warcraftbuddy.world.v1.QuestLogEntry
+	(*emptypb.Empty)(nil),     // 22: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),    // 23: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_quests_quests_proto_depIdxs = []int32{
-	1,  // 0: warcraftbuddy.quests.v1.Offer.quests:type_name -> warcraftbuddy.quests.v1.Quest
-	10, // 1: warcraftbuddy.quests.v1.NearbyGiver.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 0: warcraftbuddy.quests.v1.Offer.quests:type_name -> warcraftbuddy.quests.v1.Quest
+	20, // 1: warcraftbuddy.quests.v1.NearbyGiver.creature:type_name -> warcraftbuddy.world.v1.CreatureState
 	0,  // 2: warcraftbuddy.quests.v1.Acceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
-	2,  // 3: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
-	3,  // 4: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
-	4,  // 5: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
-	5,  // 6: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
-	11, // 7: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	6,  // 8: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
-	12, // 9: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
-	12, // 10: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
-	7,  // 11: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
-	8,  // 12: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	8,  // 13: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	13, // 14: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	6,  // 15: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
-	6,  // 16: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
-	9,  // 17: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
-	9,  // 18: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
-	9,  // 19: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
-	12, // 20: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
-	15, // [15:21] is the sub-list for method output_type
-	9,  // [9:15] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	3,  // 3: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
+	4,  // 4: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
+	5,  // 5: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
+	6,  // 6: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
+	21, // 7: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	13, // 8: warcraftbuddy.quests.v1.StateResponse.turn_in_offer:type_name -> warcraftbuddy.quests.v1.TurnInOffer
+	14, // 9: warcraftbuddy.quests.v1.StateResponse.last_reward:type_name -> warcraftbuddy.quests.v1.RewardReceipt
+	8,  // 10: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
+	9,  // 11: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
+	12, // 12: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
+	12, // 13: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
+	12, // 14: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
+	1,  // 15: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
+	7,  // 16: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
+	22, // 17: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
+	22, // 18: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
+	17, // 19: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
+	18, // 20: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	18, // 21: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	10, // 22: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
+	15, // 23: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
+	16, // 24: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
+	23, // 25: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	7,  // 26: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
+	7,  // 27: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
+	19, // 28: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
+	19, // 29: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
+	19, // 30: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
+	11, // 31: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
+	19, // 32: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
+	19, // 33: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
+	22, // 34: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
+	26, // [26:35] is the sub-list for method output_type
+	17, // [17:26] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_quests_quests_proto_init() }
@@ -992,8 +2167,8 @@ func file_modules_buddy_quests_quests_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_quests_quests_proto_rawDesc), len(file_modules_buddy_quests_quests_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   9,
+			NumEnums:      2,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

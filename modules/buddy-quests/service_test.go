@@ -575,9 +575,14 @@ func TestManifestDescriptorAndDependencies(t *testing.T) {
 	if !ok || !module.Requires("buddy-world") || !module.Requires("buddy-actions") {
 		t.Fatal("missing module/dependencies")
 	}
-	for _, alias := range []string{"discover", "state", "offer", "details", "accept"} {
+	for _, alias := range []string{"discover", "state", "offer", "details", "accept", "journal", "turn_in", "claim_reward"} {
 		if _, ok := module.RPC(alias); !ok {
 			t.Error("missing alias", alias)
 		}
+	}
+	state, _ := module.RPC("state")
+	log := state.Descriptor().Output().Fields().ByName("quest_log")
+	if log == nil || log.Message().Fields().ByName("complete") == nil || log.Message().Fields().ByName("objective_counts") == nil {
+		t.Fatal("descriptor imports stale world quest progress schema")
 	}
 }

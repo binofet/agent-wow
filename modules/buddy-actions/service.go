@@ -59,14 +59,21 @@ type Service struct {
 	assistUntil, nextAssist                                  time.Time
 	pendingSpell                                             uint32
 	pendingTarget, failedAssistTarget                        uint64
+	weaponQueries                                            map[uint32]bool
+	weapons                                                  map[uint32]weaponProof
+	weaponOrder                                              []uint32
+	improvedSinister1, improvedSinister2                     bool
+	autoTarget                                               uint64
+	autoStopping                                             bool
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof)}
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
 	s.expireInteractionLocked()
+	s.updateClassLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
@@ -138,6 +145,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	if s.state.CastPending || s.state.MotionUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "casting or movement state is unconfirmed")
+	}
+	if !s.stopAutoAttackLocked(ctx) {
+		return nil, status.Error(codes.FailedPrecondition, "auto attack stop awaits server confirmation")
 	}
 	w, err := s.snapshot(ctx)
 	if err != nil {
@@ -298,10 +308,22 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	s.state.Assisting = r.Enabled
 	if r.Enabled {
 		s.assistUntil = s.now().Add(lease)
+		s.lastStep = s.now()
 		s.failedAssistTarget = 0
 		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
 	} else {
 		s.state.Reason = "assist_disabled"
+		// An explicit user disable authorizes one fresh stop attempt after an
+		// ambiguous write; ordinary controller ticks never retry that write.
+		s.autoStopping = false
+		s.state.AutoAttackUnconfirmed = false
+		if !s.stopAutoAttackLocked(ctx) {
+			s.state.Reason = "auto_attack_stop_waiting_for_server"
+		}
+		if !s.explicitStopLocked(ctx) {
+			s.state.Reason = "motion_unconfirmed_explicit_stop_required"
+		}
+		s.lastStep = s.now()
 	}
 	return s.stateLocked(), nil
 }
@@ -344,6 +366,9 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.autoStopping = false
+	s.state.AutoAttackUnconfirmed = false
+	s.stopAutoAttackLocked(ctx)
 	s.state.InteractionOwner = ""
 	s.interactionToken = ""
 	s.state.Following = false
@@ -389,6 +414,7 @@ func (s *Service) snapshot(ctx context.Context) (*worldv1.SnapshotResponse, erro
 		return nil, err
 	}
 	s.lastWorld = out
+	s.updateClassLocked()
 	return out, nil
 }
 
@@ -482,6 +508,9 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 		s.state.Healing = false
 		s.state.Assisting = false
 		s.state.Reason = "transport_error_no_retry"
+		if s.autoTarget != 0 && !s.autoStopping {
+			s.stopAutoAttackLocked(ctx)
+		}
 		return false
 	}
 	s.state.TransportWrites++
@@ -535,6 +564,7 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 		s.state.Following = false
 		s.state.Healing = false
 		s.state.Assisting = false
+		s.stopAutoAttackLocked(ctx)
 	}
 	return written
 }
@@ -559,7 +589,13 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = s.now()
 		return
 	}
-	if s.closed || (!s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending) {
+	if s.closed {
+		return
+	}
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending {
+		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
+		s.lastStep = s.now()
 		return
 	}
 	if s.state.MotionUnconfirmed {
@@ -567,6 +603,13 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Healing = false
 		s.state.Assisting = false
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
+		s.stopAutoAttackLocked(ctx)
+		return
+	}
+	if s.state.AutoAttackUnconfirmed {
+		s.stopLocked(ctx)
+		s.lastStep = s.now()
+		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return
 	}
 	now := s.now()
@@ -581,6 +624,8 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.state.Assisting && !now.Before(s.assistUntil) {
 		s.state.Assisting = false
+		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
 		s.state.Reason = "assist_lease_expired"
 	}
 	if s.state.CastPending && !now.Before(s.castUntil) {
@@ -589,6 +634,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Following = false
 		s.stopLocked(ctx)
 		s.state.Assisting = false
+		s.stopAutoAttackLocked(ctx)
 		s.pendingSpell = 0
 		s.pendingTarget = 0
 		s.state.Reason = "cast_result_timeout_no_retry"
@@ -599,6 +645,7 @@ func (s *Service) Tick(ctx context.Context) {
 	snapshot, err := s.snapshot(ctx)
 	if err != nil {
 		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
 		s.lastStep = now
 		s.state.Reason = "observations_unavailable"
 		s.state.AssistReason = s.state.Reason
@@ -609,6 +656,7 @@ func (s *Service) Tick(ctx context.Context) {
 		// normal jump, AFK or visibility loss must not silently revoke it.
 		// No local motion is attempted until fresh safe context is available.
 		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
 		if reason == "player_identity_mismatch" {
 			s.state.Following = false
 			s.state.Healing = false
@@ -621,8 +669,18 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if !s.refreshPositionLocked(snapshot) {
 		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
 		s.lastStep = now
 		return
+	}
+	if s.autoTarget != 0 {
+		t := snapshot.OwnerTarget
+		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || (t.AttackVictimGuid != ownerGUID && t.AttackVictimGuid != s.selfGUID) {
+			s.stopLocked(ctx)
+			s.stopAutoAttackLocked(ctx)
+			s.lastStep = now
+			return
+		}
 	}
 	if s.state.MotionUnconfirmed {
 		s.state.Assisting = false
@@ -643,7 +701,19 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
+	if s.state.AutoAttackUnconfirmed {
+		// A failed assist gate may just have requested ATTACKSTOP. Do not
+		// fall through to a new follow movement in that same controller tick.
+		s.stopLocked(ctx)
+		s.lastStep = now
+		s.state.Reason = "auto_attack_stop_waiting_for_server"
+		return
+	}
 	if !s.state.Following {
+		// The prior movement can belong to a rogue approach even when the
+		// separate Follow intent has never been enabled.
+		s.stopLocked(ctx)
+		s.lastStep = now
 		return
 	}
 	// This first slice is restricted to Eastern Kingdoms outdoor map0 and
@@ -710,6 +780,14 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 		s.state.Reason = reason
 		return false
 	}
+	if !snapshot.Self.ClassKnown || snapshot.Self.ClassId != 5 {
+		s.state.Reason = "healing_unavailable_for_class"
+		return false
+	}
+	if !s.stopAutoAttackLocked(ctx) {
+		s.state.Reason = "auto_attack_stop_waiting_for_server"
+		return false
+	}
 	if !s.refreshPositionLocked(snapshot) {
 		s.stopLocked(ctx)
 		return false
@@ -738,7 +816,7 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 	}
 	// Max mana >= base mana for an ordinary level1 human priest. This
 	// conservative budget covers DBC16%baseMana before server cost modifiers.
-	budget := (uint64(a.MaxPower)*16 + 99) / 100
+	budget := manaBudget(a, 16)
 	if !a.PowerKnown || a.PowerType != 0 || budget == 0 || uint64(a.Power) < budget {
 		s.state.Reason = "mana_unknown_or_insufficient"
 		return false
@@ -782,34 +860,90 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	p := packet.Payload
 	malformed := false
 	switch packet.Opcode {
+	case opcode.SMSGItemQuerySingleResponse:
+		proof, err := decodeWeaponQuery(p)
+		if err != nil {
+			malformed = true
+		} else if s.weaponQueries[proof.entry] {
+			s.weapons[proof.entry] = proof
+		}
+	case opcode.SMSGAttackerstateupdate:
+		attacker, _, damage, err := decodeMeleeDamage(p)
+		if err != nil {
+			malformed = true
+		} else if attacker == s.selfGUID && damage > 0 {
+			s.state.MeleeDamageEvents++
+			s.state.MeleeDamageTotal += uint64(damage)
+			s.state.AssistDamageEvents++
+			s.state.AssistDamageTotal += uint64(damage)
+		}
+	case opcode.SMSGAttackstart:
+		if len(p) != 16 {
+			malformed = true
+		} else if binary.LittleEndian.Uint64(p) == s.selfGUID {
+			target := binary.LittleEndian.Uint64(p[8:])
+			if target == 0 {
+				malformed = true
+			} else {
+				s.state.AutoAttacking = true
+				s.state.AutoAttackTargetGuid = target
+				if !s.autoStopping {
+					s.autoTarget = target
+					s.state.AutoAttackUnconfirmed = false
+				}
+			}
+		}
+	case opcode.SMSGAttackstop:
+		attacker, n, err := readGUID(p)
+		if err != nil {
+			malformed = true
+			break
+		}
+		target, m, err := readGUID(p[n:])
+		if err != nil || len(p) != n+m+4 {
+			malformed = true
+			break
+		}
+		dead := binary.LittleEndian.Uint32(p[n+m:])
+		if dead > 1 {
+			malformed = true
+			break
+		}
+		if attacker == s.selfGUID {
+			if !s.autoStopping && dead == 0 && s.autoTarget != 0 {
+				s.failedAssistTarget = s.autoTarget
+			}
+			_ = target
+			s.autoTarget = 0
+			s.autoStopping = false
+			s.state.AutoAttacking = false
+			s.state.AutoAttackTargetGuid = 0
+			s.state.AutoAttackRequested = false
+			s.state.AutoAttackUnconfirmed = false
+		}
 	case opcode.SMSGSpellnonmeleedamagelog:
 		caster, _, spell, damage, err := decodeSpellDamage(p)
 		if err != nil {
 			malformed = true
-		} else if caster == s.selfGUID && spell == smite && damage > 0 {
-			s.state.SmiteDamageEvents++
-			s.state.SmiteDamageTotal += uint64(damage)
+		} else if caster == s.selfGUID {
+			s.offensiveDamageLocked(spell, damage)
 		}
 	case opcode.SMSGInitialSpells:
-		heal, err := initialSpellKnown(p, lesserHeal)
-		attack, attackErr := initialSpellKnown(p, smite)
-		if err != nil || attackErr != nil {
+		_, err := initialSpellKnown(p, lesserHeal)
+		if err != nil {
 			malformed = true
 		} else {
-			s.state.KnownLesserHeal = heal
-			s.state.KnownSmite = attack
+			for _, spell := range []uint32{lesserHeal, smite, fireball, sinisterStrike, autoAttack, 13732, 13863} {
+				known, _ := initialSpellKnown(p, spell)
+				s.setKnownSpell(spell, known)
+			}
 		}
 	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell:
 		if len(p) < 4 {
 			malformed = true
 		} else {
 			spell := binary.LittleEndian.Uint32(p)
-			if spell == lesserHeal {
-				s.state.KnownLesserHeal = packet.Opcode == opcode.SMSGLearnedSpell
-			}
-			if spell == smite {
-				s.state.KnownSmite = packet.Opcode == opcode.SMSGLearnedSpell
-			}
+			s.setKnownSpell(spell, packet.Opcode == opcode.SMSGLearnedSpell)
 		}
 	case opcode.SMSGCastFailed:
 		if len(p) < 6 {
@@ -837,7 +971,11 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 					s.state.Reason = "server_spell_go_health_effect_unverified"
 				} else {
 					s.state.ServerAssistGo++
-					s.state.Reason = "server_smite_go_damage_effect_unverified"
+					if spell == smite {
+						s.state.Reason = "server_smite_go_damage_effect_unverified"
+					} else {
+						s.state.Reason = "server_offensive_spell_go_damage_effect_unverified"
+					}
 				}
 				s.state.CastPending = false
 				s.pendingSpell = 0

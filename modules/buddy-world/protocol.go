@@ -422,13 +422,13 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
 					}
 					setMap(p, selfMap)
-					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c} {
+					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c, 0x36, 0x78, 0x42, 0x3e} {
 						p.known[f] = true
 					}
 					for f := 0; f < 7; f++ {
@@ -444,13 +444,13 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					}
 					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now, vitalsAt: now}
 					setMap(p, players[0])
-					for _, f := range []int{objectEntry, unitNPCFlags, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, 0x12, 0x13, 0x37, 0x3c} {
+					for _, f := range []int{objectEntry, unitNPCFlags, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, 0x12, 0x13, 0x37, 0x3c, 0x42} {
 						p.known[f] = true
 					}
 					newCreature = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
 					p = &observed{guid: guid, present: true, observedAt: now}
-					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack} {
+					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack, 0x3c, 0x3d} {
 						p.known[f] = true
 					}
 					newItem = true
@@ -630,12 +630,17 @@ func values(c *cursor, p *observed, now time.Time) error {
 			v := c.u32()
 			field := block*32 + bit
 			if p != nil && p.isSelf {
-				if field >= questLogFirst && field < questLogFirst+25*5 && (field-questLogFirst)%5 == 0 {
+				if field >= questLogFirst && field < questLogFirst+25*5 {
 					slot := (field - questLogFirst) / 5
-					if p.questLog[slot] != v {
-						p.questLog[slot] = v
+					part := (field - questLogFirst) % 5
+					if p.questLog[slot][part] != v {
+						p.questLog[slot][part] = v
 						p.questRevision++
 					}
+				}
+				if field == 0x162 || field == 0x163 {
+					shift := uint((field - 0x162) * 32)
+					p.mainhand = p.mainhand&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
 				}
 				if field >= backpackFirst && field < backpackFirst+32 {
 					slot, half := (field-backpackFirst)/2, (field-backpackFirst)%2

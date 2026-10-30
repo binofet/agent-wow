@@ -440,8 +440,31 @@ type State struct {
 	AssistReason                string          `protobuf:"bytes,28,opt,name=assist_reason,json=assistReason,proto3" json:"assist_reason,omitempty"`
 	SmiteDamageEvents           uint64          `protobuf:"varint,29,opt,name=smite_damage_events,json=smiteDamageEvents,proto3" json:"smite_damage_events,omitempty"`
 	SmiteDamageTotal            uint64          `protobuf:"varint,30,opt,name=smite_damage_total,json=smiteDamageTotal,proto3" json:"smite_damage_total,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	ClassKnown                  bool            `protobuf:"varint,31,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
+	ClassId                     uint32          `protobuf:"varint,32,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
+	ClassName                   string          `protobuf:"bytes,33,opt,name=class_name,json=className,proto3" json:"class_name,omitempty"`
+	KnownFireball               bool            `protobuf:"varint,34,opt,name=known_fireball,json=knownFireball,proto3" json:"known_fireball,omitempty"`
+	KnownSinisterStrike         bool            `protobuf:"varint,35,opt,name=known_sinister_strike,json=knownSinisterStrike,proto3" json:"known_sinister_strike,omitempty"`
+	KnownAutoAttack             bool            `protobuf:"varint,36,opt,name=known_auto_attack,json=knownAutoAttack,proto3" json:"known_auto_attack,omitempty"`
+	CombatSpellId               uint32          `protobuf:"varint,37,opt,name=combat_spell_id,json=combatSpellId,proto3" json:"combat_spell_id,omitempty"`
+	CombatStyle                 string          `protobuf:"bytes,38,opt,name=combat_style,json=combatStyle,proto3" json:"combat_style,omitempty"`
+	AssistDamageEvents          uint64          `protobuf:"varint,39,opt,name=assist_damage_events,json=assistDamageEvents,proto3" json:"assist_damage_events,omitempty"`
+	AssistDamageTotal           uint64          `protobuf:"varint,40,opt,name=assist_damage_total,json=assistDamageTotal,proto3" json:"assist_damage_total,omitempty"`
+	FireballDamageEvents        uint64          `protobuf:"varint,41,opt,name=fireball_damage_events,json=fireballDamageEvents,proto3" json:"fireball_damage_events,omitempty"`
+	FireballDamageTotal         uint64          `protobuf:"varint,42,opt,name=fireball_damage_total,json=fireballDamageTotal,proto3" json:"fireball_damage_total,omitempty"`
+	SinisterStrikeDamageEvents  uint64          `protobuf:"varint,43,opt,name=sinister_strike_damage_events,json=sinisterStrikeDamageEvents,proto3" json:"sinister_strike_damage_events,omitempty"`
+	SinisterStrikeDamageTotal   uint64          `protobuf:"varint,44,opt,name=sinister_strike_damage_total,json=sinisterStrikeDamageTotal,proto3" json:"sinister_strike_damage_total,omitempty"`
+	MeleeDamageEvents           uint64          `protobuf:"varint,45,opt,name=melee_damage_events,json=meleeDamageEvents,proto3" json:"melee_damage_events,omitempty"`
+	MeleeDamageTotal            uint64          `protobuf:"varint,46,opt,name=melee_damage_total,json=meleeDamageTotal,proto3" json:"melee_damage_total,omitempty"`
+	// Server ATTACKSTART/ATTACKSTOP observations, distinct from transport intent.
+	AutoAttacking            bool   `protobuf:"varint,47,opt,name=auto_attacking,json=autoAttacking,proto3" json:"auto_attacking,omitempty"`
+	AutoAttackTargetGuid     uint64 `protobuf:"varint,48,opt,name=auto_attack_target_guid,json=autoAttackTargetGuid,proto3" json:"auto_attack_target_guid,omitempty"`
+	AutoAttackRequested      bool   `protobuf:"varint,49,opt,name=auto_attack_requested,json=autoAttackRequested,proto3" json:"auto_attack_requested,omitempty"`
+	AutoAttackUnconfirmed    bool   `protobuf:"varint,50,opt,name=auto_attack_unconfirmed,json=autoAttackUnconfirmed,proto3" json:"auto_attack_unconfirmed,omitempty"`
+	SinisterStrikeEnergyCost uint32 `protobuf:"varint,51,opt,name=sinister_strike_energy_cost,json=sinisterStrikeEnergyCost,proto3" json:"sinister_strike_energy_cost,omitempty"`
+	MainhandWeaponVerified   bool   `protobuf:"varint,52,opt,name=mainhand_weapon_verified,json=mainhandWeaponVerified,proto3" json:"mainhand_weapon_verified,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
@@ -684,6 +707,160 @@ func (x *State) GetSmiteDamageTotal() uint64 {
 	return 0
 }
 
+func (x *State) GetClassKnown() bool {
+	if x != nil {
+		return x.ClassKnown
+	}
+	return false
+}
+
+func (x *State) GetClassId() uint32 {
+	if x != nil {
+		return x.ClassId
+	}
+	return 0
+}
+
+func (x *State) GetClassName() string {
+	if x != nil {
+		return x.ClassName
+	}
+	return ""
+}
+
+func (x *State) GetKnownFireball() bool {
+	if x != nil {
+		return x.KnownFireball
+	}
+	return false
+}
+
+func (x *State) GetKnownSinisterStrike() bool {
+	if x != nil {
+		return x.KnownSinisterStrike
+	}
+	return false
+}
+
+func (x *State) GetKnownAutoAttack() bool {
+	if x != nil {
+		return x.KnownAutoAttack
+	}
+	return false
+}
+
+func (x *State) GetCombatSpellId() uint32 {
+	if x != nil {
+		return x.CombatSpellId
+	}
+	return 0
+}
+
+func (x *State) GetCombatStyle() string {
+	if x != nil {
+		return x.CombatStyle
+	}
+	return ""
+}
+
+func (x *State) GetAssistDamageEvents() uint64 {
+	if x != nil {
+		return x.AssistDamageEvents
+	}
+	return 0
+}
+
+func (x *State) GetAssistDamageTotal() uint64 {
+	if x != nil {
+		return x.AssistDamageTotal
+	}
+	return 0
+}
+
+func (x *State) GetFireballDamageEvents() uint64 {
+	if x != nil {
+		return x.FireballDamageEvents
+	}
+	return 0
+}
+
+func (x *State) GetFireballDamageTotal() uint64 {
+	if x != nil {
+		return x.FireballDamageTotal
+	}
+	return 0
+}
+
+func (x *State) GetSinisterStrikeDamageEvents() uint64 {
+	if x != nil {
+		return x.SinisterStrikeDamageEvents
+	}
+	return 0
+}
+
+func (x *State) GetSinisterStrikeDamageTotal() uint64 {
+	if x != nil {
+		return x.SinisterStrikeDamageTotal
+	}
+	return 0
+}
+
+func (x *State) GetMeleeDamageEvents() uint64 {
+	if x != nil {
+		return x.MeleeDamageEvents
+	}
+	return 0
+}
+
+func (x *State) GetMeleeDamageTotal() uint64 {
+	if x != nil {
+		return x.MeleeDamageTotal
+	}
+	return 0
+}
+
+func (x *State) GetAutoAttacking() bool {
+	if x != nil {
+		return x.AutoAttacking
+	}
+	return false
+}
+
+func (x *State) GetAutoAttackTargetGuid() uint64 {
+	if x != nil {
+		return x.AutoAttackTargetGuid
+	}
+	return 0
+}
+
+func (x *State) GetAutoAttackRequested() bool {
+	if x != nil {
+		return x.AutoAttackRequested
+	}
+	return false
+}
+
+func (x *State) GetAutoAttackUnconfirmed() bool {
+	if x != nil {
+		return x.AutoAttackUnconfirmed
+	}
+	return false
+}
+
+func (x *State) GetSinisterStrikeEnergyCost() uint32 {
+	if x != nil {
+		return x.SinisterStrikeEnergyCost
+	}
+	return 0
+}
+
+func (x *State) GetMainhandWeaponVerified() bool {
+	if x != nil {
+		return x.MainhandWeaponVerified
+	}
+	return false
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -716,8 +893,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"corpseGuid\"_\n" +
 	"\x10InteractionLease\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x125\n" +
-	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\x9c\n" +
-	"\n" +
+	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xba\x12\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -752,7 +928,31 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x10server_assist_go\x18\x1b \x01(\x04R\x0eserverAssistGo\x12#\n" +
 	"\rassist_reason\x18\x1c \x01(\tR\fassistReason\x12.\n" +
 	"\x13smite_damage_events\x18\x1d \x01(\x04R\x11smiteDamageEvents\x12,\n" +
-	"\x12smite_damage_total\x18\x1e \x01(\x04R\x10smiteDamageTotal2\xcd\x06\n" +
+	"\x12smite_damage_total\x18\x1e \x01(\x04R\x10smiteDamageTotal\x12\x1f\n" +
+	"\vclass_known\x18\x1f \x01(\bR\n" +
+	"classKnown\x12\x19\n" +
+	"\bclass_id\x18  \x01(\rR\aclassId\x12\x1d\n" +
+	"\n" +
+	"class_name\x18! \x01(\tR\tclassName\x12%\n" +
+	"\x0eknown_fireball\x18\" \x01(\bR\rknownFireball\x122\n" +
+	"\x15known_sinister_strike\x18# \x01(\bR\x13knownSinisterStrike\x12*\n" +
+	"\x11known_auto_attack\x18$ \x01(\bR\x0fknownAutoAttack\x12&\n" +
+	"\x0fcombat_spell_id\x18% \x01(\rR\rcombatSpellId\x12!\n" +
+	"\fcombat_style\x18& \x01(\tR\vcombatStyle\x120\n" +
+	"\x14assist_damage_events\x18' \x01(\x04R\x12assistDamageEvents\x12.\n" +
+	"\x13assist_damage_total\x18( \x01(\x04R\x11assistDamageTotal\x124\n" +
+	"\x16fireball_damage_events\x18) \x01(\x04R\x14fireballDamageEvents\x122\n" +
+	"\x15fireball_damage_total\x18* \x01(\x04R\x13fireballDamageTotal\x12A\n" +
+	"\x1dsinister_strike_damage_events\x18+ \x01(\x04R\x1asinisterStrikeDamageEvents\x12?\n" +
+	"\x1csinister_strike_damage_total\x18, \x01(\x04R\x19sinisterStrikeDamageTotal\x12.\n" +
+	"\x13melee_damage_events\x18- \x01(\x04R\x11meleeDamageEvents\x12,\n" +
+	"\x12melee_damage_total\x18. \x01(\x04R\x10meleeDamageTotal\x12%\n" +
+	"\x0eauto_attacking\x18/ \x01(\bR\rautoAttacking\x125\n" +
+	"\x17auto_attack_target_guid\x180 \x01(\x04R\x14autoAttackTargetGuid\x122\n" +
+	"\x15auto_attack_requested\x181 \x01(\bR\x13autoAttackRequested\x126\n" +
+	"\x17auto_attack_unconfirmed\x182 \x01(\bR\x15autoAttackUnconfirmed\x12=\n" +
+	"\x1bsinister_strike_energy_cost\x183 \x01(\rR\x18sinisterStrikeEnergyCost\x128\n" +
+	"\x18mainhand_weapon_verified\x184 \x01(\bR\x16mainhandWeaponVerified2\xcd\x06\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +

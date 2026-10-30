@@ -48,6 +48,27 @@ message PlayerState {
   uint64 target_guid = 35;
   uint32 faction_template = 36;
   uint32 unit_flags_2 = 37;
+  bool class_known = 38;
+  uint32 class_id = 39;
+  bool level_known = 40;
+  uint32 level = 41;
+  bool base_mana_known = 42;
+  uint32 base_mana = 43;
+  bool combat_reach_known = 44;
+  float combat_reach = 45;
+  bool base_attack_time_known = 46;
+  uint32 base_attack_time_ms = 47;
+  EquippedWeapon mainhand = 48;
+}
+
+message EquippedWeapon {
+  bool slot_known = 1;
+  uint64 item_guid = 2;
+  bool metadata_known = 3;
+  uint32 entry = 4;
+  bool durability_known = 5;
+  uint32 durability = 6;
+  uint32 max_durability = 7;
 }
 
 message SnapshotRequest {}
@@ -91,6 +112,8 @@ message CreatureState {
   uint64 attack_victim_guid = 32;
   uint64 attack_age_ms = 33;
   CreatureTrajectory trajectory = 34;
+  bool combat_reach_known = 35;
+  float combat_reach = 36;
 }
 
 // Advertised server trajectory, separate from actual position observations.
@@ -116,6 +139,12 @@ message QuestLogEntry {
   // Zero-based server quest-log slot; 0 quest_id means empty.
   uint32 slot = 1;
   uint32 quest_id = 2;
+  uint32 state = 3;
+  bool complete = 4;
+  bool failed = 5;
+  // Four uint16 counters from the two server quest-objective fields.
+  repeated uint32 objective_counts = 6;
+  uint32 expire_time = 7;
 }
 
 message BackpackSlot {

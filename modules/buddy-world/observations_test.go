@@ -174,21 +174,21 @@ func TestQuestLogOwnCreateZeroBaselineAndStrideFive(t *testing.T) {
 	}
 	rev := r.SelfQuestLogRevision
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(1, map[int]uint32{0x9e: 783, 0x9f: 2, 0xa0: 123, 0x9e + 24*5: 42}))
-	if r.SelfQuestLog[0].QuestId != 783 || r.SelfQuestLog[1].QuestId != 0 || r.SelfQuestLog[24].QuestId != 42 || r.SelfQuestLogRevision != rev+2 {
+	if r.SelfQuestLog[0].QuestId != 783 || r.SelfQuestLog[1].QuestId != 0 || r.SelfQuestLog[24].QuestId != 42 || r.SelfQuestLogRevision != rev+4 {
 		t.Fatal(r)
 	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(3, map[int]uint32{0x9e: 999}))
-	if r.SelfQuestLog[0].QuestId != 783 || r.SelfQuestLogRevision != rev+2 {
+	if r.SelfQuestLog[0].QuestId != 783 || r.SelfQuestLogRevision != rev+4 {
 		t.Fatal("owner log changed self log", r)
 	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(1, map[int]uint32{0x9e: 0}))
-	if r.SelfQuestLog[0].QuestId != 0 || r.SelfQuestLogRevision != rev+3 {
+	if r.SelfQuestLog[0].QuestId != 0 || r.SelfQuestLogRevision != rev+5 {
 		t.Fatal(r)
 	}
 	// A malformed own CREATE must not establish a new empty baseline.
 	bad := createFixture(1, vitalFields())
 	r = packet(t, s, opcode.SMSGUpdateObject, bad[:len(bad)-1])
-	if !r.SelfQuestLogKnown || r.SelfQuestLog[24].QuestId != 42 || r.SelfQuestLogRevision != rev+3 {
+	if !r.SelfQuestLogKnown || r.SelfQuestLog[24].QuestId != 42 || r.SelfQuestLogRevision != rev+5 {
 		t.Fatal(r)
 	}
 }

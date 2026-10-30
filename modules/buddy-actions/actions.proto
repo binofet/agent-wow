@@ -65,6 +65,29 @@ message State {
   string assist_reason = 28;
   uint64 smite_damage_events = 29;
   uint64 smite_damage_total = 30;
+  bool class_known = 31;
+  uint32 class_id = 32;
+  string class_name = 33;
+  bool known_fireball = 34;
+  bool known_sinister_strike = 35;
+  bool known_auto_attack = 36;
+  uint32 combat_spell_id = 37;
+  string combat_style = 38;
+  uint64 assist_damage_events = 39;
+  uint64 assist_damage_total = 40;
+  uint64 fireball_damage_events = 41;
+  uint64 fireball_damage_total = 42;
+  uint64 sinister_strike_damage_events = 43;
+  uint64 sinister_strike_damage_total = 44;
+  uint64 melee_damage_events = 45;
+  uint64 melee_damage_total = 46;
+  // Server ATTACKSTART/ATTACKSTOP observations, distinct from transport intent.
+  bool auto_attacking = 47;
+  uint64 auto_attack_target_guid = 48;
+  bool auto_attack_requested = 49;
+  bool auto_attack_unconfirmed = 50;
+  uint32 sinister_strike_energy_cost = 51;
+  bool mainhand_weapon_verified = 52;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);

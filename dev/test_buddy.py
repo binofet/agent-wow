@@ -40,6 +40,8 @@ class BuddyLifecycleTests(unittest.TestCase):
         }
         for name, value in paths.items():
             self.patch(buddy, name, value)
+        for name,value in {"PROFILE":"default","CHARACTER":"Arlen","CHARACTER_GUID":None,"RPC_PORT":8086,"CONFIG_DIR":None,"DATA_DIR":None,"MODULE_DIR":None}.items():
+            self.patch(buddy,name,value)
         buddy.BINARY.write_text("mock executable")
         buddy.BINARY.chmod(0o700)
         buddy.CONFIG.write_text("{}")
@@ -86,8 +88,8 @@ class BuddyLifecycleTests(unittest.TestCase):
         # unrelated private line must never appear in launcher output.
         line = (
             'PRIVATE_NEVER_PRINT\nlevel=INFO msg="world session ready" event=ready '
-            f'rpc_url=http://127.0.0.1:8086/rpc pid={self.ready_pid} '
-            'character.name=Arlen\n'
+            f'rpc_url=http://127.0.0.1:{buddy.RPC_PORT}/rpc pid={self.ready_pid} '
+            f'character.name={buddy.CHARACTER} character.guid={buddy.CHARACTER_GUID or 1}\n'
         )
         os.write(kwargs["stdout"].fileno(), line.encode())
         return types.SimpleNamespace(pid=12345, poll=lambda: None)
@@ -235,6 +237,49 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.assertEqual(buddy.PID_FILE.read_bytes(), original)
         self.assertIsNotNone(buddy.load_record()["ready_offset"])
         self.assertFalse(list(buddy.PID_FILE.parent.glob(".buddy-pid-*")))
+
+    def profile(self, **overrides):
+        args = dict(profile="mage",character_name="Mira",character_guid=10,rpc_port=8087,
+                    config=None,config_dir=None,data_dir=None,module_dir=None)
+        args.update(overrides)
+        buddy.configure(types.SimpleNamespace(**args))
+        buddy.PID_FILE.parent.mkdir(parents=True,mode=0o700,exist_ok=True)
+        buddy.CONFIG.write_text("{}")
+
+    def test_named_profile_separates_auth_data_pid_log_and_ready_identity(self):
+        original_config = buddy.CONFIG
+        self.profile()
+        record=self.launch()
+        self.assertEqual(buddy.CONFIG,buddy.ROOT/"config/buddies/mage/buddy.yaml")
+        self.assertNotEqual(original_config,buddy.CONFIG)
+        self.assertEqual(record["profile_identity"]["character_guid"],10)
+        environment=self.spawn_arguments[1]["env"]
+        self.assertEqual(environment["AGENT_WOW_CONFIG_DIR"],str(buddy.CONFIG_DIR))
+        self.assertEqual(environment["AGENT_WOW_AUTH_FILE_PATH"],str(buddy.CONFIG_DIR/"auth.json"))
+        self.assertEqual(environment["AGENT_WOW_DATA_DIR"],str(buddy.ROOT/"data/buddies/mage"))
+        self.assertEqual(environment["AGENT_WOW_WORLDRPC_PORT"],"8087")
+        self.assertEqual(record["argv"],buddy.command_line())
+        self.assertFalse(buddy.ready_line(b'level=INFO msg="world session ready" event=ready pid=12345 character.name=Mira character.guid=11 rpc_url=http://127.0.0.1:8087/rpc\n',12345))
+
+    def test_other_profile_record_is_never_signaled_even_with_matching_pid(self):
+        self.profile()
+        self.launch()
+        record=buddy.PID_FILE.read_bytes()
+        self.profile(profile="rogue",character_name="Rook",character_guid=11,rpc_port=8088)
+        buddy.PID_FILE.write_bytes(record)
+        for action in (buddy.start,buddy.stop,buddy.status):
+            with self.assertRaisesRegex(buddy.BuddyError,"left untouched"):
+                action()
+        self.send_signal.assert_not_called()
+
+    def test_profile_arguments_bound_identity_and_preserve_default(self):
+        base=dict(profile="default",character_name=None,character_guid=None,rpc_port=None,config=None,config_dir=None,data_dir=None,module_dir=None)
+        buddy.configure(types.SimpleNamespace(**base))
+        self.assertEqual(buddy.CONFIG,buddy.ROOT/"config/buddy.yaml")
+        self.assertIsNone(buddy.CONFIG_DIR)
+        for change in ({"profile":"../other"},{"profile":"mage"},{"character_name":"Mira/"},{"character_guid":3<<48},{"rpc_port":80}):
+            with self.assertRaises(buddy.BuddyError):
+                buddy.configure(types.SimpleNamespace(**dict(base,**change)))
 
 
 if __name__ == "__main__":

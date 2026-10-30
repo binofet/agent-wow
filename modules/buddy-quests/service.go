@@ -39,6 +39,8 @@ type Service struct {
 	queryQuest                          uint32
 	wait                                chan struct{}
 	responseReceived                    bool
+	turnIn                              turnInRuntime
+	journal                             journalRuntime
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -72,6 +74,7 @@ func (s *Service) world(ctx context.Context) (*worldv1.SnapshotResponse, error) 
 	}
 	s.mu.Lock()
 	s.applyLogLocked(result)
+	s.applyRewardWorldLocked(result)
 	s.mu.Unlock()
 	return result, nil
 }
@@ -133,6 +136,12 @@ func (s *Service) snapshotLocked() *questsv1.StateResponse {
 		result.Offer.ExpiresInMs = 0
 		if s.now().Before(s.offerUntil) {
 			result.Offer.ExpiresInMs = uint64(s.offerUntil.Sub(s.now()).Milliseconds())
+		}
+	}
+	if result.TurnInOffer != nil {
+		result.TurnInOffer.ExpiresInMs = 0
+		if s.now().Before(s.turnIn.offerUntil) {
+			result.TurnInOffer.ExpiresInMs = uint64(s.turnIn.offerUntil.Sub(s.now()).Milliseconds())
 		}
 	}
 	return result
@@ -326,6 +335,7 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 	s.responseReceived = false
 	defer func() { s.mu.Lock(); s.queryUntil = time.Time{}; s.mu.Unlock() }()
 	s.state.Offer = nil
+	s.state.TurnInOffer = nil
 	s.state.GiverStatus = nil
 	s.state.Revision++
 	s.mu.Unlock()
@@ -443,6 +453,9 @@ wait:
 }
 
 func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+	if packet != nil && (s.handleJournalPacket(packet) || s.handleTurnInPacket(packet)) {
+		return &emptypb.Empty{}, nil
+	}
 	var offer *questsv1.Offer
 	var giver *questsv1.GiverStatus
 	var err error
@@ -500,7 +513,8 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	if offer != nil {
-		if offer.NpcGuid != s.queryNPC || !s.now().Before(s.queryUntil) || (s.queryQuest != 0 && (offer.Source != "quest_details" || len(offer.Quests) != 1 || offer.Quests[0].QuestId != s.queryQuest)) {
+		followup := s.followupLocked(offer)
+		if !followup && (offer.NpcGuid != s.queryNPC || !s.now().Before(s.queryUntil) || (s.queryQuest != 0 && (offer.Source != "quest_details" || len(offer.Quests) != 1 || offer.Quests[0].QuestId != s.queryQuest))) {
 			s.state.IgnoredPackets++
 			return &emptypb.Empty{}, nil
 		}
@@ -520,6 +534,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			s.state.IgnoredPackets++
 		}
 	} else if failure != "" {
+		s.rejectRewardLocked(failure, reason, failedQuest)
 		if a := s.state.LastAcceptance; a != nil && a.Status == questsv1.AcceptanceStatus_REQUESTED && s.now().Before(s.acceptUntil) && (failedQuest == 0 || failedQuest == a.QuestId) {
 			a.Status = questsv1.AcceptanceStatus_SERVER_REJECTED
 			a.Failure = failure

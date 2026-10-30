@@ -140,7 +140,7 @@ func (s *observations) putItem(p *observed) {
 		// Keep the currently referenced backpack objects when possible.
 		var oldest *observed
 		for _, candidate := range s.items {
-			inBackpack := false
+			inBackpack := candidate.guid == s.players[0].mainhand
 			for _, guid := range s.players[0].backpack {
 				if guid == candidate.guid {
 					inBackpack = true
@@ -174,6 +174,8 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.AttackVictimKnown = p.attackVictimKnown
 	r.AttackVictimGuid = p.attackVictim
 	r.AttackAgeMs = age(now, p.attackAt)
+	r.CombatReach = math.Float32frombits(p.fields[0x42])
+	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
 	if t := p.trajectory; t.known {
 		r.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: t.duration, AgeMs: uint64(t.elapsed) + age(now, t.at), DestinationKnown: t.destinationKnown, DestinationX: t.destination[0], DestinationY: t.destination[1], DestinationZ: t.destination[2], Cyclic: t.cyclic, TransportRelative: t.relative, TransportGuid: t.transport, TransportSeat: int32(t.seat), Stopped: t.stopped, Flags: t.flags}
 	}
@@ -241,9 +243,19 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	r.SelfQuestLogKnown = p.questLogKnown
 	r.SelfQuestLogRevision = p.questRevision
 	if p.questLogKnown {
-		for slot, id := range p.questLog {
-			r.SelfQuestLog = append(r.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(slot), QuestId: id})
+		for slot, fields := range p.questLog {
+			r.SelfQuestLog = append(r.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(slot), QuestId: fields[0], State: fields[1], Complete: fields[1]&1 != 0, Failed: fields[1]&2 != 0, ObjectiveCounts: []uint32{fields[2] & 0xffff, fields[2] >> 16, fields[3] & 0xffff, fields[3] >> 16}, ExpireTime: fields[4]})
 		}
+	}
+	r.Self.Mainhand = &worldv1.EquippedWeapon{SlotKnown: p.mainhandKnown, ItemGuid: p.mainhand}
+	if item := s.items[p.mainhand]; item != nil {
+		owner := uint64(item.fields[itemOwner]) | uint64(item.fields[itemOwner+1])<<32
+		weapon := r.Self.Mainhand
+		weapon.Entry = item.fields[objectEntry]
+		weapon.MetadataKnown = item.known[objectEntry] && item.known[itemOwner] && item.known[itemOwner+1] && owner == p.guid && weapon.Entry > 0
+		weapon.Durability = item.fields[0x3c]
+		weapon.MaxDurability = item.fields[0x3d]
+		weapon.DurabilityKnown = item.known[0x3c] && item.known[0x3d] && weapon.Durability <= weapon.MaxDurability
 	}
 	r.BackpackKnown = p.backpackKnown
 	r.BackpackRevision = p.backpackRevision + s.itemRevision

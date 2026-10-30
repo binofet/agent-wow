@@ -69,9 +69,13 @@ func TestFinitePositionAndCastEventBounds(t *testing.T) {
 
 func FuzzPacketDecoders(f *testing.F) {
 	f.Add([]byte{0, 1, 0, 2, 8, 0, 0, 0, 0, 0, 0})
+	f.Add(weaponQueryFixture(2092, 15, 13))
+	f.Add(meleeDamageFixture(1, 0xf130000033000001, 7, 0))
 	f.Fuzz(func(t *testing.T, p []byte) {
 		_, _, _ = readGUID(p)
 		_, _ = initialKnown(p)
 		_, _, _, _, _ = castEvent(p)
+		_, _ = decodeWeaponQuery(p)
+		_, _, _, _ = decodeMeleeDamage(p)
 	})
 }

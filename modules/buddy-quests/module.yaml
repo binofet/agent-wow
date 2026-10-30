@@ -13,6 +13,9 @@ rpc:
   offer: /warcraftbuddy.quests.v1.BuddyQuests/Offer
   details: /warcraftbuddy.quests.v1.BuddyQuests/Details
   accept: /warcraftbuddy.quests.v1.BuddyQuests/Accept
+  journal: /warcraftbuddy.quests.v1.BuddyQuests/Journal
+  turn_in: /warcraftbuddy.quests.v1.BuddyQuests/TurnIn
+  claim_reward: /warcraftbuddy.quests.v1.BuddyQuests/ClaimReward
 packets:
   SMSG_QUESTGIVER_STATUS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_QUESTGIVER_QUEST_LIST: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
@@ -22,3 +25,7 @@ packets:
   SMSG_QUESTLOG_FULL: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_QUESTGIVER_QUEST_FAILED: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_GOSSIP_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUEST_QUERY_RESPONSE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_REQUEST_ITEMS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_OFFER_REWARD: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket

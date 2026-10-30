@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Bounded outdoor direct following and Lesser Heal for fixed owner Joel; disabled until explicitly enabled
+description: Bounded outdoor following and class-aware priest mage or rogue assistance to fixed owner Joel
 requires: [buddy-world]
 compose:
   file: compose.yaml
@@ -26,5 +26,9 @@ packets:
   SMSG_SPELL_FAILURE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKERSTATEUPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKSTART: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKSTOP: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
 lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout

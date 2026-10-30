@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-€#
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"¾	
+—*
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -79,8 +79,33 @@ walk_speed (R	walkSpeed
 targetGuid)
 faction_template$ (RfactionTemplate 
 unit_flags_2% (R
-unitFlags2"
-SnapshotRequest"û	
+unitFlags2
+class_known& (R
+classKnown
+class_id' (RclassId
+level_known( (R
+levelKnown
+level) (Rlevel&
+base_mana_known* (RbaseManaKnown
+	base_mana+ (RbaseMana,
+combat_reach_known, (RcombatReachKnown!
+combat_reach- (RcombatReach3
+base_attack_time_known. (RbaseAttackTimeKnown-
+base_attack_time_ms/ (RbaseAttackTimeMsB
+mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand"û
+EquippedWeapon
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability (RmaxDurability"
+SnapshotRequest"Ì
+
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -123,7 +148,9 @@ unitFlags2.
 attack_age_ms! (RattackAgeMsJ
 
 trajectory" (2*.warcraftbuddy.world.v1.CreatureTrajectoryR
-trajectory"Ã
+trajectory,
+combat_reach_known# (RcombatReachKnown!
+combat_reach$ (RcombatReach"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -139,10 +166,16 @@ durationMs
  (RtransportGuid%
 transport_seat (RtransportSeat
 stopped (Rstopped
-flags (Rflags">
+flags (Rflags"Ô
 QuestLogEntry
 slot (Rslot
-quest_id (RquestId"¯
+quest_id (RquestId
+state (Rstate
+complete (Rcomplete
+failed (Rfailed)
+objective_counts (RobjectiveCounts
+expire_time (R
+expireTime"¯
 BackpackSlot
 bag (Rbag
 slot (Rslot

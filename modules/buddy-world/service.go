@@ -4,6 +4,7 @@ package buddyworld
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -26,7 +27,7 @@ type observed struct {
 	known             [playerFlags + 1]bool
 	isSelf            bool
 	questLogKnown     bool
-	questLog          [25]uint32
+	questLog          [25][5]uint32
 	questRevision     uint64
 	backpackKnown     bool
 	backpack          [16]uint64
@@ -35,6 +36,8 @@ type observed struct {
 	attackVictim      uint64
 	attackAt          time.Time
 	trajectory        observedTrajectory
+	mainhandKnown     bool
+	mainhand          uint64
 }
 
 type Service struct {
@@ -74,6 +77,16 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	}
 	r.HealthKnown = p.known[unitHealth] && p.known[unitMaxHealth] && r.MaxHealth > 0 && r.Health <= r.MaxHealth
 	r.PowerType = p.fields[unitBytes0] >> 24
+	r.ClassId = (p.fields[unitBytes0] >> 8) & 0xff
+	r.ClassKnown = p.known[unitBytes0] && r.ClassId > 0 && r.ClassId <= 11 && r.ClassId != 10
+	r.Level = p.fields[0x36]
+	r.LevelKnown = p.known[0x36] && r.Level > 0
+	r.BaseMana = p.fields[0x78]
+	r.BaseManaKnown = p.known[0x78] && r.BaseMana > 0
+	r.CombatReach = math.Float32frombits(p.fields[0x42])
+	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
+	r.BaseAttackTimeMs = p.fields[0x3e]
+	r.BaseAttackTimeKnown = p.known[0x3e] && r.BaseAttackTimeMs > 0 && r.BaseAttackTimeMs <= 60000
 	if p.known[unitBytes0] && r.PowerType < 7 {
 		i := int(r.PowerType)
 		r.Power, r.MaxPower = p.fields[unitPower1+i], p.fields[unitMaxPower1+i]

@@ -65,6 +65,112 @@ message StateResponse {
   repeated warcraftbuddy.world.v1.QuestLogEntry quest_log = 10;
   uint64 malformed_packets = 11;
   uint64 ignored_packets = 12;
+  TurnInOffer turn_in_offer = 13;
+  RewardReceipt last_reward = 14;
+}
+message QuestObjective {
+  string kind = 1;
+  uint32 index = 2;
+  int32 target_id = 3;
+  uint32 required_count = 4;
+  string text = 5;
+  bool current_known = 6;
+  uint32 current_count = 7;
+}
+message QuestJournalEntry {
+  uint32 quest_id = 1;
+  uint32 slot = 2;
+  string title = 3;
+  string details = 4;
+  string objectives = 5;
+  string area_description = 6;
+  bool template_known = 7;
+  string failure = 8;
+  repeated QuestObjective targets = 9;
+  bool log_state_known = 10;
+  uint32 log_state = 11;
+  bool complete = 12;
+  bool failed = 13;
+  repeated uint32 objective_counts = 14;
+  uint32 expire_time = 15;
+  uint64 observed_questgiver_guid = 16;
+  uint64 observed_reward_npc_guid = 17;
+}
+message JournalRequest { bool refresh = 1; }
+message JournalResponse {
+  string session_id = 1;
+  uint64 quest_log_revision = 2;
+  repeated QuestJournalEntry entries = 3;
+}
+message RewardItem {
+  uint32 index = 1;
+  uint32 item_id = 2;
+  uint32 count = 3;
+  uint32 display_id = 4;
+}
+message TurnInOffer {
+  uint64 revision = 1;
+  uint64 npc_guid = 2;
+  uint32 quest_id = 3;
+  string title = 4;
+  string text = 5;
+  string source = 6;
+  bool can_complete = 7;
+  uint64 expires_in_ms = 8;
+  repeated RewardItem choices = 9;
+  repeated RewardItem rewards = 10;
+  repeated RewardItem required_items = 11;
+  uint32 required_money = 12;
+  uint32 reward_money = 13;
+  uint32 reward_xp = 14;
+  uint32 flags = 15;
+  bool reward_requested = 16;
+}
+enum RewardStatus {
+  REWARD_NONE = 0;
+  REWARD_REQUESTED = 1;
+  REWARD_CONFIRMED = 2;
+  REWARD_UNCONFIRMED = 3;
+  REWARD_REJECTED = 4;
+  REWARD_WRITE_UNCONFIRMED = 5;
+}
+message RewardReceipt {
+  uint64 npc_guid = 1;
+  uint32 quest_id = 2;
+  uint64 offer_revision = 3;
+  RewardStatus status = 4;
+  bool transport_written = 5;
+  bool server_reward_observed = 6;
+  bool log_removal_confirmed = 7;
+  uint64 baseline_log_revision = 8;
+  uint64 confirmed_log_revision = 9;
+  uint32 reward_xp = 10;
+  uint32 reward_money = 11;
+  uint32 reward_honor = 12;
+  uint32 reward_talents = 13;
+  uint32 reward_arena = 14;
+  string failure = 15;
+  uint32 server_reason = 16;
+  bool backpack_evidence_known = 17;
+  bool reward_items_observed_in_backpack = 18;
+  uint64 baseline_backpack_revision = 19;
+  uint64 confirmed_backpack_revision = 20;
+  string inventory_limitation = 21;
+}
+message TurnInRequest {
+  string session_id = 1;
+  uint64 npc_guid = 2;
+  uint32 quest_id = 3;
+  uint64 quest_log_revision = 4;
+}
+message RewardRequest {
+  string session_id = 1;
+  uint64 offer_revision = 2;
+  uint64 npc_guid = 3;
+  uint32 quest_id = 4;
+  uint32 choice_index = 5;
+  uint32 expected_item_id = 6;
+  bool no_choice = 7;
 }
 message OfferRequest { string session_id = 1; uint64 npc_guid = 2; }
 message QuestRequest {
@@ -85,5 +191,8 @@ service BuddyQuests {
   rpc Offer(OfferRequest) returns (OperationResult);
   rpc Details(QuestRequest) returns (OperationResult);
   rpc Accept(QuestRequest) returns (OperationResult);
+  rpc Journal(JournalRequest) returns (JournalResponse);
+  rpc TurnIn(TurnInRequest) returns (OperationResult);
+  rpc ClaimReward(RewardRequest) returns (OperationResult);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -293,6 +294,143 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(send["channel"], "PARTY")
 
 
+class ProfilePartyTests(unittest.TestCase):
+    def setup_party(self, responses, reply=None, members=None):
+        group={"known":True,"inGroup":True,"members":members or [
+            {"guid":"3","name":"Joel","online":True},
+            {"guid":"10","name":"Mira","online":True,"self":True},
+            {"guid":"1","name":"Arlen","online":True}]}
+        class Controls:
+            def __init__(self):
+                self.events,self.executed=[],[]
+                self.party={"group":group}
+            def refresh(self): pass
+            def context(self): return {"party":group}
+            def execute(self, action, **args): self.executed.append(action)
+        controls=Controls()
+        rpc=FakeRPC(responses)
+        original=rpc.call
+        def call(method,params):
+            if method=="buddy-party.state":
+                rpc.calls.append((method,params))
+                return {"group":group}
+            return original(method,params)
+        rpc.call=call
+        brain=FakeBrain(reply or {"text":"Good to meet you, Arlen.","emote":"NONE","action":"FOLLOW"})
+        loop=converse.Conversation(rpc,brain,controls=controls,character_name="Mira",character_class="mage",character_guid=10,party_agents={1:"Arlen"})
+        return loop,rpc,brain,controls,group
+
+    def test_named_peer_gets_bounded_reply_without_control_authority(self):
+        clock=[0]
+        with patch.object(converse.time,"monotonic",side_effect=lambda:clock[0]):
+            loop,rpc,brain,controls,_=self.setup_party([poll(),poll([message(1,"Arlen, tell us a story",channel="PARTY")]),
+                poll([message(2,"Mira, follow me?",sender=1,channel="PARTY")]),
+                poll([message(3,"Mira, another question?",sender=1,channel="PARTY")]),
+                poll([message(4,"Mira, third question?",sender=1,channel="PARTY")]),
+                poll([message(5,"Mira, fourth question?",sender=1,channel="PARTY")])])
+            loop.tick();loop.tick() # Owner directs another character, quietly opens finite conversation budget.
+            clock[0]=1;loop.tick()
+            clock[0]=2;loop.tick() # Cooldown: no echo reply.
+            clock[0]=32;loop.tick()
+            clock[0]=63;loop.tick() # Budget exhausted, regardless of another named question.
+        self.assertEqual(len(brain.histories),2)
+        self.assertEqual(controls.executed,[])
+        self.assertEqual([p["channel"] for m,p in rpc.calls if m=="buddy-chat.send"],["PARTY","PARTY"])
+        self.assertTrue(all(h[-1]["speaker"]=="Arlen" for h in brain.histories))
+        self.assertEqual(loop.history["PARTY"][-1]["speaker"],"Mira")
+
+    def test_peer_requires_roster_named_address_and_current_server_membership(self):
+        for mode in ("stranger","unnamed","whisper","absent","offline","wrongname","ownerabsent"):
+            with self.subTest(mode=mode):
+                peer=message(2,"Mira, hello",sender=1,channel="PARTY")
+                loop,rpc,brain,_,group=self.setup_party([poll(),poll([message(1,"Arlen, speak",channel="PARTY")]),poll([peer])])
+                loop.tick();loop.tick()
+                if mode=="stranger":peer["senderGuid"]="99"
+                if mode=="unnamed":peer["text"]="Hello everyone"
+                if mode=="whisper":peer["channel"]="WHISPER"
+                if mode=="absent":group["members"]=group["members"][:2]
+                if mode=="offline":group["members"][2]["online"]=False
+                if mode=="wrongname":group["members"][2]["name"]="Other"
+                if mode=="ownerabsent":group["members"]=group["members"][1:]
+                loop.tick()
+                self.assertFalse(brain.histories)
+                self.assertFalse(any(m=="buddy-chat.send" for m,_ in rpc.calls))
+
+    def test_peer_leaving_group_during_generation_drops_reply(self):
+        loop,rpc,brain,_,group=self.setup_party([poll(),poll([message(1,"Arlen, speak",channel="PARTY")]),poll([message(2,"Mira, hello",sender=1,channel="PARTY")])])
+        original=brain.generate
+        def generate(history,state):
+            reply=original(history,state)
+            group["members"]=group["members"][:2]
+            return reply
+        brain.generate=generate
+        for _ in range(3):loop.tick()
+        self.assertEqual(len(brain.histories),1)
+        self.assertFalse(any(m=="buddy-chat.send" for m,_ in rpc.calls))
+
+    def test_single_agent_owner_commands_skip_others_but_party_wide_request_acts(self):
+        loop,_,brain,controls,_=self.setup_party([poll(),poll([message(1,"Arlen, follow me",channel="PARTY")]),
+            poll([message(2,"Arlen, follow Mira",channel="PARTY")]),
+            poll([message(3,"Everyone, follow me",channel="PARTY")])])
+        for _ in range(4):loop.tick()
+        self.assertEqual(len(brain.histories),1)
+        self.assertEqual(controls.executed,["FOLLOW"])
+        self.assertEqual(brain.histories[0][-1]["text"],"Everyone, follow me")
+        self.assertEqual(converse.addressed_names("Arlen and Mira, follow",["Arlen","Mira"]),{"arlen","mira"})
+        self.assertEqual(converse.addressed_names("Arlen, heal Joel. Mira, attack.",["Arlen","Mira"]),{"arlen","mira"})
+
+    def test_class_persona_capability_truth_and_nonpriest_heal_gate(self):
+        for name,role,class_id,known in (("Mira","mage",8,"knownFireball"),("Rook","rogue",4,"knownAutoAttack")):
+            persona=converse.character_persona(name,role)
+            self.assertIn("You are "+name,persona)
+            self.assertIn("human\n"+role,persona)
+            self.assertNotIn("You are Arlen",persona)
+            rpc=FakeRPC([])
+            controls=converse.BuddyControls(rpc,character_class=role)
+            controls.actions_available=True
+            controls.actions={"classKnown":True,"classId":class_id,known:True,"knownLesserHeal":True}
+            self.assertTrue(controls.context()["abilities"]["assisting"])
+            self.assertFalse(controls.context()["abilities"]["healing"])
+            rpc.calls.clear()
+            self.assertIn("don't have",controls.execute("HEAL_ONCE"))
+            self.assertFalse(rpc.calls)
+            controls.actions["classKnown"]=False
+            self.assertFalse(controls.context()["abilities"]["assisting"])
+
+    def test_profiles_isolate_state_and_validate_roster(self):
+        def args(**extra):
+            base=dict(profile="default",character_name=None,character_class=None,character_guid=None,
+                      player_name="Joel",player_guid=3,state_dir=None,rpc_url="http://127.0.0.1:8086/rpc",party_agent=[])
+            base.update(extra)
+            return types.SimpleNamespace(**base)
+        path,identity,roster=converse.conversation_profile(args())
+        self.assertEqual(path,converse.ROOT/"data/converse")
+        self.assertEqual(identity["name"],"Arlen")
+        a=args(profile="mage",character_name="Mira",character_class="mage",character_guid=10,rpc_url="http://127.0.0.1:8087/rpc",party_agent=["Arlen:1","Rook:11"])
+        path,identity,roster=converse.conversation_profile(a)
+        self.assertEqual(path,converse.ROOT/"data/converse/mage")
+        self.assertEqual(roster,{1:"Arlen",11:"Rook"})
+        self.assertEqual(identity["guid"],10)
+        for values in (["Arlen:1","Other:1"],["Arlen:3"],["Mira:11"],["Arlen:1:2"],["Arlen:0"]):
+            with self.assertRaises(converse.ConversationError):
+                converse.parse_roster(values,10,"Mira",3)
+        with self.assertRaises(converse.ConversationError):
+            converse.conversation_profile(args(profile="../other"))
+        with self.assertRaises(converse.ConversationError):
+            converse.conversation_profile(args(profile="mage"))
+
+    def test_stop_cannot_target_another_characters_shared_state_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=converse.ensure_state(Path(temporary)/"brain")
+            converse.write_json(folder/"status.json",{"instance":"other-instance","character_identity":{"profile":"other"}})
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                with self.assertRaisesRegex(converse.ConversationError,"another character"):
+                    converse.main(["stop","--profile","mira","--character-name","Mira","--character-class","mage",
+                                   "--character-guid","4","--rpc-url","http://127.0.0.1:8087/rpc","--state-dir",str(folder)])
+            self.assertFalse((folder/"stop.json").exists())
+
+
 class ControlsTests(unittest.TestCase):
     def quest_controls(self, quests=None, status="CONFIRMED_IN_LOG"):
         quests = quests or [{"questId": 783, "title": "A Threat Within", "available": True}]
@@ -469,6 +607,142 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(controls.execute("HEAL_ONCE"), "I'm trying Lesser Heal now.")
         rpc.reason = "unknown_blocker"
         self.assertEqual(controls.execute("HEAL_ONCE"), "I couldn't start Lesser Heal yet.")
+
+    def test_rogue_uncertain_attack_stop_is_not_reported_stopped(self):
+        class RPC:
+            def call(self, method, params):
+                return {"autoAttackUnconfirmed": True}
+        controls = converse.BuddyControls(RPC(), character_class="rogue")
+        controls.actions_available = True
+        self.assertIn("waiting for the server", controls.execute("DISABLE_ASSIST"))
+
+
+class QuestJournalRewardTests(unittest.TestCase):
+    def test_private_human_quest_snapshot_is_labeled_and_separate_from_own_journal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/"joel-quest-report.json"
+            snapshot={"recordedAt":"2026-10-30T12:00:00Z","source":"Joel screenshot",
+                      "quests":[{"questId":7,"title":"Kobold Camp Cleanup","objectives":[{"text":"Kobold Vermin slain","current":0,"required":8}]},
+                                {"questId":3903,"title":"Milly Osworth","objectives":[{"text":"Speak to Milly Osworth."}]}]}
+            path.write_text(json.dumps(snapshot));path.chmod(0o600)
+            controls=converse.BuddyControls(FakeRPC([]),owner_quest_context=path)
+            controls.journal_available=True
+            controls.journal={"entries":[{"questId":783,"title":"A Threat Within","templateKnown":True}]}
+            state=controls.context()
+            report=state["owner_reported_quests"]
+            self.assertTrue(report["available"])
+            self.assertIs(report["live"],False)
+            self.assertEqual(report["recordedAt"],snapshot["recordedAt"])
+            self.assertEqual(report["quests"],snapshot["quests"])
+            self.assertIn("stale",report["progressSemantics"])
+            self.assertEqual(state["journal"]["entries"][0]["questId"],783)
+            self.assertNotIn(str(path),json.dumps(state))
+
+    def test_invalid_or_missing_quest_report_is_unknown_without_private_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/"report.json"
+            valid={"recordedAt":"2026-10-30T12:00:00Z","source":"Joel screenshot","quests":[]}
+            cases=[dict(valid,recordedAt="not-a-time"),dict(valid,recordedAt="2026-10-30T12:00:00"),
+                   dict(valid,source="|cprivate-secret"),dict(valid,password="private-secret"),
+                   dict(valid,quests=[{"questId":7,"title":"Quest","objectives":[]}]*26),
+                   dict(valid,quests=[{"questId":0,"title":"Quest","objectives":[]}]),
+                   dict(valid,quests=[{"questId":7,"title":"Quest","objectives":[{"text":"Kill","current":9,"required":8}]}])]
+            for value in cases:
+                path.write_text(json.dumps(value));path.chmod(0o600)
+                result=converse.owner_quest_snapshot(path)
+                self.assertIs(result["available"],False)
+                self.assertNotIn("private-secret",json.dumps(result))
+            path.write_text(json.dumps(valid));path.chmod(0o644)
+            self.assertFalse(converse.owner_quest_snapshot(path)["available"])
+            path.chmod(0o600)
+            link=path.with_name("link");link.symlink_to(path)
+            self.assertFalse(converse.owner_quest_snapshot(link)["available"])
+            path.write_bytes(b" "*65537)
+            self.assertFalse(converse.owner_quest_snapshot(path)["available"])
+            path.unlink()
+            self.assertFalse(converse.owner_quest_snapshot(path)["available"])
+            os.mkfifo(path,0o600)
+            self.assertFalse(converse.owner_quest_snapshot(path)["available"])
+
+    def reward_controls(self, choices=(), receipt=None):
+        npc="17379390962003542017"
+        discovery={"sessionId":"quest-session","revision":"4","questLogKnown":True,"questLogRevision":"7",
+                   "questLog":[{"questId":783,"complete":True}],
+                   "nearby":[{"canInteract":True,"distanceKnown":True,"distance":2,"creature":{"guid":npc}}]}
+        offer={"revision":"9","npcGuid":npc,"questId":783,"title":"A Threat Within",
+               "source":"reward_offer","canComplete":True,"expiresInMs":"60000","choices":list(choices)}
+        state={"sessionId":"quest-session","revision":"8","turnInOffer":offer}
+        result=receipt if receipt is not None else {"questId":783,"status":"REWARD_CONFIRMED","serverRewardObserved":True,"logRemovalConfirmed":True}
+        class RPC:
+            def __init__(self):self.calls=[]
+            def call(self,method,params):
+                self.calls.append((method,params))
+                if method=="buddy-quests.discover":return discovery
+                if method=="buddy-quests.turn_in":return {"transportWritten":True,"serverResponseReceived":True,"state":state}
+                if method=="buddy-quests.state":return state
+                if method=="buddy-quests.claim_reward":return {"transportWritten":True,"state":dict(state,lastReward=result)}
+                return {}
+        rpc=RPC();controls=converse.BuddyControls(rpc);controls.quests_available=True
+        return controls,rpc,discovery,offer
+
+    def test_zero_and_single_actual_reward_choice_are_bound_and_confirmed(self):
+        for choices in ([],[{"index":2,"itemId":1001,"count":1}]):
+            controls,rpc,_,_=self.reward_controls(choices)
+            text=controls.execute("TURN_IN_QUEST")
+            self.assertIn("Turn-in confirmed",text)
+            turn=next(p for m,p in rpc.calls if m=="buddy-quests.turn_in")
+            self.assertEqual(turn["questLogRevision"],"7")
+            self.assertEqual(turn["questId"],783)
+            reward=next(p for m,p in rpc.calls if m=="buddy-quests.claim_reward")
+            self.assertEqual(reward["offerRevision"],"9")
+            self.assertEqual(reward["noChoice"],not choices)
+            self.assertEqual(reward["choiceIndex"],2 if choices else 0)
+            self.assertEqual(reward["expectedItemId"],1001 if choices else 0)
+
+    def test_multiple_rewards_require_actual_unique_item_choice(self):
+        controls,rpc,_,_=self.reward_controls([{"index":0,"itemId":1001},{"index":1,"itemId":1002}])
+        text=controls.execute("TURN_IN_QUEST",quest_id=783)
+        self.assertIn("1001",text);self.assertIn("1002",text)
+        self.assertFalse(any(m=="buddy-quests.claim_reward" for m,_ in rpc.calls))
+        self.assertIn("isn't",controls.execute("CLAIM_QUEST_REWARD",quest_id=783,item_entry=9999))
+        self.assertFalse(any(m=="buddy-quests.claim_reward" for m,_ in rpc.calls))
+        self.assertIn("Turn-in confirmed",controls.execute("CLAIM_QUEST_REWARD",quest_id=783,item_entry=1002))
+        reward=next(p for m,p in rpc.calls if m=="buddy-quests.claim_reward")
+        self.assertEqual((reward["choiceIndex"],reward["expectedItemId"]),(1,1002))
+
+    def test_transport_or_server_reward_without_log_removal_is_unconfirmed(self):
+        for receipt in ({"questId":783,"status":"REWARD_REQUESTED"},
+                        {"questId":783,"status":"REWARD_CONFIRMED","serverRewardObserved":True},
+                        {"questId":784,"status":"REWARD_CONFIRMED","serverRewardObserved":True,"logRemovalConfirmed":True}):
+            controls,_,_,_=self.reward_controls(receipt=receipt)
+            self.assertIn("haven't confirmed",controls.execute("TURN_IN_QUEST",quest_id=783))
+
+    def test_zero_quest_id_requires_unique_completed_own_quest(self):
+        controls,rpc,discovery,_=self.reward_controls()
+        discovery["questLog"].append({"questId":7,"complete":True})
+        self.assertIn("unambiguous",controls.execute("TURN_IN_QUEST"))
+        self.assertFalse(any(m=="buddy-quests.turn_in" for m,_ in rpc.calls))
+        discovery["questLog"]=[{"questId":783,"complete":False}]
+        self.assertIn("unambiguous",controls.execute("TURN_IN_QUEST"))
+
+    def test_journal_context_uses_actual_templates_and_planning_has_no_actuator(self):
+        journal={"sessionId":"quest-session","questLogRevision":"7","entries":[
+            {"questId":783,"templateKnown":True,"title":"A Threat Within","objectives":"Speak to Marshal McBride.","targets":[]},
+            {"questId":7,"templateKnown":False,"failure":"awaiting_query_response"}]}
+        class RPC:
+            def __init__(self):self.calls=[]
+            def call(self,method,params):
+                self.calls.append((method,params))
+                return journal if method=="buddy-quests.journal" else {}
+        rpc=RPC();controls=converse.BuddyControls(rpc)
+        self.assertEqual(controls.context()["journal"],{"available":False,"entries":[]})
+        controls.refresh()
+        self.assertEqual(controls.context()["journal"],journal)
+        self.assertIn(("buddy-quests.journal",{"refresh":False}),rpc.calls)
+        rpc.calls.clear()
+        self.assertIsNone(controls.execute("PLAN_QUEST",quest_id=783))
+        self.assertIn("haven't received",controls.execute("PLAN_QUEST",quest_id=7))
+        self.assertEqual(rpc.calls,[])
 
 
 class BoundaryTests(unittest.TestCase):
