@@ -23,7 +23,7 @@ func TestNamedRegionsRejectOtherRegionAndUnknownPolicies(t *testing.T) {
 		{RegionNorthshire, cryptStart, cryptSurface},
 		{RegionDeathknellCrypt, testStart, testEnd},
 		{RegionDeathknellCrypt, cryptStart, Point{1843.32, 1639.9, 97.8113}},
-		{Region(2), cryptStart, cryptSurface},
+		{Region(3), cryptStart, cryptSurface},
 		{Region(255), testStart, testEnd},
 	} {
 		if _, err := PlanRegionContext(context.Background(), "", 0, tc.region, tc.start, tc.end); err == nil || strings.Contains(err.Error(), "directory") {

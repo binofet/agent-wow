@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""Finite normal trainer learning of the party's assigned starter professions."""
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+loader = importlib.machinery.SourceFileLoader("profession_sync", str(Path(__file__).with_name("sync-quests")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+sync = importlib.util.module_from_spec(spec)
+loader.exec_module(sync)
+c, Error, integer, ROOT = sync.converse, sync.Error, sync.integer, sync.converse.ROOT
+PRIMARY = {1: (171, 182), 4: (197, 333), 5: (165, 393)}
+SECONDARY = (129, 185, 356)
+NAMES = {129: "First Aid", 165: "Leatherworking", 171: "Alchemy", 182: "Herbalism",
+         185: "Cooking", 197: "Tailoring", 333: "Enchanting", 356: "Fishing", 393: "Skinning"}
+ROSTER = {guid: (name, port) for name, guid, port in sync.ROSTER}
+BUDGET = 10000
+
+
+def identity(guid):
+    if type(guid) is not int or guid not in ROSTER:
+        raise Error("Only the three configured companion profiles are supported")
+    name, port = ROSTER[guid]
+    return dict(version=1, mode="initial_profession_learning", name=name, guid=guid, port=port,
+                primarySkills=list(PRIMARY[guid]), secondarySkills=list(SECONDARY), budgetCopper=BUDGET)
+
+
+class RPC(sync.SyncRPC):
+    EXTRA = sync.SyncRPC.EXTRA | {"buddy-training.state", "buddy-training.discover_professions",
+                                  "buddy-training.list", "buddy-training.buy_profession",
+                                  "buddy-actions.travel_trainer"}
+
+    def call(self, method, params):
+        if method != "buddy-actions.travel_trainer":
+            return super().call(method, params)
+        self.request_id += 1
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.request_id,
+            "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with self.opener.open(request, timeout=35) as response:
+                raw = response.read(262145)
+            result = json.loads(raw) if len(raw) <= 262144 else None
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("Profession trainer travel is unconfirmed") from None
+        if (not isinstance(result, dict) or result.get("jsonrpc") != "2.0"
+                or type(result.get("id")) is not int or result["id"] != self.request_id
+                or "error" in result or not isinstance(result.get("result"), dict)):
+            raise Error("Profession trainer travel did not return a matching result")
+        return result["result"]
+
+
+def private_state(path):
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY), "r") as source:
+            raw = source.read(65537)
+        value = json.loads(raw) if len(raw) <= 65536 else None
+        if not isinstance(value, dict):
+            raise Error("Profession state is invalid or exceeds its bound")
+        return value
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        raise Error("Profession state contains invalid JSON") from None
+
+
+def position(value):
+    return (isinstance(value, dict) and value.get("known", value.get("positionKnown")) is True
+            and value.get("mapKnown") is True and all(type(value.get(k, 0)) in (int, float)
+            and math.isfinite(value.get(k, 0)) and abs(value.get(k, 0)) < 40000 for k in ("x", "y", "z")))
+
+
+def distance(a, b):
+    return math.sqrt(sum((a.get(k, 0)-b.get(k, 0))**2 for k in ("x", "y", "z")))
+
+
+def skills(state):
+    if state.get("professionsKnown") is not True:
+        return None
+    result = {}
+    for key, limit in (("primaryProfessions", 11), ("secondaryProfessions", 3)):
+        rows = state.get(key, [])
+        if not isinstance(rows, list) or len(rows) > limit:
+            raise Error("Profession evidence exceeds its bound")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise Error("Malformed profession evidence")
+            skill, rank, maximum = (integer(row.get(k, 0)) for k in ("skillId", "rank", "maxRank"))
+            if not 0 < skill <= 65535 or not 0 < rank <= maximum <= 65535 or skill in result:
+                raise Error("Invalid profession skill identity or rank")
+            result[skill] = {"skillId": skill, "rank": rank, "maxRank": maximum,
+                             "step": integer(row.get("step", 0)), "primary": key == "primaryProfessions"}
+    return result
+
+
+class Learner:
+    def __init__(self, guid, rpc, save=lambda value: None, stored=None, now=time.time,
+                 stopped=lambda: False, allow_travel=False):
+        self.guid, self.rpc, self.save, self.now, self.stopped = guid, rpc, save, now, stopped
+        self.identity = identity(guid)
+        self.assigned = set(PRIMARY[guid])
+        self.wanted = self.assigned | set(SECONDARY)
+        self.allow_travel, self.done, self.anchor = allow_travel, False, None
+        self.data = stored or dict(identity=self.identity, reservedCopper=0, attempts=[], queried=[], travelAttempts={})
+        if (self.data.get("identity") != self.identity or type(self.data.get("reservedCopper")) is not int
+                or not 0 <= self.data["reservedCopper"] <= BUDGET
+                or not isinstance(self.data.get("attempts"), list) or len(self.data["attempts"]) > 10
+                or not isinstance(self.data.get("queried"), list) or len(self.data["queried"]) > 48
+                or not isinstance(self.data.get("travelAttempts"), dict) or len(self.data["travelAttempts"]) > 32):
+            raise Error("Saved profession identity or bounds are invalid")
+        for row in self.data["attempts"]:
+            if (not isinstance(row, dict) or integer(row.get("skill", 0)) not in self.wanted
+                    or not isinstance(row.get("session"), str) or not 1 <= len(row["session"]) <= 128
+                    or not 0 < integer(row.get("npc", 0)) <= 2**64-1
+                    or not 0 < integer(row.get("spell", 0)) < 2**31
+                    or not 0 < integer(row.get("learned", 0)) < 2**31
+                    or type(row.get("offerRevision")) is not int or not 0 < row["offerRevision"] < 2**64
+                    or type(row.get("cost")) is not int or not 0 <= row["cost"] <= BUDGET
+                    or type(row.get("baselineId")) is not int or row["baselineId"] < 0
+                    or type(row.get("baselineSkillsRevision")) is not int or row["baselineSkillsRevision"] < 0
+                    or row.get("status") not in ("reserved", "confirmed", "rejected", "skill_observed_purchase_unconfirmed")):
+                raise Error("Saved profession reservation is invalid")
+        if sum(row["cost"] for row in self.data["attempts"]) != self.data["reservedCopper"]:
+            raise Error("Profession reservations do not match their budget")
+        for skill in self.wanted:
+            attempts = [row for row in self.data["attempts"] if row["skill"] == skill]
+            if len(attempts) > 2 or any(row["status"] != "rejected" for row in attempts[:-1]):
+                raise Error("Only a definite rejection permits one bounded fresh-offer retry")
+            bindings = {(row["session"], row["npc"], row["offerRevision"]) for row in attempts}
+            if len(bindings) != len(attempts):
+                raise Error("A profession offer cannot be attempted twice")
+        for row in self.data["queried"]:
+            if (not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str)
+                    or integer(row[0]) >> 48 != 0xf130 or not isinstance(row[1], str) or len(row[1]) > 512):
+                raise Error("Saved profession trainer query is invalid")
+        for key, value in self.data["travelAttempts"].items():
+            if not isinstance(key, str) or integer(key) >> 48 != 0xf130 or type(value) is not int or not 0 <= value <= 3:
+                raise Error("Saved profession route attempt is invalid")
+        self.status = dict(guid=guid, name=self.identity["name"], phase="starting", observedProfessions=[],
+                           confirmedPurchases=[], reservedCopper=self.data["reservedCopper"])
+        self.next_operation = 0
+
+    def call(self, method, params):
+        if self.stopped():
+            raise c.Stopped("Profession learning stop requested")
+        return self.rpc.call(method, params)
+
+    def read(self):
+        world = self.call("buddy-world.snapshot", {})
+        own = world.get("self", {})
+        if not isinstance(own, dict) or integer(own.get("guid", 0)) != self.guid:
+            raise Error("Profession character connection is wrong")
+        discovery = self.call("buddy-training.discover_professions", {})
+        state = discovery.get("state", {})
+        session = sync.session_id(state)
+        actions = self.call("buddy-actions.status", {})
+        final = self.call("buddy-training.state", {})
+        if sync.session_id(final) != session:
+            raise Error("Profession body changed while reading")
+        return dict(world=world, own=own, actions=actions, state=final,
+                    nearby=discovery.get("nearby", []), session=session)
+
+    def safe(self, context):
+        own, actions = context["own"], context["actions"]
+        if (any(own.get(key) is not True for key in ("present", "aliveKnown", "alive", "unitFlagsKnown"))
+                or integer(own.get("unitFlags", 0)) & 0x80000):
+            self.status["phase"] = "waiting_out_of_combat_for_professions"
+            return False
+        if (not position(actions.get("position")) or integer(actions["position"].get("mapId", 0)) != 0
+                or any(actions.get(key) is True for key in ("castPending", "motionUnconfirmed", "autoAttacking", "autoAttackUnconfirmed", "traveling", "practicing"))
+                or actions.get("interactionOwner") or context["state"].get("actionInFlight") is True):
+            self.status["phase"] = "waiting_for_safe_profession_interaction"
+            return False
+        return True
+
+    def reconcile(self, state, observed):
+        receipt = state.get("lastPurchase", {})
+        changed = False
+        for attempt in self.data["attempts"]:
+            if attempt["status"] != "reserved":
+                continue
+            match = (state.get("sessionId") == attempt["session"] and isinstance(receipt, dict)
+                     and integer(receipt.get("id", 0)) > attempt["baselineId"]
+                     and integer(receipt.get("npcGuid", 0)) == integer(attempt["npc"])
+                     and integer(receipt.get("spellId", 0)) == attempt["spell"]
+                     and integer(receipt.get("costCopper", 0)) == attempt["cost"]
+                     and integer(receipt.get("professionSkillId", 0)) == attempt["skill"])
+            if match and receipt.get("status") in ("SERVER_REJECTED", 4):
+                attempt["status"], changed = "rejected", True
+            elif (match and receipt.get("status") in ("TRAINING_CONFIRMED", 3)
+                    and receipt.get("serverSuccessObserved") is True and receipt.get("professionSkillObserved") is True
+                    and integer(receipt.get("confirmedSkillsRevision", 0)) > attempt["baselineSkillsRevision"]
+                    and (receipt.get("learnedSpellObserved") is True or receipt.get("refreshedTrainerKnows") is True)
+                    and attempt["skill"] in observed):
+                attempt["status"], changed = "confirmed", True
+            elif attempt["skill"] in observed:
+                attempt["status"], changed = "skill_observed_purchase_unconfirmed", True
+        if changed:
+            self.save(self.data)
+        self.status["confirmedPurchases"] = [row["skill"] for row in self.data["attempts"] if row["status"] == "confirmed"]
+
+    def candidates(self, context):
+        rows, pos = context["nearby"], context["actions"]["position"]
+        if not isinstance(rows, list) or len(rows) > 97:
+            raise Error("Profession trainer discovery exceeds its bound")
+        result = []
+        for row in rows:
+            npc = row.get("creature", {}) if isinstance(row, dict) else {}
+            if (not position(npc) or any(npc.get(key) is not True for key in ("present", "aliveKnown", "alive"))
+                    or integer(npc.get("mapId", 0)) != integer(pos.get("mapId", 0))
+                    or integer(npc.get("npcFlags", 0)) & 0x50 != 0x50
+                    or integer(npc.get("movementFlags", 0)) != 0
+                    or integer(npc.get("unitFlags", 0)) & 0x80000):
+                continue
+            guid, entry = integer(npc.get("guid", 0)), integer(npc.get("entry", 0))
+            if guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry:
+                continue
+            dist = distance(pos, npc)
+            if dist <= 120 and (self.anchor is None or distance(self.anchor, npc) <= 160):
+                result.append(dict(guid=guid, entry=entry, distance=dist))
+        return sorted(result, key=lambda row: (row["distance"], row["guid"]))[:32]
+
+    def travel(self, context, trainer):
+        if not self.allow_travel:
+            self.status["phase"] = "waiting_beside_observed_profession_trainer"
+            return
+        key = str(trainer["guid"])
+        if self.data["travelAttempts"].get(key, 0) >= 3:
+            self.status["phase"] = "profession_trainer_route_attempt_limit"
+            return
+        lease = self.call("buddy-actions.acquire_interaction", {"owner": "training", "leaseMs": 30000})
+        token, state = lease.get("token"), lease.get("state", {})
+        if not isinstance(token, str) or not 1 <= len(token) <= 128 or state.get("interactionOwner") != "training":
+            raise Error("Profession trainer travel lease is unconfirmed")
+        try:
+            if state.get("moving") is True or state.get("motionUnconfirmed") is True:
+                raise Error("Profession trainer travel stop is unconfirmed")
+            fresh = self.read()
+            # The owned lease itself is expected during this fresh safety read.
+            if fresh["actions"].get("interactionOwner") != "training":
+                return
+            fresh["actions"] = dict(fresh["actions"], interactionOwner="")
+            if (fresh["session"] != context["session"] or not self.safe(fresh)
+                    or not any(row["guid"] == trainer["guid"] for row in self.candidates(fresh))):
+                return
+            self.data["travelAttempts"][key] = self.data["travelAttempts"].get(key, 0)+1
+            self.save(self.data)
+            self.status["phase"] = "traveling_to_actual_profession_trainer"
+            self.call("buddy-actions.travel_trainer", {"token": token, "npcGuid": str(trainer["guid"])})
+        finally:
+            try:
+                self.rpc.call("buddy-actions.release_interaction", {"owner": "training", "token": token})
+            except Error:
+                self.status["cleanup"] = "trainer_travel_release_unconfirmed"
+
+    def tick(self):
+        context = self.read()
+        state = context["state"]
+        observed = skills(state)
+        if observed is None:
+            self.status["phase"] = "waiting_for_actual_complete_profession_evidence"
+            return
+        self.reconcile(state, observed)
+        missing = self.wanted - observed.keys()
+        self.status.update(observedProfessions=list(observed.values()), missingSkills=sorted(missing),
+                           reservedCopper=self.data["reservedCopper"], observationsCurrent=True)
+        if not missing:
+            self.done = True
+            self.status["phase"] = "all_assigned_professions_observed"
+            return
+        primary = {skill for skill, row in observed.items() if row["primary"]}
+        conflict = bool(primary - self.assigned)
+        self.status["preservingUnassignedPrimarySkills"] = sorted(primary - self.assigned)
+        if any(row["status"] == "reserved" for row in self.data["attempts"]):
+            self.status["phase"] = "waiting_for_unconfirmed_profession_purchase"
+            return
+        if context["own"].get("levelKnown") is not True:
+            self.status["phase"] = "waiting_for_actual_character_level"
+            return
+        if not self.safe(context):
+            return
+        if self.anchor is None:
+            self.anchor = dict(context["actions"]["position"])
+        if self.now() < self.next_operation:
+            return
+        self.next_operation = self.now()+10
+        trainers = self.candidates(context)
+        eligible = [row for row in trainers if row["distance"] <= 4 or self.data["travelAttempts"].get(str(row["guid"]), 0) < 3]
+        signature = ":".join((context["session"], ",".join(str(skill) for skill in sorted(observed)),
+                              str(integer(state.get("copper", 0))) if state.get("copperKnown") is True else "unknown",
+                              str(integer(context["own"].get("level", 0))),
+                              str(integer(state.get("freePrimarySlots", 0))) if state.get("freePrimarySlotsKnown") is True else "unknown"))
+        trainer = next((row for row in eligible if [str(row["guid"]), signature] not in self.data["queried"]), None)
+        if trainer is None:
+            self.status["phase"] = "waiting_for_observed_assigned_profession_trainer"
+            return
+        if trainer["distance"] > 4:
+            self.travel(context, trainer)
+            return
+        state = self.call("buddy-training.list", {"sessionId": context["session"], "npcGuid": str(trainer["guid"]), "trainerType": 2})
+        offer = state.get("offer", {})
+        if (sync.session_id(state) != context["session"] or integer(offer.get("npcGuid", 0)) != trainer["guid"]
+                or integer(offer.get("trainerType", 0)) != 2 or integer(offer.get("expiresInMs", 0)) <= 0
+                or integer(offer.get("revision", 0)) == 0):
+            self.status["phase"] = "waiting_for_current_profession_training_offer"
+            return
+        observed = skills(state)
+        if observed is None:
+            self.status["phase"] = "waiting_for_actual_complete_profession_evidence"
+            return
+        primary = {skill for skill, row in observed.items() if row["primary"]}
+        conflict = bool(primary - self.assigned)
+        spells = offer.get("spells", [])
+        if not isinstance(spells, list) or len(spells) > 256:
+            raise Error("Profession trainer offer exceeds its bound")
+        attempted = set()
+        for skill in self.wanted:
+            previous = [row for row in self.data["attempts"] if row["skill"] == skill]
+            if previous and (previous[-1]["status"] != "rejected" or len(previous) >= 2
+                    or (previous[-1]["session"], previous[-1]["npc"], previous[-1]["offerRevision"]) ==
+                       (context["session"], str(trainer["guid"]), integer(offer["revision"]))):
+                attempted.add(skill)
+        wallet = integer(state.get("copper", 0)) if state.get("copperKnown") is True else 0
+        budget = min(BUDGET-self.data["reservedCopper"], wallet)
+        choices, unaffordable = [], []
+        for spell in spells:
+            if not isinstance(spell, dict):
+                raise Error("Malformed profession trainer spell")
+            skill = integer(spell.get("professionSkillId", 0))
+            is_primary = skill in self.assigned
+            if (skill not in self.wanted or skill in observed or skill in attempted or integer(spell.get("usable", 0)) != 0
+                    or not 0 < integer(spell.get("spellId", 0)) < 2**31 or not 0 < integer(spell.get("learnedSpellId", 0)) < 2**31
+                    or spell.get("primaryProfession", False) is not is_primary
+                    or spell.get("pointCost") != ([0, 1] if is_primary else [0, 0])
+                    or integer(spell.get("requiredLevel", 0)) > integer(context["own"].get("level", 0))
+                    or integer(spell.get("requiredSkill", 0)) or integer(spell.get("requiredSkillRank", 0))
+                    or any(integer(value) for value in spell.get("requiredAbilities", []))):
+                continue
+            if is_primary and (conflict or len(primary) >= 2 or state.get("freePrimarySlotsKnown") is not True
+                               or not 0 < integer(state.get("freePrimarySlots", 0)) <= 2 or integer(context["own"].get("level", 0)) < 5):
+                continue
+            if integer(spell.get("costCopper", 0)) > budget:
+                unaffordable.append(integer(spell.get("costCopper", 0)))
+                continue
+            choices.append(spell)
+        if not choices:
+            self.data["queried"].append([str(trainer["guid"]), signature])
+            self.data["queried"] = self.data["queried"][-48:]
+            self.save(self.data)
+            self.status["phase"] = "waiting_for_profession_training_money" if unaffordable else "no_affordable_assigned_initial_training_at_this_trainer"
+            if unaffordable:
+                self.status["requiredCopperForObservedOffer"] = min(unaffordable)
+            return
+        spell = min(choices, key=lambda row: (integer(row["professionSkillId"]) in SECONDARY,
+                                              integer(row.get("costCopper", 0)), integer(row["professionSkillId"])))
+        fresh = self.read()
+        fresh_skills = skills(fresh["state"])
+        latest = fresh["state"].get("offer", {})
+        fresh_primary = {skill for skill, row in (fresh_skills or {}).items() if row["primary"]}
+        skill, cost = integer(spell["professionSkillId"]), integer(spell.get("costCopper", 0))
+        primary_changed = (skill in self.assigned and (fresh_primary-self.assigned or len(fresh_primary) >= 2
+            or fresh["state"].get("freePrimarySlotsKnown") is not True
+            or not 0 < integer(fresh["state"].get("freePrimarySlots", 0)) <= 2))
+        if (fresh["session"] != context["session"] or not self.safe(fresh) or fresh_skills is None
+                or skill in fresh_skills or primary_changed
+                or fresh["state"].get("copperKnown") is not True or integer(fresh["state"].get("copper", 0)) < cost
+                or fresh["own"].get("levelKnown") is not True
+                or integer(fresh["own"].get("level", 0)) < max(integer(spell.get("requiredLevel", 0)), 5 if skill in self.assigned else 1)
+                or any(integer(latest.get(key, 0)) != integer(offer.get(key, 0)) for key in ("revision", "npcGuid"))
+                or integer(latest.get("expiresInMs", 0)) <= 0
+                or spell not in latest.get("spells", [])
+                or not any(row["guid"] == trainer["guid"] and row["distance"] <= 4 for row in self.candidates(fresh))):
+            self.status["phase"] = "profession_offer_changed_rechecking"
+            return
+        attempt = dict(session=context["session"], npc=str(trainer["guid"]), spell=integer(spell["spellId"]),
+            learned=integer(spell["learnedSpellId"]), skill=skill, cost=cost, status="reserved",
+            offerRevision=integer(offer["revision"]),
+            baselineId=integer(fresh["state"].get("lastPurchase", {}).get("id", 0)),
+            baselineSkillsRevision=integer(fresh["state"].get("professionsRevision", 0)))
+        self.data["attempts"].append(attempt)
+        self.data["reservedCopper"] += cost
+        self.save(self.data)
+        result = self.call("buddy-training.buy_profession", {"purchase": dict(sessionId=context["session"],
+            npcGuid=str(trainer["guid"]), offerRevision=str(integer(offer.get("revision", 0))),
+            spellId=attempt["spell"], expectedCostCopper=cost, maxSpendCopper=budget),
+            "skillId": skill, "allowedPrimarySkills": list(PRIMARY[self.guid])})
+        current = skills(result)
+        if current is not None:
+            self.reconcile(result, current)
+        self.status["phase"] = "waiting_for_actual_profession_learning_confirmation"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("run", "status", "stop"))
+    parser.add_argument("--character-guid", type=int, required=True)
+    parser.add_argument("--max-minutes", type=float, default=10)
+    parser.add_argument("--travel-trainers", action="store_true", help="Use the deployed verified trainer navigation endpoint")
+    args = parser.parse_args(argv)
+    expected = identity(args.character_guid)
+    if not math.isfinite(args.max_minutes) or not 0 < args.max_minutes <= 10:
+        parser.error("Profession routine must last greater than0 and at most10minutes")
+    base = c.ensure_state(ROOT/"data/professions")
+    folder = c.ensure_state(base/str(args.character_guid))
+    with os.fdopen(c.private_open(folder/"lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        if args.command != "run":
+            record = c.read_json(folder/"status.json")
+            if record and record.get("identity") != expected:
+                raise Error("Directory tracks a different profession profile")
+            running = c.is_locked(lock)
+            if args.command == "status":
+                print(json.dumps(dict(record, running=running), indent=2))
+            elif running:
+                instance = record.get("instance", "")
+                if not isinstance(instance, str) or len(instance) != 32 or any(q not in "0123456789abcdef" for q in instance):
+                    raise Error("Profession process instance is unconfirmed")
+                c.write_json(folder/"stop.json", {"identity": expected, "instance": instance})
+                print("Profession routine stop requested.")
+            return 0
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Error("This character already has a profession routine") from None
+        record = dict(identity=expected, instance=uuid.uuid4().hex, pid=os.getpid(), routineActive=True)
+        end, stop_requested = time.monotonic()+args.max_minutes*60, False
+        def stop(signum, frame):
+            nonlocal stop_requested
+            stop_requested = True
+        signal.signal(signal.SIGINT, stop)
+        signal.signal(signal.SIGTERM, stop)
+        def stopped():
+            return (stop_requested or time.monotonic() >= end or c.read_json(folder/"stop.json") ==
+                    {"identity": expected, "instance": record["instance"]})
+        def save(value):
+            if len(json.dumps(value)) > 65536:
+                raise Error("Profession receipts exceed their bound")
+            c.write_json(folder/"operations.json", value)
+        actor = Learner(args.character_guid, RPC(f"http://127.0.0.1:{expected['port']}/rpc", timeout=6), save,
+                        private_state(folder/"operations.json") or None, stopped=stopped, allow_travel=args.travel_trainers)
+        def status():
+            record.update(updatedAt=time.time(), remainingSeconds=max(0, int(end-time.monotonic())), own=actor.status)
+            c.write_json(folder/"status.json", record)
+        status()
+        try:
+            while not stopped() and not actor.done:
+                try:
+                    actor.tick()
+                except c.Stopped:
+                    break
+                except Error:
+                    actor.status.update(phase="profession_operation_unavailable_or_unconfirmed", observationsCurrent=False)
+                status()
+                until = time.monotonic()+2
+                while not stopped() and not actor.done and time.monotonic() < until:
+                    time.sleep(.1)
+        finally:
+            record["routineActive"] = False
+            if not actor.done:
+                actor.status["phase"] = "profession_routine_stopped_or_expired"
+            status()
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError) as error:
+        print("Professions: " + str(error), file=sys.stderr)
+        sys.exit(1)
