@@ -92,7 +92,7 @@ func unclaimedColdridgePull(c *worldv1.CreatureState) bool {
 func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.SnapshotResponse) (*actionsv1.State, error) {
 	goal, incomplete := selectColdridgePracticeGoal(w, s.selfGUID)
 	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !coldridge(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
-		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own supported incompletequest179 or170")
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own supported incompletequest179,170 or183")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
@@ -101,6 +101,8 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 	s.coldridgeGoal = goal
 	if goal.questID == 170 {
 		s.state.PracticePhase = "waiting_for_safe_quest_170_pull"
+	} else if goal.questID == 183 {
+		s.state.PracticePhase = "waiting_for_safe_quest_183_pull"
 	}
 	s.practiceUntil, s.practiceQuestGoal = s.now().Add(10*time.Minute), true
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
@@ -131,6 +133,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		why := "quest_179_complete_absent_or_level_limit"
 		if goal.questID == 170 {
 			why = "quest_170_complete_absent_or_invalid"
+		} else if goal.questID == 183 {
+			why = "quest_183_complete_absent_or_invalid"
 		}
 		s.stopPracticeLocked(ctx, why)
 		return
@@ -202,6 +206,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			s.state.PracticePhase = "waiting_for_observed_level_one_ragged_young_wolf"
 			if goal.questID == 170 {
 				s.state.PracticePhase = "waiting_for_observed_required_quest_170_target"
+			} else if goal.questID == 183 {
+				s.state.PracticePhase = "waiting_for_observed_required_quest_183_target"
 			}
 			return
 		}
@@ -218,6 +224,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.state.PracticePhase = "waiting_for_observed_wolf_position"
 		if goal.questID == 170 {
 			s.state.PracticePhase = "waiting_for_observed_quest_170_target_position"
+		} else if goal.questID == 183 {
+			s.state.PracticePhase = "waiting_for_observed_quest_183_target_position"
 		}
 		return
 	}
@@ -257,6 +265,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.state.PracticePhase = "approaching_observed_coldridge_wolf_on_navmesh"
 		if goal.questID == 170 {
 			s.state.PracticePhase = "approaching_observed_quest_170_target_on_navmesh"
+		} else if goal.questID == 183 {
+			s.state.PracticePhase = "approaching_observed_quest_183_target_on_navmesh"
 		}
 		return
 	}
@@ -290,6 +300,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
 	if goal.questID == 170 {
 		s.state.PracticePhase = "fighting_observed_quest_170_target"
+	} else if goal.questID == 183 {
+		s.state.PracticePhase = "fighting_observed_quest_183_target"
 	}
 	if finishing {
 		s.state.PracticePhase = "finishing_current_fight_to_goal"

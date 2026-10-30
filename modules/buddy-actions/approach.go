@@ -115,7 +115,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		}
 		quest33, _ := ownWolfQuest(w)
 		quest179, _ := ownColdridgeQuest(w, s.selfGUID)
-		if s.coldridgeGoal.questID == 170 {
+		if s.coldridgeGoal.questID == 170 || s.coldridgeGoal.questID == 183 {
 			// Another accepted quest must not replace the goal bound at start.
 			quest179 = false
 		}
@@ -229,16 +229,17 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	}
 }
 
-// Quest170 adds only corpses matching the explicitly bound combat goal. The
-// living target proof remains the exact level2/55-health profile, retained by
-// the world's actual corpse observation. Quest completion may precede looting.
+// Only corpses matching the explicitly bound170/183 combat goal enter this
+// exception. The world's actual corpse retains the verified living profile;
+// quest completion may precede looting.
 func (s *Service) ownColdridgeGoalCorpseLocked(w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
 	goal := &s.coldridgeGoal
-	if goal.questID != 170 || !s.now().Before(s.practiceUntil) || w == nil || w.Self == nil || corpse == nil {
+	if goal.questID != 170 && goal.questID != 183 || !s.now().Before(s.practiceUntil) || w == nil || w.Self == nil || corpse == nil {
 		return false
 	}
 	active, _ := goal.observe(w, s.selfGUID)
-	return active && goal.supportsEntry(corpse.Entry) && corpse.Guid>>48 == 0xf130 && corpse.Guid&0xffffff != 0 && uint32(corpse.Guid>>24&0xffffff) == corpse.Entry && corpse.MapKnown && corpse.MapId == 0 && w.Self.MapKnown && w.Self.MapId == 0 && coldridge(s.pos) && corpse.LevelKnown && corpse.Level == 2 && corpse.MaxHealth == 55
+	level, maxHealth, faction := goal.creatureProfile()
+	return active && goal.supportsEntry(corpse.Entry) && corpse.Guid>>48 == 0xf130 && corpse.Guid&0xffffff != 0 && uint32(corpse.Guid>>24&0xffffff) == corpse.Entry && corpse.MapKnown && corpse.MapId == 0 && w.Self.MapKnown && w.Self.MapId == 0 && coldridge(s.pos) && corpse.LevelKnown && corpse.Level == level && corpse.MaxHealth == maxHealth && (goal.questID != 183 || corpse.FactionTemplate == faction)
 }
 
 // This movement exception is bound to the acting character's actual own quest
