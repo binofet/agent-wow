@@ -27,6 +27,10 @@ REWARD_GIVERS = {783: 197, 7: 197, 15: 197, 18: 823, 21: 197, 54: 240, 3903: 929
 REWARD_CHOICES = converse.QUEST_REWARD_PREFERENCES
 
 
+class PartyRPC(sync.SyncRPC):
+    EXTRA = sync.SyncRPC.EXTRA | {"buddy-quests.accept_shared"}
+
+
 def load_private(path):
     try:
         with os.fdopen(converse.private_open(path, os.O_RDONLY), "r") as source:
@@ -90,6 +94,47 @@ class PartyQuestSync:
         self.reward_lookup = None
 
     call = sync.CharacterSync.call
+
+    def poll_shared_quest(self):
+        # A real server share is independent of the addon heartbeat. The Go
+        # endpoint owns the party/session checks and consumes its sequence
+        # before transport, including ambiguous writes.
+        state = self.call("buddy-quests.state", {})
+        if state.get("sharedQuestsEnabled") is not True:
+            return False
+        share = state.get("pendingShare", {})
+        if not isinstance(share, dict) or not share:
+            return False
+        q = share.get("quest", {})
+        qid = integer(q.get("questId", 0)) if isinstance(q, dict) else 0
+        sequence = integer(share.get("sequence", 0))
+        if (not 0 < qid <= 2147483647 or not 0 < sequence < 2**64
+                or integer(share.get("sharerGuid", 0)) != 3
+                or share.get("kind") not in ("SHARED_DETAILS", "PARTY_CONFIRM", 1, 2)):
+            return False
+        self.status.update(sharedQuestId=qid, sharedQuestSequence=str(sequence))
+        own = sync.active_log(state)
+        if share.get("acceptRequested") is True:
+            self.status["sharedQuestPhase"] = ("confirmed_in_own_quest_log" if qid in own
+                                               else "waiting_for_server_quest_log")
+            return False
+        if state.get("actionInFlight") is True:
+            self.status["sharedQuestPhase"] = "waiting_for_available_quest_operation"
+            return False
+        session = sync.session_id(state)
+        self.status["sharedQuestPhase"] = "accepting_joels_shared_quest"
+        self.notify()
+        try:
+            result = self.call("buddy-quests.accept_shared", {
+                "sessionId": session, "shareSequence": str(sequence),
+                "sharerGuid": "3", "questId": qid})
+            fresh = result.get("state", {})
+            self.status["sharedQuestPhase"] = ("confirmed_in_own_quest_log"
+                if sync.session_id(fresh) == session and qid in sync.active_log(fresh)
+                else "waiting_for_server_quest_log")
+        except Error:
+            self.status["sharedQuestPhase"] = "reconciling_shared_quest_request"
+        return True
 
     def mutate(self, method, params, key=None, offer_binding=None, query=None, operation=None):
         if key and key not in self.data["reservations"] and len(self.data["reservations"]) >= 96:
@@ -307,6 +352,15 @@ class PartyQuestSync:
     def tick(self):
         self.status["observationsCurrent"] = False
         try:
+            if self.poll_shared_quest():
+                return
+        except Error:
+            self.status["sharedQuestPhase"] = "share_observations_unavailable"
+        area_snapshot = getattr(converse, "area_quest_snapshot", lambda guid: {})
+        if area_snapshot(self.guid).get("active") is True:
+            self.status["phase"] = "waiting_for_requested_area_quest_sweep"
+            return
+        try:
             context = self.read()
         except Error:
             self.status["phase"] = "waiting_for_fresh_owner_feed_and_party"
@@ -440,7 +494,7 @@ def main(argv=None):
         profiles=[]
         for name,guid,port in ROSTER:
             path=folder/("character-"+str(guid)+".json")
-            profiles.append(PartyQuestSync(name,guid,sync.SyncRPC("http://127.0.0.1:"+str(port)+"/rpc",timeout=6),
+            profiles.append(PartyQuestSync(name,guid,PartyRPC("http://127.0.0.1:"+str(port)+"/rpc",timeout=6),
                 save=lambda value,path=path:save(path,value),stored=load_private(path),stopped=stopped))
         def status():
             record.update(updatedAt=time.time(),characters=[profile.status for profile in profiles])

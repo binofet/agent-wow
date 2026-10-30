@@ -1103,6 +1103,63 @@ class QuestApproachCandidateTests(unittest.TestCase):
                 self.assertEqual(converse.BuddyControls.quest_candidates([candidate], actions, world), [])
 
 
+class AreaQuestControlsTests(unittest.TestCase):
+    def record(self, folder, guid=1):
+        record={"identity":converse.area_quest_identity(guid),"instance":"d"*32,"routineActive":True,
+                "own":{"phase":"traveling_to_observed_area_questgiver","activeQuestIds":[7],
+                       "acceptedQuestIds":[15],"rewardedQuestIds":[783],"privateToken":"hidden"}}
+        converse.write_json(folder/"status.json",record)
+        return record
+
+    def test_owned_locked_profile_status_and_cooperative_stop_are_sanitized_and_exact(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,"ROOT",Path(temporary)):
+            base=converse.ensure_state(Path(temporary)/"data/area-quests")
+            folder=converse.ensure_state(base/"1")
+            record=self.record(folder)
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                snapshot=converse.area_quest_snapshot(1)
+                self.assertTrue(snapshot["active"])
+                self.assertEqual(snapshot["own"]["acceptedQuestIds"],[15])
+                self.assertNotIn("privateToken",str(snapshot))
+                controls=converse.BuddyControls(FakeRPC([]))
+                self.assertIn("requested",controls.execute("STOP_AREA_QUESTS"))
+                self.assertEqual(converse.read_json(folder/"stop.json"),{"identity":record["identity"],"instance":record["instance"]})
+                controls.actions_available=True
+                controls.execute("STOP_FOLLOWING")
+                self.assertEqual(converse.read_json(folder/"stop.json"),{"identity":record["identity"],"instance":record["instance"],"restoreFollowing":False})
+                record["identity"]=converse.area_quest_identity(4)
+                converse.write_json(folder/"status.json",record)
+                self.assertFalse(converse.area_quest_snapshot(1)["active"])
+
+    def test_start_uses_fixed_actual_character_profile_and_never_reconnects_actor(self):
+        class RPC:
+            url="http://127.0.0.1:8087/rpc"
+            def call(self,method,params):
+                return {"self":{"guid":"4"}}
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,"ROOT",Path(temporary)),\
+                patch.object(converse.subprocess,"Popen") as launch:
+            controls=converse.BuddyControls(RPC(),character_class="mage",character_guid=4)
+            controls.actions_available=controls.quests_available=True
+            self.assertIn("starting",controls.execute("AREA_QUESTS"))
+            args,kwargs=launch.call_args
+            self.assertEqual(args[0],[converse.sys.executable,"-B",str(Path(temporary)/"dev/area-quests"),"run","--character-guid","4"])
+            self.assertTrue(kwargs["start_new_session"])
+            self.assertEqual(kwargs["stdin"],converse.subprocess.DEVNULL)
+            controls.rpc.url="http://127.0.0.1:8088/rpc"
+            self.assertIn("doesn't match",controls.execute("AREA_QUESTS"))
+            self.assertEqual(launch.call_count,1)
+
+    def test_active_sweep_is_not_duplicated_and_new_actions_are_in_schema(self):
+        controls=converse.BuddyControls(FakeRPC([]))
+        controls.actions_available=controls.quests_available=True
+        with patch.object(converse,"area_quest_snapshot",return_value={"active":True}),patch.object(converse.subprocess,"Popen") as launch:
+            self.assertIn("already running",controls.execute("AREA_QUESTS"))
+            launch.assert_not_called()
+        self.assertIn("AREA_QUESTS",converse.REPLY_SCHEMA["properties"]["action"]["enum"])
+        self.assertIn("STOP_AREA_QUESTS",converse.REPLY_SCHEMA["properties"]["action"]["enum"])
+
+
 class OwnerFeedTests(unittest.TestCase):
     def feed(self):
         return {"available":True,"bodySessionId":"chat-session","addonSession":"012345abcdef",

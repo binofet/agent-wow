@@ -37,6 +37,8 @@ class FakeRPC:
         self.feed_change=None
         self.item_details={}
         self.after_lookup=None
+        self.shared_enabled,self.share,self.share_calls=False,{},0
+        self.share_error,self.share_apply=False,True
 
     def feed(self):
         self.feed_reads+=1
@@ -58,12 +60,13 @@ class FakeRPC:
         return {"sessionId":self.session,"questLogKnown":True,"questLogRevision":str(self.log_revision),
                 "questLog":[{"questId":q,"complete":q in self.complete} for q in sorted(self.active)],
                 "nearby":[{"creature":c,"distanceKnown":True,"distance":abs(self.self_x+8900)}],
-                "offer":copy.deepcopy(self.offer),"turnInOffer":copy.deepcopy(self.reward),"lastReward":copy.deepcopy(self.receipt)}
+                "offer":copy.deepcopy(self.offer),"turnInOffer":copy.deepcopy(self.reward),"lastReward":copy.deepcopy(self.receipt),
+                "sharedQuestsEnabled":self.shared_enabled,"pendingShare":copy.deepcopy(self.share)}
 
     def call(self,method,params):
         self.calls.append((method,copy.deepcopy(params)))
         if method=="buddy-world.snapshot":return self.world()
-        if method=="buddy-quests.discover":return self.quests()
+        if method in ("buddy-quests.discover","buddy-quests.state"):return self.quests()
         if method=="buddy-chat.owner_feed":return self.feed()
         if method=="buddy-actions.status":return {"position":{"known":True,"mapKnown":True,"mapId":0,"x":self.self_x,"y":-100.,"z":80.}}
         if method=="buddy-party.state":return {"group":{"known":True,"inGroup":True,"members":[
@@ -79,6 +82,13 @@ class FakeRPC:
             self.self_x=-8903.
             if self.after_travel:self.after_travel(self)
             return {"reason":"quest_travel_within_distance"}
+        if method=="buddy-quests.accept_shared":
+            self.share_calls+=1
+            assert params=={"sessionId":self.session,"shareSequence":str(self.share["sequence"]),"sharerGuid":"3","questId":self.share["quest"]["questId"]}
+            self.share["acceptRequested"]=True
+            if self.share_apply and params["questId"] not in self.active:self.active.add(params["questId"]);self.log_revision+=1
+            if self.share_error:raise party.Error("Ambiguous shared acceptance")
+            return {"state":self.quests()}
         if method=="buddy-quests.turn_in":
             self.revision+=1
             self.reward={"npcGuid":str(self.npc),"questId":params["questId"],"revision":str(self.revision),
@@ -106,6 +116,85 @@ class FakeRPC:
 
 
 class PartyQuestTests(unittest.TestCase):
+    @staticmethod
+    def shared_offer(rpc, **changes):
+        rpc.shared_enabled=True
+        rpc.share={"sequence":9,"sharerGuid":"3","quest":{"questId":62},
+                   "kind":"SHARED_DETAILS","expiresInMs":"28000"}
+        rpc.share.update(changes)
+
+    def test_actual_shared_quest_accepts_without_addon_feed_or_npc_range(self):
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc)
+        rpc.age=999999
+        rpc.owner_x=-8400
+        profile.tick()
+        self.assertEqual(rpc.share_calls,1)
+        self.assertIn(62,rpc.active)
+        self.assertEqual(profile.status["sharedQuestPhase"],"confirmed_in_own_quest_log")
+        self.assertFalse(any(method in ("buddy-chat.owner_feed","buddy-actions.travel_quest") for method,_ in rpc.calls))
+
+    def test_shared_acceptance_ambiguity_is_not_replayed_or_reported_confirmed(self):
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc)
+        rpc.share_error=True;rpc.share_apply=False
+        profile.tick();profile.tick()
+        self.assertEqual(rpc.share_calls,1)
+        self.assertNotIn(62,rpc.active)
+        self.assertNotEqual(profile.status["sharedQuestPhase"],"confirmed_in_own_quest_log")
+
+    def test_delayed_actual_log_insertion_confirms_without_another_shared_accept(self):
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc);rpc.share_apply=False
+        profile.poll_shared_quest()
+        self.assertEqual(profile.status["sharedQuestPhase"],"waiting_for_server_quest_log")
+        rpc.active.add(62)
+        self.assertFalse(profile.poll_shared_quest())
+        self.assertEqual(rpc.share_calls,1)
+        self.assertEqual(profile.status["sharedQuestPhase"],"confirmed_in_own_quest_log")
+
+    def test_unusable_shared_offers_never_write_acceptance(self):
+        for change in ({"sharerGuid":"99"},{"kind":"NPC_DETAILS"},
+                       {"sequence":0},{"quest":{"questId":0}},{"acceptRequested":True}):
+            profile,rpc,_,_=self.rig()
+            self.shared_offer(rpc,**change)
+            profile.poll_shared_quest()
+            self.assertEqual(rpc.share_calls,0,change)
+
+    def test_existing_quest_and_expired_share_reach_source_bound_cleanup(self):
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc);rpc.active.add(62)
+        self.assertTrue(profile.poll_shared_quest())
+        self.assertEqual(rpc.share_calls,1)
+        self.assertEqual(profile.status["sharedQuestPhase"],"confirmed_in_own_quest_log")
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc,expiresInMs="0");rpc.share_apply=False
+        self.assertTrue(profile.poll_shared_quest())
+        self.assertEqual(rpc.share_calls,1)
+        self.assertNotIn(62,rpc.active)
+
+    def test_busy_quest_operation_can_recheck_share_without_consuming_it(self):
+        profile,rpc,_,_=self.rig()
+        self.shared_offer(rpc)
+        original=rpc.quests
+        rpc.quests=lambda:dict(original(),actionInFlight=True)
+        self.assertFalse(profile.poll_shared_quest())
+        self.assertEqual(rpc.share_calls,0)
+        rpc.quests=original
+        self.assertTrue(profile.poll_shared_quest())
+        self.assertEqual(rpc.share_calls,1)
+
+    def test_area_sweep_defers_npc_sync_while_shared_quest_polling_stays_available(self):
+        profile,rpc,_,_=self.rig()
+        with patch.object(party.converse,"area_quest_snapshot",return_value={"active":True},create=True):
+            profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_requested_area_quest_sweep")
+        self.assertFalse(self.mutations(rpc))
+        self.shared_offer(rpc)
+        with patch.object(party.converse,"area_quest_snapshot",return_value={"active":True},create=True):
+            profile.tick()
+        self.assertEqual(rpc.share_calls,1)
+
     def rig(self,guid=1,stored=None):
         mock=patch.object(party.converse,"quest_sync_snapshot",return_value={"active":False})
         mock.start();self.addCleanup(mock.stop)
@@ -115,7 +204,7 @@ class PartyQuestTests(unittest.TestCase):
         return profile,rpc,clock,saved
 
     def mutations(self,rpc):return [(m,p) for m,p in rpc.calls if m not in (
-        "buddy-world.snapshot","buddy-quests.discover","buddy-actions.status","buddy-party.state","buddy-chat.owner_feed","buddy-trade.lookup_items")]
+        "buddy-world.snapshot","buddy-quests.discover","buddy-quests.state","buddy-actions.status","buddy-party.state","buddy-chat.owner_feed","buddy-trade.lookup_items")]
 
     def test_owner_completed_own_complete_handoff_then_actual_owner_followup_accepts(self):
         profile,rpc,clock,_=self.rig()
@@ -173,7 +262,7 @@ class PartyQuestTests(unittest.TestCase):
         rpc.self_x=-8912
         rpc.after_travel=lambda rpc:setattr(rpc,"owner_present",False)
         profile.tick()
-        self.assertFalse(any(m.startswith("buddy-quests.") and m!="buddy-quests.discover" for m,_ in rpc.calls))
+        self.assertFalse(any(m.startswith("buddy-quests.") and m not in ("buddy-quests.discover", "buddy-quests.state") for m,_ in rpc.calls))
         self.assertIn(("buddy-actions.release_interaction",{"owner":"quests","token":"owned-lease"}),rpc.calls)
         profile,rpc,_,_=self.rig()
         rpc.self_x=-8912

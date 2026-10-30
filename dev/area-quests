@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""One finite, explicitly requested sweep of actual nearby questgivers."""
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+import uuid
+
+loader = importlib.machinery.SourceFileLoader("area_party_quests", str(Path(__file__).with_name("party-quests")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+party = importlib.util.module_from_spec(spec)
+loader.exec_module(party)
+converse, sync, Error, integer = party.converse, party.sync, party.Error, party.integer
+
+
+class AreaSweep(party.PartyQuestSync):
+    def __init__(self, name, guid, rpc, save=lambda value: None, now=time.time, stopped=lambda: False, notify=lambda: None):
+        super().__init__(name, guid, rpc, save=save, now=now, stopped=stopped, notify=notify)
+        self.anchor, self.session, self.original_following = None, None, False
+        self.initial, self.accepted, self.rewarded = set(), set(), set()
+        self.queries, self.turnins, self.auto_accepts = set(), set(), set()
+        self.held, self.done, self.unconfirmed = False, False, 0
+        self.travel_attempts = {}
+        self.suppress_follow_restore = False
+
+    def read(self):
+        state = self.call("buddy-quests.discover", {})
+        world = self.call("buddy-world.snapshot", {})
+        actions = self.call("buddy-actions.status", {})
+        journal = self.call("buddy-quests.journal", {"refresh": False})
+        final = self.call("buddy-quests.state", {})
+        if sync.session_id(state) != sync.session_id(final):
+            raise Error("Quest body changed while reading area observations")
+        player = world.get("self", {})
+        if not isinstance(player, dict) or integer(player.get("guid", 0)) != self.guid:
+            raise Error("Area quest character identity changed")
+        return {"quests": final, "world": world, "actions": actions, "journal": journal,
+                "active": sync.active_log(final), "session": sync.session_id(final)}
+
+    def safe(self, context):
+        player, actions = context["world"]["self"], context["actions"]
+        if (any(player.get(key) is not True for key in ("present", "aliveKnown", "alive", "unitFlagsKnown"))
+                or integer(player.get("unitFlags", 0)) & 0x80000):
+            self.status["phase"] = "paused_for_combat_or_character_state"
+            return False
+        if (not party.finite_position(actions.get("position"), "known")
+                or integer(actions["position"].get("mapId", 0)) != 0
+                or not converse.BuddyControls.quest_scene_safe(actions, context["world"], self.guid)):
+            self.status["phase"] = "waiting_for_safe_known_character_position"
+            return False
+        if any(actions.get(key) is True for key in ("traveling", "practicing", "castPending")) or context["quests"].get("actionInFlight") is True:
+            self.status["phase"] = "waiting_for_existing_game_operation"
+            return False
+        return True
+
+    def givers(self, context):
+        nearby = context["quests"].get("nearby", [])
+        if not isinstance(nearby, list) or len(nearby) > 64:
+            raise Error("Area questgiver observations are invalid")
+        own, result = context["actions"]["position"], []
+        for row in nearby:
+            creature = row.get("creature", {}) if isinstance(row, dict) else {}
+            if (not party.finite_position(creature)
+                    or any(creature.get(key) is not True for key in ("present", "aliveKnown", "alive"))
+                    or integer(creature.get("mapId", 0)) != 0
+                    or integer(creature.get("npcFlags", 0)) & 2 == 0
+                    or integer(creature.get("movementFlags", 0)) != 0
+                    or integer(creature.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000 | 0x100000 | 0x2000000)
+                    or party.distance(self.anchor, creature) > 120):
+                continue
+            guid, entry = integer(creature.get("guid", 0)), integer(creature.get("entry", 0))
+            if guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry:
+                continue
+            current_distance = party.distance(own, creature)
+            if self.travel_attempts.get(guid, 0) >= 3 and current_distance > 8:
+                continue
+            result.append({"guid": guid, "entry": entry, "distance": current_distance})
+        return sorted(result, key=lambda row: (row["distance"], row["guid"]))[:32]
+
+    @staticmethod
+    def complete(context):
+        return {integer(row.get("questId", 0)) for row in context["quests"].get("questLog", [])
+                if isinstance(row, dict) and row.get("complete") is True and row.get("failed") is not True}
+
+    def allowed(self, context, qid, purpose):
+        if purpose == "reward":
+            return qid in self.complete(context)
+        offer = context["quests"].get("offer", {})
+        return (qid not in context["active"] and len(context["active"]) < 25
+                and any(isinstance(row, dict) and integer(row.get("questId", 0)) == qid
+                        and row.get("available") is True and row.get("repeatable") is not True
+                        and row.get("acceptRequested") is not True and integer(row.get("flags", 0)) & 0x80000 == 0
+                        for row in offer.get("quests", [])))
+
+    def request(self, context, giver, method, qid=0, key=None, offer_binding=None, query=None):
+        if self.stopped():
+            raise converse.Stopped("Area quest stop requested")
+        if self.now() < self.data["nextMutationAt"] or key and self.data["reservations"].get(key) == offer_binding:
+            return False
+        # Movement is retryable in bounded segments. Consume a quest offer only
+        # immediately before its actual request, after travel and fresh checks.
+        self.data["nextMutationAt"] = self.now()+10
+        self.save(self.data)
+        def operation():
+            if giver["distance"] > 8:
+                if self.travel_attempts.get(giver["guid"], 0) >= 3:
+                    self.status["phase"] = "area_giver_route_attempt_limit_reached"
+                    return {}
+                lease = self.call("buddy-actions.acquire_interaction", {"owner": "quests", "leaseMs": 30000})
+                token, state = lease.get("token"), lease.get("state", {})
+                if not isinstance(token, str) or not 1 <= len(token) <= 128 or state.get("interactionOwner") != "quests":
+                    raise Error("Area quest travel lease is unconfirmed")
+                try:
+                    if state.get("moving") is True or state.get("motionUnconfirmed") is True:
+                        raise Error("Area quest travel stop is unconfirmed")
+                    fresh = self.read()
+                    if (not self.safe(fresh) or fresh["session"] != self.session
+                            or not any(row["guid"] == giver["guid"] for row in self.givers(fresh))
+                            or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding)):
+                        return {}
+                    self.status["phase"] = "traveling_to_observed_area_questgiver"
+                    self.notify()
+                    self.travel_attempts[giver["guid"]] = self.travel_attempts.get(giver["guid"], 0)+1
+                    self.call("buddy-actions.travel_quest", {"token": token, "npcGuid": str(giver["guid"])})
+                finally:
+                    try:
+                        self.rpc.call("buddy-actions.release_interaction", {"owner": "quests", "token": token})
+                    except Error:
+                        self.status["cleanup"] = "interaction_release_unconfirmed"
+            fresh = self.read()
+            if (not self.safe(fresh) or fresh["session"] != self.session
+                    or not any(row["guid"] == giver["guid"] and row["distance"] <= 8 for row in self.givers(fresh))):
+                self.status["phase"] = "travel_stopped_short_rechecking_area_giver"
+                if self.travel_attempts.get(giver["guid"], 0) >= 3:
+                    self.unconfirmed += 1
+                return {}
+            state = fresh["quests"]
+            params = {"sessionId": self.session, "npcGuid": str(giver["guid"])}
+            if method == "buddy-quests.turn_in":
+                if not self.allowed(fresh, qid, "reward") or converse.BuddyControls.ambiguous_quest_reward(state, qid):
+                    return {}
+                params.update(questId=qid, questLogRevision=str(integer(state.get("questLogRevision", 0))))
+            elif method == "buddy-quests.accept":
+                if not self.allowed(fresh, qid, "accept") or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding):
+                    return {}
+                params.update(questId=qid, offerRevision=offer_binding[2])
+            elif method == "buddy-quests.claim_reward":
+                if (not self.allowed(fresh, qid, "reward") or converse.BuddyControls.ambiguous_quest_reward(state, qid)
+                        or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding)):
+                    return {}
+                choice = self.choice(state["turnInOffer"], fresh["world"]["self"], session=self.session)
+                if choice is False:
+                    return {}
+                params.update(questId=qid, offerRevision=offer_binding[2], noChoice=choice is None,
+                              choiceIndex=choice["index"] if choice else 0, expectedItemId=choice["itemId"] if choice else 0)
+            if self.stopped():
+                raise converse.Stopped("Area quest stop requested")
+            if key:
+                self.data["reservations"][key] = offer_binding
+            if query:
+                (self.queries if query[0] == "offer" else self.turnins).add(query[1])
+            self.data["lastMutation"] = {"method": method, "questId": qid, "npcGuid": str(giver["guid"]), "at": self.now()}
+            self.save(self.data)
+            self.notify()
+            return self.call(method, params)
+        try:
+            result = operation()
+            if result:
+                self.status["phase"] = "waiting_for_fresh_area_quest_state"
+            return bool(result)
+        except converse.Stopped:
+            raise
+        except Error:
+            self.unconfirmed += 1
+            self.status["phase"] = "area_request_unconfirmed_reconciling_actual_state"
+            return False
+
+    def tick(self):
+        context = self.read()
+        self.status.update(activeQuestIds=sorted(context["active"]), observationsCurrent=True)
+        if self.session is None:
+            if not self.safe(context):
+                return
+            self.session = context["session"]
+            self.anchor = dict(context["actions"]["position"])
+            self.original_following = context["actions"].get("following") is True
+            self.initial = set(context["active"])
+            self.data["routine"] = {"session": self.session, "originalFollowing": self.original_following}
+            self.save(self.data)
+        elif context["session"] != self.session:
+            self.done = True
+            self.status["phase"] = "stopped_after_body_session_changed"
+            return
+        self.accepted |= context["active"] - self.initial
+        receipt = context["quests"].get("lastReward", {})
+        qid = integer(receipt.get("questId", 0))
+        if (qid and qid not in context["active"] and receipt.get("status") in ("REWARD_CONFIRMED", 2)
+                and receipt.get("serverRewardObserved") is True and receipt.get("logRemovalConfirmed") is True):
+            self.rewarded.add(qid)
+        self.status.update(acceptedQuestIds=sorted(self.accepted), rewardedQuestIds=sorted(self.rewarded))
+        if not self.safe(context):
+            return
+        if context["actions"].get("following") is True:
+            self.held = True
+            self.data["routine"]["held"] = True
+            if self.mutate("buddy-actions.follow", {"enabled": False}):
+                self.status["phase"] = "holding_previous_follow_intent"
+            return
+        if self.now() < self.data["nextMutationAt"]:
+            self.status["phase"] = "waiting_for_mutation_cooldown"
+            return
+        candidates = self.givers(context)
+        state = context["quests"]
+        offer, reward = state.get("offer", {}), state.get("turnInOffer", {})
+        complete = self.complete(context)
+        reward_giver = next((row for row in candidates if integer(reward.get("npcGuid", 0)) == row["guid"]), None)
+        reward_qid = integer(reward.get("questId", 0))
+        if reward_giver and reward_qid in complete and self.reward_offer(reward, reward_qid, reward_giver["guid"]):
+            bound = sync.binding(self.session, reward_giver["guid"], integer(reward.get("revision", 0)))
+            if not converse.BuddyControls.ambiguous_quest_reward(state, reward_qid) and self.data["reservations"].get("claim:"+str(reward_qid)) != bound:
+                if self.choice(reward, context["world"]["self"], lookup=True, session=self.session) is False:
+                    return
+                self.request(context, reward_giver, "buddy-quests.claim_reward", reward_qid, "claim:"+str(reward_qid), bound)
+                return
+        menu_giver = next((row for row in candidates if integer(offer.get("npcGuid", 0)) == row["guid"]), None)
+        entries = offer.get("quests", [])
+        if not isinstance(entries, list) or len(entries) > 32:
+            raise Error("Area quest offer is invalid")
+        journal = context["journal"].get("entries", [])
+        if not isinstance(journal, list) or len(journal) > 25:
+            raise Error("Area quest journal is invalid")
+        for giver in candidates:
+            known = {integer(row.get("questId", 0)) for row in journal if isinstance(row, dict)
+                     and integer(row.get("observedRewardNpcGuid", 0)) == giver["guid"]}
+            if menu_giver == giver and integer(offer.get("expiresInMs", 0)) > 0:
+                known |= {integer(row.get("questId", 0)) for row in entries if isinstance(row, dict)}
+            for qid in sorted(complete & known):
+                turn_key = (giver["guid"], qid, integer(state.get("questLogRevision", 0)))
+                if turn_key not in self.turnins and not converse.BuddyControls.ambiguous_quest_reward(state, qid):
+                    self.request(context, giver, "buddy-quests.turn_in", qid, query=("turn_in", turn_key))
+                    return
+        if menu_giver and integer(offer.get("expiresInMs", 0)) > 0:
+            bound = sync.binding(self.session, menu_giver["guid"], integer(offer.get("revision", 0)))
+            for quest in entries:
+                if (not isinstance(quest, dict) or quest.get("available") is not True
+                        or quest.get("repeatable") is True or quest.get("acceptRequested") is True):
+                    continue
+                qid = integer(quest.get("questId", 0))
+                if not qid or qid in context["active"] or len(context["active"]) >= 25:
+                    continue
+                if integer(quest.get("flags", 0)) & 0x80000:
+                    auto_key = tuple(bound) + (qid,)
+                    if auto_key not in self.auto_accepts:
+                        self.auto_accepts.add(auto_key)
+                        self.status["phase"] = "waiting_for_automatic_quest_log_confirmation"
+                        return
+                    continue
+                if self.data["reservations"].get("accept:"+str(qid)) != bound:
+                    self.request(context, menu_giver, "buddy-quests.accept", qid, "accept:"+str(qid), bound)
+                    return
+        signature = (tuple(sorted(context["active"])), tuple(sorted(complete)))
+        for giver in candidates:
+            key = (giver["guid"], signature)
+            if key not in self.queries:
+                if len(self.queries) >= 64:
+                    self.done = True
+                    self.status["phase"] = "finished_at_bounded_giver_query_limit"
+                    return
+                if self.travel_attempts.get(giver["guid"], 0) >= 3 and giver["distance"] > 8:
+                    continue
+                self.request(context, giver, "buddy-quests.offer", query=("offer", key))
+                return
+        self.done = True
+        self.status.update(phase="finished_with_unconfirmed_area_requests" if self.unconfirmed else "finished_visible_area_quest_sweep",
+                           queriedGivers=len({row[0] for row in self.queries}))
+
+    def cleanup(self):
+        if self.session is None or not self.held or not self.original_following or self.suppress_follow_restore:
+            return
+        try:
+            world = self.rpc.call("buddy-world.snapshot", {})
+            state = self.rpc.call("buddy-quests.state", {})
+            if integer(world.get("self", {}).get("guid", 0)) != self.guid or sync.session_id(state) != self.session:
+                self.status["cleanup"] = "body_changed_no_stale_follow_restore"
+                return
+            result = self.rpc.call("buddy-actions.follow", {"enabled": True})
+            self.status["cleanup"] = "previous_follow_intent_restored" if result.get("following") is True else "follow_restore_unconfirmed"
+        except Error:
+            self.status["cleanup"] = "follow_restore_unconfirmed"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("run", "status", "stop"))
+    parser.add_argument("--character-guid", type=int, required=True)
+    parser.add_argument("--max-seconds", type=float, default=300)
+    args = parser.parse_args(argv)
+    identity = converse.area_quest_identity(args.character_guid)
+    if not math.isfinite(args.max_seconds) or not 0 < args.max_seconds <= 300:
+        parser.error("Area sweep duration must be greater than0 and at most300seconds")
+    base = converse.ensure_state(converse.ROOT / "data/area-quests")
+    folder = converse.ensure_state(base / str(args.character_guid))
+    if args.command != "run":
+        result = converse.area_quest_snapshot(args.character_guid, stop=args.command == "stop")
+        print(json.dumps(result, indent=2))
+        return 0
+    with os.fdopen(converse.private_open(folder/"lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Error("This character already has an area quest sweep") from None
+        record = {"identity": identity, "instance": uuid.uuid4().hex, "pid": os.getpid(), "routineActive": True}
+        end, stop_requested = time.monotonic()+args.max_seconds, False
+        def stop(signum, frame):
+            nonlocal stop_requested
+            stop_requested = True
+        signal.signal(signal.SIGINT, stop)
+        signal.signal(signal.SIGTERM, stop)
+        def stopped():
+            request = converse.read_json(folder/"stop.json")
+            expected = {"identity": identity, "instance": record["instance"]}
+            if request == dict(expected, restoreFollowing=False):
+                actor.suppress_follow_restore = True
+                return True
+            return stop_requested or time.monotonic() >= end or request == expected
+        def save(value):
+            if len(json.dumps(value)) > 65536:
+                raise Error("Area quest reservations exceed their size limit")
+            converse.write_json(folder/"operations.json", value)
+        actor = AreaSweep(identity["name"], args.character_guid,
+                          sync.SyncRPC(f"http://127.0.0.1:{identity['port']}/rpc", timeout=5), save=save, stopped=stopped)
+        def status():
+            record.update(updatedAt=time.time(), remainingSeconds=max(0, int(end-time.monotonic())), own=actor.status)
+            converse.write_json(folder/"status.json", record)
+        actor.notify = status
+        status()
+        try:
+            while not stopped() and not actor.done:
+                try:
+                    actor.tick()
+                except converse.Stopped:
+                    break
+                except Error:
+                    actor.status.update(phase="waiting_for_area_quest_observations", observationsCurrent=False)
+                status()
+                tick_end = time.monotonic()+1
+                while not actor.done and not stopped() and time.monotonic() < tick_end:
+                    time.sleep(.1)
+        finally:
+            actor.cleanup()
+            if not actor.done:
+                actor.status["phase"] = "stopped_or_area_sweep_time_limit_reached"
+            record["routineActive"] = False
+            status()
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError) as error:
+        print("Area quests: " + str(error), file=sys.stderr)
+        sys.exit(1)

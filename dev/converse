@@ -45,7 +45,7 @@ DISABLED_FEATURES = (
 ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
            "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
-           "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC")
+           "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS")
 QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 3903],
                        "prerequisiteQuestIds": [783, 5261, 33],
                        "characters": [{"name": "Arlen", "guid": 1, "port": 8086},
@@ -146,6 +146,15 @@ confirmed outcomes; reserved or unrecorded outcomes remain unconfirmed. Do not
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
+AREA_QUESTS starts one bounded nearby quest sweep only when Joel explicitly asks
+you to turn in and gather quests in this area. It visits actual observed local
+questgivers, turns in your completed quests, chooses actual rewards and accepts
+actual available quests without requiring Joel to have them. It pauses in combat,
+holds following while active and restores the previous follow intent afterward.
+It lasts at most five minutes; it never abandons quests or explores beyond the
+local sweep radius. STOP_AREA_QUESTS cancels that sweep. area_quests reports its
+actual phase and confirmed own-log results; never claim the sweep finished from
+its start acknowledgement. Other agents cannot authorize either action.
 """
 
 
@@ -373,6 +382,65 @@ def quest_sync_snapshot(character_guid, stop=False):
 
 def party_quest_sync_snapshot(character_guid, stop=False):
     return _quest_routine_snapshot(character_guid, stop=stop, standing=True)
+
+
+def area_quest_identity(character_guid):
+    row = next((row for row in QUEST_SYNC_IDENTITY["characters"] if row["guid"] == character_guid), None)
+    if row is None:
+        raise ConversationError("No matching area quest character profile")
+    return {"version": 1, "mode": "area_quests", **row}
+
+
+def area_quest_snapshot(character_guid, stop=False, restore_follow=True):
+    unknown = {"active": False}
+    try:
+        identity = area_quest_identity(character_guid)
+        folder = ROOT / "data/area-quests" / str(character_guid)
+        if any(path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077
+               for path in (folder.parent, folder)):
+            return unknown
+        def read(path):
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "r") as source:
+                info = os.fstat(source.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                        or info.st_nlink != 1 or info.st_mode & 0o077 or info.st_size > 8192):
+                    raise ConversationError("Area quest state is unavailable")
+                return json.loads(source.read(8193))
+        record = read(folder / "status.json")
+        if (not isinstance(record, dict) or record.get("identity") != identity
+                or not isinstance(record.get("instance"), str) or not re.fullmatch(r"[0-9a-f]{32}", record["instance"])):
+            return unknown
+        descriptor = os.open(folder / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r") as lock:
+            info = os.fstat(lock.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+                return unknown
+            active = record.get("routineActive") is True and is_locked(lock)
+        own, clean = record.get("own", {}), {}
+        if not isinstance(own, dict):
+            return unknown
+        for key in ("phase", "cleanup"):
+            value = own.get(key)
+            if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,96}", value):
+                clean[key] = value
+        for key in ("activeQuestIds", "acceptedQuestIds", "rewardedQuestIds"):
+            values = own.get(key, [])
+            if not isinstance(values, list) or len(values) > 25:
+                return unknown
+            clean[key] = [integer(value) for value in values]
+            if any(not 0 < value < 2**31 for value in clean[key]):
+                return unknown
+        result = {"active": active, "phase": clean.get("phase", "starting"), "own": clean}
+        if stop and active:
+            request = {"identity": identity, "instance": record["instance"]}
+            if not restore_follow:
+                request["restoreFollowing"] = False
+            write_json(folder / "stop.json", request)
+            result["stopRequested"] = True
+        return result
+    except (OSError, ValueError, TypeError, ConversationError):
+        return unknown
 
 
 def party_maintenance_snapshot(character_guid):
@@ -862,14 +930,18 @@ class BuddyControls:
     def context(self):
         goal = quest_sync_snapshot(self.character_guid)
         standing = party_quest_sync_snapshot(self.character_guid)
+        area = area_quest_snapshot(self.character_guid)
         state = {"abilities": {"following": self.actions_available,
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
                               "quests": self.quests_available, "looting": self.loot_available,
                               "trading": self.trade_available,
                               "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack"}.get(self.character_class,"unsupported")) is True,
-                              "quest_sync_stop": goal.get("active") is True or standing.get("active") is True},
+                              "quest_sync_stop": goal.get("active") is True or standing.get("active") is True,
+                              "area_quests": self.actions_available and self.quests_available,
+                              "area_quests_stop": area.get("active") is True},
                  "quest_sync": goal,
                  "party_quest_sync": standing,
+                 "area_quests": area,
                  "party_maintenance": party_maintenance_snapshot(self.character_guid),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
@@ -1298,12 +1370,39 @@ class BuddyControls:
     def execute(self, action, quest_id=0, item_entry=0, gold_copper=0):
         if action == "NONE":
             return None
+        if action == "STOP_AREA_QUESTS":
+            result = area_quest_snapshot(self.character_guid, stop=True)
+            return "I've requested that my area quest sweep stop and restore my prior follow setting." if result.get("stopRequested") is True else "I don't have an active area quest sweep to stop."
+        if action == "AREA_QUESTS":
+            if not self.actions_available or not self.quests_available:
+                return "Quest travel isn't ready yet."
+            if area_quest_snapshot(self.character_guid).get("active") is True:
+                return "My area quest sweep is already running."
+            try:
+                identity = area_quest_identity(self.character_guid)
+                if getattr(self.rpc, "url", "") != f"http://127.0.0.1:{identity['port']}/rpc":
+                    return "My area quest profile doesn't match this character connection."
+                player = self.rpc.call("buddy-world.snapshot", {}).get("self", {})
+                if not isinstance(player, dict) or integer(player.get("guid", 0)) != self.character_guid:
+                    return "I couldn't confirm my character before starting the area quest sweep."
+                root = ensure_state(ROOT / "data/area-quests")
+                folder = ensure_state(root / str(self.character_guid))
+                descriptor = private_open(folder / "live.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+                with os.fdopen(descriptor, "ab", buffering=0) as log:
+                    subprocess.Popen([sys.executable, "-B", str(ROOT / "dev/area-quests"), "run",
+                                      "--character-guid", str(self.character_guid)], cwd=ROOT,
+                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            except (OSError, ConversationError):
+                return "I couldn't start my area quest sweep."
+            return "I'm starting a nearby quest sweep: turn-ins, rewards and available quests, for up to five minutes."
         if action == "STOP_QUEST_SYNC":
             initial = quest_sync_snapshot(self.character_guid, stop=True)
             standing = party_quest_sync_snapshot(self.character_guid, stop=True)
             return ("I've requested that our quest-sync routine stop; cleanup may take a moment."
                     if initial.get("stopRequested") is True or standing.get("stopRequested") is True
                     else "I don't see an active matching quest-sync routine to stop.")
+        if action in ("FOLLOW", "STOP_FOLLOWING"):
+            area_quest_snapshot(self.character_guid, stop=True, restore_follow=False)
         try:
             if action == "PLAN_QUEST":
                 entries = self.journal.get("entries", []) if self.journal_available else []
