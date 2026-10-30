@@ -4,6 +4,7 @@
 import argparse
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -64,6 +65,28 @@ def recorded_independent(record):
     if type(value) is not bool:
         raise BuddyError(f"PID file has an invalid operating mode; left untouched: {PID_FILE}")
     return value
+
+
+def operation_deadline(deadline, timeout):
+    now = time.monotonic()
+    if deadline is None:
+        return now + timeout
+    if type(deadline) not in (int, float):
+        raise BuddyError("Deadline must be a finite future same-host monotonic time")
+    try:
+        valid = math.isfinite(deadline) and deadline > now
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise BuddyError("Deadline must be a finite future same-host monotonic time")
+    return min(now + timeout, deadline)
+
+
+def remaining_time(deadline, expired):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise BuddyError(expired)
+    return remaining
 
 
 def configure(args):
@@ -236,9 +259,10 @@ def docker_access(deadline):
     if not shutil.which("docker"):
         raise BuddyError("Docker CLI is missing; install Docker Engine and Compose before starting the buddy.")
     for args in (("info", "--format", "{{.ServerVersion}}"), ("compose", "version", "--short")):
+        remaining = remaining_time(deadline, "Docker access deadline expired; no client was launched")
         try:
             result = subprocess.run(["docker", *args], stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL, timeout=max(0.1, min(10, deadline-time.monotonic())))
+                                    stderr=subprocess.DEVNULL, timeout=min(10, remaining))
         except subprocess.TimeoutExpired:
             raise BuddyError("Docker access check timed out; verify docker info and docker compose version in this SSH session.") from None
         if result.returncode:
@@ -255,7 +279,10 @@ def child_identity(child, deadline):
     settle_until = min(deadline, time.monotonic() + EXEC_SETTLE_TIMEOUT)
     start_ticks = None
     previous = None
+    expired = (f"PID {child.pid} did not expose the exact project command before the tracking deadline; "
+               f"it was preserved and left untouched. Log: {LOG_FILE}")
     while True:
+        remaining_time(settle_until, expired)
         if child.poll() is not None:
             raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
         try:
@@ -271,17 +298,16 @@ def child_identity(child, deadline):
             if info["argv"] == command_line() and previous == info:
                 if child.poll() is not None:
                     raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
+                remaining_time(settle_until, expired)
                 return info
         previous = info if info is not None and info["argv"] == command_line() else None
-        if time.monotonic() >= settle_until:
-            raise BuddyError(f"PID {child.pid} did not expose the exact project command within {EXEC_SETTLE_TIMEOUT}s; "
-                             f"it was preserved and left untouched. Log: {LOG_FILE}")
-        time.sleep(0.01)
+        time.sleep(min(0.01, remaining_time(settle_until, expired)))
 
 
-def start():
+def start(*, deadline=None):
+    """Start this profile, optionally within an absolute same-host deadline."""
+    deadline = operation_deadline(deadline, START_TIMEOUT)
     independent = requested_independent()
-    deadline = time.monotonic() + START_TIMEOUT
     record = load_record()
     if record is not None and running_owned(record):
         if recorded_independent(record) != independent:
@@ -289,6 +315,7 @@ def start():
             raise BuddyError(f"PID {record['pid']} is running with BUDDY_INDEPENDENT={actual}, but {requested} was requested; "
                              "no signal or restart sent. Stop this profile before starting in another mode.")
         if readiness(record):
+            remaining_time(deadline, f"Startup deadline expired; PID {record['pid']} was preserved without restart")
             print(f"Already running: PID {record['pid']}; matching world session ready event observed.\nLog: {LOG_FILE}")
             return 0
         raise BuddyError(f"PID {record['pid']} is already running without a verified ready event; left untouched. Log: {LOG_FILE}")
@@ -317,8 +344,12 @@ def start():
                            AGENT_WOW_REALM_FILE_PATH=str(CONFIG_DIR / "realm.json"))
     if DATA_DIR is not None:
         environment["AGENT_WOW_DATA_DIR"] = str(DATA_DIR)
+    expired = "Startup deadline expired before launch; no client was launched"
+    remaining_time(deadline, expired)
     with os.fdopen(private_file(LOG_FILE, os.O_WRONLY | os.O_CREAT), "wb") as log:
+        remaining_time(deadline, expired)
         log.truncate()
+        remaining_time(deadline, expired)
         child = subprocess.Popen(command_line(), cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
         info = child_identity(child, deadline)
@@ -332,21 +363,28 @@ def start():
             raise BuddyError(f"PID {record['pid']} exited before a matching ready event. Log: {LOG_FILE}")
         found, offset = scan_log(record, offset, lambda line: ready_line(line, child.pid))
         if found is not None and running_owned(record):
+            remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
             record["ready_offset"] = found
             save_record(record)
+            remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
             print(f"Started: PID {child.pid}; matching world session ready event observed.\nLog: {LOG_FILE}")
             return 0
-        time.sleep(0.25)
-    raise BuddyError(f"Startup did not become ready within {START_TIMEOUT}s; PID {child.pid} was preserved. Use dev/buddy status or stop. Log: {LOG_FILE}")
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    raise BuddyError(f"Startup deadline expired without readiness; PID {child.pid} was preserved. Use dev/buddy status or stop. Log: {LOG_FILE}")
 
 
-def stop():
+def stop(*, deadline=None):
+    """Stop this owned profile, optionally within an absolute same-host deadline."""
+    deadline = operation_deadline(deadline, STOP_TIMEOUT)
     record = load_record()
     if record is None or not running_owned(record):
+        remaining_time(deadline, f"Stop deadline expired during lifecycle checks; no signal sent. Log: {LOG_FILE}")
         print(f"Buddy is not running.\nLog: {LOG_FILE}")
         return 0
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         raise BuddyError("Linux pidfd signal support is unavailable; refusing a signal that could race PID reuse.")
+    expired = f"Stop deadline expired before SIGTERM; no signal sent. PID {record['pid']} preserved. Log: {LOG_FILE}"
+    remaining_time(deadline, expired)
     # pidfd pins the exact process while /proc identity is rechecked before SIGTERM.
     pidfd = os.pidfd_open(record["pid"])
     try:
@@ -354,10 +392,11 @@ def stop():
             raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
         with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as log:
             offset = os.fstat(log.fileno()).st_size
+        remaining_time(deadline, expired)
         signal.pidfd_send_signal(pidfd, signal.SIGTERM)
     finally:
         os.close(pidfd)
-    deadline, confirmed = time.monotonic() + STOP_TIMEOUT, False
+    confirmed = False
     while time.monotonic() < deadline:
         found, offset = scan_log(record, offset, logout_line)
         confirmed = confirmed or found is not None
@@ -367,11 +406,12 @@ def stop():
             confirmed = confirmed or found is not None
             if not confirmed:
                 raise BuddyError(f"PID {record['pid']} exited, but no server logout completion was observed; logout is unverified. Log: {LOG_FILE}")
+            remaining_time(deadline, f"Server logout completion and process exit were verified, but the stop deadline was not met; no force kill sent. Log: {LOG_FILE}")
             print(f"Stopped: PID {record['pid']}; server logout completion and process exit verified.\nLog: {LOG_FILE}")
             return 0
-        time.sleep(0.25)
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
     detail = "server logout was confirmed, but the process is still exiting" if confirmed else "server-confirmed exit was not observed"
-    raise BuddyError(f"After {STOP_TIMEOUT}s, {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
+    raise BuddyError(f"Stop deadline expired: {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
 
 
 def status():

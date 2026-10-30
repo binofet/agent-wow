@@ -52,6 +52,7 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.alive = True
         self.process_overrides = {}
         self.patch(buddy, "process_info", side_effect=self.process_info)
+        self.real_docker_access = buddy.docker_access
         self.docker = self.patch(buddy, "docker_access")
         self.socket = self.patch(buddy.socket, "socket")
         self.ready_pid = 12345
@@ -100,6 +101,209 @@ class BuddyLifecycleTests(unittest.TestCase):
     def launch(self):
         self.assertEqual(buddy.start(), 0)
         return buddy.load_record()
+
+    def virtual_clock(self):
+        clock = types.SimpleNamespace(now=100.0, sleeps=[])
+
+        def sleep(duration):
+            self.assertGreaterEqual(duration, 0)
+            clock.sleeps.append(duration)
+            clock.now += duration
+
+        self.patch(buddy.time, "monotonic", side_effect=lambda: clock.now)
+        self.patch(buddy.time, "sleep", side_effect=sleep)
+        return clock
+
+    def test_deadline_is_keyword_only_and_invalid_values_cannot_read_spawn_or_signal(self):
+        clock = self.virtual_clock()
+        for action in (buddy.start, buddy.stop):
+            with self.subTest(action=action.__name__):
+                with self.assertRaises(TypeError):
+                    action(clock.now + 1)
+                with mock.patch.object(buddy, "load_record") as load:
+                    for value in (True, False, "101", object(), float("nan"), float("inf"), float("-inf"), 10**1000, -1, clock.now, clock.now - .1):
+                        with self.subTest(deadline=value):
+                            with self.assertRaisesRegex(buddy.BuddyError, "finite future same-host monotonic"):
+                                action(deadline=value)
+                    load.assert_not_called()
+        self.spawn.assert_not_called()
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_future_deadline_cannot_extend_default_start_or_stop_timeout(self):
+        clock = self.virtual_clock()
+        self.assertEqual(buddy.start(deadline=clock.now + 1000), 0)
+        self.assertEqual(self.docker.call_args.args, (100 + buddy.START_TIMEOUT,))
+        start = clock.now
+        self.send_signal.side_effect = lambda *args: setattr(clock, "now", clock.now + 2)
+        with self.assertRaisesRegex(buddy.BuddyError, "no force kill"):
+            buddy.stop(deadline=clock.now + 1000)
+        self.assertAlmostEqual(clock.now, start + buddy.STOP_TIMEOUT)
+        self.assertEqual(self.send_signal.call_count, 1)
+        self.assertTrue(all(0 <= seconds <= .25 for seconds in clock.sleeps))
+
+    def test_start_deadline_is_shared_by_preflight_tracking_and_readiness(self):
+        clock = self.virtual_clock()
+        deadline = clock.now + .1
+        self.ready_pid = 99999
+        self.docker.side_effect = lambda deadline: setattr(clock, "now", clock.now + .04)
+        with mock.patch.object(buddy, "preflight_pid_file", side_effect=lambda: setattr(clock, "now", clock.now + .02)):
+            with self.assertRaisesRegex(buddy.BuddyError, "deadline expired without readiness.*preserved"):
+                buddy.start(deadline=deadline)
+        self.assertEqual(self.docker.call_args.args, (deadline,))
+        self.assertAlmostEqual(clock.now, deadline)
+        self.assertLess(clock.sleeps[-1], .04)
+        self.assertFalse(buddy.readiness(buddy.load_record()))
+        self.assertEqual(self.spawn.call_count, 1)
+        self.send_signal.assert_not_called()
+
+    def test_expiry_during_preflight_preserves_log_and_forbids_launch(self):
+        clock = self.virtual_clock()
+        deadline = clock.now + .1
+        buddy.LOG_FILE.write_text("preserve existing evidence")
+        with mock.patch.object(buddy, "preflight_pid_file", side_effect=lambda: setattr(clock, "now", deadline)):
+            with self.assertRaisesRegex(buddy.BuddyError, "deadline expired before launch; no client was launched"):
+                buddy.start(deadline=deadline)
+        self.assertEqual(buddy.LOG_FILE.read_text(), "preserve existing evidence")
+        self.assertFalse(buddy.PID_FILE.exists())
+        self.spawn.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_subsecond_tracking_deadline_caps_sleep_and_preserves_untracked_child(self):
+        clock = self.virtual_clock()
+        deadline = clock.now + .005
+        with self.assertRaisesRegex(buddy.BuddyError, "tracking deadline.*preserved and left untouched"):
+            buddy.start(deadline=deadline)
+        self.assertAlmostEqual(clock.now, deadline)
+        self.assertEqual(len(clock.sleeps), 1)
+        self.assertAlmostEqual(clock.sleeps[0], .005)
+        self.assertFalse(buddy.PID_FILE.exists())
+        self.assertEqual(self.spawn.call_count, 1)
+        self.send_signal.assert_not_called()
+
+    def test_existing_ready_process_is_preserved_under_short_start_deadline(self):
+        clock = self.virtual_clock()
+        self.launch()
+        original_record, original_log = buddy.PID_FILE.read_bytes(), buddy.LOG_FILE.read_bytes()
+        self.docker.reset_mock()
+        self.assertEqual(buddy.start(deadline=clock.now + .001), 0)
+        with self.assertRaisesRegex(buddy.BuddyError, "finite future same-host monotonic"):
+            buddy.start(deadline=clock.now)
+        self.assertEqual(self.spawn.call_count, 1)
+        self.docker.assert_not_called()
+        self.assertEqual(buddy.PID_FILE.read_bytes(), original_record)
+        self.assertEqual(buddy.LOG_FILE.read_bytes(), original_log)
+        self.send_signal.assert_not_called()
+
+    def test_deadline_does_not_weaken_exact_identity_for_start_or_stop(self):
+        clock = self.virtual_clock()
+        self.launch()
+        self.process_overrides = {"start_ticks": 999}
+        for action in (buddy.start, buddy.stop):
+            with self.assertRaisesRegex(buddy.BuddyError, "no signal sent"):
+                action(deadline=clock.now + 1)
+        self.assertEqual(self.spawn.call_count, 1)
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_expiry_after_pidfd_open_closes_descriptor_without_sigterm(self):
+        clock = self.virtual_clock()
+        self.launch()
+        deadline = clock.now + .1
+        descriptors = []
+
+        def open_pidfd(pid):
+            descriptor = os.open(os.devnull, os.O_RDONLY)
+            descriptors.append(descriptor)
+            clock.now = deadline
+            return descriptor
+
+        self.pidfd.side_effect = open_pidfd
+        with self.assertRaisesRegex(buddy.BuddyError, "deadline expired before SIGTERM; no signal sent"):
+            buddy.stop(deadline=deadline)
+        self.assertEqual(len(descriptors), 1)
+        with self.assertRaises(OSError):
+            os.fstat(descriptors[0])
+        self.send_signal.assert_not_called()
+        self.assertTrue(buddy.running_owned(buddy.load_record()))
+
+    def test_stop_deadline_includes_identity_and_signal_time_without_reset(self):
+        clock = self.virtual_clock()
+        record = self.launch()
+        deadline = clock.now + .1
+
+        def open_pidfd(pid):
+            clock.now += .03
+            return os.open(os.devnull, os.O_RDONLY)
+
+        self.pidfd.side_effect = open_pidfd
+        self.send_signal.side_effect = lambda *args: setattr(clock, "now", clock.now + .02)
+        with self.assertRaisesRegex(buddy.BuddyError, "deadline expired.*no force kill"):
+            buddy.stop(deadline=deadline)
+        self.assertAlmostEqual(clock.now, deadline)
+        self.assertLess(clock.sleeps[-1], .051)
+        self.send_signal.assert_called_once()
+        self.assertEqual(self.send_signal.call_args.args[1], signal.SIGTERM)
+        self.assertEqual(buddy.load_record()["pid"], record["pid"])
+
+    def test_stop_cannot_report_deadline_success_from_late_exit_or_absence_observations(self):
+        clock = self.virtual_clock()
+        self.launch()
+        deadline = clock.now + .1
+
+        def terminate(*args):
+            with buddy.LOG_FILE.open("ab") as log:
+                log.write(b'level=DEBUG msg="world packet" direction=read opcode=0x04d '
+                          b'opcode_label=SMSG_LOGOUT_COMPLETE bytes=0\n')
+            self.alive = False
+
+        original_scan = buddy.scan_log
+
+        def slow_scan(*args):
+            result = original_scan(*args)
+            clock.now = deadline
+            return result
+
+        self.send_signal.side_effect = terminate
+        with mock.patch.object(buddy, "scan_log", side_effect=slow_scan):
+            with self.assertRaisesRegex(buddy.BuddyError, "exit were verified, but the stop deadline was not met; no force kill"):
+                buddy.stop(deadline=deadline)
+        self.send_signal.assert_called_once()
+        self.assertNotIn("Stopped: PID", self.output.getvalue())
+
+        deadline = clock.now + .1
+
+        def slow_load():
+            clock.now = deadline
+            return None
+
+        with mock.patch.object(buddy, "load_record", side_effect=slow_load):
+            with self.assertRaisesRegex(buddy.BuddyError, "deadline expired during lifecycle checks; no signal sent"):
+                buddy.stop(deadline=deadline)
+        self.send_signal.assert_called_once()
+        self.assertEqual(self.spawn.call_count, 1)
+
+    def test_docker_waits_shrink_to_remaining_budget_without_floor_or_late_dispatch(self):
+        clock = self.virtual_clock()
+        deadline = clock.now + .05
+
+        def docker_check(*args, **kwargs):
+            clock.now += min(.04, kwargs["timeout"])
+            return types.SimpleNamespace(returncode=0)
+
+        with mock.patch.object(buddy.shutil, "which", return_value="/mock/docker"), \
+                mock.patch.object(buddy.subprocess, "run", side_effect=docker_check) as run:
+            self.real_docker_access(deadline)
+            self.assertEqual(run.call_count, 2)
+            self.assertAlmostEqual(run.call_args_list[0].kwargs["timeout"], .05)
+            self.assertAlmostEqual(run.call_args_list[1].kwargs["timeout"], .01)
+            run.reset_mock()
+            clock.now = deadline - .01
+            with self.assertRaisesRegex(buddy.BuddyError, "Docker access deadline expired"):
+                self.real_docker_access(deadline)
+            self.assertEqual(run.call_count, 1)
+        self.spawn.assert_not_called()
+        self.send_signal.assert_not_called()
 
     def test_private_detached_launch_and_exact_readiness(self):
         record = self.launch()
@@ -275,13 +479,9 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.send_signal.assert_not_called()
 
     def test_wrong_pid_never_proves_readiness_or_gets_killed(self):
+        self.virtual_clock()
         self.ready_pid = 99999
-        # Advance a virtual clock after tracking, so a slow fsync on CI cannot
-        # expire the deadline before this test reaches the wrong ready event.
-        ticks = iter([0, 0, 0, 0, 0, 2])
-        with mock.patch.object(buddy, "START_TIMEOUT", 1), \
-                mock.patch.object(buddy.time, "monotonic", side_effect=lambda: next(ticks, 2)), \
-                mock.patch.object(buddy.time, "sleep"):
+        with mock.patch.object(buddy, "START_TIMEOUT", .03):
             with self.assertRaisesRegex(buddy.BuddyError, "preserved"):
                 buddy.start()
         self.assertFalse(buddy.readiness(buddy.load_record()))
@@ -340,10 +540,11 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.send_signal.assert_called_once()
 
     def test_stop_timeout_never_escalates_to_kill(self):
+        clock = self.virtual_clock()
         record = self.launch()
-        with mock.patch.object(buddy, "STOP_TIMEOUT", 0):
-            with self.assertRaisesRegex(buddy.BuddyError, "no force kill"):
-                buddy.stop()
+        self.send_signal.side_effect = lambda *args: setattr(clock, "now", clock.now + buddy.STOP_TIMEOUT)
+        with self.assertRaisesRegex(buddy.BuddyError, "no force kill"):
+            buddy.stop()
         self.send_signal.assert_called_once()
         self.assertEqual(self.send_signal.call_args.args[1], signal.SIGTERM)
         self.assertEqual(buddy.load_record()["pid"], record["pid"])
