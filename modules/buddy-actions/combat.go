@@ -31,15 +31,15 @@ func (s *Service) updateClassLocked() {
 	case 5:
 		s.state.ClassName = "priest"
 		s.state.CombatStyle = "priest_smite"
-		s.state.CombatSpellId = smite
+		s.state.CombatSpellId = s.selectedSpellLocked(smite).id
 	case 8:
 		s.state.ClassName = "mage"
 		s.state.CombatStyle = "mage_fireball"
-		s.state.CombatSpellId = fireball
+		s.state.CombatSpellId = s.selectedSpellLocked(fireball).id
 	case 4:
 		s.state.ClassName = "rogue"
 		s.state.CombatStyle = "rogue_melee"
-		s.state.CombatSpellId = sinisterStrike
+		s.state.CombatSpellId = s.selectedSpellLocked(sinisterStrike).id
 	default:
 		s.state.ClassName = "unsupported"
 	}
@@ -55,15 +55,29 @@ func manaBudget(p *worldv1.PlayerState, percent uint64) uint64 {
 }
 
 func (s *Service) setKnownSpell(spell uint32, known bool) {
+	if r := spellRankFor(spell); r.id != 0 {
+		if s.knownSpells == nil {
+			s.knownSpells = make(map[uint32]bool)
+		}
+		if known {
+			s.knownSpells[spell] = true
+		} else {
+			delete(s.knownSpells, spell)
+		}
+		found := highestKnownSpell(s.knownSpells, r.family).id != 0
+		switch r.family {
+		case lesserHeal:
+			s.state.KnownLesserHeal = found
+		case smite:
+			s.state.KnownSmite = found
+		case fireball:
+			s.state.KnownFireball = found
+		case sinisterStrike:
+			s.state.KnownSinisterStrike = found
+		}
+		return
+	}
 	switch spell {
-	case lesserHeal:
-		s.state.KnownLesserHeal = known
-	case smite:
-		s.state.KnownSmite = known
-	case fireball:
-		s.state.KnownFireball = known
-	case sinisterStrike:
-		s.state.KnownSinisterStrike = known
 	case autoAttack:
 		s.state.KnownAutoAttack = known
 	case 13732:
@@ -72,12 +86,15 @@ func (s *Service) setKnownSpell(spell uint32, known bool) {
 		s.improvedSinister2 = known
 	}
 }
+func (s *Service) selectedSpellLocked(family uint32) spellRank {
+	return highestKnownSpell(s.knownSpells, family)
+}
 
 func (s *Service) offensiveDamageLocked(spell, damage uint32) {
 	if damage == 0 {
 		return
 	}
-	switch spell {
+	switch spellRankFor(spell).family {
 	case smite:
 		s.state.SmiteDamageEvents++
 		s.state.SmiteDamageTotal += uint64(damage)

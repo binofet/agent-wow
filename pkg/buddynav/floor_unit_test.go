@@ -138,8 +138,8 @@ func TestCollisionReaderInternalAxesScaleRotationAndSuffix(t *testing.T) {
 		if f.bytes <= 0 || f.bytes > floorCacheBytes || len(f.tiles) != 1 || len(f.models) != 1 {
 			t.Fatal("unbounded or missing cache")
 		}
-		if _, _, err := f.height(Point{-8400, 100, 90}, 90); err == nil {
-			t.Fatal("loaded unsupported fourth tile")
+		if _, _, err := f.height(Point{-9700, 100, 90}, 90); err == nil {
+			t.Fatal("loaded unsupported tile outside bounded nine")
 		}
 	}
 }

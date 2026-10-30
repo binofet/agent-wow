@@ -962,6 +962,80 @@ class OwnerFeedTests(unittest.TestCase):
             self.assertFalse(converse.party_quest_sync_snapshot(1)["active"])
 
 
+class PartyMaintenanceContextTests(unittest.TestCase):
+    def fixture(self, root):
+        folder=converse.ensure_state(root/"data/party-maintenance")
+        record={"identity":converse.PARTY_MAINTENANCE_IDENTITY,"phase":"running","instance":"d"*32,
+            "updatedAt":time.time(),"characters":[{"name":name,"guid":guid,"phase":"waiting_for_training_confirmation",
+                "privateToken":"never_forward"} for name,guid in (("Arlen",1),("Mira",4),("Rook",5))]}
+        own={"identity":{"name":"Arlen","guid":1,"ownerGuid":3,"budgetCopper":10000},
+             "reservedCopper":300,"training":[{"spell":585,"cost":100,"status":"confirmed","session":"private_session"},
+                {"spell":2050,"cost":200,"status":"reserved"}],
+             "mail":{"sessionId":"private_mail_session","listRevision":"1","mailboxGuid":str(0xf110022b0e000001),
+                "mailId":77,"status":"reserved","privateToken":"never_forward"}}
+        converse.write_json(folder/"status.json",record);converse.write_json(folder/"character-1.json",own)
+        return folder,record,own
+
+    def test_owned_locked_routine_context_contains_only_sanitized_confirmed_facts(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,_,own=self.fixture(Path(temp))
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                rpc=FakeRPC([]);state=converse.BuddyControls(rpc).context()["party_maintenance"]
+                self.assertTrue(state["active"]);self.assertTrue(state["observationsCurrent"])
+                self.assertEqual(state["own"],{"name":"Arlen","guid":1,"phase":"waiting_for_training_confirmation",
+                    "recordsKnown":True,"reservedCopper":300,"confirmedSpellIds":[585],"stipendStatus":"reserved_unconfirmed"})
+                self.assertNotIn("private",json.dumps(state));self.assertNotIn("never_forward",json.dumps(state))
+                self.assertEqual(rpc.calls,[("buddy-world.snapshot",{})])
+                own["mail"]["status"]="confirmed";converse.write_json(folder/"character-1.json",own)
+                self.assertEqual(converse.party_maintenance_snapshot(1)["own"]["stipendStatus"],"confirmed")
+            self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+
+    def test_missing_character_record_never_invents_budget_or_training(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,_,_=self.fixture(Path(temp));(folder/"character-1.json").unlink()
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                state=converse.party_maintenance_snapshot(1)
+                self.assertTrue(state["active"])
+                self.assertFalse(state["own"]["recordsKnown"])
+                self.assertIsNone(state["own"]["reservedCopper"])
+                self.assertEqual(state["own"]["confirmedSpellIds"],[])
+                self.assertEqual(state["own"]["stipendStatus"],"unrecorded")
+
+    def test_wrong_identity_budget_and_nonprivate_or_symlinked_records_fail_closed(self):
+        for mode in ("identity","character","budget","cost","spell","public","symlink","oversize","roster"):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+                folder,record,own=self.fixture(Path(temp))
+                with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                    converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                    if mode=="identity":record["identity"]={"wrong":True}
+                    elif mode=="roster":record["characters"][1]["guid"]=1
+                    elif mode=="character":own["identity"]["guid"]=4
+                    elif mode=="budget":own["reservedCopper"]=10001
+                    elif mode=="cost":own["training"][0]["cost"]=99
+                    elif mode=="spell":own["training"][0]["spell"]=-1
+                    converse.write_json(folder/"status.json",record);converse.write_json(folder/"character-1.json",own)
+                    if mode=="public":(folder/"character-1.json").chmod(0o644)
+                    elif mode=="symlink":
+                        (folder/"character-1.json").rename(folder/"original.json")
+                        (folder/"character-1.json").symlink_to(folder/"original.json")
+                    elif mode=="oversize":(folder/"character-1.json").write_text(" "*65537)
+                    self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+
+    def test_stale_phase_is_labeled_and_stopped_record_is_inactive(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,record,_=self.fixture(Path(temp))
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                record["updatedAt"]=time.time()-120;converse.write_json(folder/"status.json",record)
+                state=converse.party_maintenance_snapshot(1)
+                self.assertTrue(state["active"]);self.assertFalse(state["observationsCurrent"])
+                record["phase"]="stopped";converse.write_json(folder/"status.json",record)
+                self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+                self.assertFalse(converse.party_maintenance_snapshot(99)["active"])
+
+
 class BoundaryTests(unittest.TestCase):
     def test_numeric_action_schema_is_required_bounded_and_legacy_compatible(self):
         for key in converse.NUMERIC_ARGS:

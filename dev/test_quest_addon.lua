@@ -2,6 +2,7 @@
 local source = assert(arg[1], "addon source path required")
 local clock, rows, sent, hooks, callbacks, collapsed, selected, title, owner, database
 local queryCount, completed, questNPC
+local printed
 
 local function visible()
     local result, hidden = {}, false
@@ -14,6 +15,8 @@ end
 local function reset(keep)
     clock, rows, sent, hooks, callbacks, selected, title = keep and 10 or 1, {}, {}, {}, {}, 1, "Quest"
     owner, queryCount, completed, questNPC = "Joel", 0, {}, "0xF1300000C400022C"
+    SlashCmdList, printed = {}, {}
+    DEFAULT_CHAT_FRAME = {AddMessage = function(_, message) printed[#printed + 1] = message end}
     WarcraftBuddyQuestSyncDB = keep and database or nil
     function time() return 1700000000 + math.floor(clock) end
     function GetTime() return clock end
@@ -92,4 +95,45 @@ assert(count==64, "completed-query subset bounded64")
 
 reset(); owner="Mira"; rows={{id=7}}; event("PLAYER_LOGIN"); update()
 assert(#sent==0, "only Joel broadcasts")
+
+reset(); rows={{id=7}}; event("PLAYER_LOGIN"); update()
+for i=1,60 do update(5) end
+local healthy=WarcraftBuddyQuestSyncStatus()
+assert(healthy.onUpdateTicks==61 and healthy.completedSnapshots==61 and healthy.readErrors==0,
+    "five-minute idle heartbeat keeps publishing without quest events")
+local sentBeforePause=#sent
+clock=clock+300 -- No OnUpdate calls: emulate a suspended/background client UI.
+local paused=WarcraftBuddyQuestSyncStatus()
+assert(paused.updateAge==300 and paused.snapshotWallAge==300 and paused.onUpdateTicks==61,
+    "diagnostic distinguishes frame suspension from packet receipt")
+SlashCmdList.WARCRAFTBUDDYQUESTSYNC("")
+assert(#printed==1 and #sent==sentBeforePause and printed[1]:find("ticks=61",1,true),
+    "status stays local and never sends ordinary or addon chat")
+update(1)
+assert(#sent==sentBeforePause+1 and WarcraftBuddyQuestSyncStatus().snapshotWallAge==0,
+    "foreground update resumes heartbeat without reload")
+
+local realTitle=GetQuestLogTitle
+GetQuestLogTitle=function() error("simulated quest log failure") end
+update(5)
+assert(WarcraftBuddyQuestSyncStatus().readErrors==1 and WarcraftBuddyQuestSyncStatus().phase=="quest_log_read_failed")
+GetQuestLogTitle=realTitle;update(5)
+assert(WarcraftBuddyQuestSyncStatus().phase=="snapshot_send_calls_completed", "quest read failure recovers on heartbeat")
+local realSend=SendAddonMessage
+SendAddonMessage=function() error("simulated addon send failure") end
+update(5)
+assert(WarcraftBuddyQuestSyncStatus().sendErrors==1 and WarcraftBuddyQuestSyncStatus().phase=="addon_send_call_failed")
+SendAddonMessage=realSend;update(5)
+assert(WarcraftBuddyQuestSyncStatus().phase=="snapshot_send_calls_completed", "send error recovers without reload")
+local realLevel=UnitLevel
+UnitLevel=function() error("simulated unexpected publish failure") end
+update(5)
+assert(WarcraftBuddyQuestSyncStatus().publishErrors==1 and WarcraftBuddyQuestSyncStatus().phase=="publish_failed")
+UnitLevel=realLevel;update(5)
+assert(WarcraftBuddyQuestSyncStatus().phase=="snapshot_send_calls_completed", "unexpected publish error stays local")
+local queries=queryCount
+SlashCmdList.WARCRAFTBUDDYQUESTSYNC("refresh")
+assert(queryCount==queries+1, "explicit refresh uses normal completed-query API")
+update(1)
+assert(WarcraftBuddyQuestSyncStatus().snapshotAge==0)
 print("Addon Lua5.1 behavior checks passed")

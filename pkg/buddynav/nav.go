@@ -282,7 +282,7 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 
 func finite(v float32) bool { return !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) }
 func inBounds(p Point) bool {
-	return finite(p.X) && finite(p.Y) && finite(p.Z) && p.X >= -9050 && p.X <= -8400 && p.Y >= -500 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
+	return finite(p.X) && finite(p.Y) && finite(p.Z) && p.X >= -9599 && p.X <= -8400 && p.Y >= -700 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
 }
 func distance(a, b Point) float64 {
 	x, y, z := float64(a.X-b.X), float64(a.Y-b.Y), float64(a.Z-b.Z)
@@ -549,10 +549,10 @@ func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
 		return nil, errors.New("initialize navigation mesh failed")
 	}
 	loaded := 0
-	// Northshire and Echo Ridge Mine use these three fixed grid tiles. Missing
+	// Northshire, the vineyard and Goldshire use these nine fixed grid tiles. Missing
 	// portions of the bounded rectangle still fail closed rather than loading
 	// arbitrary neighboring map data or producing a direct fallback.
-	for _, name := range []string{"0004831.mmtile", "0004832.mmtile", "0004732.mmtile"} {
+	for _, name := range []string{"0004731.mmtile", "0004732.mmtile", "0004733.mmtile", "0004831.mmtile", "0004832.mmtile", "0004833.mmtile", "0004931.mmtile", "0004932.mmtile", "0004933.mmtile"} {
 		data, err := readBounded(filepath.Join(dir, name), 32<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

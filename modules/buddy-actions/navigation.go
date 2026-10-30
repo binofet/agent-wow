@@ -21,7 +21,7 @@ func (s *Service) SetNavigationDataDir(path string) {
 }
 
 func northshire(p position) bool {
-	return finite(p) && p.x >= -9050 && p.x <= -8400 && p.y >= -500 && p.y <= 200 && p.z >= 40 && p.z <= 180
+	return finite(p) && p.x >= -9599 && p.x <= -8400 && p.y >= -700 && p.y <= 200 && p.z >= 40 && p.z <= 180
 }
 
 func planNavigation(ctx context.Context, root string, from, to position) ([]position, error) {

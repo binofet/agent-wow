@@ -132,7 +132,7 @@ func TestQuestTravelObservedGenericGiverRetainsAllSafetyGates(t *testing.T) {
 			case "trajectory":
 				c.Trajectory = &worldv1.CreatureTrajectory{Known: true, Stopped: false}
 			case "outside_northshire":
-				c.X = -9100
+				c.X = -9700
 			case "conflicting_view":
 				other := &worldv1.CreatureState{Guid: c.Guid, Entry: c.Entry, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: c.PositionRevision, X: c.X + 1, Y: c.Y, Z: c.Z, HealthKnown: true, Health: 100, AliveKnown: true, Alive: true, NpcFlags: 2}
 				f.world.NearbyCreatures = []*worldv1.CreatureState{other}

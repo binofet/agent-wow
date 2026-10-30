@@ -22,6 +22,7 @@ rpc:
 packets:
   SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LEARNED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SUPERCEDED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_REMOVED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

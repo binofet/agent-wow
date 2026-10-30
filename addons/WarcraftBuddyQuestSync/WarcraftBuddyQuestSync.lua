@@ -6,6 +6,15 @@ local nonce = string.format("%08x%04x", time() % 4294967296, math.random(0, 6553
 local revision, due, lastSent, suppressUntil = 0, 0, -10, 0
 local snapshotting, dialog, pendingAccept = false, nil, nil
 local pendingRewards, previous, completed, db = {}, {}, {}, nil
+local diagnostics = {ticks = 0, attempts = 0, snapshots = 0, sendCalls = 0, readErrors = 0,
+    sendErrors = 0, publishErrors = 0, phase = "waiting_for_login"}
+local lastUpdate, lastSnapshot, lastSnapshotWall, lastError, lastErrorWall
+
+local function reportError(kind, message)
+    diagnostics[kind] = diagnostics[kind] + 1
+    lastError = tostring(message):gsub("[%c]", " "):sub(1, 160)
+    lastErrorWall = time()
+end
 
 local function validID(value)
     return type(value) == "number" and value >= 1 and value <= 2147483647 and value == math.floor(value)
@@ -118,9 +127,17 @@ end
 
 local function publish()
     lastSent = GetTime()
-    if not db or not isJoel() or GetNumPartyMembers() < 1 then return end
+    diagnostics.attempts = diagnostics.attempts + 1
+    if not db then diagnostics.phase = "waiting_for_login"; return end
+    if not isJoel() then diagnostics.phase = "not_joel"; return end
+    if GetNumPartyMembers() < 1 then diagnostics.phase = "not_in_party"; return end
     local ok, quests, _, count = pcall(readLog)
-    if not ok then snapshotting = false; return end
+    if not ok then
+        snapshotting = false
+        diagnostics.phase = "quest_log_read_failed"
+        reportError("readErrors", quests)
+        return
+    end
     local now = GetTime()
     for id, pending in pairs(pendingRewards) do
         if now - pending.at > 30 then pendingRewards[id] = nil
@@ -142,7 +159,7 @@ local function publish()
     previous = quests
     db.rewarded, db.accepted = cleanEvents(db.rewarded), cleanEvents(db.accepted)
     local level = UnitLevel("player")
-    if type(level) ~= "number" or level < 1 or level > 80 then return end
+    if type(level) ~= "number" or level < 1 or level > 80 then diagnostics.phase = "unknown_player_level"; return end
     local tokens, ids = {"L=" .. level}, {}
     for id in pairs(quests) do ids[#ids + 1] = id end
     table.sort(ids)
@@ -169,14 +186,61 @@ local function publish()
         current = current == "" and token or current .. ";" .. token
     end
     if current ~= "" then parts[#parts + 1] = current end
-    if #parts > 12 then return end
+    if #parts > 12 then diagnostics.phase = "snapshot_exceeds_part_limit"; return end
     revision = revision % 2147483647 + 1
     for index, body in ipairs(parts) do
         local payload = "1|" .. nonce .. "|" .. revision .. "|" .. index .. "|" .. #parts .. "|" .. count .. "|" .. body
-        if #payload > 200 then return end
-        SendAddonMessage(PREFIX, payload, "PARTY")
+        if #payload > 200 then diagnostics.phase = "snapshot_exceeds_payload_limit"; return end
+        local sent, message = pcall(SendAddonMessage, PREFIX, payload, "PARTY")
+        if not sent then
+            diagnostics.phase = "addon_send_call_failed"
+            reportError("sendErrors", message)
+            return
+        end
+        diagnostics.sendCalls = diagnostics.sendCalls + 1
     end
+    diagnostics.snapshots = diagnostics.snapshots + 1
+    diagnostics.phase = "snapshot_send_calls_completed"
+    lastSnapshot, lastSnapshotWall = GetTime(), time()
     lastSent, due = GetTime(), 0
+end
+
+-- Local diagnostics never send ordinary chat. A send-call count is not evidence
+-- that the server or companions received a snapshot; compare receiver counters.
+function WarcraftBuddyQuestSyncStatus()
+    return {version = "0.2.0", phase = diagnostics.phase, initialized = db ~= nil,
+        ownerMatches = isJoel(), partyMembers = GetNumPartyMembers(),
+        onUpdateTicks = diagnostics.ticks, publishAttempts = diagnostics.attempts,
+        completedSnapshots = diagnostics.snapshots, sendCalls = diagnostics.sendCalls,
+        readErrors = diagnostics.readErrors, sendErrors = diagnostics.sendErrors,
+        publishErrors = diagnostics.publishErrors, revision = revision,
+        updateAge = lastUpdate and GetTime() - lastUpdate,
+        attemptAge = diagnostics.attempts > 0 and GetTime() - lastSent or nil,
+        snapshotAge = lastSnapshot and GetTime() - lastSnapshot,
+        snapshotWallAge = lastSnapshotWall and time() - lastSnapshotWall,
+        lastError = lastError, errorWallAge = lastErrorWall and time() - lastErrorWall,
+        frameShown = frame.IsShown and frame:IsShown(),
+        uiShown = UIParent and UIParent.IsShown and UIParent:IsShown(),
+        afk = UnitIsAFK and UnitIsAFK("player") and true or false}
+end
+
+SLASH_WARCRAFTBUDDYQUESTSYNC1 = "/wbq"
+SlashCmdList.WARCRAFTBUDDYQUESTSYNC = function(command)
+    if command and command:lower():match("^%s*refresh%s*$") then
+        if isJoel() and type(QueryQuestsCompleted) == "function" then QueryQuestsCompleted() end
+        queue()
+    end
+    local status = WarcraftBuddyQuestSyncStatus()
+    local function age(value) return value and string.format("%.1fs", value) or "never" end
+    local line = "WBQ " .. status.version .. " " .. status.phase .. " owner=" .. tostring(status.ownerMatches)
+        .. " party=" .. status.partyMembers .. " AFK=" .. tostring(status.afk)
+        .. " frame=" .. tostring(status.frameShown) .. " UI=" .. tostring(status.uiShown)
+        .. " ticks=" .. status.onUpdateTicks .. " attempts=" .. status.publishAttempts
+        .. " snapshots=" .. status.completedSnapshots .. " sendCalls=" .. status.sendCalls
+        .. " updateAge=" .. age(status.updateAge) .. " sentAge=" .. age(status.snapshotAge)
+        .. " wallAge=" .. age(status.snapshotWallAge) .. " errors=" .. (status.readErrors + status.sendErrors + status.publishErrors)
+    DEFAULT_CHAT_FRAME:AddMessage(line)
+    if status.lastError then DEFAULT_CHAT_FRAME:AddMessage("WBQ last error: " .. status.lastError) end
 end
 
 frame:SetScript("OnEvent", function(_, event)
@@ -219,5 +283,14 @@ hooksecurefunc("AbandonQuest", function()
     queue()
 end)
 frame:SetScript("OnUpdate", function()
-    if GetTime() - lastSent >= 5 or due > 0 and GetTime() >= due and GetTime() - lastSent >= 1 then publish() end
+    diagnostics.ticks = diagnostics.ticks + 1
+    lastUpdate = GetTime()
+    if GetTime() - lastSent >= 5 or due > 0 and GetTime() >= due and GetTime() - lastSent >= 1 then
+        local ok, message = pcall(publish)
+        if not ok then
+            snapshotting = false
+            diagnostics.phase = "publish_failed"
+            reportError("publishErrors", message)
+        end
+    end
 end)

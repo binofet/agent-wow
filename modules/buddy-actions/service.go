@@ -27,7 +27,7 @@ import (
 
 const (
 	lease      = 4 * time.Hour
-	limitation = "Configured navigation follows only the supported Northshire area; unconfigured runtimes retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
+	limitation = "Configured navigation covers Northshire and the route to Goldshire, including shallow wading; unconfigured runtimes retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
 )
 
 type sessionAPI interface {
@@ -62,6 +62,7 @@ type Service struct {
 	weaponQueries                                            map[uint32]bool
 	weapons                                                  map[uint32]weaponProof
 	weaponOrder                                              []uint32
+	knownSpells                                              map[uint32]bool
 	improvedSinister1, improvedSinister2                     bool
 	autoTarget                                               uint64
 	autoStopping                                             bool
@@ -878,9 +879,10 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 		s.state.Reason = "target_not_injured_or_health_unknown"
 		return false
 	}
-	// Max mana >= base mana for an ordinary level1 human priest. This
-	// conservative budget covers DBC16%baseMana before server cost modifiers.
-	budget := manaBudget(a, 16)
+	// Use the selected known rank's verified base-mana percentage.
+	// Max mana is the conservative fallback when base mana is unknown.
+	heal := s.selectedSpellLocked(lesserHeal)
+	budget := manaBudget(a, uint64(heal.manaPercent))
 	if !a.PowerKnown || a.PowerType != 0 || budget == 0 || uint64(a.Power) < budget {
 		s.state.Reason = "mana_unknown_or_insufficient"
 		return false
@@ -896,16 +898,16 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 	}
 	s.castCount++
 	s.nextHeal = now.Add(3 * time.Second)
-	s.castUntil = now.Add(5 * time.Second)
+	s.castUntil = now.Add(max(5*time.Second, heal.castTime+1500*time.Millisecond))
 	s.state.CastPending = true
 	s.state.HealAttempts++
-	s.pendingSpell = lesserHeal
+	s.pendingSpell = heal.id
 	s.pendingTarget = ownerGUID
 	s.nextAssist = now.Add(3 * time.Second)
-	s.state.LastCastSpellId = lesserHeal
+	s.state.LastCastSpellId = heal.id
 	s.state.LastCastTargetGuid = ownerGUID
 	s.state.LastCastFailure = 0
-	if !s.sendLocked(ctx, opcode.CMSGCastSpell, castPacket(s.castCount)) {
+	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.id, ownerGUID)) {
 		s.state.CastPending = false
 		s.pendingSpell = 0
 		s.pendingTarget = 0
@@ -1004,17 +1006,22 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		if err != nil {
 			malformed = true
 		} else {
-			for _, spell := range []uint32{lesserHeal, smite, fireball, sinisterStrike, autoAttack, 13732, 13863} {
+			for _, spell := range trackedSpellIDs() {
 				known, _ := initialSpellKnown(p, spell)
 				s.setKnownSpell(spell, known)
 			}
 		}
-	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell:
-		if len(p) < 4 {
+	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell, opcode.SMSGSupercededSpell:
+		remove, add, err := spellKnowledgePacket(packet.Opcode, p)
+		if err != nil {
 			malformed = true
 		} else {
-			spell := binary.LittleEndian.Uint32(p)
-			s.setKnownSpell(spell, packet.Opcode == opcode.SMSGLearnedSpell)
+			if remove != 0 {
+				s.setKnownSpell(remove, false)
+			}
+			if add != 0 {
+				s.setKnownSpell(add, true)
+			}
 		}
 	case opcode.SMSGCastFailed:
 		if len(p) < 6 {
@@ -1030,19 +1037,19 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			if !validCastTargetBody(p, offset, packet.Opcode == opcode.SMSGSpellGo, s.pendingTarget) {
 				malformed = true
 			} else if packet.Opcode == opcode.SMSGSpellStart {
-				if spell == lesserHeal {
+				if spellFamily(spell, lesserHeal) {
 					s.state.ServerCastStarts++
 				} else {
 					s.state.ServerAssistStarts++
 				}
 				s.state.Reason = "server_cast_started"
 			} else {
-				if spell == lesserHeal {
+				if spellFamily(spell, lesserHeal) {
 					s.state.ServerCastGo++
 					s.state.Reason = "server_spell_go_health_effect_unverified"
 				} else {
 					s.state.ServerAssistGo++
-					if spell == smite {
+					if spellFamily(spell, smite) {
 						s.state.Reason = "server_smite_go_damage_effect_unverified"
 					} else {
 						s.state.Reason = "server_offensive_spell_go_damage_effect_unverified"

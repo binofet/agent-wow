@@ -19,7 +19,7 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 	owner := playerPosition(world.Owner)
 	// Ground navigation supports hills and a modest catch-up distance. It
 	// does not chase a vanished owner or bridge arbitrary map gaps.
-	if distance(s.pos, owner) > 60 || math.Abs(float64(owner.z-s.pos.z)) > 12 {
+	if distance(s.pos, owner) > 120 || math.Abs(float64(owner.z-s.pos.z)) > 12 {
 		pause("formation_owner_outside_supported_range")
 		return
 	}

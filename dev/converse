@@ -50,6 +50,8 @@ QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 
 LEGACY_QUEST_SYNC_IDENTITY = dict(QUEST_SYNC_IDENTITY, prerequisiteQuestIds=[783])
 PARTY_QUEST_IDENTITY = {"version": 1, "ownerGuid": 3, "mode": "owner_addon_quests",
                         "characters": QUEST_SYNC_IDENTITY["characters"]}
+PARTY_MAINTENANCE_IDENTITY = {"version": 1, "ownerGuid": 3, "mode": "training_stipend_and_class_training",
+                              "characters": QUEST_SYNC_IDENTITY["characters"]}
 # Verified official AzerothCore item_template categories. Select only an ID
 # actually offered by the server; this does not equip or teach any item.
 QUEST_REWARD_PREFERENCES = {18: {5: 5580, 8: 1159, 4: 2224},
@@ -129,6 +131,17 @@ or Joel's words. Automatic synchronization follows Joel's actual quest changes;
 it never abandons quests or invents rewards.
 Do not claim quest information is unreadable when the supplied journal contains
 it. Planning does not authorize blind combat pulls or new navigation.
+party_maintenance is the actual owned standing maintenance routine. When active,
+it automatically collects the exact training stipend at an observed mailbox
+within5yards and buys affordable actual class-training offers at an observed
+trainer within4yards. Explain its own reported phase when asked what you are
+doing. This does not provide general inventory management or travel to services.
+reservedCopper is budget already reserved for attempts, not your wallet balance
+or proof of spending. Only confirmedSpellIds and stipendStatus confirmed record
+confirmed outcomes; reserved or unrecorded outcomes remain unconfirmed. Do not
+invent spell names or claim new training from an attempted purchase. If
+observationsCurrent is false, describe the phase as the last report, not live
+progress. The routine has no additional model action.
 """
 
 
@@ -328,6 +341,97 @@ def quest_sync_snapshot(character_guid, stop=False):
 
 def party_quest_sync_snapshot(character_guid, stop=False):
     return _quest_routine_snapshot(character_guid, stop=stop, standing=True)
+
+
+def party_maintenance_snapshot(character_guid):
+    folder = ROOT / "data/party-maintenance"
+    unknown = {"active": False}
+    expected = {1: "Arlen", 4: "Mira", 5: "Rook"}
+    def read(path, limit):
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            info = os.fstat(source.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                    or info.st_mode & 0o077 or info.st_size > limit):
+                raise ConversationError("Maintenance evidence is not a private regular file")
+            raw = source.read(limit + 1)
+            if len(raw) > limit:
+                raise ConversationError("Maintenance evidence exceeds its bound")
+            value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ConversationError("Maintenance evidence is invalid")
+        return value
+    try:
+        info = folder.lstat()
+        if (character_guid not in expected or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid() or info.st_mode & 0o077):
+            return unknown
+        record = read(folder / "status.json", 8192)
+        if (record.get("identity") != PARTY_MAINTENANCE_IDENTITY or record.get("phase") != "running"
+                or not isinstance(record.get("instance"), str) or not re.fullmatch(r"[a-f0-9]{32}", record["instance"])):
+            return unknown
+        updated = record.get("updatedAt")
+        if type(updated) not in (int, float) or not math.isfinite(updated) or not 0 <= updated <= time.time() + 5:
+            return unknown
+        rows = record.get("characters", [])
+        if (not isinstance(rows, list) or len(rows) != 3 or any(not isinstance(row, dict)
+                or type(row.get("guid")) is not int or row["guid"] not in expected
+                or row.get("name") != expected[row["guid"]] for row in rows)
+                or {row["guid"] for row in rows} != set(expected)):
+            return unknown
+        own = next(row for row in rows if row["guid"] == character_guid)
+        phase = own.get("phase")
+        if not isinstance(phase, str) or not re.fullmatch(r"[a-z0-9_]{1,96}", phase):
+            return unknown
+        # Keep the lock descriptor open while reading character evidence. It is
+        # never modified, and no PID is inferred or signalled by this helper.
+        descriptor = os.open(folder / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r") as lock:
+            info = os.fstat(lock.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                    or info.st_mode & 0o077 or not is_locked(lock)):
+                return unknown
+            summary = {"name": expected[character_guid], "guid": character_guid, "phase": phase,
+                       "recordsKnown": False, "reservedCopper": None, "confirmedSpellIds": [], "stipendStatus": "unrecorded"}
+            try:
+                data = read(folder / ("character-" + str(character_guid) + ".json"), 65536)
+            except FileNotFoundError:
+                data = None
+            if data is not None:
+                identity = {"name": expected[character_guid], "guid": character_guid, "ownerGuid": 3, "budgetCopper": 10000}
+                reserved, training = data.get("reservedCopper"), data.get("training")
+                if (data.get("identity") != identity or type(reserved) is not int or not 0 <= reserved <= 10000
+                        or not isinstance(training, list) or len(training) > 128):
+                    return unknown
+                confirmed, cost = set(), 0
+                for row in training:
+                    if (not isinstance(row, dict) or type(row.get("cost")) is not int or not 0 <= row["cost"] <= 10000
+                            or row.get("status") not in ("reserved", "confirmed", "rejected")
+                            or not 0 < integer(row.get("spell", 0)) <= 2**32 - 1):
+                        return unknown
+                    cost += row["cost"]
+                    if row["status"] == "confirmed":
+                        confirmed.add(integer(row["spell"]))
+                if cost != reserved:
+                    return unknown
+                mail = data.get("mail")
+                stipend = "not_requested"
+                if mail is not None:
+                    if (not isinstance(mail, dict) or mail.get("status") not in ("reserved", "confirmed")
+                            or not isinstance(mail.get("sessionId"), str) or not 1 <= len(mail["sessionId"]) <= 128
+                            or not 0 < integer(mail.get("mailId", 0)) <= 2**32 - 1
+                            or integer(mail.get("listRevision", 0)) == 0 or integer(mail.get("mailboxGuid", 0)) >> 48 != 0xf110):
+                        return unknown
+                    stipend = "confirmed" if mail["status"] == "confirmed" else "reserved_unconfirmed"
+                summary.update(recordsKnown=True, reservedCopper=reserved, confirmedSpellIds=sorted(confirmed), stipendStatus=stipend)
+            final = read(folder / "status.json", 8192)
+            if (final.get("instance") != record["instance"] or final.get("phase") != "running"
+                    or final.get("identity") != PARTY_MAINTENANCE_IDENTITY):
+                return unknown
+        return {"active": True, "phase": "running", "own": summary, "updatedAt": updated,
+                "observationsCurrent": time.time() - updated <= 60}
+    except (OSError, ValueError, TypeError, ConversationError):
+        return unknown
 
 
 def owner_party_known(group, self_guid):
@@ -730,6 +834,7 @@ class BuddyControls:
                               "quest_sync_stop": goal.get("active") is True or standing.get("active") is True},
                  "quest_sync": goal,
                  "party_quest_sync": standing,
+                 "party_maintenance": party_maintenance_snapshot(self.character_guid),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
                  "quests": self.quests if self.quests_available else {},

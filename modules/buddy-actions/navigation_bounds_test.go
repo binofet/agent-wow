@@ -13,7 +13,7 @@ func TestNorthshireNavigationIncludesObservedEchoRidgeAndBoundedMine(t *testing.
 			t.Fatal("supported mine position rejected", p)
 		}
 	}
-	for _, p := range []position{{x: -8399.99, y: -120, z: 65}, {x: -9050.01, y: -120, z: 65}, {x: -8500, y: -500.01, z: 65}, {x: -8500, y: 200.01, z: 65}, {x: -8500, y: -120, z: 39.99}, {x: -8500, y: -120, z: 180.01}, {x: float32(math.NaN()), y: -120, z: 65}} {
+	for _, p := range []position{{x: -8399.99, y: -120, z: 65}, {x: -9599.01, y: -120, z: 65}, {x: -8500, y: -700.01, z: 65}, {x: -8500, y: 200.01, z: 65}, {x: -8500, y: -120, z: 39.99}, {x: -8500, y: -120, z: 180.01}, {x: float32(math.NaN()), y: -120, z: 65}} {
 		if northshire(p) {
 			t.Fatal("unsupported position accepted", p)
 		}
@@ -49,5 +49,23 @@ func TestConfiguredNavigationNeverFallsThroughOutsideMineArea(t *testing.T) {
 	s.Tick(context.Background())
 	if s.state.Moving || len(f.packets) != 0 {
 		t.Fatal("unsupported nav area fell through to direct movement", &s.state, f.packets)
+	}
+}
+
+func TestAdjacentVineyardGoldshireCorridorRemainsBounded(t *testing.T) {
+	for _, p := range []position{{x: -9460, y: -100, z: 60}, {x: -9100, y: -650, z: 80}, {x: -9599, y: -700, z: 40}} {
+		if !northshire(p) {
+			t.Fatal("supportedcorridorpositionrejected", p)
+		}
+	}
+	from, to := position{x: -9360, y: -150, z: 60}, position{x: -9460, y: -100, z: 60}
+	if !validNavigationPath([]position{from, to}, from, to) {
+		t.Fatal("boundedGoldshirerouterejected")
+	}
+	if validNavigationPath([]position{from, {x: -9600, y: -100, z: 60}, to}, from, to) {
+		t.Fatal("corridorescapesfixedtilecoverage")
+	}
+	if validNavigationPath([]position{from, {x: -9400, y: -750, z: 60}, to}, from, to) {
+		t.Fatal("corridorescapessouthbound")
 	}
 }

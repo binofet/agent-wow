@@ -18,7 +18,7 @@ const enemyGUID = uint64(0xf130000033000001)
 func assistRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	s, f, advance := rig(t)
 	learn(s)
-	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLearnedSpell, Payload: []byte{0x49, 2, 0, 0}})
+	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLearnedSpell, Payload: []byte{0x49, 2, 0, 0, 0, 0}})
 	f.world.Owner.Health = 100
 	f.world.Owner.UnitFlags = 0x80000
 	f.world.Owner.TargetKnown = true

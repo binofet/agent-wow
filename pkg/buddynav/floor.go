@@ -71,7 +71,7 @@ func selectPhysicalFloor(mesh, terrain, collision float32, collisionKnown bool) 
 	return h, nil
 }
 
-// Called only under the planner gate. The fixed region loads at most three
+// Called only under the planner gate. The fixed region loads at most nine
 // spawn tiles; decoded model geometry uses a strict 32MiB LRU, 8MiB/model cap.
 func (f *floorReader) height(q Point, mesh float32) (float32, bool, error) {
 	return f.heightRange(q, mesh, .5, 2.5)
@@ -139,7 +139,12 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 	return origin.Z - best, hit, nil
 }
 func allowedFloorTile(name string) bool {
-	return name == "000_31_48.vmtile" || name == "000_32_48.vmtile" || name == "000_32_47.vmtile"
+	switch name {
+	case "000_31_47.vmtile", "000_32_47.vmtile", "000_33_47.vmtile", "000_31_48.vmtile", "000_32_48.vmtile", "000_33_48.vmtile", "000_31_49.vmtile", "000_32_49.vmtile", "000_33_49.vmtile":
+		return true
+	default:
+		return false
+	}
 }
 func (f *floorReader) model(name string) (*floorModel, error) {
 	if m := f.models[name]; m != nil {

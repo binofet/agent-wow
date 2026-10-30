@@ -132,3 +132,21 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 		t.Fatal("late formation failed to stop", s.stateLocked())
 	}
 }
+
+func TestFormationCatchUpUsesVerifiedRoutesUpTo120Yards(t *testing.T) {
+	for _, gap := range []float32{90, 121} {
+		s, f, advance := formationRig(t, 4, 8)
+		f.world.Owner.X += gap
+		toggle(t, s, true)
+		for i := 0; i < 5; i++ {
+			s.Tick(context.Background())
+			advance(200 * time.Millisecond)
+		}
+		if gap == 90 && !s.state.Moving {
+			t.Fatal("observed owner could not be caught along a verified route", s.stateLocked())
+		}
+		if gap == 121 && (s.state.Moving || s.state.Reason != "formation_owner_outside_supported_range") {
+			t.Fatal("follow exceeded its catch-up bound", s.stateLocked())
+		}
+	}
+}

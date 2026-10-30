@@ -93,7 +93,7 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 		s.state.Reason = "rogue_auto_attack_waiting_for_energy"
 		return true
 	}
-	s.castOffenseLocked(ctx, sinisterStrike, target.Guid, time.Second)
+	s.castOffenseLocked(ctx, s.selectedSpellLocked(sinisterStrike).id, target.Guid, time.Second)
 	return true
 }
 
