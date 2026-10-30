@@ -362,6 +362,74 @@ class QuestTaskTests(unittest.TestCase):
         candidates=actor.candidates(actor.read(),"barrels")
         self.assertEqual(candidates[0]["guid"],BARREL)  # Actual close range can use it again.
 
+    def test_five_successful_refill_return_trips_reset_only_completed_target_budget(self):
+        actor, rpc, now, saved = self.rig()
+        rpc.auto, rpc.barrel_x, rpc.fire_x = True, 50., 150.
+        with patch.object(task.c, "area_quest_snapshot", return_value={"active": False}):
+            for _ in range(90):
+                actor.tick()
+                now[0] += 3
+                if actor.done:
+                    break
+        self.assertTrue(actor.done)
+        self.assertEqual(actor.status["phase"], "own_quest_objective_goal_observed")
+        self.assertEqual(actor.status["objectiveCount"], 5)
+        routes = [p for m, p in rpc.calls if m == "buddy-actions.travel_to"]
+        self.assertEqual(sum(p["x"] == 50. for p in routes), 5)
+        self.assertEqual(sum(p["x"] == 150. for p in routes), 5)
+        requests = [p for m, p in rpc.calls if m == "buddy-quest-items.attempt"]
+        self.assertEqual([p["action"] for p in requests], ["FILL_BUCKET", "THROW_BUCKET"] * 5)
+        self.assertEqual(len({p["requestId"] for p in requests}), 10)
+        self.assertLess(now[0] - 100, 300)
+        self.assertTrue(all(len(row["attempts"]) <= 32 for row in saved))
+        self.assertNotIn(str(BARREL), actor.travel_attempts)
+        self.assertNotIn(str(FIRE), actor.travel_attempts)
+        self.assertIsNone(rpc.lease)
+
+    def test_three_failed_routes_remain_exhausted_without_item_progress(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.barrel_x = 50.
+        original = rpc.call
+        def failed_route(method, params):
+            if method == "buddy-actions.travel_to":
+                rpc.calls.append((method, copy.deepcopy(params)))
+                return {"reason": "navigation_partial_route", "moving": False}
+            return original(method, params)
+        rpc.call = failed_route
+        self.tick(actor, now, 10)
+        self.assertEqual(sum(m == "buddy-actions.travel_to" for m, _ in rpc.calls), 3)
+        self.assertEqual(actor.travel_attempts[str(BARREL)], 3)
+        self.assertEqual(actor.status["blockedReason"], "observed_candidate_exhausted_travel_limit")
+        self.assertFalse(any(m == "buddy-quest-items.attempt" for m, _ in rpc.calls))
+        self.assertIsNone(rpc.lease)
+
+    def test_travel_budget_reset_requires_matched_authoritative_completion(self):
+        for mode in ("fill", "fill_no_inventory", "fill_wrong_source", "throw", "throw_no_go", "throw_no_credit"):
+            with self.subTest(mode=mode):
+                actor, rpc, now, _ = self.rig()
+                self.tick(actor, now, 2)
+                if mode.startswith("throw"):
+                    rpc.complete()
+                    self.tick(actor, now, 2)
+                    self.assertEqual(rpc.last_attempt["action"], "THROW_BUCKET")
+                target = FIRE if mode.startswith("throw") else BARREL
+                other = BARREL + 2
+                actor.travel_attempts.update({str(target): 3, str(other): 2})
+                rpc.complete(mode != "throw_no_credit")
+                if mode == "fill_no_inventory":
+                    rpc.operation["inventoryAddedObserved"] = False
+                elif mode == "fill_wrong_source":
+                    rpc.operation["sourceObjectGuid"] = str(BARREL + 1)
+                elif mode == "throw_no_go":
+                    rpc.operation["ownCastGoObserved"] = False
+                if mode == "fill_wrong_source":
+                    with self.assertRaisesRegex(task.Error, "binding changed"):
+                        self.tick(actor, now)
+                else:
+                    self.tick(actor, now)
+                self.assertEqual(actor.travel_attempts.get(str(target)), None if mode in ("fill", "throw") else 3)
+                self.assertEqual(actor.travel_attempts[str(other)], 2)
+
     def test_manual_worker_requests_exact_area_stop_once_then_waits_cleanup(self):
         actor,rpc,now,_ = self.rig()
         rpc.ready,rpc.reason,rpc.motion=False,"own_action_busy_or_unconfirmed",True

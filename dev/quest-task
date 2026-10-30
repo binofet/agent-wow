@@ -241,6 +241,11 @@ class QuestTask:
             self.status["phase"] = "waiting_for_owned_item_lease_release"
             return False
         pending["status"], pending["outcome"] = "resolved", name
+        if self.completion_observed(state, operation):
+            # A proven item step completes this target's approach cycle. Count
+            # unsuccessful approaches, not every later refill/throw journey.
+            target = pending["binding"][2 if pending["action"] == "FILL_BUCKET" else 3]
+            self.travel_attempts.pop(str(target), None)
         if pending["action"] == "THROW_BUCKET":
             target = pending["binding"][3]
             self.data["targetCooldowns"][str(target)] = self.now()+self.recipe["targetResetSeconds"]
