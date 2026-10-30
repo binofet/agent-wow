@@ -70,8 +70,21 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	if !known || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		return pause("loot_approach_target_unknown_far_or_vertical")
 	}
+	return s.groundApproachStepLocked(ctx, target, "loot"), nil
+}
+
+// Both interaction approaches use the same monotonic, speed-bounded movement
+// writer. Eligibility and lease ownership are checked by each caller first.
+func (s *Service) groundApproachStepLocked(ctx context.Context, target position, kind string) *actionsv1.State {
+	pause := func(reason string) *actionsv1.State {
+		if s.stopLocked(ctx) {
+			s.state.Reason = kind + "_approach_" + reason
+		}
+		return s.stateLocked()
+	}
+	d := distance(s.pos, target)
 	if d <= 3 {
-		return pause("loot_approach_within_distance")
+		return pause("within_distance")
 	}
 	p := s.pos
 	p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
@@ -82,12 +95,12 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	if s.state.Moving {
 		elapsed := s.now().Sub(s.posAt).Seconds()
 		if elapsed < 0 || elapsed > 0.6 {
-			return pause("loot_approach_tick_late")
+			return pause("tick_late")
 		}
 		// Duplicate calls cannot move farther without elapsed monotonic time.
 		if elapsed < 0.15 {
-			s.state.Reason = "loot_approach_waiting_for_next_step"
-			return s.stateLocked(), nil
+			s.state.Reason = kind + "_approach_waiting_for_next_step"
+			return s.stateLocked()
 		}
 		step := math.Min(7*elapsed, d-3)
 		fraction := float32(step / d)
@@ -97,11 +110,11 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 		op = opcode.MSGMoveHeartbeat
 	}
 	if !s.movementLocked(ctx, op, p, true) {
-		return s.stateLocked(), nil
+		return s.stateLocked()
 	}
 	if distance(s.pos, target) <= 3.01 {
-		return pause("loot_approach_within_distance")
+		return pause("within_distance")
 	}
-	s.state.Reason = "loot_approaching_direct_ground_estimate"
-	return s.stateLocked(), nil
+	s.state.Reason = kind + "_approaching_direct_ground_estimate"
+	return s.stateLocked()
 }

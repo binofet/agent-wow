@@ -618,6 +618,30 @@ class ControlsTests(unittest.TestCase):
 
 
 class QuestJournalRewardTests(unittest.TestCase):
+    def test_goal_context_and_owner_stop_bind_private_exact_identity_and_instance(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(converse, "ROOT", Path(temporary)):
+            folder=converse.ensure_state(Path(temporary)/"data/sync-quests")
+            characters=[{"name":name,"guid":guid,"phase":"waiting_for_level_2","missingQuestIds":[18,3903],
+                         "activeQuestIds":[7],"levelKnown":True,"level":1,"privateToken":"never_forward"}
+                        for name,guid in (("Arlen",1),("Mira",4),("Rook",5))]
+            record={"identity":converse.QUEST_SYNC_IDENTITY,"instance":"a"*32,"routineActive":True,
+                    "phase":"running","characters":characters,"updatedAt":10}
+            converse.write_json(folder/"status.json",record)
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                controls=converse.BuddyControls(FakeRPC([]),character_guid=4,character_class="mage")
+                state=controls.context()
+                self.assertTrue(state["abilities"]["quest_sync_stop"])
+                self.assertEqual(state["quest_sync"]["own"]["missingQuestIds"],[18,3903])
+                self.assertNotIn("never_forward",json.dumps(state))
+                self.assertIn("requested",controls.execute("STOP_QUEST_SYNC"))
+                stop=converse.read_json(folder/"stop.json")
+                self.assertEqual(stop,{"instance":"a"*32,"identity":converse.QUEST_SYNC_IDENTITY})
+                record["identity"]={"wrong":True}
+                converse.write_json(folder/"status.json",record)
+                self.assertFalse(converse.quest_sync_snapshot(4)["active"])
+            self.assertFalse(converse.quest_sync_snapshot(4)["active"])
+
     def test_private_human_quest_snapshot_is_labeled_and_separate_from_own_journal(self):
         with tempfile.TemporaryDirectory() as temporary:
             path=Path(temporary)/"joel-quest-report.json"
@@ -665,7 +689,7 @@ class QuestJournalRewardTests(unittest.TestCase):
             self.assertFalse(converse.owner_quest_snapshot(path)["available"])
 
     def reward_controls(self, choices=(), receipt=None):
-        npc="17379390962003542017"
+        npc="17379390962878382081"
         discovery={"sessionId":"quest-session","revision":"4","questLogKnown":True,"questLogRevision":"7",
                    "questLog":[{"questId":783,"complete":True}],
                    "nearby":[{"canInteract":True,"distanceKnown":True,"distance":2,"creature":{"guid":npc}}]}
@@ -743,6 +767,58 @@ class QuestJournalRewardTests(unittest.TestCase):
         self.assertIsNone(controls.execute("PLAN_QUEST",quest_id=783))
         self.assertIn("haven't received",controls.execute("PLAN_QUEST",quest_id=7))
         self.assertEqual(rpc.calls,[])
+
+
+class QuestApproachCandidateTests(unittest.TestCase):
+    def candidate(self, **overrides):
+        candidate={"distanceKnown":True,"distance":8,"blockedReason":"questgiver_outside_conservative_range",
+                   "creature":{"guid":"17379390962878382081","present":True,"mapKnown":True,
+                               "positionKnown":True,"aliveKnown":True,"alive":True,"npcFlags":2}}
+        candidate.update(overrides)
+        return candidate
+
+    def test_range_only_candidate_uses_quest_endpoint_and_prefers_immediate(self):
+        candidate=self.candidate()
+        class RPC:
+            def __init__(self):self.calls=[];self.nearby=[candidate]
+            def call(self,method,params):
+                self.calls.append((method,params))
+                if method=="buddy-quests.discover":return {"sessionId":"quests","revision":"1","nearby":self.nearby}
+                if method=="buddy-quests.offer":return {"serverResponseReceived":True,"state":{"offer":{"npcGuid":params["npcGuid"],"quests":[]}}}
+                raise AssertionError(method)
+        rpc=RPC();controls=converse.BuddyControls(rpc)
+        controls.quest_offer()
+        self.assertEqual(rpc.calls[-1],("buddy-quests.offer",{"sessionId":"quests","npcGuid":candidate["creature"]["guid"]}))
+        rpc.nearby.append({"distanceKnown":True,"distance":3.9,"canInteract":True,"creature":{"guid":"17379390962878382082"}})
+        controls.quest_offer()
+        self.assertEqual(rpc.calls[-1][1]["npcGuid"],"17379390962878382082")
+        self.assertFalse(any(method.startswith("buddy-actions.") for method,_ in rpc.calls))
+
+    def test_unknown_or_other_blocked_candidates_never_become_approach_targets(self):
+        invalid=[]
+        for change in ({"distanceKnown":False},{"distance":8.01},{"distance":float("nan")},{"distance":None},
+                       {"distance":4},{"canInteract":True},{"blockedReason":"character_motion_or_cast_unconfirmed"},
+                       {"blockedReason":"moving_questgiver_position_stale"},{"blockedReason":""}):
+            invalid.append(self.candidate(**change))
+        for change in ({"guid":"3"},{"present":False},{"positionKnown":False},{"alive":False},{"npcFlags":0},
+                       {"mapId":1},{"movementFlags":0x08000000},{"movementFlags":0x200000},
+                       {"movementFlags":1,"positionAgeMs":"1501"}):
+            candidate=self.candidate()
+            candidate["creature"].update(change)
+            invalid.append(candidate)
+        self.assertEqual(converse.BuddyControls.quest_candidates(invalid),[])
+
+    def test_turn_in_selects_bounded_range_only_observed_npc(self):
+        helper=QuestJournalRewardTests()
+        controls,rpc,discovery,_=helper.reward_controls()
+        discovery["nearby"]=[self.candidate(distance=6.5)]
+        self.assertIn("Turn-in confirmed",controls.execute("TURN_IN_QUEST",quest_id=783))
+        request=next(params for method,params in rpc.calls if method=="buddy-quests.turn_in")
+        self.assertEqual(request["npcGuid"],discovery["nearby"][0]["creature"]["guid"])
+        controls,rpc,discovery,_=helper.reward_controls()
+        discovery["nearby"]=[self.candidate(blockedReason="character_motion_or_cast_unconfirmed")]
+        self.assertIn("observed questgiver",controls.execute("TURN_IN_QUEST",quest_id=783))
+        self.assertFalse(any(method=="buddy-quests.turn_in" for method,_ in rpc.calls))
 
 
 class BoundaryTests(unittest.TestCase):

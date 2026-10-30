@@ -29,6 +29,7 @@ message InteractionRequest {
 }
 message InteractionRelease { string owner = 1; string token = 2; }
 message ApproachLootRequest { string token = 1; uint64 corpse_guid = 2; }
+message ApproachQuestRequest { string token = 1; uint64 npc_guid = 2; }
 message InteractionLease { string token = 1; State state = 2; }
 message State {
   bool following = 1;
@@ -88,6 +89,16 @@ message State {
   bool auto_attack_unconfirmed = 50;
   uint32 sinister_strike_energy_cost = 51;
   bool mainhand_weapon_verified = 52;
+  bool traveling = 53;
+  uint64 travel_npc_guid = 54;
+  bool nav_available = 55;
+  string nav_reason = 56;
+  bool practicing = 57;
+  string practice_phase = 58;
+  uint64 practice_target_guid = 59;
+  uint64 practice_lease_remaining_ms = 60;
+  uint64 practice_pulls = 61;
+  uint64 practice_kills = 62;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -98,6 +109,9 @@ service BuddyActions {
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);
+  rpc ApproachQuest(ApproachQuestRequest) returns (State);
+  rpc TravelQuest(ApproachQuestRequest) returns (State);
+  rpc Practice(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

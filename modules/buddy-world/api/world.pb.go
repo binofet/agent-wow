@@ -617,6 +617,8 @@ type CreatureState struct {
 	Trajectory        *CreatureTrajectory `protobuf:"bytes,34,opt,name=trajectory,proto3" json:"trajectory,omitempty"`
 	CombatReachKnown  bool                `protobuf:"varint,35,opt,name=combat_reach_known,json=combatReachKnown,proto3" json:"combat_reach_known,omitempty"`
 	CombatReach       float32             `protobuf:"fixed32,36,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
+	LevelKnown        bool                `protobuf:"varint,37,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
+	Level             uint32              `protobuf:"varint,38,opt,name=level,proto3" json:"level,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -899,6 +901,20 @@ func (x *CreatureState) GetCombatReachKnown() bool {
 func (x *CreatureState) GetCombatReach() float32 {
 	if x != nil {
 		return x.CombatReach
+	}
+	return 0
+}
+
+func (x *CreatureState) GetLevelKnown() bool {
+	if x != nil {
+		return x.LevelKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetLevel() uint32 {
+	if x != nil {
+		return x.Level
 	}
 	return 0
 }
@@ -1249,9 +1265,11 @@ type SnapshotResponse struct {
 	// Exactly16 slots when known; empty slots have item_guid0.
 	Backpack []*BackpackSlot `protobuf:"bytes,15,rep,name=backpack,proto3" json:"backpack,omitempty"`
 	// Only the currently observed owner's target, if present in the NPC cache.
-	OwnerTarget   *CreatureState `protobuf:"bytes,16,opt,name=owner_target,json=ownerTarget,proto3" json:"owner_target,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OwnerTarget *CreatureState `protobuf:"bytes,16,opt,name=owner_target,json=ownerTarget,proto3" json:"owner_target,omitempty"`
+	// At most32 present creatures ordered by observed self distance.
+	NearbyCreatures []*CreatureState `protobuf:"bytes,17,rep,name=nearby_creatures,json=nearbyCreatures,proto3" json:"nearby_creatures,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -1396,6 +1414,13 @@ func (x *SnapshotResponse) GetOwnerTarget() *CreatureState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetNearbyCreatures() []*CreatureState {
+	if x != nil {
+		return x.NearbyCreatures
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -1472,8 +1497,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
 	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x11\n" +
-	"\x0fSnapshotRequest\"\xcc\n" +
-	"\n" +
+	"\x0fSnapshotRequest\"\x83\v\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -1518,7 +1542,10 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"trajectory\x18\" \x01(\v2*.warcraftbuddy.world.v1.CreatureTrajectoryR\n" +
 	"trajectory\x12,\n" +
 	"\x12combat_reach_known\x18# \x01(\bR\x10combatReachKnown\x12!\n" +
-	"\fcombat_reach\x18$ \x01(\x02R\vcombatReach\"\xc3\x03\n" +
+	"\fcombat_reach\x18$ \x01(\x02R\vcombatReach\x12\x1f\n" +
+	"\vlevel_known\x18% \x01(\bR\n" +
+	"levelKnown\x12\x14\n" +
+	"\x05level\x18& \x01(\rR\x05level\"\xc3\x03\n" +
 	"\x12CreatureTrajectory\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\rR\n" +
@@ -1551,7 +1578,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
 	"stackCount\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x83\a\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xd5\a\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -1570,7 +1597,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0ebackpack_known\x18\r \x01(\bR\rbackpackKnown\x12+\n" +
 	"\x11backpack_revision\x18\x0e \x01(\x04R\x10backpackRevision\x12@\n" +
 	"\bbackpack\x18\x0f \x03(\v2$.warcraftbuddy.world.v1.BackpackSlotR\bbackpack\x12H\n" +
-	"\fowner_target\x18\x10 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\vownerTarget2\xb0\x01\n" +
+	"\fowner_target\x18\x10 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\vownerTarget\x12P\n" +
+	"\x10nearby_creatures\x18\x11 \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x0fnearbyCreatures2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -1611,15 +1639,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	3,  // 6: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
 	6,  // 7: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
 	3,  // 8: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
-	2,  // 9: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	8,  // 10: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	7,  // 11: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	9,  // 12: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	11, // [11:13] is the sub-list for method output_type
-	9,  // [9:11] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	3,  // 9: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 10: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	8,  // 11: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	7,  // 12: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	9,  // 13: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	12, // [12:14] is the sub-list for method output_type
+	10, // [10:12] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

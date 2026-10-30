@@ -53,6 +53,7 @@ func run() error {
 	}
 	defer connection.Close()
 	service := buddyactions.NewService(modv1.NewSessionClient(connection), self)
+	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)
 	readiness := health.NewServer()

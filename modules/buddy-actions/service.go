@@ -65,10 +65,22 @@ type Service struct {
 	improvedSinister1, improvedSinister2                     bool
 	autoTarget                                               uint64
 	autoStopping                                             bool
+	questApproaching                                         bool
+	approachDelay                                            func(context.Context, time.Duration) error
+	navDataDir                                               string
+	planPath                                                 func(context.Context, string, position, position) ([]position, error)
+	practiceUntil                                            time.Time
+	practiceRoute                                            []position
+	practiceRouteIndex                                       int
+	practiceTarget                                           uint64
+	practicePullStarted                                      bool
+	practiceRouteTarget                                      position
+	practiceReplans                                          int
+	practiceKillCredited                                     bool
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof)}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation}
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
@@ -84,6 +96,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	}
 	if s.state.Assisting && now.Before(s.assistUntil) {
 		out.AssistLeaseRemainingMs = uint64(s.assistUntil.Sub(now).Milliseconds())
+	}
+	if s.state.Practicing && now.Before(s.practiceUntil) {
+		out.PracticeLeaseRemainingMs = uint64(s.practiceUntil.Sub(now).Milliseconds())
 	}
 	out.Position = s.clientPositionLocked()
 	if s.state.InteractionOwner != "" {
@@ -374,6 +389,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.Following = false
 	s.state.Healing = false
 	s.state.Assisting = false
+	s.state.Practicing = false
 	s.explicitStopLocked(ctx)
 	s.state.Reason = "session_closing"
 	return &emptypb.Empty{}, nil
@@ -507,6 +523,8 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 		s.state.Following = false
 		s.state.Healing = false
 		s.state.Assisting = false
+		s.state.Practicing = false
+		s.state.PracticePhase = "transport_error_no_retry"
 		s.state.Reason = "transport_error_no_retry"
 		if s.autoTarget != 0 && !s.autoStopping {
 			s.stopAutoAttackLocked(ctx)
@@ -586,10 +604,18 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.expireInteractionLocked()
 	if s.state.InteractionOwner != "" {
+		if s.state.Practicing && !s.now().Before(s.practiceUntil) {
+			s.state.Practicing = false
+			s.state.PracticePhase = "goal_expired"
+		}
 		s.lastStep = s.now()
 		return
 	}
 	if s.closed {
+		return
+	}
+	if s.state.Practicing {
+		s.practiceTickLocked(ctx)
 		return
 	}
 	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending {
@@ -860,6 +886,13 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	p := packet.Payload
 	malformed := false
 	switch packet.Opcode {
+	case opcode.SMSGPartykilllog:
+		if len(p) != 16 {
+			malformed = true
+		} else if s.state.Practicing && s.practicePullStarted && !s.practiceKillCredited && binary.LittleEndian.Uint64(p) == s.selfGUID && binary.LittleEndian.Uint64(p[8:]) == s.practiceTarget {
+			s.state.PracticeKills++
+			s.practiceKillCredited = true
+		}
 	case opcode.SMSGItemQuerySingleResponse:
 		proof, err := decodeWeaponQuery(p)
 		if err != nil {

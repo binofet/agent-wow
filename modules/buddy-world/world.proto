@@ -114,6 +114,8 @@ message CreatureState {
   CreatureTrajectory trajectory = 34;
   bool combat_reach_known = 35;
   float combat_reach = 36;
+  bool level_known = 37;
+  uint32 level = 38;
 }
 
 // Advertised server trajectory, separate from actual position observations.
@@ -181,6 +183,8 @@ message SnapshotResponse {
   repeated BackpackSlot backpack = 15;
   // Only the currently observed owner's target, if present in the NPC cache.
   CreatureState owner_target = 16;
+  // At most32 present creatures ordered by observed self distance.
+  repeated CreatureState nearby_creatures = 17;
 }
 
 service BuddyWorld {

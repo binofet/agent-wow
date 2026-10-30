@@ -49,6 +49,9 @@ jobs:
       - name: Test in-game conversation loop
         run: python3 -B dev/test_converse.py
 
+      - name: Test automatic starter quest synchronization
+        run: python3 -B dev/test_sync_quests.py
+
       - name: Vet
         run: go vet ./...
 

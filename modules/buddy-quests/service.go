@@ -315,7 +315,16 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 		return nil, err
 	}
 	defer s.release(token)
-	if _, err := s.gate(call, npcGUID); err != nil {
+	guard := func() error {
+		if detail == nil {
+			return nil
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, err := s.validateQuestLocked(detail)
+		return err
+	}
+	if _, err := s.prepareInteraction(call, token, npcGUID, guard); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -378,18 +387,27 @@ func (s *Service) Accept(ctx context.Context, r *questsv1.QuestRequest) (*quests
 		return nil, err
 	}
 	defer s.releaseBusy()
-	s.mu.Lock()
-	_, validationErr := s.validateQuestLocked(r)
-	s.mu.Unlock()
-	if validationErr != nil {
-		return nil, validationErr
+	if _, err := s.world(call); err != nil {
+		return nil, err
+	}
+	guard := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, err := s.validateQuestLocked(r)
+		if err == nil && (!s.state.QuestLogKnown || s.inLogLocked(r.QuestId)) {
+			err = status.Error(codes.FailedPrecondition, "quest log is unknown or already contains this quest")
+		}
+		return err
+	}
+	if err := guard(); err != nil {
+		return nil, err
 	}
 	token, err := s.acquire(call)
 	if err != nil {
 		return nil, err
 	}
 	defer s.release(token)
-	if _, err := s.gate(call, r.NpcGuid); err != nil {
+	if _, err := s.prepareInteraction(call, token, r.NpcGuid, guard); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()

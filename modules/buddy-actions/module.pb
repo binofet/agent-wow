@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Ç
+¸%
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -57,10 +57,13 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 ApproachLootRequest
 token (	Rtoken
 corpse_guid (R
-corpseGuid"_
+corpseGuid"G
+ApproachQuestRequest
+token (	Rtoken
+npc_guid (RnpcGuid"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"º
+state (2.warcraftbuddy.actions.v1.StateRstate"Ê
 State
 	following (R	following
 healing (Rhealing
@@ -119,7 +122,20 @@ class_name! (	R	className%
 auto_attack_requested1 (RautoAttackRequested6
 auto_attack_unconfirmed2 (RautoAttackUnconfirmed=
 sinister_strike_energy_cost3 (RsinisterStrikeEnergyCost8
-mainhand_weapon_verified4 (RmainhandWeaponVerified2Í
+mainhand_weapon_verified4 (RmainhandWeaponVerified
+	traveling5 (R	traveling&
+travel_npc_guid6 (RtravelNpcGuid#
+nav_available7 (RnavAvailable
+
+nav_reason8 (	R	navReason
+
+practicing9 (R
+practicing%
+practice_phase: (	RpracticePhase0
+practice_target_guid; (RpracticeTargetGuid=
+practice_lease_remaining_ms< (RpracticeLeaseRemainingMs%
+practice_pulls= (RpracticePulls%
+practice_kills> (RpracticeKills2å
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -128,6 +144,9 @@ class_name! (	R	className%
 Status.google.protobuf.Empty.warcraftbuddy.actions.v1.Staten
 AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
 ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
-ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.StateC
+ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`
+ApproachQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State^
+TravelQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateT
+Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

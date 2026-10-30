@@ -5,6 +5,10 @@ services:
       dockerfile: modules/buddy-actions/Dockerfile
     network_mode: none
     read_only: true
+    environment:
+      BUDDY_NAV_DATA_DIR: /var/lib/buddy-nav
+    volumes:
+      - ${BUDDY_NAV_DATA_DIR_HOST:-../../data/navigation}:/var/lib/buddy-nav:ro
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     logging:

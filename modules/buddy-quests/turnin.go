@@ -63,7 +63,15 @@ func (s *Service) TurnIn(ctx context.Context, r *questsv1.TurnInRequest) (*quest
 		return nil, err
 	}
 	defer s.release(token)
-	if _, err := s.gate(call, r.NpcGuid); err != nil {
+	guard := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.state.QuestLogKnown || s.state.QuestLogRevision != r.QuestLogRevision || !s.inLogLocked(r.QuestId) {
+			return status.Error(codes.FailedPrecondition, "active own quest changed before turn-in")
+		}
+		return nil
+	}
+	if _, err := s.prepareInteraction(call, token, r.NpcGuid, guard); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -132,10 +140,19 @@ func (s *Service) ClaimReward(ctx context.Context, r *questsv1.RewardRequest) (*
 		return nil, err
 	}
 	defer s.releaseBusy()
-	s.mu.Lock()
-	_, _, err := s.validateRewardLocked(r)
-	s.mu.Unlock()
-	if err != nil {
+	if _, err := s.world(call); err != nil {
+		return nil, err
+	}
+	guard := func() error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_, _, err := s.validateRewardLocked(r)
+		if err == nil && (!s.state.QuestLogKnown || !s.inLogLocked(r.QuestId)) {
+			err = status.Error(codes.FailedPrecondition, "quest is absent from the active own log")
+		}
+		return err
+	}
+	if err := guard(); err != nil {
 		return nil, err
 	}
 	token, err := s.acquire(call)
@@ -143,7 +160,7 @@ func (s *Service) ClaimReward(ctx context.Context, r *questsv1.RewardRequest) (*
 		return nil, err
 	}
 	defer s.release(token)
-	w, err := s.gate(call, r.NpcGuid)
+	w, err := s.prepareInteraction(call, token, r.NpcGuid, guard)
 	if err != nil {
 		return nil, err
 	}

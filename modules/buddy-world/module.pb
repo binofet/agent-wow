@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-—*
+ +
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
@@ -104,8 +104,7 @@ slot_known (R	slotKnown
 durability (R
 durability%
 max_durability (RmaxDurability"
-SnapshotRequest"Ì
-
+SnapshotRequest"ƒ
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -150,7 +149,10 @@ unitFlags2.
 trajectory" (2*.warcraftbuddy.world.v1.CreatureTrajectoryR
 trajectory,
 combat_reach_known# (RcombatReachKnown!
-combat_reach$ (RcombatReach"Ã
+combat_reach$ (RcombatReach
+level_known% (R
+levelKnown
+level& (Rlevel"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -183,7 +185,7 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"ƒ
+metadata_known (RmetadataKnown"Õ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -202,7 +204,8 @@ lastOpcode(
 backpack_known (RbackpackKnown+
 backpack_revision (RbackpackRevision@
 backpack (2$.warcraftbuddy.world.v1.BackpackSlotRbackpackH
-owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTarget2°
+owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTargetP
+nearby_creatures (2%.warcraftbuddy.world.v1.CreatureStateRnearbyCreatures2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

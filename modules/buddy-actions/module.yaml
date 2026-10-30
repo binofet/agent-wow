@@ -16,6 +16,9 @@ rpc:
   acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
   release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
+  approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
+  travel_quest: /warcraftbuddy.actions.v1.BuddyActions/TravelQuest
+  practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
 packets:
   SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LEARNED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -30,5 +33,6 @@ packets:
   SMSG_ATTACKSTART: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_ATTACKSTOP: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_PARTYKILLLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
 lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout

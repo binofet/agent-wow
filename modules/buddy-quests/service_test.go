@@ -34,6 +34,9 @@ type fakeSession struct {
 	acquired, released int
 	lease              bool
 	onSend             func(context.Context, *modv1.SendPacketRequest) error
+	onAcquire          func()
+	approaches         []*actionsv1.ApproachQuestRequest
+	onApproach         func(context.Context, *actionsv1.ApproachQuestRequest) (*actionsv1.State, error)
 }
 
 func fixture() *fakeSession {
@@ -56,7 +59,30 @@ func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest
 	}
 	return &emptypb.Empty{}, nil
 }
-func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
+	if r.Module == "buddy-actions" && r.Method == "approach_quest" {
+		input := &actionsv1.ApproachQuestRequest{}
+		if err := r.Request.UnmarshalTo(input); err != nil {
+			return nil, err
+		}
+		f.mu.Lock()
+		if !f.lease || input.Token != "fixture-token" || input.NpcGuid != npcGUID {
+			f.mu.Unlock()
+			return nil, status.Error(codes.FailedPrecondition, "wrong approach lease or NPC")
+		}
+		f.approaches = append(f.approaches, proto.Clone(input).(*actionsv1.ApproachQuestRequest))
+		fn := f.onApproach
+		f.mu.Unlock()
+		if fn == nil {
+			return nil, status.Error(codes.FailedPrecondition, "approach not configured")
+		}
+		result, err := fn(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		packed, err := anypb.New(result)
+		return &modv1.InvokeModuleResponse{Result: packed}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var result proto.Message
@@ -76,6 +102,9 @@ func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleReque
 		f.lease = true
 		f.acquired++
 		f.actions.InteractionOwner = "quests"
+		if f.onAcquire != nil {
+			f.onAcquire()
+		}
 		result = &actionsv1.InteractionLease{Token: "fixture-token", State: proto.Clone(f.actions).(*actionsv1.State)}
 	case "buddy-actions.release_interaction":
 		input := &actionsv1.InteractionRelease{}

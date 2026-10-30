@@ -176,6 +176,8 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.AttackAgeMs = age(now, p.attackAt)
 	r.CombatReach = math.Float32frombits(p.fields[0x42])
 	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
+	r.Level = p.fields[0x36]
+	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= 80
 	if t := p.trajectory; t.known {
 		r.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: t.duration, AgeMs: uint64(t.elapsed) + age(now, t.at), DestinationKnown: t.destinationKnown, DestinationX: t.destination[0], DestinationY: t.destination[1], DestinationZ: t.destination[2], Cyclic: t.cyclic, TransportRelative: t.relative, TransportGuid: t.transport, TransportSeat: int32(t.seat), Stopped: t.stopped, Flags: t.flags}
 	}
@@ -224,6 +226,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 {
 			continue
 		}
+		r.NearbyCreatures = append(r.NearbyCreatures, creatureSnapshot(p, s, now))
 		if p.known[unitNPCFlags] && p.fields[unitNPCFlags]&2 != 0 {
 			r.QuestGivers = append(r.QuestGivers, creatureSnapshot(p, s, now))
 		}
@@ -233,6 +236,19 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	}
 	sortCreatures(r.QuestGivers)
 	sortCreatures(r.LootableCorpses)
+	sort.Slice(r.NearbyCreatures, func(i, j int) bool {
+		a, b := r.NearbyCreatures[i], r.NearbyCreatures[j]
+		if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
+			return a.DistanceToSelfObservedKnown
+		}
+		if a.DistanceToSelfObserved != b.DistanceToSelfObserved {
+			return a.DistanceToSelfObserved < b.DistanceToSelfObserved
+		}
+		return a.Guid < b.Guid
+	})
+	if len(r.NearbyCreatures) > 32 {
+		r.NearbyCreatures = r.NearbyCreatures[:32]
+	}
 	if len(r.QuestGivers) > maxCreatureResults {
 		r.QuestGivers = r.QuestGivers[:maxCreatureResults]
 	}

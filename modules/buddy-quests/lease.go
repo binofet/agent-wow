@@ -5,6 +5,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -21,6 +22,41 @@ func (s *Service) acquire(ctx context.Context) (string, error) {
 		return "", status.Error(codes.FailedPrecondition, "quest interaction lease did not confirm stopped ownership")
 	}
 	return result.Token, nil
+}
+
+// Only an explicitly requested interaction may close a short range gap. The
+// actuator owns navigation bounds and movement cleanup; this module still
+// requires a fresh strict interaction gate before any quest packet is sent.
+func (s *Service) prepareInteraction(ctx context.Context, token string, npcGUID uint64, guard func() error) (*worldv1.SnapshotResponse, error) {
+	w, err := s.gate(ctx, npcGUID)
+	if err != nil && (status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != "questgiver_outside_conservative_range") {
+		return nil, err
+	}
+	if guard != nil {
+		if check := guard(); check != nil {
+			return nil, check
+		}
+	}
+	if err == nil {
+		return w, nil
+	}
+	result := &actionsv1.State{}
+	if err := s.invoke(ctx, "buddy-actions", "approach_quest", &actionsv1.ApproachQuestRequest{Token: token, NpcGuid: npcGUID}, result); err != nil {
+		return nil, err
+	}
+	if result.Reason != "quest_approach_within_distance" || result.Moving || result.MotionUnconfirmed || result.InteractionOwner != "quests" {
+		return nil, status.Error(codes.FailedPrecondition, "quest approach did not confirm a stopped owned interaction")
+	}
+	w, err = s.gate(ctx, npcGUID)
+	if err != nil {
+		return nil, err
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return nil, err
+		}
+	}
+	return w, nil
 }
 
 func (s *Service) release(token string) {

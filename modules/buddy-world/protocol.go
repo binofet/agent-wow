@@ -444,7 +444,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					}
 					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now, vitalsAt: now}
 					setMap(p, players[0])
-					for _, f := range []int{objectEntry, unitNPCFlags, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, 0x12, 0x13, 0x37, 0x3c, 0x42} {
+					for _, f := range []int{objectEntry, unitNPCFlags, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, 0x12, 0x13, 0x36, 0x37, 0x3c, 0x42} {
 						p.known[f] = true
 					}
 					newCreature = true

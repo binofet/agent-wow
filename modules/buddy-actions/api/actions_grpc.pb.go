@@ -29,6 +29,9 @@ const (
 	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
 	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
 	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
+	BuddyActions_ApproachQuest_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
+	BuddyActions_TravelQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
 	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 )
@@ -45,6 +48,9 @@ type BuddyActionsClient interface {
 	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
 	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
 	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
+	ApproachQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
+	TravelQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
+	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -137,6 +143,36 @@ func (c *buddyActionsClient) ApproachLoot(ctx context.Context, in *ApproachLootR
 	return out, nil
 }
 
+func (c *buddyActionsClient) ApproachQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ApproachQuest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) TravelQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_TravelQuest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Practice_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -169,6 +205,9 @@ type BuddyActionsServer interface {
 	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
 	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
 	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
+	ApproachQuest(context.Context, *ApproachQuestRequest) (*State, error)
+	TravelQuest(context.Context, *ApproachQuestRequest) (*State, error)
+	Practice(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyActionsServer()
@@ -204,6 +243,15 @@ func (UnimplementedBuddyActionsServer) ReleaseInteraction(context.Context, *Inte
 }
 func (UnimplementedBuddyActionsServer) ApproachLoot(context.Context, *ApproachLootRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApproachLoot not implemented")
+}
+func (UnimplementedBuddyActionsServer) ApproachQuest(context.Context, *ApproachQuestRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproachQuest not implemented")
+}
+func (UnimplementedBuddyActionsServer) TravelQuest(context.Context, *ApproachQuestRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TravelQuest not implemented")
+}
+func (UnimplementedBuddyActionsServer) Practice(context.Context, *ToggleRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Practice not implemented")
 }
 func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -376,6 +424,60 @@ func _BuddyActions_ApproachLoot_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_ApproachQuest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachQuestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ApproachQuest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ApproachQuest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ApproachQuest(ctx, req.(*ApproachQuestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_TravelQuest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachQuestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).TravelQuest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_TravelQuest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).TravelQuest(ctx, req.(*ApproachQuestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Practice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ToggleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Practice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Practice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Practice(ctx, req.(*ToggleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -450,6 +552,18 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApproachLoot",
 			Handler:    _BuddyActions_ApproachLoot_Handler,
+		},
+		{
+			MethodName: "ApproachQuest",
+			Handler:    _BuddyActions_ApproachQuest_Handler,
+		},
+		{
+			MethodName: "TravelQuest",
+			Handler:    _BuddyActions_TravelQuest_Handler,
+		},
+		{
+			MethodName: "Practice",
+			Handler:    _BuddyActions_Practice_Handler,
 		},
 		{
 			MethodName: "OnPacket",
