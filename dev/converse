@@ -609,7 +609,7 @@ class RPC:
                 return None
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
-    def call(self, method, params):
+    def call(self, method, params, timeout=None):
         if method not in ("buddy-chat.poll", "buddy-chat.send", "buddy-chat.emote", "buddy-chat.owner_feed",
                           "buddy-party.state", "buddy-party.accept",
                           "buddy-world.snapshot",
@@ -627,7 +627,10 @@ class RPC:
         request = urllib.request.Request(self.url, data=body,
                                          headers={"Content-Type": "application/json"})
         try:
-            with self.opener.open(request, timeout=min(self.timeout, .45) if method == "buddy-trade.lookup_items" else self.timeout) as response:
+            request_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
+            if method == "buddy-trade.lookup_items":
+                request_timeout = min(request_timeout, .45)
+            with self.opener.open(request, timeout=request_timeout) as response:
                 raw = response.read(256 * 1024 + 1)
             if len(raw) > 256 * 1024:
                 raise ConversationError("Chat RPC response exceeds the limit")
@@ -926,7 +929,7 @@ class BuddyControls:
         for giver in nearby:
             if not isinstance(giver, dict) or giver.get("distanceKnown") is not True:
                 continue
-            distance, creature = giver.get("distance"), giver.get("creature", {})
+            distance, creature = giver.get("distance", 0), giver.get("creature", {})
             if (type(distance) not in (float, int) or not math.isfinite(distance)
                     or not isinstance(creature, dict)):
                 continue
@@ -1025,6 +1028,10 @@ class BuddyControls:
         result = self.quest_offer()
         if not result:
             return "I couldn't read a quest offer from a nearby questgiver yet."
+        if action == "ACCEPT_QUEST" and quest_id and self.quest_in_own_log(self.quests, quest_id):
+            offered = result[0].get("quests", [])
+            quest = next((q for q in offered if isinstance(q, dict) and integer(q.get("questId", 0)) == quest_id), {"questId": quest_id})
+            return self.quest_log_confirmation(quest)
         if not result[1]:
             return "This NPC isn't offering me a quest I can accept right now."
         offer, available = result
@@ -1036,10 +1043,40 @@ class BuddyControls:
             return "That quest isn't in the current offer. Ask me to check the available quests."
         quest = selected[0]
         session = self.bound(self.quests)["sessionId"]
-        result = self.rpc.call("buddy-quests.accept", {"sessionId": session,
-            "offerRevision": str(integer(offer.get("revision", "0"))),
-            "npcGuid": str(integer(offer.get("npcGuid", "0"))), "questId": integer(quest["questId"])})
+        if self.quest_in_own_log(self.quests, integer(quest["questId"]), session):
+            return self.quest_log_confirmation(quest)
+        if integer(quest.get("flags", 0)) & 0x80000:  # QUEST_FLAGS_AUTO_ACCEPT; 0x8 is SHARABLE.
+            deadline = time.monotonic() + .75
+            for attempt in range(3):
+                try:
+                    fresh = self.read_quest_state(min(.2, max(.001, deadline-time.monotonic())))
+                except ConversationError:
+                    break
+                if fresh.get("sessionId") != session:
+                    break
+                self.quests = fresh
+                if self.quest_in_own_log(fresh, integer(quest["questId"]), session):
+                    return self.quest_log_confirmation(quest)
+                if attempt == 2 or time.monotonic() + .05 >= deadline:
+                    break
+                time.sleep(.05)
+            return "That quest is accepted automatically; I'm waiting to see it in my quest log."
+        try:
+            result = self.rpc.call("buddy-quests.accept", {"sessionId": session,
+                "offerRevision": str(integer(offer.get("revision", "0"))),
+                "npcGuid": str(integer(offer.get("npcGuid", "0"))), "questId": integer(quest["questId"])})
+        except ConversationError:
+            try:
+                fresh = self.read_quest_state(.2)
+                if self.quest_in_own_log(fresh, integer(quest["questId"]), session):
+                    self.quests = fresh
+                    return self.quest_log_confirmation(quest)
+            except ConversationError:
+                pass
+            raise
         self.quests = result.get("state", {})
+        if self.quest_in_own_log(self.quests, integer(quest["questId"]), session):
+            return self.quest_log_confirmation(quest)
         acceptance = self.quests.get("lastAcceptance", {}) if isinstance(self.quests, dict) else {}
         if (isinstance(acceptance, dict) and acceptance.get("status") in ("CONFIRMED_IN_LOG", 2)
                 and integer(acceptance.get("questId", "0")) == integer(quest["questId"])):
@@ -1047,6 +1084,24 @@ class BuddyControls:
         if isinstance(acceptance, dict) and acceptance.get("status") in ("SERVER_REJECTED", 4):
             return "The server rejected that quest pickup."
         return "I requested the quest, but I haven't confirmed it in my quest log."
+
+    def read_quest_state(self, timeout):
+        if isinstance(self.rpc, RPC):
+            return RPC.call(self.rpc, "buddy-quests.state", {}, timeout=timeout)
+        return self.rpc.call("buddy-quests.state", {})
+
+    @staticmethod
+    def quest_in_own_log(state, quest_id, session=None):
+        if (not isinstance(state, dict) or state.get("questLogKnown") is not True
+                or not isinstance(state.get("sessionId"), str) or not 1 <= len(state["sessionId"]) <= 128
+                or session is not None and state["sessionId"] != session):
+            return False
+        quests = state.get("questLog", [])
+        return (isinstance(quests, list) and len(quests) <= 25 and any(isinstance(q, dict)
+                and integer(q.get("questId", 0)) == quest_id for q in quests))
+
+    def quest_log_confirmation(self, quest):
+        return "It's in my quest log: " + self.label(quest.get("title"), "quest " + str(quest["questId"]), 100) + "."
 
     def claim_quest_offer(self, quest_id, item_entry=0):
         if self.ambiguous_quest_reward(self.quests, quest_id):

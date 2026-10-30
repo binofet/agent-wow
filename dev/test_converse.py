@@ -449,6 +449,7 @@ class ControlsTests(unittest.TestCase):
                 if method == "buddy-quests.accept":
                     return {"transportWritten": True, "state": {"lastAcceptance": {
                         "status": status, "questId": params["questId"]}}}
+                if method == "buddy-quests.state": return {}
                 raise AssertionError(method)
         rpc = RPC()
         controls = converse.BuddyControls(rpc)
@@ -494,6 +495,68 @@ class ControlsTests(unittest.TestCase):
         rpc.call = call
         self.assertIn("won't retry", controls.execute("ACCEPT_QUEST"))
         self.assertEqual(sum(method == "buddy-quests.accept" for method, _ in rpc.calls), 1)
+
+    def auto_quest(self, flags=0x80008, initial=None, polls=()):
+        controls,rpc=self.quest_controls([{"questId":2158,"title":"Rest and Relaxation","available":True,"flags":flags}])
+        original=rpc.call
+        pending=list(polls)
+        def call(method,params):
+            if method=="buddy-quests.state":
+                rpc.calls.append((method,params))
+                return pending.pop(0) if pending else {"sessionId":"quest-session","questLogKnown":True,"questLog":[]}
+            result=original(method,params)
+            if method=="buddy-quests.offer" and initial is not None:result["state"].update(initial)
+            return result
+        rpc.call=call
+        return controls,rpc
+
+    def test_actual_own_log_after_offer_confirms_without_accept_or_synthetic_receipt(self):
+        for flags in (0,0x80008):
+            controls,rpc=self.auto_quest(flags,initial={"questLogKnown":True,"questLog":[{"questId":2158}]})
+            self.assertIn("It's in my quest log",controls.execute("ACCEPT_QUEST",quest_id=2158))
+            self.assertFalse(any(method in ("buddy-quests.accept","buddy-quests.state") for method,_ in rpc.calls))
+            self.assertNotIn("lastAcceptance",controls.quests)
+
+    def test_autoaccept_delayed_actual_log_is_polled_without_duplicate_accept(self):
+        controls,rpc=self.auto_quest(polls=[{"sessionId":"quest-session","questLogKnown":True,"questLog":[]},
+            {"sessionId":"quest-session","questLogKnown":True,"questLog":[{"questId":2158}]}])
+        with patch.object(converse.time,"sleep"):
+            self.assertIn("It's in my quest log",controls.execute("ACCEPT_QUEST",quest_id=2158))
+        self.assertEqual(sum(method=="buddy-quests.state" for method,_ in rpc.calls),2)
+        self.assertFalse(any(method=="buddy-quests.accept" for method,_ in rpc.calls))
+        self.assertNotIn("lastAcceptance",controls.quests)
+
+    def test_autoaccept_unknown_wrong_log_or_replaced_session_never_claims_confirmation(self):
+        for state in ({"sessionId":"quest-session","questLogKnown":False,"questLog":[{"questId":2158}]},
+                      {"sessionId":"quest-session","questLogKnown":True,"questLog":[{"questId":7}]},
+                      {"sessionId":"replacement","questLogKnown":True,"questLog":[{"questId":2158}]}):
+            controls,rpc=self.auto_quest(polls=[state]*3)
+            with patch.object(converse.time,"sleep"):
+                text=controls.execute("ACCEPT_QUEST",quest_id=2158)
+            self.assertIn("waiting",text)
+            self.assertFalse(any(method=="buddy-quests.accept" for method,_ in rpc.calls))
+            self.assertLessEqual(sum(method=="buddy-quests.state" for method,_ in rpc.calls),3)
+
+    def test_shareable_flag_alone_uses_normal_acceptance(self):
+        controls,rpc=self.auto_quest(flags=8)
+        controls.execute("ACCEPT_QUEST",quest_id=2158)
+        self.assertEqual(sum(method=="buddy-quests.accept" for method,_ in rpc.calls),1)
+
+    def test_accept_rpc_error_reconciles_once_only_with_same_session_actual_own_log(self):
+        for mode in ("confirmed","replacement","unknown","wrong_quest"):
+            controls,rpc=self.auto_quest(flags=0,polls=[{"sessionId":"replacement" if mode=="replacement" else "quest-session",
+                "questLogKnown":mode!="unknown","questLog":[{"questId":7 if mode=="wrong_quest" else 2158}]}])
+            original=rpc.call
+            def call(method,params):
+                if method=="buddy-quests.accept":
+                    rpc.calls.append((method,params))
+                    raise converse.ConversationError("ambiguous write")
+                return original(method,params)
+            rpc.call=call
+            text=controls.execute("ACCEPT_QUEST",quest_id=2158)
+            self.assertIn("It's in my quest log" if mode=="confirmed" else "won't retry",text)
+            self.assertEqual(sum(method=="buddy-quests.accept" for method,_ in rpc.calls),1)
+            self.assertEqual(sum(method=="buddy-quests.state" for method,_ in rpc.calls),1)
 
     def test_loot_is_explicit_and_independent_of_missing_follow_module(self):
         rpc = FakeRPC([])
@@ -959,6 +1022,12 @@ class QuestApproachCandidateTests(unittest.TestCase):
         controls.quest_offer()
         self.assertEqual(rpc.calls[-1][1]["npcGuid"],"17379390962878382082")
         self.assertFalse(any(method.startswith("buddy-actions.") for method,_ in rpc.calls))
+
+    def test_proto_omitted_zero_distance_is_valid_only_with_known_distance(self):
+        zero={"distanceKnown":True,"canInteract":True,"creature":{"guid":"17379390962878382081"}}
+        self.assertEqual(converse.BuddyControls.quest_candidates([zero]),[(0,0,17379390962878382081)])
+        for fields in ({"distanceKnown":False},{"distanceKnown":None},{"distance":None}):
+            self.assertEqual(converse.BuddyControls.quest_candidates([dict(zero,**fields)]),[])
 
     def test_unknown_or_other_blocked_candidates_never_become_approach_targets(self):
         invalid=[]
