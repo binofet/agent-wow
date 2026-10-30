@@ -27,29 +27,34 @@ type observed struct {
 	positionRevision                                             uint64
 	positionAt, vitalsAt, observedAt                             time.Time
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
-	fields            [playerFlags + 1]uint32
-	known             [playerFlags + 1]bool
-	isSelf            bool
-	questLogKnown     bool
-	questLog          [25][5]uint32
-	questRevision     uint64
-	backpackKnown     bool
-	backpack          [16]uint64
-	backpackRevision  uint64
-	attackVictimKnown bool
-	attackVictim      uint64
-	attackAt          time.Time
-	trajectory        observedTrajectory
-	mainhandKnown     bool
-	mainhand          uint64
-	offhandKnown      bool
-	offhand           uint64
-	copperKnown       bool
-	copper            uint32
-	skillsKnown       bool
-	skills            [128][3]uint32
-	freePrimaryKnown  bool
-	freePrimary       uint32
+	fields                      [playerFlags + 1]uint32
+	known                       [playerFlags + 1]bool
+	isSelf                      bool
+	questLogKnown               bool
+	questLog                    [25][5]uint32
+	questRevision               uint64
+	backpackKnown               bool
+	backpack                    [16]uint64
+	backpackRevision            uint64
+	bagSlotsKnown               bool
+	bags                        [4]uint64
+	inventoryEpoch              uint64
+	isContainer, containerKnown bool
+	inventoryItemKnown          bool
+	attackVictimKnown           bool
+	attackVictim                uint64
+	attackAt                    time.Time
+	trajectory                  observedTrajectory
+	mainhandKnown               bool
+	mainhand                    uint64
+	offhandKnown                bool
+	offhand                     uint64
+	copperKnown                 bool
+	copper                      uint32
+	skillsKnown                 bool
+	skills                      [128][3]uint32
+	freePrimaryKnown            bool
+	freePrimary                 uint32
 }
 
 type Service struct {
@@ -127,6 +132,9 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 
 func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
 	guid := request.GetCreatureGuid()
+	if request.GetCreatureEntry() > 0xffffff || request.GetGameObjectEntry() > 0xffffff {
+		return nil, status.Error(codes.InvalidArgument, "entry filters must fit actual creature/gameobject GUID entries")
+	}
 	if guid != 0 && !creatureGUID(guid) {
 		return nil, status.Error(codes.InvalidArgument, "creature_guid must identify a creature or be zero")
 	}
@@ -138,6 +146,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 		r.Owner = snapshot(owner, now)
 	}
 	s.state.appendSnapshot(r, now)
+	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry())
 	if p := s.state.creatures[guid]; guid != 0 && p != nil && p.present && p.known[objectEntry] && p.fields[objectEntry] != 0 {
 		r.RequestedCreature = creatureSnapshot(p, &s.state, now)
 	}
@@ -170,6 +179,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		}
 		if old.freePrimaryKnown != current.freePrimaryKnown || old.freePrimary != current.freePrimary {
 			next.freePrimaryRevision++
+		}
+		if s.state.inventoryView() != next.inventoryView() {
+			next.inventoryRevision++
 		}
 		if !proto.Equal(s.state.offhandSnapshot(), next.offhandSnapshot()) {
 			next.offhandRevision++

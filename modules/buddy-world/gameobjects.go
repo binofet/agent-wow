@@ -84,7 +84,7 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 || !importantGameObject(p) {
 			continue
 		}
-		v := &worldv1.GameObjectState{Guid: p.guid, Entry: p.fields[objectEntry], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision, PositionAgeMs: age(now, p.positionAt), ObservationAgeMs: age(now, p.observedAt), TypeKnown: true, GameObjectType: (p.fields[gameObjectBytes] >> 8) & 0xff, FlagsKnown: p.known[gameObjectFlags], Flags: p.fields[gameObjectFlags], DynamicFlagsKnown: p.known[gameObjectDynamic], DynamicFlags: p.fields[gameObjectDynamic], CreatedByKnown: p.known[gameObjectCreatedBy] && p.known[gameObjectCreatedBy+1], CreatedByGuid: uint64(p.fields[gameObjectCreatedBy]) | uint64(p.fields[gameObjectCreatedBy+1])<<32, StateKnown: p.known[gameObjectBytes], State: p.fields[gameObjectBytes] & 0xff}
+		v := gameObjectSnapshot(p, now)
 		if mailbox(p) {
 			r.Mailboxes = append(r.Mailboxes, v)
 		} else if harvestCrate(p) {

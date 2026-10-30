@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-÷<
+ÏB
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
 PlayerState
 guid (Rguid
@@ -111,9 +111,11 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"6
+max_durability (RmaxDurability"‰
 SnapshotRequest#
-creature_guid (RcreatureGuid"Ý
+creature_guid (RcreatureGuid%
+creature_entry (RcreatureEntry*
+game_object_entry (RgameObjectEntry"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -222,7 +224,18 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"Ô
+metadata_known (RmetadataKnown"¥
+InventoryBag
+bag (Rbag
+
+slot_known (R	slotKnown%
+container_guid (RcontainerGuid%
+metadata_known (RmetadataKnown
+entry (Rentry%
+contents_known (RcontentsKnown
+
+slot_count (R	slotCount:
+slots (2$.warcraftbuddy.world.v1.BackpackSlotRslots"Ô
 
 SkillState
 slot (Rslot
@@ -231,7 +244,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Ê
+permanent_bonus (RpermanentBonus"¦
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -267,7 +280,12 @@ selfSkills@
 self_free_primary_slots (RselfFreePrimarySlotsF
  self_free_primary_slots_revision (RselfFreePrimarySlotsRevisionL
 spell_focuses (2'.warcraftbuddy.world.v1.GameObjectStateRspellFocusesW
-own_fishing_bobbers (2'.warcraftbuddy.world.v1.GameObjectStateRownFishingBobbers2°
+own_fishing_bobbers (2'.warcraftbuddy.world.v1.GameObjectStateRownFishingBobbersV
+requested_creatures  (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreatures]
+requested_game_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRrequestedGameObjects'
+inventory_known" (RinventoryKnown-
+inventory_revision# (RinventoryRevisionK
+inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBags2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

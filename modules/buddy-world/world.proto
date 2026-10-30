@@ -84,6 +84,9 @@ message SnapshotRequest {
   // Optional exact lookup in the existing creature cache; zero requests none.
   // This never changes the cache, discovery ranking or observed positions.
   uint64 creature_guid = 1;
+  // Optional exact-entry filters in existing bounded caches; zero requests none.
+  uint32 creature_entry = 2;
+  uint32 game_object_entry = 3;
 }
 
 message GameObjectState {
@@ -189,7 +192,7 @@ message QuestLogEntry {
 }
 
 message BackpackSlot {
-  // Logical backpack bag0, slots0..15; equipment and equipped bags excluded.
+  // Logical carried bag0..4 and zero-based slot; bag0 is the built-in backpack.
   uint32 bag = 1;
   uint32 slot = 2;
   uint64 item_guid = 3;
@@ -197,6 +200,19 @@ message BackpackSlot {
   uint32 stack_count = 5;
   // Requires an owned ITEM/CONTAINER observation matching the current GUID.
   bool metadata_known = 6;
+}
+
+// Only private own carried inventory: built-in backpack plus four equipped bags.
+// Unknown occupied bag contents are never represented as known empty slots.
+message InventoryBag {
+  uint32 bag = 1;
+  bool slot_known = 2;
+  uint64 container_guid = 3;
+  bool metadata_known = 4;
+  uint32 entry = 5;
+  bool contents_known = 6;
+  uint32 slot_count = 7;
+  repeated BackpackSlot slots = 8;
 }
 
 // Actual private own-player skill fields; no inferred profession membership.
@@ -258,6 +274,15 @@ message SnapshotResponse {
   repeated GameObjectState spell_focuses = 30;
   // At most4 present type17/entry35591 bobbers with actual createdBy=self.
   repeated GameObjectState own_fishing_bobbers = 31;
+  // At most32 present exact-entry matches, retaining actual positions and ages.
+  repeated CreatureState requested_creatures = 32;
+  repeated GameObjectState requested_game_objects = 33;
+  // True only with coherent private own slot references and all equipped bag
+  // layouts/contents observed. Nonempty item metadata is separately qualified.
+  bool inventory_known = 34;
+  uint64 inventory_revision = 35;
+  // Exactly5 logical bags0..4 after own CREATE; total at most160 content slots.
+  repeated InventoryBag inventory_bags = 36;
 }
 
 service BuddyWorld {

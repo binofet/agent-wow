@@ -234,4 +234,16 @@ func TestRequestedCreatureDescriptorUsesExistingSnapshotAlias(t *testing.T) {
 	if guid == nil || guid.Number() != 1 || guid.Kind() != protoreflect.Uint64Kind || creature == nil || creature.Number() != 23 || creature.Kind() != protoreflect.MessageKind || creature.Message().FullName() != "warcraftbuddy.world.v1.CreatureState" {
 		t.Fatal("manifest snapshot descriptor has stale lookup schema", guid, creature)
 	}
+	for name, number := range map[protoreflect.Name]protoreflect.FieldNumber{"creature_entry": 2, "game_object_entry": 3} {
+		field := method.Descriptor().Input().Fields().ByName(name)
+		if field == nil || field.Number() != number || field.Kind() != protoreflect.Uint32Kind {
+			t.Fatal("stale input filter descriptor", name, field)
+		}
+	}
+	for name, number := range map[protoreflect.Name]protoreflect.FieldNumber{"requested_creatures": 32, "requested_game_objects": 33, "inventory_known": 34, "inventory_revision": 35, "inventory_bags": 36} {
+		field := method.Descriptor().Output().Fields().ByName(name)
+		if field == nil || field.Number() != number {
+			t.Fatal("stale inventory/entry descriptor", name, field)
+		}
+	}
 }

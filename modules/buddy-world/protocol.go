@@ -145,6 +145,7 @@ func markAbsent(p *observed, now time.Time) {
 	p.attackVictim = 0
 	p.trajectory = observedTrajectory{}
 	clearCastingContext(p)
+	clearInventoryContext(p)
 	p.offhandKnown, p.offhand = false, 0
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
@@ -164,6 +165,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		}
 		p := &players[0]
 		clearCastingContext(p)
+		clearInventoryContext(p)
 		p.offhandKnown, p.offhand = false, 0
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
@@ -431,10 +433,10 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					if objectType != 4 {
 						return errLayout
 					}
-					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
+					revision, questRevision, backpackRevision, inventoryEpoch := p.positionRevision, p.questRevision, p.backpackRevision, p.inventoryEpoch
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
@@ -478,7 +480,13 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					p.known[gameObjectCreatedBy+1] = true
 					newGameObject = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
-					p = &observed{guid: guid, present: true, observedAt: now}
+					p = &observed{guid: guid, present: true, observedAt: now, isContainer: objectType == 2, containerKnown: objectType == 2, inventoryItemKnown: true, inventoryEpoch: players[0].inventoryEpoch}
+					if objectType == 2 {
+						p.known[containerSlots] = true
+						for field := containerFirst; field < containerFirst+maxBagSlots*2; field++ {
+							p.known[field] = true
+						}
+					}
 					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack, 0x3c, 0x3d} {
 						p.known[f] = true
 					}
@@ -499,6 +507,14 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			}
 			if newCreature {
 				state.putCreature(p)
+			}
+			if p != nil && itemGUID(guid) && typ != 1 {
+				owner := uint64(p.fields[itemOwner]) | uint64(p.fields[itemOwner+1])<<32
+				if owner != players[0].guid {
+					// Private stack/container observations cannot be renewed by a
+					// later owner-only delta after the item left this character.
+					p.inventoryItemKnown, p.containerKnown = false, false
+				}
 			}
 			if newItem {
 				state.putItem(p)
@@ -661,6 +677,9 @@ func values(c *cursor, p *observed, now time.Time) error {
 			}
 			v := c.u32()
 			field := block*32 + bit
+			if p != nil && p.isContainer && field == containerSlots && v > maxBagSlots {
+				return errBounds
+			}
 			if p != nil && p.isSelf {
 				if field >= playerSkillsFirst && field < playerSkillsFirst+128*3 {
 					slot, part := (field-playerSkillsFirst)/3, (field-playerSkillsFirst)%3
@@ -689,6 +708,10 @@ func values(c *cursor, p *observed, now time.Time) error {
 				if field == playerOffhand || field == playerOffhand+1 {
 					shift := uint((field - playerOffhand) * 32)
 					p.offhand = p.offhand&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
+				}
+				if field >= playerBagsFirst && field < playerBagsFirst+8 {
+					slot, shift := (field-playerBagsFirst)/2, uint((field-playerBagsFirst)%2*32)
+					p.bags[slot] = p.bags[slot]&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
 				}
 				if field >= backpackFirst && field < backpackFirst+32 {
 					slot, half := (field-backpackFirst)/2, (field-backpackFirst)%2

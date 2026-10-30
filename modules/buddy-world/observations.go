@@ -11,7 +11,7 @@ import (
 
 const (
 	maxCreatures       = 128
-	maxItems           = 128
+	maxItems           = 256
 	maxCreatureResults = 64
 	objectEntry        = 3
 	unitNPCFlags       = 0x52 // OBJECT_END6 + UNIT_NPC_FLAGS0x4c
@@ -38,6 +38,7 @@ type observations struct {
 	skillsRevision      uint64
 	freePrimaryRevision uint64
 	offhandRevision     uint64
+	inventoryRevision   uint64
 }
 
 func (s observations) clone() observations {
@@ -151,17 +152,10 @@ func (s *observations) putItem(p *observed) {
 		return
 	}
 	if s.items[p.guid] == nil && len(s.items) >= maxItems {
-		// Keep the currently referenced backpack objects when possible.
+		// Keep actual carried bag references, contents and equipment.
 		var oldest *observed
 		for _, candidate := range s.items {
-			inBackpack := candidate.guid == s.players[0].mainhand || candidate.guid == s.players[0].offhand
-			for _, guid := range s.players[0].backpack {
-				if guid == candidate.guid {
-					inBackpack = true
-					break
-				}
-			}
-			if inBackpack {
+			if s.protectedItem(candidate.guid) {
 				continue
 			}
 			if oldest == nil || candidate.observedAt.Before(oldest.observedAt) || candidate.observedAt.Equal(oldest.observedAt) && candidate.guid < oldest.guid {
@@ -270,6 +264,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	if len(r.LootableCorpses) > maxCreatureResults {
 		r.LootableCorpses = r.LootableCorpses[:maxCreatureResults]
 	}
+	s.appendInventory(r)
 	p := s.players[0]
 	r.SelfCopperKnown, r.SelfCopper, r.SelfCopperRevision = p.copperKnown, p.copper, s.copperRevision
 	r.SelfSkillsKnown, r.SelfSkillsRevision = p.skillsKnown, s.skillsRevision

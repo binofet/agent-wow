@@ -1,0 +1,25 @@
+api_version: 1
+enabled: true
+description: Bounded normal quest-object and owned quest-item uses with separate cast, inventory and own quest-credit receipts
+requires: [buddy-world, buddy-actions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  state: /warcraftbuddy.questitems.v1.BuddyQuestItems/GetState
+  attempt: /warcraftbuddy.questitems.v1.BuddyQuestItems/Attempt
+  cancel: /warcraftbuddy.questitems.v1.BuddyQuestItems/Cancel
+packets:
+  SMSG_GAMEOBJECT_QUERY_RESPONSE: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_SPELL_START: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_SPELL_GO: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_SPELL_FAILURE: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_ITEM_PUSH_RESULT: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.questitems.v1.BuddyQuestItems/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.questitems.v1.BuddyQuestItems/BeforeLogout

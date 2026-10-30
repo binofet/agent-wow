@@ -268,10 +268,10 @@ func TestBoundedItemsAndConcurrentMixedWorldSnapshots(t *testing.T) {
 	s := NewService(1)
 	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 	packet(t, s, opcode.SMSGUpdateObject, createFixture(1, vitalFields()))
-	for i := uint64(1); i < 150; i++ {
+	for i := uint64(1); i < maxItems+22; i++ {
 		packet(t, s, opcode.SMSGUpdateObject, objectFixture(0x4000000000000000|i, 1, map[int]uint32{3: 159, 6: 1, 0xe: 1}))
 	}
-	if len(s.state.items) != 128 {
+	if len(s.state.items) != maxItems {
 		t.Fatal(len(s.state.items))
 	}
 	s.now = time.Now
@@ -287,7 +287,7 @@ func TestBoundedItemsAndConcurrentMixedWorldSnapshots(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if len(s.state.creatures) > 128 || len(s.state.items) > 128 {
+	if len(s.state.creatures) > 128 || len(s.state.items) > maxItems {
 		t.Fatal("unbounded cache")
 	}
 }

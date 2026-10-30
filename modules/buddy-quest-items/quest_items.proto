@@ -1,0 +1,102 @@
+syntax = "proto3";
+package warcraftbuddy.questitems.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-quest-items/api;questitemsv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+import "modules/buddy-world/world.proto";
+
+enum Action { ACTION_UNSPECIFIED = 0; FILL_BUCKET = 1; THROW_BUCKET = 2; }
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  RESERVED = 1;
+  WAITING_SERVER = 2;
+  COMPLETED = 3;
+  SERVER_REJECTED = 4;
+  CANCELLED = 5;
+  OUTCOME_UNCONFIRMED = 6;
+  BLOCKED = 7;
+  // A matched item cast consumed its bucket, but the fresh own quest log
+  // showed no credit during the bounded observation period. This is no hit claim.
+  NO_CREDIT_OBSERVED = 8;
+}
+message ItemBinding { uint32 bag = 1; uint32 slot = 2; uint64 item_guid = 3; uint32 entry = 4; uint32 count = 5; }
+message Operation {
+  string operation_id = 1;
+  string request_id = 2;
+  Action action = 3;
+  Status status = 4;
+  string reason = 5;
+  uint32 quest_id = 6;
+  uint64 source_object_guid = 7;
+  uint64 target_creature_guid = 8;
+  ItemBinding item = 9;
+  uint32 spell_id = 10;
+  uint32 cast_count = 11;
+  bool transport_written = 12;
+  bool write_unconfirmed = 13;
+  bool own_cast_start_observed = 14;
+  bool own_cast_go_observed = 15;
+  bool own_item_push_observed = 16;
+  bool inventory_added_observed = 17;
+  bool inventory_consumed_observed = 18;
+  bool quest_credit_observed = 19;
+  bool quest_complete_observed = 20;
+  uint32 before_objective_count = 21;
+  uint32 after_objective_count = 22;
+  uint64 baseline_inventory_revision = 23;
+  uint64 observed_inventory_revision = 24;
+  uint64 baseline_quest_log_revision = 25;
+  uint64 observed_quest_log_revision = 26;
+  uint32 failure_code = 27;
+  bool cancel_requested = 28;
+  bool lease_released = 29;
+  bool cleanup_unconfirmed = 30;
+  uint64 age_ms = 31;
+}
+message State {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 self_guid = 3;
+  bool active = 4;
+  bool quest_log_known = 5;
+  uint64 quest_log_revision = 6;
+  bool inventory_known = 7;
+  uint64 inventory_revision = 8;
+  uint32 quest_id = 9;
+  bool quest_active = 10;
+  uint32 objective_count = 11;
+  uint32 required_count = 12;
+  bool quest_complete = 13;
+  repeated warcraftbuddy.world.v1.GameObjectState barrels = 14;
+  // Actual observed practice-fire NPCs; burning aura state is not observed.
+  repeated warcraftbuddy.world.v1.CreatureState fires = 15;
+  ItemBinding bucket = 16;
+  bool barrel_template_known = 17;
+  bool bucket_template_known = 18;
+  bool ready = 19;
+  string reason = 20;
+  Operation operation = 21;
+  uint64 transport_writes = 22;
+  uint64 malformed_packets = 23;
+  bool closing = 24;
+  string limitation = 25;
+}
+message AttemptRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint32 quest_id = 3;
+  Action action = 4;
+  uint64 source_object_guid = 5;
+  uint64 target_creature_guid = 6;
+  uint64 expected_quest_log_revision = 7;
+  uint64 expected_inventory_revision = 8;
+  uint64 expected_item_guid = 9;
+}
+message CancelRequest { string session_id = 1; string operation_id = 2; }
+service BuddyQuestItems {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Attempt(AttemptRequest) returns (State);
+  rpc Cancel(CancelRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
