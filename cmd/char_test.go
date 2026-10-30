@@ -298,35 +298,53 @@ func TestCharacterFailuresHaveNoSuccessOutput(t *testing.T) {
 	}
 }
 
-type delayedConfirmation struct {
+type observedConfirmation struct {
 	io.Reader
-	delay time.Duration
+	beforeRead func()
 }
 
-func (r *delayedConfirmation) Read(b []byte) (int, error) {
-	if r.delay > 0 {
-		time.Sleep(r.delay)
-		r.delay = 0
+func (r *observedConfirmation) Read(b []byte) (int, error) {
+	if r.beforeRead != nil {
+		r.beforeRead()
+		r.beforeRead = nil
 	}
 	return r.Reader.Read(b)
 }
 
 func TestDeletionPromptDoesNotConsumeTimeout(t *testing.T) {
 	setupCharacterRealm(t)
+	const phaseBudget = 10 * time.Second
 	dials := 0
 	deleted := false
+	var initialContext context.Context
+	var promptReturned time.Time
 	deps := characterCommands{isTerminal: func(io.Reader) bool { return true }, dial: func(ctx context.Context, _ auth.Realm, _ *auth.Session) (characterClient, error) {
 		dials++
 		if err := ctx.Err(); err != nil {
 			t.Fatal(err)
 		}
+		if dials == 1 {
+			initialContext = ctx
+		} else {
+			deadline, ok := ctx.Deadline()
+			// Check when the second phase's full budget starts instead of
+			// racing real auth I/O against a tiny timeout and sleeping longer.
+			if promptReturned.IsZero() || !ok || deadline.Before(promptReturned.Add(phaseBudget)) {
+				t.Fatal("post-confirmation phase did not receive its full timeout", deadline, promptReturned)
+			}
+		}
 		return &fakeCharacterClient{characters: []char.Character{{GUID: 99, Name: "Arlen"}}, delete: func(ctx context.Context, _ char.GUID) error { deleted = true; return ctx.Err() }}, nil
 	}}
 	command := deps.command()
-	command.SetArgs([]string{"delete", "99", "--timeout", "100ms"})
+	command.SetArgs([]string{"delete", "99", "--timeout", phaseBudget.String()})
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	command.SetIn(&delayedConfirmation{Reader: strings.NewReader("yes\n"), delay: 150 * time.Millisecond})
+	command.SetIn(&observedConfirmation{Reader: strings.NewReader("yes\n"), beforeRead: func() {
+		if initialContext == nil || initialContext.Err() != context.Canceled {
+			t.Fatal("initial network phase must be canceled before waiting for confirmation")
+		}
+		promptReturned = time.Now()
+	}})
 	if err := command.Execute(); err != nil || dials != 2 || !deleted {
 		t.Fatal(err, dials, deleted)
 	}
