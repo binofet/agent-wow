@@ -162,6 +162,8 @@ func TestWolfQuestLootApproachOnlyIgnoresOwnerForOwnActive33AndCorpse299(t *test
 func TestQuestTravelAllowsObservedEagan196WithSameMeshAndLeaseGates(t *testing.T) {
 	s, f, _, r := travelRig(t)
 	f.world.QuestGivers[0].Entry = 196
+	r.NpcGuid = 0xf1300000c4000001
+	f.world.QuestGivers[0].Guid = r.NpcGuid
 	got, err := s.TravelQuest(context.Background(), r)
 	if err != nil || got.Reason != "quest_travel_within_distance" || got.Moving || !got.NavAvailable {
 		t.Fatal(got, err)

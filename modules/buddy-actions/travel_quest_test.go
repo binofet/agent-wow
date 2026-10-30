@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,8 @@ func travelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *acti
 	s, f, advance := rig(t)
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8933, -136, 81
 	f.world.Owner = nil
-	f.world.QuestGivers = []*worldv1.CreatureState{{Guid: approachCorpseGUID, Entry: 823, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: -8913, Y: -136, Z: 81, HealthKnown: true, Health: 100, AliveKnown: true, Alive: true, NpcFlags: 2}}
+	const giverGUID = uint64(0xf130000337000001)
+	f.world.QuestGivers = []*worldv1.CreatureState{{Guid: giverGUID, Entry: 823, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: -8913, Y: -136, Z: 81, HealthKnown: true, Health: 100, AliveKnown: true, Alive: true, NpcFlags: 2}}
 	s.SetNavigationDataDir("/fixture/client-data")
 	// Synthetic navigation fixture deliberately bends around an obstacle. The
 	// production planner never substitutes these test coordinates for a mesh.
@@ -33,7 +35,115 @@ func travelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *acti
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, f, advance, &actionsv1.ApproachQuestRequest{Token: lease.Token, NpcGuid: approachCorpseGUID}
+	return s, f, advance, &actionsv1.ApproachQuestRequest{Token: lease.Token, NpcGuid: giverGUID}
+}
+
+func TestQuestTravelKnownLandmarksDoNotFabricateObservedNPCs(t *testing.T) {
+	for _, entry := range []uint64{196, 197, 823} {
+		t.Run(strconv.FormatUint(entry, 10), func(t *testing.T) {
+			s, f, _, r := travelRig(t)
+			r.NpcGuid = 0xf130000000000001 | entry<<24
+			dest, _, ok := northshireQuestLandmark(r.NpcGuid)
+			if !ok {
+				t.Fatal("missing fixed landmark")
+			}
+			f.world.QuestGivers = nil
+			f.world.Self.X, f.world.Self.Y, f.world.Self.Z = dest.x+10, dest.y, dest.z
+			f.world.Self.PositionRevision++
+			var planned position
+			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+				planned = to
+				return []position{from, to}, nil
+			}
+			got, err := s.TravelQuest(context.Background(), r)
+			if err != nil || got.Reason != "quest_travel_landmark_reached_requires_observation" || got.Moving || got.Traveling || !got.NavAvailable || planned != dest || len(f.world.QuestGivers) != 0 || countPackets(f, opcode.MSGMoveStop) != 1 {
+				t.Fatal(got, err, planned, dest, f.world.QuestGivers)
+			}
+		})
+	}
+}
+
+func TestQuestTravelLandmarkRejectsOtherGUIDsAndObservedUnsafeNPC(t *testing.T) {
+	for _, mode := range []string{"other_entry", "entry_mismatch", "dead", "moving", "nearby_not_questgiver", "corpse", "owner_target"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := travelRig(t)
+			c := f.world.QuestGivers[0]
+			switch mode {
+			case "other_entry":
+				r.NpcGuid = 0xf13000012b000001
+				f.world.QuestGivers = nil
+			case "entry_mismatch":
+				c.Entry = 196
+			case "dead":
+				c.Alive = false
+				c.Health = 0
+			case "moving":
+				c.MovementFlags = 1
+			case "nearby_not_questgiver":
+				c.NpcFlags = 0
+				f.world.QuestGivers = nil
+				f.world.NearbyCreatures = []*worldv1.CreatureState{c}
+			case "corpse":
+				c.Alive = false
+				c.Health = 0
+				f.world.QuestGivers = nil
+				f.world.LootableCorpses = []*worldv1.CreatureState{c}
+			case "owner_target":
+				c.UnitFlags = 0x80000
+				f.world.QuestGivers = nil
+				f.world.OwnerTarget = c
+			}
+			s.planPath = func(context.Context, string, position, position) ([]position, error) {
+				t.Fatal("unsafe NPC used landmark fallback")
+				return nil, nil
+			}
+			got, err := s.TravelQuest(context.Background(), r)
+			if err != nil || got.Moving || len(f.packets) != 0 || strings.Contains(got.Reason, "landmark") {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestQuestTravelLandmarkStopsAsSoonAsActualNPCReappears(t *testing.T) {
+	s, f, advance, r := travelRig(t)
+	c := f.world.QuestGivers[0]
+	f.world.QuestGivers = nil
+	s.approachDelay = func(ctx context.Context, d time.Duration) error {
+		advance(d)
+		f.world.QuestGivers = []*worldv1.CreatureState{c}
+		return ctx.Err()
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || got.Reason != "quest_travel_landmark_giver_reobserved" || got.Moving || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
+func TestQuestTravelLandmarkStopsOnExpiryCombatAndTeleport(t *testing.T) {
+	for _, mode := range []string{"expiry", "combat", "teleport"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := travelRig(t)
+			f.world.QuestGivers = nil
+			s.approachDelay = func(ctx context.Context, d time.Duration) error {
+				advance(d)
+				switch mode {
+				case "expiry":
+					advance(31 * time.Second)
+				case "combat":
+					f.world.Self.UnitFlags = 0x80000
+				case "teleport":
+					f.world.Self.X += 10
+					f.world.Self.PositionRevision++
+				}
+				return ctx.Err()
+			}
+			got, err := s.TravelQuest(context.Background(), r)
+			if err != nil || got.Moving || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
 }
 
 func TestNavigationFailureDiagnosticRetainsStageButBoundsAndRedactsPaths(t *testing.T) {

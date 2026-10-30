@@ -723,6 +723,65 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(rpc.calls[-1],("buddy-actions.release_interaction",{"owner":"quests","token":"owned-token"}))
         self.assertFalse(any(m == "buddy-actions.travel_quest" for m,_ in rpc.calls))
 
+    def test_observed_giver_history_requires_matching_guid_entry_map_and_northshire_bounds(self):
+        profile,rpc,_,saved=self.rig()
+        row={"creature":{"guid":str(EAGAN),"entry":196,"present":True,"aliveKnown":True,"alive":True,
+                         "mapKnown":True,"positionKnown":True,"npcFlags":2,"x":-8869.0,"y":-163.0,"z":80.0}}
+        for bad in ({"mapId":1},{"x":-10000},{"z":float('nan')},{"guid":str(WILLEM)},{"entry":999}):
+            candidate=copy.deepcopy(row)
+            candidate["creature"].update(bad)
+            profile.remember_observed_givers({"nearby":[candidate]},rpc.session)
+            self.assertFalse(profile.data["knownGivers"])
+        profile.remember_observed_givers({"nearby":[row]},rpc.session)
+        self.assertEqual(profile.data["knownGivers"]["196"],{"guid":str(EAGAN),"source":"observed","session":rpc.session})
+        self.assertTrue(saved)
+        self.assertFalse(any(key in profile.data["knownGivers"]["196"] for key in ("x","y","z")))
+
+    def test_actual_historical_receipt_migrates_across_body_and_landmark_never_proves_interaction(self):
+        profile,rpc,clock,_=self.rig()
+        stored=copy.deepcopy(profile.data)
+        stored.pop("knownGivers")
+        stored["confirmedRewards"]={"5261":{"npcGuid":str(EAGAN),"session":"prior-body",
+            "serverRewardObserved":True,"logRemovalConfirmed":True}}
+        migrated,_,_,_=self.rig(stored=stored)
+        self.assertEqual(migrated.data["knownGivers"]["196"]["source"],"reward_receipt")
+        migrated.rpc,migrated.now=rpc,lambda:clock[0]
+        migrated.data["routine"]={"session":rpc.session}
+        migrated.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+        original=rpc.call
+        def call(method,params):
+            result=original(method,params)
+            return {"reason":"quest_travel_landmark_reached_requires_observation"} if method == "buddy-actions.travel_quest" else result
+        rpc.call=call
+        self.assertTrue(migrated.travel({"sessionId":rpc.session,"nearby":[]},entry=196))
+        self.assertEqual(migrated.status["phase"],"landmark_route_stopped_rediscovering_actual_questgiver")
+        self.assertEqual(migrated.status["rememberedQuestgiverEntry"],196)
+        self.assertEqual(next(p for m,p in rpc.calls if m == "buddy-actions.travel_quest"),
+                         {"token":"owned-token","npcGuid":str(EAGAN)})
+        self.assertFalse(any(m.startswith("buddy-quests.") for m,_ in rpc.calls))
+        clock[0]+=10
+        self.assertFalse(migrated.travel({"sessionId":rpc.session,"nearby":[]},entry=196))
+
+    def test_historical_bindings_migrate_only_matching_actual_giver_guids(self):
+        profile,_,_,_=self.rig()
+        stored=copy.deepcopy(profile.data)
+        stored["reservations"]={"accept:33":["old",str(WILLEM),"9"],"accept:18":["old",str(WILLEM),"10"]}
+        stored["queries"]=[{"npc":"196","signature":["old","1","2"],"at":1000}]
+        migrated,_,_,_=self.rig(stored=stored)
+        self.assertEqual(set(migrated.data["knownGivers"]),{"823"})
+        self.assertEqual(migrated.data["knownGivers"]["823"]["guid"],str(WILLEM))
+        stored["knownGivers"]={"196":{"guid":str(WILLEM),"source":"observed","session":"old"}}
+        with self.assertRaises(sync.Error):self.rig(stored=stored)
+
+    def test_remembered_landmark_never_overrides_current_observed_unsafe_giver(self):
+        profile,rpc,_,_=self.rig()
+        profile.remember_giver(EAGAN,"observed",rpc.session)
+        profile.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+        state={"sessionId":rpc.session,"nearby":[{"distanceKnown":True,"distance":30,
+               "creature":{"guid":str(EAGAN),"entry":196,"present":True,"aliveKnown":True,"alive":False}}]}
+        self.assertFalse(profile.travel(state,entry=196))
+        self.assertFalse(rpc.calls)
+
     def test_legacy_active_goal_remains_stoppable_after_chain_identity_expands(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder=sync.converse.ensure_state(Path(temporary))

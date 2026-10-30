@@ -91,6 +91,12 @@ def binding(session, npc, revision):
     return [session, str(npc), str(revision)]
 
 
+def giver_entry(guid):
+    value = integer(guid)
+    entry = value >> 24 & 0xffffff
+    return entry if value >> 48 == 0xf130 and value & 0xffffff and entry in (196, 197, 823) else 0
+
+
 class CharacterSync:
     def __init__(self, name, guid, rpc, save=lambda value: None, stored=None,
                  now=time.time, stopped=lambda: False, autonomous=False, notify=lambda: None):
@@ -125,6 +131,34 @@ class CharacterSync:
                        for key, value in rewards.items())):
             raise Error("Saved prerequisite reward evidence is invalid")
         self.data["confirmedRewards"] = rewards
+        known = self.data.get("knownGivers", {})
+        sources = {"observed", "reward_receipt", "bound_offer", "quest_query", "request"}
+        if (not isinstance(known, dict) or len(known) > 3
+                or any(key not in ("196", "197", "823") or not isinstance(value, dict)
+                       or set(value) != {"guid", "source", "session"}
+                       or giver_entry(value.get("guid", 0)) != integer(key) or value.get("source") not in sources
+                       or not isinstance(value.get("session"), str) or not 1 <= len(value["session"]) <= 128
+                       for key, value in known.items())):
+            raise Error("Saved questgiver history is invalid")
+        self.data["knownGivers"] = known
+        # These legacy records were persisted only after an actual observed
+        # giver/menu/receipt. Retain their GUID as history, never live presence.
+        for key, receipt in rewards.items():
+            self.remember_giver(receipt.get("npcGuid", 0), "reward_receipt", receipt.get("session", ""),
+                                expected=TURN_IN_GIVERS[integer(key)])
+        accept_givers = {783: 823, 7: 197, 18: 823, 3903: 823, 5261: 823, 33: 196}
+        for key, value in reservations.items():
+            verb, quest = key.split(":")
+            expected = accept_givers[integer(quest)] if verb == "accept" else TURN_IN_GIVERS[integer(quest)]
+            if integer(value[2]) > 0:
+                self.remember_giver(value[1], "bound_offer", value[0], expected=expected)
+        for query in queries:
+            self.remember_giver(query["npc"], "quest_query", query["signature"][0])
+        last = self.data.get("lastMutation", {})
+        if isinstance(last, dict) and last.get("method") in ("buddy-quests.offer", "buddy-quests.turn_in", "buddy-actions.travel_quest"):
+            routine = self.data.get("routine", {})
+            if isinstance(routine, dict):
+                self.remember_giver(last.get("npcGuid", 0), "request", routine.get("session", ""))
         waypoints = self.data.get("waypoints", {})
         if (not isinstance(waypoints, dict) or set(waypoints) - {"session", "scopes"}
                 or not isinstance(waypoints.get("session", ""), str) or len(waypoints.get("session", "")) > 128
@@ -133,6 +167,39 @@ class CharacterSync:
             raise Error("Saved observed-waypoint attempts are invalid")
         self.status = {"name": name, "guid": guid, "phase": "starting", "observationsCurrent": False,
                        "activeQuestIds": [], "missingQuestIds": sorted(DESIRED), "levelKnown": False}
+
+    def remember_giver(self, guid, source, session, expected=None):
+        entry = giver_entry(guid)
+        if (not entry or expected is not None and entry != expected
+                or not isinstance(session, str) or not 1 <= len(session) <= 128):
+            return False
+        key = str(entry)
+        known = self.data["knownGivers"]
+        if key in known and (source != "observed" or known[key]["guid"] == str(integer(guid))):
+            return False
+        known[key] = {"guid": str(integer(guid)), "source": source, "session": session}
+        return True
+
+    def remember_observed_givers(self, state, session):
+        changed = False
+        nearby = state.get("nearby", [])
+        if not isinstance(nearby, list) or len(nearby) > 64:
+            raise Error("Questgiver observations are invalid")
+        for row in nearby:
+            c = row.get("creature", {}) if isinstance(row, dict) else {}
+            if (not isinstance(c, dict) or giver_entry(c.get("guid", 0)) != integer(c.get("entry", 0))
+                    or integer(c.get("entry", 0)) not in (196, 197, 823)
+                    or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
+                    or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
+                    or integer(c.get("movementFlags", 0)) & ~0x100):
+                continue
+            bounds = (("x", -9050, -8650), ("y", -500, 200), ("z", 40, 180))
+            if any(type(c.get(key)) not in (int, float) or not math.isfinite(c[key]) or not lower <= c[key] <= upper
+                   for key, lower, upper in bounds):
+                continue
+            changed |= self.remember_giver(c["guid"], "observed", session)
+        if changed:
+            self.save(self.data)
 
     def call(self, method, params):
         if self.stopped():
@@ -168,6 +235,10 @@ class CharacterSync:
                     and result.get("reason") == "quest_travel_within_distance"
                     and result.get("moving") is not True and result.get("motionUnconfirmed") is not True
                     else "quest_travel_not_confirmed")
+                if (isinstance(result, dict) and result.get("reason") in
+                        ("quest_travel_landmark_reached_requires_observation", "quest_travel_landmark_giver_reobserved")
+                        and result.get("moving") is not True and result.get("motionUnconfirmed") is not True):
+                    self.status["phase"] = "landmark_route_stopped_rediscovering_actual_questgiver"
             elif method == "buddy-actions.practice":
                 self.status["phase"] = ("practicing_for_wolf_quest" if WOLVES in self.status.get("activeQuestIds", [])
                     else "practicing_to_level_2") if isinstance(result, dict) and result.get("practicing") is True else "practice_control_requested_rechecking"
@@ -249,6 +320,7 @@ class CharacterSync:
         all_choices, visible = [], set()
         target_observed = False
         self.status.pop("waypointQuestgiverEntry", None)
+        self.status.pop("rememberedQuestgiverEntry", None)
         for row in nearby:
             if not isinstance(row, dict):
                 continue
@@ -270,11 +342,12 @@ class CharacterSync:
             all_choices.append((d, integer(c["guid"]), integer(c["entry"])))
         choices = [choice for choice in all_choices if entry is None or choice[2] == entry]
         waypoint_scope = None
+        remembered = None if target_observed or all_choices else self.data["knownGivers"].get(str(entry))
         session = session_id(state)
-        if not choices and not target_observed and entry in (196, 197, 823) and all_choices:
+        if not choices and not target_observed and entry in (196, 197, 823) and (all_choices or remembered):
             # Coordinates only identify a repeated observation scope. The
-            # actuator still receives only an actually observed NPC GUID and
-            # validates the complete mesh route; no caller waypoint is sent.
+            # actuator receives only an observed or historically observed NPC
+            # GUID and validates the mesh route; no caller waypoint is sent.
             p = self.actions.get("position", {})
             if (not isinstance(p, dict) or p.get("known") is not True or p.get("mapKnown") is not True
                     or integer(p.get("mapId", 0)) != 0
@@ -287,7 +360,7 @@ class CharacterSync:
             if waypoint_scope in scopes or len(scopes) >= 32:
                 self.status["phase"] = "waiting_for_new_position_or_questgiver_observation"
                 return False
-            choices = all_choices
+            choices = all_choices or [(0, integer(remembered["guid"]), entry)]
         if not choices:
             self.status["phase"] = "waiting_for_observed_northshire_questgiver_route"
             return False
@@ -306,11 +379,12 @@ class CharacterSync:
                     scopes = attempts.get("scopes", []) if attempts.get("session") == session else []
                     self.data["waypoints"] = {"session": session, "scopes": scopes + [waypoint_scope]}
                     self.save(self.data) # Persist before the potentially ambiguous route write.
-                    self.status["waypointQuestgiverEntry"] = waypoint_entry
+                    self.status["rememberedQuestgiverEntry" if remembered else "waypointQuestgiverEntry"] = waypoint_entry
                 self.data["routine"]["travelToken"] = token
                 self.save(self.data)
-                self.status["phase"] = ("traveling_via_observed_starter_questgiver" if waypoint_scope is not None
-                                        else "traveling_to_observed_starter_questgiver")
+                self.status["phase"] = ("traveling_toward_remembered_starter_landmark" if remembered
+                    else "traveling_via_observed_starter_questgiver" if waypoint_scope is not None
+                    else "traveling_to_observed_starter_questgiver")
                 self.notify()
                 return self.call("buddy-actions.travel_quest", {"token": token, "npcGuid": str(npc)})
             finally:
@@ -459,6 +533,7 @@ class CharacterSync:
             raise Error("RPC character identity does not match this goal")
         self.self_player = self_player
         active = active_log(state)
+        self.remember_observed_givers(state, session)
         level_known = self_player.get("levelKnown") is True
         level = integer(self_player.get("level", 0)) if level_known else 0
         if level_known and not 1 <= level <= 80:
