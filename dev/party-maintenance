@@ -71,6 +71,9 @@ class Maintenance:
         self.save(self.data)
 
     def tick(self):
+        if c.quest_task_snapshot(self.guid).get('active') is True:
+            self.status['phase'] = 'waiting_for_requested_quest_task'
+            return
         if self.now() < self.next_query:
             return
         self.next_query = self.now() + 10

@@ -1,4 +1,4 @@
--- Passive WoW3.3.5a quest telemetry. No quest acceptance/reward/UI clicks.
+-- WoW3.3.5a passive quest telemetry and explicit companion inventory controls.
 -- The normal client sends PARTY addon chat; the server supplies sender GUID3.
 local PREFIX = "WBQUEST1"
 local frame = CreateFrame("Frame")
@@ -243,7 +243,11 @@ SlashCmdList.WARCRAFTBUDDYQUESTSYNC = function(command)
     if status.lastError then DEFAULT_CHAT_FRAME:AddMessage("WBQ last error: " .. status.lastError) end
 end
 
-frame:SetScript("OnEvent", function(_, event)
+frame:SetScript("OnEvent", function(_, event, ...)
+    if event == "CHAT_MSG_ADDON" then
+        if WarcraftBuddyInventory then WarcraftBuddyInventory.Receive(...) end
+        return
+    end
     if event == "PLAYER_LOGIN" then
         WarcraftBuddyQuestSyncDB = type(WarcraftBuddyQuestSyncDB) == "table" and WarcraftBuddyQuestSyncDB or {}
         db = WarcraftBuddyQuestSyncDB
@@ -267,7 +271,7 @@ frame:SetScript("OnEvent", function(_, event)
     end
     if not snapshotting and GetTime() >= suppressUntil then queue() end
 end)
-for _, event in ipairs({"PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_QUERY_COMPLETE", "QUEST_DETAIL", "QUEST_COMPLETE", "QUEST_FINISHED", "PARTY_MEMBERS_CHANGED", "PLAYER_LEVEL_UP"}) do
+for _, event in ipairs({"PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_QUERY_COMPLETE", "QUEST_DETAIL", "QUEST_COMPLETE", "QUEST_FINISHED", "PARTY_MEMBERS_CHANGED", "PLAYER_LEVEL_UP", "CHAT_MSG_ADDON"}) do
     frame:RegisterEvent(event)
 end
 hooksecurefunc("GetQuestReward", function()
@@ -283,6 +287,7 @@ hooksecurefunc("AbandonQuest", function()
     queue()
 end)
 frame:SetScript("OnUpdate", function()
+    if WarcraftBuddyInventory then WarcraftBuddyInventory.Tick() end
     diagnostics.ticks = diagnostics.ticks + 1
     lastUpdate = GetTime()
     if GetTime() - lastSent >= 5 or due > 0 and GetTime() >= due and GetTime() - lastSent >= 1 then
@@ -294,3 +299,232 @@ frame:SetScript("OnUpdate", function()
         end
     end
 end)
+
+-- Companion inventory: owner-requested snapshots and explicitly selected actions.
+do
+local I = {views = {}, assembling = {}, agent = "Arlen", bag = 0, status = "Refresh to inspect your companions' bags."}
+WarcraftBuddyInventory = I
+local PREFIX, roster = "WBINV1", {Arlen = "0000000000000001", Mira = "0000000000000004", Rook = "0000000000000005"}
+local serial, window, render = 0, nil, function() end
+local function hex(s, n) return type(s) == "string" and #s == n and not s:find("[^0-9a-f]") end
+local function number(s, lo, hi)
+    if type(s) ~= "string" or not s:match("^%d+$") or #s > 10 then return nil end
+    local v = tonumber(s)
+    return v and v >= lo and v <= hi and tostring(v) == s and v or nil
+end
+local function revision(s)
+    return type(s) == "string" and s:match("^%d+$") and (#s == 1 or s:sub(1,1) ~= "0")
+        and (#s < 20 or #s == 20 and s <= "18446744073709551615")
+end
+local function nonce()
+    serial = (serial + 1) % 65536
+    return string.format("%08x%04x", time() % 4294967296, (math.random(0,65535) + serial) % 65536)
+end
+local function split(s, sep)
+    local out, at = {}, 1
+    while true do
+        local j = s:find(sep, at, true)
+        if not j then out[#out+1] = s:sub(at); return out end
+        out[#out+1], at = s:sub(at,j-1), j+1
+    end
+end
+local function partySender(sender)
+    if type(sender) ~= "string" then return nil end
+    for n = 1, GetNumPartyMembers() do
+        local unit = "party" .. n
+        local name, guid = UnitName(unit), UnitGUID(unit)
+        if name == sender and roster[name] and type(guid) == "string"
+            and guid:lower():gsub("^0x", "") == roster[name] then return name end
+    end
+end
+local function send(payload)
+    if not isJoel() or GetNumPartyMembers() < 1 or #payload > 248 then return false end
+    return pcall(SendAddonMessage, PREFIX, payload, "PARTY")
+end
+function I.Refresh()
+    if I.pending then I.status = "An inventory action is still pending."; render(); return false end
+    I.nonce, I.assembling, I.requestedAt = nonce(), {}, GetTime()
+    I.selected = nil
+    local ok = send("1|R|" .. I.nonce)
+    I.status = ok and "Waiting for companion inventory..." or "Join the party to inspect inventory."
+    render(); return ok
+end
+local function decode(parts)
+    local result, seen, total = {bags = {}}, {}, 0
+    for _, body in ipairs(parts) do
+        for _, token in ipairs(split(body, ";")) do
+            local kind, text = token:match("^([BI])=(.+)$")
+            if not kind then return nil end
+            local f = split(text, ",")
+            if kind == "B" then
+                if #f ~= 4 then return nil end
+                local bag, count, entry, known = number(f[1],0,4), number(f[2],0,36), number(f[3],0,2147483647), number(f[4],0,1)
+                if not bag or not count or not entry or not known or result.bags[bag] then return nil end
+                if bag == 0 and (count ~= 16 or entry ~= 0) then return nil end
+                result.bags[bag] = {count=count, entry=entry, known=known==1, slots={}}
+            else
+                if #f ~= 5 then return nil end
+                local bag, slot, entry, count = number(f[1],0,4), number(f[2],0,35), number(f[3],1,2147483647), number(f[4],1,2147483647)
+                if not bag or not slot or not entry or not count or not hex(f[5],16) or f[5] == "0000000000000000" or seen[f[5]] then return nil end
+                total = total + 1
+                if total > 160 then return nil end
+                seen[f[5]] = true
+                result[#result+1] = {bag=bag, slot=slot, entry=entry, count=count, guid=f[5]}
+            end
+        end
+    end
+    for bag = 0,4 do if not result.bags[bag] then return nil end end
+    for _, item in ipairs(result) do
+        local b = result.bags[item.bag]
+        if not b.known or item.slot >= b.count or b.slots[item.slot] then return nil end
+        b.slots[item.slot] = item
+    end
+    return result
+end
+function I.Receive(prefix, message, channel, sender)
+    if prefix ~= PREFIX or channel ~= "PARTY" or type(message) ~= "string" or #message > 248
+        or message:find("[%c]") or not isJoel() then return false end
+    local agent = partySender(sender)
+    if not agent then return false end
+    local f = split(message, "|")
+    if f[1] ~= "1" then return false end
+    if f[2] == "A" then
+        local p = I.pending
+        if #f ~= 6 or not p or f[3] ~= p.id or f[4] ~= p.snapshot or agent ~= p.agent
+            or not f[5]:match("^[A-Z_]+$") or #f[5] > 32 or #f[6] > 48 then return false end
+        I.status = agent .. ": " .. f[5] .. (f[6] ~= "" and " - " .. f[6] or "")
+        local offered = f[5] == "QUEUED" and f[6] == "item_offered_review_normal_trade_window"
+        if offered then I.status = agent .. ": item offered. Review the normal trade window." end
+        if not offered and (f[5] == "QUEUED" or f[5] == "PENDING" or f[5] == "REQUESTED") then render(); return true end
+        I.pending, I.selected = nil, nil
+        local receipt = I.status
+        I.Refresh(); I.status = receipt; render(); return true
+    end
+    if f[2] ~= "S" or #f ~= 8 or f[3] ~= I.nonce or not hex(f[3],12) or not hex(f[4],12) or not revision(f[5]) then return false end
+    local part, count = number(f[6],1,64), number(f[7],1,64)
+    if not part or not count or part > count or GetTime() - (I.requestedAt or -100) > 30 then return false end
+    local a = I.assembling[agent]
+    if a and (a.snapshot ~= f[4] or a.revision ~= f[5] or a.count ~= count) then return false end
+    if not a then a = {snapshot=f[4], revision=f[5], count=count, parts={}, bytes=0, received=0}; I.assembling[agent] = a end
+    if a.done then return false end
+    if a.parts[part] then return a.parts[part] == f[8] end
+    a.parts[part], a.bytes, a.received = f[8], a.bytes + #f[8], a.received + 1
+    if a.bytes > 16384 then I.assembling[agent] = nil; return false end
+    if a.received ~= count then return true end
+    local view = decode(a.parts)
+    a.done = true
+    if not view then I.status = agent .. ": incomplete or invalid inventory."; render(); return false end
+    view.snapshot, view.revision, view.at = a.snapshot, a.revision, GetTime()
+    I.views[agent] = view
+    I.status = agent .. " inventory received."
+    render(); return true
+end
+function I.Command(kind, destinationBag, destinationSlot)
+    local view, selected = I.views[I.agent], I.selected
+    if I.pending or not view or GetTime() - view.at > 30 then I.status="Refresh inventory before acting."; render(); return false end
+    if kind ~= "J" and (not selected or selected.agent ~= I.agent) then I.status="Select an item first."; render(); return false end
+    local id = nonce()
+    local out = {"1",kind,id,view.snapshot,view.revision}
+    if kind ~= "J" then
+        local b = view.bags[selected.bag]
+        local item = b and b.slots[selected.slot]
+        if not b or not b.known or not item or item.guid ~= selected.guid then return false end
+        out[#out+1], out[#out+2], out[#out+3] = tostring(item.bag), tostring(item.slot), item.guid
+    end
+    if kind == "M" then
+        local b = view.bags[destinationBag]
+        if not b or not b.known or destinationSlot < 0 or destinationSlot >= b.count or b.slots[destinationSlot] then return false end
+        out[#out+1], out[#out+2] = tostring(destinationBag), tostring(destinationSlot)
+    elseif kind == "E" then
+        if destinationBag < 1 or destinationBag > 4 or view.bags[destinationBag].count ~= 0 then return false end
+        out[#out+1] = tostring(destinationBag)
+    elseif kind ~= "G" and kind ~= "J" then return false end
+    if not send(table.concat(out,"|")) then return false end
+    I.pending = {id=id, snapshot=view.snapshot, agent=I.agent, at=GetTime(), deadline=GetTime()+190}
+    I.status = "Waiting for " .. I.agent .. " to confirm the action."
+    render(); return true
+end
+local function makeWindow()
+    if window then return end
+    window = CreateFrame("Frame", "WarcraftBuddyInventoryFrame", UIParent)
+    window:SetWidth(440); window:SetHeight(445); window:SetPoint("CENTER")
+    window:SetFrameStrata("DIALOG"); window:EnableMouse(true); window:SetMovable(true)
+    window:RegisterForDrag("LeftButton"); window:SetScript("OnDragStart", window.StartMoving); window:SetScript("OnDragStop", window.StopMovingOrSizing)
+    window:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border",tile=true,tileSize=32,edgeSize=32,insets={left=10,right=10,top=10,bottom=10}})
+    local title=window:CreateFontString(nil,"OVERLAY","GameFontNormalLarge"); title:SetPoint("TOPLEFT",20,-18); title:SetText("Companion bags")
+    local close=CreateFrame("Button",nil,window,"UIPanelCloseButton"); close:SetPoint("TOPRIGHT",-5,-5)
+    local function button(text,x,y,width,fn)
+        local b=CreateFrame("Button",nil,window,"UIPanelButtonTemplate"); b:SetWidth(width); b:SetHeight(24); b:SetPoint("TOPLEFT",x,y); b:SetText(text); b:SetScript("OnClick",fn); return b
+    end
+    for n,name in ipairs({"Arlen","Mira","Rook"}) do
+        local selectedName=name
+        button(name,20+(n-1)*132,-48,126,function() I.agent=selectedName; I.selected=nil; render() end)
+    end
+    for bag=0,4 do
+        local selectedBag=bag
+        button(bag==0 and "Pack" or "Bag "..bag,20+bag*80,-80,76,function() I.bag=selectedBag; render() end)
+    end
+    local summary=window:CreateFontString(nil,"OVERLAY","GameFontHighlight"); summary:SetPoint("TOPLEFT",24,-116); summary:SetWidth(392); summary:SetJustifyH("LEFT")
+    local slots={}
+    for n=0,35 do
+        local slot=n
+        local b=CreateFrame("Button",nil,window); b:SetWidth(39); b:SetHeight(39); b:SetPoint("TOPLEFT",24+(n%9)*44,-140-math.floor(n/9)*44)
+        b.icon=b:CreateTexture(nil,"ARTWORK"); b.icon:SetAllPoints()
+        b.count=b:CreateFontString(nil,"OVERLAY","NumberFontNormal"); b.count:SetPoint("BOTTOMRIGHT",-2,2)
+        b.mark=b:CreateTexture(nil,"OVERLAY"); b.mark:SetAllPoints(); b.mark:SetTexture("Interface\\Buttons\\UI-ActionButton-Border"); b.mark:SetBlendMode("ADD")
+        b:SetScript("OnClick",function()
+            local v=I.views[I.agent]; local bag=v and v.bags[I.bag]
+            if not bag or not bag.known or slot>=bag.count then return end
+            local item=bag.slots[slot]
+            if item then I.selected={agent=I.agent,bag=I.bag,slot=slot,guid=item.guid}; render()
+            elseif I.selected then I.Command("M",I.bag,slot) end
+        end)
+        b:SetScript("OnEnter",function(self)
+            local v=I.views[I.agent]; local bag=v and v.bags[I.bag]; local item=bag and bag.slots[slot]
+            if item then GameTooltip:SetOwner(self,"ANCHOR_RIGHT"); GameTooltip:SetHyperlink("item:"..item.entry); GameTooltip:Show() end
+        end)
+        b:SetScript("OnLeave",function() GameTooltip:Hide() end)
+        slots[n]=b
+    end
+    local help=window:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); help:SetPoint("TOPLEFT",24,-326); help:SetWidth(392); help:SetJustifyH("LEFT"); help:SetText("Select an item, then click an empty slot to move it.\nGive opens a normal trade with you. Equip uses an empty bag slot.")
+    button("Refresh",20,-365,94,function() I.Refresh() end)
+    button("Give item",120,-365,94,function() I.Command("G") end)
+    button("Equip bag",220,-365,94,function()
+        local v=I.views[I.agent]
+        if v then for bag=1,4 do if v.bags[bag].known and v.bags[bag].count==0 then I.Command("E",bag); return end end end
+        I.status="No empty equipped-bag slot. Move its contents out first."; render()
+    end)
+    button("Sell junk",320,-365,94,function() I.Command("J") end)
+    local status=window:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); status:SetPoint("TOPLEFT",24,-402); status:SetWidth(392); status:SetJustifyH("LEFT")
+    render=function()
+        if not window then return end
+        local v=I.views[I.agent]; local b=v and v.bags[I.bag]
+        local known=b and b.known
+        local free=0
+        if known then for slot=0,b.count-1 do if not b.slots[slot] then free=free+1 end end end
+        summary:SetText(I.agent.." / "..(I.bag==0 and "Backpack" or "Bag "..I.bag)..(known and (" - "..free.."/"..b.count.." slots free") or " - inventory unknown"))
+        for slot,widget in pairs(slots) do
+            local item=known and b.slots[slot]
+            if known and slot<b.count then
+                widget:Show(); widget.icon:SetTexture(item and ((GetItemIcon and GetItemIcon(item.entry)) or select(10,GetItemInfo(item.entry)) or "Interface\\Icons\\INV_Misc_QuestionMark") or "Interface\\PaperDoll\\UI-Backpack-EmptySlot")
+                widget.count:SetText(item and item.count>1 and item.count or "")
+                local s=I.selected; widget.mark:SetAlpha(s and s.agent==I.agent and s.bag==I.bag and s.slot==slot and 1 or 0)
+            else widget:Hide() end
+        end
+        status:SetText(I.status)
+    end
+    window:Hide()
+end
+function I.Open()
+    makeWindow()
+    if window:IsShown() then window:Hide() else window:Show(); I.Refresh() end
+end
+function I.Tick()
+    if I.pending and GetTime() > I.pending.deadline then
+        I.pending=nil; I.status="Action unconfirmed. Refresh before making another request."; render()
+    end
+    if window and window:IsShown() and not I.pending and GetTime()-(I.requestedAt or -100)>20 then I.Refresh() end
+end
+SlashCmdList["WBINV"] = function() I.Open() end
+SLASH_WBINV1 = "/wbinv"
+end

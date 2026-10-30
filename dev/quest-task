@@ -1,0 +1,600 @@
+#!/usr/bin/env python3
+"""Run one finite own-quest recipe through observed normal game controls."""
+import argparse
+import copy
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import re
+import signal
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+loader = importlib.machinery.SourceFileLoader("quest_task_converse", str(Path(__file__).with_name("converse")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+c = importlib.util.module_from_spec(spec)
+loader.exec_module(c)
+Error, integer = c.ConversationError, c.integer
+
+# Data for the installed normal-item actuator. The executor and model do not
+# invent additional item spells, targets or packet layouts for other quests.
+RECIPES = {11360: {"kind": "obtain_and_ground_use", "sourceEntry": 186234,
+                   "targetEntry": 23537, "itemEntry": 32971, "requiredCount": 5,
+                   "sourceRange": 4.5, "targetRange": 28, "targetResetSeconds": 6}}
+TERMINAL = {"COMPLETED", "SERVER_REJECTED", "CANCELLED", "OUTCOME_UNCONFIRMED", "BLOCKED", "NO_CREDIT_OBSERVED"}
+STATUS_NAMES = {0: "STATUS_UNSPECIFIED", 1: "RESERVED", 2: "WAITING_SERVER", 3: "COMPLETED",
+                4: "SERVER_REJECTED", 5: "CANCELLED", 6: "OUTCOME_UNCONFIRMED", 7: "BLOCKED", 8: "NO_CREDIT_OBSERVED"}
+
+
+def session(value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 128 or any(ord(ch) < 32 for ch in value):
+        raise Error("Quest task body session is invalid")
+    return value
+
+
+def point(value, known="positionKnown"):
+    return (isinstance(value, dict) and value.get(known) is True and value.get("mapKnown") is True
+            and all(type(value.get(k)) in (int, float) and math.isfinite(value[k]) and abs(value[k]) <= 40000
+                    for k in ("x", "y", "z")))
+
+
+def distance(a, b):
+    return math.sqrt(sum((a[k]-b[k])**2 for k in ("x", "y", "z")))
+
+
+class RPC(c.RPC):
+    EXTRA = {"buddy-quest-items.attempt", "buddy-quest-items.cancel", "buddy-actions.acquire_interaction",
+             "buddy-actions.release_interaction", "buddy-actions.travel_to"}
+
+    def fork(self):
+        return RPC(self.url, self.timeout)
+
+    def call(self, method, params, timeout=None):
+        if method not in self.EXTRA:
+            return super().call(method, params, timeout=timeout)
+        self.request_id += 1
+        request_id = self.request_id
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": request_id,
+            "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with self.opener.open(request, timeout=35 if method == "buddy-actions.travel_to" else 5) as response:
+                raw = response.read(256*1024+1)
+            if len(raw) > 256*1024:
+                raise Error("Quest task RPC response exceeds its bound")
+            result = json.loads(raw)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("Quest task request is unconfirmed") from None
+        if (not isinstance(result, dict) or result.get("jsonrpc") != "2.0" or type(result.get("id")) is not int
+                or result["id"] != request_id or "error" in result or not isinstance(result.get("result"), dict)):
+            raise Error("Quest task RPC response is unconfirmed")
+        return result["result"]
+
+
+class QuestTask:
+    def __init__(self, guid, url, quest_id, body_session, rpc, save=lambda value: None,
+                 stored=None, now=time.time, stopped=lambda: False, notify=lambda: None):
+        self.identity = c.quest_task_identity(guid, url, quest_id)
+        if quest_id not in RECIPES:
+            raise Error("No installed execution recipe for this quest")
+        self.guid, self.qid, self.rpc, self.save, self.now = guid, quest_id, rpc, save, now
+        self.session, self.recipe, self.stopped, self.notify = session(body_session), RECIPES[quest_id], stopped, notify
+        self.data = stored or {"identity": self.identity, "attempts": [], "heldFollowing": False,
+                               "originalFollowing": False, "sessionId": self.session, "targetCooldowns": {}}
+        if (self.data.get("identity") != self.identity or not isinstance(self.data.get("attempts"), list)
+                or len(self.data["attempts"]) > 32 or not isinstance(self.data.get("targetCooldowns"), dict)
+                or len(self.data["targetCooldowns"]) > 32):
+            raise Error("Saved quest task identity or bounds are invalid")
+        for row in self.data["attempts"]:
+            if (not isinstance(row, dict) or not isinstance(row.get("requestId"), str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", row["requestId"])
+                    or row.get("action") not in ("FILL_BUCKET", "THROW_BUCKET")
+                    or row.get("status") not in ("reserved", "unconfirmed", "resolved")
+                    or not isinstance(row.get("binding"), list) or len(row["binding"]) != 6):
+                raise Error("Saved quest attempt is invalid")
+            session(row.get("sessionId"))
+            if any(type(v) is not int or not 0 <= v < 2**64 for v in row["binding"]):
+                raise Error("Saved quest attempt binding is invalid")
+            if not isinstance(row.get("operationId", ""), str) or len(row.get("operationId", "")) > 128:
+                raise Error("Saved quest operation identity is invalid")
+        for key, value in self.data["targetCooldowns"].items():
+            if not 0 < integer(key) < 2**64 or type(value) not in (int, float) or not math.isfinite(value):
+                raise Error("Saved target cooldown is invalid")
+        if (type(self.data.get("nextAttemptAt", 0)) not in (int, float)
+                or not math.isfinite(self.data.get("nextAttemptAt", 0))
+                or type(self.data.get("heldFollowing")) is not bool
+                or type(self.data.get("originalFollowing")) is not bool
+                or type(self.data.get("travelCleanupUnconfirmed", False)) is not bool):
+            raise Error("Saved quest task timing or follow intent is invalid")
+        self.done, self.suppress_follow_restore, self.travel_token = False, False, None
+        self.status = {"questId": quest_id, "phase": "starting", "observationsCurrent": False,
+                       "objectiveCount": 0, "requiredCount": self.recipe["requiredCount"], "waitingForReceipt": False}
+        self.travel_attempts, self.anchor_map = {}, None
+        self.initialized = self.data.get("sessionId") == self.session and self.data["heldFollowing"]
+        self.area_stop_requested = False
+
+    def persist(self):
+        self.save(copy.deepcopy(self.data))
+
+    def call(self, method, params):
+        if self.stopped():
+            raise c.Stopped("Quest task stop requested")
+        return self.rpc.call(method, params)
+
+    def read(self):
+        state = self.call("buddy-quest-items.state", {})
+        if session(state.get("sessionId")) != self.session or integer(state.get("selfGuid", 0)) != self.guid:
+            self.done, self.status["phase"] = True, "stopped_after_body_identity_changed"
+            raise Error("Quest item body changed")
+        if integer(state.get("questId", 0)) != self.qid:
+            raise Error("Installed quest recipe changed")
+        world = self.call("buddy-world.snapshot", {})
+        actions = self.call("buddy-actions.status", {})
+        player = world.get("self", {})
+        if not isinstance(player, dict) or integer(player.get("guid", 0)) != self.guid:
+            self.done, self.status["phase"] = True, "stopped_after_character_identity_changed"
+            raise Error("Quest actor identity changed")
+        final = self.call("buddy-quest-items.state", {})
+        if session(final.get("sessionId")) != self.session or integer(final.get("selfGuid", 0)) != self.guid:
+            self.done, self.status["phase"] = True, "stopped_after_body_identity_changed"
+            raise Error("Quest item body changed while reading")
+        if integer(final.get("questId", 0)) != self.qid:
+            raise Error("Installed quest recipe changed while reading")
+        return {"state": final, "world": world, "actions": actions, "self": player}
+
+    def safe(self, context):
+        state, player, actions = context["state"], context["self"], context["actions"]
+        pos = actions.get("position", {})
+        if (any(player.get(k) is not True for k in ("present", "aliveKnown", "alive", "unitFlagsKnown", "mapKnown"))
+                or integer(player.get("unitFlags", 0)) & 0x80000):
+            self.status["phase"] = "paused_for_combat_or_character_state"
+            return False
+        if (not point(pos, "known") or integer(pos.get("mapId", 0)) != integer(player.get("mapId", 0))):
+            self.status["phase"] = "waiting_for_known_current_map_position"
+            return False
+        current_map = integer(pos.get("mapId", 0))
+        if self.anchor_map is not None and current_map != self.anchor_map:
+            self.done, self.status["phase"] = True, "stopped_after_map_transition"
+            return False
+        if any(actions.get(k) is True for k in ("motionUnconfirmed", "autoAttackUnconfirmed", "practicing")):
+            self.status["phase"] = "waiting_for_confirmed_idle_character"
+            return False
+        if state.get("questLogKnown") is not True or state.get("inventoryKnown") is not True:
+            self.status["phase"] = "waiting_for_actual_quest_and_inventory_state"
+            return False
+        if self.data.get("travelCleanupUnconfirmed") is True:
+            if actions.get("interactionOwner") or actions.get("moving") is True:
+                self.status["phase"] = "waiting_for_confirmed_exploration_cleanup"
+                return False
+            self.data["travelCleanupUnconfirmed"] = False
+            self.persist()
+            self.status["cleanup"] = "exploration_stop_observed_after_unconfirmed_release"
+        return True
+
+    def pending(self):
+        return next((row for row in reversed(self.data["attempts"])
+                     if row["sessionId"] == self.session and row["status"] != "resolved"), None)
+
+    def completion_observed(self, state, operation):
+        if (operation.get("status") not in ("COMPLETED", 3)
+                or state.get("questLogKnown") is not True or state.get("inventoryKnown") is not True
+                or integer(operation.get("questId", 0)) != self.qid):
+            return False
+        if operation.get("action") in ("FILL_BUCKET", 1):
+            return (operation.get("inventoryAddedObserved") is True
+                    and integer(operation.get("observedInventoryRevision", 0)) > integer(operation.get("baselineInventoryRevision", 0))
+                    and integer(state.get("inventoryRevision", 0)) >= integer(operation.get("observedInventoryRevision", 0)))
+        return (operation.get("action") in ("THROW_BUCKET", 2) and operation.get("ownCastGoObserved") is True
+                and operation.get("questCreditObserved") is True
+                and integer(operation.get("observedQuestLogRevision", 0)) > integer(operation.get("baselineQuestLogRevision", 0))
+                and integer(state.get("questLogRevision", 0)) >= integer(operation.get("observedQuestLogRevision", 0))
+                and integer(operation.get("afterObjectiveCount", 0)) > integer(operation.get("beforeObjectiveCount", 0))
+                and integer(state.get("objectiveCount", 0)) >= integer(operation.get("afterObjectiveCount", 0)))
+
+    def reconcile(self, state):
+        count, required = integer(state.get("objectiveCount", 0)), integer(state.get("requiredCount", 0))
+        if required != self.recipe["requiredCount"] or not 0 <= count <= required:
+            raise Error("Quest objective observation is invalid")
+        self.status.update(objectiveCount=count, requiredCount=required, questComplete=state.get("questComplete") is True,
+                           observationsCurrent=state.get("questLogKnown") is True, attempts=len(self.data["attempts"]))
+        pending, operation = self.pending(), state.get("operation", {})
+        self.status["waitingForReceipt"] = pending is not None or state.get("active") is True
+        if pending is None:
+            return True
+        if not isinstance(operation, dict) or operation.get("requestId") != pending["requestId"]:
+            self.status["phase"] = "waiting_for_unconfirmed_request_reconciliation"
+            return False
+        if (integer(operation.get("questId", 0)) != self.qid
+                or operation.get("action") not in (pending["action"], 1 if pending["action"] == "FILL_BUCKET" else 2)
+                or integer(operation.get("baselineQuestLogRevision", 0)) != pending["binding"][0]
+                or integer(operation.get("baselineInventoryRevision", 0)) != pending["binding"][1]
+                or integer(operation.get("sourceObjectGuid", 0)) != pending["binding"][2]
+                or integer(operation.get("targetCreatureGuid", 0)) != pending["binding"][3]):
+            raise Error("Quest operation binding changed")
+        op_id = operation.get("operationId", "")
+        if not isinstance(op_id, str) or not 1 <= len(op_id) <= 128:
+            raise Error("Quest operation identity is invalid")
+        if pending.get("operationId") and pending["operationId"] != op_id:
+            raise Error("Quest operation identity changed")
+        pending["operationId"] = op_id
+        raw = operation.get("status", "STATUS_UNSPECIFIED")
+        name = STATUS_NAMES.get(raw, "invalid") if type(raw) is int else raw
+        if name not in TERMINAL:
+            self.status["phase"] = "waiting_for_server_item_operation"
+            self.persist()
+            return False
+        if (name == "OUTCOME_UNCONFIRMED" or operation.get("cleanupUnconfirmed") is True
+                or operation.get("writeUnconfirmed") is True and not self.completion_observed(state, operation)):
+            pending["status"] = "unconfirmed"
+            self.status["phase"] = "item_outcome_unconfirmed_no_automatic_resend"
+            self.persist()
+            return False
+        if state.get("active") is True or operation.get("leaseReleased") is not True:
+            self.status["phase"] = "waiting_for_owned_item_lease_release"
+            return False
+        pending["status"], pending["outcome"] = "resolved", name
+        if pending["action"] == "THROW_BUCKET":
+            target = pending["binding"][3]
+            self.data["targetCooldowns"][str(target)] = self.now()+self.recipe["targetResetSeconds"]
+        self.status["waitingForReceipt"] = False
+        self.data["nextAttemptAt"] = self.now()+2
+        self.persist()
+        if name in ("SERVER_REJECTED", "BLOCKED", "CANCELLED"):
+            self.status["blockedReason"] = "server_rejected_or_blocked_item_operation"
+            self.data["nextAttemptAt"] = self.now()+5
+            self.persist()
+        if name == "CANCELLED":
+            self.done, self.status["phase"] = True, "owned_item_operation_cancelled"
+        return True
+
+    def candidates(self, context, collection):
+        rows = context["state"].get(collection, [])
+        if not isinstance(rows, list) or len(rows) > 32:
+            raise Error("Quest target observations exceed their bound")
+        own, seen, result = context["actions"]["position"], set(), []
+        entry, high = (self.recipe["sourceEntry"], 0xf110) if collection == "barrels" else (self.recipe["targetEntry"], 0xf130)
+        for row in rows:
+            if not isinstance(row, dict) or not point(row) or row.get("present") is not True:
+                continue
+            guid = integer(row.get("guid", 0))
+            if (guid in seen or guid>>48 != high or not guid & 0xffffff or guid>>24 & 0xffffff != entry
+                    or integer(row.get("entry", 0)) != entry or integer(row.get("mapId", 0)) != integer(own.get("mapId", 0))):
+                continue
+            seen.add(guid)
+            d = distance(own, row)
+            limit = self.recipe["sourceRange"] if collection == "barrels" else self.recipe["targetRange"]
+            if d > limit and self.travel_attempts.get(str(guid), 0) >= 3:
+                self.status["blockedReason"] = "observed_candidate_exhausted_travel_limit"
+                continue
+            result.append({"guid": guid, "point": row, "distance": d})
+        return sorted(result, key=lambda row: (row["distance"], row["guid"]))
+
+    def release_travel(self):
+        if self.travel_token is None:
+            return
+        token, self.travel_token = self.travel_token, None
+        try:
+            self.rpc.call("buddy-actions.release_interaction", {"owner": "exploration", "token": token})
+        except Error:
+            self.data["travelCleanupUnconfirmed"] = True
+            self.persist()
+            self.status["cleanup"] = "exploration_release_unconfirmed"
+
+    def travel(self, context, candidate):
+        if candidate["distance"] > 200:
+            self.status["phase"] = "observed_quest_target_beyond_one_travel_leg"
+            return
+        key = str(candidate["guid"])
+        if self.travel_attempts.get(key, 0) >= 3:
+            self.status["phase"] = "quest_target_route_stalled_after_bounded_attempts"
+            return
+        lease = self.call("buddy-actions.acquire_interaction", {"owner": "exploration", "leaseMs": 30000})
+        token, control = lease.get("token"), lease.get("state", {})
+        if (not isinstance(token, str) or not 1 <= len(token) <= 128 or control.get("interactionOwner") != "exploration"):
+            raise Error("Exploration lease is unconfirmed")
+        self.travel_token = token
+        try:
+            if control.get("moving") is True or control.get("motionUnconfirmed") is True:
+                raise Error("Exploration stop is unconfirmed")
+            fresh = self.read()
+            if not self.safe(fresh) or fresh["state"].get("active") is True or self.pending() is not None:
+                return
+            if (fresh["state"].get("questActive") is not True
+                    or fresh["state"].get("questComplete") is True
+                    or integer(fresh["state"].get("objectiveCount", 0)) >= self.recipe["requiredCount"]):
+                self.status["phase"] = "quest_state_changed_before_travel_rechecking"
+                return
+            field = "barrels" if integer(candidate["point"].get("entry", 0)) == self.recipe["sourceEntry"] else "fires"
+            current = next((row for row in self.candidates(fresh, field) if row["guid"] == candidate["guid"]), None)
+            if current is None or any(current["point"][k] != candidate["point"][k] for k in ("x", "y", "z")):
+                self.status["phase"] = "observed_quest_target_changed_before_travel"
+                return
+            self.travel_attempts[key] = self.travel_attempts.get(key, 0)+1
+            self.status["phase"] = "traveling_to_observed_quest_object"
+            self.notify()
+            target = current["point"]
+            params = {"token": token, "mapId": integer(target.get("mapId", 0)), **{k: target[k] for k in ("x", "y", "z")}}
+            # A separate client owns the blocking route call. This thread can
+            # still release its exact token promptly when a stop arrives.
+            traveler = self.rpc.fork() if isinstance(self.rpc, RPC) else self.rpc
+            result, finished = queue.Queue(maxsize=1), threading.Event()
+            def route():
+                try: result.put((traveler.call("buddy-actions.travel_to", params), None))
+                except Exception as error: result.put((None, error))
+                finally: finished.set()
+            threading.Thread(target=route, daemon=True).start()
+            deadline = time.monotonic()+36
+            next_observation = time.monotonic()+1
+            while not finished.wait(.1):
+                if self.stopped() or time.monotonic() >= deadline:
+                    self.release_travel()
+                    finished.wait(2)
+                    if self.stopped():
+                        raise c.Stopped("Quest task stop requested during travel")
+                    raise Error("Quest travel result is unconfirmed")
+                if time.monotonic() >= next_observation:
+                    observed = self.rpc.call("buddy-quest-items.state", {})
+                    if (session(observed.get("sessionId")) != self.session
+                            or integer(observed.get("selfGuid", 0)) != self.guid
+                            or observed.get("questActive") is not True or observed.get("questComplete") is True
+                            or integer(observed.get("questLogRevision", 0)) != integer(fresh["state"].get("questLogRevision", 0))
+                            or integer(observed.get("inventoryRevision", 0)) != integer(fresh["state"].get("inventoryRevision", 0))):
+                        self.release_travel()
+                        finished.wait(2)
+                        self.status["phase"] = "quest_state_changed_during_travel_rechecking"
+                        return
+                    next_observation = time.monotonic()+1
+            value, error = result.get_nowait()
+            if error is not None:
+                raise Error("Quest travel result is unconfirmed") from None
+            self.status["phase"] = ("travel_arrival_reported_rechecking_observations"
+                if isinstance(value, dict) and value.get("reason") == "exploration_within_distance"
+                and value.get("moving") is not True and value.get("motionUnconfirmed") is not True
+                else "quest_travel_stopped_before_interaction")
+        finally:
+            self.release_travel()
+
+    def attempt(self, context, action, target, bucket):
+        state = context["state"]
+        binding = [integer(state.get("questLogRevision", 0)), integer(state.get("inventoryRevision", 0)),
+                   target["guid"] if action == "FILL_BUCKET" else 0,
+                   target["guid"] if action == "THROW_BUCKET" else 0, integer(bucket.get("itemGuid", 0)), self.qid]
+        if any(row["sessionId"] == self.session and row["action"] == action and row["binding"] == binding
+               and not (row["status"] == "resolved" and row.get("outcome") in ("SERVER_REJECTED", "BLOCKED"))
+               for row in self.data["attempts"]):
+            self.status["phase"] = "waiting_for_changed_server_bindings_before_retry"
+            return
+        if len(self.data["attempts"]) >= 32:
+            self.done, self.status["phase"] = True, "finished_at_finite_item_attempt_limit"
+            return
+        row = {"requestId": uuid.uuid4().hex, "sessionId": self.session, "action": action,
+               "binding": binding, "status": "reserved", "operationId": ""}
+        self.data["attempts"].append(row)
+        self.persist()  # Consumption is durable before any potentially ambiguous request.
+        self.status.update(phase="requesting_normal_quest_item_step", waitingForReceipt=True,
+                           attempts=len(self.data["attempts"]))
+        self.notify()
+        try:
+            self.call("buddy-quest-items.attempt", {"sessionId": self.session, "requestId": row["requestId"],
+                "questId": self.qid, "action": action, "sourceObjectGuid": str(binding[2]),
+                "targetCreatureGuid": str(binding[3]), "expectedQuestLogRevision": str(binding[0]),
+                "expectedInventoryRevision": str(binding[1]), "expectedItemGuid": str(binding[4])})
+        except c.Stopped:
+            raise
+        except Error:
+            row["status"] = "unconfirmed"
+            self.status["phase"] = "request_unconfirmed_reconciling_server_state"
+            self.persist()
+
+    def tick(self):
+        if self.stopped():
+            raise c.Stopped("Quest task stop requested")
+        self.status["observationsCurrent"] = False
+        context = self.read()
+        state, actions = context["state"], context["actions"]
+        reconciled = self.reconcile(state)
+        if self.done:
+            return
+        if c.area_quest_snapshot(self.guid).get("active") is True:
+            if not self.area_stop_requested:
+                c.area_quest_snapshot(self.guid, stop=True)
+                self.area_stop_requested = True
+            self.status["phase"] = "waiting_for_previous_area_sweep_cleanup"
+            return
+        if not self.safe(context):
+            return
+        if self.anchor_map is None:
+            self.anchor_map = integer(actions["position"].get("mapId", 0))
+        if state.get("questActive") is not True:
+            self.done, self.status["phase"] = True, "own_quest_absent_no_objective_action"
+            return
+        if state.get("questComplete") is True or self.status["objectiveCount"] >= self.recipe["requiredCount"]:
+            if state.get("active") is True or not reconciled:
+                self.status["phase"] = "own_goal_observed_waiting_for_owned_operation_cleanup"
+                return
+            self.done, self.status["phase"] = True, "own_quest_objective_goal_observed"
+            return
+        if not reconciled or state.get("active") is True:
+            return
+        if (state.get("ready") is not True
+                and state.get("reason") != "waiting_for_normal_server_template"):
+            self.status["phase"] = "waiting_for_quest_item_capability"
+            reason = state.get("reason", "")
+            if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,120}", reason):
+                self.status["blockedReason"] = reason
+            return
+        if not self.initialized:
+            self.initialized = True
+            self.data.update(originalFollowing=actions.get("following") is True, heldFollowing=False, sessionId=self.session)
+            self.persist()
+        if actions.get("following") is True:
+            self.data["heldFollowing"] = True
+            self.persist()
+            reply = self.call("buddy-actions.follow", {"enabled": False})
+            self.status["phase"] = "holding_previous_follow_intent" if reply.get("following") is not True else "waiting_for_follow_hold"
+            return
+        if any(actions.get(k) is True for k in ("traveling", "castPending", "autoAttacking")):
+            self.status["phase"] = "waiting_for_existing_game_operation"
+            return
+        if self.now() < self.data.get("nextAttemptAt", 0):
+            self.status["phase"] = "waiting_for_observed_operation_settlement"
+            return
+        bucket = state.get("bucket", {})
+        if not isinstance(bucket, dict):
+            raise Error("Observed quest item binding is invalid")
+        has_bucket = (integer(bucket.get("itemGuid", 0)) > 0 and integer(bucket.get("entry", 0)) == self.recipe["itemEntry"]
+                      and integer(bucket.get("count", 0)) > 0)
+        field, action, limit = ("fires", "THROW_BUCKET", self.recipe["targetRange"]) if has_bucket else ("barrels", "FILL_BUCKET", self.recipe["sourceRange"])
+        targets = self.candidates(context, field)
+        if field == "fires":
+            targets = [row for row in targets if self.data["targetCooldowns"].get(str(row["guid"]), 0) <= self.now()]
+        if not targets:
+            self.status["phase"] = "waiting_for_observed_practice_fire_or_reset" if has_bucket else "waiting_for_observed_quest_barrel"
+            return
+        target = targets[0]
+        if target["distance"] > limit:
+            self.travel(context, target)
+            return
+        if state.get("ready") is not True:
+            self.status["phase"] = "waiting_for_quest_item_capability"
+            reason = state.get("reason", "")
+            if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,120}", reason):
+                self.status["blockedReason"] = reason
+            return
+        self.status.pop("blockedReason", None)
+        self.attempt(context, action, target, bucket if has_bucket else {})
+
+    def cleanup(self):
+        self.release_travel()
+        try:
+            state = self.rpc.call("buddy-quest-items.state", {})
+            if session(state.get("sessionId")) != self.session or integer(state.get("selfGuid", 0)) != self.guid:
+                self.status["cleanup"] = "body_changed_no_stale_cleanup"
+                return
+            operation = state.get("operation", {})
+            owned = next((row for row in self.data["attempts"] if row["sessionId"] == self.session
+                          and row["requestId"] == operation.get("requestId")), None)
+            if state.get("active") is True and owned is not None:
+                op_id = operation.get("operationId", "")
+                if not isinstance(op_id, str) or not 1 <= len(op_id) <= 128:
+                    raise Error("Owned operation identity is unknown")
+                state = self.rpc.call("buddy-quest-items.cancel", {"sessionId": self.session, "operationId": op_id})
+                self.status["cleanup"] = "owned_item_cancel_requested"
+            if session(state.get("sessionId")) != self.session or integer(state.get("selfGuid", 0)) != self.guid:
+                self.status["cleanup"] = "body_changed_no_stale_cleanup"
+                return
+            operation = state.get("operation", {})
+            if (state.get("active") is True or operation.get("cleanupUnconfirmed") is True
+                    or operation.get("writeUnconfirmed") is True and not (owned is not None and self.completion_observed(state, operation))
+                    or operation.get("status") in ("OUTCOME_UNCONFIRMED", 6)):
+                self.status["cleanup"] = "owned_item_cleanup_unconfirmed_follow_not_restored"
+                return
+            if self.data.get("travelCleanupUnconfirmed") is True:
+                self.status["cleanup"] = "exploration_release_unconfirmed_follow_not_restored"
+                return
+            if self.suppress_follow_restore or not self.data["heldFollowing"] or not self.data["originalFollowing"]:
+                return
+            world = self.rpc.call("buddy-world.snapshot", {})
+            if integer(world.get("self", {}).get("guid", 0)) != self.guid:
+                return
+            final = self.rpc.call("buddy-quest-items.state", {})
+            if session(final.get("sessionId")) != self.session or integer(final.get("selfGuid", 0)) != self.guid:
+                self.status["cleanup"] = "body_changed_no_stale_follow_restore"
+                return
+            reply = self.rpc.call("buddy-actions.follow", {"enabled": True})
+            self.status["cleanup"] = "previous_follow_intent_restored" if reply.get("following") is True else "follow_restore_unconfirmed"
+        except Error:
+            self.status["cleanup"] = "owned_cleanup_unconfirmed"
+
+
+def load_private(path):
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY), "r") as source:
+            raw = source.read(65537)
+        if len(raw) > 65536:
+            raise Error("Quest task ledger exceeds its bound")
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise Error("Quest task ledger is invalid")
+        return value
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        raise Error("Quest task ledger is invalid") from None
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("run", "status", "stop"))
+    parser.add_argument("--character-guid", type=int, required=True)
+    parser.add_argument("--rpc-url", required=True)
+    parser.add_argument("--quest-id", type=int, required=True)
+    parser.add_argument("--session-id")
+    parser.add_argument("--max-seconds", type=float, default=300)
+    args = parser.parse_args(argv)
+    identity = c.quest_task_identity(args.character_guid, args.rpc_url, args.quest_id)
+    if args.quest_id not in RECIPES or not math.isfinite(args.max_seconds) or not 0 < args.max_seconds <= 300:
+        parser.error("Supported quest recipe and a duration within300seconds are required")
+    if args.command != "run":
+        print(json.dumps(c.quest_task_snapshot(args.character_guid, args.rpc_url, args.quest_id, stop=args.command == "stop"), indent=2))
+        return 0
+    session(args.session_id)
+    folder = c.ensure_state(c.ensure_state(c.ROOT / "data/quest-task") / str(args.character_guid))
+    with os.fdopen(c.private_open(folder / "lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise Error("This character already has an active quest task") from None
+        record = {"identity": identity, "instance": uuid.uuid4().hex, "bodySessionId": args.session_id,
+                  "pid": os.getpid(), "routineActive": True}
+        deadline, stop_requested = time.monotonic()+args.max_seconds, False
+        def signal_stop(signum, frame):
+            nonlocal stop_requested
+            stop_requested = True
+        signal.signal(signal.SIGINT, signal_stop); signal.signal(signal.SIGTERM, signal_stop)
+        actor = None
+        def stopped():
+            request = c.read_json(folder / "stop.json")
+            expected = {"identity": identity, "instance": record["instance"]}
+            if request == dict(expected, restoreFollowing=False):
+                if actor is not None: actor.suppress_follow_restore = True
+                return True
+            return stop_requested or time.monotonic() >= deadline or request == expected
+        def save(value):
+            if len(json.dumps(value)) > 65536:
+                raise Error("Quest task ledger exceeds its bound")
+            c.write_json(folder / "operations.json", value)
+        actor = QuestTask(args.character_guid, args.rpc_url, args.quest_id, args.session_id, RPC(args.rpc_url),
+                          save=save, stored=load_private(folder / "operations.json"), stopped=stopped)
+        def status():
+            record.update(updatedAt=time.time(), remainingSeconds=max(0, int(deadline-time.monotonic())), own=actor.status)
+            c.write_json(folder / "status.json", record)
+        actor.notify = status
+        status()
+        try:
+            while not stopped() and not actor.done:
+                try: actor.tick()
+                except c.Stopped: break
+                except Error:
+                    if not actor.done: actor.status.update(phase="quest_observation_or_request_unavailable", observationsCurrent=False)
+                status()
+                until = time.monotonic()+1
+                while not actor.done and not stopped() and time.monotonic() < until: time.sleep(.1)
+        finally:
+            actor.cleanup()
+            if not actor.done: actor.status["phase"] = "quest_task_stopped_or_expired"
+            record["routineActive"] = False
+            status()
+    return 0
+
+
+if __name__ == "__main__":
+    try: sys.exit(main())
+    except (Error, OSError) as error:
+        print("Quest task: " + str(error), file=sys.stderr); sys.exit(1)

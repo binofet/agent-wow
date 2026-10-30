@@ -192,6 +192,9 @@ class AreaSweep(party.PartyQuestSync):
             return False
 
     def tick(self):
+        if converse.quest_task_snapshot(self.guid).get("active") is True:
+            self.status["phase"] = "waiting_for_requested_quest_task"
+            return
         context = self.read()
         self.status.update(activeQuestIds=sorted(context["active"]), observationsCurrent=True)
         if self.session is None:

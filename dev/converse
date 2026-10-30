@@ -45,7 +45,8 @@ DISABLED_FEATURES = (
 ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
            "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
-           "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS")
+           "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
+           "EXECUTE_QUEST", "STOP_QUEST")
 QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 3903],
                        "prerequisiteQuestIds": [783, 5261, 33],
                        "characters": [{"name": "Arlen", "guid": 1, "port": 8086},
@@ -79,8 +80,8 @@ CHARACTER_CLASS in a private World of Warcraft realm. Joel is a human warrior. T
 naturally in the game: warm, curious, concise, with occasional dry humor. Use
 first person; avoid canned assistant offers. You can chat and perform WAVE, BOW,
 or CHEER. The supplied control state says whether following and Lesser Heal are
-installed and available. Following handles nearby open ground, without terrain
-navigation. Other abilities exist only when supplied abilities say available.
+installed and available. Following uses the installed client navigation on the
+current map. Other abilities exist only when supplied abilities say available.
 DISCOVER_QUESTS reads the nearest interactable NPC's actual offers. ACCEPT_QUEST
 requests one offered quest: quest_id is the exact observed ID, or0 only for a
 unique available offer. ENABLE_LOOTING/DISABLE_LOOTING toggles nearby ordinary
@@ -155,6 +156,17 @@ It lasts at most five minutes; it never abandons quests or explores beyond the
 local sweep radius. STOP_AREA_QUESTS cancels that sweep. area_quests reports its
 actual phase and confirmed own-log results; never claim the sweep finished from
 its start acknowledgement. Other agents cannot authorize either action.
+EXECUTE_QUEST starts one finite supported objective recipe for your own active
+quest_id when Joel says to do that quest. Resolve its ID from the actual own
+journal and quest_execution capability; do not invent a recipe for another
+quest. This differs from PLAN_QUEST, which only discusses an objective, and
+AREA_QUESTS, which visits questgivers. STOP_QUEST requests cancellation of your
+current quest task. quest_task reports its actual phase and own observed counter;
+an item use, cast or start acknowledgement is not quest credit. Quest objects,
+item ownership and ground targets are chosen by the installed controller, never
+by model coordinates or spell IDs. Do not claim a practice fire's burning aura
+is observed when the capability says it is unknown. Unknown or stale counters
+remain unknown. A stopped request remains pending until cleanup is observed.
 """
 
 
@@ -443,6 +455,74 @@ def area_quest_snapshot(character_guid, stop=False, restore_follow=True):
         return unknown
 
 
+def quest_task_identity(character_guid, rpc_url, quest_id):
+    if not 0 < integer(character_guid) < 2**48 or not 0 < integer(quest_id) < 2**32:
+        raise ConversationError("Quest task identity is invalid")
+    RPC(rpc_url)  # Endpoint validation only; no network operation.
+    return {"version": 1, "mode": "quest_recipe", "characterGuid": character_guid,
+            "rpcUrl": rpc_url, "questId": quest_id}
+
+
+def quest_task_snapshot(character_guid, rpc_url=None, quest_id=0, stop=False, restore_follow=True):
+    unknown = {"active": False}
+    try:
+        folder = ROOT / "data/quest-task" / str(integer(character_guid))
+        if any(path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077
+               for path in (folder.parent, folder)):
+            return unknown
+        def read(path):
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "r") as source:
+                info = os.fstat(source.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
+                        or info.st_mode & 0o077 or info.st_size > 16384):
+                    raise ConversationError("Quest task state is unavailable")
+                return json.loads(source.read(16385))
+        record = read(folder / "status.json")
+        identity = record.get("identity", {})
+        expected = quest_task_identity(character_guid, identity.get("rpcUrl"), integer(identity.get("questId", 0)))
+        if (identity != expected or rpc_url is not None and identity["rpcUrl"] != rpc_url
+                or quest_id and identity["questId"] != quest_id
+                or not isinstance(record.get("instance"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", record["instance"])
+                or not isinstance(record.get("bodySessionId"), str)
+                or not 1 <= len(record["bodySessionId"]) <= 128):
+            return unknown
+        descriptor = os.open(folder / "lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "r") as lock:
+            info = os.fstat(lock.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+                return unknown
+            active = record.get("routineActive") is True and is_locked(lock)
+        own = record.get("own", {})
+        if not isinstance(own, dict):
+            return unknown
+        result = {"active": active, "questId": identity["questId"], "phase": "starting",
+                  "bodySessionId": record["bodySessionId"]}
+        for key in ("phase", "cleanup", "blockedReason"):
+            value = own.get(key)
+            if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,120}", value):
+                result[key] = value
+        for key in ("objectiveCount", "requiredCount", "attempts"):
+            result[key] = integer(own.get(key, 0))
+            if not 0 <= result[key] <= 10000:
+                return unknown
+        for key in ("observationsCurrent", "questComplete", "waitingForReceipt"):
+            result[key] = own.get(key) is True
+        updated = record.get("updatedAt", 0)
+        if type(updated) not in (int, float) or not math.isfinite(updated) or not 0 <= time.time()-updated <= 15:
+            result["observationsCurrent"] = False
+        if stop and active:
+            request = {"identity": identity, "instance": record["instance"]}
+            if not restore_follow:
+                request["restoreFollowing"] = False
+            write_json(folder / "stop.json", request)
+            result["stopRequested"] = True
+        return result
+    except (OSError, ValueError, TypeError, AttributeError, ConversationError):
+        return unknown
+
+
 def party_maintenance_snapshot(character_guid):
     folder = ROOT / "data/party-maintenance"
     unknown = {"active": False}
@@ -686,6 +766,7 @@ class RPC:
                           "buddy-loot.state", "buddy-loot.enable",
                           "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
                           "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
+                          "buddy-quest-items.state",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist"):
             raise ConversationError("Unsupported chat method")
@@ -860,6 +941,7 @@ class BuddyControls:
         self.previous_quest_confirmation = None
         self.previous_loot_items = self.previous_completed_trades = None
         self.reward_items = {"available": False, "items": []}
+        self.quest_items, self.quest_items_available = {}, False
 
     def refresh(self):
         try:
@@ -901,9 +983,16 @@ class BuddyControls:
         except ConversationError:
             self.actions_available = False
         for name, method in (("quests", "buddy-quests.state"), ("loot", "buddy-loot.state"),
-                             ("trade", "buddy-trade.state"), ("journal", "buddy-quests.journal")):
+                             ("trade", "buddy-trade.state"), ("journal", "buddy-quests.journal"),
+                             ("quest_items", "buddy-quest-items.state")):
             try:
                 setattr(self, name, self.rpc.call(method, {"refresh": False} if name == "journal" else {}))
+                if name == "quest_items":
+                    value = self.quest_items
+                    if (integer(value.get("selfGuid", 0)) != self.character_guid
+                            or not isinstance(value.get("sessionId"), str) or not 1 <= len(value["sessionId"]) <= 128
+                            or not 0 < integer(value.get("questId", 0)) < 2**32):
+                        raise ConversationError("Quest executor identity is unavailable")
                 setattr(self, name + "_available", True)
             except ConversationError:
                 setattr(self, name + "_available", False)
@@ -931,6 +1020,9 @@ class BuddyControls:
         goal = quest_sync_snapshot(self.character_guid)
         standing = party_quest_sync_snapshot(self.character_guid)
         area = area_quest_snapshot(self.character_guid)
+        task = quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None))
+        if self.quest_items_available and task.get("bodySessionId") != self.quest_items.get("sessionId"):
+            task["observationsCurrent"] = False
         state = {"abilities": {"following": self.actions_available,
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
                               "quests": self.quests_available, "looting": self.loot_available,
@@ -938,10 +1030,14 @@ class BuddyControls:
                               "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack"}.get(self.character_class,"unsupported")) is True,
                               "quest_sync_stop": goal.get("active") is True or standing.get("active") is True,
                               "area_quests": self.actions_available and self.quests_available,
-                              "area_quests_stop": area.get("active") is True},
+                              "area_quests_stop": area.get("active") is True,
+                              "quest_execution": self.actions_available and self.quest_items_available,
+                              "quest_execution_stop": task.get("active") is True},
                  "quest_sync": goal,
                  "party_quest_sync": standing,
                  "area_quests": area,
+                 "quest_task": task,
+                 "quest_execution": self.quest_items if self.quest_items_available else {"available": False},
                  "party_maintenance": party_maintenance_snapshot(self.character_guid),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
@@ -1368,10 +1464,47 @@ class BuddyControls:
     def execute(self, action, quest_id=0, item_entry=0, gold_copper=0):
         if action == "NONE":
             return None
+        if action == "STOP_QUEST":
+            result = quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None), quest_id, stop=True)
+            return ("I've requested that my quest task stop and release its own controls."
+                    if result.get("stopRequested") is True else "I don't have a matching active quest task to stop.")
+        if action == "EXECUTE_QUEST":
+            active = quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None))
+            if active.get("active") is True:
+                return "My quest task is already running; its current progress is in my own quest log."
+            if not self.actions_available:
+                return "My movement controller isn't ready yet."
+            try:
+                state = self.rpc.call("buddy-quest-items.state", {})
+                supported = integer(state.get("questId", 0))
+                session = state.get("sessionId")
+                if (integer(state.get("selfGuid", 0)) != self.character_guid or not isinstance(session, str)
+                        or not 1 <= len(session) <= 128 or not 0 < supported < 2**32):
+                    raise ConversationError("Quest executor identity is unconfirmed")
+                if quest_id and quest_id != supported:
+                    return "I can discuss that quest, but I don't have an installed objective recipe for it yet."
+                if state.get("questLogKnown") is not True or state.get("questActive") is not True:
+                    return "I haven't confirmed that quest in my own active quest log."
+                if state.get("questComplete") is True:
+                    return "My own quest log already marks that quest complete."
+                url = getattr(self.rpc, "url", "")
+                quest_task_identity(self.character_guid, url, supported)
+                area_quest_snapshot(self.character_guid, stop=True)
+                folder = ensure_state(ensure_state(ROOT / "data/quest-task") / str(self.character_guid))
+                descriptor = private_open(folder / "live.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+                with os.fdopen(descriptor, "ab", buffering=0) as log:
+                    subprocess.Popen([sys.executable, "-B", str(ROOT / "dev/quest-task"), "run",
+                                      "--character-guid", str(self.character_guid), "--rpc-url", url,
+                                      "--quest-id", str(supported), "--session-id", session], cwd=ROOT,
+                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            except (OSError, ValueError, ConversationError):
+                return "I couldn't start the installed quest executor. I'll keep its progress unconfirmed."
+            return "I'm starting that quest's objective steps, for up to five minutes. I'll track my own confirmed quest credit."
         if action == "STOP_AREA_QUESTS":
             result = area_quest_snapshot(self.character_guid, stop=True)
             return "I've requested that my area quest sweep stop and restore my prior follow setting." if result.get("stopRequested") is True else "I don't have an active area quest sweep to stop."
         if action == "AREA_QUESTS":
+            quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None), stop=True)
             if not self.actions_available or not self.quests_available:
                 return "Quest travel isn't ready yet."
             if area_quest_snapshot(self.character_guid).get("active") is True:
@@ -1401,6 +1534,7 @@ class BuddyControls:
                     else "I don't see an active matching quest-sync routine to stop.")
         if action in ("FOLLOW", "STOP_FOLLOWING"):
             area_quest_snapshot(self.character_guid, stop=True, restore_follow=False)
+            quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None), stop=True, restore_follow=False)
         try:
             if action == "PLAN_QUEST":
                 entries = self.journal.get("entries", []) if self.journal_available else []

@@ -1,6 +1,6 @@
 ## Interface: 30300
 ## Title: Warcraft Buddy Quest Sync
-## Notes: Shares Joel's quest state with his party companions.
+## Notes: Quest sync and companion inventory. Type /wbinv to inspect bags.
 ## Version: 0.2.0
 ## SavedVariablesPerCharacter: WarcraftBuddyQuestSyncDB
 WarcraftBuddyQuestSync.lua
