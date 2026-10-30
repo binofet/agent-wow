@@ -40,8 +40,11 @@ jobs:
       - name: Check development launchers
         run: |
           bash -n run
-          python3 -c 'from pathlib import Path; p = Path("dev/realm"); compile(p.read_text(), str(p), "exec")'
+          python3 -B -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for p in (Path("dev/realm"), Path("dev/buddy"))]'
           REALM_DB_ROOT_PASSWORD=ci-validation-only docker compose --file dev/realm.compose.yaml config --quiet
+
+      - name: Test buddy launcher lifecycle
+        run: python3 -B dev/test_buddy.py
 
       - name: Vet
         run: go vet ./...

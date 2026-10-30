@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""Start, stop, or inspect the project's first buddy (Arlen) on Linux."""
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import platform
+import shlex
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BINARY = ROOT / "bin" / "agent-wow"
+CONFIG = ROOT / "config" / "buddy.yaml"
+PID_FILE = ROOT / "config" / "buddy.pid"
+LOG_FILE = ROOT / "config" / "buddy-live.log"
+LOCK_FILE = ROOT / "config" / "buddy.lock"
+CHARACTER = "Arlen"
+RPC_HOST, RPC_PORT = "127.0.0.1", 8086
+START_TIMEOUT, STOP_TIMEOUT = 330, 45
+MAX_LINE = 64 << 10
+
+
+class BuddyError(Exception):
+    pass
+
+
+def command_line():
+    return [str(BINARY), "--config", str(CONFIG), "char", "play", CHARACTER,
+            "--timeout", "15s", "--module-timeout", "5m"]
+
+
+def private_file(path, flags):
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+        os.close(fd)
+        raise BuddyError(f"Expected a regular file owned by this user: {path}")
+    os.fchmod(fd, 0o600)
+    return fd
+
+
+def load_record():
+    try:
+        with os.fdopen(private_file(PID_FILE, os.O_RDONLY), "r") as source:
+            record = json.loads(source.read(8193))
+    except FileNotFoundError:
+        return None
+    except (ValueError, TypeError):
+        raise BuddyError(f"Unrecognized PID file; left untouched: {PID_FILE}") from None
+    keys = ("pid", "start_ticks", "exe_device", "exe_inode", "log_device", "log_inode")
+    if (not isinstance(record, dict) or record.get("argv") != command_line()
+            or any(type(record.get(key)) is not int or record[key] < 0 for key in keys)
+            or record["pid"] <= 1
+            or (record.get("ready_offset") is not None and
+                (type(record["ready_offset"]) is not int or record["ready_offset"] < 0))):
+        raise BuddyError(f"PID file does not identify this launcher's body; left untouched: {PID_FILE}")
+    return record
+
+
+def save_record(record):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", prefix=".buddy-pid-", dir=PID_FILE.parent,
+                                         delete=False) as output:
+            temporary = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(record, output, separators=(",", ":"))
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, PID_FILE)
+        temporary = None
+    except OSError as error:
+        raise BuddyError(f"PID {record['pid']} was preserved, but its tracking update failed: {error}. "
+                         f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def preflight_pid_file():
+    # Exercise creation and durable writing in the PID directory before spawning.
+    # The actual record is replaced atomically so failed updates preserve the old one.
+    with tempfile.NamedTemporaryFile(prefix=".buddy-pid-check-", dir=PID_FILE.parent) as output:
+        output.write(b"{}\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def process_info(pid):
+    directory = Path("/proc") / str(pid)
+    try:
+        # comm may contain spaces or parentheses; fields after its last ')' start at field 3.
+        fields = (directory / "stat").read_text().rsplit(") ", 1)[1].split()
+        if fields[0] in ("Z", "X"):
+            return None
+        argv = [part.decode("utf-8") for part in (directory / "cmdline").read_bytes().split(b"\0") if part]
+        executable = (directory / "exe").stat()
+        return {"start_ticks": int(fields[19]), "argv": argv,
+                "exe_device": executable.st_dev, "exe_inode": executable.st_ino}
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def running_owned(record):
+    info = process_info(record["pid"])
+    if info is None:
+        return False
+    if any(info[key] != record[key] for key in ("argv", "start_ticks", "exe_device", "exe_inode")):
+        raise BuddyError(f"PID {record['pid']} no longer matches the exact project binary/config/character; no signal sent.")
+    return True
+
+
+def log_fields(line):
+    try:
+        return dict(token.split("=", 1) for token in shlex.split(line.decode("utf-8")) if "=" in token)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+
+
+def ready_line(line, pid):
+    fields = log_fields(line)
+    return (fields.get("msg") == "world session ready" and fields.get("event") == "ready"
+            and fields.get("pid") == str(pid) and fields.get("character.name") == CHARACTER
+            and fields.get("rpc_url") == f"http://{RPC_HOST}:{RPC_PORT}/rpc")
+
+
+def logout_line(line):
+    fields = log_fields(line)
+    return (fields.get("msg") == "world packet" and fields.get("direction") == "read"
+            and fields.get("opcode") == "0x04d" and fields.get("opcode_label") == "SMSG_LOGOUT_COMPLETE"
+            and fields.get("bytes") == "0")
+
+
+def scan_log(record, offset, predicate):
+    """Read complete bounded lines from one snapshot, never displaying log contents."""
+    with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as source:
+        info = os.fstat(source.fileno())
+        if (info.st_dev, info.st_ino) != (record["log_device"], record["log_inode"]):
+            raise BuddyError("Buddy log was replaced; readiness/logout cannot be attributed to the recorded process.")
+        if offset > info.st_size:
+            raise BuddyError("Buddy log was truncated; readiness/logout cannot be verified.")
+        source.seek(offset)
+        while source.tell() < info.st_size:
+            start = source.tell()
+            line = source.readline(min(MAX_LINE + 1, info.st_size - start))
+            if len(line) > MAX_LINE:
+                raise BuddyError("Buddy log contains an oversized line; inspect it privately.")
+            if not line.endswith(b"\n"):
+                return None, start
+            if predicate(line):
+                return start, source.tell()
+        return None, source.tell()
+
+
+def readiness(record):
+    offset = record.get("ready_offset")
+    found, _ = scan_log(record, 0 if offset is None else offset,
+                        lambda line: ready_line(line, record["pid"]))
+    if found is not None and offset is None:
+        record["ready_offset"] = found
+        save_record(record)
+    return found is not None
+
+
+def docker_access(deadline):
+    if not shutil.which("docker"):
+        raise BuddyError("Docker CLI is missing; install Docker Engine and Compose before starting the buddy.")
+    for args in (("info", "--format", "{{.ServerVersion}}"), ("compose", "version", "--short")):
+        try:
+            result = subprocess.run(["docker", *args], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, timeout=max(0.1, min(10, deadline-time.monotonic())))
+        except subprocess.TimeoutExpired:
+            raise BuddyError("Docker access check timed out; verify docker info and docker compose version in this SSH session.") from None
+        if result.returncode:
+            raise BuddyError("Docker is unavailable to this SSH session; verify docker info and docker compose version with the current user's groups.")
+
+
+def start():
+    deadline = time.monotonic() + START_TIMEOUT
+    record = load_record()
+    if record is not None and running_owned(record):
+        if readiness(record):
+            print(f"Already running: PID {record['pid']}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            return 0
+        raise BuddyError(f"PID {record['pid']} is already running without a verified ready event; left untouched. Log: {LOG_FILE}")
+    for path in (BINARY, CONFIG):
+        if path.is_symlink() or not path.is_file():
+            raise BuddyError(f"Required project file is missing or is a symlink: {path}")
+    if not os.access(BINARY, os.X_OK):
+        raise BuddyError(f"Project binary is not executable: {BINARY}; build it with ./run build.")
+    docker_access(deadline)
+    preflight_pid_file()
+    # Test availability before touching the old log. The client performs the actual bind;
+    # a race is handled as startup failure, never by terminating the port's owner.
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((RPC_HOST, RPC_PORT))
+        except OSError:
+            raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
+    environment = os.environ.copy()
+    environment.update(AGENT_WOW_MODULE_DIR=str(ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
+                       AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))
+    with os.fdopen(private_file(LOG_FILE, os.O_WRONLY | os.O_CREAT), "wb") as log:
+        log.truncate()
+        child = subprocess.Popen(command_line(), cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+        try:
+            info = process_info(child.pid)
+        except OSError as error:
+            raise BuddyError(f"PID {child.pid} was preserved, but ownership tracking failed: {error}. "
+                             f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
+        if info is None:
+            raise BuddyError(f"Buddy exited before it could be tracked. Log: {LOG_FILE}")
+        if info["argv"] != command_line():
+            raise BuddyError(f"PID {child.pid} did not execute the exact project command; it was left untouched. Log: {LOG_FILE}")
+        log_info = os.fstat(log.fileno())
+        record = dict(info, pid=child.pid, log_device=log_info.st_dev, log_inode=log_info.st_ino,
+                      ready_offset=None)
+        save_record(record)
+    offset = 0
+    while time.monotonic() < deadline:
+        if child.poll() is not None or not running_owned(record):
+            raise BuddyError(f"PID {record['pid']} exited before a matching ready event. Log: {LOG_FILE}")
+        found, offset = scan_log(record, offset, lambda line: ready_line(line, child.pid))
+        if found is not None and running_owned(record):
+            record["ready_offset"] = found
+            save_record(record)
+            print(f"Started: PID {child.pid}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            return 0
+        time.sleep(0.25)
+    raise BuddyError(f"Startup did not become ready within {START_TIMEOUT}s; PID {child.pid} was preserved. Use dev/buddy status or stop. Log: {LOG_FILE}")
+
+
+def stop():
+    record = load_record()
+    if record is None or not running_owned(record):
+        print(f"Buddy is not running.\nLog: {LOG_FILE}")
+        return 0
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise BuddyError("Linux pidfd signal support is unavailable; refusing a signal that could race PID reuse.")
+    # pidfd pins the exact process while /proc identity is rechecked before SIGTERM.
+    pidfd = os.pidfd_open(record["pid"])
+    try:
+        if not running_owned(record):
+            raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
+        with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as log:
+            offset = os.fstat(log.fileno()).st_size
+        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+    finally:
+        os.close(pidfd)
+    deadline, confirmed = time.monotonic() + STOP_TIMEOUT, False
+    while time.monotonic() < deadline:
+        found, offset = scan_log(record, offset, logout_line)
+        confirmed = confirmed or found is not None
+        if not running_owned(record):
+            # Catch the final flushed line if exit raced the previous log snapshot.
+            found, offset = scan_log(record, offset, logout_line)
+            confirmed = confirmed or found is not None
+            if not confirmed:
+                raise BuddyError(f"PID {record['pid']} exited, but no server logout completion was observed; logout is unverified. Log: {LOG_FILE}")
+            print(f"Stopped: PID {record['pid']}; server logout completion and process exit verified.\nLog: {LOG_FILE}")
+            return 0
+        time.sleep(0.25)
+    detail = "server logout was confirmed, but the process is still exiting" if confirmed else "server-confirmed exit was not observed"
+    raise BuddyError(f"After {STOP_TIMEOUT}s, {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
+
+
+def status():
+    record = load_record()
+    if record is None:
+        print(f"PID: none\nRunning: no\nReadiness: not observed\nLog: {LOG_FILE}")
+        return 0
+    running = running_owned(record)
+    ready = running and readiness(record)
+    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nReadiness: {'matching ready event observed' if ready else 'not observed for a running body'}\nLog: {LOG_FILE}")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__ + " Uses config/buddy.yaml and 127.0.0.1:8086.")
+    parser.add_argument("command", choices=("start", "stop", "status"))
+    args = parser.parse_args()
+    if platform.system() != "Linux":
+        raise BuddyError("Run dev/buddy from a fresh Linux SSH session with Docker access.")
+    PID_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if PID_FILE.parent.is_symlink() or PID_FILE.parent.stat().st_mode & 0o022:
+        raise BuddyError("config must be a real directory without group/other write access.")
+    with os.fdopen(private_file(LOCK_FILE, os.O_WRONLY | os.O_CREAT), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BuddyError(f"Another buddy operation is in progress; no action taken. Log: {LOG_FILE}") from None
+        return {"start": start, "stop": stop, "status": status}[args.command]()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, BuddyError) as error:
+        print(f"buddy: {error}", file=sys.stderr)
+        sys.exit(1)

@@ -55,6 +55,23 @@ func (s *Service) Send(ctx context.Context, request *chatv1.SendRequest) (*chatv
 	return &chatv1.SendResponse{TransportWritten: true}, nil
 }
 
+func (s *Service) Emote(ctx context.Context, request *chatv1.EmoteRequest) (*chatv1.SendResponse, error) {
+	payload, err := encodeEmote(request)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	if s.session == nil {
+		return nil, status.Error(codes.FailedPrecondition, "session callback is unavailable")
+	}
+	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(opcode.CMSGTextEmote), Payload: payload}); err != nil {
+		return nil, err
+	}
+	return &chatv1.SendResponse{TransportWritten: true}, nil
+}
+
 func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
 	// A handler error is fatal to the core session. Unknown and malformed chat
 	// must therefore be accounted for locally and acknowledged successfully.

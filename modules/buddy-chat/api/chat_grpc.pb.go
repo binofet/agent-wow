@@ -22,6 +22,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	BuddyChat_Send_FullMethodName     = "/warcraftbuddy.chat.v1.BuddyChat/Send"
+	BuddyChat_Emote_FullMethodName    = "/warcraftbuddy.chat.v1.BuddyChat/Emote"
 	BuddyChat_Poll_FullMethodName     = "/warcraftbuddy.chat.v1.BuddyChat/Poll"
 	BuddyChat_OnPacket_FullMethodName = "/warcraftbuddy.chat.v1.BuddyChat/OnPacket"
 )
@@ -31,6 +32,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyChatClient interface {
 	Send(ctx context.Context, in *SendRequest, opts ...grpc.CallOption) (*SendResponse, error)
+	Emote(ctx context.Context, in *EmoteRequest, opts ...grpc.CallOption) (*SendResponse, error)
 	Poll(ctx context.Context, in *PollRequest, opts ...grpc.CallOption) (*PollResponse, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -47,6 +49,16 @@ func (c *buddyChatClient) Send(ctx context.Context, in *SendRequest, opts ...grp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SendResponse)
 	err := c.cc.Invoke(ctx, BuddyChat_Send_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyChatClient) Emote(ctx context.Context, in *EmoteRequest, opts ...grpc.CallOption) (*SendResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendResponse)
+	err := c.cc.Invoke(ctx, BuddyChat_Emote_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +90,7 @@ func (c *buddyChatClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts
 // for forward compatibility.
 type BuddyChatServer interface {
 	Send(context.Context, *SendRequest) (*SendResponse, error)
+	Emote(context.Context, *EmoteRequest) (*SendResponse, error)
 	Poll(context.Context, *PollRequest) (*PollResponse, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyChatServer()
@@ -92,6 +105,9 @@ type UnimplementedBuddyChatServer struct{}
 
 func (UnimplementedBuddyChatServer) Send(context.Context, *SendRequest) (*SendResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Send not implemented")
+}
+func (UnimplementedBuddyChatServer) Emote(context.Context, *EmoteRequest) (*SendResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Emote not implemented")
 }
 func (UnimplementedBuddyChatServer) Poll(context.Context, *PollRequest) (*PollResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Poll not implemented")
@@ -134,6 +150,24 @@ func _BuddyChat_Send_Handler(srv interface{}, ctx context.Context, dec func(inte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyChatServer).Send(ctx, req.(*SendRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyChat_Emote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyChatServer).Emote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyChat_Emote_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyChatServer).Emote(ctx, req.(*EmoteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -184,6 +218,10 @@ var BuddyChat_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Send",
 			Handler:    _BuddyChat_Send_Handler,
+		},
+		{
+			MethodName: "Emote",
+			Handler:    _BuddyChat_Emote_Handler,
 		},
 		{
 			MethodName: "Poll",

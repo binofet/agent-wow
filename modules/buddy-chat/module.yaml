@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit SAY/PARTY sends and cursor-based player SAY/PARTY/WHISPER polling; no automatic replies
+description: Explicit SAY/PARTY chat, WAVE/BOW/CHEER emotes and cursor-based player chat polling; no automatic replies
 compose:
   file: compose.yaml
   service: module
@@ -8,6 +8,7 @@ grpc:
   descriptor_set: module.pb
 rpc:
   send: /warcraftbuddy.chat.v1.BuddyChat/Send
+  emote: /warcraftbuddy.chat.v1.BuddyChat/Emote
   poll: /warcraftbuddy.chat.v1.BuddyChat/Poll
 packets:
   SMSG_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket
