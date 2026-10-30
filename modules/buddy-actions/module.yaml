@@ -18,6 +18,7 @@ rpc:
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
   approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
   travel_quest: /warcraftbuddy.actions.v1.BuddyActions/TravelQuest
+  exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
 packets:
   SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

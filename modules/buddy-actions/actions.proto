@@ -35,6 +35,8 @@ message ApproachLootRequest {
   uint64 game_object_guid = 3;
 }
 message ApproachQuestRequest { string token = 1; uint64 npc_guid = 2; }
+// An owned quests lease permits only the fixed, measured crypt exit route.
+message ExitCryptRequest { string token = 1; }
 message InteractionLease { string token = 1; State state = 2; }
 message State {
   bool following = 1;
@@ -116,6 +118,7 @@ service BuddyActions {
   rpc ApproachLoot(ApproachLootRequest) returns (State);
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
   rpc TravelQuest(ApproachQuestRequest) returns (State);
+  rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);

@@ -93,6 +93,10 @@ func navigationDiagnostic(err error, root string) string {
 // The route was produced by the client navmesh. Each transport write advances
 // by at most seven units per elapsed second along its ordered 3D segments.
 func (s *Service) navigationStepLocked(ctx context.Context, path []position, index *int) bool {
+	return s.navigationStepWithinLocked(ctx, path, index, northshire)
+}
+
+func (s *Service) navigationStepWithinLocked(ctx context.Context, path []position, index *int, inside func(position) bool) bool {
 	for *index < len(path) && distance(s.pos, path[*index]) <= 0.05 {
 		*index++
 	}
@@ -138,7 +142,7 @@ func (s *Service) navigationStepLocked(ctx context.Context, path []position, ind
 	if p.o < 0 {
 		p.o += 2 * math.Pi
 	}
-	if !northshire(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+0.01 {
+	if !inside(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+0.01 {
 		s.stopLocked(ctx)
 		return false
 	}
