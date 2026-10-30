@@ -27,6 +27,10 @@ c, town = load("party_town_converse", "converse"), load("party_town_finite", "to
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
 ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088)}
 MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
+CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
+            ("assist", "buddy-actions.assist", "assisting", "actions"),
+            ("healing", "buddy-actions.healing", "healing", "actions"),
+            ("follow", "buddy-actions.follow", "following", "actions"))
 
 def identity(guid):
     if guid not in ROSTER:
@@ -101,11 +105,12 @@ class GuardedWorker(town.Worker):
 
 class Supervisor:
     def __init__(self, guid, rpc=None, save=lambda value: None, stored=None, now=time.time,
-                 stopped=lambda: False, revoked=lambda: False, notify=lambda: None, worker=None):
+                 stopped=lambda: False, revoked=lambda: False, notify=lambda: None, worker=None, revoked_controls=None):
         self.guid, self.identity = guid, identity(guid)
         self.rpc = rpc or RPC(self.identity["rpcUrl"])
         if self.rpc.url != self.identity["rpcUrl"]: raise Error("Town endpoint differs from owned profile")
         self.save, self.now, self.stopped, self.revoked, self.notify = save, now, stopped, revoked, notify
+        self.revoked_controls = revoked_controls
         self.data = stored or dict(identity=self.identity, attempts=[])
         if self.data.get("identity") != self.identity or not isinstance(self.data.get("attempts"), list) or len(self.data["attempts"]) > 128:
             raise Error("Town journal identity or bound is invalid")
@@ -118,8 +123,13 @@ class Supervisor:
         self.session, self.owner_anchor, self.steady_owner, self.owner_since = None, None, None, self.now()
         self.token, self.activity_id, self.held, self.original_follow = None, "", False, False
         self.release_uncertain, self.worker = False, worker or self.run_worker
+        self.held_controls, self.controls_paused, self.pause_uncertain, self.worker_uncertain = {}, False, False, False
 
     def persist(self): self.save(copy.deepcopy(self.data))
+    def controls_revoked(self):
+        if self.revoked_controls is not None:
+            return set(self.revoked_controls())
+        return {row[0] for row in CONTROLS} if self.revoked() else set()
     def activities(self):
         return (c.quest_task_snapshot(self.guid).get("active") is True
                 or c.area_quest_snapshot(self.guid).get("active") is True or profession_active(self.guid))
@@ -163,6 +173,8 @@ class Supervisor:
         if inv.get("active") is True or inv.get("closing") is True or inv.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
             if not own_worker: raise Error("Town waits for inventory receipt")
         town.layout(inv)
+        if self.controls_paused and any(context[group].get(field,False) is not False for _,_,field,group in CONTROLS):
+            raise Error("Town controls changed after the verified hold")
         owner = context["world"].get("owner", {})
         if not isinstance(owner,dict): raise Error("Owner observation is invalid")
         if owner.get("present") is True:
@@ -174,13 +186,67 @@ class Supervisor:
         return None
 
     def guard(self, traveling=False):
-        if self.stopped() or self.revoked(): raise Error("Town activity stop requested")
+        if self.stopped() or self.revoked() or self.controls_revoked(): raise Error("Town activity stop requested")
         context = self.read()
         owner = self.safe(context, traveling=traveling, own_worker=not traveling)
         if ((owner is None) != (self.owner_anchor is None) or owner is not None and
                 (owner["mapId"] != self.owner_anchor["mapId"] or distance(owner, self.owner_anchor) > .35)):
             raise Error("Joel moved or returned during town upkeep")
         return context
+
+    def pause_controls(self, context, row):
+        self.held_controls, self.pause_uncertain, self.worker_uncertain, self.controls_paused = {}, False, False, False
+        row["heldControls"] = {}
+        for name,method,field,group in CONTROLS:
+            enabled=context[group].get(field,False)
+            if type(enabled) is not bool: raise Error("Town control intent is invalid")
+            if not enabled: continue
+            self.guard()
+            self.held_controls[name]=True
+            row["heldControls"][name]=True
+            self.persist()  # Record the owned hold before its potentially ambiguous request.
+            if self.stopped() or self.revoked() or self.controls_revoked():
+                del self.held_controls[name]
+                del row["heldControls"][name]
+                self.persist()
+                raise Error("Town hold revoked before its control write")
+            try:
+                reply=self.rpc.call(method,dict(enabled=False))
+                if reply.get(field,False) is not False:
+                    raise Error("Town control pause receipt is unconfirmed")
+            except Error:
+                self.pause_uncertain=True
+                raise
+        fresh=self.guard()
+        if any(fresh[group].get(field,False) is not False for _,_,field,group in CONTROLS):
+            self.pause_uncertain=True
+            raise Error("Town needs all held controls confirmed paused")
+        self.controls_paused=True
+
+    def restore_controls(self):
+        if self.release_uncertain or self.pause_uncertain or self.worker_uncertain:
+            self.status["controlsRestore"]="unconfirmed_no_automatic_control_restore"
+            return
+        try:
+            fresh=self.read()
+            operation=fresh["inv"].get("operation",{})
+            if (fresh["actions"].get("interactionOwner") or fresh["actions"].get("motionUnconfirmed") is True
+                    or fresh["inv"].get("active") is True or operation.get("status") in ("REQUESTED","OUTCOME_UNCONFIRMED")
+                    or operation.get("leaseReleased",True) is not True):
+                self.status["controlsRestore"]="pending_game_cleanup_no_control_restore"
+                return
+            for name,method,field,_ in reversed(CONTROLS):
+                if name not in self.held_controls or name in self.controls_revoked(): continue
+                # The loopback URL can survive a body reconnect. Recheck the
+                # current actual body immediately before each restoration.
+                current=town.checked_state(self.rpc.call("buddy-inventory.state",{}),self.guid)
+                if current["sessionId"] != self.session: raise Error("Town body changed before control restore")
+                if name in self.controls_revoked(): continue
+                reply=self.rpc.call(method,dict(enabled=True))
+                if reply.get(field) is not True: raise Error("Town control restore is unconfirmed")
+            self.status["controlsRestore"]="held_controls_restored_except_explicit_new_commands"
+        except (Error,town.Error):
+            self.status["controlsRestore"]="control_restore_unconfirmed_no_retry"
 
     def vendors(self, context):
         reply = self.rpc.call("buddy-inventory.discover", {})
@@ -337,17 +403,16 @@ class Supervisor:
         self.activity_id, self.held, self.original_follow = uuid.uuid4().hex, False, context["actions"].get("following") is True
         self.status.update(busy=True,lastKind=kind,confirmedOperations=0,phase="holding_follow_for_town_upkeep"); self.notify()
         try:
-            if self.original_follow:
-                self.held=True
-                result=self.rpc.call("buddy-actions.follow",dict(enabled=False))
-                if result.get("following") is True: raise Error("Town follow hold is unconfirmed")
+            self.pause_controls(context,row)
             self.guard()
             if mode == "travel":
                 self.status["phase"]="traveling_to_observed_vendor"; self.notify(); self.travel(target)
             self.guard()
             self.status["phase"]="finite_town_worker_running"; self.notify()
+            self.worker_uncertain=True
             result=self.worker(kind,target)
             phase=result.get("phase")
+            self.worker_uncertain=phase not in ("complete","blocked","server_rejected")
             row["phase"]="complete" if phase == "complete" else "blocked" if phase == "blocked" else "unconfirmed"
             self.status.update(phase="town_upkeep_"+row["phase"], confirmedOperations=result.get("newConfirmedOperations",0))
         except (Error,town.Error,OSError,ValueError,KeyError,TypeError):
@@ -355,13 +420,8 @@ class Supervisor:
             self.status["phase"]="town_upkeep_stopped_or_unconfirmed"
         finally:
             self.release(); self.persist()
-            if self.held and not self.release_uncertain and not self.revoked():
-                try:
-                    fresh=self.read()
-                    if (not fresh["actions"].get("interactionOwner") and fresh["actions"].get("motionUnconfirmed") is not True
-                            and not self.revoked()):
-                        self.rpc.call("buddy-actions.follow",dict(enabled=True))
-                except (Error,town.Error): pass
+            self.restore_controls()
+            self.controls_paused=False
             self.status["busy"]=False; self.activity_id=""; self.notify()
 
 def main(argv=None):
@@ -392,12 +452,20 @@ def main(argv=None):
             return requested or time.monotonic() >= end or c.read_json(folder/"stop.json") == dict(identity=expected,instance=record["instance"])
         actor=None
         def revoked():
-            return (actor is not None and actor.activity_id and c.read_json(folder/"follow-revoked.json") ==
-                    dict(identity=expected,instance=record["instance"],activityId=actor.activity_id))
+            return bool(revoked_controls())
+        def revoked_controls():
+            if actor is None or not actor.activity_id:return set()
+            marker=c.read_json(folder/"follow-revoked.json")
+            if any(marker.get(key) != value for key,value in dict(identity=expected,instance=record["instance"],activityId=actor.activity_id).items()):
+                return set()
+            controls=marker.get("controls",[row[0] for row in CONTROLS])
+            if not isinstance(controls,list) or any(name not in {row[0] for row in CONTROLS} for name in controls):
+                return {row[0] for row in CONTROLS}
+            return set(controls)
         def save(value):
             if len(json.dumps(value)) > 65536: raise Error("Town ledger exceeds its bound")
             c.write_json(folder/"operations.json",value)
-        actor=Supervisor(args.character_guid,save=save,stored=load_operations(folder/"operations.json"),stopped=stopped,revoked=revoked)
+        actor=Supervisor(args.character_guid,save=save,stored=load_operations(folder/"operations.json"),stopped=stopped,revoked=revoked,revoked_controls=revoked_controls)
         def status():
             record.update(updatedAt=time.time(),activityId=actor.activity_id,own=actor.status)
             c.write_json(folder/"status.json",record)

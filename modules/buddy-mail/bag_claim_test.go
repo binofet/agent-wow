@@ -128,6 +128,34 @@ func bagListing(t *testing.T, s *Service, f *bagFake, id string) *mailv1.ClaimBa
 	return &mailv1.ClaimBagAttachmentRequest{SessionId: v.SessionId, RequestId: id, ListRevision: v.ListRevision, MailboxGuid: v.MailboxGuid, MailId: m.MailId, AttachmentIndex: a.AttachmentIndex, ItemGuidLow: a.ItemGuidLow, ExpectedCount: a.Count, ExpectedInventoryRevision: f.w.InventoryRevision}
 }
 
+func TestBagListUsesOwnedConsoleSenderAndPreservesClaimProof(t *testing.T) {
+	for _, self := range []uint64{1, 4, 5, 6, 8} {
+		t.Run(fmt.Sprint(self), func(t *testing.T) {
+			s, f := bagRig(t)
+			s.self, f.w.Self.Guid = self, self
+			binary.LittleEndian.PutUint64(f.list[5+7:], self)
+			request := bagListing(t, s, f, "self-sender")
+			state, err := s.ClaimBagAttachment(context.Background(), request)
+			if err != nil || state.LastBagClaim == nil || state.LastBagClaim.Status != mailv1.BagClaimStatus_BAG_CLAIM_CONFIRMED || !state.LastBagClaim.ServerAcknowledged || !state.LastBagClaim.InventoryConfirmed || !state.LastBagClaim.LeaseReleased {
+				t.Fatal(state, err)
+			}
+			for _, sender := range []uint64{0, self + 1} {
+				s, f = bagRig(t)
+				s.self, f.w.Self.Guid = self, self
+				binary.LittleEndian.PutUint64(f.list[5+7:], sender)
+				state, err = s.List(context.Background(), &mailv1.ListRequest{})
+				want := 0
+				if sender == 0 {
+					want = 1
+				}
+				if err != nil || state.ListedMailCount != 1 || len(state.BagMails) != want || len(f.sends) != 1 {
+					t.Fatal("sender filtering must not claim", sender, state, err)
+				}
+			}
+		})
+	}
+}
+
 func TestBagClaimNeedsExactAckAndInventory(t *testing.T) {
 	for _, name := range []string{"both", "ack_only", "inventory_only", "wrong_item", "wrong_count", "wrong_mail", "unchanged_revision", "other_inventory_changed", "unknown_metadata", "duplicate_guid", "server_rejected", "transport_error"} {
 		t.Run(name, func(t *testing.T) {

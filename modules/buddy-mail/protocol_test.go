@@ -37,7 +37,7 @@ func TestMailBinaryGoldens(t *testing.T) {
 func TestPartyBagsExactObservedAttachmentProtocol(t *testing.T) {
 	p := partyBagList(4, 77, 1000)
 	rows, err := decodeMailList(p)
-	if err != nil || len(rows) != 1 || !rows[0].partyBags() || rows[0].attachments[3].itemLow != 1003 || rows[0].attachments[3].index != 3 || rows[0].attachments[3].count != 1 {
+	if err != nil || len(rows) != 1 || !rows[0].partyBags(1) || rows[0].attachments[3].itemLow != 1003 || rows[0].attachments[3].index != 3 || rows[0].attachments[3].count != 1 {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
 	for n := range len(p) {
@@ -46,20 +46,20 @@ func TestPartyBagsExactObservedAttachmentProtocol(t *testing.T) {
 		}
 	}
 	for name, change := range map[string]func(*mailEntry){
-		"subject": func(m *mailEntry) { m.subject += " " }, "sender": func(m *mailEntry) { m.sender = 1 }, "stationery": func(m *mailEntry) { m.stationery = 41 }, "type": func(m *mailEntry) { m.typeID = 3 }, "cod": func(m *mailEntry) { m.cod = 1 }, "money": func(m *mailEntry) { m.money = 1 }, "entry": func(m *mailEntry) { m.attachments[0].entry = 1 }, "count": func(m *mailEntry) { m.attachments[0].count = 2 }, "zero_guid": func(m *mailEntry) { m.attachments[0].itemLow = 0 }, "duplicate_guid": func(m *mailEntry) { m.attachments[1].itemLow = m.attachments[0].itemLow }, "duplicate_index": func(m *mailEntry) { m.attachments[1].index = 0 }, "index": func(m *mailEntry) { m.attachments[0].index = 4 },
+		"subject": func(m *mailEntry) { m.subject += " " }, "sender": func(m *mailEntry) { m.sender = 2 }, "stationery": func(m *mailEntry) { m.stationery = 41 }, "type": func(m *mailEntry) { m.typeID = 3 }, "cod": func(m *mailEntry) { m.cod = 1 }, "money": func(m *mailEntry) { m.money = 1 }, "entry": func(m *mailEntry) { m.attachments[0].entry = 1 }, "count": func(m *mailEntry) { m.attachments[0].count = 2 }, "zero_guid": func(m *mailEntry) { m.attachments[0].itemLow = 0 }, "duplicate_guid": func(m *mailEntry) { m.attachments[1].itemLow = m.attachments[0].itemLow }, "duplicate_index": func(m *mailEntry) { m.attachments[1].index = 0 }, "index": func(m *mailEntry) { m.attachments[0].index = 4 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := rows[0]
 			m.attachments = append([]mailAttachment{}, m.attachments...)
 			change(&m)
-			if m.partyBags() {
+			if m.partyBags(1) {
 				t.Fatal("inexact envelope eligible")
 			}
 		})
 	}
 	for _, n := range []int{0, 5, 12} {
 		r, err := decodeMailList(partyBagList(n, 77, 1000))
-		if err != nil || r[0].partyBags() {
+		if err != nil || r[0].partyBags(1) {
 			t.Fatalf("count%d eligible %v", n, err)
 		}
 	}
@@ -77,6 +77,31 @@ func TestPartyBagsExactObservedAttachmentProtocol(t *testing.T) {
 		t.Fatal("zero item guid")
 	}
 }
+
+func TestPartyBagsConsoleSenderIsBoundToActualRecipient(t *testing.T) {
+	for _, self := range []uint64{1, 4, 5, 6, 8} {
+		p := partyBagList(4, 77, 1000)
+		// MailHandler emits the normal raw player sender GUID at row offset7.
+		binary.LittleEndian.PutUint64(p[5+7:], self)
+		rows, err := decodeMailList(p)
+		if err != nil || len(rows) != 1 || rows[0].sender != self || !rows[0].partyBags(self) {
+			t.Fatal(self, rows, err)
+		}
+		if rows[0].partyBags(self+1) || rows[0].partyBags(0) || rows[0].stipend() {
+			t.Fatal("recipient-specific bag mail accepted as foreign or stipend", self)
+		}
+		for n := range len(p) {
+			if _, err := decodeMailList(p[:n]); err == nil {
+				t.Fatalf("self%d accepted prefix%d", self, n)
+			}
+		}
+		rows[0].sender = 0
+		if !rows[0].partyBags(self) {
+			t.Fatal("legacy zero sender rejected")
+		}
+	}
+}
+
 func TestMailListEveryTruncationAndBounds(t *testing.T) {
 	p := goldenList(t)
 	for n := range len(p) {

@@ -25,8 +25,10 @@ type mailAttachment struct {
 	itemLow, entry, count uint32
 }
 
-func (m mailEntry) partyBags() bool {
-	if m.id == 0 || m.typeID != 0 || m.sender != 0 || m.stationery != 61 || m.money != 0 || m.cod != 0 || m.subject != "Party bags" || m.items == 0 || m.items > 4 || len(m.attachments) != int(m.items) {
+func (m mailEntry) partyBags(self uint64) bool {
+	// cs_send.cpp HandleSendItemsCommand sends console mail as its recipient.
+	// The legacy zero sender remains supported; another player's sender never is.
+	if self == 0 || self>>48 != 0 || m.id == 0 || m.typeID != 0 || m.sender != 0 && m.sender != self || m.stationery != 61 || m.money != 0 || m.cod != 0 || m.subject != "Party bags" || m.items == 0 || m.items > 4 || len(m.attachments) != int(m.items) {
 		return false
 	}
 	seen := make(map[uint32]bool)

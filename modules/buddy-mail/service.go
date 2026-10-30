@@ -421,7 +421,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 			if entry.stipend() {
 				s.state.Stipends = append(s.state.Stipends, &mailv1.StipendMail{MailId: entry.id, Copper: entry.money})
 			}
-			if entry.partyBags() {
+			if entry.partyBags(s.self) {
 				m := &mailv1.BagMail{MailId: entry.id}
 				for _, a := range entry.attachments {
 					m.Attachments = append(m.Attachments, &mailv1.BagAttachment{AttachmentIndex: uint32(a.index), ItemGuidLow: a.itemLow, Entry: a.entry, Count: a.count})

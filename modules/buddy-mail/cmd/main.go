@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -29,35 +27,48 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
-	moduleSocket, sessionSocket := os.Getenv("AGENT_WOW_MODULE_SOCKET"), os.Getenv("AGENT_WOW_SESSION_SOCKET")
-	if moduleSocket == "" || sessionSocket == "" {
-		return errors.New("session-owned module/session sockets required")
+
+type runtimeConfig struct {
+	moduleSocket, sessionSocket, sessionID string
+	self                                   uint64
+}
+
+func readRuntimeConfig(getenv func(string) string) (runtimeConfig, error) {
+	c := runtimeConfig{moduleSocket: getenv("AGENT_WOW_MODULE_SOCKET"), sessionSocket: getenv("AGENT_WOW_SESSION_SOCKET"), sessionID: getenv("AGENT_WOW_SESSION_ID")}
+	self, err := strconv.ParseUint(getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
+	if c.moduleSocket == "" || c.sessionSocket == "" || len(c.sessionID) == 0 || len(c.sessionID) > 128 || err != nil || self == 0 || self>>48 != 0 || uint32(self) == 0 {
+		return runtimeConfig{}, errors.New("session-owned sockets, session ID and player identity are required")
 	}
-	self, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
-	if err != nil || self == 0 || self>>48 != 0 {
-		return errors.New("runtime player character GUID required")
+	for _, b := range []byte(c.sessionID) {
+		if !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.') {
+			return runtimeConfig{}, errors.New("bounded runtime session ID is required")
+		}
+	}
+	c.self = self
+	return c, nil
+}
+
+func run() error {
+	config, err := readRuntimeConfig(os.Getenv)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	listener, err := net.Listen("unix", moduleSocket)
+	listener, err := net.Listen("unix", config.moduleSocket)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	if err := os.Chmod(moduleSocket, 0666); err != nil {
+	if err := os.Chmod(config.moduleSocket, 0666); err != nil {
 		return err
 	}
-	connection, err := grpc.NewClient("unix://"+sessionSocket, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDisableRetry(), grpc.WithDefaultCallOptions(grpc.MaxRetryRPCBufferSize(0)))
+	connection, err := grpc.NewClient("unix://"+config.sessionSocket, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDisableRetry(), grpc.WithDefaultCallOptions(grpc.MaxRetryRPCBufferSize(0)))
 	if err != nil {
 		return err
 	}
 	defer connection.Close()
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return err
-	}
-	service := buddymail.NewService(modv1.NewSessionClient(connection), hex.EncodeToString(nonce), self)
+	service := buddymail.NewService(modv1.NewSessionClient(connection), config.sessionID, config.self)
 	server := grpc.NewServer()
 	mailv1.RegisterBuddyMailServer(server, service)
 	readiness := health.NewServer()

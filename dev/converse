@@ -468,7 +468,7 @@ def quest_task_identity(character_guid, rpc_url, quest_id):
             "rpcUrl": rpc_url, "questId": quest_id}
 
 
-def party_town_snapshot(character_guid, revoke_follow=False):
+def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None):
     unknown = {"active": False, "busy": False}
     try:
         ports = {1: 8086, 4: 8087, 5: 8088}
@@ -499,11 +499,22 @@ def party_town_snapshot(character_guid, revoke_follow=False):
         phase = own.get("phase", "")
         if isinstance(phase, str) and re.fullmatch(r"[a-z0-9_]{1,120}", phase):
             result["phase"] = phase
-        if revoke_follow and result["busy"]:
+        control = "follow" if revoke_follow else revoke_control
+        if control is not None and control not in ("follow", "healing", "assist", "loot"):
+            raise ConversationError("Town control revocation is invalid")
+        if control is not None and result["busy"]:
             activity = record.get("activityId", "")
             if isinstance(activity, str) and re.fullmatch(r"[0-9a-f]{32}", activity):
-                write_json(folder / "follow-revoked.json", {"identity": expected, "instance": record["instance"],
-                                                          "activityId": activity})
+                marker = {"identity": expected, "instance": record["instance"], "activityId": activity}
+                prior = read_json(folder / "follow-revoked.json")
+                controls = set()
+                if all(prior.get(key) == value for key,value in marker.items()):
+                    previous = prior.get("controls", ["follow", "healing", "assist", "loot"])
+                    if not isinstance(previous,list) or any(name not in ("follow","healing","assist","loot") for name in previous):
+                        raise ConversationError("Town control marker is invalid")
+                    controls.update(previous)
+                controls.add(control)
+                write_json(folder / "follow-revoked.json", dict(marker, controls=sorted(controls)))
                 result["followRevoked"] = True
         return result
     except (OSError, ValueError, TypeError, ConversationError):
@@ -1686,6 +1697,7 @@ class BuddyControls:
                 if not self.loot_available:
                     return "Automatic looting isn't ready yet."
                 enabled = action == "ENABLE_LOOTING"
+                party_town_snapshot(self.character_guid, revoke_control="loot")
                 self.loot = self.rpc.call("buddy-loot.enable", {"enabled": enabled})
                 if enabled and self.loot.get("enabled") is not True:
                     return "I couldn't enable automatic looting yet."
@@ -1710,6 +1722,8 @@ class BuddyControls:
             "DISABLE_ASSIST": ("buddy-actions.assist", {"enabled": False}, "Combat assistance is off."),
         }
         method, params, acknowledgement = commands[action]
+        if action in ("ENABLE_HEALING", "DISABLE_HEALING", "ENABLE_ASSIST", "DISABLE_ASSIST"):
+            party_town_snapshot(self.character_guid, revoke_control="healing" if "HEALING" in action else "assist")
         try:
             self.actions = self.rpc.call(method, params)
         except ConversationError:
