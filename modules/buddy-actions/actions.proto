@@ -28,7 +28,12 @@ message InteractionRequest {
   uint32 lease_ms = 3;
 }
 message InteractionRelease { string owner = 1; string token = 2; }
-message ApproachLootRequest { string token = 1; uint64 corpse_guid = 2; }
+message ApproachLootRequest {
+  string token = 1;
+  // Exactly one observed target: an eligible corpse or own Milly harvest crate.
+  uint64 corpse_guid = 2;
+  uint64 game_object_guid = 3;
+}
 message ApproachQuestRequest { string token = 1; uint64 npc_guid = 2; }
 message InteractionLease { string token = 1; State state = 2; }
 message State {

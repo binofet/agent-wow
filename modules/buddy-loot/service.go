@@ -47,6 +47,7 @@ type Service struct {
 	questWolf                                  bool
 	questGather                                bool
 	gatherCastCount                            byte
+	gatherObjectRevision                       uint64
 	pausedSource                               uint64
 	pausedGather                               bool
 }
@@ -159,6 +160,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.state.PendingCorpseGuid = 0
 	s.state.PendingGameObjectGuid = 0
 	s.questGather = false
+	s.gatherObjectRevision = 0
 	s.items = nil
 	s.window = lootWindow{}
 	s.index = 0
@@ -172,7 +174,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.nextTry = s.now().Add(time.Second)
 }
 func (s *Service) beginRelease(ctx context.Context) {
-	if s.questGather && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
+	if s.questGather && s.opened && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
 		packet := []byte{s.gatherCastCount}
 		packet = binary.LittleEndian.AppendUint32(packet, harvestOpenSpell)
 		if !s.write(ctx, opcode.CMSGCancelCast, packet) {
@@ -360,7 +362,9 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 		if s.state.Phase != "waiting_release" && !now.Before(s.transactionUntil) {
-			s.state.Enabled = false
+			if !s.gatherOpeningTimeoutRecoverable() {
+				s.state.Enabled = false
+			}
 			s.state.Reason = "loot_transaction_timeout_no_retry"
 			s.beginRelease(ctx)
 			return
@@ -387,20 +391,22 @@ func (s *Service) Tick(ctx context.Context) {
 			currentActions = active
 			if s.questGather {
 				s.observeGatherQuest(world)
-				if active.Moving || !harvestContext(world, active, s.selfGUID, false) {
+				if active.Moving && s.state.Phase != "gather_approaching" || !harvestContext(world, active, s.selfGUID, false) {
 					s.state.Reason = "gather_character_or_quest_became_unsafe"
 					s.beginRelease(ctx)
 					return
 				}
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && !active.Moving && harvestContext(world, active, s.selfGUID, false)) {
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
 			}
 		}
 		if (s.state.Phase == "waiting_open" || s.state.Phase == "waiting_item" || s.state.Phase == "waiting_money" || s.state.Phase == "waiting_release") && !now.Before(s.deadline) {
-			s.state.Enabled = false
+			if !s.gatherOpeningTimeoutRecoverable() {
+				s.state.Enabled = false
+			}
 			s.state.Reason = "loot_response_timeout_no_retry"
 			if s.state.Phase == "waiting_release" {
 				s.finish(ctx)
@@ -410,6 +416,8 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 		switch s.state.Phase {
+		case "gather_approaching":
+			s.gatherApproachLocked(ctx, observed, currentActions)
 		case "approaching":
 			approach := &actionsv1.State{}
 			if s.invoke(ctx, "buddy-actions", "approach_loot", &actionsv1.ApproachLootRequest{Token: s.token, CorpseGuid: s.state.PendingCorpseGuid}, approach) != nil {

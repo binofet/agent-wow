@@ -59,6 +59,9 @@ func harvestContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64
 	return true
 }
 func harvestObject(p *actionsv1.ClientPosition, g *worldv1.GameObjectState) bool {
+	return harvestObjectWithin(p, g, 4.5)
+}
+func harvestObjectWithin(p *actionsv1.ClientPosition, g *worldv1.GameObjectState, maxDistance float64) bool {
 	if p == nil || g == nil || g.Guid>>48 != 0xf110 || g.Guid&0xffffff == 0 || uint32(g.Guid>>24&0xffffff) != harvestObjectEntry || g.Entry != harvestObjectEntry || !g.Present || !g.TypeKnown || g.GameObjectType != 3 || !g.MapKnown || g.MapId != p.MapId || !g.PositionKnown || !g.FlagsKnown || g.Flags&(1|8|16) != 0 {
 		return false
 	}
@@ -68,7 +71,7 @@ func harvestObject(p *actionsv1.ClientPosition, g *worldv1.GameObjectState) bool
 		}
 	}
 	dx, dy, dz := float64(g.X-p.X), float64(g.Y-p.Y), float64(g.Z-p.Z)
-	return dx*dx+dy*dy+dz*dz <= 4.5*4.5 && math.Abs(dz) <= 1.5
+	return dx*dx+dy*dy+dz*dz <= maxDistance*maxDistance && math.Abs(dz) <= 1.5
 }
 func gatherOpenPacket(count byte, guid uint64) []byte {
 	p := make([]byte, 10)
@@ -90,6 +93,14 @@ func (s *Service) pendingGUID() uint64 {
 		return s.state.PendingGameObjectGuid
 	}
 	return s.state.PendingCorpseGuid
+}
+
+// A timed-out opening has issued no Autostore, hence no old GUID-less item or
+// slot receipt can belong to this attempt. Cancel/release its exact source and
+// keep it in gatherSeen. Once a window was accepted, retain the fail-closed
+// timeout behavior because later item/slot receipts cannot identify a source.
+func (s *Service) gatherOpeningTimeoutRecoverable() bool {
+	return s.questGather && s.state.LastGather != nil && !s.state.LastGather.LootWindowObserved && !s.state.LastGather.ItemPushObserved
 }
 func (s *Service) observeGatherQuest(w *worldv1.SnapshotResponse) {
 	r := s.state.LastGather
@@ -116,7 +127,7 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 	var selected *worldv1.GameObjectState
 	best := math.Inf(1)
 	for _, g := range w.QuestObjects {
-		if g == nil || s.gatherSeen[g.Guid] || !harvestObject(a.Position, g) {
+		if g == nil || s.gatherSeen[g.Guid] || !harvestObjectWithin(a.Position, g, 12) {
 			continue
 		}
 		d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)
@@ -150,7 +161,7 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 			}
 		}
 	}
-	if !valid || current == nil || current.PositionRevision != selected.PositionRevision || fresh.SelfQuestLogRevision != w.SelfQuestLogRevision || !harvestObject(l.State.Position, current) {
+	if !valid || current == nil || current.PositionRevision != selected.PositionRevision || fresh.SelfQuestLogRevision != w.SelfQuestLogRevision || !harvestObjectWithin(l.State.Position, current, 12) {
 		s.releaseLease(ctx)
 		s.state.Reason = "gather_observation_changed_after_stop"
 		return true
@@ -165,12 +176,65 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 	}
 	s.gatherSeen[current.Guid] = true
 	s.state.PendingGameObjectGuid = current.Guid
+	s.gatherObjectRevision = current.PositionRevision
 	s.state.LastGather = &lootv1.GatherReceipt{Id: id, ObjectGuid: current.Guid, ObjectEntry: harvestObjectEntry, QuestId: harvestQuestID, ItemId: harvestItemID, Status: lootv1.GatherStatus_GATHER_REQUESTED, BaselineQuestLogRevision: fresh.SelfQuestLogRevision, ObservedQuestLogRevision: fresh.SelfQuestLogRevision, Reason: "opening_requested_waiting_for_server"}
 	s.transactionUntil = s.now().Add(12 * time.Second)
 	s.moneySent = false
 	s.moneyCleared = false
-	s.openLocked(ctx)
+	if harvestObject(l.State.Position, current) {
+		s.openLocked(ctx)
+	} else {
+		s.state.Phase = "gather_approaching"
+		s.state.Reason = "nearby_harvest_crate_approach_pending"
+	}
 	return true
+}
+
+func (s *Service) gatherApproachLocked(ctx context.Context, w *worldv1.SnapshotResponse, a *actionsv1.State) {
+	valid := func(world *worldv1.SnapshotResponse, actions *actionsv1.State, maxDistance float64) bool {
+		if !harvestContext(world, actions, s.selfGUID, true) || len(world.QuestObjects) > 32 {
+			return false
+		}
+		matches := 0
+		for _, g := range world.QuestObjects {
+			if g != nil && g.Guid == s.state.PendingGameObjectGuid {
+				if g.PositionRevision != s.gatherObjectRevision || !harvestObjectWithin(actions.Position, g, maxDistance) {
+					return false
+				}
+				matches++
+			}
+		}
+		return matches == 1
+	}
+	if !valid(w, a, 12) {
+		s.state.Reason = "harvest_approach_observation_or_quest_changed"
+		s.finish(ctx)
+		return
+	}
+	approach := &actionsv1.State{}
+	if s.invoke(ctx, "buddy-actions", "approach_loot", &actionsv1.ApproachLootRequest{Token: s.token, GameObjectGuid: s.state.PendingGameObjectGuid}, approach) != nil {
+		s.state.Reason = "harvest_approach_unavailable_no_retry"
+		s.finish(ctx)
+		return
+	}
+	// Movement may have taken time and received a correction. The opening cast
+	// always uses a fresh own quest/object observation after the final STOP.
+	fresh := &worldv1.SnapshotResponse{}
+	if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) != nil || approach.InteractionOwner != "loot" || approach.InteractionLeaseRemainingMs < 1000 || !valid(fresh, approach, 12) {
+		s.state.Reason = "harvest_approach_post_step_state_changed"
+		s.finish(ctx)
+		return
+	}
+	if approach.Moving {
+		s.state.Reason = "approaching_nearby_harvest_crate"
+		return
+	}
+	if approach.Reason != "loot_approach_within_distance" || !valid(fresh, approach, 4.5) {
+		s.state.Reason = "harvest_approach_stopped_unsafe_or_out_of_range"
+		s.finish(ctx)
+		return
+	}
+	s.openLocked(ctx)
 }
 
 func gatherObjectCurrent(w *worldv1.SnapshotResponse, a *actionsv1.State, guid uint64) bool {

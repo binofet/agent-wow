@@ -15,11 +15,11 @@ import (
 )
 
 // ApproachLoot advances at most one ordinary ground-movement step toward an
-// observed eligible corpse. Only the current loot interaction token permits it;
+// observed eligible corpse or own Milly harvest crate. Only the current loot interaction token permits it;
 // callers cannot select coordinates or an arbitrary living target.
 func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootRequest) (result *actionsv1.State, err error) {
-	if r == nil || r.Token == "" || r.CorpseGuid == 0 {
-		return nil, status.Error(codes.InvalidArgument, "loot token and corpse GUID are required")
+	if r == nil || r.Token == "" || (r.CorpseGuid == 0) == (r.GameObjectGuid == 0) {
+		return nil, status.Error(codes.InvalidArgument, "loot token and exactly one corpse or game-object GUID are required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,30 +72,59 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	if !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
 		return pause("loot_approach_normal_run_speed_unknown")
 	}
-	var corpse *worldv1.CreatureState
-	if len(w.LootableCorpses) <= 64 {
-		for _, c := range w.LootableCorpses {
-			if c != nil && c.Guid == r.CorpseGuid {
-				corpse = c
-				break
+	var target position
+	var targetRevision uint64
+	var targetKnown bool
+	if r.GameObjectGuid != 0 {
+		if s.navDataDir == "" {
+			return pause("loot_approach_harvest_requires_verified_navigation")
+		}
+		if !ownHarvestQuest(w, s.selfGUID) {
+			return pause("loot_approach_harvest_quest_not_incomplete")
+		}
+		var object *worldv1.GameObjectState
+		if len(w.QuestObjects) <= 32 {
+			for _, g := range w.QuestObjects {
+				if g != nil && g.Guid == r.GameObjectGuid {
+					if object != nil {
+						return pause("loot_approach_harvest_observation_ambiguous")
+					}
+					object = g
+				}
 			}
 		}
-	}
-	if corpse == nil || !corpse.Present || !corpse.MapKnown || corpse.MapId != w.Self.MapId || !corpse.HealthKnown || corpse.Health != 0 || !corpse.AliveKnown || corpse.Alive || corpse.DynamicFlags&1 == 0 || corpse.Guid>>48 != 0xf130 && corpse.Guid>>48 != 0xf150 {
-		return pause("loot_approach_corpse_not_eligible")
-	}
-	quest33, _ := ownWolfQuest(w)
-	if !quest33 || corpse.Entry != 299 {
-		if reason := safePlayers(w, s.selfGUID); reason != "" {
-			return pause("loot_approach_" + reason)
+		if object == nil || !object.Present || object.Guid>>48 != 0xf110 || object.Guid&0xffffff == 0 || uint32(object.Guid>>24&0xffffff) != 161557 || object.Entry != 161557 || !object.TypeKnown || object.GameObjectType != 3 || !object.MapKnown || object.MapId != w.Self.MapId || !object.PositionKnown || !object.FlagsKnown || object.Flags&(1|8|16) != 0 {
+			return pause("loot_approach_harvest_object_not_eligible")
 		}
-		if w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
-			return pause("loot_approach_requires_nearby_owner_outside_combat")
+		target = position{x: object.X, y: object.Y, z: object.Z, o: object.Orientation}
+		targetRevision, targetKnown = object.PositionRevision, finite(target)
+	} else {
+		var corpse *worldv1.CreatureState
+		if len(w.LootableCorpses) <= 64 {
+			for _, c := range w.LootableCorpses {
+				if c != nil && c.Guid == r.CorpseGuid {
+					corpse = c
+					break
+				}
+			}
 		}
+		if corpse == nil || !corpse.Present || !corpse.MapKnown || corpse.MapId != w.Self.MapId || !corpse.HealthKnown || corpse.Health != 0 || !corpse.AliveKnown || corpse.Alive || corpse.DynamicFlags&1 == 0 || corpse.Guid>>48 != 0xf130 && corpse.Guid>>48 != 0xf150 {
+			return pause("loot_approach_corpse_not_eligible")
+		}
+		quest33, _ := ownWolfQuest(w)
+		if !quest33 || corpse.Entry != 299 {
+			if reason := safePlayers(w, s.selfGUID); reason != "" {
+				return pause("loot_approach_" + reason)
+			}
+			if w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
+				return pause("loot_approach_requires_nearby_owner_outside_combat")
+			}
+		}
+		target, targetKnown, _ = creaturePosition(corpse)
+		targetRevision = corpse.PositionRevision
 	}
-	target, known, _ := creaturePosition(corpse)
 	d := distance(s.pos, target)
-	if !known || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
+	if !targetKnown || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		return pause("loot_approach_target_unknown_far_or_vertical")
 	}
 	if s.navDataDir != "" {
@@ -117,12 +146,12 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 				s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 				return pause("loot_approach_navigation_unavailable")
 			}
-			route = &lootApproachNavigation{path: append([]position(nil), path...), start: s.pos, target: target, selfRevision: s.positionRevision, targetRevision: corpse.PositionRevision}
+			route = &lootApproachNavigation{path: append([]position(nil), path...), start: s.pos, target: target, selfRevision: s.positionRevision, targetRevision: targetRevision}
 			// Planning does not reserve a stale corpse, position, or lease.
 			// This second validation cannot recurse into another plan.
 			return s.approachLootStepLocked(ctx, r, route)
 		}
-		if route.selfRevision != s.positionRevision || distance(route.start, s.pos) > .05 || route.targetRevision != corpse.PositionRevision || distance(route.target, target) > .01 {
+		if route.selfRevision != s.positionRevision || distance(route.start, s.pos) > .05 || route.targetRevision != targetRevision || distance(route.target, target) > .01 {
 			return pause("loot_approach_position_changed_after_planning")
 		}
 		s.state.NavAvailable = true
@@ -167,6 +196,26 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		return s.stateLocked(), nil
 	}
 	return s.groundApproachStepLocked(ctx, target, "loot"), nil
+}
+
+// This movement exception is bound to the acting character's actual own quest
+// log, never to a party member's quests or an arbitrary game-object target.
+func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64) bool {
+	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+		return false
+	}
+	var seen [25]bool
+	found := false
+	for _, q := range w.SelfQuestLog {
+		if q == nil || q.Slot >= 25 || seen[q.Slot] {
+			return false
+		}
+		seen[q.Slot] = true
+		if q.QuestId == 3904 && !q.Complete && !q.Failed && q.State&3 == 0 {
+			found = true
+		}
+	}
+	return found
 }
 
 // Both interaction approaches use the same monotonic, speed-bounded movement

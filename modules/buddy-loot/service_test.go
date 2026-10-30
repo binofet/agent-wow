@@ -32,6 +32,7 @@ type fakeSession struct {
 	approachCalls int
 	failApproach  bool
 	afterAcquire  func()
+	afterApproach func()
 }
 
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -60,20 +61,29 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		if err := r.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		if request.Token != "owned-loot-token" || request.CorpseGuid != corpseGUID || f.leaseOwner != "loot" || f.failApproach {
+		if request.Token != "owned-loot-token" || (request.CorpseGuid != 0) == (request.GameObjectGuid != 0) || request.CorpseGuid != 0 && request.CorpseGuid != corpseGUID || request.GameObjectGuid != 0 && request.GameObjectGuid != harvestGUID || f.leaseOwner != "loot" || f.failApproach {
 			return nil, errors.New("approach unavailable")
+		}
+		end := float32(9)
+		if request.GameObjectGuid != 0 {
+			end = f.world.QuestObjects[0].X - 3
 		}
 		f.approachCalls++
 		f.actions.Position.X += 1.4
 		f.actions.Position.Estimated = true
 		f.actions.Moving = true
 		f.actions.Reason = "loot_approaching_direct_ground_estimate"
-		if f.actions.Position.X >= 9 {
-			f.actions.Position.X = 9
+		if f.actions.Position.X >= end {
+			f.actions.Position.X = end
 			f.actions.Moving = false
 			f.actions.Reason = "loot_approach_within_distance"
 		}
-		value = f.actions
+		a := proto.Clone(f.actions).(*actionsv1.State)
+		a.InteractionOwner, a.InteractionLeaseRemainingMs = f.leaseOwner, 15000
+		value = a
+		if f.afterApproach != nil {
+			f.afterApproach()
+		}
 	case "buddy-actions.acquire_interaction":
 		request := &actionsv1.InteractionRequest{}
 		if err := r.Request.UnmarshalTo(request); err != nil {

@@ -301,11 +301,13 @@ func (x *InteractionRelease) GetToken() string {
 }
 
 type ApproachLootRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
-	CorpseGuid    uint64                 `protobuf:"varint,2,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Token string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	// Exactly one observed target: an eligible corpse or own Milly harvest crate.
+	CorpseGuid     uint64 `protobuf:"varint,2,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
+	GameObjectGuid uint64 `protobuf:"varint,3,opt,name=game_object_guid,json=gameObjectGuid,proto3" json:"game_object_guid,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ApproachLootRequest) Reset() {
@@ -348,6 +350,13 @@ func (x *ApproachLootRequest) GetToken() string {
 func (x *ApproachLootRequest) GetCorpseGuid() uint64 {
 	if x != nil {
 		return x.CorpseGuid
+	}
+	return 0
+}
+
+func (x *ApproachLootRequest) GetGameObjectGuid() uint64 {
+	if x != nil {
+		return x.GameObjectGuid
 	}
 	return 0
 }
@@ -1018,11 +1027,12 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\blease_ms\x18\x03 \x01(\rR\aleaseMs\"@\n" +
 	"\x12InteractionRelease\x12\x14\n" +
 	"\x05owner\x18\x01 \x01(\tR\x05owner\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"L\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"v\n" +
 	"\x13ApproachLootRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x1f\n" +
 	"\vcorpse_guid\x18\x02 \x01(\x04R\n" +
-	"corpseGuid\"G\n" +
+	"corpseGuid\x12(\n" +
+	"\x10game_object_guid\x18\x03 \x01(\x04R\x0egameObjectGuid\"G\n" +
 	"\x14ApproachQuestRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x19\n" +
 	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\"_\n" +

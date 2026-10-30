@@ -234,3 +234,146 @@ func TestLootNavigationCancellationStopsOnlyItsOwnedMovement(t *testing.T) {
 		t.Fatal("old canceled token stopped replacement lease")
 	}
 }
+
+const approachHarvestGUID uint64 = 0xf110000000000000 | uint64(161557)<<24 | 42
+
+func harvestApproachRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachLootRequest) {
+	t.Helper()
+	s, f, advance, r := navLootRig(t)
+	setWolfQuest(f, false)
+	f.world.SelfQuestLog[0].QuestId = 3904
+	f.world.Owner = nil // Own harvest quest authorizes this local interaction.
+	f.world.LootableCorpses = nil
+	f.world.QuestObjects = []*worldv1.GameObjectState{{Guid: approachHarvestGUID, Entry: 161557, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: -8927, Y: -136, Z: 81, TypeKnown: true, GameObjectType: 3, FlagsKnown: true}}
+	r.CorpseGuid, r.GameObjectGuid = 0, approachHarvestGUID
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) { return []position{a, b}, nil }
+	return s, f, advance, r
+}
+
+func TestHarvestApproachRequiresExactOneTargetAndOwnIncompleteQuest(t *testing.T) {
+	for _, mode := range []string{"both", "neither", "wrong_token", "no_nav", "no_quest", "complete", "failed", "unknown_log", "partial_log", "duplicate_slot", "foreign_self", "absent", "wrong_entry", "wrong_guid", "wrong_type", "unknown_flags", "in_use", "not_selectable", "other_map", "unknown_position", "far", "vertical", "duplicate_object", "combat", "swimming", "unsafe_motion"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := harvestApproachRig(t)
+			g := f.world.QuestObjects[0]
+			switch mode {
+			case "both":
+				r.CorpseGuid = approachCorpseGUID
+			case "neither":
+				r.GameObjectGuid = 0
+			case "wrong_token":
+				r.Token = "other"
+			case "no_nav":
+				s.navDataDir = ""
+			case "no_quest":
+				f.world.SelfQuestLog[0].QuestId = 3903
+			case "complete":
+				f.world.SelfQuestLog[0].State = 1
+			case "failed":
+				f.world.SelfQuestLog[0].Failed = true
+			case "unknown_log":
+				f.world.SelfQuestLogKnown = false
+			case "partial_log":
+				f.world.SelfQuestLog = f.world.SelfQuestLog[:24]
+			case "duplicate_slot":
+				f.world.SelfQuestLog[1].Slot = 0
+			case "foreign_self":
+				f.world.Self.Guid = 4
+			case "absent":
+				f.world.QuestObjects = nil
+			case "wrong_entry":
+				g.Entry++
+			case "wrong_guid":
+				g.Guid = approachCorpseGUID
+				r.GameObjectGuid = g.Guid
+			case "wrong_type":
+				g.GameObjectType = 19
+			case "unknown_flags":
+				g.FlagsKnown = false
+			case "in_use":
+				g.Flags = 1
+			case "not_selectable":
+				g.Flags = 16
+			case "other_map":
+				g.MapId = 1
+			case "unknown_position":
+				g.PositionKnown = false
+			case "far":
+				g.X = -8920
+			case "vertical":
+				g.Z = 83
+			case "duplicate_object":
+				f.world.QuestObjects = append(f.world.QuestObjects, g)
+			case "combat":
+				f.world.Self.UnitFlags |= 0x80000
+			case "swimming":
+				f.world.Self.MovementFlags = 0x200000
+			case "unsafe_motion":
+				s.state.MotionUnconfirmed = true
+			}
+			out, err := s.ApproachLoot(context.Background(), r)
+			if err == nil && (out == nil || out.Moving) || len(f.packets) != 0 {
+				t.Fatal("unsafe harvest approach", out, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestHarvestApproachUsesVerifiedCornersAndStopsBeforeOpeningDistance(t *testing.T) {
+	s, f, advance, r := harvestApproachRig(t)
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
+		if a.y < -134.005 {
+			return []position{a, {x: -8933, y: -134, z: 81}, {x: -8927, y: -134, z: 81}, b}, nil
+		}
+		return []position{a, {x: -8927, y: -134, z: 81}, b}, nil
+	}
+	var out *actionsv1.State
+	for i := 0; i < 12; i++ {
+		var err error
+		out, err = s.ApproachLoot(context.Background(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 && (out.Position.X != -8933 || math.Abs(float64(out.Position.Y+134.6)) > .002) {
+			t.Fatal("cut crate corner", out)
+		}
+		if !out.Moving {
+			break
+		}
+		advance(200 * time.Millisecond)
+	}
+	if out.Moving || out.Reason != "loot_approach_within_distance" || f.packets[len(f.packets)-1].Opcode != opcode.MSGMoveStop {
+		t.Fatal(out, f.packets)
+	}
+	for _, p := range f.packets {
+		if p.Opcode == opcode.CMSGCastSpell || p.Opcode == opcode.CMSGLoot {
+			t.Fatal("movement actuator opened loot")
+		}
+	}
+}
+
+func TestHarvestApproachRechecksQuestObjectLeaseAndGroundAfterPlanning(t *testing.T) {
+	for _, mode := range []string{"ground", "quest", "object", "removed", "lease"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := harvestApproachRig(t)
+			s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
+				switch mode {
+				case "ground":
+					return nil, errors.New("start poly unavailable")
+				case "quest":
+					f.world.SelfQuestLog[0].Complete = true
+				case "object":
+					f.world.QuestObjects[0].PositionRevision++
+				case "removed":
+					f.world.QuestObjects = nil
+				case "lease":
+					advance(16 * time.Second)
+				}
+				return []position{a, b}, nil
+			}
+			out, err := s.ApproachLoot(context.Background(), r)
+			if err == nil && out.Moving || len(f.packets) != 0 {
+				t.Fatal(out, err, f.packets)
+			}
+		})
+	}
+}

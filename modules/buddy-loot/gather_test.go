@@ -59,6 +59,67 @@ func TestHarvestOpeningGoldenAndLootType(t *testing.T) {
 		t.Fatal("gather decoder accepted corpse loot type")
 	}
 }
+
+func TestHarvestApproachesOnlySelectedObservedCrateThenOpensAfterStopped(t *testing.T) {
+	s, f, advance := harvestRig(t)
+	f.world.QuestObjects[0].X = 12
+	enable(t, s)
+	s.Tick(context.Background())
+	if current(t, s).Phase != "gather_approaching" || len(f.packets) != 0 {
+		t.Fatal(current(t, s), f.packets)
+	}
+	for i := 0; i < 9 && current(t, s).Phase == "gather_approaching"; i++ {
+		advance(200 * time.Millisecond)
+		s.Tick(context.Background())
+		if f.actions.Moving && len(f.packets) != 0 {
+			t.Fatal("opened moving", current(t, s))
+		}
+	}
+	got := current(t, s)
+	if got.Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 7 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCastSpell || got.LastGather.ObjectGuid != harvestGUID || !got.LastGather.OpeningTransportWritten {
+		t.Fatal(got, f.packets)
+	}
+}
+
+func TestHarvestApproachFailureOrChangedObservationStopsWithoutOpeningOrRetry(t *testing.T) {
+	for _, mode := range []string{"unavailable", "quest_complete", "object_revision", "object_absent", "combat", "post_step_quest", "post_step_object", "disable"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance := harvestRig(t)
+			f.world.QuestObjects[0].X = 12
+			enable(t, s)
+			s.Tick(context.Background())
+			switch mode {
+			case "unavailable":
+				f.failApproach = true
+			case "quest_complete":
+				f.world.SelfQuestLog[0].Complete = true
+			case "object_revision":
+				f.world.QuestObjects[0].PositionRevision++
+			case "object_absent":
+				f.world.QuestObjects = nil
+			case "combat":
+				f.world.Self.UnitFlags |= 0x80000
+			case "post_step_quest":
+				f.afterApproach = func() { f.world.SelfQuestLog[0].Complete = true }
+			case "post_step_object":
+				f.afterApproach = func() { f.world.QuestObjects = nil }
+			case "disable":
+				s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
+			}
+			advance(200 * time.Millisecond)
+			s.Tick(context.Background())
+			if len(f.packets) != 0 || f.leaseOwner != "" || current(t, s).LastGather.OpeningTransportWritten {
+				t.Fatal(current(t, s), f.packets)
+			}
+			f.afterApproach = nil
+			advance(time.Second)
+			s.Tick(context.Background())
+			if len(f.packets) != 0 || f.leaseOwner != "" {
+				t.Fatal("retried rejected approach", current(t, s))
+			}
+		})
+	}
+}
 func TestHarvestNeedsEnabledOwnIncompleteQuestAndObservedCrate(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -81,7 +142,7 @@ func TestHarvestNeedsEnabledOwnIncompleteQuestAndObservedCrate(t *testing.T) {
 		{"unsafe_motion", func(_ *Service, f *fakeSession) { f.actions.MotionUnconfirmed = true }},
 		{"unknown_position", func(_ *Service, f *fakeSession) { f.actions.Position.Known = false }},
 		{"casting", func(_ *Service, f *fakeSession) { f.actions.CastPending = true }},
-		{"far", func(_ *Service, f *fakeSession) { f.world.QuestObjects[0].X = 5 }},
+		{"far", func(_ *Service, f *fakeSession) { f.world.QuestObjects[0].X = 13 }},
 		{"height", func(_ *Service, f *fakeSession) { f.world.QuestObjects[0].Z = 2 }},
 		{"nan", func(_ *Service, f *fakeSession) { f.world.QuestObjects[0].X = float32(math.NaN()) }},
 		{"absent", func(_ *Service, f *fakeSession) { f.world.QuestObjects[0].Present = false }},
@@ -252,6 +313,63 @@ func TestHarvestTimeoutFailureAndDisableNeverRetryOrLeakLease(t *testing.T) {
 				t.Fatal("ambiguous crate replayed", mode)
 			}
 		})
+	}
+}
+
+func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *testing.T) {
+	s, f, advance := harvestRig(t)
+	enable(t, s)
+	s.Tick(context.Background())
+	advance(4 * time.Second)
+	s.Tick(context.Background())
+	if !current(t, s).Enabled || current(t, s).Phase != "waiting_release" {
+		t.Fatal(current(t, s))
+	}
+	if len(f.packets) != 3 || f.packets[1].Opcode != opcode.CMSGCancelCast || f.packets[2].Opcode != opcode.CMSGLootRelease || binary.LittleEndian.Uint64(f.packets[2].Payload) != harvestGUID {
+		t.Fatal(f.packets)
+	}
+	// A late old window cannot schedule storage during cleanup, even without
+	// a release ACK. The finite release timeout still retires this source.
+	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}))
+	advance(3 * time.Second)
+	s.Tick(context.Background())
+	if !current(t, s).Enabled || f.leaseOwner != "" || current(t, s).LastGather.LootWindowObserved {
+		t.Fatal(current(t, s))
+	}
+	before := len(f.packets)
+	advance(time.Second)
+	s.Tick(context.Background())
+	if len(f.packets) != before {
+		t.Fatal("reopened timed-out source")
+	}
+	const nextGUID = harvestGUID + 1
+	f.world.QuestObjects[0].Guid = nextGUID
+	advance(time.Second)
+	s.Tick(context.Background())
+	if current(t, s).PendingGameObjectGuid != nextGUID || current(t, s).Phase != "waiting_open" {
+		t.Fatal(current(t, s))
+	}
+	before = len(f.packets)
+	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}))
+	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
+	emit(s, opcode.SMSGLootRemoved, []byte{2})
+	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 11119, 1))
+	s.Tick(context.Background())
+	got := current(t, s)
+	if got.Phase != "waiting_open" || got.LastGather.LootWindowObserved || got.LastGather.ItemPushObserved || got.LastGather.ReleaseObserved || len(f.packets) != before {
+		t.Fatal("late source crossed transaction", got)
+	}
+	emit(s, opcode.SMSGLootResponse, harvestWindow(nextGUID, lootItem{slot: 2, id: 11119, count: 1}))
+	s.Tick(context.Background())
+	if current(t, s).Phase != "waiting_item" || f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem {
+		t.Fatal(current(t, s))
+	}
+	// Once storage might have been sent, GUID-less receipt ambiguity requires
+	// the old fail-closed behavior; do not continue to another crate.
+	advance(3 * time.Second)
+	s.Tick(context.Background())
+	if current(t, s).Enabled {
+		t.Fatal("ambiguous item timeout preserved intent")
 	}
 }
 

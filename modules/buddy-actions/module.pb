@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¸%
+â%
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -53,11 +53,12 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 lease_ms (RleaseMs"@
 InteractionRelease
 owner (	Rowner
-token (	Rtoken"L
+token (	Rtoken"v
 ApproachLootRequest
 token (	Rtoken
 corpse_guid (R
-corpseGuid"G
+corpseGuid(
+game_object_guid (RgameObjectGuid"G
 ApproachQuestRequest
 token (	Rtoken
 npc_guid (RnpcGuid"_
