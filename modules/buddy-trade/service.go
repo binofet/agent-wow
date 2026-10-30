@@ -41,6 +41,7 @@ type Service struct {
 	names                       map[uint32]string
 	queried                     map[uint32]bool
 	metadata                    map[uint32]itemMetadata
+	lookup                      itemLookupRuntime
 	junkPending                 *tradev1.JunkDisposal
 	junkUntil, junkNext         time.Time
 }
@@ -635,6 +636,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 			}
 		}
 	case uint32(opcode.SMSGItemQuerySingleResponse):
+		s.observeItemLookupLocked(p.Payload)
 		entry, name, err := parseItemName(p.Payload)
 		if err != nil {
 			s.state.MalformedPackets++

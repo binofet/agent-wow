@@ -15,6 +15,7 @@ rpc:
   cancel: /warcraftbuddy.trade.v1.BuddyTrade/Cancel
   junk_disposal: /warcraftbuddy.trade.v1.BuddyTrade/JunkDisposal
   destroy_junk: /warcraftbuddy.trade.v1.BuddyTrade/DestroyJunk
+  lookup_items: /warcraftbuddy.trade.v1.BuddyTrade/LookupItems
 packets:
   SMSG_TRADE_STATUS: /warcraftbuddy.trade.v1.BuddyTrade/OnPacket
   SMSG_TRADE_STATUS_EXTENDED: /warcraftbuddy.trade.v1.BuddyTrade/OnPacket

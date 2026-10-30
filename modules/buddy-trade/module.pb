@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-€
+Á#
 modules/buddy-trade/trade.protowarcraftbuddy.trade.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ž
 Item
 slot (Rslot
@@ -107,7 +107,54 @@ trade_slot (R	tradeSlot"`
 
 session_id (	R	sessionId
 revision (Rrevision
-copper (Rcopper2¸
+copper (Rcopper"4
+ItemStat
+type (Rtype
+value (Rvalue"Z
+WeaponDamage
+minimum (Rminimum
+maximum (Rmaximum
+school (Rschool"¢
+ItemDetails
+item_id (RitemId
+	available (R	available
+pending (Rpending
+reason (	Rreason
+name (	Rname
+
+item_class (R	itemClass
+subclass (Rsubclass%
+inventory_type (RinventoryType
+quality	 (Rquality
+
+item_level
+ (R	itemLevel%
+required_level (RrequiredLevel
+	buy_price (RbuyPrice
+
+sell_price (R	sellPrice'
+allowable_class (RallowableClass%
+allowable_race (RallowableRace%
+required_skill (RrequiredSkill.
+required_skill_rank (RrequiredSkillRank%
+required_spell (RrequiredSpell6
+stats (2 .warcraftbuddy.trade.v1.ItemStatRstats
+armor (Rarmor>
+damages (2$.warcraftbuddy.trade.v1.WeaponDamageRdamages
+delay_ms (RdelayMs
+flags (Rflags
+flags2 (Rflags2
+	has_spell (RhasSpell>
+required_reputation_faction (RrequiredReputationFaction8
+required_reputation_rank (RrequiredReputationRank.
+required_honor_rank (RrequiredHonorRank,
+required_city_rank (RrequiredCityRank"/
+LookupItemsRequest
+item_ids (RitemIds"o
+LookupItemsResponse
+
+session_id (	R	sessionId9
+items (2#.warcraftbuddy.trade.v1.ItemDetailsRitems2 
 
 BuddyTradeA
 GetState.google.protobuf.Empty.warcraftbuddy.trade.v1.StateK
@@ -116,6 +163,7 @@ BuddyTradeA
 	OfferGold#.warcraftbuddy.trade.v1.GoldRequest.warcraftbuddy.trade.v1.StateM
 Cancel$.warcraftbuddy.trade.v1.BoundRequest.warcraftbuddy.trade.v1.StateQ
 JunkDisposal".warcraftbuddy.trade.v1.JunkToggle.warcraftbuddy.trade.v1.StateQ
-DestroyJunk#.warcraftbuddy.trade.v1.JunkRequest.warcraftbuddy.trade.v1.StateC
+DestroyJunk#.warcraftbuddy.trade.v1.JunkRequest.warcraftbuddy.trade.v1.Statef
+LookupItems*.warcraftbuddy.trade.v1.LookupItemsRequest+.warcraftbuddy.trade.v1.LookupItemsResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-trade/api;tradev1bproto3

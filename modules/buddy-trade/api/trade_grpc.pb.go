@@ -28,6 +28,7 @@ const (
 	BuddyTrade_Cancel_FullMethodName       = "/warcraftbuddy.trade.v1.BuddyTrade/Cancel"
 	BuddyTrade_JunkDisposal_FullMethodName = "/warcraftbuddy.trade.v1.BuddyTrade/JunkDisposal"
 	BuddyTrade_DestroyJunk_FullMethodName  = "/warcraftbuddy.trade.v1.BuddyTrade/DestroyJunk"
+	BuddyTrade_LookupItems_FullMethodName  = "/warcraftbuddy.trade.v1.BuddyTrade/LookupItems"
 	BuddyTrade_OnPacket_FullMethodName     = "/warcraftbuddy.trade.v1.BuddyTrade/OnPacket"
 	BuddyTrade_BeforeLogout_FullMethodName = "/warcraftbuddy.trade.v1.BuddyTrade/BeforeLogout"
 )
@@ -43,6 +44,7 @@ type BuddyTradeClient interface {
 	Cancel(ctx context.Context, in *BoundRequest, opts ...grpc.CallOption) (*State, error)
 	JunkDisposal(ctx context.Context, in *JunkToggle, opts ...grpc.CallOption) (*State, error)
 	DestroyJunk(ctx context.Context, in *JunkRequest, opts ...grpc.CallOption) (*State, error)
+	LookupItems(ctx context.Context, in *LookupItemsRequest, opts ...grpc.CallOption) (*LookupItemsResponse, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -125,6 +127,16 @@ func (c *buddyTradeClient) DestroyJunk(ctx context.Context, in *JunkRequest, opt
 	return out, nil
 }
 
+func (c *buddyTradeClient) LookupItems(ctx context.Context, in *LookupItemsRequest, opts ...grpc.CallOption) (*LookupItemsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LookupItemsResponse)
+	err := c.cc.Invoke(ctx, BuddyTrade_LookupItems_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyTradeClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -156,6 +168,7 @@ type BuddyTradeServer interface {
 	Cancel(context.Context, *BoundRequest) (*State, error)
 	JunkDisposal(context.Context, *JunkToggle) (*State, error)
 	DestroyJunk(context.Context, *JunkRequest) (*State, error)
+	LookupItems(context.Context, *LookupItemsRequest) (*LookupItemsResponse, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyTradeServer()
@@ -188,6 +201,9 @@ func (UnimplementedBuddyTradeServer) JunkDisposal(context.Context, *JunkToggle) 
 }
 func (UnimplementedBuddyTradeServer) DestroyJunk(context.Context, *JunkRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DestroyJunk not implemented")
+}
+func (UnimplementedBuddyTradeServer) LookupItems(context.Context, *LookupItemsRequest) (*LookupItemsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupItems not implemented")
 }
 func (UnimplementedBuddyTradeServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -342,6 +358,24 @@ func _BuddyTrade_DestroyJunk_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyTrade_LookupItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupItemsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTradeServer).LookupItems(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTrade_LookupItems_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTradeServer).LookupItems(ctx, req.(*LookupItemsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyTrade_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -412,6 +446,10 @@ var BuddyTrade_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DestroyJunk",
 			Handler:    _BuddyTrade_DestroyJunk_Handler,
+		},
+		{
+			MethodName: "LookupItems",
+			Handler:    _BuddyTrade_LookupItems_Handler,
 		},
 		{
 			MethodName: "OnPacket",
