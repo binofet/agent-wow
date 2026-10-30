@@ -1,0 +1,63 @@
+package buddynav
+
+import "errors"
+
+// Region selects a fixed, reviewed client-asset policy. Callers cannot supply
+// arbitrary bounds, tiles or map IDs. The zero value retains Northshire.
+type Region uint8
+
+const (
+	RegionNorthshire Region = iota
+	// RegionDeathknellCrypt covers only the measured crypt stairs and nearby
+	// surface endpoint. It does not cover the route to Shadow Priest Sarvis.
+	RegionDeathknellCrypt
+)
+
+func (r Region) name() (string, error) {
+	switch r {
+	case RegionNorthshire:
+		return "Northshire", nil
+	case RegionDeathknellCrypt:
+		return "Deathknell crypt", nil
+	default:
+		return "", errors.New("unknown navigation region")
+	}
+}
+
+func (r Region) contains(p Point) bool {
+	if !finite(p.X) || !finite(p.Y) || !finite(p.Z) {
+		return false
+	}
+	switch r {
+	case RegionNorthshire:
+		return p.X >= -9599 && p.X <= -8400 && p.Y >= -700 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
+	case RegionDeathknellCrypt:
+		return p.X >= 1642 && p.X <= 1684 && p.Y >= 1662 && p.Y <= 1681 && p.Z >= 118 && p.Z <= 145
+	default:
+		return false
+	}
+}
+
+func (r Region) meshTiles() ([]string, error) {
+	switch r {
+	case RegionNorthshire:
+		return []string{"0004731.mmtile", "0004732.mmtile", "0004733.mmtile", "0004831.mmtile", "0004832.mmtile", "0004833.mmtile", "0004931.mmtile", "0004932.mmtile", "0004933.mmtile"}, nil
+	case RegionDeathknellCrypt:
+		return []string{"0002828.mmtile"}, nil
+	default:
+		return nil, errors.New("unknown navigation region")
+	}
+}
+
+func (r Region) allowsFloorTile(name string) bool {
+	switch r {
+	case RegionNorthshire:
+		switch name {
+		case "000_31_47.vmtile", "000_32_47.vmtile", "000_33_47.vmtile", "000_31_48.vmtile", "000_32_48.vmtile", "000_33_48.vmtile", "000_31_49.vmtile", "000_32_49.vmtile", "000_33_49.vmtile":
+			return true
+		}
+	case RegionDeathknellCrypt:
+		return name == "000_28_28.vmtile"
+	}
+	return false
+}

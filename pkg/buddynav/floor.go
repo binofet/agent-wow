@@ -38,6 +38,7 @@ type floorModel struct {
 	name   string
 }
 type floorReader struct {
+	region    Region
 	dir       string
 	tiles     map[string][]floorSpawn
 	models    map[string]*floorModel
@@ -47,7 +48,11 @@ type floorReader struct {
 }
 
 func newFloorReader(dir string) *floorReader {
-	return &floorReader{dir: dir, tiles: make(map[string][]floorSpawn), models: make(map[string]*floorModel), lru: list.New()}
+	return newFloorReaderRegion(dir, RegionNorthshire)
+}
+
+func newFloorReaderRegion(dir string, region Region) *floorReader {
+	return &floorReader{dir: dir, region: region, tiles: make(map[string][]floorSpawn), models: make(map[string]*floorModel), lru: list.New()}
 }
 
 func (p *planner) floor(ctx context.Context, q Point, mesh, terrain float32) (float32, error) {
@@ -84,10 +89,14 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 		return 0, false, err
 	}
 	f.lastModel = ""
+	regionName, err := f.region.name()
+	if err != nil {
+		return 0, false, err
+	}
 	gx, gy := int(math.Floor(32-float64(q.X)/533.33333333)), int(math.Floor(32-float64(q.Y)/533.33333333))
 	name := fmt.Sprintf("000_%02d_%02d.vmtile", gy, gx)
-	if !allowedFloorTile(name) {
-		return 0, false, errors.New("collision query leaves bounded Northshire tiles")
+	if !f.region.allowsFloorTile(name) {
+		return 0, false, fmt.Errorf("collision query leaves bounded %s tiles", regionName)
 	}
 	spawns, ok := f.tiles[name]
 	if !ok {
@@ -139,12 +148,7 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 	return origin.Z - best, hit, nil
 }
 func allowedFloorTile(name string) bool {
-	switch name {
-	case "000_31_47.vmtile", "000_32_47.vmtile", "000_33_47.vmtile", "000_31_48.vmtile", "000_32_48.vmtile", "000_33_48.vmtile", "000_31_49.vmtile", "000_32_49.vmtile", "000_33_49.vmtile":
-		return true
-	default:
-		return false
-	}
+	return RegionNorthshire.allowsFloorTile(name)
 }
 func (f *floorReader) model(name string) (*floorModel, error) {
 	if m := f.models[name]; m != nil {

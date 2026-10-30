@@ -44,6 +44,13 @@ func Plan(dataDir string, mapID uint32, start, dest Point) ([]Point, error) {
 // PlanContext checks cancellation while waiting for the planner and between
 // bounded upstream queries/samples. The upstream file/query call is synchronous.
 func PlanContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) (points []Point, err error) {
+	return PlanRegionContext(ctx, dataDir, mapID, RegionNorthshire, start, dest)
+}
+
+// PlanRegionContext plans inside one sealed region, with the same bounded
+// physical-floor, water, complete-path and cancellation checks as PlanContext.
+// It only reads static client assets; it cannot move a game character.
+func PlanRegionContext(ctx context.Context, dataDir string, mapID uint32, region Region, start, dest Point) (points []Point, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	defer func() {
@@ -52,13 +59,13 @@ func PlanContext(ctx context.Context, dataDir string, mapID uint32, start, dest 
 			err = errors.New("invalid navigation data or query")
 		}
 	}()
-	if err := validateRequest(mapID, start, dest); err != nil {
+	if err := validateRegionRequest(mapID, region, start, dest); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	p, err := cachedPlanner(dataDir)
+	p, err := cachedPlannerRegion(dataDir, region)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +88,7 @@ func (e *physicalDiscontinuity) Error() string {
 // complete replans may avoid the exact polygon that proved discontinuous. All
 // temporary flags are restored under the same planner gate on every exit.
 func planWithReroutes(ctx context.Context, p *planner, start, dest Point) ([]Point, error) {
-	return rerouteBounded(ctx, p, func() ([]Point, error) { return plan(ctx, p, start, dest) })
+	return rerouteBounded(ctx, p, func() ([]Point, error) { return planRegion(ctx, p, p.region, start, dest) })
 }
 func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point, error)) ([]Point, error) {
 	restore := make(map[detour.DtPolyRef]uint16, 2)
@@ -131,11 +138,19 @@ type backend interface {
 }
 
 func validateRequest(mapID uint32, start, dest Point) error {
+	return validateRegionRequest(mapID, RegionNorthshire, start, dest)
+}
+
+func validateRegionRequest(mapID uint32, region Region, start, dest Point) error {
+	name, err := region.name()
+	if err != nil {
+		return err
+	}
 	if mapID != 0 {
 		return errors.New("navigation supports map 0 only")
 	}
-	if !inBounds(start) || !inBounds(dest) {
-		return errors.New("navigation endpoints must be finite and inside Northshire bounds")
+	if !region.contains(start) || !region.contains(dest) {
+		return fmt.Errorf("navigation endpoints must be finite and inside %s bounds", name)
 	}
 	if distance(start, dest) > MaxRouteLength {
 		return errors.New("navigation endpoints exceed 180 yard route budget")
@@ -144,9 +159,17 @@ func validateRequest(mapID uint32, start, dest Point) error {
 }
 
 func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
+	return planRegion(ctx, b, RegionNorthshire, start, dest)
+}
+
+func planRegion(ctx context.Context, b backend, region Region, start, dest Point) ([]Point, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validateRegionRequest(0, region, start, dest); err != nil {
+		return nil, err
+	}
+	name, _ := region.name()
 	r, err := b.findPath(start, dest)
 	if err != nil {
 		return nil, fmt.Errorf("find navigation path: %w", err)
@@ -161,8 +184,8 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 	points = append(points, start)
 	for _, p := range r.Points {
 		q := Point{p.X, p.Y, p.Z}
-		if !inBounds(q) {
-			return nil, errors.New("navigation path leaves Northshire bounds or contains non-finite coordinates")
+		if !region.contains(q) {
+			return nil, fmt.Errorf("navigation path leaves %s bounds or contains non-finite coordinates", name)
 		}
 		if distance(points[len(points)-1], q) > 0.001 {
 			points = append(points, q)
@@ -218,8 +241,8 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 			return errors.New("navigation water depth exceeds shallow wading limit")
 		}
 		q.Z = floor
-		if !inBounds(q) {
-			return errors.New("navigation mesh height leaves Northshire bounds")
+		if !region.contains(q) {
+			return fmt.Errorf("navigation mesh height leaves %s bounds", name)
 		}
 		if len(out) > 0 {
 			prev := out[len(out)-1]
@@ -282,7 +305,7 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 
 func finite(v float32) bool { return !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) }
 func inBounds(p Point) bool {
-	return finite(p.X) && finite(p.Y) && finite(p.Z) && p.X >= -9599 && p.X <= -8400 && p.Y >= -700 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
+	return RegionNorthshire.contains(p)
 }
 func distance(a, b Point) float64 {
 	x, y, z := float64(a.X-b.X), float64(a.Y-b.Y), float64(a.Z-b.Z)
@@ -290,6 +313,7 @@ func distance(a, b Point) float64 {
 }
 
 type planner struct {
+	region         Region
 	gate           chan struct{}
 	terrainManager *pathfinding.TerrainManager
 	query          *detour.DtNavMeshQuery
@@ -298,12 +322,24 @@ type planner struct {
 	floors         *floorReader
 }
 
+type plannerCacheKey struct {
+	directory string
+	region    Region
+}
+
 var planners = struct {
 	sync.Mutex
-	items map[string]*planner
-}{items: make(map[string]*planner)}
+	items map[plannerCacheKey]*planner
+}{items: make(map[plannerCacheKey]*planner)}
 
 func cachedPlanner(dataDir string) (*planner, error) {
+	return cachedPlannerRegion(dataDir, RegionNorthshire)
+}
+
+func cachedPlannerRegion(dataDir string, region Region) (*planner, error) {
+	if _, err := region.name(); err != nil {
+		return nil, err
+	}
 	if dataDir == "" {
 		return nil, errors.New("navigation data directory is required")
 	}
@@ -323,13 +359,14 @@ func cachedPlanner(dataDir string) (*planner, error) {
 	}
 	planners.Lock()
 	defer planners.Unlock()
-	if p := planners.items[dir]; p != nil {
+	key := plannerCacheKey{directory: dir, region: region}
+	if p := planners.items[key]; p != nil {
 		return p, nil
 	}
 	if len(planners.items) >= 4 {
 		return nil, errors.New("navigation data directory cache limit reached")
 	}
-	mesh, err := loadMesh(filepath.Join(dir, "mmaps"))
+	mesh, err := loadMeshRegion(filepath.Join(dir, "mmaps"), region)
 	if err != nil {
 		return nil, err
 	}
@@ -340,10 +377,10 @@ func cachedPlanner(dataDir string) (*planner, error) {
 	f := detour.DtAllocDtQueryFilter()
 	f.SetIncludeFlags(0x01 | 0x08) // NAV_GROUND and only depth-verified NAV_WATER.
 	f.SetExcludeFlags(^uint16(0x01 | 0x08))
-	p := &planner{gate: make(chan struct{}, 1), mesh: mesh, query: q, filter: f,
-		terrainManager: pathfinding.NewTerrainManager(filepath.Join(dir, "maps")), floors: newFloorReader(filepath.Join(dir, "vmaps"))}
+	p := &planner{region: region, gate: make(chan struct{}, 1), mesh: mesh, query: q, filter: f,
+		terrainManager: pathfinding.NewTerrainManager(filepath.Join(dir, "maps")), floors: newFloorReaderRegion(filepath.Join(dir, "vmaps"), region)}
 	p.gate <- struct{}{}
-	planners.items[dir] = p
+	planners.items[key] = p
 	return p, nil
 }
 
@@ -517,6 +554,10 @@ func (p *planner) insetRayPoint(ref detour.DtPolyRef, v *[3]float32) error {
 // tile header (36-byte recast config). Read that format explicitly rather than
 // rewriting public assets to fool upstream's older MMAP19 loader.
 func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
+	return loadMeshRegion(dir, RegionNorthshire)
+}
+
+func loadMeshRegion(dir string, region Region) (mesh *detour.DtNavMesh, err error) {
 	// The pure-Go Detour decoder uses slice-backed binary structures. Reject
 	// a corrupt local asset as a planner error rather than crashing the body.
 	defer func() {
@@ -525,6 +566,10 @@ func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
 			err = errors.New("invalid navigation mesh data")
 		}
 	}()
+	tiles, err := region.meshTiles()
+	if err != nil {
+		return nil, err
+	}
 	data, err := readBounded(filepath.Join(dir, "000.mmap"), 28)
 	if err != nil {
 		return nil, err
@@ -549,10 +594,9 @@ func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
 		return nil, errors.New("initialize navigation mesh failed")
 	}
 	loaded := 0
-	// Northshire, the vineyard and Goldshire use these nine fixed grid tiles. Missing
-	// portions of the bounded rectangle still fail closed rather than loading
-	// arbitrary neighboring map data or producing a direct fallback.
-	for _, name := range []string{"0004731.mmtile", "0004732.mmtile", "0004733.mmtile", "0004831.mmtile", "0004832.mmtile", "0004833.mmtile", "0004931.mmtile", "0004932.mmtile", "0004933.mmtile"} {
+	// Only the named region's sealed tile list is considered. Missing portions
+	// still fail closed rather than loading neighbors or returning a shortcut.
+	for _, name := range tiles {
 		data, err := readBounded(filepath.Join(dir, name), 32<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -571,7 +615,8 @@ func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
 		loaded++
 	}
 	if loaded == 0 {
-		return nil, errors.New("Northshire navigation tiles are missing")
+		name, _ := region.name()
+		return nil, fmt.Errorf("%s navigation tiles are missing", name)
 	}
 	return mesh, nil
 }
