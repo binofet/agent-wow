@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ø
+©
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -53,10 +53,15 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 lease_ms (RleaseMs"@
 InteractionRelease
 owner (	Rowner
-token (	Rtoken"_
+token (	Rtoken"L
+ApproachLootRequest
+token (	Rtoken
+corpse_guid (R
+corpseGuid"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"™	
+state (2.warcraftbuddy.actions.v1.StateRstate"œ
+
 State
 	following (R	following
 healing (Rhealing
@@ -88,7 +93,10 @@ knownSmite'
 last_cast_spell_id (RlastCastSpellId1
 last_cast_target_guid (RlastCastTargetGuid0
 server_assist_starts (RserverAssistStarts(
-server_assist_go (RserverAssistGo2í
+server_assist_go (RserverAssistGo#
+assist_reason (	RassistReason.
+smite_damage_events (RsmiteDamageEvents,
+smite_damage_total (RsmiteDamageTotal2Í
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -96,6 +104,7 @@ knownSmite'
 HealOnce.google.protobuf.Empty.warcraftbuddy.actions.v1.StateA
 Status.google.protobuf.Empty.warcraftbuddy.actions.v1.Staten
 AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
-ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.StateC
+ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
+ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

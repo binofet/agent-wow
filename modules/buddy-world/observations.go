@@ -174,6 +174,9 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.AttackVictimKnown = p.attackVictimKnown
 	r.AttackVictimGuid = p.attackVictim
 	r.AttackAgeMs = age(now, p.attackAt)
+	if t := p.trajectory; t.known {
+		r.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: t.duration, AgeMs: uint64(t.elapsed) + age(now, t.at), DestinationKnown: t.destinationKnown, DestinationX: t.destination[0], DestinationY: t.destination[1], DestinationZ: t.destination[2], Cyclic: t.cyclic, TransportRelative: t.relative, TransportGuid: t.transport, TransportSeat: int32(t.seat), Stopped: t.stopped, Flags: t.flags}
+	}
 	d, k := observedDistance(*p, s.players[0])
 	r.DistanceToSelfObservedKnown = k
 	r.DistanceToSelfObserved = float32(d)

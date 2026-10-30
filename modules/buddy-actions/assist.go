@@ -12,6 +12,7 @@ import (
 // Smite585/rank1, verified from build12340 Spell.dbc: 1500ms cast/GCD,
 // 30yd range, 9% base mana. A selected NPC alone is never hostility evidence.
 func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
+	defer func() { s.state.AssistReason = s.state.Reason }()
 	if !s.state.Assisting {
 		return false
 	}
@@ -32,7 +33,7 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 		s.state.Reason = "smite_not_in_known_spells"
 		return false
 	}
-	if !owner.TargetKnown || owner.TargetGuid == 0 || target == nil || target.Guid != owner.TargetGuid || !target.Present || !target.MapKnown || target.MapId != self.MapId || !target.PositionKnown || !target.HealthKnown || !target.AliveKnown || !target.Alive || target.Health == 0 {
+	if !owner.TargetKnown || owner.TargetGuid == 0 || target == nil || target.Guid != owner.TargetGuid || !target.Present || !target.MapKnown || target.MapId != self.MapId || !target.HealthKnown || !target.AliveKnown || !target.Alive || target.Health == 0 {
 		s.state.Reason = "assist_requires_observed_living_owner_target"
 		return false
 	}
@@ -62,8 +63,8 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 		s.state.Reason = "assist_throttled_or_pending"
 		return false
 	}
-	position := position{target.X, target.Y, target.Z, target.Orientation}
-	if !finite(position) || distance(s.pos, position) > 28 || target.MovementFlags&0x08000000 != 0 || target.MovementFlags&0xff != 0 && target.PositionAgeMs > 1500 {
+	position, known, _ := creaturePosition(target)
+	if !known || distance(s.pos, position) > 28 {
 		s.state.Reason = "assist_target_outside_conservative_range"
 		return false
 	}
@@ -110,6 +111,34 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 	}
 	s.state.Reason = "smite_transport_written_waiting_for_server"
 	return true
+}
+
+// NPC movement packets advertise a route endpoint and duration. Once an
+// ordinary noncyclic route has elapsed we may use that endpoint as a client
+// estimate, while keeping the actual observation and its age unchanged.
+func creaturePosition(c *worldv1.CreatureState) (position, bool, bool) {
+	if c == nil {
+		return position{}, false, false
+	}
+	p := position{c.X, c.Y, c.Z, c.Orientation}
+	t := c.Trajectory
+	if t != nil && t.Known {
+		if t.TransportRelative {
+			return p, false, false
+		}
+		if t.Stopped {
+			return p, c.PositionKnown && finite(p), false
+		}
+		if !t.Cyclic && t.DestinationKnown && t.AgeMs >= uint64(t.DurationMs) {
+			p = position{t.DestinationX, t.DestinationY, t.DestinationZ, c.Orientation}
+			return p, finite(p), true
+		}
+		return p, false, false // Wait for arrival rather than using a stale start.
+	}
+	if c.MovementFlags&0x08000000 != 0 || c.MovementFlags&0xff != 0 && c.PositionAgeMs > 1500 {
+		return p, false, false
+	}
+	return p, c.PositionKnown && finite(p), false
 }
 
 func (s *Service) castFailedLocked(code uint32, reason string) {

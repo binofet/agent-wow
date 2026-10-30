@@ -28,6 +28,7 @@ const (
 	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
 	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
 	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
 	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 )
@@ -43,6 +44,7 @@ type BuddyActionsClient interface {
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
 	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
+	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -125,6 +127,16 @@ func (c *buddyActionsClient) ReleaseInteraction(ctx context.Context, in *Interac
 	return out, nil
 }
 
+func (c *buddyActionsClient) ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ApproachLoot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -156,6 +168,7 @@ type BuddyActionsServer interface {
 	Status(context.Context, *emptypb.Empty) (*State, error)
 	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
 	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
+	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyActionsServer()
@@ -188,6 +201,9 @@ func (UnimplementedBuddyActionsServer) AcquireInteraction(context.Context, *Inte
 }
 func (UnimplementedBuddyActionsServer) ReleaseInteraction(context.Context, *InteractionRelease) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReleaseInteraction not implemented")
+}
+func (UnimplementedBuddyActionsServer) ApproachLoot(context.Context, *ApproachLootRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproachLoot not implemented")
 }
 func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -342,6 +358,24 @@ func _BuddyActions_ReleaseInteraction_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_ApproachLoot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachLootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ApproachLoot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ApproachLoot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ApproachLoot(ctx, req.(*ApproachLootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -412,6 +446,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReleaseInteraction",
 			Handler:    _BuddyActions_ReleaseInteraction_Handler,
+		},
+		{
+			MethodName: "ApproachLoot",
+			Handler:    _BuddyActions_ApproachLoot_Handler,
 		},
 		{
 			MethodName: "OnPacket",

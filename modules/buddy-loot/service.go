@@ -42,6 +42,7 @@ type Service struct {
 	index                                      int
 	removed, pushed, moneySent, moneyCleared   bool
 	seen                                       map[uint64]bool
+	opened                                     bool
 }
 
 func NewService(session sessionAPI, self uint64) *Service {
@@ -134,6 +135,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.items = nil
 	s.window = lootWindow{}
 	s.index = 0
+	s.opened = false
 	if s.state.Enabled {
 		s.state.Phase = "idle"
 	} else {
@@ -142,6 +144,10 @@ func (s *Service) finish(ctx context.Context) {
 	s.nextTry = s.now().Add(time.Second)
 }
 func (s *Service) beginRelease(ctx context.Context) {
+	if !s.opened {
+		s.finish(ctx)
+		return
+	}
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
 	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.state.PendingCorpseGuid)) {
@@ -153,7 +159,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	defer s.mu.Unlock()
 	s.closed = true
 	s.state.Enabled = false
-	if s.token != "" && s.state.PendingCorpseGuid != 0 {
+	if s.token != "" && s.opened && s.state.PendingCorpseGuid != 0 {
 		_ = s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.state.PendingCorpseGuid))
 	}
 	s.finish(ctx)
@@ -180,23 +186,68 @@ func ownerReady(p *worldv1.PlayerState) bool {
 }
 
 func eligible(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState) bool {
+	return eligibleWithin(self, p, c, 4.5, 2)
+}
+
+// Completed ordinary spline endpoints are explicitly estimated; active paths
+// and transport-relative coordinates cannot establish a corpse world position.
+func corpsePosition(c *worldv1.CreatureState) (float32, float32, float32, bool) {
+	if c == nil {
+		return 0, 0, 0, false
+	}
+	x, y, z, known := c.X, c.Y, c.Z, c.PositionKnown
+	if t := c.Trajectory; t != nil && t.Known {
+		if t.TransportRelative {
+			return 0, 0, 0, false
+		}
+		if !t.Stopped {
+			if t.Cyclic || !t.DestinationKnown || t.AgeMs < uint64(t.DurationMs) {
+				return 0, 0, 0, false
+			}
+			x, y, z, known = t.DestinationX, t.DestinationY, t.DestinationZ, true
+		}
+	} else if c.MovementFlags&0x08000000 != 0 || c.MovementFlags&0xff != 0 && c.PositionAgeMs > 1500 {
+		return 0, 0, 0, false
+	}
+	for _, v := range []float32{x, y, z} {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.Abs(float64(v)) > 40000 {
+			return 0, 0, 0, false
+		}
+	}
+	return x, y, z, known
+}
+
+func eligibleWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState, maxRange, maxHeight float64) bool {
 	if self == nil || p == nil || c == nil || !self.Present || !self.AliveKnown || !self.Alive || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x8000000) != 0 {
 		return false
 	}
-	if !p.Known || !p.MapKnown || !c.Present || !c.MapKnown || p.MapId != c.MapId || !c.PositionKnown || !c.HealthKnown || c.Health != 0 || !c.AliveKnown || c.Alive || c.DynamicFlags&1 == 0 {
+	if !p.Known || !p.MapKnown || !c.Present || !c.MapKnown || p.MapId != c.MapId || !c.HealthKnown || c.Health != 0 || !c.AliveKnown || c.Alive || c.DynamicFlags&1 == 0 {
 		return false
 	}
 	if kind := c.Guid >> 48; kind != 0xf130 && kind != 0xf150 {
 		return false
 	}
-	values := []float32{p.X, p.Y, p.Z, c.X, c.Y, c.Z}
-	for _, v := range values {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+	x, y, z, known := corpsePosition(c)
+	if !known {
+		return false
+	}
+	for _, v := range []float32{p.X, p.Y, p.Z} {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.Abs(float64(v)) > 40000 {
 			return false
 		}
 	}
-	dx, dy, dz := float64(p.X-c.X), float64(p.Y-c.Y), float64(p.Z-c.Z)
-	return dx*dx+dy*dy+dz*dz <= 4.5*4.5 && math.Abs(dz) <= 2
+	dx, dy, dz := float64(p.X-x), float64(p.Y-y), float64(p.Z-z)
+	return dx*dx+dy*dy+dz*dz <= maxRange*maxRange && math.Abs(dz) <= maxHeight
+}
+
+func (s *Service) openLocked(ctx context.Context) {
+	s.state.Phase = "waiting_open"
+	s.state.Reason = "loot_open_transport_pending"
+	s.deadline = s.now().Add(2 * time.Second)
+	s.opened = true // Reserve before an ambiguous transport write.
+	if !s.write(ctx, opcode.CMSGLoot, guidPacket(s.state.PendingCorpseGuid)) {
+		s.finish(ctx)
+	}
 }
 
 func (s *Service) Tick(ctx context.Context) {
@@ -207,6 +258,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	now := s.now()
 	if s.token != "" {
+		var observed *worldv1.SnapshotResponse
 		if s.state.Phase == "release_observed" {
 			s.finish(ctx)
 			return
@@ -228,6 +280,7 @@ func (s *Service) Tick(ctx context.Context) {
 				s.beginRelease(ctx)
 				return
 			}
+			observed = world
 			active := &actionsv1.State{}
 			if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, active) != nil || active.InteractionOwner != "loot" || active.InteractionLeaseRemainingMs < 1000 {
 				s.state.Enabled = false
@@ -247,6 +300,31 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 		switch s.state.Phase {
+		case "approaching":
+			approach := &actionsv1.State{}
+			if s.invoke(ctx, "buddy-actions", "approach_loot", &actionsv1.ApproachLootRequest{Token: s.token, CorpseGuid: s.state.PendingCorpseGuid}, approach) != nil {
+				s.state.Reason = "loot_approach_unavailable_no_retry"
+				s.finish(ctx)
+				return
+			}
+			if approach.Moving {
+				s.state.Reason = "approaching_nearby_corpse"
+				return
+			}
+			var corpse *worldv1.CreatureState
+			for _, c := range observed.LootableCorpses {
+				if c != nil && c.Guid == s.state.PendingCorpseGuid {
+					corpse = c
+					break
+				}
+			}
+			if approach.Reason != "loot_approach_within_distance" || !eligible(observed.Self, approach.Position, corpse) {
+				s.state.Reason = "loot_approach_stopped_unsafe_or_out_of_range"
+				s.finish(ctx)
+				return
+			}
+			s.openLocked(ctx)
+
 		case "ready_money":
 			s.moneySent = true
 			s.moneyCleared = false
@@ -330,16 +408,21 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "client_position_unavailable"
 		return
 	}
+	if actions.Position == nil || !actions.Position.Known || !actions.Position.MapKnown || !world.Owner.MapKnown || world.Owner.MapId != actions.Position.MapId || !world.Owner.PositionKnown || math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) > 30*30 {
+		s.state.Reason = "loot_deferred_owner_not_nearby"
+		return
+	}
 	var selected *worldv1.CreatureState
 	best := math.Inf(1)
 	for _, c := range world.LootableCorpses {
 		if c == nil {
 			continue
 		}
-		if s.seen[c.Guid] || !eligible(world.Self, actions.Position, c) {
+		if s.seen[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
 			continue
 		}
-		d := math.Pow(float64(actions.Position.X-c.X), 2) + math.Pow(float64(actions.Position.Y-c.Y), 2) + math.Pow(float64(actions.Position.Z-c.Z), 2)
+		x, y, z, _ := corpsePosition(c)
+		d := math.Pow(float64(actions.Position.X-x), 2) + math.Pow(float64(actions.Position.Y-y), 2) + math.Pow(float64(actions.Position.Z-z), 2)
 		if d < best {
 			best = d
 			selected = c
@@ -358,7 +441,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.token = lease.Token
-	if !eligible(world.Self, lease.State.Position, selected) {
+	if !eligibleWithin(world.Self, lease.State.Position, selected, 12, 1.5) {
 		s.releaseLease(ctx)
 		s.state.Reason = "corpse_out_of_range_after_stop"
 		return
@@ -366,13 +449,13 @@ func (s *Service) Tick(ctx context.Context) {
 	s.seen[selected.Guid] = true
 	s.state.PendingCorpseGuid = selected.Guid
 	s.transactionUntil = now.Add(12 * time.Second)
-	s.deadline = now.Add(2 * time.Second)
-	s.state.Phase = "waiting_open"
-	s.state.Reason = "loot_open_transport_pending"
 	s.moneySent = false
 	s.moneyCleared = false
-	if !s.write(ctx, opcode.CMSGLoot, guidPacket(selected.Guid)) {
-		s.finish(ctx)
+	if eligible(world.Self, lease.State.Position, selected) {
+		s.openLocked(ctx)
+	} else {
+		s.state.Phase = "approaching"
+		s.state.Reason = "nearby_corpse_approach_pending"
 	}
 }
 

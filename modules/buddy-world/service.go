@@ -34,6 +34,7 @@ type observed struct {
 	attackVictimKnown bool
 	attackVictim      uint64
 	attackAt          time.Time
+	trajectory        observedTrajectory
 }
 
 type Service struct {

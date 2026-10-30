@@ -330,7 +330,7 @@ func TestOwnerTargetAndObservedAttackVictim(t *testing.T) {
 	}
 }
 
-func TestActiveSplineHeaderCannotEstablishCurrentPosition(t *testing.T) {
+func TestActiveSplineHeaderCannotCommitPartialPosition(t *testing.T) {
 	s := NewService(1)
 	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 	packet(t, s, opcode.SMSGUpdateObject, objectFixture(npcGUID, 3, npcFields(2)))
@@ -343,7 +343,7 @@ func TestActiveSplineHeaderCannotEstablishCurrentPosition(t *testing.T) {
 	u32(b, 1)
 	b.WriteByte(0)
 	r := packet(t, s, opcode.SMSGMonsterMove, b.Bytes())
-	if r.QuestGivers[0].PositionKnown || r.QuestGivers[0].PositionRevision != 1 || r.QuestGivers[0].X == 50 {
+	if !r.QuestGivers[0].PositionKnown || r.QuestGivers[0].PositionRevision != 1 || r.QuestGivers[0].X != 1 || r.MalformedPackets != 1 {
 		t.Fatal(r)
 	}
 }

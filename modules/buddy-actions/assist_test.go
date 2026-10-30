@@ -163,3 +163,57 @@ func TestUnsafeTickStopsAtLatestAuthoritativeCorrection(t *testing.T) {
 		t.Fatal("unsafe pause wrote superseded coordinates", p)
 	}
 }
+
+func TestSmiteUsesElapsedAdvertisedEndpointWithoutInventingObservation(t *testing.T) {
+	s, f, _ := assistRig(t)
+	target := f.world.OwnerTarget
+	target.PositionKnown = false
+	target.X = 100
+	target.MovementFlags = 0x08000000
+	target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 1500, DestinationKnown: true, DestinationX: 12}
+	s.Tick(context.Background())
+	if state(t, s).AssistAttempts != 1 || target.X != 100 || target.PositionKnown {
+		t.Fatal(state(t, s), target)
+	}
+	s, f, _ = assistRig(t)
+	f.world.OwnerTarget.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500, DestinationKnown: true, DestinationX: 12}
+	s.Tick(context.Background())
+	if state(t, s).AssistAttempts != 0 {
+		t.Fatal("cast on an unarrived path")
+	}
+}
+
+func TestOwnSmiteDamageCounterRequiresActualServerDamage(t *testing.T) {
+	s, _, _ := assistRig(t)
+	packet := append(packedGUID(enemyGUID), packedGUID(1)...)
+	tail := make([]byte, 32)
+	binary.LittleEndian.PutUint32(tail, smite)
+	binary.LittleEndian.PutUint32(tail[4:], 15)
+	tail[12] = 2
+	packet = append(packet, tail...)
+	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellnonmeleedamagelog, Payload: packet})
+	if st := state(t, s); st.SmiteDamageEvents != 1 || st.SmiteDamageTotal != 15 || st.ServerAssistGo != 0 {
+		t.Fatal(st)
+	}
+	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellnonmeleedamagelog, Payload: packet[:len(packet)-1]})
+	if st := state(t, s); st.SmiteDamageEvents != 1 || st.MalformedPackets != 1 {
+		t.Fatal(st)
+	}
+}
+
+func TestExpiredApproachLeaseStopsBeforeIntentResumes(t *testing.T) {
+	s, f, advance := rig(t)
+	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.state.Moving = true
+	advance(1100 * time.Millisecond)
+	if st := state(t, s); st.InteractionLeaseRemainingMs != 0 || st.InteractionOwner != "loot" {
+		t.Fatal("status discarded moving lease", st)
+	}
+	s.Tick(context.Background())
+	if state(t, s).Moving || state(t, s).InteractionOwner != "" || len(f.packets) != 1 || f.packets[0].Opcode != opcode.MSGMoveStop {
+		t.Fatal(lease, state(t, s), f.packets)
+	}
+}

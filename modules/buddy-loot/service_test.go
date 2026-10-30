@@ -22,13 +22,15 @@ import (
 const corpseGUID = uint64(0xf130000001000001)
 
 type fakeSession struct {
-	mu         sync.Mutex
-	world      *worldv1.SnapshotResponse
-	actions    *actionsv1.State
-	packets    []*modv1.SendPacketRequest
-	leaseOwner string
-	releases   int
-	failOpcode uint32
+	mu            sync.Mutex
+	world         *worldv1.SnapshotResponse
+	actions       *actionsv1.State
+	packets       []*modv1.SendPacketRequest
+	leaseOwner    string
+	releases      int
+	failOpcode    uint32
+	approachCalls int
+	failApproach  bool
 }
 
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -52,6 +54,25 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		a.InteractionOwner = f.leaseOwner
 		a.InteractionLeaseRemainingMs = 15000
 		value = a
+	case "buddy-actions.approach_loot":
+		request := &actionsv1.ApproachLootRequest{}
+		if err := r.Request.UnmarshalTo(request); err != nil {
+			return nil, err
+		}
+		if request.Token != "owned-loot-token" || request.CorpseGuid != corpseGUID || f.leaseOwner != "loot" || f.failApproach {
+			return nil, errors.New("approach unavailable")
+		}
+		f.approachCalls++
+		f.actions.Position.X += 1.4
+		f.actions.Position.Estimated = true
+		f.actions.Moving = true
+		f.actions.Reason = "loot_approaching_direct_ground_estimate"
+		if f.actions.Position.X >= 9 {
+			f.actions.Position.X = 9
+			f.actions.Moving = false
+			f.actions.Reason = "loot_approach_within_distance"
+		}
+		value = f.actions
 	case "buddy-actions.acquire_interaction":
 		request := &actionsv1.InteractionRequest{}
 		if err := r.Request.UnmarshalTo(request); err != nil {
@@ -82,9 +103,59 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 	packed, err := anypb.New(value)
 	return &modv1.InvokeModuleResponse{Result: packed}, err
 }
+
+func TestNearbyCorpseApproachStopsBeforeOpeningAndFailureReleases(t *testing.T) {
+	s, f, advance := rig(t)
+	f.world.LootableCorpses[0].X = 12
+	enable(t, s)
+	s.Tick(context.Background())
+	if current(t, s).Phase != "approaching" || len(f.packets) != 0 {
+		t.Fatal("opened distant corpse")
+	}
+	for i := 0; i < 8 && current(t, s).Phase == "approaching"; i++ {
+		advance(200 * time.Millisecond)
+		s.Tick(context.Background())
+	}
+	if current(t, s).Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 7 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+		t.Fatalf("approach %+v calls%d packets%v", current(t, s), f.approachCalls, f.packets)
+	}
+	s, f, advance = rig(t)
+	f.world.LootableCorpses[0].X = 12
+	enable(t, s)
+	s.Tick(context.Background())
+	f.failApproach = true
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if len(f.packets) != 0 || f.releases != 1 || current(t, s).PendingCorpseGuid != 0 {
+		t.Fatal("failed approach retained interaction or wrote loot")
+	}
+}
+
+func TestElapsedCorpseEndpointCanEstablishReachButActiveSplineCannot(t *testing.T) {
+	for _, elapsed := range []bool{false, true} {
+		s, f, _ := rig(t)
+		c := f.world.LootableCorpses[0]
+		c.X = 30
+		c.PositionKnown = true
+		c.MovementFlags = 0x08000000
+		c.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 999, DestinationKnown: true, DestinationX: 2}
+		if elapsed {
+			c.Trajectory.AgeMs = 1000
+		}
+		enable(t, s)
+		s.Tick(context.Background())
+		if elapsed {
+			if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+				t.Fatal("completed endpoint not usable")
+			}
+		} else if len(f.packets) != 0 || f.leaseOwner != "" {
+			t.Fatal("active path treated as arrival")
+		}
+	}
+}
 func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
-	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 1, Present: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, Owner: &worldv1.PlayerState{Guid: 3, Present: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, LootableCorpses: []*worldv1.CreatureState{{Guid: corpseGUID, Present: true, MapKnown: true, PositionKnown: true, X: 2, HealthKnown: true, MaxHealth: 100, AliveKnown: true, DynamicFlags: 1}}}, actions: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true}}}
+	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 1, Present: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, Owner: &worldv1.PlayerState{Guid: 3, Present: true, MapKnown: true, PositionKnown: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, LootableCorpses: []*worldv1.CreatureState{{Guid: corpseGUID, Present: true, MapKnown: true, PositionKnown: true, X: 2, HealthKnown: true, MaxHealth: 100, AliveKnown: true, DynamicFlags: 1}}}, actions: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true}}}
 	s := NewService(f, 1)
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }

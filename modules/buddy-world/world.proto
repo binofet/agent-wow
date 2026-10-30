@@ -90,6 +90,26 @@ message CreatureState {
   bool attack_victim_known = 31;
   uint64 attack_victim_guid = 32;
   uint64 attack_age_ms = 33;
+  CreatureTrajectory trajectory = 34;
+}
+
+// Advertised server trajectory, separate from actual position observations.
+// A consumer may derive an explicitly estimated endpoint after age>=duration
+// for noncyclic, nontransport paths. This does not refresh position_age_ms.
+message CreatureTrajectory {
+  bool known = 1;
+  uint32 duration_ms = 2;
+  uint64 age_ms = 3;
+  bool destination_known = 4;
+  float destination_x = 5;
+  float destination_y = 6;
+  float destination_z = 7;
+  bool cyclic = 8;
+  bool transport_relative = 9;
+  uint64 transport_guid = 10;
+  int32 transport_seat = 11;
+  bool stopped = 12;
+  uint32 flags = 13;
 }
 
 message QuestLogEntry {

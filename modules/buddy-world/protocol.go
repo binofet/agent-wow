@@ -125,6 +125,7 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 		p.positionAt = now
 		p.positionRevision++
 		p.observedAt = now
+		p.trajectory = observedTrajectory{}
 	}
 	return nil
 }
@@ -136,6 +137,7 @@ func markAbsent(p *observed, now time.Time) {
 	p.observedAt = now
 	p.attackVictimKnown = false
 	p.attackVictim = 0
+	p.trajectory = observedTrajectory{}
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
 
@@ -289,57 +291,25 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			p.observedAt = now
 		}
 		return true, nil
-	case opcode.SMSGMonsterMove:
+	case opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport:
 		guid := c.guid()
-		if creatureGUID(guid) {
-			c.u8()
-			x, y, z := c.f32(), c.f32(), c.f32()
-			c.u32()
-			kind := c.u8()
-			if c.err != nil {
-				return true, c.err
-			}
-			if kind > 4 {
-				return true, errLayout
-			}
-			if kind == 1 {
-				if err := c.done(); err != nil {
-					return true, err
-				}
-			}
-			if p := state.target(guid); p != nil {
-				if kind != 1 {
-					p.positionKnown = false
-					p.movementKnown = false
-					p.movementFlags |= 0x08000000
-					p.observedAt = now
-					return true, nil
-				}
-				if err := position(p, x, y, z, p.orientation, now); err != nil {
-					return true, err
-				}
-				// Only an exactly framed STOP proves a stationary server point.
-				// Active spline tails and trajectories are unsupported.
-				p.movementKnown = false
-				if kind == 1 {
-					p.movementFlags &^= 0x08000000
-				} else {
-					p.movementFlags |= 0x08000000
-				}
-			}
-			return true, nil
+		p := state.target(guid)
+		if !creatureGUID(guid) {
+			p = nil
 		}
-		c.skip(1)
-		if c.err != nil {
-			return true, c.err
+		if err := monsterMove(c, p, op == opcode.SMSGMonsterMoveTransport, now); err != nil {
+			return true, err
 		}
-		if p := state.target(guid); p != nil {
-			p.positionKnown = false
-			p.movementKnown = false
-			p.observedAt = now
+		// Server spline motion of controlled players is outside this controller.
+		if !creatureGUID(guid) {
+			if player := state.target(guid); player != nil {
+				player.positionKnown = false
+				player.movementKnown = false
+				player.observedAt = now
+			}
 		}
 		return true, nil
-	case opcode.SMSGMoveKnockBack, opcode.SMSGMonsterMoveTransport:
+	case opcode.SMSGMoveKnockBack:
 		// Spline and knockback trajectories are deliberately not predicted.
 		// Invalidate a tracked player's position until the next actual position.
 		guid := c.guid()
@@ -355,6 +325,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			p.positionKnown = false
 			p.movementKnown = false
 			p.observedAt = now
+			p.trajectory = observedTrajectory{}
 		}
 		return true, nil
 	}
@@ -551,7 +522,7 @@ func movementUpdate(c *cursor, p *observed, now time.Time) error {
 			p.speedsKnown = true
 		}
 		if moveFlags&0x08000000 != 0 {
-			if err := splineCreate(c); err != nil {
+			if err := splineCreate(c, p, now); err != nil {
 				return err
 			}
 		}
@@ -590,21 +561,53 @@ func movementUpdate(c *cursor, p *observed, now time.Time) error {
 	return c.err
 }
 
-func splineCreate(c *cursor) error {
-	flags := c.u32()
-	if flags&0x20000 != 0 {
-		c.skip(4)
-	} else if flags&0x10000 != 0 {
-		c.skip(8)
-	} else if flags&0x8000 != 0 {
-		c.skip(12)
+func splineCreate(c *cursor, p *observed, now time.Time) error {
+	t := observedTrajectory{known: true, at: now}
+	t.flags = c.u32()
+	t.cyclic = t.flags&0x80000 != 0
+	if t.flags&0x20000 != 0 {
+		if angle := c.f32(); !validFloat(angle) {
+			return errFloat
+		}
+	} else if t.flags&0x10000 != 0 {
+		c.u64()
+	} else if t.flags&0x8000 != 0 {
+		if _, err := point(c); err != nil {
+			return err
+		}
 	}
-	c.skip(28) // elapsed, duration, id, two modifiers, acceleration, effect start
+	t.elapsed = c.u32()
+	t.duration = c.u32()
+	c.u32()
+	for i := 0; i < 3; i++ {
+		if f := c.f32(); !validFloat(f) {
+			return errFloat
+		}
+	}
+	c.u32()
 	nodes := c.u32()
+	if c.err != nil {
+		return c.err
+	}
 	if nodes > maxBlocks || uint64(nodes)*12 > uint64(len(c.b)-c.off) {
 		return errBounds
 	}
-	c.skip(int(nodes)*12 + 1 + 12)
+	for i := uint32(0); i < nodes; i++ {
+		if _, err := point(c); err != nil {
+			return err
+		}
+	}
+	mode := c.u8()
+	destination, err := point(c)
+	if err != nil {
+		return err
+	}
+	t.destination = destination
+	t.destinationKnown = nodes > 0 && t.duration > 0 && !t.cyclic && t.flags&unsafeEndpointFlags == 0 && mode <= 1
+	if p != nil {
+		t.relative = p.movementFlags&0x200 != 0
+		p.trajectory = t
+	}
 	return c.err
 }
 

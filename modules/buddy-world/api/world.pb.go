@@ -431,9 +431,10 @@ type CreatureState struct {
 	TargetGuid                   uint64  `protobuf:"varint,29,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
 	UnitFlags_2                  uint32  `protobuf:"varint,30,opt,name=unit_flags_2,json=unitFlags2,proto3" json:"unit_flags_2,omitempty"`
 	// Distinct from UNIT_FIELD_TARGET selection: actual ATTACKSTART evidence.
-	AttackVictimKnown bool   `protobuf:"varint,31,opt,name=attack_victim_known,json=attackVictimKnown,proto3" json:"attack_victim_known,omitempty"`
-	AttackVictimGuid  uint64 `protobuf:"varint,32,opt,name=attack_victim_guid,json=attackVictimGuid,proto3" json:"attack_victim_guid,omitempty"`
-	AttackAgeMs       uint64 `protobuf:"varint,33,opt,name=attack_age_ms,json=attackAgeMs,proto3" json:"attack_age_ms,omitempty"`
+	AttackVictimKnown bool                `protobuf:"varint,31,opt,name=attack_victim_known,json=attackVictimKnown,proto3" json:"attack_victim_known,omitempty"`
+	AttackVictimGuid  uint64              `protobuf:"varint,32,opt,name=attack_victim_guid,json=attackVictimGuid,proto3" json:"attack_victim_guid,omitempty"`
+	AttackAgeMs       uint64              `protobuf:"varint,33,opt,name=attack_age_ms,json=attackAgeMs,proto3" json:"attack_age_ms,omitempty"`
+	Trajectory        *CreatureTrajectory `protobuf:"bytes,34,opt,name=trajectory,proto3" json:"trajectory,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -699,6 +700,156 @@ func (x *CreatureState) GetAttackAgeMs() uint64 {
 	return 0
 }
 
+func (x *CreatureState) GetTrajectory() *CreatureTrajectory {
+	if x != nil {
+		return x.Trajectory
+	}
+	return nil
+}
+
+// Advertised server trajectory, separate from actual position observations.
+// A consumer may derive an explicitly estimated endpoint after age>=duration
+// for noncyclic, nontransport paths. This does not refresh position_age_ms.
+type CreatureTrajectory struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Known             bool                   `protobuf:"varint,1,opt,name=known,proto3" json:"known,omitempty"`
+	DurationMs        uint32                 `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	AgeMs             uint64                 `protobuf:"varint,3,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
+	DestinationKnown  bool                   `protobuf:"varint,4,opt,name=destination_known,json=destinationKnown,proto3" json:"destination_known,omitempty"`
+	DestinationX      float32                `protobuf:"fixed32,5,opt,name=destination_x,json=destinationX,proto3" json:"destination_x,omitempty"`
+	DestinationY      float32                `protobuf:"fixed32,6,opt,name=destination_y,json=destinationY,proto3" json:"destination_y,omitempty"`
+	DestinationZ      float32                `protobuf:"fixed32,7,opt,name=destination_z,json=destinationZ,proto3" json:"destination_z,omitempty"`
+	Cyclic            bool                   `protobuf:"varint,8,opt,name=cyclic,proto3" json:"cyclic,omitempty"`
+	TransportRelative bool                   `protobuf:"varint,9,opt,name=transport_relative,json=transportRelative,proto3" json:"transport_relative,omitempty"`
+	TransportGuid     uint64                 `protobuf:"varint,10,opt,name=transport_guid,json=transportGuid,proto3" json:"transport_guid,omitempty"`
+	TransportSeat     int32                  `protobuf:"varint,11,opt,name=transport_seat,json=transportSeat,proto3" json:"transport_seat,omitempty"`
+	Stopped           bool                   `protobuf:"varint,12,opt,name=stopped,proto3" json:"stopped,omitempty"`
+	Flags             uint32                 `protobuf:"varint,13,opt,name=flags,proto3" json:"flags,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CreatureTrajectory) Reset() {
+	*x = CreatureTrajectory{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatureTrajectory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatureTrajectory) ProtoMessage() {}
+
+func (x *CreatureTrajectory) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatureTrajectory.ProtoReflect.Descriptor instead.
+func (*CreatureTrajectory) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CreatureTrajectory) GetKnown() bool {
+	if x != nil {
+		return x.Known
+	}
+	return false
+}
+
+func (x *CreatureTrajectory) GetDurationMs() uint32 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetAgeMs() uint64 {
+	if x != nil {
+		return x.AgeMs
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetDestinationKnown() bool {
+	if x != nil {
+		return x.DestinationKnown
+	}
+	return false
+}
+
+func (x *CreatureTrajectory) GetDestinationX() float32 {
+	if x != nil {
+		return x.DestinationX
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetDestinationY() float32 {
+	if x != nil {
+		return x.DestinationY
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetDestinationZ() float32 {
+	if x != nil {
+		return x.DestinationZ
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetCyclic() bool {
+	if x != nil {
+		return x.Cyclic
+	}
+	return false
+}
+
+func (x *CreatureTrajectory) GetTransportRelative() bool {
+	if x != nil {
+		return x.TransportRelative
+	}
+	return false
+}
+
+func (x *CreatureTrajectory) GetTransportGuid() uint64 {
+	if x != nil {
+		return x.TransportGuid
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetTransportSeat() int32 {
+	if x != nil {
+		return x.TransportSeat
+	}
+	return 0
+}
+
+func (x *CreatureTrajectory) GetStopped() bool {
+	if x != nil {
+		return x.Stopped
+	}
+	return false
+}
+
+func (x *CreatureTrajectory) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
 type QuestLogEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Zero-based server quest-log slot; 0 quest_id means empty.
@@ -710,7 +861,7 @@ type QuestLogEntry struct {
 
 func (x *QuestLogEntry) Reset() {
 	*x = QuestLogEntry{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -722,7 +873,7 @@ func (x *QuestLogEntry) String() string {
 func (*QuestLogEntry) ProtoMessage() {}
 
 func (x *QuestLogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -735,7 +886,7 @@ func (x *QuestLogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestLogEntry.ProtoReflect.Descriptor instead.
 func (*QuestLogEntry) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *QuestLogEntry) GetSlot() uint32 {
@@ -768,7 +919,7 @@ type BackpackSlot struct {
 
 func (x *BackpackSlot) Reset() {
 	*x = BackpackSlot{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -780,7 +931,7 @@ func (x *BackpackSlot) String() string {
 func (*BackpackSlot) ProtoMessage() {}
 
 func (x *BackpackSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -793,7 +944,7 @@ func (x *BackpackSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackpackSlot.ProtoReflect.Descriptor instead.
 func (*BackpackSlot) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BackpackSlot) GetBag() uint32 {
@@ -868,7 +1019,7 @@ type SnapshotResponse struct {
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -880,7 +1031,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -893,7 +1044,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SnapshotResponse) GetSelf() *PlayerState {
@@ -1060,7 +1211,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x10faction_template\x18$ \x01(\rR\x0ffactionTemplate\x12 \n" +
 	"\funit_flags_2\x18% \x01(\rR\n" +
 	"unitFlags2\"\x11\n" +
-	"\x0fSnapshotRequest\"\xaf\t\n" +
+	"\x0fSnapshotRequest\"\xfb\t\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -1100,7 +1251,26 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"unitFlags2\x12.\n" +
 	"\x13attack_victim_known\x18\x1f \x01(\bR\x11attackVictimKnown\x12,\n" +
 	"\x12attack_victim_guid\x18  \x01(\x04R\x10attackVictimGuid\x12\"\n" +
-	"\rattack_age_ms\x18! \x01(\x04R\vattackAgeMs\">\n" +
+	"\rattack_age_ms\x18! \x01(\x04R\vattackAgeMs\x12J\n" +
+	"\n" +
+	"trajectory\x18\" \x01(\v2*.warcraftbuddy.world.v1.CreatureTrajectoryR\n" +
+	"trajectory\"\xc3\x03\n" +
+	"\x12CreatureTrajectory\x12\x14\n" +
+	"\x05known\x18\x01 \x01(\bR\x05known\x12\x1f\n" +
+	"\vduration_ms\x18\x02 \x01(\rR\n" +
+	"durationMs\x12\x15\n" +
+	"\x06age_ms\x18\x03 \x01(\x04R\x05ageMs\x12+\n" +
+	"\x11destination_known\x18\x04 \x01(\bR\x10destinationKnown\x12#\n" +
+	"\rdestination_x\x18\x05 \x01(\x02R\fdestinationX\x12#\n" +
+	"\rdestination_y\x18\x06 \x01(\x02R\fdestinationY\x12#\n" +
+	"\rdestination_z\x18\a \x01(\x02R\fdestinationZ\x12\x16\n" +
+	"\x06cyclic\x18\b \x01(\bR\x06cyclic\x12-\n" +
+	"\x12transport_relative\x18\t \x01(\bR\x11transportRelative\x12%\n" +
+	"\x0etransport_guid\x18\n" +
+	" \x01(\x04R\rtransportGuid\x12%\n" +
+	"\x0etransport_seat\x18\v \x01(\x05R\rtransportSeat\x12\x18\n" +
+	"\astopped\x18\f \x01(\bR\astopped\x12\x14\n" +
+	"\x05flags\x18\r \x01(\rR\x05flags\">\n" +
 	"\rQuestLogEntry\x12\x12\n" +
 	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x19\n" +
 	"\bquest_id\x18\x02 \x01(\rR\aquestId\"\xaf\x01\n" +
@@ -1148,34 +1318,36 @@ func file_modules_buddy_world_world_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_world_world_proto_rawDescData
 }
 
-var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_modules_buddy_world_world_proto_goTypes = []any{
-	(*PlayerState)(nil),      // 0: warcraftbuddy.world.v1.PlayerState
-	(*SnapshotRequest)(nil),  // 1: warcraftbuddy.world.v1.SnapshotRequest
-	(*CreatureState)(nil),    // 2: warcraftbuddy.world.v1.CreatureState
-	(*QuestLogEntry)(nil),    // 3: warcraftbuddy.world.v1.QuestLogEntry
-	(*BackpackSlot)(nil),     // 4: warcraftbuddy.world.v1.BackpackSlot
-	(*SnapshotResponse)(nil), // 5: warcraftbuddy.world.v1.SnapshotResponse
-	(*v1.WorldPacket)(nil),   // 6: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),    // 7: google.protobuf.Empty
+	(*PlayerState)(nil),        // 0: warcraftbuddy.world.v1.PlayerState
+	(*SnapshotRequest)(nil),    // 1: warcraftbuddy.world.v1.SnapshotRequest
+	(*CreatureState)(nil),      // 2: warcraftbuddy.world.v1.CreatureState
+	(*CreatureTrajectory)(nil), // 3: warcraftbuddy.world.v1.CreatureTrajectory
+	(*QuestLogEntry)(nil),      // 4: warcraftbuddy.world.v1.QuestLogEntry
+	(*BackpackSlot)(nil),       // 5: warcraftbuddy.world.v1.BackpackSlot
+	(*SnapshotResponse)(nil),   // 6: warcraftbuddy.world.v1.SnapshotResponse
+	(*v1.WorldPacket)(nil),     // 7: agentwow.module.v1.WorldPacket
+	(*emptypb.Empty)(nil),      // 8: google.protobuf.Empty
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
-	0, // 0: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
-	0, // 1: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
-	2, // 2: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
-	3, // 3: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	2, // 4: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
-	4, // 5: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
-	2, // 6: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
-	1, // 7: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	6, // 8: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5, // 9: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	7, // 10: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	9, // [9:11] is the sub-list for method output_type
-	7, // [7:9] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	3,  // 0: warcraftbuddy.world.v1.CreatureState.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
+	0,  // 1: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
+	0,  // 2: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
+	2,  // 3: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
+	4,  // 4: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	2,  // 5: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	5,  // 6: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
+	2,  // 7: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
+	1,  // 8: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	7,  // 9: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	6,  // 10: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	8,  // 11: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	10, // [10:12] is the sub-list for method output_type
+	8,  // [8:10] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -1189,7 +1361,7 @@ func file_modules_buddy_world_world_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_world_world_proto_rawDesc), len(file_modules_buddy_world_world_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

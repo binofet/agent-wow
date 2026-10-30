@@ -80,7 +80,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	}
 	out.Position = s.clientPositionLocked()
 	if s.state.InteractionOwner != "" {
-		out.InteractionLeaseRemainingMs = uint64(s.interactionUntil.Sub(now).Milliseconds())
+		if remaining := s.interactionUntil.Sub(now); remaining > 0 {
+			out.InteractionLeaseRemainingMs = uint64(remaining.Milliseconds())
+		}
 	}
 	return out
 }
@@ -90,6 +92,11 @@ func validInteractionOwner(owner string) bool {
 }
 func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
+		// An approach must stop before its expired lease can be discarded.
+		// Tick owns the bounded transport write; status remains read-only.
+		if s.state.Moving {
+			return
+		}
 		s.state.InteractionOwner = ""
 		s.interactionToken = ""
 		s.lastStep = s.now()
@@ -117,6 +124,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
 	if s.state.InteractionOwner != "" {
+		if !s.now().Before(s.interactionUntil) {
+			return nil, status.Error(codes.FailedPrecondition, "expired interaction awaits movement stop")
+		}
 		if r.Owner != s.state.InteractionOwner || r.Token == "" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 			return nil, status.Error(codes.FailedPrecondition, "another interaction is active")
 		}
@@ -165,6 +175,9 @@ func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.Interacti
 	s.expireInteractionLocked()
 	if s.state.InteractionOwner != r.Owner || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease does not match")
+	}
+	if !s.stopLocked(ctx) {
+		return nil, status.Error(codes.FailedPrecondition, "interaction movement stop unconfirmed")
 	}
 	s.state.InteractionOwner = ""
 	s.interactionToken = ""
@@ -538,6 +551,9 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
+		s.stopLocked(ctx)
+	}
 	s.expireInteractionLocked()
 	if s.state.InteractionOwner != "" {
 		s.lastStep = s.now()
@@ -585,6 +601,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.stopLocked(ctx)
 		s.lastStep = now
 		s.state.Reason = "observations_unavailable"
+		s.state.AssistReason = s.state.Reason
 		return
 	}
 	if reason := safePlayers(snapshot, s.selfGUID); reason != "" {
@@ -599,6 +616,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		s.lastStep = now
 		s.state.Reason = reason
+		s.state.AssistReason = reason
 		return
 	}
 	if !s.refreshPositionLocked(snapshot) {
@@ -764,6 +782,14 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	p := packet.Payload
 	malformed := false
 	switch packet.Opcode {
+	case opcode.SMSGSpellnonmeleedamagelog:
+		caster, _, spell, damage, err := decodeSpellDamage(p)
+		if err != nil {
+			malformed = true
+		} else if caster == s.selfGUID && spell == smite && damage > 0 {
+			s.state.SmiteDamageEvents++
+			s.state.SmiteDamageTotal += uint64(damage)
+		}
 	case opcode.SMSGInitialSpells:
 		heal, err := initialSpellKnown(p, lesserHeal)
 		attack, attackErr := initialSpellKnown(p, smite)
