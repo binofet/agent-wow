@@ -5,6 +5,7 @@ RUN go mod download
 COPY api ./api
 COPY pkg ./pkg
 COPY modules/buddy-world/api ./modules/buddy-world/api
+COPY modules/buddy-party/api ./modules/buddy-party/api
 COPY modules/buddy-actions ./modules/buddy-actions
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /buddy-actions ./modules/buddy-actions/cmd
 
