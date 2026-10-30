@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-è(
+ª*
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -61,7 +61,13 @@ corpseGuid(
 game_object_guid (RgameObjectGuid"G
 ApproachQuestRequest
 token (	Rtoken
-npc_guid (RnpcGuid"(
+npc_guid (RnpcGuid"h
+TravelToRequest
+token (	Rtoken
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz"(
 ExitCryptRequest
 token (	Rtoken"_
 InteractionLease
@@ -141,7 +147,7 @@ practicing%
 practice_kills> (RpracticeKills*
 known_shadow_bolt? (RknownShadowBolt9
 shadow_bolt_damage_events@ (RshadowBoltDamageEvents7
-shadow_bolt_damage_totalA (RshadowBoltDamageTotal2¡
+shadow_bolt_damage_totalA (RshadowBoltDamageTotal2ù
 
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
@@ -154,7 +160,8 @@ practicing%
 ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`
 ApproachQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State^
 TravelQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State`
-TravelTrainer..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateX
+TravelTrainer..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateV
+TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.StateX
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
 Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>

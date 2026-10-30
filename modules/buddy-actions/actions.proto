@@ -20,7 +20,7 @@ message ClientPosition {
   uint64 revision = 10;
 }
 message InteractionRequest {
-  // Fixed coordination labels: loot, quests, trade, training, mail, professions.
+  // Fixed coordination labels: loot, quests, trade, training, mail, professions, exploration.
   string owner = 1;
   // Required only to renew an existing lease; never returned by Status.
   string token = 2;
@@ -35,6 +35,14 @@ message ApproachLootRequest {
   uint64 game_object_guid = 3;
 }
 message ApproachQuestRequest { string token = 1; uint64 npc_guid = 2; }
+// Movement only: a caller destination grants no NPC presence or interaction proof.
+message TravelToRequest {
+  string token = 1;
+  uint32 map_id = 2;
+  float x = 3;
+  float y = 4;
+  float z = 5;
+}
 // An owned quests lease permits only the fixed, measured crypt exit route.
 message ExitCryptRequest { string token = 1; }
 message InteractionLease { string token = 1; State state = 2; }
@@ -54,7 +62,7 @@ message State {
   uint64 malformed_packets = 12;
   uint64 follow_lease_remaining_ms = 13;
   uint64 healing_lease_remaining_ms = 14;
-  // No collision, pathfinding, height-map or local line-of-sight query exists.
+  // Installed client navigation availability and remaining controller limits.
   string limitation = 15;
   // A failed movement-stop write blocks further movement/healing until an
   // explicit stop succeeds or a new authoritative stopped position is seen.
@@ -122,6 +130,7 @@ service BuddyActions {
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
   rpc TravelQuest(ApproachQuestRequest) returns (State);
   rpc TravelTrainer(ApproachQuestRequest) returns (State);
+  rpc TravelTo(TravelToRequest) returns (State);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);

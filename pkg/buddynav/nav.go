@@ -78,10 +78,13 @@ func PlanRegionContext(ctx context.Context, dataDir string, mapID uint32, region
 	return planWithReroutes(ctx, p, start, dest)
 }
 
-type physicalDiscontinuity struct{ from, to Point }
+type physicalDiscontinuity struct {
+	from, to           Point
+	floorFrom, floorTo Point
+}
 
 func (e *physicalDiscontinuity) Error() string {
-	return fmt.Sprintf("physical ground has an unsupported vertical ledge at %.4f,%.4f", e.from.X, e.from.Y)
+	return fmt.Sprintf("physical ground has an unsupported vertical ledge at %.4f,%.4f (floor %.4f -> %.4f)", e.from.X, e.from.Y, e.floorFrom.Z, e.floorTo.Z)
 }
 
 // A smoothed polygon path can cross the edge of a collision prop. At most two
@@ -217,21 +220,35 @@ func planWithin(ctx context.Context, b backend, contains func(Point) bool, name 
 	// the polygon-crossing waypoints.
 	out := make([]Point, 0, MaxPoints)
 	var previousMesh Point
+	var segmentStart, segmentEnd Point
+	var segmentKnown bool
 	var add func(Point, int) error
 	add = func(q Point, depth int) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		h, err := b.ground(q)
+		var h float32
+		var water, bound bool
+		var err error
+		if routed, ok := b.(interface {
+			groundOnRoute(Point, Point, Point) (float32, bool, bool, error)
+		}); ok && segmentKnown {
+			h, water, bound, err = routed.groundOnRoute(q, segmentStart, segmentEnd)
+		}
+		if err == nil && !bound {
+			h, err = b.ground(q)
+		}
 		if err != nil {
 			return fmt.Errorf("navigation ground sample at %.4f,%.4f,%.4f: %w", q.X, q.Y, q.Z, err)
 		}
-		if !finite(h) || math.Abs(float64(h-q.Z)) > 2 {
+		if !finite(h) || !bound && math.Abs(float64(h-q.Z)) > 2 {
 			return errors.New("navigation sample differs from mesh height by more than 2 yards")
 		}
-		water, err := b.water(q)
-		if err != nil {
-			return err
+		if !bound {
+			water, err = b.water(q)
+			if err != nil {
+				return err
+			}
 		}
 		terrain, ok := b.terrain(q)
 		if !ok || !finite(terrain) || terrain <= -10000 {
@@ -269,7 +286,7 @@ func planWithin(ctx context.Context, b backend, contains func(Point) bool, name 
 			}
 			if math.Abs(float64(q.Z-prev.Z)) > 1.0 {
 				if depth >= 4 {
-					return &physicalDiscontinuity{from: previousMesh, to: meshPoint}
+					return &physicalDiscontinuity{from: previousMesh, to: meshPoint, floorFrom: prev, floorTo: q}
 				}
 				// Sample physical stair edges more finely without relaxing the cap.
 				mid := Point{(previousMesh.X + meshPoint.X) / 2, (previousMesh.Y + meshPoint.Y) / 2, (previousMesh.Z + meshPoint.Z) / 2}
@@ -294,6 +311,7 @@ func planWithin(ctx context.Context, b backend, contains func(Point) bool, name 
 	}
 	for i := 1; i < len(points); i++ {
 		a, z := points[i-1], points[i]
+		segmentStart, segmentEnd, segmentKnown = a, z, true
 		n := int(math.Ceil(distance(a, z)))
 		for j := 1; j <= n; j++ {
 			t := float32(j) / float32(n)
@@ -337,6 +355,7 @@ type planner struct {
 	filter         *detour.DtQueryFilter
 	floors         *floorReader
 	terrainHeaders map[string]bool
+	routeSurfaces  []routeSurface
 }
 
 type plannerCacheKey struct {
@@ -402,6 +421,7 @@ func cachedPlannerRegion(dataDir string, region Region) (*planner, error) {
 }
 
 func (p *planner) findPath(a, b Point) (*pathfinding.PathResult, error) {
+	p.routeSurfaces = nil
 	start, _, err := p.groundRef(a)
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
@@ -431,6 +451,12 @@ func (p *planner) findPath(a, b Point) (*pathfinding.PathResult, error) {
 			return nil, errors.New("navigation off-mesh connection is unsupported")
 		}
 		r.Points[i] = pathfinding.Point3D{X: positions[i*3+2], Y: positions[i*3], Z: positions[i*3+1]}
+	}
+	// Detour documents straightPathRefs as the polygon entered at each
+	// crossing. ALL_CROSSINGS therefore binds each following XY segment to
+	// one actual corridor polygon, including its detailed non-planar ground.
+	for i := 0; i < n-1; i++ {
+		p.routeSurfaces = append(p.routeSurfaces, routeSurface{from: Point{r.Points[i].X, r.Points[i].Y, r.Points[i].Z}, to: Point{r.Points[i+1].X, r.Points[i+1].Y, r.Points[i+1].Z}, ref: refs[i]})
 	}
 	return r, nil
 }

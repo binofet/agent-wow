@@ -127,7 +127,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 }
 
 func validInteractionOwner(owner string) bool {
-	return owner == "loot" || owner == "quests" || owner == "trade" || owner == "training" || owner == "mail" || owner == "professions"
+	return owner == "loot" || owner == "quests" || owner == "trade" || owner == "training" || owner == "mail" || owner == "professions" || owner == "exploration"
 }
 func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
@@ -144,7 +144,7 @@ func (s *Service) expireInteractionLocked() {
 
 func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.InteractionRequest) (*actionsv1.InteractionLease, error) {
 	if r == nil || !validInteractionOwner(r.Owner) {
-		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, mail, or professions")
+		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, mail, professions, or exploration")
 	}
 	duration := r.LeaseMs
 	if duration == 0 {
@@ -616,6 +616,12 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 	}
 	if moving && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
 		s.state.Reason = "movement_owner_map_changed"
+		return false
+	}
+	// Clock and observation callbacks may consume the remainder of a lease.
+	// Expiry revokes travel writes immediately; the old movement still owes STOP.
+	if moving && s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
+		s.state.Reason = "movement_interaction_lease_expired"
 		return false
 	}
 	if !s.sendLocked(ctx, op, movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)) {
