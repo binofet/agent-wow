@@ -654,6 +654,179 @@ func (x *EquipmentSlotState) GetHasEnhancements() bool {
 	return false
 }
 
+// Actual observed own non-bones CORPSE object, not a guessed death location.
+type CorpseState struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Guid              uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
+	OwnerGuid         uint64                 `protobuf:"varint,2,opt,name=owner_guid,json=ownerGuid,proto3" json:"owner_guid,omitempty"`
+	Present           bool                   `protobuf:"varint,3,opt,name=present,proto3" json:"present,omitempty"`
+	MapKnown          bool                   `protobuf:"varint,4,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
+	MapId             uint32                 `protobuf:"varint,5,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
+	PositionKnown     bool                   `protobuf:"varint,6,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
+	X                 float32                `protobuf:"fixed32,7,opt,name=x,proto3" json:"x,omitempty"`
+	Y                 float32                `protobuf:"fixed32,8,opt,name=y,proto3" json:"y,omitempty"`
+	Z                 float32                `protobuf:"fixed32,9,opt,name=z,proto3" json:"z,omitempty"`
+	Orientation       float32                `protobuf:"fixed32,10,opt,name=orientation,proto3" json:"orientation,omitempty"`
+	PositionRevision  uint64                 `protobuf:"varint,11,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
+	PositionAgeMs     uint64                 `protobuf:"varint,12,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
+	ObservationAgeMs  uint64                 `protobuf:"varint,13,opt,name=observation_age_ms,json=observationAgeMs,proto3" json:"observation_age_ms,omitempty"`
+	FlagsKnown        bool                   `protobuf:"varint,14,opt,name=flags_known,json=flagsKnown,proto3" json:"flags_known,omitempty"`
+	Flags             uint32                 `protobuf:"varint,15,opt,name=flags,proto3" json:"flags,omitempty"`
+	DynamicFlagsKnown bool                   `protobuf:"varint,16,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
+	DynamicFlags      uint32                 `protobuf:"varint,17,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CorpseState) Reset() {
+	*x = CorpseState{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CorpseState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CorpseState) ProtoMessage() {}
+
+func (x *CorpseState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CorpseState.ProtoReflect.Descriptor instead.
+func (*CorpseState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CorpseState) GetGuid() uint64 {
+	if x != nil {
+		return x.Guid
+	}
+	return 0
+}
+
+func (x *CorpseState) GetOwnerGuid() uint64 {
+	if x != nil {
+		return x.OwnerGuid
+	}
+	return 0
+}
+
+func (x *CorpseState) GetPresent() bool {
+	if x != nil {
+		return x.Present
+	}
+	return false
+}
+
+func (x *CorpseState) GetMapKnown() bool {
+	if x != nil {
+		return x.MapKnown
+	}
+	return false
+}
+
+func (x *CorpseState) GetMapId() uint32 {
+	if x != nil {
+		return x.MapId
+	}
+	return 0
+}
+
+func (x *CorpseState) GetPositionKnown() bool {
+	if x != nil {
+		return x.PositionKnown
+	}
+	return false
+}
+
+func (x *CorpseState) GetX() float32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *CorpseState) GetY() float32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *CorpseState) GetZ() float32 {
+	if x != nil {
+		return x.Z
+	}
+	return 0
+}
+
+func (x *CorpseState) GetOrientation() float32 {
+	if x != nil {
+		return x.Orientation
+	}
+	return 0
+}
+
+func (x *CorpseState) GetPositionRevision() uint64 {
+	if x != nil {
+		return x.PositionRevision
+	}
+	return 0
+}
+
+func (x *CorpseState) GetPositionAgeMs() uint64 {
+	if x != nil {
+		return x.PositionAgeMs
+	}
+	return 0
+}
+
+func (x *CorpseState) GetObservationAgeMs() uint64 {
+	if x != nil {
+		return x.ObservationAgeMs
+	}
+	return 0
+}
+
+func (x *CorpseState) GetFlagsKnown() bool {
+	if x != nil {
+		return x.FlagsKnown
+	}
+	return false
+}
+
+func (x *CorpseState) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *CorpseState) GetDynamicFlagsKnown() bool {
+	if x != nil {
+		return x.DynamicFlagsKnown
+	}
+	return false
+}
+
+func (x *CorpseState) GetDynamicFlags() uint32 {
+	if x != nil {
+		return x.DynamicFlags
+	}
+	return 0
+}
+
 type EquippedWeapon struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SlotKnown       bool                   `protobuf:"varint,1,opt,name=slot_known,json=slotKnown,proto3" json:"slot_known,omitempty"`
@@ -669,7 +842,7 @@ type EquippedWeapon struct {
 
 func (x *EquippedWeapon) Reset() {
 	*x = EquippedWeapon{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -681,7 +854,7 @@ func (x *EquippedWeapon) String() string {
 func (*EquippedWeapon) ProtoMessage() {}
 
 func (x *EquippedWeapon) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -694,7 +867,7 @@ func (x *EquippedWeapon) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EquippedWeapon.ProtoReflect.Descriptor instead.
 func (*EquippedWeapon) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EquippedWeapon) GetSlotKnown() bool {
@@ -764,7 +937,7 @@ type SnapshotRequest struct {
 
 func (x *SnapshotRequest) Reset() {
 	*x = SnapshotRequest{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -776,7 +949,7 @@ func (x *SnapshotRequest) String() string {
 func (*SnapshotRequest) ProtoMessage() {}
 
 func (x *SnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -789,7 +962,7 @@ func (x *SnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotRequest.ProtoReflect.Descriptor instead.
 func (*SnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SnapshotRequest) GetCreatureGuid() uint64 {
@@ -851,7 +1024,7 @@ type GameObjectState struct {
 
 func (x *GameObjectState) Reset() {
 	*x = GameObjectState{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -863,7 +1036,7 @@ func (x *GameObjectState) String() string {
 func (*GameObjectState) ProtoMessage() {}
 
 func (x *GameObjectState) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -876,7 +1049,7 @@ func (x *GameObjectState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GameObjectState.ProtoReflect.Descriptor instead.
 func (*GameObjectState) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GameObjectState) GetGuid() uint64 {
@@ -1092,7 +1265,7 @@ type CreatureState struct {
 
 func (x *CreatureState) Reset() {
 	*x = CreatureState{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1277,7 @@ func (x *CreatureState) String() string {
 func (*CreatureState) ProtoMessage() {}
 
 func (x *CreatureState) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1290,7 @@ func (x *CreatureState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatureState.ProtoReflect.Descriptor instead.
 func (*CreatureState) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CreatureState) GetGuid() uint64 {
@@ -1424,7 +1597,7 @@ type CreatureTrajectory struct {
 
 func (x *CreatureTrajectory) Reset() {
 	*x = CreatureTrajectory{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1436,7 +1609,7 @@ func (x *CreatureTrajectory) String() string {
 func (*CreatureTrajectory) ProtoMessage() {}
 
 func (x *CreatureTrajectory) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[6]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1449,7 +1622,7 @@ func (x *CreatureTrajectory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreatureTrajectory.ProtoReflect.Descriptor instead.
 func (*CreatureTrajectory) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CreatureTrajectory) GetKnown() bool {
@@ -1560,7 +1733,7 @@ type QuestLogEntry struct {
 
 func (x *QuestLogEntry) Reset() {
 	*x = QuestLogEntry{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[7]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1572,7 +1745,7 @@ func (x *QuestLogEntry) String() string {
 func (*QuestLogEntry) ProtoMessage() {}
 
 func (x *QuestLogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[7]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1585,7 +1758,7 @@ func (x *QuestLogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestLogEntry.ProtoReflect.Descriptor instead.
 func (*QuestLogEntry) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *QuestLogEntry) GetSlot() uint32 {
@@ -1658,7 +1831,7 @@ type BackpackSlot struct {
 
 func (x *BackpackSlot) Reset() {
 	*x = BackpackSlot{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1670,7 +1843,7 @@ func (x *BackpackSlot) String() string {
 func (*BackpackSlot) ProtoMessage() {}
 
 func (x *BackpackSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1683,7 +1856,7 @@ func (x *BackpackSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackpackSlot.ProtoReflect.Descriptor instead.
 func (*BackpackSlot) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *BackpackSlot) GetBag() uint32 {
@@ -1781,7 +1954,7 @@ type InventoryBag struct {
 
 func (x *InventoryBag) Reset() {
 	*x = InventoryBag{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1793,7 +1966,7 @@ func (x *InventoryBag) String() string {
 func (*InventoryBag) ProtoMessage() {}
 
 func (x *InventoryBag) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1806,7 +1979,7 @@ func (x *InventoryBag) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryBag.ProtoReflect.Descriptor instead.
 func (*InventoryBag) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *InventoryBag) GetBag() uint32 {
@@ -1881,7 +2054,7 @@ type SkillState struct {
 
 func (x *SkillState) Reset() {
 	*x = SkillState{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[10]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1893,7 +2066,7 @@ func (x *SkillState) String() string {
 func (*SkillState) ProtoMessage() {}
 
 func (x *SkillState) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[10]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1906,7 +2079,7 @@ func (x *SkillState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SkillState.ProtoReflect.Descriptor instead.
 func (*SkillState) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SkillState) GetSlot() uint32 {
@@ -2035,13 +2208,15 @@ type SnapshotResponse struct {
 	SelfEquipmentRevision uint64 `protobuf:"varint,42,opt,name=self_equipment_revision,json=selfEquipmentRevision,proto3" json:"self_equipment_revision,omitempty"`
 	// Exactly19 logical slots after own CREATE; empty slots have item_guid0.
 	SelfEquipment []*EquipmentSlotState `protobuf:"bytes,43,rep,name=self_equipment,json=selfEquipment,proto3" json:"self_equipment,omitempty"`
+	// Absent when unobserved, foreign, bones, or multiple own corpses disagree.
+	OwnCorpse     *CorpseState `protobuf:"bytes,44,opt,name=own_corpse,json=ownCorpse,proto3" json:"own_corpse,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[11]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2053,7 +2228,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[11]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2066,7 +2241,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SnapshotResponse) GetSelf() *PlayerState {
@@ -2370,6 +2545,13 @@ func (x *SnapshotResponse) GetSelfEquipment() []*EquipmentSlotState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetOwnCorpse() *CorpseState {
+	if x != nil {
+		return x.OwnCorpse
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -2462,7 +2644,28 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0emax_durability\x18\t \x01(\rR\rmaxDurability\x12-\n" +
 	"\x12enhancements_known\x18\n" +
 	" \x01(\bR\x11enhancementsKnown\x12)\n" +
-	"\x10has_enhancements\x18\v \x01(\bR\x0fhasEnhancements\"\xfb\x01\n" +
+	"\x10has_enhancements\x18\v \x01(\bR\x0fhasEnhancements\"\x90\x04\n" +
+	"\vCorpseState\x12\x12\n" +
+	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x1d\n" +
+	"\n" +
+	"owner_guid\x18\x02 \x01(\x04R\townerGuid\x12\x18\n" +
+	"\apresent\x18\x03 \x01(\bR\apresent\x12\x1b\n" +
+	"\tmap_known\x18\x04 \x01(\bR\bmapKnown\x12\x15\n" +
+	"\x06map_id\x18\x05 \x01(\rR\x05mapId\x12%\n" +
+	"\x0eposition_known\x18\x06 \x01(\bR\rpositionKnown\x12\f\n" +
+	"\x01x\x18\a \x01(\x02R\x01x\x12\f\n" +
+	"\x01y\x18\b \x01(\x02R\x01y\x12\f\n" +
+	"\x01z\x18\t \x01(\x02R\x01z\x12 \n" +
+	"\vorientation\x18\n" +
+	" \x01(\x02R\vorientation\x12+\n" +
+	"\x11position_revision\x18\v \x01(\x04R\x10positionRevision\x12&\n" +
+	"\x0fposition_age_ms\x18\f \x01(\x04R\rpositionAgeMs\x12,\n" +
+	"\x12observation_age_ms\x18\r \x01(\x04R\x10observationAgeMs\x12\x1f\n" +
+	"\vflags_known\x18\x0e \x01(\bR\n" +
+	"flagsKnown\x12\x14\n" +
+	"\x05flags\x18\x0f \x01(\rR\x05flags\x12.\n" +
+	"\x13dynamic_flags_known\x18\x10 \x01(\bR\x11dynamicFlagsKnown\x12#\n" +
+	"\rdynamic_flags\x18\x11 \x01(\rR\fdynamicFlags\"\xfb\x01\n" +
 	"\x0eEquippedWeapon\x12\x1d\n" +
 	"\n" +
 	"slot_known\x18\x01 \x01(\bR\tslotKnown\x12\x1b\n" +
@@ -2617,7 +2820,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xba\x15\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xfe\x15\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -2665,7 +2868,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x11trainer_creatures\x18( \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10trainerCreatures\x120\n" +
 	"\x14self_equipment_known\x18) \x01(\bR\x12selfEquipmentKnown\x126\n" +
 	"\x17self_equipment_revision\x18* \x01(\x04R\x15selfEquipmentRevision\x12Q\n" +
-	"\x0eself_equipment\x18+ \x03(\v2*.warcraftbuddy.world.v1.EquipmentSlotStateR\rselfEquipment2\xb0\x01\n" +
+	"\x0eself_equipment\x18+ \x03(\v2*.warcraftbuddy.world.v1.EquipmentSlotStateR\rselfEquipment\x12B\n" +
+	"\n" +
+	"own_corpse\x18, \x01(\v2#.warcraftbuddy.world.v1.CorpseStateR\townCorpse2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -2683,59 +2888,61 @@ func file_modules_buddy_world_world_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_world_world_proto_rawDescData
 }
 
-var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*PlayerState)(nil),        // 0: warcraftbuddy.world.v1.PlayerState
 	(*EquipmentSlotState)(nil), // 1: warcraftbuddy.world.v1.EquipmentSlotState
-	(*EquippedWeapon)(nil),     // 2: warcraftbuddy.world.v1.EquippedWeapon
-	(*SnapshotRequest)(nil),    // 3: warcraftbuddy.world.v1.SnapshotRequest
-	(*GameObjectState)(nil),    // 4: warcraftbuddy.world.v1.GameObjectState
-	(*CreatureState)(nil),      // 5: warcraftbuddy.world.v1.CreatureState
-	(*CreatureTrajectory)(nil), // 6: warcraftbuddy.world.v1.CreatureTrajectory
-	(*QuestLogEntry)(nil),      // 7: warcraftbuddy.world.v1.QuestLogEntry
-	(*BackpackSlot)(nil),       // 8: warcraftbuddy.world.v1.BackpackSlot
-	(*InventoryBag)(nil),       // 9: warcraftbuddy.world.v1.InventoryBag
-	(*SkillState)(nil),         // 10: warcraftbuddy.world.v1.SkillState
-	(*SnapshotResponse)(nil),   // 11: warcraftbuddy.world.v1.SnapshotResponse
-	(*v1.WorldPacket)(nil),     // 12: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),      // 13: google.protobuf.Empty
+	(*CorpseState)(nil),        // 2: warcraftbuddy.world.v1.CorpseState
+	(*EquippedWeapon)(nil),     // 3: warcraftbuddy.world.v1.EquippedWeapon
+	(*SnapshotRequest)(nil),    // 4: warcraftbuddy.world.v1.SnapshotRequest
+	(*GameObjectState)(nil),    // 5: warcraftbuddy.world.v1.GameObjectState
+	(*CreatureState)(nil),      // 6: warcraftbuddy.world.v1.CreatureState
+	(*CreatureTrajectory)(nil), // 7: warcraftbuddy.world.v1.CreatureTrajectory
+	(*QuestLogEntry)(nil),      // 8: warcraftbuddy.world.v1.QuestLogEntry
+	(*BackpackSlot)(nil),       // 9: warcraftbuddy.world.v1.BackpackSlot
+	(*InventoryBag)(nil),       // 10: warcraftbuddy.world.v1.InventoryBag
+	(*SkillState)(nil),         // 11: warcraftbuddy.world.v1.SkillState
+	(*SnapshotResponse)(nil),   // 12: warcraftbuddy.world.v1.SnapshotResponse
+	(*v1.WorldPacket)(nil),     // 13: agentwow.module.v1.WorldPacket
+	(*emptypb.Empty)(nil),      // 14: google.protobuf.Empty
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
-	2,  // 0: warcraftbuddy.world.v1.PlayerState.mainhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
-	2,  // 1: warcraftbuddy.world.v1.PlayerState.offhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
-	6,  // 2: warcraftbuddy.world.v1.CreatureState.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
-	8,  // 3: warcraftbuddy.world.v1.InventoryBag.slots:type_name -> warcraftbuddy.world.v1.BackpackSlot
+	3,  // 0: warcraftbuddy.world.v1.PlayerState.mainhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
+	3,  // 1: warcraftbuddy.world.v1.PlayerState.offhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
+	7,  // 2: warcraftbuddy.world.v1.CreatureState.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
+	9,  // 3: warcraftbuddy.world.v1.InventoryBag.slots:type_name -> warcraftbuddy.world.v1.BackpackSlot
 	0,  // 4: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
 	0,  // 5: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
-	5,  // 6: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
-	7,  // 7: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	5,  // 8: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
-	8,  // 9: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
-	5,  // 10: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
-	5,  // 11: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
-	4,  // 12: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
-	4,  // 13: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
-	5,  // 14: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	10, // 15: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
-	4,  // 16: warcraftbuddy.world.v1.SnapshotResponse.spell_focuses:type_name -> warcraftbuddy.world.v1.GameObjectState
-	4,  // 17: warcraftbuddy.world.v1.SnapshotResponse.own_fishing_bobbers:type_name -> warcraftbuddy.world.v1.GameObjectState
-	5,  // 18: warcraftbuddy.world.v1.SnapshotResponse.requested_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
-	4,  // 19: warcraftbuddy.world.v1.SnapshotResponse.requested_game_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
-	9,  // 20: warcraftbuddy.world.v1.SnapshotResponse.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
-	5,  // 21: warcraftbuddy.world.v1.SnapshotResponse.skinnable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	6,  // 6: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
+	8,  // 7: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	6,  // 8: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	9,  // 9: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
+	6,  // 10: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
+	6,  // 11: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	5,  // 12: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
+	5,  // 13: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	6,  // 14: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	11, // 15: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
+	5,  // 16: warcraftbuddy.world.v1.SnapshotResponse.spell_focuses:type_name -> warcraftbuddy.world.v1.GameObjectState
+	5,  // 17: warcraftbuddy.world.v1.SnapshotResponse.own_fishing_bobbers:type_name -> warcraftbuddy.world.v1.GameObjectState
+	6,  // 18: warcraftbuddy.world.v1.SnapshotResponse.requested_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	5,  // 19: warcraftbuddy.world.v1.SnapshotResponse.requested_game_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	10, // 20: warcraftbuddy.world.v1.SnapshotResponse.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
+	6,  // 21: warcraftbuddy.world.v1.SnapshotResponse.skinnable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
 	0,  // 22: warcraftbuddy.world.v1.SnapshotResponse.nearby_players:type_name -> warcraftbuddy.world.v1.PlayerState
-	4,  // 23: warcraftbuddy.world.v1.SnapshotResponse.nearby_gathering_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
-	5,  // 24: warcraftbuddy.world.v1.SnapshotResponse.trainer_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	5,  // 23: warcraftbuddy.world.v1.SnapshotResponse.nearby_gathering_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	6,  // 24: warcraftbuddy.world.v1.SnapshotResponse.trainer_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
 	1,  // 25: warcraftbuddy.world.v1.SnapshotResponse.self_equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
-	3,  // 26: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	12, // 27: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	11, // 28: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	13, // 29: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	28, // [28:30] is the sub-list for method output_type
-	26, // [26:28] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	2,  // 26: warcraftbuddy.world.v1.SnapshotResponse.own_corpse:type_name -> warcraftbuddy.world.v1.CorpseState
+	4,  // 27: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	13, // 28: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	12, // 29: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	14, // 30: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	29, // [29:31] is the sub-list for method output_type
+	27, // [27:29] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -2749,7 +2956,7 @@ func file_modules_buddy_world_world_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_world_world_proto_rawDesc), len(file_modules_buddy_world_world_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-²,
+ù4
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -74,7 +74,33 @@ corpseGuid(
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"Ë
+state (2.warcraftbuddy.actions.v1.StateRstate"©
+RecoveryState
+enabled (Renabled
+active (Ractive
+phase (	Rphase
+reason (	Rreason
+death_epoch (R
+deathEpoch+
+release_attempted (RreleaseAttempted'
+release_written (RreleaseWritten%
+ghost_observed (RghostObserved,
+corpse_query_known	 (RcorpseQueryKnown!
+corpse_found
+ (RcorpseFoundQ
+corpse_location (2(.warcraftbuddy.actions.v1.ClientPositionRcorpseLocation"
+corpse_map_id (RcorpseMapId
+corpse_guid (R
+corpseGuidW
+graveyard_location (2(.warcraftbuddy.actions.v1.ClientPositionRgraveyardLocation.
+reclaim_delay_known (RreclaimDelayKnown;
+reclaim_delay_remaining_ms (RreclaimDelayRemainingMs+
+reclaim_attempted (RreclaimAttempted'
+reclaim_written (RreclaimWritten%
+alive_observed (RaliveObserved
+rested (Rrested1
+movement_unconfirmed (RmovementUnconfirmed#
+verified_legs (RverifiedLegs"
 State
 	following (R	following
 healing (Rhealing
@@ -151,7 +177,8 @@ practicing%
 shadow_bolt_damage_events@ (RshadowBoltDamageEvents7
 shadow_bolt_damage_totalA (RshadowBoltDamageTotal/
 interaction_harvestB (RinteractionHarvest.
-harvest_guard_guidsC (RharvestGuardGuids2Ú
+harvest_guard_guidsC (RharvestGuardGuidsC
+recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecovery2°
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -167,6 +194,7 @@ practicing%
 TravelVendor..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateV
 TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.StateX
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
-Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
+Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateT
+Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

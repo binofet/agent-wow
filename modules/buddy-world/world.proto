@@ -88,6 +88,27 @@ message EquipmentSlotState {
   bool has_enhancements = 11;
 }
 
+// Actual observed own non-bones CORPSE object, not a guessed death location.
+message CorpseState {
+  uint64 guid = 1;
+  uint64 owner_guid = 2;
+  bool present = 3;
+  bool map_known = 4;
+  uint32 map_id = 5;
+  bool position_known = 6;
+  float x = 7;
+  float y = 8;
+  float z = 9;
+  float orientation = 10;
+  uint64 position_revision = 11;
+  uint64 position_age_ms = 12;
+  uint64 observation_age_ms = 13;
+  bool flags_known = 14;
+  uint32 flags = 15;
+  bool dynamic_flags_known = 16;
+  uint32 dynamic_flags = 17;
+}
+
 message EquippedWeapon {
   bool slot_known = 1;
   uint64 item_guid = 2;
@@ -331,6 +352,8 @@ message SnapshotResponse {
   uint64 self_equipment_revision = 42;
   // Exactly19 logical slots after own CREATE; empty slots have item_guid0.
   repeated EquipmentSlotState self_equipment = 43;
+  // Absent when unobserved, foreign, bones, or multiple own corpses disagree.
+  CorpseState own_corpse = 44;
 }
 
 service BuddyWorld {

@@ -183,6 +183,7 @@ func (s *Session) SendPacket(ctx context.Context, op uint32, body []byte) error 
 		opcode.CMSGPlayerLogin, opcode.CMSGCheatPlayerLogin, opcode.CMSGCheckLoginCriteria,
 		opcode.CMSGPing, opcode.CMSGKeepAlive, opcode.CMSGTimeSyncResp, opcode.CMSGWardenData,
 		opcode.MSGMoveTeleportAck, opcode.MSGMoveWorldportAck,
+		opcode.CMSGForceMoveRootAck, opcode.CMSGForceMoveUnrootAck,
 		opcode.CMSGPlayerLogout, opcode.CMSGLogoutRequest, opcode.CMSGLogoutCancel:
 		return status.Error(codes.PermissionDenied, "opcode is owned by the session")
 	}

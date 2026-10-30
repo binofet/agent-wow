@@ -52,6 +52,30 @@ message TravelToRequest {
 // An owned quests lease permits only the fixed, measured crypt exit route.
 message ExitCryptRequest { string token = 1; }
 message InteractionLease { string token = 1; State state = 2; }
+message RecoveryState {
+  bool enabled = 1;
+  bool active = 2;
+  string phase = 3;
+  string reason = 4;
+  uint64 death_epoch = 5;
+  bool release_attempted = 6;
+  bool release_written = 7;
+  bool ghost_observed = 8;
+  bool corpse_query_known = 9;
+  bool corpse_found = 10;
+  ClientPosition corpse_location = 11;
+  uint32 corpse_map_id = 12;
+  uint64 corpse_guid = 13;
+  ClientPosition graveyard_location = 14;
+  bool reclaim_delay_known = 15;
+  uint64 reclaim_delay_remaining_ms = 16;
+  bool reclaim_attempted = 17;
+  bool reclaim_written = 18;
+  bool alive_observed = 19;
+  bool rested = 20;
+  bool movement_unconfirmed = 21;
+  uint32 verified_legs = 22;
+}
 message State {
   bool following = 1;
   bool healing = 2;
@@ -127,6 +151,7 @@ message State {
   // Actual online party plus self/fixed owner, refreshed by guarded renewal.
   // Only present while interaction_harvest is true; at most42 unique GUIDs.
   repeated uint64 harvest_guard_guids = 67;
+  RecoveryState recovery = 68;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -145,6 +170,8 @@ service BuddyActions {
   rpc TravelTo(TravelToRequest) returns (State);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
+  // Normal release, validated same-map ghost route, and corpse reclamation.
+  rpc Recovery(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

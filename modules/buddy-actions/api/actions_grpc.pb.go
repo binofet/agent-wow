@@ -36,6 +36,7 @@ const (
 	BuddyActions_TravelTo_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
 	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
 	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
+	BuddyActions_Recovery_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
 	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 )
@@ -60,6 +61,8 @@ type BuddyActionsClient interface {
 	TravelTo(ctx context.Context, in *TravelToRequest, opts ...grpc.CallOption) (*State, error)
 	ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error)
 	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
+	// Normal release, validated same-map ghost route, and corpse reclamation.
+	Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -222,6 +225,16 @@ func (c *buddyActionsClient) Practice(ctx context.Context, in *ToggleRequest, op
 	return out, nil
 }
 
+func (c *buddyActionsClient) Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Recovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -262,6 +275,8 @@ type BuddyActionsServer interface {
 	TravelTo(context.Context, *TravelToRequest) (*State, error)
 	ExitCrypt(context.Context, *ExitCryptRequest) (*State, error)
 	Practice(context.Context, *ToggleRequest) (*State, error)
+	// Normal release, validated same-map ghost route, and corpse reclamation.
+	Recovery(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyActionsServer()
@@ -318,6 +333,9 @@ func (UnimplementedBuddyActionsServer) ExitCrypt(context.Context, *ExitCryptRequ
 }
 func (UnimplementedBuddyActionsServer) Practice(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Practice not implemented")
+}
+func (UnimplementedBuddyActionsServer) Recovery(context.Context, *ToggleRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Recovery not implemented")
 }
 func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -616,6 +634,24 @@ func _BuddyActions_Practice_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_Recovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ToggleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Recovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Recovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Recovery(ctx, req.(*ToggleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -718,6 +754,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Practice",
 			Handler:    _BuddyActions_Practice_Handler,
+		},
+		{
+			MethodName: "Recovery",
+			Handler:    _BuddyActions_Recovery_Handler,
 		},
 		{
 			MethodName: "OnPacket",

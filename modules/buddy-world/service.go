@@ -80,7 +80,7 @@ func NewIndependentService(selfGUID uint64) *Service {
 }
 
 func newService(selfGUID, ownerGUID uint64) *Service {
-	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: ownerGUID}}, nearbyPlayers: make(map[uint64]*observed), creatures: make(map[uint64]*observed), items: make(map[uint64]*observed), gameObjects: make(map[uint64]*observed)}, now: time.Now}
+	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: ownerGUID}}, nearbyPlayers: make(map[uint64]*observed), creatures: make(map[uint64]*observed), items: make(map[uint64]*observed), gameObjects: make(map[uint64]*observed), corpses: make(map[uint64]*observed)}, now: time.Now}
 }
 
 func age(now, observed time.Time) uint64 {

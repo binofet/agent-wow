@@ -172,6 +172,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			state.nearbyPlayers = make(map[uint64]*observed)
 			state.creatures = make(map[uint64]*observed)
 			state.gameObjects = make(map[uint64]*observed)
+			state.corpses = make(map[uint64]*observed)
 		}
 		p.mapID, p.mapKnown, p.present = mapID, true, true
 		p.movementKnown = false
@@ -186,6 +187,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
 		state.gameObjects = make(map[uint64]*observed)
+		state.corpses = make(map[uint64]*observed)
 		return true, nil
 	case opcode.SMSGUpdateObject:
 		return true, updates(c, state, now)
@@ -425,10 +427,10 @@ func updates(c *cursor, state *observations, now time.Time) error {
 		case 0, 1, 2, 3:
 			guid := c.guid()
 			p := state.target(guid)
-			newCreature, newItem, newGameObject, newPlayer := false, false, false, false
+			newCreature, newItem, newGameObject, newPlayer, newCorpse := false, false, false, false, false
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
-				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 {
+				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 || state.corpses[guid] != nil && objectType != 7 {
 					return errLayout
 				}
 				if player(players, guid) != nil {
@@ -498,6 +500,17 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					p.known[gameObjectCreatedBy] = true
 					p.known[gameObjectCreatedBy+1] = true
 					newGameObject = true
+				} else if objectType == 7 && corpseGUID(guid) {
+					revision := uint64(0)
+					if p != nil {
+						revision = p.positionRevision
+					}
+					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now}
+					setMap(p, players[0])
+					for _, f := range []int{corpseOwner, corpseOwner + 1, corpseFlags, corpseDynamic} {
+						p.known[f] = true
+					}
+					newCorpse = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
 					p = &observed{guid: guid, present: true, observedAt: now, isContainer: objectType == 2, containerKnown: objectType == 2, inventoryItemKnown: true, inventoryEpoch: players[0].inventoryEpoch}
 					if objectType == 2 {
@@ -548,6 +561,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			}
 			if newGameObject {
 				state.putGameObject(p)
+			}
+			if newCorpse {
+				state.putCorpse(p)
 			}
 		case 4, 5:
 			n := c.u32()

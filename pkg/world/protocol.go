@@ -8,9 +8,13 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
-// The core handles connection lifecycle and server-commanded teleport ACKs.
+// The core handles connection lifecycle and server-commanded movement ACKs.
 // Gameplay payloads are still routed unchanged to registered modules.
 func (e *engine) handle(op uint16, body []byte) (bool, error) {
+	switch op {
+	case opcode.SMSGLoginVerifyWorld, opcode.SMSGTransferPending, opcode.SMSGNewWorld, opcode.MSGMoveTeleportAck:
+		e.movement.observed(op, body, e.s.state.Character.GUID, e.timestamp())
+	}
 	switch op {
 	case opcode.SMSGLoginVerifyWorld:
 		if len(body) != 20 {
@@ -32,6 +36,13 @@ func (e *engine) handle(op uint16, body []byte) (bool, error) {
 	case opcode.MSGMoveTeleportAck, opcode.SMSGNewWorld:
 		if replyOp, reply, valid := teleportAcknowledgement(op, body, e.s.state.Character.GUID, e.timestamp()); valid {
 			return false, e.write(replyOp, reply)
+		}
+	case opcode.SMSGForceMoveRoot, opcode.SMSGForceMoveUnroot:
+		if replyOp, reply, info, valid := e.movement.acknowledgement(op, body, e.s.state.Character.GUID, e.timestamp()); valid {
+			if err := e.write(replyOp, reply); err != nil {
+				return false, err
+			}
+			e.movement.info = info
 		}
 	case opcode.SMSGPong:
 		if len(body) != 4 {

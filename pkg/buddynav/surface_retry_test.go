@@ -52,8 +52,16 @@ func surfaceRetryFixture(t *testing.T, kind string) *planner {
 func TestSurfaceRetryThinLandingUsesEndpointPolygon(t *testing.T) {
 	p := surfaceRetryFixture(t, "landing")
 	a, b := Point{-8891.679, -165.76001, 98.34174}, Point{-8892.266, -165.06668, 98.44844}
-	if err := p.walkablePrimary(a, b); err == nil {
-		t.Fatal("fixture must reproduce midpoint landing ray failure")
+	// The bounded same-poly inset can now make the primary ray succeed too.
+	// Independently retain the endpoint retry's actual-poly/height proof.
+	endpointVerified := false
+	for _, hint := range [...]Point{a, b} {
+		if ref, _, err := p.groundRef(hint); err == nil && p.endpointPolygonRay(ref, a, b) {
+			endpointVerified = true
+		}
+	}
+	if !endpointVerified {
+		t.Fatal("thin landing lacks complete endpoint-polygon ray")
 	}
 	if err := p.walkable(a, b); err != nil {
 		t.Fatal(err)

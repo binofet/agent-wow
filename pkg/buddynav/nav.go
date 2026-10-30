@@ -544,28 +544,72 @@ func (p *planner) nearPoly(ref detour.DtPolyRef, q Point) bool {
 	return math.Hypot(float64(nearest[0]-v[0]), float64(nearest[2]-v[2])) <= 0.02
 }
 
+// insetRayPoint adjusts only the numerical ray/height query, never a movement
+// point. A centroid direction can round away its narrow-axis component at world
+// coordinates near 10,000. Try a bounded set of shorter centroid and inward
+// edge-normal offsets, each on this same polygon and at most 1cm after float32
+// rounding. The ordinary complete surface ray and physical sampler still run.
 func (p *planner) insetRayPoint(ref detour.DtPolyRef, v *[3]float32) error {
 	var tile *detour.DtMeshTile
 	var poly *detour.DtPoly
-	if st := p.mesh.GetTileAndPolyByRef(ref, &tile, &poly); detour.DtStatusFailed(st) || poly.VertCount < 3 {
+	if st := p.mesh.GetTileAndPolyByRef(ref, &tile, &poly); detour.DtStatusFailed(st) || poly.VertCount < 3 || !walkSurfaceFlags(poly.Flags) {
 		return errors.New("invalid ground polygon")
 	}
-	var cx, cy float32
+	original := *v
+	var cx, cy float64
 	for i := 0; i < int(poly.VertCount); i++ {
 		k := int(poly.Verts[i]) * 3
-		cx += tile.Verts[k]
-		cy += tile.Verts[k+2]
+		cx += float64(tile.Verts[k])
+		cy += float64(tile.Verts[k+2])
 	}
-	cx /= float32(poly.VertCount)
-	cy /= float32(poly.VertCount)
-	dx, dy := cx-v[0], cy-v[2]
-	d := math.Hypot(float64(dx), float64(dy))
-	if d > 0 {
-		factor := float32(math.Min(0.01/d, 1))
-		v[0] += dx * factor
-		v[2] += dy * factor
+	cx /= float64(poly.VertCount)
+	cy /= float64(poly.VertCount)
+	try := func(dx, dy float64) bool {
+		q := original
+		q[0] += float32(dx)
+		q[2] += float32(dy)
+		if math.Hypot(float64(q[0]-original[0]), float64(q[2]-original[2])) > .010001 {
+			return false
+		}
+		var height float32
+		if st := p.query.GetPolyHeight(ref, q[:], &height); detour.DtStatusFailed(st) || !finite(height) {
+			return false
+		}
+		*v = q
+		return true
 	}
-	return nil
+	dx, dy := cx-float64(original[0]), cy-float64(original[2])
+	d := math.Hypot(dx, dy)
+	if d == 0 {
+		if try(0, 0) {
+			return nil
+		}
+	} else {
+		for _, step := range [...]float64{.009, .005, .001, .01} {
+			factor := math.Min(step/d, 1)
+			if try(dx*factor, dy*factor) {
+				return nil
+			}
+		}
+	}
+	for i := 0; i < int(poly.VertCount); i++ {
+		a, b := int(poly.Verts[i])*3, int(poly.Verts[(i+1)%int(poly.VertCount)])*3
+		ex, ey := float64(tile.Verts[b])-float64(tile.Verts[a]), float64(tile.Verts[b+2])-float64(tile.Verts[a+2])
+		length := math.Hypot(ex, ey)
+		if length == 0 {
+			continue
+		}
+		nx, ny := -ey/length, ex/length
+		if nx*(cx-float64(tile.Verts[a]))+ny*(cy-float64(tile.Verts[a+2])) < 0 {
+			nx, ny = -nx, -ny
+		}
+		for _, step := range [...]float64{.001, .005, .009, .01} {
+			if try(nx*step, ny*step) {
+				return nil
+			}
+		}
+	}
+	return errors.New("cannot inset ground sample inside same polygon within 1cm")
 }
 
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/common/Collision/Maps/MapDefines.h

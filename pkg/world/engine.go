@@ -30,6 +30,7 @@ type engine struct {
 	pongTimer             *time.Timer
 	pingSequence, latency uint32
 	pings                 map[uint32]time.Time
+	movement              movementControl
 }
 
 func (e *engine) write(op uint32, body []byte) error {
@@ -46,6 +47,7 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte) error
 	}
 	_, err := e.s.conn.WritePacket(op, body)
 	if err == nil {
+		e.movement.sent(op, body, e.s.state.Character.GUID)
 		logPacket(e.s.logger, "write", op, len(body))
 	}
 	return err

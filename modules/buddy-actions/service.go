@@ -74,6 +74,7 @@ type Service struct {
 	navDataDir                                               string
 	planPath                                                 func(context.Context, string, position, position) ([]position, error)
 	planMapPath                                              func(context.Context, string, uint32, position, position) ([]position, error)
+	planRecoveryPath                                         func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                                        func(context.Context, string, position, position) ([]position, error)
 	planColdridge182Path                                     func(context.Context, string, position, position) ([]position, error)
 	practiceUntil                                            time.Time
@@ -89,10 +90,11 @@ type Service struct {
 	formation                                                followFormation
 	followNav                                                followNavigation
 	meleeNav                                                 followNavigation
+	recovery                                                 deathRecovery
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
 }
 
 // NewIndependentService keeps self-scoped actions available without granting
@@ -108,6 +110,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	s.expireInteractionLocked()
 	s.updateClassLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
+	out.Recovery = s.recovery.snapshot(s.now())
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -689,6 +692,10 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		s.state.Reason = "movement_interaction_lease_expired"
 		return false
 	}
+	if moving && s.recoveryOwnsLocked() && (snapshotErr != nil || !s.recovery.state.Active || !ghostSelf(w, s.selfGUID)) {
+		s.state.Reason = "recovery_ghost_changed_before_movement"
+		return false
+	}
 	if moving && s.state.InteractionHarvest {
 		reason := ""
 		if s.now().Sub(s.harvestGuardAt) < 0 || s.now().Sub(s.harvestGuardAt) > time.Second {
@@ -702,7 +709,19 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		}
 	}
 	follow, heal, assist := s.state.Following, s.state.Healing, s.state.Assisting
-	if !s.sendLocked(ctx, op, movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)) {
+	payload := movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)
+	if snapshotErr == nil && w.Self.AliveKnown && !w.Self.Alive && w.Self.PlayerFlags&ghostFlag != 0 {
+		if moving && (!s.recoveryOwnsLocked() || !ghostSelf(w, s.selfGUID)) {
+			s.state.Reason = "ghost_movement_requires_recovery_custody"
+			return false
+		}
+		// Water-walking has no optional MovementInfo tail. Preserve only this
+		// actually observed ghost flag; never invent swimming/flying flags.
+		at := len(packedGUID(s.selfGUID))
+		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
+		binary.LittleEndian.PutUint32(payload[at:], flags)
+	}
+	if !s.sendLocked(ctx, op, payload) {
 		if s.state.InteractionHarvest {
 			s.state.Following, s.state.Healing, s.state.Assisting = follow, heal, assist
 		}
@@ -764,6 +783,10 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.closed && s.recoveryTickLocked(ctx) {
+		s.lastStep = s.now()
+		return
+	}
 	formationUsed := false
 	defer func() {
 		// Combat, casts, interactions and corrections can change our position.
@@ -1026,6 +1049,12 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	p := packet.Payload
 	malformed := false
+	if handled, err := s.recoveryPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	switch packet.Opcode {
 	case opcode.SMSGPartykilllog:
 		if len(p) != 16 {

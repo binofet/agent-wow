@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-éM
+ÂQ
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"≠
 PlayerState
 guid (Rguid
@@ -120,7 +120,28 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"˚
+has_enhancements (RhasEnhancements"ê
+CorpseState
+guid (Rguid
+
+owner_guid (R	ownerGuid
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
+flags_known (R
+flagsKnown
+flags (Rflags.
+dynamic_flags_known (RdynamicFlagsKnown#
+dynamic_flags (RdynamicFlags"˚
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -275,7 +296,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"∫
+permanent_bonus (RpermanentBonus"˛
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -323,7 +344,9 @@ selfSkills@
 trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures0
 self_equipment_known) (RselfEquipmentKnown6
 self_equipment_revision* (RselfEquipmentRevisionQ
-self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipment2∞
+self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipmentB
+
+own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpse2∞
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
