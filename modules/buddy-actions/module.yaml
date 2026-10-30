@@ -19,6 +19,7 @@ rpc:
   approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
   travel_quest: /warcraftbuddy.actions.v1.BuddyActions/TravelQuest
   travel_trainer: /warcraftbuddy.actions.v1.BuddyActions/TravelTrainer
+  travel_vendor: /warcraftbuddy.actions.v1.BuddyActions/TravelVendor
   travel_to: /warcraftbuddy.actions.v1.BuddyActions/TravelTo
   exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice

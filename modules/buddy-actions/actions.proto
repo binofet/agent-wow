@@ -130,6 +130,8 @@ service BuddyActions {
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
   rpc TravelQuest(ApproachQuestRequest) returns (State);
   rpc TravelTrainer(ApproachQuestRequest) returns (State);
+  // Movement only under an owned trade lease to an actual observed vendor.
+  rpc TravelVendor(ApproachQuestRequest) returns (State);
   rpc TravelTo(TravelToRequest) returns (State);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
