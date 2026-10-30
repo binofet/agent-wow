@@ -150,9 +150,10 @@ class Maintenance:
                     or type(record.get('attempts')) is not int or not 1<=record['attempts']<=REJECT_ATTEMPTS):
                 raise Error('Training rejection record is invalid')
             if record.get('eligibility') is not None:self.checked_eligibility(record['eligibility'])
-        self.status = {'name': name, 'guid': guid, 'phase': 'starting'}
+        self.status = {'name': name, 'guid': guid, 'phase': 'starting', 'exhaustedTrainerCount': 0}
         self.next_query = 0
         self.stopped, self.travel_attempts = stopped, {}
+        self.exhausted_trainers, self.exhausted_body = {}, None
         self.endpoint = getattr(rpc, "url", None)
         expected = "http://127.0.0.1:"+str(next(p for n,g,p in ROSTER if g==guid))+"/rpc"
         if self.endpoint is not None and self.endpoint != expected:
@@ -230,6 +231,71 @@ class Maintenance:
             elif purchase.get('status')=='KNOWN_AT_TRAINER' and purchase.get('refreshedTrainerKnows') is True:
                 self.settle_training(pending,'known_at_trainer')
         return pending if pending['status']=='reserved' else None
+
+    def trainer_prerequisites(self, world, skills):
+        own=world.get('self',{})
+        if own.get('levelKnown') is not True or not 1<=integer(own.get('level',0))<=80:return None
+        ranks=[]
+        if skills:
+            rows=world.get('selfSkills',[])
+            if (world.get('selfSkillsKnown') is not True or not isinstance(rows,list) or len(rows)!=128
+                    or {integer(r.get('slot',0)) for r in rows}!=set(range(128))):return None
+            for skill in skills:
+                found=[integer(r.get('value',0)) for r in rows if integer(r.get('skillId',0))==skill]
+                if len(found)>1:return None
+                ranks.append((skill,found[0] if found else 0))
+        return integer(own['level']),tuple(ranks)
+
+    def trainer_exhausted(self, body, npc, world, state):
+        if body!=self.exhausted_body:
+            self.exhausted_trainers.clear();self.exhausted_body=body
+            self.status['exhaustedTrainerCount']=0
+        cached=self.exhausted_trainers.get(integer(npc))
+        if cached is None:return False
+        current=self.trainer_prerequisites(world,cached['skills'])
+        if current is None or state.get('copperKnown') is not True:return False
+        budget=min(CLASS_PURCHASE_CAP,max(0,integer(state.get('copper',0))-self.reserve_copper))
+        if current!=cached['prerequisites'] or cached['nextCost'] is not None and budget>=cached['nextCost']:
+            self.exhausted_trainers.pop(integer(npc),None)
+            self.status['exhaustedTrainerCount']=len(self.exhausted_trainers);return False
+        return True
+
+    def remember_exhausted_trainer(self, body, npc, world, state, spells, attempted, budget):
+        # Only a fresh, complete normal class list can suppress a later visit.
+        # Errors, unresolved purchases and definite failures never become exhaustion.
+        purchase=state.get('lastPurchase')
+        if (state.get('actionInFlight') is True or purchase and
+                purchase.get('status') not in ('TRAINING_CONFIRMED','KNOWN_AT_TRAINER')
+                or any(r['status'] in ('reserved','rejected') and integer(r['npc'])==integer(npc)
+                    for r in self.data['training'])):return
+        skills=set();costs=[]
+        for spell in spells:
+            sid,usable=integer(spell.get('spellId',0)),integer(spell.get('usable',0))
+            points=spell.get('pointCost')
+            if (not 0<sid<=2**32-1 or usable not in (0,1,2) or not isinstance(points,list)
+                    or len(points)!=2 or any(integer(v) for v in points)
+                    or str(sid) in self.data['rejections']):return
+            if usable!=2:
+                abilities=spell.get('requiredAbilities',[])
+                if (not isinstance(abilities,list) or len(abilities)>3
+                        or any(integer(v)>2**32-1 for v in abilities)):return
+                # Unavailable at the current level with an unobserved spell
+                # prerequisite cannot establish durable trainer exhaustion.
+                if (usable==1 and integer(spell.get('requiredLevel',0))<=integer(world['self'].get('level',0))
+                        and any(integer(v) for v in abilities)):return
+                skill=integer(spell.get('requiredSkill',0))
+                if skill:skills.add(skill)
+                cost=integer(spell.get('costCopper',0))
+                if usable==0 and sid not in attempted and budget<cost<=CLASS_PURCHASE_CAP:costs.append(cost)
+        skills=tuple(sorted(skills));prerequisites=self.trainer_prerequisites(world,skills)
+        if prerequisites is None:return
+        if body!=self.exhausted_body:
+            self.exhausted_trainers.clear();self.exhausted_body=body
+        if integer(npc) not in self.exhausted_trainers and len(self.exhausted_trainers)>=128:
+            self.exhausted_trainers.pop(next(iter(self.exhausted_trainers)))
+        self.exhausted_trainers[integer(npc)]={'skills':skills,'prerequisites':prerequisites,
+            'nextCost':min(costs) if costs else None}
+        self.status['exhaustedTrainerCount']=len(self.exhausted_trainers)
 
     def activity_phase(self):
         if c.quest_task_snapshot(self.guid).get('active') is True:
@@ -541,9 +607,18 @@ class Maintenance:
         nearby = discovery.get('nearby', [])
         if not isinstance(nearby, list) or len(nearby) > 97:
             raise Error('Trainer observations exceed bound')
+        if sync.session_id(state)!=self.exhausted_body:
+            self.exhausted_trainers.clear();self.exhausted_body=sync.session_id(state)
+            self.status['exhaustedTrainerCount']=0
         nearby=self.own_class_trainers(nearby,own)
         if pending is not None:
             nearby=[r for r in nearby if integer(r.get('creature',{}).get('guid',0))==integer(pending['npc'])]
+        else:
+            before=len(nearby)
+            nearby=[r for r in nearby if not self.trainer_exhausted(sync.session_id(state),
+                r.get('creature',{}).get('guid',0),world,state)]
+            if before and not nearby:
+                self.status['phase']='no_affordable_unattempted_class_training';return
         trainers = [row for row in nearby if row.get('interactable') is True]
         travel_guard=None
         if not trainers:
@@ -602,6 +677,7 @@ class Maintenance:
                     and self.retry_allowed(integer(spell['spellId']),evidence)):
                 choices.append(spell)
         if not choices:
+            self.remember_exhausted_trainer(listed_body,npc,world,state,spells,attempted,budget)
             self.status['phase'] = 'no_affordable_unattempted_class_training'
             return
         spell = min(choices, key=lambda s:(integer(s.get('costCopper',0)), integer(s['spellId'])))

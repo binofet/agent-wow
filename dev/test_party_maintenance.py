@@ -762,4 +762,86 @@ class DurableClassTrainingTests(unittest.TestCase):
         free=[p for method,p in self.rpc.calls if method=='buddy-training.buy'][-1]
         self.assertEqual((free['maxSpendCopper'],free['reserveCopper']),(1,100))
 
+class ExhaustedTrainerTests(unittest.TestCase):
+    setUp=MaintenanceTests.setUp
+    tick=MaintenanceTests.tick
+    methods=MaintenanceTests.methods
+
+    def complete_offer(self, usable=2, **changes):
+        self.rpc.offer['spells']=[dict(spellId=123,usable=usable,costCopper=100,
+            requiredLevel=4,pointCost=[0,0],**changes)]
+
+    def test_exhausted_visit_never_queries_or_moves_again_same_level(self):
+        self.complete_offer();self.rpc.world['owner']=None
+        self.rpc.world['self'].update(classKnown=True,classId=5,movementFlagsKnown=True)
+        self.rpc.trainer_x=20.
+        self.tick();self.assertEqual(self.methods().count('buddy-actions.travel_trainer'),1)
+        self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.assertEqual(self.agent.status['exhaustedTrainerCount'],1)
+        self.rpc.actions['position']['x']=0.
+        for _ in range(3):self.tick()
+        self.assertEqual(self.methods().count('buddy-actions.travel_trainer'),1)
+        self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.assertNotIn('buddy-training.buy',self.methods())
+        self.rpc.training['copper']+=1;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.list'),1)
+
+    def test_level_body_and_actual_relevant_prerequisite_progress_reopen(self):
+        self.complete_offer(1,requiredSkill=171)
+        self.rpc.world.update(selfSkillsKnown=True,selfSkills=[dict(slot=i) for i in range(128)])
+        self.rpc.world['selfSkills'][0].update(skillId=171,value=1)
+        self.tick();self.tick();self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.rpc.world['selfSkills'][1].update(skillId=43,value=20)
+        self.tick();self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.rpc.world['selfSkills'][0]['value']=2
+        self.tick();self.assertEqual(self.methods().count('buddy-training.list'),2)
+        self.rpc.world['self']['level']=5
+        self.tick();self.assertEqual(self.methods().count('buddy-training.list'),3)
+        self.rpc.training['sessionId']='body2'
+        self.tick();self.assertEqual(self.methods().count('buddy-training.list'),4)
+        self.assertEqual(self.agent.exhausted_body,'body2')
+
+    def test_unaffordable_offer_reopens_only_when_actual_budget_reaches_price(self):
+        self.complete_offer(0);self.rpc.training['copper']=150
+        self.tick();self.tick();self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.rpc.training['copper']=151;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.rpc.training['copper']=200;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.list'),2)
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_errors_pending_rejected_unknown_offers_never_establish_exhaustion(self):
+        for mode in ('error','pending','rejected','unknown_points','unknown_status','unknown_level','unknown_skill','unknown_ability'):
+            with self.subTest(mode=mode):
+                self.setUp();self.complete_offer()
+                if mode=='pending':self.rpc.purchase=dict(status='UNCONFIRMED_TIMEOUT')
+                elif mode=='rejected':self.rpc.purchase=dict(status='SERVER_REJECTED')
+                elif mode=='unknown_status':self.rpc.purchase=dict(status='MYSTERY')
+                elif mode=='unknown_points':self.rpc.offer['spells'][0].pop('pointCost')
+                elif mode=='unknown_level':self.rpc.world['self']['levelKnown']=False
+                elif mode=='unknown_skill':self.complete_offer(1,requiredSkill=171)
+                elif mode=='unknown_ability':self.complete_offer(1,requiredAbilities=[1000])
+                old=self.rpc.call
+                def call(method,params):
+                    if mode=='error' and method=='buddy-training.list':raise m.Error('list response lost')
+                    result=old(method,params)
+                    if method=='buddy-training.list' and mode in ('pending','rejected','unknown_status'):
+                        result['lastPurchase']=copy.deepcopy(self.rpc.purchase)
+                    return result
+                self.rpc.call=call
+                if mode=='error':
+                    with self.assertRaises(m.Error):self.tick()
+                else:self.tick()
+                self.assertFalse(self.agent.exhausted_trainers)
+
+    def test_cache_is_bounded_and_new_body_drops_all_old_teacher_keys(self):
+        self.complete_offer();body='body1';world=self.rpc.world;state=self.rpc.training
+        for n in range(140):
+            self.agent.remember_exhausted_trainer(body,int(self.rpc.offer['npcGuid'])+n,world,state,
+                self.rpc.offer['spells'],set(),9900)
+        self.assertEqual(len(self.agent.exhausted_trainers),128)
+        self.rpc.training['sessionId']='new-body';self.rpc.offer['expiresInMs']=0
+        self.tick();self.assertFalse(self.agent.exhausted_trainers)
+        self.assertEqual(self.agent.exhausted_body,'new-body')
+
 if __name__=='__main__':unittest.main()
