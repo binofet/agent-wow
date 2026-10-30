@@ -23,6 +23,30 @@ func safePracticeCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string 
 	return safeQuestCharacter(&worldv1.SnapshotResponse{Self: copy}, selfGUID)
 }
 
+func ownWolfQuest(w *worldv1.SnapshotResponse) (active, incomplete bool) {
+	if w == nil || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+		return false, false
+	}
+	seen := [25]bool{}
+	for _, q := range w.SelfQuestLog {
+		if q == nil || q.Slot >= 25 || seen[q.Slot] {
+			return false, false
+		}
+		seen[q.Slot] = true
+		if q.QuestId == 33 && !q.Failed && q.State&2 == 0 {
+			active, incomplete = true, !q.Complete && q.State&1 == 0
+		}
+	}
+	return active, incomplete
+}
+
+func practicePullBudget(p *worldv1.PlayerState) uint64 {
+	if p.ClassId == 5 {
+		return manaBudget(p, 45)
+	}
+	return manaBudget(p, 40)
+}
+
 func (s *Service) stopPracticeLocked(ctx context.Context, why string) {
 	s.state.Practicing = false
 	s.state.PracticePhase = why
@@ -57,14 +81,19 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		return nil, status.Error(codes.FailedPrecondition, "practice requires confirmed idle action ownership")
 	}
 	w, err := s.snapshot(ctx)
-	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || w.Self.Level != 1 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
-		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1 mage or rogue safely in Northshire")
+	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
+		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1..5 supported class safely in Northshire")
+	}
+	active33, incomplete33 := ownWolfQuest(w)
+	if !incomplete33 && (active33 || w.Self.Level != 1 || w.Self.ClassId == 5) {
+		return nil, status.Error(codes.FailedPrecondition, "practice requires own incompletequest33 or level1 mage/rogue XP goal")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
 	}
 	s.state.Practicing, s.state.PracticePhase = true, "waiting_for_safe_pull"
 	s.practiceUntil = s.now().Add(10 * time.Minute)
+	s.practiceQuestGoal = incomplete33
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 	s.practiceRoute = nil
 	s.practicePullStarted = false
@@ -83,13 +112,19 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		return
 	}
 	w, err := s.snapshot(ctx)
-	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 8) {
+	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
 	}
 	self := w.Self
+	active33, incomplete33 := ownWolfQuest(w)
+	questNeeded := incomplete33 && self.Level >= 1 && self.Level <= 5
+	xpNeeded := !active33 && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
+	if active33 {
+		s.practiceQuestGoal = true
+	}
 	finishing := false
-	if self.Level >= 2 {
+	if !questNeeded && !xpNeeded {
 		if s.practicePullStarted && self.UnitFlags&0x80000 != 0 && len(w.NearbyCreatures) <= 32 {
 			for _, c := range w.NearbyCreatures {
 				if eligiblePracticeWolf(c) && c.Guid == s.practiceTarget && c.AttackVictimKnown && c.AttackVictimGuid == s.selfGUID && c.AttackAgeMs <= 30000 {
@@ -98,17 +133,31 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			}
 		}
 		if !finishing {
-			s.stopPracticeLocked(ctx, "level_two_observed")
+			why := "level_two_observed"
+			if s.practiceQuestGoal {
+				why = "quest_33_completion_observed"
+				if incomplete33 {
+					why = "quest_33_level_limit"
+				}
+				if !active33 {
+					why = "own_quest_33_absent_or_unknown"
+				}
+			}
+			s.stopPracticeLocked(ctx, why)
 			return
 		}
-		s.state.PracticePhase = "finishing_current_fight_to_level2"
+		phase := "finishing_current_fight_to_level2"
+		if s.practiceQuestGoal {
+			phase = "finishing_current_fight_to_goal"
+		}
+		s.state.PracticePhase = phase
 		defer func() {
 			if s.state.Practicing {
-				s.state.PracticePhase = "finishing_current_fight_to_level2"
+				s.state.PracticePhase = phase
 			}
 		}()
 	}
-	if self.Level != 1 && !finishing || !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !s.refreshPositionLocked(w) || !northshire(s.pos) || s.state.MotionUnconfirmed {
+	if !questNeeded && !xpNeeded && !finishing || !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !s.refreshPositionLocked(w) || !northshire(s.pos) || s.state.MotionUnconfirmed {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
 	}
@@ -117,15 +166,15 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.state.PracticePhase = "waiting_for_server_attack_stop"
 		return
 	}
-	if self.ClassId == 8 && !s.state.KnownFireball || self.ClassId == 4 && (!s.state.KnownAutoAttack || !s.state.KnownSinisterStrike) {
+	if self.ClassId == 8 && !s.state.KnownFireball || self.ClassId == 5 && !s.state.KnownSmite || self.ClassId == 4 && (!s.state.KnownAutoAttack || !s.state.KnownSinisterStrike) {
 		s.stopPracticeLocked(ctx, "required_spell_unknown")
 		return
 	}
-	if self.ClassId == 8 && self.PowerType != 0 || self.ClassId == 4 && self.PowerType != 3 {
+	if self.ClassId != 4 && self.PowerType != 0 || self.ClassId == 4 && self.PowerType != 3 {
 		s.stopPracticeLocked(ctx, "class_resource_type_unknown")
 		return
 	}
-	if self.ClassId == 8 && self.UnitFlags&0x2000 != 0 || self.ClassId == 4 && (!self.CombatReachKnown || !self.BaseAttackTimeKnown || self.UnitFlags&(0x20000|0x200000) != 0) {
+	if self.ClassId != 4 && self.UnitFlags&0x2000 != 0 || self.ClassId == 4 && (!self.CombatReachKnown || !self.BaseAttackTimeKnown || self.UnitFlags&(0x20000|0x200000) != 0) {
 		s.stopPracticeLocked(ctx, "class_combat_state_unknown_or_unsafe")
 		return
 	}
@@ -168,8 +217,8 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			return
 		}
 		ready := self.MaxHealth > 0 && uint64(self.Health)*100 >= uint64(self.MaxHealth)*95
-		if self.ClassId == 8 {
-			ready = ready && self.PowerType == 0 && uint64(self.Power) >= manaBudget(self, 40)
+		if self.ClassId != 4 {
+			ready = ready && self.PowerType == 0 && uint64(self.Power) >= practicePullBudget(self)
 		} else {
 			ready = ready && self.PowerType == 3 && self.Power >= 90
 		}
@@ -177,7 +226,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			s.state.PracticePhase = "recovering_before_next_pull"
 			return
 		}
-		best := float64(46)
+		best := float64(120)
 		for _, c := range w.NearbyCreatures {
 			if !eligiblePracticeWolf(c) || c.UnitFlags&0x80000 != 0 || c.DynamicFlags != 0 || c.AttackVictimKnown || c.TargetKnown && c.TargetGuid != 0 {
 				continue
@@ -221,7 +270,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		return
 	}
 	standRange := float64(3.5)
-	if self.ClassId == 8 {
+	if self.ClassId != 4 {
 		standRange = 25
 	}
 	needsApproach := distance(s.pos, targetPosition) > standRange
@@ -268,7 +317,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	if !s.practicePullStarted {
 		// Recheck the pull prerequisites after approach/plan time; a previously
 		// healthy ready observation does not authorize a later weakened pull.
-		if self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || self.ClassId == 8 && uint64(self.Power) < manaBudget(self, 40) || self.ClassId == 4 && self.Power < 90 {
+		if self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || self.ClassId != 4 && uint64(self.Power) < practicePullBudget(self) || self.ClassId == 4 && self.Power < 90 {
 			s.stopPracticeLocked(ctx, "pull_prerequisites_changed")
 			return
 		}
@@ -278,13 +327,23 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	}
 	if self.ClassId == 4 {
 		s.rogueAssistLocked(ctx, w, target, targetPosition)
-	} else if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, 8) && self.UnitFlags&0x2000 == 0 {
-		if s.faceEnemyLocked(ctx, targetPosition) {
-			s.castOffenseLocked(ctx, fireball, target.Guid, 3*time.Second)
+	} else {
+		spell, cost := fireball, uint64(8)
+		if self.ClassId == 5 {
+			spell, cost = smite, 9
+		}
+		if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, cost) && self.UnitFlags&0x2000 == 0 {
+			if s.faceEnemyLocked(ctx, targetPosition) {
+				s.castOffenseLocked(ctx, spell, target.Guid, 3*time.Second)
+			}
 		}
 	}
 	if finishing {
-		s.state.PracticePhase = "finishing_current_fight_to_level2"
+		if s.practiceQuestGoal {
+			s.state.PracticePhase = "finishing_current_fight_to_goal"
+		} else {
+			s.state.PracticePhase = "finishing_current_fight_to_level2"
+		}
 	} else {
 		s.state.PracticePhase = "fighting_observed_young_wolf"
 	}

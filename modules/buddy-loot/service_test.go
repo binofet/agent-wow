@@ -31,6 +31,7 @@ type fakeSession struct {
 	failOpcode    uint32
 	approachCalls int
 	failApproach  bool
+	afterAcquire  func()
 }
 
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -86,6 +87,9 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		a.InteractionOwner = "loot"
 		a.InteractionLeaseRemainingMs = 15000
 		value = &actionsv1.InteractionLease{Token: "owned-loot-token", State: a}
+		if f.afterAcquire != nil {
+			f.afterAcquire()
+		}
 	case "buddy-actions.release_interaction":
 		request := &actionsv1.InteractionRelease{}
 		if err := r.Request.UnmarshalTo(request); err != nil {

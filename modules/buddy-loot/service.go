@@ -43,6 +43,7 @@ type Service struct {
 	removed, pushed, moneySent, moneyCleared   bool
 	seen                                       map[uint64]bool
 	opened                                     bool
+	questWolf                                  bool
 }
 
 func NewService(session sessionAPI, self uint64) *Service {
@@ -126,6 +127,7 @@ func (s *Service) releaseLease(ctx context.Context) {
 	if s.token != "" {
 		_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "loot", Token: s.token}, &actionsv1.State{})
 		s.token = ""
+		s.questWolf = false
 	}
 }
 func (s *Service) finish(ctx context.Context) {
@@ -136,6 +138,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.window = lootWindow{}
 	s.index = 0
 	s.opened = false
+	s.questWolf = false
 	if s.state.Enabled {
 		s.state.Phase = "idle"
 	} else {
@@ -183,6 +186,49 @@ func (s *Service) Run(ctx context.Context) {
 
 func ownerReady(p *worldv1.PlayerState) bool {
 	return p != nil && p.Guid == 3 && p.Present && p.AliveKnown && p.Alive && p.PlayerFlags&2 == 0 && p.UnitFlagsKnown
+}
+
+// This exception belongs to the acting character's observed quest log. Party
+// members' quest IDs, backpack guesses, and an enable request cannot grant it.
+func ownWolfQuest(world *worldv1.SnapshotResponse, selfGUID uint64) bool {
+	if world == nil || world.Self == nil || world.Self.Guid != selfGUID || !world.SelfQuestLogKnown || len(world.SelfQuestLog) != 25 {
+		return false
+	}
+	var slots [25]bool
+	found := false
+	for _, entry := range world.SelfQuestLog {
+		if entry == nil || entry.Slot >= 25 || slots[entry.Slot] {
+			return false
+		}
+		slots[entry.Slot] = true
+		if entry.QuestId == 33 && !entry.Failed && entry.State&2 == 0 {
+			found = true
+		}
+	}
+	return found
+}
+
+func wolfQuestContext(world *worldv1.SnapshotResponse, p *actionsv1.ClientPosition, selfGUID uint64) bool {
+	if !ownWolfQuest(world, selfGUID) || p == nil {
+		return false
+	}
+	self := world.Self
+	if !self.Present || !self.AliveKnown || !self.Alive || !self.HealthKnown || self.Health == 0 || !self.MapKnown || self.MapId != 0 || !self.PositionKnown || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !self.MovementFlagsKnown || self.MovementFlags&^uint32(0x1ff) != 0 || self.ExtraMovementFlags != 0 || !self.SpeedsKnown || math.IsNaN(float64(self.RunSpeed)) || math.IsInf(float64(self.RunSpeed), 0) || math.Abs(float64(self.RunSpeed)-7) > 0.01 {
+		return false
+	}
+	if !p.Known || !p.MapKnown || p.MapId != 0 {
+		return false
+	}
+	for _, v := range []float32{p.X, p.Y, p.Z} {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.Abs(float64(v)) > 40000 {
+			return false
+		}
+	}
+	return true
+}
+
+func activeOwnerReady(world *worldv1.SnapshotResponse) bool {
+	return world != nil && ownerReady(world.Owner) && world.Owner.UnitFlags&0x80000 == 0
 }
 
 func eligible(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState) bool {
@@ -275,7 +321,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		if s.state.Phase != "waiting_release" {
 			world := &worldv1.SnapshotResponse{}
-			if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, world) != nil || !ownerReady(world.Owner) || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || world.Self.UnitFlags&0x80000 != 0 || (world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0) {
+			if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || world.Self.UnitFlags&0x80000 != 0 {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -286,6 +332,11 @@ func (s *Service) Tick(ctx context.Context) {
 				s.state.Enabled = false
 				s.state.Reason = "interaction_lease_lost_no_further_loot_writes"
 				s.finish(ctx)
+				return
+			}
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) {
+				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
+				s.beginRelease(ctx)
 				return
 			}
 		}
@@ -377,11 +428,11 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "world_observations_unavailable"
 		return
 	}
-	if !ownerReady(world.Owner) {
+	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
 	}
-	if world.Owner.UnitFlags&0x80000 != 0 {
+	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
@@ -408,7 +459,9 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "client_position_unavailable"
 		return
 	}
-	if actions.Position == nil || !actions.Position.Known || !actions.Position.MapKnown || !world.Owner.MapKnown || world.Owner.MapId != actions.Position.MapId || !world.Owner.PositionKnown || math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) > 30*30 {
+	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
+	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
+	if !ownerNearby && !wolfScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
 		return
 	}
@@ -416,6 +469,9 @@ func (s *Service) Tick(ctx context.Context) {
 	best := math.Inf(1)
 	for _, c := range world.LootableCorpses {
 		if c == nil {
+			continue
+		}
+		if !ownerNearby && (!wolfScope || c.Entry != 299) {
 			continue
 		}
 		if s.seen[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -441,6 +497,27 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.token = lease.Token
+	s.questWolf = selected.Entry == 299 && wolfScope
+	if s.questWolf {
+		selectedGUID := selected.Guid
+		fresh := &worldv1.SnapshotResponse{}
+		if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) != nil || lease.State.MotionUnconfirmed || !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) {
+			s.releaseLease(ctx)
+			s.questWolf = false
+			s.state.Reason = "quest_wolf_scope_changed_after_stop"
+			return
+		}
+		world = fresh
+		selected = nil
+		if len(fresh.LootableCorpses) <= 64 {
+			for _, c := range fresh.LootableCorpses {
+				if c != nil && c.Guid == selectedGUID && c.Entry == 299 {
+					selected = c
+					break
+				}
+			}
+		}
+	}
 	if !eligibleWithin(world.Self, lease.State.Position, selected, 12, 1.5) {
 		s.releaseLease(ctx)
 		s.state.Reason = "corpse_out_of_range_after_stop"

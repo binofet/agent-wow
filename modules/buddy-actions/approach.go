@@ -41,14 +41,11 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	if err != nil {
 		return pause("loot_approach_observations_unavailable")
 	}
-	if reason := safePlayers(w, s.selfGUID); reason != "" {
+	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
 		return pause("loot_approach_" + reason)
 	}
 	if !s.refreshPositionLocked(w) {
 		return pause("loot_approach_authoritative_position_changed")
-	}
-	if w.Self.MapId != 0 || w.Self.UnitFlags&0x80000 != 0 || w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
-		return pause("loot_approach_requires_nearby_owner_outside_combat")
 	}
 	if !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
 		return pause("loot_approach_normal_run_speed_unknown")
@@ -64,6 +61,15 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	}
 	if corpse == nil || !corpse.Present || !corpse.MapKnown || corpse.MapId != w.Self.MapId || !corpse.HealthKnown || corpse.Health != 0 || !corpse.AliveKnown || corpse.Alive || corpse.DynamicFlags&1 == 0 || corpse.Guid>>48 != 0xf130 && corpse.Guid>>48 != 0xf150 {
 		return pause("loot_approach_corpse_not_eligible")
+	}
+	quest33, _ := ownWolfQuest(w)
+	if !quest33 || corpse.Entry != 299 {
+		if reason := safePlayers(w, s.selfGUID); reason != "" {
+			return pause("loot_approach_" + reason)
+		}
+		if w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
+			return pause("loot_approach_requires_nearby_owner_outside_combat")
+		}
 	}
 	target, known, _ := creaturePosition(corpse)
 	d := distance(s.pos, target)

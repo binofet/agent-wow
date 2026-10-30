@@ -37,7 +37,7 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 				continue
 			}
 			p := position{c.X, c.Y, c.Z, c.Orientation}
-			if (c.Entry != 823 && c.Entry != 197) || !c.Present || !c.MapKnown || c.MapId != 0 || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&2 == 0 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !northshire(p) {
+			if (c.Entry != 823 && c.Entry != 197 && c.Entry != 196) || !c.Present || !c.MapKnown || c.MapId != 0 || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&2 == 0 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !northshire(p) {
 				return nil, "quest_travel_observed_stationary_giver_required"
 			}
 			return c, ""

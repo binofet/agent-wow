@@ -77,6 +77,7 @@ type Service struct {
 	practiceRouteTarget                                      position
 	practiceReplans                                          int
 	practiceKillCredited                                     bool
+	practiceQuestGoal                                        bool
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {

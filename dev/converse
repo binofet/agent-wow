@@ -43,10 +43,11 @@ ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALIN
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
            "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC")
 QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 3903],
-                       "prerequisiteQuestIds": [783],
+                       "prerequisiteQuestIds": [783, 5261, 33],
                        "characters": [{"name": "Arlen", "guid": 1, "port": 8086},
                                       {"name": "Mira", "guid": 4, "port": 8087},
                                       {"name": "Rook", "guid": 5, "port": 8088}]}
+LEGACY_QUEST_SYNC_IDENTITY = dict(QUEST_SYNC_IDENTITY, prerequisiteQuestIds=[783])
 NUMERIC_ARGS = ("quest_id", "item_entry", "gold_copper")
 REPLY_SCHEMA = {
     "type": "object", "properties": {
@@ -256,7 +257,7 @@ def quest_sync_snapshot(character_guid, stop=False):
         if len(raw) > 8192:
             return unknown
         record = json.loads(raw)
-        if (not isinstance(record, dict) or record.get("identity") != QUEST_SYNC_IDENTITY
+        if (not isinstance(record, dict) or record.get("identity") not in (QUEST_SYNC_IDENTITY, LEGACY_QUEST_SYNC_IDENTITY)
                 or record.get("routineActive") is not True
                 or not isinstance(record.get("instance"), str)
                 or not re.fullmatch(r"[0-9a-f]{32}", record["instance"])):
@@ -277,12 +278,12 @@ def quest_sync_snapshot(character_guid, stop=False):
             return unknown
         own = {key: raw_own[key] for key in ("guid", "name", "levelKnown", "level", "observationsCurrent",
                "lastObservedAt", "matchedRequestedIds", "exactGoalMatched", "introRewardConfirmed",
-               "navAvailable", "practiceKills") if key in raw_own}
+               "navAvailable", "practiceKills", "wolfQuestComplete") if key in raw_own}
         for key in ("phase", "practicePhase", "cleanup"):
             value = raw_own.get(key)
             if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,96}", value):
                 own[key] = value
-        for key in ("activeQuestIds", "missingQuestIds", "extraQuestIds"):
+        for key in ("activeQuestIds", "missingQuestIds", "extraQuestIds", "confirmedPrerequisiteQuestIds"):
             values = raw_own.get(key, [])
             if not isinstance(values, list) or len(values) > 25:
                 return unknown
@@ -294,9 +295,10 @@ def quest_sync_snapshot(character_guid, stop=False):
             return unknown
         result = {"active": True, "phase": phase,
                   "desiredQuestIds": [7, 18, 3903], "own": own,
+                  "prerequisiteQuestIds": record["identity"]["prerequisiteQuestIds"],
                   "updatedAt": record.get("updatedAt")}
         if stop:
-            write_json(folder / "stop.json", {"instance": record["instance"], "identity": QUEST_SYNC_IDENTITY})
+            write_json(folder / "stop.json", {"instance": record["instance"], "identity": record["identity"]})
             result["stopRequested"] = True
         return result
     except (OSError, ValueError, TypeError, ConversationError):

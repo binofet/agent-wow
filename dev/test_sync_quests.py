@@ -20,6 +20,7 @@ sync = importlib.util.module_from_spec(spec)
 loader.exec_module(sync)
 MCBRIDE = 0xf1300000c5000001
 WILLEM = 0xf130000337000002
+EAGAN = 0xf1300000c4000003
 
 
 class FakeRPC:
@@ -27,16 +28,20 @@ class FakeRPC:
         self.guid, self.level, self.revision, self.log_revision = guid, 1, 1, 1
         self.active, self.calls, self.session = set(), [], "quest-session"
         self.intro_done, self.offer, self.reward, self.receipt = False, {}, {}, {}
+        self.eagan_done, self.wolves_done, self.wolves_complete = False, False, True
+        self.rewards_by_quest = {}
         self.apply_accept, self.apply_claim = True, True
         self.error_on, self.rewards, self.nearby, self.owner_present = None, [], True, True
-        self.entries = ((WILLEM, 823), (MCBRIDE, 197))
+        self.entries = ((WILLEM, 823), (MCBRIDE, 197), (EAGAN, 196))
         self.actions = {"following": True, "navAvailable": True}
+        self.loot = {"enabled": True}
         self.far = False
         self.combat = False
 
     def world(self):
         return {"self": {"guid": str(self.guid), "present": True, "aliveKnown": True,
                          "alive": True, "levelKnown": True, "level": self.level,
+                         "classKnown": True, "classId": {1:5,4:8,5:4}.get(self.guid, 0),
                          "unitFlagsKnown": True, "unitFlags": 0x80000 if self.combat else 0},
                 "owner": {"guid": "3", "present": self.owner_present, "aliveKnown": True, "alive": True}}
 
@@ -52,7 +57,7 @@ class FakeRPC:
                         mapKnown=True, positionKnown=True, npcFlags=2)
         return {"sessionId": self.session, "questLogKnown": True,
                 "questLogRevision": str(self.log_revision),
-                "questLog": [{"questId": quest, "complete": quest == 783} for quest in sorted(self.active)],
+                "questLog": [{"questId": quest, "complete": quest in (783,5261) or quest == 33 and self.wolves_complete} for quest in sorted(self.active)],
                 "nearby": nearby, "offer": copy.deepcopy(self.offer),
                 "turnInOffer": copy.deepcopy(self.reward), "lastReward": copy.deepcopy(self.receipt)}
 
@@ -64,6 +69,11 @@ class FakeRPC:
             return self.state()
         if method == "buddy-actions.status":
             return copy.deepcopy(self.actions)
+        if method == "buddy-loot.state":
+            return copy.deepcopy(self.loot)
+        if method == "buddy-loot.enable":
+            self.loot["enabled"] = params["enabled"]
+            return copy.deepcopy(self.loot)
         if method == "buddy-actions.follow":
             self.actions["following"] = params["enabled"]
             return copy.deepcopy(self.actions)
@@ -84,15 +94,20 @@ class FakeRPC:
             npc = int(params["npcGuid"])
             offered = []
             if npc == WILLEM:
-                offered = [] if self.intro_done else [783]
+                intro_done = self.intro_done or 7 in self.active
+                offered = [] if intro_done else [783]
+                if intro_done and not self.eagan_done and not self.wolves_done:
+                    offered += [5261]
                 if self.level >= 2:
-                    offered += [18, 3903]
+                    offered += [18] + ([3903] if self.wolves_done else [])
             if npc == MCBRIDE and self.intro_done:
                 offered = [7]
+            if npc == EAGAN and self.eagan_done and not self.wolves_done:
+                offered = [33]
             self.offer = {"revision": str(self.revision), "npcGuid": str(npc), "expiresInMs": "60000",
                           "quests": [{"questId": quest, "available": True} for quest in offered if quest not in self.active]}
         elif method == "buddy-quests.accept":
-            if params["questId"] not in sync.DESIRED | {783}:
+            if params["questId"] not in sync.DESIRED | sync.PREREQUISITES:
                 raise AssertionError("Accepted out-of-goal quest")
             if self.apply_accept:
                 self.active.add(params["questId"])
@@ -101,21 +116,28 @@ class FakeRPC:
                 if quest["questId"] == params["questId"]:
                     quest["acceptRequested"] = True
         elif method == "buddy-quests.turn_in":
-            if params["questId"] != 783 or int(params["npcGuid"]) != MCBRIDE:
+            quest = params["questId"]
+            expected_npc = MCBRIDE if quest == 783 else EAGAN
+            if quest not in sync.PREREQUISITES or int(params["npcGuid"]) != expected_npc or quest == 33 and not self.wolves_complete:
                 raise AssertionError("Turned in a different quest or NPC")
             self.revision += 1
-            self.reward = {"revision": str(self.revision), "npcGuid": str(MCBRIDE), "questId": 783,
+            self.reward = {"revision": str(self.revision), "npcGuid": str(expected_npc), "questId": quest,
                            "source": "reward_offer", "canComplete": True, "expiresInMs": "60000",
-                           "choices": copy.deepcopy(self.rewards)}
+                           "choices": copy.deepcopy(self.rewards_by_quest.get(quest,self.rewards))}
         elif method == "buddy-quests.claim_reward":
-            if params["questId"] != 783 or params["offerRevision"] != self.reward["revision"]:
+            quest = params["questId"]
+            if quest not in sync.PREREQUISITES or params["offerRevision"] != self.reward["revision"] or quest != self.reward["questId"]:
                 raise AssertionError("Unbound reward")
             self.reward["rewardRequested"] = True
             if self.apply_claim:
-                self.active.remove(783)
+                self.active.remove(quest)
                 self.log_revision += 1
-                self.intro_done = True
-                self.receipt = {"questId": 783, "status": "REWARD_CONFIRMED",
+                if quest == 783: self.intro_done = True
+                if quest == 5261: self.eagan_done = True
+                if quest == 33: self.wolves_done = True
+                self.receipt = {"questId": quest, "status": "REWARD_CONFIRMED",
+                                "npcGuid": params["npcGuid"], "offerRevision": params["offerRevision"],
+                                "confirmedLogRevision": str(self.log_revision),
                                 "serverRewardObserved": True, "logRemovalConfirmed": True}
         else:
             raise AssertionError("Unsupported goal RPC: " + method)
@@ -133,7 +155,7 @@ class SyncTests(unittest.TestCase):
         return profile, rpc, clock, saved
 
     def mutate_calls(self, rpc):
-        return [(method, params) for method, params in rpc.calls if method not in ("buddy-world.snapshot", "buddy-quests.discover", "buddy-actions.status")]
+        return [(method, params) for method, params in rpc.calls if method not in ("buddy-world.snapshot", "buddy-quests.discover", "buddy-actions.status", "buddy-loot.state")]
 
     def test_full_prerequisite_then_level_gate_and_goal_matching(self):
         profile, rpc, clock, saved = self.rig()
@@ -199,7 +221,7 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(first["questId"], second["questId"])
 
     def test_only_intro_turnin_and_zero_or_one_actual_reward_choice(self):
-        for choices in ([], [{"index": 2, "itemId": 123, "count": 1}], [{"index": 0, "itemId": 123}, {"index": 1, "itemId": 456}]):
+        for choices in ([], [{"index": 2, "itemId": 123, "count": 1}], [{"index": 0, "itemId": 123, "count": 1}, {"index": 1, "itemId": 456, "count": 1}]):
             profile, rpc, clock, _ = self.rig()
             rpc.active, rpc.rewards = {783, 18}, choices
             profile.tick()
@@ -208,7 +230,7 @@ class SyncTests(unittest.TestCase):
             claims = [p for m, p in rpc.calls if m == "buddy-quests.claim_reward"]
             if len(choices) > 1:
                 self.assertFalse(claims)
-                self.assertEqual(profile.status["phase"], "waiting_for_owner_reward_choice")
+                self.assertEqual(profile.status["phase"], "waiting_for_verified_prerequisite_reward_choice")
             else:
                 self.assertEqual(len(claims), 1)
                 self.assertEqual(claims[0]["noChoice"], not choices)
@@ -392,8 +414,8 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(timeouts,[35,6])
 
     def test_practice_uses_installed_control_and_level2_stops_before_quest_work(self):
-        profile, rpc, clock, _ = self.rig()
-        profile.autonomous, rpc.owner_present, rpc.active = True, False, {7}
+        profile, rpc, clock, _ = self.rig(4)
+        profile.autonomous, rpc.owner_present, rpc.active = True, False, {7,3903}
         profile.tick()
         clock[0] += 10
         profile.tick()
@@ -409,8 +431,8 @@ class SyncTests(unittest.TestCase):
         profile.tick()
         self.assertFalse(rpc.actions["practicing"])
         self.assertFalse(any(method == "buddy-quests.accept" for method, _ in rpc.calls))
-        profile, rpc, clock, _ = self.rig()
-        profile.autonomous, rpc.active, rpc.actions["navAvailable"] = True, {7}, False
+        profile, rpc, clock, _ = self.rig(4)
+        profile.autonomous, rpc.active, rpc.actions["navAvailable"] = True, {7,3903}, False
         profile.tick()
         clock[0] += 10
         profile.tick()
@@ -418,8 +440,8 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(profile.status["phase"], "practicing_to_level_2")
 
     def test_party_xp_level2_does_not_interrupt_owned_current_fight(self):
-        profile, rpc, clock, _ = self.rig()
-        profile.autonomous, rpc.active = True, {7}
+        profile, rpc, clock, _ = self.rig(4)
+        profile.autonomous, rpc.active = True, {7,3903}
         profile.tick()
         clock[0] += 10
         profile.tick()
@@ -455,16 +477,192 @@ class SyncTests(unittest.TestCase):
         travel = next(params for method, params in rpc.calls if method == "buddy-actions.travel_quest")
         self.assertEqual(travel["npcGuid"], str(WILLEM))
         self.assertEqual(profile.status["neededQuestgiverEntry"], 823)
-        for _ in range(12):
+        for _ in range(40):
             clock[0] += 10
             profile.tick()
             if profile.status.get("exactGoalMatched"):
                 break
         accepts = [params for method, params in rpc.calls if method == "buddy-quests.accept"]
-        self.assertEqual([params["questId"] for params in accepts], [18, 3903])
+        self.assertEqual([params["questId"] for params in accepts], [18, 5261, 33, 3903])
         self.assertNotEqual(accepts[0]["offerRevision"], accepts[1]["offerRevision"])
-        self.assertTrue(all(params["npcGuid"] == str(WILLEM) for params in accepts))
+        self.assertTrue(all(params["npcGuid"] == str(EAGAN if params["questId"] == 33 else WILLEM) for params in accepts))
         self.assertEqual(profile.status["activeQuestIds"], [7,18,3903])
+
+    def test_wolf_prerequisite_full_chain_all_roles_uses_own_complete_and_actual_reward_choice(self):
+        for guid, expected_item in ((1,80),(4,80),(5,6070)):
+            profile,rpc,clock,saved = self.rig(guid)
+            profile.autonomous, rpc.active, rpc.level = True, {7,18}, 2
+            rpc.wolves_complete = False
+            rpc.rewards_by_quest[33] = [{"index":4,"itemId":6070,"count":1},{"index":1,"itemId":80,"count":1}]
+            practiced = False
+            for _ in range(70):
+                profile.tick()
+                if 33 in rpc.active and rpc.actions.get("practicing"):
+                    practiced = True
+                    self.assertEqual(profile.status["phase"],"practicing_for_wolf_quest")
+                    self.assertFalse(any(m == "buddy-quests.turn_in" and p["questId"] == 33 for m,p in rpc.calls))
+                    # Only this authoritative own-log transition allows turn-in.
+                    rpc.wolves_complete = True
+                    rpc.actions.update(practicing=False,practicePhase="quest_objectives_complete")
+                if profile.status.get("exactGoalMatched"):
+                    break
+                clock[0] += 10
+            self.assertTrue(practiced)
+            self.assertEqual(profile.status["activeQuestIds"],[7,18,3903])
+            self.assertEqual([p["questId"] for m,p in rpc.calls if m == "buddy-quests.accept"],[5261,33,3903])
+            turns=[p for m,p in rpc.calls if m == "buddy-quests.turn_in"]
+            self.assertEqual([p["questId"] for p in turns],[5261,33])
+            self.assertTrue(all(p["npcGuid"] == str(EAGAN) for p in turns))
+            claim=next(p for m,p in rpc.calls if m == "buddy-quests.claim_reward" and p["questId"] == 33)
+            self.assertEqual(claim["expectedItemId"],expected_item)
+            self.assertEqual(claim["choiceIndex"],1 if expected_item == 80 else 4)
+            self.assertFalse(claim["noChoice"])
+            self.assertEqual(profile.status["confirmedPrerequisiteQuestIds"],[33,5261])
+            restarted,_,_,_=self.rig(guid,stored=saved[-1])
+            self.assertTrue(restarted.data["confirmedRewards"]["33"]["serverRewardObserved"])
+
+    def test_wolf_objective_counts_never_substitute_for_complete_and_finishing_fight_waits(self):
+        profile,rpc,clock,_=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        original=rpc.state
+        def state():
+            value=original()
+            next(q for q in value["questLog"] if q["questId"] == 33)["objectiveCounts"]=[8,8,8,8]
+            return value
+        rpc.state=state
+        profile.tick()
+        clock[0]+=10
+        profile.tick()
+        self.assertTrue(rpc.actions["practicing"])
+        self.assertFalse(any(m == "buddy-quests.turn_in" for m,_ in rpc.calls))
+        rpc.wolves_complete,rpc.combat=True,True
+        rpc.actions["practicePhase"]="finishing_current_fight_to_goal"
+        before=len(self.mutate_calls(rpc))
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual(len(self.mutate_calls(rpc)),before)
+        self.assertEqual(profile.status["phase"],"finishing_current_practice_engagement_before_quests")
+        rpc.actions.update(practicing=False,practicePhase="quest_objectives_complete")
+        rpc.combat=False
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual(rpc.calls[-1][0],"buddy-quests.turn_in")
+        self.assertEqual(rpc.calls[-1][1]["questId"],33)
+
+    def test_unknown_actual_wolf_reward_choices_or_class_pause_without_claim(self):
+        for guid,choices,unknown_class in ((1,[{"index":0,"itemId":999,"count":1},{"index":1,"itemId":6070,"count":1}],False),
+                                          (5,[{"index":0,"itemId":80,"count":1},{"index":1,"itemId":999,"count":1}],False),
+                                          (4,[{"index":0,"itemId":80,"count":1},{"index":1,"itemId":6070,"count":1}],True)):
+            profile,rpc,clock,_=self.rig(guid)
+            rpc.active,rpc.level,rpc.rewards={7,18,33},2,choices
+            if unknown_class:
+                original=rpc.world
+                def world():
+                    value=original()
+                    value["self"]["classKnown"]=False
+                    return value
+                rpc.world=world
+            profile.tick()
+            clock[0]+=10
+            profile.tick()
+            self.assertEqual(profile.status["phase"],"waiting_for_verified_prerequisite_reward_choice")
+            self.assertFalse(any(m == "buddy-quests.claim_reward" for m,_ in rpc.calls))
+
+    def test_prerequisite_reward_needs_both_proofs_and_survives_new_body_without_reaccept(self):
+        profile,rpc,clock,saved=self.rig()
+        rpc.active,rpc.level={7,18},2
+        rpc.receipt={"questId":33,"status":"REWARD_CONFIRMED","serverRewardObserved":True}
+        profile.tick()
+        self.assertNotIn("33",profile.data["confirmedRewards"])
+        rpc.receipt.update(logRemovalConfirmed=True,npcGuid=str(EAGAN),offerRevision="9",confirmedLogRevision="7")
+        profile.tick()
+        self.assertIn("33",profile.data["confirmedRewards"])
+        restarted,_,_,_=self.rig(stored=saved[-1])
+        restarted.rpc,restarted.now=rpc,lambda:clock[0]
+        rpc.session,rpc.receipt,rpc.wolves_done="new-body",{},True
+        before=len(rpc.calls)
+        for _ in range(8):
+            clock[0]+=10
+            restarted.tick()
+            if restarted.status.get("exactGoalMatched"):break
+        self.assertTrue(restarted.status["exactGoalMatched"])
+        self.assertFalse(any(m == "buddy-quests.accept" and p["questId"] in sync.PREREQUISITES for m,p in rpc.calls[before:]))
+
+    def test_malformed_prerequisite_reward_choice_never_emits_claim(self):
+        for choices in ([{"index":6,"itemId":80,"count":1}],
+                        [{"index":0,"itemId":80,"count":0}],
+                        [{"index":0,"itemId":80,"count":1},{"index":0,"itemId":6070,"count":1}]):
+            profile,rpc,clock,_=self.rig()
+            rpc.active,rpc.rewards={7,18,33},choices
+            profile.tick()
+            clock[0]+=10
+            with self.assertRaises(sync.Error):profile.tick()
+            self.assertFalse(any(m == "buddy-quests.claim_reward" for m,_ in rpc.calls))
+
+    def test_wolf_practice_confirms_enabled_loot_on_fresh_tick_before_starting(self):
+        profile,rpc,clock,_=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        rpc.loot["enabled"]=False
+        profile.tick() # Hold the previous following intent first.
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual(rpc.calls[-1],("buddy-loot.enable",{"enabled":True}))
+        self.assertEqual(profile.status["phase"],"waiting_for_confirmed_wolf_looting")
+        self.assertFalse(any(m == "buddy-actions.practice" for m,_ in rpc.calls))
+        clock[0]+=10
+        profile.tick()
+        methods=[m for m,_ in rpc.calls]
+        self.assertEqual(methods[-2:],["buddy-loot.state","buddy-actions.practice"])
+        self.assertTrue(rpc.actions["practicing"])
+        self.assertEqual(len([m for m,_ in rpc.calls if m == "buddy-loot.enable"]),1)
+
+    def test_wolf_loot_unavailable_waits_and_other_practice_never_enables_loot(self):
+        profile,rpc,clock,_=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        profile.tick()
+        original=rpc.call
+        def call(method,params):
+            if method == "buddy-loot.state":raise sync.Error("module unavailable")
+            return original(method,params)
+        rpc.call=call
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_wolf_loot_module")
+        self.assertFalse(any(m in ("buddy-actions.practice","buddy-loot.enable") for m,_ in rpc.calls))
+        for active,complete in (({7,3903},False),({7,18,33},True)):
+            profile,rpc,clock,_=self.rig(4)
+            profile.autonomous,rpc.active,rpc.wolves_complete=True,active,complete
+            rpc.loot["enabled"]=False
+            profile.tick()
+            clock[0]+=10
+            profile.tick()
+            self.assertFalse(any(m.startswith("buddy-loot.") for m,_ in rpc.calls))
+
+    def test_legacy_active_goal_remains_stoppable_after_chain_identity_expands(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=sync.converse.ensure_state(Path(temporary))
+            with os.fdopen(sync.converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                sync.fcntl.flock(lock,sync.fcntl.LOCK_EX|sync.fcntl.LOCK_NB)
+                record={"identity":sync.converse.LEGACY_QUEST_SYNC_IDENTITY,"instance":"a"*32}
+                sync.converse.write_json(folder/"status.json",record)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(sync.main(["stop","--state-dir",str(folder)]),0)
+                self.assertEqual(sync.converse.read_json(folder/"stop.json"),record)
+
+    def test_applied_wolf_reward_lost_receipt_after_body_replacement_reconciles_actual_giver_menus(self):
+        profile,rpc,clock,_=self.rig()
+        rpc.active,rpc.level,rpc.eagan_done,rpc.wolves_done={7,18},2,True,True
+        profile.data["confirmedRewards"]["5261"]={"serverRewardObserved":True,"logRemovalConfirmed":True}
+        rpc.session="replacement-after-ambiguous-reward"
+        for _ in range(12):
+            profile.tick()
+            if profile.status.get("exactGoalMatched"):break
+            clock[0]+=10
+        queried=[int(p["npcGuid"]) for m,p in rpc.calls if m == "buddy-quests.offer"]
+        self.assertEqual(queried[:2],[EAGAN,WILLEM])
+        self.assertEqual([p["questId"] for m,p in rpc.calls if m == "buddy-quests.accept"],[3903])
+        self.assertTrue(profile.status["exactGoalMatched"])
+        self.assertNotIn("33",profile.data["confirmedRewards"])
 
 
 if __name__ == "__main__":
