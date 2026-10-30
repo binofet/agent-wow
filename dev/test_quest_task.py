@@ -21,7 +21,7 @@ class RPC:
     url = "http://127.0.0.1:8086/rpc"
     def __init__(self):
         self.calls, self.session, self.guid = [], "item-body", 1
-        self.following, self.map_id, self.x = True, 0, 0.
+        self.following, self.map_id, self.x, self.z = True, 0, 0., 0.
         self.combat, self.alive, self.motion = False, True, False
         self.active, self.operation, self.count, self.inv, self.log = False, {}, 0, 1, 1
         self.quest_active, self.quest_known, self.inventory_known = True, True, True
@@ -78,7 +78,7 @@ class RPC:
         if method == "buddy-actions.status":
             return dict(following=self.following, motionUnconfirmed=self.motion,
                         interactionOwner="exploration" if self.lease else "", moving=False,
-                        position=dict(known=True, mapKnown=True, mapId=self.map_id, x=self.x, y=0., z=0.))
+                        position=dict(known=True, mapKnown=True, mapId=self.map_id, x=self.x, y=0., z=self.z))
         if method == "buddy-actions.follow":
             self.following = params["enabled"]
             return {"following": self.following}
@@ -376,7 +376,8 @@ class QuestTaskTests(unittest.TestCase):
         self.assertEqual(actor.status["objectiveCount"], 5)
         routes = [p for m, p in rpc.calls if m == "buddy-actions.travel_to"]
         self.assertEqual(sum(p["x"] == 50. for p in routes), 5)
-        self.assertEqual(sum(p["x"] == 150. for p in routes), 5)
+        self.assertEqual(sum(p["x"] == 130. for p in routes), 5)
+        self.assertFalse(any(p["x"] == 150. for p in routes))
         requests = [p for m, p in rpc.calls if m == "buddy-quest-items.attempt"]
         self.assertEqual([p["action"] for p in requests], ["FILL_BUCKET", "THROW_BUCKET"] * 5)
         self.assertEqual(len({p["requestId"] for p in requests}), 10)
@@ -385,6 +386,74 @@ class QuestTaskTests(unittest.TestCase):
         self.assertNotIn(str(BARREL), actor.travel_attempts)
         self.assertNotIn(str(FIRE), actor.travel_attempts)
         self.assertIsNone(rpc.lease)
+
+    def test_throw_travel_uses_twenty_yard_standoff_with_own_floor_hint(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.bucket = dict(bag=1, slot=2, itemGuid=str(ITEM), entry=32971, count=1)
+        rpc.fire_x, rpc.z = 80., 7.
+        self.tick(actor, now, 2)
+        routes = [p for m, p in rpc.calls if m == "buddy-actions.travel_to"]
+        self.assertEqual(len(routes), 1)
+        self.assertEqual((routes[0]["x"], routes[0]["y"], routes[0]["z"]), (60., 0., 7.))
+        self.assertEqual(abs(rpc.fire_x - routes[0]["x"]), 20.)
+        self.assertFalse(any(m == "buddy-quest-items.attempt" for m, _ in rpc.calls))
+        self.tick(actor, now)
+        self.assertEqual(rpc.last_attempt["action"], "THROW_BUCKET")
+        self.assertEqual(int(rpc.last_attempt["targetCreatureGuid"]), FIRE)
+        actor, rpc, now, _ = self.rig()
+        rpc.barrel_x = 50.
+        self.tick(actor, now, 2)
+        route = next(p for m, p in rpc.calls if m == "buddy-actions.travel_to")
+        self.assertEqual((route["x"], route["y"], route["z"]), (50., 0., 0.))
+
+    def test_bad_standoff_route_never_falls_back_to_fire_center_and_alternates_after_three(self):
+        actor, rpc, now, _ = self.rig()
+        rpc.bucket = dict(bag=1, slot=2, itemGuid=str(ITEM), entry=32971, count=1)
+        rpc.fire_x = 80.
+        original_state, original_call = rpc.state, rpc.call
+        def state():
+            result = original_state()
+            result["fires"].append(rpc.target(FIRE + 1, 23537, 120.))
+            return result
+        def route(method, params):
+            if method == "buddy-actions.travel_to" and params["x"] == 60.:
+                rpc.calls.append((method, copy.deepcopy(params)))
+                return {"reason": "navigation_partial_route", "moving": False}
+            return original_call(method, params)
+        rpc.state, rpc.call = state, route
+        self.tick(actor, now, 5)
+        routes = [p for m, p in rpc.calls if m == "buddy-actions.travel_to"]
+        self.assertEqual([p["x"] for p in routes], [60., 60., 60., 100.])
+        self.assertFalse(any(p["x"] in (80., 120.) for p in routes))
+        self.assertEqual(actor.travel_attempts[str(FIRE)], 3)
+        self.assertFalse(any(m == "buddy-quest-items.attempt" for m, _ in rpc.calls))
+        self.assertIsNone(rpc.lease)
+
+    def test_reported_standoff_arrival_still_requires_fresh_fire_range_and_bindings(self):
+        for mode in ("outside_range", "inventory", "quest", "fire_moved", "body"):
+            with self.subTest(mode=mode):
+                actor, rpc, now, _ = self.rig()
+                rpc.bucket = dict(bag=1, slot=2, itemGuid=str(ITEM), entry=32971, count=1)
+                rpc.fire_x = 80.
+                original = rpc.call
+                def route(method, params):
+                    if method == "buddy-actions.travel_to":
+                        rpc.calls.append((method, copy.deepcopy(params)))
+                        if mode != "outside_range": rpc.x = params["x"] - 2
+                        if mode == "inventory": rpc.inv += 1
+                        elif mode == "quest": rpc.log += 1
+                        elif mode == "fire_moved": rpc.fire_x += 1
+                        elif mode == "body": rpc.session = "replacement-body"
+                        return {"reason": "exploration_within_distance", "moving": False}
+                    return original(method, params)
+                rpc.call = route
+                if mode == "body":
+                    with self.assertRaises(task.Error): self.tick(actor, now, 2)
+                else:
+                    self.tick(actor, now, 2)
+                    self.assertIn(actor.status["phase"], ("observed_fire_standoff_not_confirmed_in_cast_range", "quest_state_changed_after_standoff_rechecking"))
+                self.assertFalse(any(m == "buddy-quest-items.attempt" for m, _ in rpc.calls))
+                self.assertIsNone(rpc.lease)
 
     def test_three_failed_routes_remain_exhausted_without_item_progress(self):
         actor, rpc, now, _ = self.rig()

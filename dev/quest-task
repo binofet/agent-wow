@@ -29,7 +29,7 @@ Error, integer = c.ConversationError, c.integer
 # invent additional item spells, targets or packet layouts for other quests.
 RECIPES = {11360: {"kind": "obtain_and_ground_use", "sourceEntry": 186234,
                    "targetEntry": 23537, "itemEntry": 32971, "requiredCount": 5,
-                   "sourceRange": 4.5, "targetRange": 28, "targetResetSeconds": 6}}
+                   "sourceRange": 4.5, "targetRange": 28, "targetStandoff": 20, "targetResetSeconds": 6}}
 TERMINAL = {"COMPLETED", "SERVER_REJECTED", "CANCELLED", "OUTCOME_UNCONFIRMED", "BLOCKED", "NO_CREDIT_OBSERVED"}
 STATUS_NAMES = {0: "STATUS_UNSPECIFIED", 1: "RESERVED", 2: "WAITING_SERVER", 3: "COMPLETED",
                 4: "SERVER_REJECTED", 5: "CANCELLED", 6: "OUTCOME_UNCONFIRMED", 7: "BLOCKED", 8: "NO_CREDIT_OBSERVED"}
@@ -319,14 +319,28 @@ class QuestTask:
                 return
             field = "barrels" if integer(candidate["point"].get("entry", 0)) == self.recipe["sourceEntry"] else "fires"
             current = next((row for row in self.candidates(fresh, field) if row["guid"] == candidate["guid"]), None)
-            if current is None or any(current["point"][k] != candidate["point"][k] for k in ("x", "y", "z")):
+            if (current is None or any(current["point"][k] != candidate["point"][k] for k in ("x", "y", "z"))
+                    or integer(current["point"].get("positionRevision", 0)) != integer(candidate["point"].get("positionRevision", 0))):
                 self.status["phase"] = "observed_quest_target_changed_before_travel"
                 return
             self.travel_attempts[key] = self.travel_attempts.get(key, 0)+1
             self.status["phase"] = "traveling_to_observed_quest_object"
             self.notify()
             target = current["point"]
-            params = {"token": token, "mapId": integer(target.get("mapId", 0)), **{k: target[k] for k in ("x", "y", "z")}}
+            destination = {k: target[k] for k in ("x", "y", "z")}
+            if field == "fires":
+                own = fresh["actions"]["position"]
+                dx, dy = own["x"] - target["x"], own["y"] - target["y"]
+                horizontal = math.hypot(dx, dy)
+                if horizontal <= .01:
+                    self.status["phase"] = "observed_fire_standoff_direction_unknown"
+                    return
+                stand = self.recipe["targetStandoff"]
+                # A movement request only: own Z is a floor hint, never proof of
+                # ground. TravelTo still requires its complete physical route.
+                destination = {"x": target["x"] + stand * dx / horizontal,
+                               "y": target["y"] + stand * dy / horizontal, "z": own["z"]}
+            params = {"token": token, "mapId": integer(target.get("mapId", 0)), **destination}
             # A separate client owns the blocking route call. This thread can
             # still release its exact token promptly when a stop arrives.
             traveler = self.rpc.fork() if isinstance(self.rpc, RPC) else self.rpc
@@ -360,10 +374,26 @@ class QuestTask:
             value, error = result.get_nowait()
             if error is not None:
                 raise Error("Quest travel result is unconfirmed") from None
-            self.status["phase"] = ("travel_arrival_reported_rechecking_observations"
-                if isinstance(value, dict) and value.get("reason") == "exploration_within_distance"
-                and value.get("moving") is not True and value.get("motionUnconfirmed") is not True
-                else "quest_travel_stopped_before_interaction")
+            arrived = (isinstance(value, dict) and value.get("reason") == "exploration_within_distance"
+                       and value.get("moving") is not True and value.get("motionUnconfirmed") is not True)
+            self.status["phase"] = "travel_arrival_reported_rechecking_observations" if arrived else "quest_travel_stopped_before_interaction"
+            if arrived and field == "fires":
+                observed = self.read()
+                if not self.safe(observed):
+                    return
+                if (observed["state"].get("questActive") is not True
+                        or observed["state"].get("questComplete") is True
+                        or observed["state"].get("active") is True
+                        or integer(observed["state"].get("questLogRevision", 0)) != integer(fresh["state"].get("questLogRevision", 0))
+                        or integer(observed["state"].get("inventoryRevision", 0)) != integer(fresh["state"].get("inventoryRevision", 0))):
+                    self.status["phase"] = "quest_state_changed_after_standoff_rechecking"
+                    return
+                actual = next((row for row in self.candidates(observed, "fires") if row["guid"] == candidate["guid"]), None)
+                if (actual is None or any(actual["point"][k] != target[k] for k in ("x", "y", "z"))
+                        or integer(actual["point"].get("positionRevision", 0)) != integer(target.get("positionRevision", 0))
+                        or actual["distance"] > self.recipe["targetRange"]):
+                    self.status["phase"] = "observed_fire_standoff_not_confirmed_in_cast_range"
+                    return
         finally:
             self.release_travel()
 
