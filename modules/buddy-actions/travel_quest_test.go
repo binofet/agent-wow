@@ -63,6 +63,107 @@ func TestQuestTravelKnownLandmarksDoNotFabricateObservedNPCs(t *testing.T) {
 	}
 }
 
+func TestQuestTravelObservedMillyUsesActualPositionWithoutOwner(t *testing.T) {
+	s, f, _, r := travelRig(t)
+	const millyGUID = uint64(0xf130002450000123)
+	r.NpcGuid = millyGUID
+	c := f.world.QuestGivers[0]
+	c.Guid, c.Entry = millyGUID, 9296
+	actual := position{x: c.X, y: c.Y, z: c.Z, o: c.Orientation}
+	planned := false
+	oldPlanner := s.planPath
+	s.planPath = func(ctx context.Context, root string, from, to position) ([]position, error) {
+		planned = true
+		if to != actual {
+			t.Fatal("generic giver did not use its actual observation", to, actual)
+		}
+		return oldPlanner(ctx, root, from, to)
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || !planned || got.Reason != "quest_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || !got.NavAvailable || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, planned)
+	}
+}
+
+func TestQuestTravelUnobservedMillyNeverGetsLandmarkFallback(t *testing.T) {
+	s, f, _, r := travelRig(t)
+	r.NpcGuid = 0xf130002450000123
+	f.world.QuestGivers = nil
+	s.planPath = func(context.Context, string, position, position) ([]position, error) {
+		t.Fatal("unobserved generic giver was sent to navigation")
+		return nil, nil
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || got.Reason != "quest_travel_current_observed_giver_required" || got.Moving || got.Traveling || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
+func TestQuestTravelObservedGenericGiverRetainsAllSafetyGates(t *testing.T) {
+	for _, mode := range []string{"entry_mismatch", "absent", "position_unknown", "map_unknown", "other_map", "dead", "health_unknown", "not_questgiver", "combat", "moving", "spline", "trajectory", "outside_northshire", "conflicting_view"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := travelRig(t)
+			r.NpcGuid = 0xf130002450000123
+			c := f.world.QuestGivers[0]
+			c.Guid, c.Entry = r.NpcGuid, 9296
+			switch mode {
+			case "entry_mismatch":
+				c.Entry = 823
+			case "absent":
+				c.Present = false
+			case "position_unknown":
+				c.PositionKnown = false
+			case "map_unknown":
+				c.MapKnown = false
+			case "other_map":
+				c.MapId = 1
+			case "dead":
+				c.Alive, c.Health = false, 0
+			case "health_unknown":
+				c.HealthKnown = false
+			case "not_questgiver":
+				c.NpcFlags = 0
+			case "combat":
+				c.UnitFlags = 0x80000
+			case "moving":
+				c.MovementFlags = 1
+			case "spline":
+				c.MovementFlags = 0x08000000
+			case "trajectory":
+				c.Trajectory = &worldv1.CreatureTrajectory{Known: true, Stopped: false}
+			case "outside_northshire":
+				c.X = -9100
+			case "conflicting_view":
+				other := &worldv1.CreatureState{Guid: c.Guid, Entry: c.Entry, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: c.PositionRevision, X: c.X + 1, Y: c.Y, Z: c.Z, HealthKnown: true, Health: 100, AliveKnown: true, Alive: true, NpcFlags: 2}
+				f.world.NearbyCreatures = []*worldv1.CreatureState{other}
+			}
+			s.planPath = func(context.Context, string, position, position) ([]position, error) {
+				t.Fatal("unsafe generic giver started navigation")
+				return nil, nil
+			}
+			got, err := s.TravelQuest(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || len(f.packets) != 0 || got.Reason == "quest_travel_within_distance" {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestQuestTravelGenericGiverLossStopsBeforeAnyHeartbeat(t *testing.T) {
+	s, f, advance, r := travelRig(t)
+	r.NpcGuid = 0xf130002450000123
+	f.world.QuestGivers[0].Guid, f.world.QuestGivers[0].Entry = r.NpcGuid, 9296
+	s.approachDelay = func(ctx context.Context, d time.Duration) error {
+		advance(d)
+		f.world.QuestGivers = nil
+		return ctx.Err()
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || got.Reason != "quest_travel_current_observed_giver_required" || got.Moving || got.Traveling || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
 func TestQuestTravelLandmarkRejectsOtherGUIDsAndObservedUnsafeNPC(t *testing.T) {
 	for _, mode := range []string{"other_entry", "entry_mismatch", "dead", "moving", "nearby_not_questgiver", "corpse", "owner_target"} {
 		t.Run(mode, func(t *testing.T) {

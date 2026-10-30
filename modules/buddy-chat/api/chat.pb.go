@@ -622,6 +622,281 @@ func (x *PollResponse) GetSessionId() string {
 	return ""
 }
 
+// A bounded owner-addon report, separate from the conversational chat ring.
+// State: 0 incomplete, 1 complete, 2 failed, as reported by Joel's normal UI.
+type OwnerQuestState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	QuestId       uint32                 `protobuf:"varint,1,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	State         uint32                 `protobuf:"varint,2,opt,name=state,proto3" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OwnerQuestState) Reset() {
+	*x = OwnerQuestState{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerQuestState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerQuestState) ProtoMessage() {}
+
+func (x *OwnerQuestState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerQuestState.ProtoReflect.Descriptor instead.
+func (*OwnerQuestState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *OwnerQuestState) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *OwnerQuestState) GetState() uint32 {
+	if x != nil {
+		return x.State
+	}
+	return 0
+}
+
+// Addon-correlated UI requests and quest-log changes. These are owner reports,
+// not independent server reward receipts for this companion.
+type OwnerQuestEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	QuestId       uint32                 `protobuf:"varint,1,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	NpcGuid       uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	AgeMs         uint64                 `protobuf:"varint,3,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OwnerQuestEvent) Reset() {
+	*x = OwnerQuestEvent{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerQuestEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerQuestEvent) ProtoMessage() {}
+
+func (x *OwnerQuestEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerQuestEvent.ProtoReflect.Descriptor instead.
+func (*OwnerQuestEvent) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *OwnerQuestEvent) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *OwnerQuestEvent) GetNpcGuid() uint64 {
+	if x != nil {
+		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *OwnerQuestEvent) GetAgeMs() uint64 {
+	if x != nil {
+		return x.AgeMs
+	}
+	return 0
+}
+
+type OwnerFeedResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// A complete, validated snapshot has arrived. Callers must check age_ms.
+	Available         bool               `protobuf:"varint,1,opt,name=available,proto3" json:"available,omitempty"`
+	BodySessionId     string             `protobuf:"bytes,2,opt,name=body_session_id,json=bodySessionId,proto3" json:"body_session_id,omitempty"`
+	AddonSession      string             `protobuf:"bytes,3,opt,name=addon_session,json=addonSession,proto3" json:"addon_session,omitempty"`
+	Revision          uint32             `protobuf:"varint,4,opt,name=revision,proto3" json:"revision,omitempty"`
+	AgeMs             uint64             `protobuf:"varint,5,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
+	Level             uint32             `protobuf:"varint,6,opt,name=level,proto3" json:"level,omitempty"`
+	Quests            []*OwnerQuestState `protobuf:"bytes,7,rep,name=quests,proto3" json:"quests,omitempty"`
+	Rewarded          []*OwnerQuestEvent `protobuf:"bytes,8,rep,name=rewarded,proto3" json:"rewarded,omitempty"`
+	Accepted          []*OwnerQuestEvent `protobuf:"bytes,9,rep,name=accepted,proto3" json:"accepted,omitempty"`
+	ReceivedPackets   uint64             `protobuf:"varint,10,opt,name=received_packets,json=receivedPackets,proto3" json:"received_packets,omitempty"`
+	MalformedPackets  uint64             `protobuf:"varint,11,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	IgnoredPackets    uint64             `protobuf:"varint,12,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
+	IncompleteBatches uint64             `protobuf:"varint,13,opt,name=incomplete_batches,json=incompleteBatches,proto3" json:"incomplete_batches,omitempty"`
+	Assembling        bool               `protobuf:"varint,14,opt,name=assembling,proto3" json:"assembling,omitempty"`
+	// Positive IDs from the normal client's completed-query cache, at most64.
+	// Omission from this bounded report does not prove a quest uncompleted.
+	CompletedQuestIds []uint32 `protobuf:"varint,15,rep,packed,name=completed_quest_ids,json=completedQuestIds,proto3" json:"completed_quest_ids,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *OwnerFeedResponse) Reset() {
+	*x = OwnerFeedResponse{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerFeedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerFeedResponse) ProtoMessage() {}
+
+func (x *OwnerFeedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerFeedResponse.ProtoReflect.Descriptor instead.
+func (*OwnerFeedResponse) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *OwnerFeedResponse) GetAvailable() bool {
+	if x != nil {
+		return x.Available
+	}
+	return false
+}
+
+func (x *OwnerFeedResponse) GetBodySessionId() string {
+	if x != nil {
+		return x.BodySessionId
+	}
+	return ""
+}
+
+func (x *OwnerFeedResponse) GetAddonSession() string {
+	if x != nil {
+		return x.AddonSession
+	}
+	return ""
+}
+
+func (x *OwnerFeedResponse) GetRevision() uint32 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetAgeMs() uint64 {
+	if x != nil {
+		return x.AgeMs
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetLevel() uint32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetQuests() []*OwnerQuestState {
+	if x != nil {
+		return x.Quests
+	}
+	return nil
+}
+
+func (x *OwnerFeedResponse) GetRewarded() []*OwnerQuestEvent {
+	if x != nil {
+		return x.Rewarded
+	}
+	return nil
+}
+
+func (x *OwnerFeedResponse) GetAccepted() []*OwnerQuestEvent {
+	if x != nil {
+		return x.Accepted
+	}
+	return nil
+}
+
+func (x *OwnerFeedResponse) GetReceivedPackets() uint64 {
+	if x != nil {
+		return x.ReceivedPackets
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetMalformedPackets() uint64 {
+	if x != nil {
+		return x.MalformedPackets
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetIgnoredPackets() uint64 {
+	if x != nil {
+		return x.IgnoredPackets
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetIncompleteBatches() uint64 {
+	if x != nil {
+		return x.IncompleteBatches
+	}
+	return 0
+}
+
+func (x *OwnerFeedResponse) GetAssembling() bool {
+	if x != nil {
+		return x.Assembling
+	}
+	return false
+}
+
+func (x *OwnerFeedResponse) GetCompletedQuestIds() []uint32 {
+	if x != nil {
+		return x.CompletedQuestIds
+	}
+	return nil
+}
+
 var File_modules_buddy_chat_chat_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_chat_chat_proto_rawDesc = "" +
@@ -663,7 +938,33 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\x0fignored_packets\x18\x06 \x01(\x04R\x0eignoredPackets\x12+\n" +
 	"\x11malformed_packets\x18\a \x01(\x04R\x10malformedPackets\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\b \x01(\tR\tsessionId*i\n" +
+	"session_id\x18\b \x01(\tR\tsessionId\"B\n" +
+	"\x0fOwnerQuestState\x12\x19\n" +
+	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x14\n" +
+	"\x05state\x18\x02 \x01(\rR\x05state\"^\n" +
+	"\x0fOwnerQuestEvent\x12\x19\n" +
+	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x19\n" +
+	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12\x15\n" +
+	"\x06age_ms\x18\x03 \x01(\x04R\x05ageMs\"\x8f\x05\n" +
+	"\x11OwnerFeedResponse\x12\x1c\n" +
+	"\tavailable\x18\x01 \x01(\bR\tavailable\x12&\n" +
+	"\x0fbody_session_id\x18\x02 \x01(\tR\rbodySessionId\x12#\n" +
+	"\raddon_session\x18\x03 \x01(\tR\faddonSession\x12\x1a\n" +
+	"\brevision\x18\x04 \x01(\rR\brevision\x12\x15\n" +
+	"\x06age_ms\x18\x05 \x01(\x04R\x05ageMs\x12\x14\n" +
+	"\x05level\x18\x06 \x01(\rR\x05level\x12>\n" +
+	"\x06quests\x18\a \x03(\v2&.warcraftbuddy.chat.v1.OwnerQuestStateR\x06quests\x12B\n" +
+	"\brewarded\x18\b \x03(\v2&.warcraftbuddy.chat.v1.OwnerQuestEventR\brewarded\x12B\n" +
+	"\baccepted\x18\t \x03(\v2&.warcraftbuddy.chat.v1.OwnerQuestEventR\baccepted\x12)\n" +
+	"\x10received_packets\x18\n" +
+	" \x01(\x04R\x0freceivedPackets\x12+\n" +
+	"\x11malformed_packets\x18\v \x01(\x04R\x10malformedPackets\x12'\n" +
+	"\x0fignored_packets\x18\f \x01(\x04R\x0eignoredPackets\x12-\n" +
+	"\x12incomplete_batches\x18\r \x01(\x04R\x11incompleteBatches\x12\x1e\n" +
+	"\n" +
+	"assembling\x18\x0e \x01(\bR\n" +
+	"assembling\x12.\n" +
+	"\x13completed_quest_ids\x18\x0f \x03(\rR\x11completedQuestIds*i\n" +
 	"\aChannel\x12\x17\n" +
 	"\x13CHANNEL_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03SAY\x10\x01\x12\t\n" +
@@ -681,11 +982,12 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\x11EMOTE_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03BOW\x10\x11\x12\t\n" +
 	"\x05CHEER\x10\x15\x12\b\n" +
-	"\x04WAVE\x10e2\xc5\x02\n" +
+	"\x04WAVE\x10e2\x94\x03\n" +
 	"\tBuddyChat\x12O\n" +
 	"\x04Send\x12\".warcraftbuddy.chat.v1.SendRequest\x1a#.warcraftbuddy.chat.v1.SendResponse\x12Q\n" +
 	"\x05Emote\x12#.warcraftbuddy.chat.v1.EmoteRequest\x1a#.warcraftbuddy.chat.v1.SendResponse\x12O\n" +
-	"\x04Poll\x12\".warcraftbuddy.chat.v1.PollRequest\x1a#.warcraftbuddy.chat.v1.PollResponse\x12C\n" +
+	"\x04Poll\x12\".warcraftbuddy.chat.v1.PollRequest\x1a#.warcraftbuddy.chat.v1.PollResponse\x12M\n" +
+	"\tOwnerFeed\x12\x16.google.protobuf.Empty\x1a(.warcraftbuddy.chat.v1.OwnerFeedResponse\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-chat/api;chatv1b\x06proto3"
 
 var (
@@ -701,19 +1003,22 @@ func file_modules_buddy_chat_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_chat_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_modules_buddy_chat_chat_proto_goTypes = []any{
-	(Channel)(0),           // 0: warcraftbuddy.chat.v1.Channel
-	(Language)(0),          // 1: warcraftbuddy.chat.v1.Language
-	(Emote)(0),             // 2: warcraftbuddy.chat.v1.Emote
-	(*EmoteRequest)(nil),   // 3: warcraftbuddy.chat.v1.EmoteRequest
-	(*SendRequest)(nil),    // 4: warcraftbuddy.chat.v1.SendRequest
-	(*SendResponse)(nil),   // 5: warcraftbuddy.chat.v1.SendResponse
-	(*PollRequest)(nil),    // 6: warcraftbuddy.chat.v1.PollRequest
-	(*Message)(nil),        // 7: warcraftbuddy.chat.v1.Message
-	(*PollResponse)(nil),   // 8: warcraftbuddy.chat.v1.PollResponse
-	(*v1.WorldPacket)(nil), // 9: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),  // 10: google.protobuf.Empty
+	(Channel)(0),              // 0: warcraftbuddy.chat.v1.Channel
+	(Language)(0),             // 1: warcraftbuddy.chat.v1.Language
+	(Emote)(0),                // 2: warcraftbuddy.chat.v1.Emote
+	(*EmoteRequest)(nil),      // 3: warcraftbuddy.chat.v1.EmoteRequest
+	(*SendRequest)(nil),       // 4: warcraftbuddy.chat.v1.SendRequest
+	(*SendResponse)(nil),      // 5: warcraftbuddy.chat.v1.SendResponse
+	(*PollRequest)(nil),       // 6: warcraftbuddy.chat.v1.PollRequest
+	(*Message)(nil),           // 7: warcraftbuddy.chat.v1.Message
+	(*PollResponse)(nil),      // 8: warcraftbuddy.chat.v1.PollResponse
+	(*OwnerQuestState)(nil),   // 9: warcraftbuddy.chat.v1.OwnerQuestState
+	(*OwnerQuestEvent)(nil),   // 10: warcraftbuddy.chat.v1.OwnerQuestEvent
+	(*OwnerFeedResponse)(nil), // 11: warcraftbuddy.chat.v1.OwnerFeedResponse
+	(*emptypb.Empty)(nil),     // 12: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),    // 13: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_chat_chat_proto_depIdxs = []int32{
 	2,  // 0: warcraftbuddy.chat.v1.EmoteRequest.emote:type_name -> warcraftbuddy.chat.v1.Emote
@@ -721,19 +1026,24 @@ var file_modules_buddy_chat_chat_proto_depIdxs = []int32{
 	1,  // 2: warcraftbuddy.chat.v1.SendRequest.language:type_name -> warcraftbuddy.chat.v1.Language
 	0,  // 3: warcraftbuddy.chat.v1.Message.channel:type_name -> warcraftbuddy.chat.v1.Channel
 	7,  // 4: warcraftbuddy.chat.v1.PollResponse.messages:type_name -> warcraftbuddy.chat.v1.Message
-	4,  // 5: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
-	3,  // 6: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
-	6,  // 7: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
-	9,  // 8: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5,  // 9: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
-	5,  // 10: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
-	8,  // 11: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
-	10, // 12: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	9,  // 5: warcraftbuddy.chat.v1.OwnerFeedResponse.quests:type_name -> warcraftbuddy.chat.v1.OwnerQuestState
+	10, // 6: warcraftbuddy.chat.v1.OwnerFeedResponse.rewarded:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	10, // 7: warcraftbuddy.chat.v1.OwnerFeedResponse.accepted:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	4,  // 8: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
+	3,  // 9: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
+	6,  // 10: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
+	12, // 11: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:input_type -> google.protobuf.Empty
+	13, // 12: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	5,  // 13: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
+	5,  // 14: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
+	8,  // 15: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
+	11, // 16: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:output_type -> warcraftbuddy.chat.v1.OwnerFeedResponse
+	12, // 17: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
+	13, // [13:18] is the sub-list for method output_type
+	8,  // [8:13] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_chat_chat_proto_init() }
@@ -747,7 +1057,7 @@ func file_modules_buddy_chat_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_chat_chat_proto_rawDesc), len(file_modules_buddy_chat_chat_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

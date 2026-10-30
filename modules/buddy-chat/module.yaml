@@ -10,5 +10,6 @@ rpc:
   send: /warcraftbuddy.chat.v1.BuddyChat/Send
   emote: /warcraftbuddy.chat.v1.BuddyChat/Emote
   poll: /warcraftbuddy.chat.v1.BuddyChat/Poll
+  owner_feed: /warcraftbuddy.chat.v1.BuddyChat/OwnerFeed
 packets:
   SMSG_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket

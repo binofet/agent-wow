@@ -55,8 +55,8 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 	if !northshire(s.pos) || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
 		return nil, "quest_travel_northshire_normal_ground_required"
 	}
-	landmark, entry, allowed := northshireQuestLandmark(r.NpcGuid)
-	if !allowed || len(w.QuestGivers) > 64 || len(w.NearbyCreatures) > 32 || len(w.LootableCorpses) > 64 {
+	landmark, entry, hasLandmark := northshireQuestLandmark(r.NpcGuid)
+	if entry == 0 || len(w.QuestGivers) > 64 || len(w.NearbyCreatures) > 32 || len(w.LootableCorpses) > 64 {
 		return nil, "quest_travel_allowed_northshire_giver_required"
 	}
 	// Search other bounded views too: an observed NPC that lost its questgiver
@@ -81,11 +81,14 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 	if observed != nil {
 		return observed, ""
 	}
+	if !hasLandmark {
+		return nil, "quest_travel_current_observed_giver_required"
+	}
 	return &questTravelTarget{position: landmark, landmark: true}, ""
 }
 
-// TravelQuest never accepts caller coordinates. It binds one observed allowed
-// questgiver or one of three explicit remembered landmarks to a complete
+// TravelQuest never accepts caller coordinates. It binds one currently observed
+// Northshire questgiver or one of three explicit remembered landmarks to a complete
 // static-client navmesh route. Landmark travel stops when the real NPC returns
 // to observation; interaction still requires a current actual NPC snapshot.
 func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestRequest) (result *actionsv1.State, err error) {

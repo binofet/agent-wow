@@ -88,9 +88,46 @@ message PollResponse {
   string session_id = 8;
 }
 
+// A bounded owner-addon report, separate from the conversational chat ring.
+// State: 0 incomplete, 1 complete, 2 failed, as reported by Joel's normal UI.
+message OwnerQuestState {
+  uint32 quest_id = 1;
+  uint32 state = 2;
+}
+
+// Addon-correlated UI requests and quest-log changes. These are owner reports,
+// not independent server reward receipts for this companion.
+message OwnerQuestEvent {
+  uint32 quest_id = 1;
+  uint64 npc_guid = 2;
+  uint64 age_ms = 3;
+}
+
+message OwnerFeedResponse {
+  // A complete, validated snapshot has arrived. Callers must check age_ms.
+  bool available = 1;
+  string body_session_id = 2;
+  string addon_session = 3;
+  uint32 revision = 4;
+  uint64 age_ms = 5;
+  uint32 level = 6;
+  repeated OwnerQuestState quests = 7;
+  repeated OwnerQuestEvent rewarded = 8;
+  repeated OwnerQuestEvent accepted = 9;
+  uint64 received_packets = 10;
+  uint64 malformed_packets = 11;
+  uint64 ignored_packets = 12;
+  uint64 incomplete_batches = 13;
+  bool assembling = 14;
+  // Positive IDs from the normal client's completed-query cache, at most64.
+  // Omission from this bounded report does not prove a quest uncompleted.
+  repeated uint32 completed_quest_ids = 15;
+}
+
 service BuddyChat {
   rpc Send(SendRequest) returns (SendResponse);
   rpc Emote(EmoteRequest) returns (SendResponse);
   rpc Poll(PollRequest) returns (PollResponse);
+  rpc OwnerFeed(google.protobuf.Empty) returns (OwnerFeedResponse);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

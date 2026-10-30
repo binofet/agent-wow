@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"sync"
+	"time"
 
 	chatv1 "github.com/agent-wow/agent-wow/modules/buddy-chat/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -34,10 +35,12 @@ type Service struct {
 	latest    uint64
 	ignored   uint64
 	malformed uint64
+	now       func() time.Time
+	ownerFeed ownerFeedState
 }
 
 func NewService(session packetSender, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, sessionID: rand.Text()}
+	return &Service{session: session, selfGUID: selfGUID, sessionID: rand.Text(), now: time.Now}
 }
 
 func (s *Service) Send(ctx context.Context, request *chatv1.SendRequest) (*chatv1.SendResponse, error) {
@@ -84,6 +87,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) && s.ingestOwnerFeedLocked(packet.Payload) {
+		return &emptypb.Empty{}, nil
+	}
 	if err != nil {
 		if errors.Is(err, errUnsupportedChat) {
 			s.ignored++
