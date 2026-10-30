@@ -71,8 +71,8 @@ func newDoctorCommandWithDependencies(deps doctorDependencies) *cobra.Command {
 	var timeout time.Duration
 	command := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check Linux, local Docker, Compose, and authserver TCP reachability",
-		Long: `Check the documented runtime prerequisites without starting containers or logging in.
+		Short: "Check Linux, local Docker, Compose, Buildx, and authserver TCP reachability",
+		Long: `Check runtime prerequisites and optional build-tool diagnostics without starting containers or logging in.
 
 TCP reachability does not verify the WoW protocol, credentials, realm/worldserver,
 or gameplay. No account or password files are read or created.`,
@@ -116,6 +116,10 @@ func (r *doctorReport) add(name, status, detail, remedy string) {
 	}
 }
 
+func (r *doctorReport) addOptional(name, status, detail, remedy string) {
+	r.Checks = append(r.Checks, doctorCheck{Name: name, Status: status, Detail: detail, Remedy: remedy, Required: false})
+}
+
 func runDoctorChecks(ctx context.Context, deps doctorDependencies, report *doctorReport) {
 	if deps.goos == "linux" {
 		report.add("linux_runtime", "pass", "Client is running on Linux.", "")
@@ -136,6 +140,7 @@ func runDoctorChecks(ctx context.Context, deps doctorDependencies, report *docto
 		for _, name := range []string{"docker_endpoint", "docker_daemon", "docker_compose"} {
 			report.add(name, "skip", "Not checked because the Docker CLI is unavailable.", "Install Docker Engine and its Compose plugin, then rerun agent-wow doctor.")
 		}
+		report.addOptional("docker_buildx", "skip", "Optional Buildx diagnostic was not checked because the Docker CLI is unavailable.", "Install Docker Engine, then rerun agent-wow doctor.")
 	} else {
 		version, err := deps.run(ctx, dockerPath, "--version")
 		if err != nil {
@@ -160,13 +165,23 @@ func runDoctorChecks(ctx context.Context, deps doctorDependencies, report *docto
 
 	if configErr != nil {
 		report.add("auth_tcp", "skip", "Authserver TCP reachability was not checked because configuration is invalid.", "Correct the configuration, then rerun agent-wow doctor.")
-		return
-	}
-	address := net.JoinHostPort(cfg.AuthServer.Host, strconv.Itoa(cfg.AuthServer.Port))
-	if err := deps.dial(ctx, address); err != nil {
-		report.add("auth_tcp", "fail", "Authserver TCP connection to "+address+" failed: "+err.Error(), "Check authserver.host/port, start the existing authserver if needed, and check the route/firewall to its TCP port.")
 	} else {
-		report.add("auth_tcp", "pass", "TCP connection to "+address+" succeeded; WoW protocol and login have not been verified.", "")
+		address := net.JoinHostPort(cfg.AuthServer.Host, strconv.Itoa(cfg.AuthServer.Port))
+		if err := deps.dial(ctx, address); err != nil {
+			report.add("auth_tcp", "fail", "Authserver TCP connection to "+address+" failed: "+err.Error(), "Check authserver.host/port, start the existing authserver if needed, and check the route/firewall to its TCP port.")
+		} else {
+			report.add("auth_tcp", "pass", "TCP connection to "+address+" succeeded; WoW protocol and login have not been verified.", "")
+		}
+	}
+	// Optional diagnostics run last so a slow plugin cannot spend the shared
+	// probe budget before required TCP reachability has been checked.
+	if pathErr == nil {
+		version, err := deps.run(ctx, dockerPath, "buildx", "version")
+		if err != nil {
+			report.addOptional("docker_buildx", "warn", "Docker Buildx plugin could not run: "+err.Error()+"; Compose versions with an internal builder may still build modules.", "Install the Docker Buildx CLI plugin for this Docker installation to use Buildx/Bake, then verify docker buildx version succeeds.")
+		} else {
+			report.addOptional("docker_buildx", "pass", "Docker Buildx version: "+version, "")
+		}
 	}
 }
 

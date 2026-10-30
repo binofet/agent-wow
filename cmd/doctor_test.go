@@ -87,11 +87,11 @@ func TestDoctorCompletePrerequisites(t *testing.T) {
 	if err != nil || !report.Ready {
 		t.Fatalf("healthy prerequisites failed: %+v, %v", report, err)
 	}
-	if len(report.Checks) != 7 {
+	if len(report.Checks) != 8 {
 		t.Fatalf("expected every required check, got %+v", report.Checks)
 	}
 	for _, check := range report.Checks {
-		if check.Status != "pass" || !check.Required {
+		if check.Status != "pass" || check.Required != (check.Name != "docker_buildx") {
 			t.Errorf("unexpected check: %+v", check)
 		}
 	}
@@ -104,7 +104,7 @@ func TestDoctorCompletePrerequisites(t *testing.T) {
 	if got := doctorCheckNamed(t, report, "auth_tcp").Detail; !strings.Contains(got, "WoW protocol and login have not been verified") {
 		t.Fatal("TCP result implies protocol/login validation")
 	}
-	if len(f.contexts) != 5 {
+	if len(f.contexts) != 6 {
 		t.Fatalf("expected bounded Docker and TCP probes, got %d", len(f.contexts))
 	}
 	for _, ctx := range f.contexts {
@@ -118,6 +118,7 @@ func TestDoctorCompletePrerequisites(t *testing.T) {
 		"/usr/bin/docker context inspect --format {{.Endpoints.docker.Host}}",
 		"/usr/bin/docker info --format {{.ServerVersion}}",
 		"/usr/bin/docker compose version --short",
+		"/usr/bin/docker buildx version",
 	}
 	if !reflect.DeepEqual(f.commands, wantCommands) {
 		t.Fatalf("unexpected commands (doctor must not start or modify containers): %v", f.commands)
@@ -160,10 +161,40 @@ func TestDoctorFailedPrerequisitesRemainMachineReadable(t *testing.T) {
 			if check.Status != "fail" || check.Remedy == "" {
 				t.Fatalf("failure lacks a concrete remedy: %+v", check)
 			}
-			if len(report.Checks) != 7 {
+			if len(report.Checks) != 8 {
 				t.Fatal("one failed prerequisite prevented independent checks")
 			}
+			for _, other := range report.Checks {
+				if other.Name != tc.check && other.Status != "pass" {
+					t.Errorf("failed %s prevented independent check %s: %+v", tc.check, other.Name, other)
+				}
+			}
 		})
+	}
+}
+
+func TestDoctorMissingBuildxIsOptionalWithWorkingCompose(t *testing.T) {
+	f := newDoctorFixture()
+	f.commandError["buildx version"] = errors.New("docker: 'buildx' is not a docker command")
+	run := f.deps.run
+	f.deps.run = func(ctx context.Context, path string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "buildx" && len(f.addresses) != 1 {
+			t.Fatal("optional Buildx probe could consume the timeout before required TCP reachability")
+		}
+		return run(ctx, path, args...)
+	}
+	report, err := executeDoctor(t, f.deps)
+	if err != nil || !report.Ready {
+		t.Fatalf("optional Buildx diagnostic prevented readiness: %+v, %v", report, err)
+	}
+	check := doctorCheckNamed(t, report, "docker_buildx")
+	if check.Status != "warn" || check.Required || check.Remedy == "" {
+		t.Fatalf("missing Buildx did not produce an optional warning with remedy: %+v", check)
+	}
+	for _, other := range report.Checks {
+		if other.Name != "docker_buildx" && other.Status != "pass" {
+			t.Fatalf("Buildx warning prevented independent check %s: %+v", other.Name, other)
+		}
 	}
 }
 
@@ -174,9 +205,9 @@ func TestDoctorMissingDockerStillChecksAuth(t *testing.T) {
 	if err == nil || report.Ready || len(f.commands) != 0 {
 		t.Fatalf("missing CLI not handled correctly: %+v, %v", report, err)
 	}
-	for _, name := range []string{"docker_endpoint", "docker_daemon", "docker_compose"} {
+	for _, name := range []string{"docker_endpoint", "docker_daemon", "docker_compose", "docker_buildx"} {
 		check := doctorCheckNamed(t, report, name)
-		if check.Status != "skip" || check.Remedy == "" {
+		if check.Status != "skip" || check.Remedy == "" || check.Required != (name != "docker_buildx") {
 			t.Errorf("missing dependency not explained: %+v", check)
 		}
 	}
