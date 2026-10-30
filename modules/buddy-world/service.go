@@ -113,6 +113,12 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	// Ghosts can have positive health. Public player flags must also be known.
 	r.AliveKnown = r.HealthKnown && p.known[playerFlags]
 	r.Alive = r.AliveKnown && r.Health > 0 && r.PlayerFlags&0x10 == 0 && r.DynamicFlags&0x20 == 0
+	if p.isSelf && p.present {
+		r.ChannelObjectKnown = p.known[unitChannelObject] && p.known[unitChannelObject+1]
+		r.ChannelObjectGuid = uint64(p.fields[unitChannelObject]) | uint64(p.fields[unitChannelObject+1])<<32
+		r.ChannelSpellKnown, r.ChannelSpellId = p.known[unitChannelSpell], p.fields[unitChannelSpell]
+		r.ShapeshiftFormKnown, r.ShapeshiftForm = p.known[unitShapeshiftBytes], p.fields[unitShapeshiftBytes]>>24
+	}
 	return r
 }
 

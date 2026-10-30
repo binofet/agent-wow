@@ -59,6 +59,12 @@ message PlayerState {
   bool base_attack_time_known = 46;
   uint32 base_attack_time_ms = 47;
   EquippedWeapon mainhand = 48;
+  bool channel_object_known = 49;
+  uint64 channel_object_guid = 50;
+  bool channel_spell_known = 51;
+  uint32 channel_spell_id = 52;
+  bool shapeshift_form_known = 53;
+  uint32 shapeshift_form = 54;
 }
 
 message EquippedWeapon {
@@ -97,6 +103,10 @@ message GameObjectState {
   uint32 flags = 17;
   bool dynamic_flags_known = 18;
   uint32 dynamic_flags = 19;
+  bool created_by_known = 20;
+  uint64 created_by_guid = 21;
+  bool state_known = 22;
+  uint32 state = 23;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.
@@ -240,6 +250,11 @@ message SnapshotResponse {
   bool self_free_primary_slots_known = 27;
   uint32 self_free_primary_slots = 28;
   uint64 self_free_primary_slots_revision = 29;
+  // At most32 present public SPELL_FOCUS(type8) objects. FocusID is template
+  // metadata and must be obtained through an ordinary gameobject query.
+  repeated GameObjectState spell_focuses = 30;
+  // At most4 present type17/entry35591 bobbers with actual createdBy=self.
+  repeated GameObjectState own_fishing_bobbers = 31;
 }
 
 service BuddyWorld {

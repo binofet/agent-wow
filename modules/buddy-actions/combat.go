@@ -4,6 +4,7 @@ import worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 
 const (
 	fireball       uint32 = 133
+	shadowBolt     uint32 = 686
 	sinisterStrike uint32 = 1752
 	autoAttack     uint32 = 6603
 )
@@ -36,6 +37,10 @@ func (s *Service) updateClassLocked() {
 		s.state.ClassName = "mage"
 		s.state.CombatStyle = "mage_fireball"
 		s.state.CombatSpellId = s.selectedSpellLocked(fireball).id
+	case 9:
+		s.state.ClassName = "warlock"
+		s.state.CombatStyle = "warlock_shadow_bolt"
+		s.state.CombatSpellId = s.selectedSpellLocked(shadowBolt).id
 	case 4:
 		s.state.ClassName = "rogue"
 		s.state.CombatStyle = "rogue_melee"
@@ -72,6 +77,8 @@ func (s *Service) setKnownSpell(spell uint32, known bool) {
 			s.state.KnownSmite = found
 		case fireball:
 			s.state.KnownFireball = found
+		case shadowBolt:
+			s.state.KnownShadowBolt = found
 		case sinisterStrike:
 			s.state.KnownSinisterStrike = found
 		}
@@ -101,6 +108,9 @@ func (s *Service) offensiveDamageLocked(spell, damage uint32) {
 	case fireball:
 		s.state.FireballDamageEvents++
 		s.state.FireballDamageTotal += uint64(damage)
+	case shadowBolt:
+		s.state.ShadowBoltDamageEvents++
+		s.state.ShadowBoltDamageTotal += uint64(damage)
 	case sinisterStrike:
 		s.state.SinisterStrikeDamageEvents++
 		s.state.SinisterStrikeDamageTotal += uint64(damage)

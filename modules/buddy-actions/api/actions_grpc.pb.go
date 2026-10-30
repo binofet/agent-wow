@@ -31,6 +31,7 @@ const (
 	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
 	BuddyActions_ApproachQuest_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
 	BuddyActions_TravelQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_TravelTrainer_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
 	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
 	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
 	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
@@ -51,6 +52,7 @@ type BuddyActionsClient interface {
 	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
 	ApproachQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
 	TravelQuest(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
+	TravelTrainer(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
 	ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error)
 	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -165,6 +167,16 @@ func (c *buddyActionsClient) TravelQuest(ctx context.Context, in *ApproachQuestR
 	return out, nil
 }
 
+func (c *buddyActionsClient) TravelTrainer(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_TravelTrainer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -219,6 +231,7 @@ type BuddyActionsServer interface {
 	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
 	ApproachQuest(context.Context, *ApproachQuestRequest) (*State, error)
 	TravelQuest(context.Context, *ApproachQuestRequest) (*State, error)
+	TravelTrainer(context.Context, *ApproachQuestRequest) (*State, error)
 	ExitCrypt(context.Context, *ExitCryptRequest) (*State, error)
 	Practice(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
@@ -262,6 +275,9 @@ func (UnimplementedBuddyActionsServer) ApproachQuest(context.Context, *ApproachQ
 }
 func (UnimplementedBuddyActionsServer) TravelQuest(context.Context, *ApproachQuestRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TravelQuest not implemented")
+}
+func (UnimplementedBuddyActionsServer) TravelTrainer(context.Context, *ApproachQuestRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TravelTrainer not implemented")
 }
 func (UnimplementedBuddyActionsServer) ExitCrypt(context.Context, *ExitCryptRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExitCrypt not implemented")
@@ -476,6 +492,24 @@ func _BuddyActions_TravelQuest_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_TravelTrainer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachQuestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).TravelTrainer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_TravelTrainer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).TravelTrainer(ctx, req.(*ApproachQuestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_ExitCrypt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExitCryptRequest)
 	if err := dec(in); err != nil {
@@ -594,6 +628,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TravelQuest",
 			Handler:    _BuddyActions_TravelQuest_Handler,
+		},
+		{
+			MethodName: "TravelTrainer",
+			Handler:    _BuddyActions_TravelTrainer_Handler,
 		},
 		{
 			MethodName: "ExitCrypt",

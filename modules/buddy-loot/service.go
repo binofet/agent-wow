@@ -45,6 +45,7 @@ type Service struct {
 	gatherSeen                                 map[uint64]bool
 	opened                                     bool
 	questWolf                                  bool
+	questColdridge                             bool
 	questGather                                bool
 	gatherCastCount                            byte
 	gatherObjectRevision                       uint64
@@ -139,6 +140,7 @@ func (s *Service) releaseLease(ctx context.Context) {
 		_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "loot", Token: s.token}, &actionsv1.State{})
 		s.token = ""
 		s.questWolf = false
+		s.questColdridge = false
 	}
 }
 func (s *Service) finish(ctx context.Context) {
@@ -166,6 +168,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.index = 0
 	s.opened = false
 	s.questWolf = false
+	s.questColdridge = false
 	if s.state.Enabled {
 		s.state.Phase = "idle"
 	} else {
@@ -245,6 +248,13 @@ func ownWolfQuest(world *worldv1.SnapshotResponse, selfGUID uint64) bool {
 
 func wolfQuestContext(world *worldv1.SnapshotResponse, p *actionsv1.ClientPosition, selfGUID uint64) bool {
 	if !ownWolfQuest(world, selfGUID) || p == nil {
+		return false
+	}
+	return safeOwnQuestLootContext(world, p)
+}
+
+func safeOwnQuestLootContext(world *worldv1.SnapshotResponse, p *actionsv1.ClientPosition) bool {
+	if world == nil || world.Self == nil || p == nil {
 		return false
 	}
 	self := world.Self
@@ -389,6 +399,11 @@ func (s *Service) Tick(ctx context.Context) {
 				return
 			}
 			currentActions = active
+			if s.questColdridge && (active.MotionUnconfirmed || !coldridgeQuestContext(world, active.Position, s.selfGUID)) {
+				s.state.Reason = "coldridge_loot_scope_became_unsafe"
+				s.beginRelease(ctx)
+				return
+			}
 			if s.questGather {
 				s.observeGatherQuest(world)
 				if active.Moving && s.state.Phase != "gather_approaching" || !harvestContext(world, active, s.selfGUID, false) {
@@ -397,7 +412,7 @@ func (s *Service) Tick(ctx context.Context) {
 					return
 				}
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questColdridge && !active.MotionUnconfirmed && coldridgeQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -538,11 +553,11 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.tryGatherLocked(ctx, world) {
 		return
 	}
-	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) {
+	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
 	}
-	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) {
+	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
@@ -571,7 +586,8 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
 	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
-	if !ownerNearby && !wolfScope {
+	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID)
+	if !ownerNearby && !wolfScope && !coldridgeScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
 		return
 	}
@@ -581,7 +597,7 @@ func (s *Service) Tick(ctx context.Context) {
 		if c == nil {
 			continue
 		}
-		if !ownerNearby && (!wolfScope || c.Entry != 299) {
+		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && coldridgeCorpse(c)) {
 			continue
 		}
 		if s.seen[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -608,12 +624,25 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.token = lease.Token
 	s.questWolf = selected.Entry == 299 && wolfScope
-	if s.questWolf {
+	s.questColdridge = coldridgeScope && coldridgeCorpse(selected)
+	if s.questWolf || s.questColdridge {
 		selectedGUID := selected.Guid
 		fresh := &worldv1.SnapshotResponse{}
-		if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) != nil || lease.State.MotionUnconfirmed || !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) {
+		freshErr := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh)
+		// Independent Coldridge looting cannot rely on the position returned
+		// before the subsequent world observation completed.
+		if freshErr == nil && s.questColdridge {
+			freshActions := &actionsv1.State{}
+			freshErr = s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, freshActions)
+			if freshErr == nil && (freshActions.InteractionOwner != "loot" || freshActions.InteractionLeaseRemainingMs < 1000) {
+				freshErr = errors.New("owned loot lease changed")
+			}
+			lease.State = freshActions
+		}
+		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !coldridgeQuestContext(fresh, lease.State.Position, s.selfGUID) {
 			s.releaseLease(ctx)
 			s.questWolf = false
+			s.questColdridge = false
 			s.state.Reason = "quest_wolf_scope_changed_after_stop"
 			return
 		}
@@ -621,7 +650,7 @@ func (s *Service) Tick(ctx context.Context) {
 		selected = nil
 		if len(fresh.LootableCorpses) <= 64 {
 			for _, c := range fresh.LootableCorpses {
-				if c != nil && c.Guid == selectedGUID && c.Entry == 299 {
+				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && coldridgeCorpse(c)) {
 					selected = c
 					break
 				}

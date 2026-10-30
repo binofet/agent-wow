@@ -71,6 +71,7 @@ type Service struct {
 	approachDelay                                            func(context.Context, time.Duration) error
 	navDataDir                                               string
 	planPath                                                 func(context.Context, string, position, position) ([]position, error)
+	planColdridgePath                                        func(context.Context, string, position, position) ([]position, error)
 	practiceUntil                                            time.Time
 	practiceRoute                                            []position
 	practiceRouteIndex                                       int
@@ -86,7 +87,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planColdridgePath: planColdridgeNavigation}
 }
 
 // NewIndependentService keeps self-scoped actions available without granting
@@ -125,7 +126,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 }
 
 func validInteractionOwner(owner string) bool {
-	return owner == "loot" || owner == "quests" || owner == "trade" || owner == "training" || owner == "mail"
+	return owner == "loot" || owner == "quests" || owner == "trade" || owner == "training" || owner == "mail" || owner == "professions"
 }
 func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
@@ -142,7 +143,7 @@ func (s *Service) expireInteractionLocked() {
 
 func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.InteractionRequest) (*actionsv1.InteractionLease, error) {
 	if r == nil || !validInteractionOwner(r.Owner) {
-		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, or mail")
+		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, mail, or professions")
 	}
 	duration := r.LeaseMs
 	if duration == 0 {

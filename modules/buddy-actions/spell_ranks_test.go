@@ -17,6 +17,7 @@ func TestVerifiedSpellRankCatalog(t *testing.T) {
 		585:  {585, 591, 598, 984, 1004, 6060, 10933, 10934, 25363, 25364, 48122, 48123},
 		133:  {133, 143, 145, 3140, 8400, 8401, 8402, 10148, 10149, 10150, 10151, 25306, 27070, 38692, 42832, 42833},
 		1752: {1752, 1757, 1758, 1759, 1760, 8621, 11293, 11294, 26861, 26862, 48637, 48638},
+		686:  {686},
 	}
 	seen := map[uint32]bool{}
 	for family, ids := range chains {
@@ -40,7 +41,11 @@ func TestVerifiedSpellRankCatalog(t *testing.T) {
 		}
 		last := ids[len(ids)-1]
 		delete(known, last)
-		if highestKnownSpell(known, family).id != ids[len(ids)-2] {
+		var fallback uint32
+		if len(ids) > 1 {
+			fallback = ids[len(ids)-2]
+		}
+		if highestKnownSpell(known, family).id != fallback {
 			t.Fatal("removal did not fall back", family)
 		}
 	}
@@ -63,6 +68,7 @@ func TestRankSpecificResourceAndCastMetadata(t *testing.T) {
 		{133, 8, 1500 * time.Millisecond}, {143, 11, 2 * time.Second}, {145, 14, 2500 * time.Millisecond},
 		{3140, 16, 3 * time.Second}, {8400, 19, 3500 * time.Millisecond}, {42833, 19, 3500 * time.Millisecond},
 		{1752, 0, 0}, {48638, 0, 0},
+		{686, 10, 1700 * time.Millisecond},
 	} {
 		r := spellRankFor(tc.id)
 		if r.manaPercent != tc.pct || r.castTime != tc.cast {

@@ -144,6 +144,7 @@ func markAbsent(p *observed, now time.Time) {
 	p.attackVictimKnown = false
 	p.attackVictim = 0
 	p.trajectory = observedTrajectory{}
+	clearCastingContext(p)
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
 
@@ -161,6 +162,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, err
 		}
 		p := &players[0]
+		clearCastingContext(p)
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
 			state.creatures = make(map[uint64]*observed)
@@ -434,6 +436,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					if self {
 						p.questRevision++
 						p.backpackRevision++
+						for _, f := range []int{unitChannelObject, unitChannelObject + 1, unitChannelSpell, unitShapeshiftBytes} {
+							p.known[f] = true
+						}
 					}
 					setMap(p, selfMap)
 					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c, 0x36, 0x78, 0x42, 0x3e} {
@@ -467,6 +472,8 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					p.known[gameObjectBytes] = true
 					p.known[gameObjectFlags] = true
 					p.known[gameObjectDynamic] = true
+					p.known[gameObjectCreatedBy] = true
+					p.known[gameObjectCreatedBy+1] = true
 					newGameObject = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
 					p = &observed{guid: guid, present: true, observedAt: now}

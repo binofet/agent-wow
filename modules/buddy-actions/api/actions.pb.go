@@ -187,7 +187,7 @@ func (x *ClientPosition) GetRevision() uint64 {
 
 type InteractionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Fixed coordination labels: loot, quests, trade, training, mail.
+	// Fixed coordination labels: loot, quests, trade, training, mail, professions.
 	Owner string `protobuf:"bytes,1,opt,name=owner,proto3" json:"owner,omitempty"`
 	// Required only to renew an existing lease; never returned by Status.
 	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
@@ -579,6 +579,9 @@ type State struct {
 	PracticeLeaseRemainingMs uint64 `protobuf:"varint,60,opt,name=practice_lease_remaining_ms,json=practiceLeaseRemainingMs,proto3" json:"practice_lease_remaining_ms,omitempty"`
 	PracticePulls            uint64 `protobuf:"varint,61,opt,name=practice_pulls,json=practicePulls,proto3" json:"practice_pulls,omitempty"`
 	PracticeKills            uint64 `protobuf:"varint,62,opt,name=practice_kills,json=practiceKills,proto3" json:"practice_kills,omitempty"`
+	KnownShadowBolt          bool   `protobuf:"varint,63,opt,name=known_shadow_bolt,json=knownShadowBolt,proto3" json:"known_shadow_bolt,omitempty"`
+	ShadowBoltDamageEvents   uint64 `protobuf:"varint,64,opt,name=shadow_bolt_damage_events,json=shadowBoltDamageEvents,proto3" json:"shadow_bolt_damage_events,omitempty"`
+	ShadowBoltDamageTotal    uint64 `protobuf:"varint,65,opt,name=shadow_bolt_damage_total,json=shadowBoltDamageTotal,proto3" json:"shadow_bolt_damage_total,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -1047,6 +1050,27 @@ func (x *State) GetPracticeKills() uint64 {
 	return 0
 }
 
+func (x *State) GetKnownShadowBolt() bool {
+	if x != nil {
+		return x.KnownShadowBolt
+	}
+	return false
+}
+
+func (x *State) GetShadowBoltDamageEvents() uint64 {
+	if x != nil {
+		return x.ShadowBoltDamageEvents
+	}
+	return 0
+}
+
+func (x *State) GetShadowBoltDamageTotal() uint64 {
+	if x != nil {
+		return x.ShadowBoltDamageTotal
+	}
+	return 0
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -1085,7 +1109,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"_\n" +
 	"\x10InteractionLease\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x125\n" +
-	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xca\x15\n" +
+	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xea\x16\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -1157,7 +1181,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x14practice_target_guid\x18; \x01(\x04R\x12practiceTargetGuid\x12=\n" +
 	"\x1bpractice_lease_remaining_ms\x18< \x01(\x04R\x18practiceLeaseRemainingMs\x12%\n" +
 	"\x0epractice_pulls\x18= \x01(\x04R\rpracticePulls\x12%\n" +
-	"\x0epractice_kills\x18> \x01(\x04R\rpracticeKills2\xbf\t\n" +
+	"\x0epractice_kills\x18> \x01(\x04R\rpracticeKills\x12*\n" +
+	"\x11known_shadow_bolt\x18? \x01(\bR\x0fknownShadowBolt\x129\n" +
+	"\x19shadow_bolt_damage_events\x18@ \x01(\x04R\x16shadowBoltDamageEvents\x127\n" +
+	"\x18shadow_bolt_damage_total\x18A \x01(\x04R\x15shadowBoltDamageTotal2\xa1\n" +
+	"\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +
@@ -1168,7 +1196,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12ReleaseInteraction\x12,.warcraftbuddy.actions.v1.InteractionRelease\x1a\x1f.warcraftbuddy.actions.v1.State\x12^\n" +
 	"\fApproachLoot\x12-.warcraftbuddy.actions.v1.ApproachLootRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12`\n" +
 	"\rApproachQuest\x12..warcraftbuddy.actions.v1.ApproachQuestRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12^\n" +
-	"\vTravelQuest\x12..warcraftbuddy.actions.v1.ApproachQuestRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12X\n" +
+	"\vTravelQuest\x12..warcraftbuddy.actions.v1.ApproachQuestRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12`\n" +
+	"\rTravelTrainer\x12..warcraftbuddy.actions.v1.ApproachQuestRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12X\n" +
 	"\tExitCrypt\x12*.warcraftbuddy.actions.v1.ExitCryptRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12T\n" +
 	"\bPractice\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
@@ -1213,26 +1242,28 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	4,  // 9: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
 	5,  // 10: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
 	5,  // 11: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	6,  // 12: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	0,  // 13: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	10, // 14: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	9,  // 15: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	8,  // 16: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 17: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 18: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 19: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 20: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	7,  // 21: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	8,  // 22: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 23: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 24: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 25: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 26: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	8,  // 27: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	9,  // 28: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	9,  // 29: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	16, // [16:30] is the sub-list for method output_type
-	2,  // [2:16] is the sub-list for method input_type
+	5,  // 12: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	6,  // 13: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	0,  // 14: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	10, // 15: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 16: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	8,  // 17: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 18: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 19: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 20: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 21: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	7,  // 22: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	8,  // 23: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 24: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 25: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 26: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 27: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 28: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	8,  // 29: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	9,  // 30: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	9,  // 31: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	17, // [17:32] is the sub-list for method output_type
+	2,  // [2:17] is the sub-list for method input_type
 	2,  // [2:2] is the sub-list for extension type_name
 	2,  // [2:2] is the sub-list for extension extendee
 	0,  // [0:2] is the sub-list for field type_name

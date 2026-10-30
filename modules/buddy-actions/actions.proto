@@ -20,7 +20,7 @@ message ClientPosition {
   uint64 revision = 10;
 }
 message InteractionRequest {
-  // Fixed coordination labels: loot, quests, trade, training, mail.
+  // Fixed coordination labels: loot, quests, trade, training, mail, professions.
   string owner = 1;
   // Required only to renew an existing lease; never returned by Status.
   string token = 2;
@@ -106,6 +106,9 @@ message State {
   uint64 practice_lease_remaining_ms = 60;
   uint64 practice_pulls = 61;
   uint64 practice_kills = 62;
+  bool known_shadow_bolt = 63;
+  uint64 shadow_bolt_damage_events = 64;
+  uint64 shadow_bolt_damage_total = 65;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -118,6 +121,7 @@ service BuddyActions {
   rpc ApproachLoot(ApproachLootRequest) returns (State);
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
   rpc TravelQuest(ApproachQuestRequest) returns (State);
+  rpc TravelTrainer(ApproachQuestRequest) returns (State);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);

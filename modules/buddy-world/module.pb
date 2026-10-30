@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Á7
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
+Š<
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ˆ
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -92,7 +92,13 @@ levelKnown
 combat_reach- (RcombatReach3
 base_attack_time_known. (RbaseAttackTimeKnown-
 base_attack_time_ms/ (RbaseAttackTimeMsB
-mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand"û
+mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand0
+channel_object_known1 (RchannelObjectKnown.
+channel_object_guid2 (RchannelObjectGuid.
+channel_spell_known3 (RchannelSpellKnown(
+channel_spell_id4 (RchannelSpellId2
+shapeshift_form_known5 (RshapeshiftFormKnown'
+shapeshift_form6 (RshapeshiftForm"û
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -105,7 +111,7 @@ durability (R
 durability%
 max_durability (RmaxDurability"6
 SnapshotRequest#
-creature_guid (RcreatureGuid"Ô
+creature_guid (RcreatureGuid"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -128,7 +134,12 @@ type_known (R	typeKnown(
 flagsKnown
 flags (Rflags.
 dynamic_flags_known (RdynamicFlagsKnown#
-dynamic_flags (RdynamicFlags"ƒ
+dynamic_flags (RdynamicFlags(
+created_by_known (RcreatedByKnown&
+created_by_guid (RcreatedByGuid
+state_known (R
+stateKnown
+state (Rstate"ƒ
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -218,7 +229,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"£
+permanent_bonus (RpermanentBonus"Ê
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -252,7 +263,9 @@ selfCopper0
 selfSkills@
 self_free_primary_slots_known (RselfFreePrimarySlotsKnown5
 self_free_primary_slots (RselfFreePrimarySlotsF
- self_free_primary_slots_revision (RselfFreePrimarySlotsRevision2°
+ self_free_primary_slots_revision (RselfFreePrimarySlotsRevisionL
+spell_focuses (2'.warcraftbuddy.world.v1.GameObjectStateRspellFocusesW
+own_fishing_bobbers (2'.warcraftbuddy.world.v1.GameObjectStateRownFishingBobbers2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

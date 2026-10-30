@@ -81,6 +81,9 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		return nil, status.Error(codes.FailedPrecondition, "practice requires confirmed idle action ownership")
 	}
 	w, err := s.snapshot(ctx)
+	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
+		return s.startColdridgePracticeLocked(ctx, w)
+	}
 	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
 		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1..5 supported class safely in Northshire")
 	}
@@ -137,6 +140,10 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		return
 	}
 	w, err := s.snapshot(ctx, s.practiceTarget)
+	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
+		s.coldridgePracticeTickLocked(ctx, w)
+		return
+	}
 	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return

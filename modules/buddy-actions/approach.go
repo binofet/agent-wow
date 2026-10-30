@@ -75,6 +75,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	var target position
 	var targetRevision uint64
 	var targetKnown bool
+	coldridgeCorpse := false
 	if r.GameObjectGuid != 0 {
 		if s.navDataDir == "" {
 			return pause("loot_approach_harvest_requires_verified_navigation")
@@ -112,7 +113,9 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 			return pause("loot_approach_corpse_not_eligible")
 		}
 		quest33, _ := ownWolfQuest(w)
-		if !quest33 || corpse.Entry != 299 {
+		quest179, _ := ownColdridgeQuest(w, s.selfGUID)
+		coldridgeCorpse = quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
+		if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse {
 			if reason := safePlayers(w, s.selfGUID); reason != "" {
 				return pause("loot_approach_" + reason)
 			}
@@ -128,12 +131,22 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		return pause("loot_approach_target_unknown_far_or_vertical")
 	}
 	if s.navDataDir != "" {
-		if !northshire(s.pos) || !northshire(target) {
+		inside := northshire
+		if coldridgeCorpse {
+			inside = coldridge
+		}
+		if !inside(s.pos) || !inside(target) {
 			return pause("loot_approach_outside_supported_navigation_area")
 		}
 		if route == nil {
 			planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-			path, err := s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+			var path []position
+			var err error
+			if coldridgeCorpse {
+				path, err = s.coldridgeNavigationPath(planCtx, s.pos, target)
+			} else {
+				path, err = s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+			}
 			if err == nil {
 				err = planCtx.Err()
 			}
@@ -166,6 +179,18 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		if index == len(route.path) {
 			return pause("loot_approach_route_ended_outside_range")
 		}
+		if coldridgeCorpse {
+			// The formation chord helper is deliberately Northshire-only.
+			// Coldridge uses the existing region-bounded segment writer.
+			if !s.navigationStepWithinLocked(ctx, route.path, &index, coldridge) {
+				return pause("loot_approach_invalid_navigation_step")
+			}
+			if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, index) <= 3.01 {
+				return pause("loot_approach_within_distance")
+			}
+			s.state.Reason = "loot_approaching_coldridge_client_navmesh_estimate"
+			return s.stateLocked(), nil
+		}
 		p := s.pos
 		op := uint32(opcode.MSGMoveStartForward)
 		if s.state.Moving {
@@ -194,6 +219,9 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		}
 		s.state.Reason = "loot_approaching_client_navmesh_estimate"
 		return s.stateLocked(), nil
+	}
+	if coldridgeCorpse {
+		return pause("loot_approach_coldridge_requires_verified_navigation")
 	}
 	return s.groundApproachStepLocked(ctx, target, "loot"), nil
 }

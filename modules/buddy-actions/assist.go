@@ -25,7 +25,7 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 	}
 	self, owner, target := w.Self, w.Owner, w.OwnerTarget
 	s.updateClassLocked()
-	if !self.ClassKnown || (self.ClassId != 5 && self.ClassId != 8 && self.ClassId != 4) {
+	if !self.ClassKnown || (self.ClassId != 5 && self.ClassId != 8 && self.ClassId != 4 && self.ClassId != 9) {
 		return fail("assist_class_unknown_or_unsupported")
 	}
 	if self.ClassId == 5 && (!owner.HealthKnown || owner.MaxHealth == 0 || uint64(owner.Health)*100 < uint64(owner.MaxHealth)*85) {
@@ -63,6 +63,11 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 		rank, maxRange = s.selectedSpellLocked(fireball), 33
 		if !s.state.KnownFireball {
 			return fail("fireball_not_in_known_spells")
+		}
+	} else if self.ClassId == 9 {
+		rank, maxRange = s.selectedSpellLocked(shadowBolt), 28
+		if !s.state.KnownShadowBolt {
+			return fail("shadow_bolt_not_in_known_spells")
 		}
 	} else if !s.state.KnownSmite {
 		return fail("smite_not_in_known_spells")
@@ -144,6 +149,8 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 		s.state.Reason = "smite_transport_written_waiting_for_server"
 	case fireball:
 		s.state.Reason = "fireball_transport_written_waiting_for_server"
+	case shadowBolt:
+		s.state.Reason = "shadow_bolt_transport_written_waiting_for_server"
 	case sinisterStrike:
 		s.state.Reason = "sinister_strike_transport_written_waiting_for_server"
 	}

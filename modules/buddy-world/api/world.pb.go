@@ -77,6 +77,12 @@ type PlayerState struct {
 	BaseAttackTimeKnown bool            `protobuf:"varint,46,opt,name=base_attack_time_known,json=baseAttackTimeKnown,proto3" json:"base_attack_time_known,omitempty"`
 	BaseAttackTimeMs    uint32          `protobuf:"varint,47,opt,name=base_attack_time_ms,json=baseAttackTimeMs,proto3" json:"base_attack_time_ms,omitempty"`
 	Mainhand            *EquippedWeapon `protobuf:"bytes,48,opt,name=mainhand,proto3" json:"mainhand,omitempty"`
+	ChannelObjectKnown  bool            `protobuf:"varint,49,opt,name=channel_object_known,json=channelObjectKnown,proto3" json:"channel_object_known,omitempty"`
+	ChannelObjectGuid   uint64          `protobuf:"varint,50,opt,name=channel_object_guid,json=channelObjectGuid,proto3" json:"channel_object_guid,omitempty"`
+	ChannelSpellKnown   bool            `protobuf:"varint,51,opt,name=channel_spell_known,json=channelSpellKnown,proto3" json:"channel_spell_known,omitempty"`
+	ChannelSpellId      uint32          `protobuf:"varint,52,opt,name=channel_spell_id,json=channelSpellId,proto3" json:"channel_spell_id,omitempty"`
+	ShapeshiftFormKnown bool            `protobuf:"varint,53,opt,name=shapeshift_form_known,json=shapeshiftFormKnown,proto3" json:"shapeshift_form_known,omitempty"`
+	ShapeshiftForm      uint32          `protobuf:"varint,54,opt,name=shapeshift_form,json=shapeshiftForm,proto3" json:"shapeshift_form,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -447,6 +453,48 @@ func (x *PlayerState) GetMainhand() *EquippedWeapon {
 	return nil
 }
 
+func (x *PlayerState) GetChannelObjectKnown() bool {
+	if x != nil {
+		return x.ChannelObjectKnown
+	}
+	return false
+}
+
+func (x *PlayerState) GetChannelObjectGuid() uint64 {
+	if x != nil {
+		return x.ChannelObjectGuid
+	}
+	return 0
+}
+
+func (x *PlayerState) GetChannelSpellKnown() bool {
+	if x != nil {
+		return x.ChannelSpellKnown
+	}
+	return false
+}
+
+func (x *PlayerState) GetChannelSpellId() uint32 {
+	if x != nil {
+		return x.ChannelSpellId
+	}
+	return 0
+}
+
+func (x *PlayerState) GetShapeshiftFormKnown() bool {
+	if x != nil {
+		return x.ShapeshiftFormKnown
+	}
+	return false
+}
+
+func (x *PlayerState) GetShapeshiftForm() uint32 {
+	if x != nil {
+		return x.ShapeshiftForm
+	}
+	return 0
+}
+
 type EquippedWeapon struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SlotKnown       bool                   `protobuf:"varint,1,opt,name=slot_known,json=slotKnown,proto3" json:"slot_known,omitempty"`
@@ -606,6 +654,10 @@ type GameObjectState struct {
 	Flags             uint32                 `protobuf:"varint,17,opt,name=flags,proto3" json:"flags,omitempty"`
 	DynamicFlagsKnown bool                   `protobuf:"varint,18,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
 	DynamicFlags      uint32                 `protobuf:"varint,19,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	CreatedByKnown    bool                   `protobuf:"varint,20,opt,name=created_by_known,json=createdByKnown,proto3" json:"created_by_known,omitempty"`
+	CreatedByGuid     uint64                 `protobuf:"varint,21,opt,name=created_by_guid,json=createdByGuid,proto3" json:"created_by_guid,omitempty"`
+	StateKnown        bool                   `protobuf:"varint,22,opt,name=state_known,json=stateKnown,proto3" json:"state_known,omitempty"`
+	State             uint32                 `protobuf:"varint,23,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -769,6 +821,34 @@ func (x *GameObjectState) GetDynamicFlagsKnown() bool {
 func (x *GameObjectState) GetDynamicFlags() uint32 {
 	if x != nil {
 		return x.DynamicFlags
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetCreatedByKnown() bool {
+	if x != nil {
+		return x.CreatedByKnown
+	}
+	return false
+}
+
+func (x *GameObjectState) GetCreatedByGuid() uint64 {
+	if x != nil {
+		return x.CreatedByGuid
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetStateKnown() bool {
+	if x != nil {
+		return x.StateKnown
+	}
+	return false
+}
+
+func (x *GameObjectState) GetState() uint32 {
+	if x != nil {
+		return x.State
 	}
 	return 0
 }
@@ -1577,8 +1657,13 @@ type SnapshotResponse struct {
 	SelfFreePrimarySlotsKnown    bool          `protobuf:"varint,27,opt,name=self_free_primary_slots_known,json=selfFreePrimarySlotsKnown,proto3" json:"self_free_primary_slots_known,omitempty"`
 	SelfFreePrimarySlots         uint32        `protobuf:"varint,28,opt,name=self_free_primary_slots,json=selfFreePrimarySlots,proto3" json:"self_free_primary_slots,omitempty"`
 	SelfFreePrimarySlotsRevision uint64        `protobuf:"varint,29,opt,name=self_free_primary_slots_revision,json=selfFreePrimarySlotsRevision,proto3" json:"self_free_primary_slots_revision,omitempty"`
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	// At most32 present public SPELL_FOCUS(type8) objects. FocusID is template
+	// metadata and must be obtained through an ordinary gameobject query.
+	SpellFocuses []*GameObjectState `protobuf:"bytes,30,rep,name=spell_focuses,json=spellFocuses,proto3" json:"spell_focuses,omitempty"`
+	// At most4 present type17/entry35591 bobbers with actual createdBy=self.
+	OwnFishingBobbers []*GameObjectState `protobuf:"bytes,31,rep,name=own_fishing_bobbers,json=ownFishingBobbers,proto3" json:"own_fishing_bobbers,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -1814,11 +1899,25 @@ func (x *SnapshotResponse) GetSelfFreePrimarySlotsRevision() uint64 {
 	return 0
 }
 
+func (x *SnapshotResponse) GetSpellFocuses() []*GameObjectState {
+	if x != nil {
+		return x.SpellFocuses
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetOwnFishingBobbers() []*GameObjectState {
+	if x != nil {
+		return x.OwnFishingBobbers
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
-	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xef\f\n" +
+	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\x88\x0f\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -1878,7 +1977,13 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\fcombat_reach\x18- \x01(\x02R\vcombatReach\x123\n" +
 	"\x16base_attack_time_known\x18. \x01(\bR\x13baseAttackTimeKnown\x12-\n" +
 	"\x13base_attack_time_ms\x18/ \x01(\rR\x10baseAttackTimeMs\x12B\n" +
-	"\bmainhand\x180 \x01(\v2&.warcraftbuddy.world.v1.EquippedWeaponR\bmainhand\"\xfb\x01\n" +
+	"\bmainhand\x180 \x01(\v2&.warcraftbuddy.world.v1.EquippedWeaponR\bmainhand\x120\n" +
+	"\x14channel_object_known\x181 \x01(\bR\x12channelObjectKnown\x12.\n" +
+	"\x13channel_object_guid\x182 \x01(\x04R\x11channelObjectGuid\x12.\n" +
+	"\x13channel_spell_known\x183 \x01(\bR\x11channelSpellKnown\x12(\n" +
+	"\x10channel_spell_id\x184 \x01(\rR\x0echannelSpellId\x122\n" +
+	"\x15shapeshift_form_known\x185 \x01(\bR\x13shapeshiftFormKnown\x12'\n" +
+	"\x0fshapeshift_form\x186 \x01(\rR\x0eshapeshiftForm\"\xfb\x01\n" +
 	"\x0eEquippedWeapon\x12\x1d\n" +
 	"\n" +
 	"slot_known\x18\x01 \x01(\bR\tslotKnown\x12\x1b\n" +
@@ -1891,7 +1996,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"durability\x12%\n" +
 	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"6\n" +
 	"\x0fSnapshotRequest\x12#\n" +
-	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\"\xd4\x04\n" +
+	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\"\xdd\x05\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -1914,7 +2019,12 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"flagsKnown\x12\x14\n" +
 	"\x05flags\x18\x11 \x01(\rR\x05flags\x12.\n" +
 	"\x13dynamic_flags_known\x18\x12 \x01(\bR\x11dynamicFlagsKnown\x12#\n" +
-	"\rdynamic_flags\x18\x13 \x01(\rR\fdynamicFlags\"\x83\v\n" +
+	"\rdynamic_flags\x18\x13 \x01(\rR\fdynamicFlags\x12(\n" +
+	"\x10created_by_known\x18\x14 \x01(\bR\x0ecreatedByKnown\x12&\n" +
+	"\x0fcreated_by_guid\x18\x15 \x01(\x04R\rcreatedByGuid\x12\x1f\n" +
+	"\vstate_known\x18\x16 \x01(\bR\n" +
+	"stateKnown\x12\x14\n" +
+	"\x05state\x18\x17 \x01(\rR\x05state\"\x83\v\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -2004,7 +2114,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xa3\r\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xca\x0e\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -2038,7 +2148,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"selfSkills\x12@\n" +
 	"\x1dself_free_primary_slots_known\x18\x1b \x01(\bR\x19selfFreePrimarySlotsKnown\x125\n" +
 	"\x17self_free_primary_slots\x18\x1c \x01(\rR\x14selfFreePrimarySlots\x12F\n" +
-	" self_free_primary_slots_revision\x18\x1d \x01(\x04R\x1cselfFreePrimarySlotsRevision2\xb0\x01\n" +
+	" self_free_primary_slots_revision\x18\x1d \x01(\x04R\x1cselfFreePrimarySlotsRevision\x12L\n" +
+	"\rspell_focuses\x18\x1e \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fspellFocuses\x12W\n" +
+	"\x13own_fishing_bobbers\x18\x1f \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x11ownFishingBobbers2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -2086,15 +2198,17 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
 	4,  // 12: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
 	8,  // 13: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
-	2,  // 14: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	10, // 15: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	9,  // 16: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	11, // 17: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	16, // [16:18] is the sub-list for method output_type
-	14, // [14:16] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	3,  // 14: warcraftbuddy.world.v1.SnapshotResponse.spell_focuses:type_name -> warcraftbuddy.world.v1.GameObjectState
+	3,  // 15: warcraftbuddy.world.v1.SnapshotResponse.own_fishing_bobbers:type_name -> warcraftbuddy.world.v1.GameObjectState
+	2,  // 16: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	10, // 17: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 18: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	11, // 19: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	18, // [18:20] is the sub-list for method output_type
+	16, // [16:18] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

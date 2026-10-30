@@ -19,6 +19,9 @@ type spellRank struct {
 }
 
 var spellRankCatalog = []spellRank{
+	// Build12340 Spell.dbc686:10%base mana, CastTimes90=1700ms, Range4max30.
+	// Only this actually verified player rank is supported for warlocks.
+	{id: 686, family: 686, rank: 1, manaPercent: 10, castTime: 1700 * time.Millisecond},
 	{id: 2050, family: 2050, rank: 1, manaPercent: 16, castTime: 1500 * time.Millisecond},
 	{id: 2052, family: 2050, rank: 2, manaPercent: 21, castTime: 2000 * time.Millisecond},
 	{id: 2053, family: 2050, rank: 3, manaPercent: 27, castTime: 2500 * time.Millisecond},

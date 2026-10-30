@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Bounded outdoor following and class-aware priest mage or rogue assistance to fixed owner Joel
+description: Bounded outdoor following and class-aware priest mage rogue or warlock assistance to fixed owner Joel
 requires: [buddy-world, buddy-party]
 compose:
   file: compose.yaml
@@ -18,6 +18,7 @@ rpc:
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
   approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
   travel_quest: /warcraftbuddy.actions.v1.BuddyActions/TravelQuest
+  travel_trainer: /warcraftbuddy.actions.v1.BuddyActions/TravelTrainer
   exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
 packets:
