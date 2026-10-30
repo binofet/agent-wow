@@ -241,6 +241,59 @@ class TownTests(unittest.TestCase):
         self.assertEqual(self.worker("run", mailbox_guid=MAILBOX, claims_only=True)["phase"], "complete")
         self.assertEqual(len(self.rpc.mutations()), 8)
 
+    def test_four_claims_wait_for_list_throttle_and_refresh_compacted_indices(self):
+        clock, sleeps, listed, claims = [100.0], [], [], []
+        self.rpc.current["inventoryBags"][0]["slots"][2] = {"slot": 2}
+        self.rpc.current["items"] = self.rpc.current["items"][1:]
+        original = self.rpc.call
+        last_list = [clock[0]-.4]
+
+        def call(method, params):
+            if method == "buddy-mail.state":
+                self.rpc.mail["listAgeMs"] = str(int(round((clock[0]-last_list[0])*1000)))
+            elif method == "buddy-mail.list":
+                if clock[0]-last_list[0] < 1:
+                    raise m.Error("ResourceExhausted_mail_list_request_throttled")
+                last_list[0] = clock[0]
+                listed.append(clock[0])
+                self.rpc.mail.update(listAgeMs="0", listRevision=str(int(self.rpc.mail["listRevision"])+1))
+                # A fresh server list compacts indices after each attachment is
+                # removed. Cached pre-claim indices are not valid for the next.
+                for row in self.rpc.mail["bagMails"]:
+                    for index, attachment in enumerate(row["attachments"]):
+                        attachment["attachmentIndex"] = index
+            elif method == "buddy-mail.claim_bag_attachment":
+                attachment = self.rpc.mail["bagMails"][0]["attachments"][0]
+                self.assertEqual(params["attachmentIndex"], 0)
+                self.assertEqual(params["itemGuidLow"], attachment["itemGuidLow"])
+                self.assertEqual(params["listRevision"], self.rpc.mail["listRevision"])
+                self.assertEqual(params["expectedInventoryRevision"], self.rpc.current["inventoryRevision"])
+                self.assertEqual(len(listed), len(claims)+1)
+                claims.append(params["requestId"])
+            return original(method, params)
+
+        def sleep(delay):
+            self.assertGreater(delay, 0)
+            self.assertLessEqual(delay, 1.1)
+            sleeps.append(delay)
+            clock[0] += delay
+            # A normal inventory observation may arrive during the wait. It
+            # must precede, rather than invalidate, the claim's new baseline.
+            self.rpc.current["inventoryRevision"] = str(int(self.rpc.current["inventoryRevision"])+1)
+            self.rpc.current["revision"] = str(int(self.rpc.current["revision"])+1)
+
+        self.rpc.call = call
+        with m.Journal(self.path, URL, 6) as journal:
+            worker = m.Worker(self.rpc, 6, journal, now=lambda: clock[0], sleep=sleep)
+            result = worker.run(mailbox_guid=MAILBOX, claims_only=True)
+        self.assertEqual(result["phase"], "complete")
+        self.assertEqual(result["operations"], {"claim": 4, "equip": 4, "sell": 0})
+        self.assertEqual((len(listed), len(claims), len(set(claims)), len(sleeps)), (4, 4, 4, 4))
+        self.assertAlmostEqual(sleeps[0], .65)
+        self.assertTrue(all(b-a >= 1 for a, b in zip(listed, listed[1:])))
+        self.assertEqual(sum(b.get("slotCount", 0) for b in self.rpc.current["inventoryBags"]), 96)
+        self.assertEqual(len(self.rpc.mutations()), 8)
+
     def test_claim_ack_inventory_identity_and_session_required(self):
         for change in ({"serverAcknowledged": False}, {"leaseReleased": False}, {"entry": 7005}, {"count": 2}, {"itemGuid": str(JUNK)}):
             self.setUp(); self.rpc.after = lambda _, op, change=change: op.update(change)

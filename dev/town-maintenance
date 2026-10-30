@@ -430,10 +430,25 @@ class Worker:
     def claim_one(self, mailbox_guid):
         if self.pending():
             return self.reconcile(self.pending())
+        mailbox = positive(mailbox_guid)
+        identity = self.state()
+        self.bind(identity)
+        previous = self.rpc.call("buddy-mail.state", {})
+        if previous.get("sessionId") != identity["sessionId"] or boolean(previous, "operationInFlight"):
+            raise Error("same_session_idle_mail_state_required")
+        # The service throttles List requests for one second. Response age is
+        # conservative because it starts after the request; unknown age waits
+        # the full interval. Take the inventory baseline only after this wait.
+        age = number(previous.get("listAgeMs", 0)) if (boolean(previous, "listKnown")
+            and number(previous.get("mailboxGuid", 0)) == mailbox) else 0
+        wait = max(0, (1050-age)/1000)
+        if wait:
+            self.sleep(wait)
         state = self.state(); bags, slots = self.ready(state)
+        if state["sessionId"] != identity["sessionId"]:
+            raise Error("mail_session_changed_before_inventory_baseline")
         if not any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items()):
             raise Error("known_general_slot_for_bag_attachment_required")
-        mailbox = positive(mailbox_guid)
         mail = self.rpc.call("buddy-mail.list", {"mailboxGuid": str(mailbox)})
         if (mail.get("sessionId") != state["sessionId"] or mail.get("listKnown") is not True or mail.get("listCurrent") is not True
                 or mail.get("operationInFlight") or number(mail.get("mailboxGuid", 0)) != mailbox or number(mail.get("bagsClaimReserved", 0)) >= 4):
