@@ -1,0 +1,20 @@
+api_version: 1
+enabled: true
+description: Explicit bound class trainer lists and purchases with observed prices, wallet budgets and server learning confirmation
+requires: [buddy-world, buddy-actions, buddy-trade]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  discover: /warcraftbuddy.training.v1.BuddyTraining/Discover
+  state: /warcraftbuddy.training.v1.BuddyTraining/GetState
+  list: /warcraftbuddy.training.v1.BuddyTraining/List
+  buy: /warcraftbuddy.training.v1.BuddyTraining/Buy
+packets:
+  SMSG_TRAINER_LIST: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
+  SMSG_TRAINER_BUY_SUCCEEDED: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
+  SMSG_TRAINER_BUY_FAILED: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
+  SMSG_LEARNED_SPELL: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
+  SMSG_SUPERCEDED_SPELL: /warcraftbuddy.training.v1.BuddyTraining/OnPacket

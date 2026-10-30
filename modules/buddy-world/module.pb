@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
- +
+±0
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
@@ -104,7 +104,25 @@ slot_known (R	slotKnown
 durability (R
 durability%
 max_durability (RmaxDurability"
-SnapshotRequest"ƒ
+SnapshotRequest"È
+GameObjectState
+guid (Rguid
+entry (Rentry
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
+
+type_known (R	typeKnown(
+game_object_type (RgameObjectType"ƒ
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -185,7 +203,7 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"Õ
+metadata_known (RmetadataKnown"›	
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -205,7 +223,12 @@ lastOpcode(
 backpack_revision (RbackpackRevision@
 backpack (2$.warcraftbuddy.world.v1.BackpackSlotRbackpackH
 owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTargetP
-nearby_creatures (2%.warcraftbuddy.world.v1.CreatureStateRnearbyCreatures2°
+nearby_creatures (2%.warcraftbuddy.world.v1.CreatureStateRnearbyCreatures*
+self_copper_known (RselfCopperKnown
+self_copper (R
+selfCopper0
+self_copper_revision (RselfCopperRevisionE
+	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxes2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

@@ -106,6 +106,11 @@ func (s *Service) inventory(ctx context.Context) (*worldv1.SnapshotResponse, err
 		return nil, err
 	}
 	s.mu.Lock()
+	if w.SelfCopperRevision >= s.state.CopperRevision {
+		s.state.CopperKnown = w.SelfCopperKnown
+		s.state.Copper = w.SelfCopper
+		s.state.CopperRevision = w.SelfCopperRevision
+	}
 	s.state.BackpackKnown = w.BackpackKnown && len(w.Backpack) == 16
 	s.state.BackpackRevision = w.BackpackRevision
 	s.state.Backpack = nil

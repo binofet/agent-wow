@@ -38,6 +38,8 @@ type observed struct {
 	trajectory        observedTrajectory
 	mainhandKnown     bool
 	mainhand          uint64
+	copperKnown       bool
+	copper            uint32
 }
 
 type Service struct {
@@ -51,7 +53,7 @@ type Service struct {
 }
 
 func NewService(selfGUID uint64) *Service {
-	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: OwnerGUID}}, creatures: make(map[uint64]*observed), items: make(map[uint64]*observed)}, now: time.Now}
+	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: OwnerGUID}}, creatures: make(map[uint64]*observed), items: make(map[uint64]*observed), gameObjects: make(map[uint64]*observed)}, now: time.Now}
 }
 
 func age(now, observed time.Time) uint64 {
@@ -124,6 +126,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
+		old, current := s.state.players[0], next.players[0]
+		if old.copperKnown != current.copperKnown || old.copper != current.copper {
+			next.copperRevision++
+		}
 		next.edited = nil
 		s.state = next
 		s.observed++

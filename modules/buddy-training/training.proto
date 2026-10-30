@@ -1,0 +1,88 @@
+syntax = "proto3";
+package warcraftbuddy.training.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-training/api;trainingv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+import "modules/buddy-world/world.proto";
+
+message Spell {
+  uint32 spell_id = 1;
+  uint32 usable = 2;
+  uint32 cost_copper = 3;
+  repeated uint32 point_cost = 4;
+  uint32 required_level = 5;
+  uint32 required_skill = 6;
+  uint32 required_skill_rank = 7;
+  repeated uint32 required_abilities = 8;
+}
+message Offer {
+  uint64 revision = 1;
+  uint64 npc_guid = 2;
+  uint32 trainer_type = 3;
+  repeated Spell spells = 4;
+  string greeting = 5;
+  uint64 expires_in_ms = 6;
+}
+enum PurchaseStatus {
+  PURCHASE_NONE = 0;
+  REQUESTED = 1;
+  TRAINER_SUCCEEDED = 2;
+  TRAINING_CONFIRMED = 3;
+  SERVER_REJECTED = 4;
+  UNCONFIRMED_TIMEOUT = 5;
+}
+message Purchase {
+  uint64 id = 1;
+  uint64 npc_guid = 2;
+  uint32 spell_id = 3;
+  uint32 cost_copper = 4;
+  PurchaseStatus status = 5;
+  bool transport_written = 6;
+  bool server_success_observed = 7;
+  bool learned_spell_observed = 8;
+  bool refreshed_trainer_knows = 9;
+  repeated uint32 learned_spell_ids = 10;
+  uint32 server_failure = 11;
+  string failure = 12;
+  uint32 baseline_copper = 13;
+  uint64 baseline_copper_revision = 14;
+  bool copper_debit_observed = 15;
+}
+message State {
+  string session_id = 1;
+  uint64 revision = 2;
+  bool action_in_flight = 3;
+  Offer offer = 4;
+  Purchase last_purchase = 5;
+  bool copper_known = 6;
+  uint32 copper = 7;
+  uint64 copper_revision = 8;
+  uint64 malformed_packets = 9;
+  uint64 ignored_packets = 10;
+  uint64 transport_writes = 11;
+  string reason = 12;
+}
+message Trainer {
+  warcraftbuddy.world.v1.CreatureState creature = 1;
+  bool distance_known = 2;
+  double distance = 3;
+  bool interactable = 4;
+  string blocked_reason = 5;
+}
+message Discovery { State state = 1; repeated Trainer nearby = 2; }
+message ListRequest { string session_id = 1; uint64 npc_guid = 2; }
+message BuyRequest {
+  string session_id = 1;
+  uint64 npc_guid = 2;
+  uint64 offer_revision = 3;
+  uint32 spell_id = 4;
+  uint32 expected_cost_copper = 5;
+  uint32 max_spend_copper = 6;
+}
+service BuddyTraining {
+  rpc Discover(google.protobuf.Empty) returns (Discovery);
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc List(ListRequest) returns (State);
+  rpc Buy(BuyRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+}

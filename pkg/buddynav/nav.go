@@ -1,4 +1,4 @@
-// Package buddynav plans bounded, ground-only Northshire routes from read-only
+// Package buddynav plans bounded Northshire ground and shallow-wading routes from read-only
 // client map assets. It does not connect to a game server or move a character.
 package buddynav
 
@@ -22,6 +22,7 @@ const (
 	MaxPoints         = 256
 	MaxRouteLength    = 180.0
 	EndpointTolerance = 2.0
+	MaxWadingDepth    = 1.8
 	// This exact terrain-loader dependency is tagged v1.0.10. Path queries
 	// use its pinned Detour fork directly, retaining complete-result checks.
 	UpstreamRevision = "be53c70850e6c3bdfa776cb22d3a5734ebe0a440"
@@ -109,7 +110,7 @@ func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point
 			return nil, err
 		}
 		var flags uint16
-		if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || flags != 1 {
+		if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || !walkSurfaceFlags(flags) {
 			return nil, err
 		}
 		if st := p.mesh.SetPolyFlags(ref, 0); detour.DtStatusFailed(st) {
@@ -123,6 +124,7 @@ func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point
 type backend interface {
 	findPath(start, dest Point) (*pathfinding.PathResult, error)
 	ground(Point) (float32, error)
+	water(Point) (bool, error)
 	terrain(Point) (float32, bool)
 	floor(context.Context, Point, float32, float32) (float32, error)
 	walkable(Point, Point) error
@@ -196,6 +198,10 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 		if !finite(h) || math.Abs(float64(h-q.Z)) > 2 {
 			return errors.New("navigation sample differs from mesh height by more than 2 yards")
 		}
+		water, err := b.water(q)
+		if err != nil {
+			return err
+		}
 		terrain, ok := b.terrain(q)
 		if !ok || !finite(terrain) || terrain <= -10000 {
 			return errors.New("navigation terrain height is unavailable")
@@ -207,6 +213,9 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 		}
 		if !finite(floor) || floor < h-2 || floor > h+.5 {
 			return errors.New("navigation physical floor differs from verified mesh layer")
+		}
+		if water && (h-floor < -.01 || float64(h-floor) > MaxWadingDepth+.0001) {
+			return errors.New("navigation water depth exceeds shallow wading limit")
 		}
 		q.Z = floor
 		if !inBounds(q) {
@@ -329,8 +338,8 @@ func cachedPlanner(dataDir string) (*planner, error) {
 		return nil, errors.New("initialize navigation query failed")
 	}
 	f := detour.DtAllocDtQueryFilter()
-	f.SetIncludeFlags(0x01) // NAV_GROUND only; never liquid, off-mesh, or unknown flags.
-	f.SetExcludeFlags(^uint16(0x01))
+	f.SetIncludeFlags(0x01 | 0x08) // NAV_GROUND and only depth-verified NAV_WATER.
+	f.SetExcludeFlags(^uint16(0x01 | 0x08))
 	p := &planner{gate: make(chan struct{}, 1), mesh: mesh, query: q, filter: f,
 		terrainManager: pathfinding.NewTerrainManager(filepath.Join(dir, "maps")), floors: newFloorReader(filepath.Join(dir, "vmaps"))}
 	p.gate <- struct{}{}
@@ -384,8 +393,8 @@ func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
 		return 0, 0, errors.New("no nearby ground polygon")
 	}
 	var flags uint16
-	if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || flags != 1 {
-		return 0, 0, errors.New("polygon is not ground-only")
+	if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || !walkSurfaceFlags(flags) {
+		return 0, 0, errors.New("polygon is not ground or shallow-wading candidate")
 	}
 	var over bool
 	if st := p.query.ClosestPointOnPoly(ref, v[:], nearest[:], &over); detour.DtStatusFailed(st) || (!over && math.Hypot(float64(nearest[0]-v[0]), float64(nearest[2]-v[2])) > 0.02) {
@@ -407,6 +416,18 @@ func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
 	return ref, height, nil
 }
 func (p *planner) ground(q Point) (float32, error) { _, h, err := p.groundRef(q); return h, err }
+func walkSurfaceFlags(flags uint16) bool           { return flags != 0 && flags & ^uint16(1|8) == 0 }
+func (p *planner) water(q Point) (bool, error) {
+	ref, _, err := p.groundRef(q)
+	if err != nil {
+		return false, err
+	}
+	var flags uint16
+	if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) {
+		return false, errors.New("navigation surface flags unavailable")
+	}
+	return flags&8 != 0, nil
+}
 func (p *planner) walkable(a, b Point) error {
 	// Prefer the polygon containing the segment interior when a portal vertex
 	// belongs to several polygons. Nearest-poly tie order at the vertex alone

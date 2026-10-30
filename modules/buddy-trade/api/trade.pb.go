@@ -130,6 +130,9 @@ type State struct {
 	BackpackRevision   uint64  `protobuf:"varint,17,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
 	Backpack           []*Item `protobuf:"bytes,18,rep,name=backpack,proto3" json:"backpack,omitempty"`
 	Limitation         string  `protobuf:"bytes,19,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	CopperKnown        bool    `protobuf:"varint,20,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
+	Copper             uint32  `protobuf:"varint,21,opt,name=copper,proto3" json:"copper,omitempty"`
+	CopperRevision     uint64  `protobuf:"varint,22,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -295,6 +298,27 @@ func (x *State) GetLimitation() string {
 		return x.Limitation
 	}
 	return ""
+}
+
+func (x *State) GetCopperKnown() bool {
+	if x != nil {
+		return x.CopperKnown
+	}
+	return false
+}
+
+func (x *State) GetCopper() uint32 {
+	if x != nil {
+		return x.Copper
+	}
+	return 0
+}
+
+func (x *State) GetCopperRevision() uint64 {
+	if x != nil {
+		return x.CopperRevision
+	}
+	return 0
 }
 
 type BoundRequest struct {
@@ -504,7 +528,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1b\n" +
 	"\titem_guid\x18\x04 \x01(\x04R\bitemGuid\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xc1\x06\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xa5\a\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -528,7 +552,10 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\bbackpack\x18\x12 \x03(\v2\x1c.warcraftbuddy.trade.v1.ItemR\bbackpack\x12\x1e\n" +
 	"\n" +
 	"limitation\x18\x13 \x01(\tR\n" +
-	"limitation\"I\n" +
+	"limitation\x12!\n" +
+	"\fcopper_known\x18\x14 \x01(\bR\vcopperKnown\x12\x16\n" +
+	"\x06copper\x18\x15 \x01(\rR\x06copper\x12'\n" +
+	"\x0fcopper_revision\x18\x16 \x01(\x04R\x0ecopperRevision\"I\n" +
 	"\fBoundRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +

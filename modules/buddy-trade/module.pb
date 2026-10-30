@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Î
+²
 modules/buddy-trade/trade.protowarcraftbuddy.trade.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ž
 Item
 slot (Rslot
@@ -39,7 +39,7 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 count (Rcount
 	item_guid (RitemGuid
 name (	Rname%
-metadata_known (RmetadataKnown"Á
+metadata_known (RmetadataKnown"¥
 State
 
 session_id (	R	sessionId
@@ -63,7 +63,10 @@ session_id (	R	sessionId
 backpack (2.warcraftbuddy.trade.v1.ItemRbackpack
 
 limitation (	R
-limitation"I
+limitation!
+copper_known (RcopperKnown
+copper (Rcopper'
+copper_revision (RcopperRevision"I
 BoundRequest
 
 session_id (	R	sessionId

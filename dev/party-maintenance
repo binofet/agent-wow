@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Collect the training stipend and learn affordable class spells near actual services."""
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import time
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+loader = importlib.machinery.SourceFileLoader('maintenance_sync', str(Path(__file__).with_name('sync-quests')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+sync = importlib.util.module_from_spec(spec)
+loader.exec_module(sync)
+c, Error, integer = sync.converse, sync.Error, sync.integer
+ROSTER = sync.ROSTER
+IDENTITY = {'version': 1, 'ownerGuid': 3, 'mode': 'training_stipend_and_class_training',
+            'characters': [{'name': n, 'guid': g, 'port': p} for n,g,p in ROSTER]}
+
+def load_character(path):
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY),'r') as source:
+            raw=source.read(65537)
+        if len(raw)>65536:raise Error('Maintenance character state exceeds its bound')
+        value=json.loads(raw)
+        if not isinstance(value,dict):raise ValueError
+        return value
+    except FileNotFoundError:return {}
+    except ValueError:raise Error('Invalid maintenance character state') from None
+
+def confirmed_mail(receipt, mail_id):
+    return (integer(receipt.get('mailId',0)) == integer(mail_id)
+        and receipt.get('status') == 'CLAIM_CONFIRMED' and receipt.get('serverAcknowledged') is True
+        and receipt.get('walletIncreaseObserved') is True and integer(receipt.get('confirmedCopper',0)) == 10000)
+
+class RPC(sync.SyncRPC):
+    EXTRA = sync.SyncRPC.EXTRA | {'buddy-mail.list', 'buddy-mail.state', 'buddy-mail.claim_stipend',
+        'buddy-training.discover', 'buddy-training.state', 'buddy-training.list', 'buddy-training.buy'}
+
+class Maintenance:
+    def __init__(self, name, guid, rpc, save, stored=None, now=time.time):
+        self.name, self.guid, self.rpc, self.save, self.now = name, guid, rpc, save, now
+        identity = {'name': name, 'guid': guid, 'ownerGuid': 3, 'budgetCopper': 10000}
+        self.data = stored or {'identity': identity, 'reservedCopper': 0, 'training': [], 'mail': None}
+        if (self.data.get('identity') != identity or type(self.data.get('reservedCopper')) is not int
+                or not 0 <= self.data['reservedCopper'] <= 10000
+                or not isinstance(self.data.get('training'), list) or len(self.data['training']) > 128
+                or self.data.get('mail') is not None and not isinstance(self.data['mail'], dict)):
+            raise Error('Maintenance state identity or bounds are invalid')
+        for row in self.data['training']:
+            if (not isinstance(row, dict) or not isinstance(row.get('session'), str)
+                    or not 1 <= len(row['session']) <= 128 or not 0 < integer(row.get('spell', 0)) <= 2**32-1
+                    or type(row.get('cost')) is not int or not 0 <= row['cost'] <= 10000
+                    or not 0 < integer(row.get('npc',0)) <= 2**64-1
+                    or type(row.get('baselineId')) is not int or row['baselineId'] < 0
+                    or row.get('status') not in ('reserved','confirmed','rejected')):
+                raise Error('Training reservation is invalid')
+        if sum(row['cost'] for row in self.data['training']) != self.data['reservedCopper']:
+            raise Error('Training budget does not match reservations')
+        self.status = {'name': name, 'guid': guid, 'phase': 'starting'}
+        self.next_query = 0
+
+    def persist(self):
+        self.save(self.data)
+
+    def tick(self):
+        if self.now() < self.next_query:
+            return
+        self.next_query = self.now() + 10
+        world = self.rpc.call('buddy-world.snapshot', {})
+        own, owner = world.get('self', {}), world.get('owner', {})
+        party = self.rpc.call('buddy-party.state', {}).get('group', {})
+        if integer(own.get('guid', 0)) != self.guid or integer(owner.get('guid', 0)) != 3:
+            raise Error('Maintenance character identity changed')
+        if not c.owner_party_known(party, self.guid):
+            self.status['phase'] = 'waiting_for_joels_party'
+            return
+        if any(p.get('present') is not True or p.get('aliveKnown') is not True or p.get('alive') is not True
+               or p.get('unitFlagsKnown') is not True or integer(p.get('unitFlags', 0)) & 0x80000
+               for p in (own,owner)):
+            self.status['phase'] = 'waiting_out_of_combat'
+            return
+        a = self.rpc.call('buddy-actions.status', {})
+        if any(a.get(k) for k in ('moving','castPending','motionUnconfirmed','autoAttacking','autoAttackUnconfirmed','interactionOwner')):
+            self.status['phase'] = 'waiting_for_idle_companion'
+            return
+        if self.data['mail'] and self.data['mail'].get('status') == 'reserved':
+            state=self.rpc.call('buddy-mail.state',{})
+            if (state.get('sessionId') == self.data['mail']['sessionId']
+                    and confirmed_mail(state.get('lastClaim',{}),self.data['mail']['mailId'])):
+                self.data['mail']['status']='confirmed'
+                self.persist()
+        pos = a.get('position', {})
+        boxes = world.get('mailboxes', [])
+        mailbox_near = (pos.get('known') is True and pos.get('mapKnown') is True
+            and isinstance(boxes, list) and len(boxes) <= 32
+            and all(type(pos.get(k)) in (int,float) and math.isfinite(pos[k]) for k in ('x','y','z'))
+            and any(m.get('present') is True and m.get('positionKnown') is True and m.get('mapKnown') is True
+                and integer(m.get('mapId',0)) == integer(pos.get('mapId',0))
+                and all(type(m.get(k)) in (int,float) and math.isfinite(m[k]) for k in ('x','y','z'))
+                and sum((m[k]-pos[k])**2 for k in ('x','y','z')) <= 25 for m in boxes))
+        if mailbox_near and self.data['mail'] is None:
+            mail = self.rpc.call('buddy-mail.list', {})
+            if mail.get('listCurrent') is True and mail.get('listKnown') is True and not mail.get('claimReserved'):
+                rows = mail.get('stipends', [])
+                if rows and isinstance(rows, list) and len(rows) <= 50:
+                    row = rows[0]
+                    if integer(row.get('copper', 0)) == 10000 and integer(row.get('mailId', 0)) > 0:
+                        request = {'sessionId': sync.session_id(mail), 'listRevision': mail['listRevision'],
+                                   'mailboxGuid': mail['mailboxGuid'], 'mailId': row['mailId']}
+                        self.data['mail'] = dict(request, status='reserved')
+                        self.persist()  # A restart must not replay an ambiguous claim.
+                        receipt = self.rpc.call('buddy-mail.claim_stipend', request).get('lastClaim', {})
+                        if confirmed_mail(receipt,row['mailId']):
+                            self.data['mail']['status'] = 'confirmed'
+                            self.persist()
+                        self.status['phase'] = 'stipend_' + self.data['mail']['status']
+                        return
+        if self.data['training'] and self.data['training'][-1]['status'] == 'reserved':
+            pending = self.data['training'][-1]
+            state = self.rpc.call('buddy-training.state', {})
+            purchase = state.get('lastPurchase', {})
+            if (sync.session_id(state) == pending['session'] and integer(purchase.get('spellId',0)) == pending['spell']
+                    and integer(purchase.get('id',0)) > pending['baselineId']
+                    and integer(purchase.get('npcGuid',0)) == integer(pending['npc'])
+                    and integer(purchase.get('costCopper',0)) == pending['cost']):
+                if (purchase.get('status') == 'TRAINING_CONFIRMED' and purchase.get('serverSuccessObserved') is True
+                        and (purchase.get('learnedSpellObserved') is True or purchase.get('refreshedTrainerKnows') is True)):
+                    pending['status'] = 'confirmed'
+                    self.persist()
+                elif purchase.get('status') == 'SERVER_REJECTED':
+                    pending['status'] = 'rejected'
+                    self.persist()
+            if pending['status'] == 'reserved':
+                self.status['phase'] = 'waiting_for_training_confirmation'
+                return
+        if len(self.data['training']) >= 128 or self.data['reservedCopper'] >= 10000:
+            self.status['phase'] = 'training_budget_reserved'
+            return
+        discovery = self.rpc.call('buddy-training.discover', {})
+        state = discovery.get('state', {})
+        nearby = discovery.get('nearby', [])
+        if not isinstance(nearby, list) or len(nearby) > 97:
+            raise Error('Trainer observations exceed bound')
+        trainers = [row for row in nearby if row.get('interactable') is True]
+        if not trainers:
+            self.status['phase'] = 'waiting_near_class_trainer_or_mailbox'
+            return
+        npc = trainers[0].get('creature', {}).get('guid')
+        state = self.rpc.call('buddy-training.list', {'sessionId': sync.session_id(state), 'npcGuid': npc})
+        offer = state.get('offer', {})
+        if (integer(offer.get('npcGuid', 0)) != integer(npc) or integer(offer.get('expiresInMs', 0)) <= 0
+                or integer(offer.get('trainerType', 0)) != 0 or state.get('copperKnown') is not True):
+            self.status['phase'] = 'waiting_for_current_class_training_offer'
+            return
+        spells = offer.get('spells', [])
+        if not isinstance(spells, list) or len(spells) > 256:
+            raise Error('Training offer exceeds bound')
+        attempted = {row['spell'] for row in self.data['training']}
+        budget = min(10000-self.data['reservedCopper'], integer(state.get('copper', 0)))
+        choices = [s for s in spells if integer(s.get('usable', 0)) == 0 and integer(s.get('spellId',0)) > 0
+                   and not any(integer(v) for v in s.get('pointCost', []))
+                   and 0 <= integer(s.get('costCopper',0)) <= budget
+                   and integer(s.get('requiredLevel',0)) <= integer(own.get('level',0))
+                   and integer(s.get('spellId',0)) not in attempted]
+        if not choices:
+            self.status['phase'] = 'no_affordable_unattempted_class_training'
+            return
+        spell = min(choices, key=lambda s:(integer(s.get('costCopper',0)), integer(s['spellId'])))
+        cost, spell_id = integer(spell.get('costCopper',0)), integer(spell['spellId'])
+        self.data['training'].append({'session':sync.session_id(state), 'spell':spell_id, 'cost':cost,
+            'npc':str(npc), 'baselineId':integer(state.get('lastPurchase',{}).get('id',0)), 'status':'reserved'})
+        self.data['reservedCopper'] += cost
+        self.persist()  # Reserve the cumulative budget before any purchase packet.
+        self.rpc.call('buddy-training.buy', {'sessionId':sync.session_id(state), 'npcGuid':npc,
+            'offerRevision':offer['revision'], 'spellId':spell_id, 'expectedCostCopper':cost, 'maxSpendCopper':budget})
+        self.status['phase'] = 'waiting_for_training_confirmation'
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command',choices=('run','status','stop'))
+    parser.add_argument('--state-dir',type=Path,default=ROOT/'data/party-maintenance')
+    parser.add_argument('--max-hours',type=float,default=8)
+    args=parser.parse_args()
+    if not math.isfinite(args.max_hours) or not 0 < args.max_hours <= 8:
+        parser.error('Runtime must be greater than0 and at most8hours')
+    folder=c.ensure_state(args.state_dir)
+    with os.fdopen(c.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+        record=c.read_json(folder/'status.json')
+        if record and record.get('identity') != IDENTITY:
+            raise Error('Directory tracks a different maintenance routine')
+        if args.command != 'run':
+            running=c.is_locked(lock)
+            if args.command == 'status':print(json.dumps(dict(record,running=running),indent=2))
+            elif running:
+                instance=record.get('instance','')
+                if len(instance)!=32 or any(x not in '0123456789abcdef' for x in instance):raise Error('Unconfirmed maintenance instance')
+                c.write_json(folder/'stop.json',{'identity':IDENTITY,'instance':instance})
+                print('Party maintenance stop requested.')
+            else:print('Party maintenance is not running.')
+            return
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise Error('Party maintenance already runs') from None
+        record={'identity':IDENTITY,'instance':uuid.uuid4().hex,'pid':os.getpid(),'phase':'running'}
+        stop_requested=False
+        def stop(signum,frame):
+            nonlocal stop_requested
+            stop_requested=True
+        signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop)
+        deadline=time.monotonic()+args.max_hours*3600
+        def stopped():
+            return stop_requested or time.monotonic()>=deadline or c.read_json(folder/'stop.json')=={'identity':IDENTITY,'instance':record['instance']}
+        profiles=[]
+        for name,guid,port in ROSTER:
+            path=folder/('character-'+str(guid)+'.json')
+            stored=load_character(path)
+            profiles.append(Maintenance(name,guid,RPC('http://127.0.0.1:'+str(port)+'/rpc',timeout=8),
+                lambda value,path=path:c.write_json(path,value),stored or None))
+        def status():
+            record.update(updatedAt=time.time(),characters=[p.status for p in profiles])
+            c.write_json(folder/'status.json',record)
+        try:
+            while not stopped():
+                for p in profiles:
+                    if stopped():break
+                    try:p.tick()
+                    except (Error,KeyError,TypeError,ValueError):p.status['phase']='service_request_or_observation_unavailable'
+                    status()
+                until=time.monotonic()+1
+                while time.monotonic()<until and not stopped():time.sleep(.1)
+        finally:
+            record['phase']='stopped';status()
+
+if __name__=='__main__':
+    try:main()
+    except (Error,OSError) as e:raise SystemExit('Party maintenance: '+str(e))

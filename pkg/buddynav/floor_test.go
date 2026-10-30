@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/azerothcore/AzerothGhost/pathfinding"
+	"github.com/o0olele/detour-go/detour"
 )
 
 // Explicit opt-in measurements use only static, independently extracted client
@@ -72,6 +73,37 @@ func TestPhysicalFloorMeasurements(t *testing.T) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	t.Logf("heapAlloc=%d heapSys=%d", m.HeapAlloc, m.HeapSys)
+}
+
+func TestPhysicalFormationDiagnostic(t *testing.T) {
+	dir := os.Getenv("BUDDY_NAV_FLOOR_TEST_DATA_DIR")
+	if dir == "" {
+		t.Skip("static assets required")
+	}
+	mesh, err := loadMesh(filepath.Join(dir, "mmaps"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := detour.DtAllocNavMeshQuery()
+	if st := query.Init(mesh, 4096); detour.DtStatusFailed(st) {
+		t.Fatal(st)
+	}
+	p := &planner{mesh: mesh, query: query}
+	f := detour.DtAllocDtQueryFilter()
+	f.SetIncludeFlags(0xffff)
+	f.SetExcludeFlags(0)
+	for _, q := range []Point{{-9026.6514, -234.0776, 69.2486}, {-9027.586, -235.64706, 69.07536}, {-9014.413, -214.67183, 71.12956}, {-9020, -230, 70}} {
+		v := recast(q)
+		ext := [3]float32{1, 20, 1}
+		var ref detour.DtPolyRef
+		var nearest [3]float32
+		st := p.query.FindNearestPoly(v[:], ext[:], f, &ref, nearest[:])
+		var flags uint16
+		if ref != 0 {
+			p.mesh.GetPolyFlags(ref, &flags)
+		}
+		t.Logf("query=%+v status=%x ref=%x flags=%x nearestWorld=%+v", q, st, ref, flags, Point{nearest[2], nearest[0], nearest[1]})
+	}
 }
 
 func TestPhysicalEchoRidgeRoutes(t *testing.T) {

@@ -159,7 +159,12 @@ class BuddyLifecycleTests(unittest.TestCase):
 
     def test_wrong_pid_never_proves_readiness_or_gets_killed(self):
         self.ready_pid = 99999
-        with mock.patch.object(buddy, "START_TIMEOUT", 0.01):
+        # Advance a virtual clock after tracking, so a slow fsync on CI cannot
+        # expire the deadline before this test reaches the wrong ready event.
+        ticks = iter([0, 0, 0, 0, 0, 2])
+        with mock.patch.object(buddy, "START_TIMEOUT", 1), \
+                mock.patch.object(buddy.time, "monotonic", side_effect=lambda: next(ticks, 2)), \
+                mock.patch.object(buddy.time, "sleep"):
             with self.assertRaisesRegex(buddy.BuddyError, "preserved"):
                 buddy.start()
         self.assertFalse(buddy.readiness(buddy.load_record()))

@@ -158,6 +158,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
 			state.creatures = make(map[uint64]*observed)
+			state.gameObjects = make(map[uint64]*observed)
 		}
 		p.mapID, p.mapKnown, p.present = mapID, true, true
 		p.movementKnown = false
@@ -170,6 +171,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		markAbsent(&players[0], now)
 		markAbsent(&players[1], now)
 		state.creatures = make(map[uint64]*observed)
+		state.gameObjects = make(map[uint64]*observed)
 		return true, nil
 	case opcode.SMSGUpdateObject:
 		return true, updates(c, state, now)
@@ -409,7 +411,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 		case 0, 1, 2, 3:
 			guid := c.guid()
 			p := state.target(guid)
-			newCreature, newItem := false, false
+			newCreature, newItem, newGameObject := false, false, false
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
 				if objectType > 7 {
@@ -422,7 +424,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, copperKnown: self}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
@@ -448,6 +450,16 @@ func updates(c *cursor, state *observations, now time.Time) error {
 						p.known[f] = true
 					}
 					newCreature = true
+				} else if objectType == 5 && gameObjectGUID(guid) {
+					revision := uint64(0)
+					if p != nil {
+						revision = p.positionRevision
+					}
+					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now}
+					setMap(p, players[0])
+					p.known[objectEntry] = true
+					p.known[gameObjectBytes] = true
+					newGameObject = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
 					p = &observed{guid: guid, present: true, observedAt: now}
 					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack, 0x3c, 0x3d} {
@@ -475,6 +487,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				state.putItem(p)
 			} else if p != nil && itemGUID(guid) && typ != 1 {
 				state.itemRevision++
+			}
+			if newGameObject {
+				state.putGameObject(p)
 			}
 		case 4, 5:
 			n := c.u32()
@@ -630,6 +645,10 @@ func values(c *cursor, p *observed, now time.Time) error {
 			v := c.u32()
 			field := block*32 + bit
 			if p != nil && p.isSelf {
+				if field == playerCoinage {
+					p.copperKnown = true
+					p.copper = v
+				}
 				if field >= questLogFirst && field < questLogFirst+25*5 {
 					slot := (field - questLogFirst) / 5
 					part := (field - questLogFirst) % 5

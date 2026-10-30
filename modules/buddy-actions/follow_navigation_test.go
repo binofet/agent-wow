@@ -139,9 +139,13 @@ func TestFollowNavigationFailureStopsWithoutFallbackOrRapidRetry(t *testing.T) {
 		t.Fatalf("unbounded private diagnostic: %q", s.state.NavReason)
 	}
 	advance(200 * time.Millisecond)
+	beforeReason := s.state.NavReason
 	s.followFormationStepLocked(context.Background(), target, 0.8)
 	if calls != 1 || len(f.packets) != 1 {
 		t.Fatal("rapid retry or direct fallback after planner failure")
+	}
+	if s.state.NavReason != beforeReason {
+		t.Fatal("waitstate hid actual planner error")
 	}
 }
 

@@ -25,6 +25,7 @@ type fakeBackend struct {
 	onFind    func()
 	groundFn  func(Point) (float32, error)
 	floorFn   func(Point, float32, float32) (float32, error)
+	waterFn   func(Point) (bool, error)
 	terrainOK bool
 	walkErr   error
 	samples   []Point
@@ -52,6 +53,12 @@ func (f *fakeBackend) ground(p Point) (float32, error) {
 	return p.Z, nil
 }
 func (f *fakeBackend) terrain(p Point) (float32, bool) { return p.Z, f.terrainOK }
+func (f *fakeBackend) water(p Point) (bool, error) {
+	if f.waterFn != nil {
+		return f.waterFn(p)
+	}
+	return false, nil
+}
 func (f *fakeBackend) floor(_ context.Context, p Point, h, t float32) (float32, error) {
 	if f.floorFn != nil {
 		return f.floorFn(p, h, t)

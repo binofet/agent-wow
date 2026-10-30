@@ -34,6 +34,9 @@ message State {
   uint64 backpack_revision = 17;
   repeated Item backpack = 18;
   string limitation = 19;
+  bool copper_known = 20;
+  uint32 copper = 21;
+  uint64 copper_revision = 22;
 }
 message BoundRequest { string session_id = 1; uint64 revision = 2; }
 message ItemRequest {

@@ -1,0 +1,62 @@
+syntax = "proto3";
+package warcraftbuddy.mail.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-mail/api;mailv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message ListRequest { uint64 mailbox_guid = 1; }
+message ClaimRequest {
+  string session_id = 1;
+  uint64 list_revision = 2;
+  uint64 mailbox_guid = 3;
+  uint32 mail_id = 4;
+}
+message StipendMail { uint32 mail_id = 1; uint32 copper = 2; }
+enum ClaimStatus {
+  CLAIM_NONE = 0;
+  CLAIM_REQUESTED = 1;
+  CLAIM_CONFIRMED = 2;
+  CLAIM_UNCONFIRMED = 3;
+  CLAIM_SERVER_REJECTED = 4;
+  CLAIM_WRITE_UNCONFIRMED = 5;
+}
+message ClaimReceipt {
+  uint32 mail_id = 1;
+  ClaimStatus status = 2;
+  bool transport_written = 3;
+  bool server_acknowledged = 4;
+  bool wallet_increase_observed = 5;
+  uint32 baseline_copper = 6;
+  uint32 observed_copper = 7;
+  uint64 baseline_copper_revision = 8;
+  uint64 observed_copper_revision = 9;
+  uint32 confirmed_copper = 10;
+  uint32 server_error = 11;
+  uint32 equipment_error = 12;
+}
+message State {
+  string session_id = 1;
+  string phase = 2;
+  bool operation_in_flight = 3;
+  bool list_known = 4;
+  bool list_current = 5;
+  uint64 list_revision = 6;
+  uint64 mailbox_guid = 7;
+  uint64 list_age_ms = 8;
+  uint32 listed_mail_count = 9;
+  // Only exact normal console-sender0 GM stationery61 stipend messages.
+  // Other owned mail bodies, subjects and attachments are never exposed.
+  repeated StipendMail stipends = 10;
+  ClaimReceipt last_claim = 11;
+  uint64 transport_writes = 12;
+  uint64 malformed_packets = 13;
+  // One stipend attempt per module instance, including ambiguous writes.
+  bool claim_reserved = 14;
+}
+service BuddyMail {
+  rpc List(ListRequest) returns (State);
+  rpc ClaimStipend(ClaimRequest) returns (State);
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

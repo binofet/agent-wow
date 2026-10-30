@@ -1,0 +1,19 @@
+api_version: 1
+enabled: true
+description: Explicit nearby mailbox listing and one-shot collection of exact server Training stipend money only
+requires: [buddy-world, buddy-actions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  list: /warcraftbuddy.mail.v1.BuddyMail/List
+  claim_stipend: /warcraftbuddy.mail.v1.BuddyMail/ClaimStipend
+  state: /warcraftbuddy.mail.v1.BuddyMail/GetState
+packets:
+  SMSG_MAIL_LIST_RESULT: /warcraftbuddy.mail.v1.BuddyMail/OnPacket
+  SMSG_SEND_MAIL_RESULT: /warcraftbuddy.mail.v1.BuddyMail/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.mail.v1.BuddyMail/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.mail.v1.BuddyMail/BeforeLogout

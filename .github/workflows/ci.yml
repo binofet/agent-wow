@@ -40,7 +40,7 @@ jobs:
       - name: Check development launchers
         run: |
           bash -n run
-          python3 -B -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for p in (Path("dev/realm"), Path("dev/buddy"), Path("dev/converse"), Path("dev/sync-quests"), Path("dev/party-quests"))]'
+          python3 -B -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for p in (Path("dev/realm"), Path("dev/buddy"), Path("dev/converse"), Path("dev/sync-quests"), Path("dev/party-quests"), Path("dev/party-maintenance"))]'
           REALM_DB_ROOT_PASSWORD=ci-validation-only docker compose --file dev/realm.compose.yaml config --quiet
 
       - name: Test buddy launcher lifecycle
@@ -54,6 +54,9 @@ jobs:
 
       - name: Test ongoing party quest synchronization
         run: python3 -B dev/test_party_quests.py
+
+      - name: Test training and stipend maintenance
+        run: python3 -B dev/test_party_maintenance.py
 
       - name: Test legacy client quest addon
         run: |

@@ -73,6 +73,24 @@ message EquippedWeapon {
 
 message SnapshotRequest {}
 
+message GameObjectState {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  bool present = 3;
+  bool map_known = 4;
+  uint32 map_id = 5;
+  bool position_known = 6;
+  float x = 7;
+  float y = 8;
+  float z = 9;
+  float orientation = 10;
+  uint64 position_revision = 11;
+  uint64 position_age_ms = 12;
+  uint64 observation_age_ms = 13;
+  bool type_known = 14;
+  uint32 game_object_type = 15;
+}
+
 // Public, server-observed creature state. No database lookup or invented name.
 message CreatureState {
   uint64 guid = 1;
@@ -185,6 +203,12 @@ message SnapshotResponse {
   CreatureState owner_target = 16;
   // At most32 present creatures ordered by observed self distance.
   repeated CreatureState nearby_creatures = 17;
+  bool self_copper_known = 18;
+  uint32 self_copper = 19;
+  // Advances only when the own coinage value/known baseline changes.
+  uint64 self_copper_revision = 20;
+  // At most32 actual, present GAMEOBJECTs whose public type byte is MAILBOX19.
+  repeated GameObjectState mailboxes = 21;
 }
 
 service BuddyWorld {

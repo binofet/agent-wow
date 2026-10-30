@@ -23,6 +23,7 @@ type followNavigation struct {
 	expected     position
 	selfRevision uint64
 	nextPlanAt   time.Time
+	lastError    string
 }
 
 func (f *followNavigation) Reset() { *f = followNavigation{} }
@@ -192,6 +193,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.arrivalKnown = false
 		s.state.NavAvailable = false
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
+		f.lastError = s.state.NavReason
 		s.stopLocked(ctx)
 		s.state.Reason = reason
 		return false
@@ -238,11 +240,16 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		validCached = true
 		s.state.NavAvailable = true
 		s.state.NavReason = "client_ground_navmesh"
+		f.lastError = ""
 	}
 	if !validCached || f.index >= len(f.path) {
 		if !validCached {
 			s.state.NavAvailable = false
-			s.state.NavReason = "follow_navigation_replan_wait"
+			if f.lastError != "" {
+				s.state.NavReason = f.lastError
+			} else {
+				s.state.NavReason = "follow_navigation_replan_wait"
+			}
 		}
 		ok := s.stopLocked(ctx)
 		s.state.Reason = "follow_navigation_replan_wait"

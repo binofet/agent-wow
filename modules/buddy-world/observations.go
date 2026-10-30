@@ -19,21 +19,25 @@ const (
 	backpackFirst      = 0x172
 	itemOwner          = 6
 	itemStack          = 0xe
+	playerCoinage      = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
 )
 
 // Maps are shallow-cloned per packet. target copies each touched object once,
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
-	players      [2]observed
-	creatures    map[uint64]*observed
-	items        map[uint64]*observed
-	edited       map[uint64]bool
-	itemRevision uint64
+	players        [2]observed
+	creatures      map[uint64]*observed
+	items          map[uint64]*observed
+	gameObjects    map[uint64]*observed
+	edited         map[uint64]bool
+	itemRevision   uint64
+	copperRevision uint64
 }
 
 func (s observations) clone() observations {
 	s.creatures = maps.Clone(s.creatures)
 	s.items = maps.Clone(s.items)
+	s.gameObjects = maps.Clone(s.gameObjects)
 	s.edited = make(map[uint64]bool)
 	return s
 }
@@ -44,6 +48,9 @@ func (s *observations) target(guid uint64) *observed {
 	objects := s.creatures
 	if objects[guid] == nil {
 		objects = s.items
+	}
+	if objects[guid] == nil {
+		objects = s.gameObjects
 	}
 	p := objects[guid]
 	if p == nil {
@@ -62,6 +69,7 @@ func (s *observations) remove(guid uint64, now time.Time) {
 		markAbsent(p, now)
 	}
 	delete(s.creatures, guid)
+	delete(s.gameObjects, guid)
 	if s.items[guid] != nil {
 		delete(s.items, guid)
 		s.itemRevision++
@@ -215,6 +223,7 @@ func sortCreatures(items []*worldv1.CreatureState) {
 	})
 }
 func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time) {
+	s.appendMailboxes(r, now)
 	owner := s.players[1]
 	target := uint64(owner.fields[0x12]) | uint64(owner.fields[0x13])<<32
 	if owner.present && owner.known[0x12] && owner.known[0x13] {
@@ -256,6 +265,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		r.LootableCorpses = r.LootableCorpses[:maxCreatureResults]
 	}
 	p := s.players[0]
+	r.SelfCopperKnown, r.SelfCopper, r.SelfCopperRevision = p.copperKnown, p.copper, s.copperRevision
 	r.SelfQuestLogKnown = p.questLogKnown
 	r.SelfQuestLogRevision = p.questRevision
 	if p.questLogKnown {
