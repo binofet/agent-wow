@@ -3,6 +3,8 @@ import importlib.machinery
 import importlib.util
 from pathlib import Path
 import unittest
+import threading
+from unittest.mock import patch
 
 loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__).with_name('party-maintenance')))
 spec=importlib.util.spec_from_loader(loader.name,loader)
@@ -24,15 +26,28 @@ class RPC:
         self.claim={'mailId':5,'status':'CLAIM_CONFIRMED','serverAcknowledged':True,'walletIncreaseObserved':True,'confirmedCopper':10000}
         self.purchase={}
         self.fail_buy=False
+        self.trainer_x,self.token,self.block_travel=None,None,None
+        self.route_reason,self.before_acquire,self.after_travel='trainer_travel_within_distance',None,None
     def call(self,method,params):
         self.calls.append((method,copy.deepcopy(params)))
         if method=='buddy-world.snapshot':value=self.world
         elif method=='buddy-party.state':value={'group':self.group}
         elif method=='buddy-actions.status':value=self.actions
-        elif method=='buddy-training.discover':value={'state':self.training,'nearby':[{'interactable':True,'creature':{'guid':self.offer['npcGuid']}}]}
-        elif method=='buddy-training.list':value=self.training
+        elif method=='buddy-training.discover':
+            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'creature':{'guid':self.offer['npcGuid']}}]}
+            else:
+                x=self.actions['position']['x'];distance=abs(self.trainer_x-x)
+                creature=dict(guid=self.offer['npcGuid'],entry=(int(self.offer['npcGuid'])>>24)&0xffffff,
+                    present=True,mapKnown=True,positionKnown=True,x=self.trainer_x,y=0.,z=0.,
+                    aliveKnown=True,alive=True,healthKnown=True,health=100,npcFlags=0x33)
+                value={'state':self.training,'nearby':[dict(creature=creature,distanceKnown=True,distance=distance,
+                    interactable=distance<=4,blockedReason='' if distance<=4 else 'trainer_outside_conservative_range')]}
+        elif method=='buddy-training.list':
+            assert self.token is None,'trainer list must acquire its own lease'
+            value=self.training
         elif method=='buddy-training.state':value=dict(self.training,lastPurchase=self.purchase)
         elif method=='buddy-training.buy':
+            assert self.token is None,'trainer buy must acquire its own lease'
             if self.fail_buy:raise m.Error('uncertain write')
             value=self.training
         elif method=='buddy-mail.list':value=self.mail
@@ -40,17 +55,135 @@ class RPC:
         elif method=='buddy-mail.claim_stipend':
             if m.confirmed_mail(self.claim,params['mailId']):self.training['copper']+=10000
             value={'lastClaim':self.claim}
+        elif method=='buddy-actions.acquire_interaction':
+            assert params=={'owner':'training','leaseMs':30000} and self.token is None
+            self.token='exact-training-token';self.actions['interactionOwner']='training'
+            value={'token':self.token,'state':self.actions}
+            if self.before_acquire:self.before_acquire(self)
+        elif method=='buddy-actions.travel_trainer':
+            assert params=={'token':self.token,'npcGuid':self.offer['npcGuid']}
+            if self.block_travel:self.block_travel.wait(2)
+            if self.route_reason=='trainer_travel_within_distance':self.actions['position']['x']=self.trainer_x-2
+            if self.after_travel:self.after_travel(self)
+            value=dict(self.actions,reason=self.route_reason)
+        elif method=='buddy-actions.release_interaction':
+            assert params=={'owner':'training','token':self.token}
+            self.token=None;self.actions.pop('interactionOwner',None)
+            if self.block_travel:self.block_travel.set()
+            value=self.actions
         else:raise AssertionError(method)
         return copy.deepcopy(value)
 
 class MaintenanceTests(unittest.TestCase):
     def setUp(self):
         self.rpc=RPC();self.saved=[];self.now=[100]
+        for name in ('quest_task_snapshot','area_quest_snapshot','party_town_snapshot'):
+            mock=patch.object(m.c,name,return_value={'active':False});mock.start();self.addCleanup(mock.stop)
+        mock=patch.object(m,'profession_active',return_value=False);mock.start();self.addCleanup(mock.stop)
         self.agent=m.Maintenance('Arlen',1,self.rpc,lambda d:self.saved.append(copy.deepcopy(d)),now=lambda:self.now[0])
     def tick(self):self.agent.tick();self.now[0]+=11
     def methods(self):return [x[0] for x in self.rpc.calls]
     def box(self,x=0):
         self.rpc.world['mailboxes']=[{'present':True,'positionKnown':True,'mapKnown':True,'x':x,'y':0,'z':0}]
+    def travel_rig(self, owner_present=True):
+        self.rpc.trainer_x=50.
+        self.rpc.world['self'].update(classKnown=True,classId=5,levelKnown=True,movementFlagsKnown=True)
+        if owner_present:
+            self.rpc.world['owner'].update(mapKnown=True,positionKnown=True,movementFlagsKnown=True,x=0.,y=0.,z=0.)
+        else:self.rpc.world['owner']=None
+
+    def test_observed_class_trainer_travel_releases_before_offer_and_purchase(self):
+        for present in (True,False):
+            with self.subTest(owner_present=present):
+                self.setUp();self.travel_rig(present)
+                self.tick()
+                methods=self.methods()
+                self.assertEqual(methods.count('buddy-actions.travel_trainer'),1)
+                self.assertLess(methods.index('buddy-actions.release_interaction'),methods.index('buddy-training.list'))
+                self.assertLess(methods.index('buddy-training.list'),methods.index('buddy-training.buy'))
+                self.assertEqual(self.saved[-1]['training'][0]['status'],'reserved')
+                self.assertEqual(self.saved[-1]['reservedCopper'],100)
+                self.assertIsNone(self.rpc.token)
+                self.assertNotIn('buddy-actions.follow',methods)
+                self.rpc.purchase={'id':1,'npcGuid':self.rpc.offer['npcGuid'],'spellId':123,'costCopper':100,
+                    'status':'TRAINING_CONFIRMED','serverSuccessObserved':True,'learnedSpellObserved':True}
+                self.tick();self.assertEqual(self.agent.data['training'][0]['status'],'confirmed')
+
+    def test_no_trainer_trip_during_requested_quest_area_profession_or_town(self):
+        for name in ('quest_task_snapshot','area_quest_snapshot','party_town_snapshot','profession_active'):
+            with self.subTest(name=name):
+                self.setUp();self.travel_rig()
+                owner=m if name=='profession_active' else m.c
+                with patch.object(owner,name,return_value=True if name=='profession_active' else {'active':True}):self.tick()
+                self.assertEqual(self.methods(),[])
+
+    def test_travel_requires_stationary_safe_owner_and_positive_actual_wallet(self):
+        for mode in ('owner_moving','owner_unknown_movement','owner_map','own_unknown_level','wallet_unknown','no_money','too_far'):
+            with self.subTest(mode=mode):
+                self.setUp();self.travel_rig()
+                if mode=='owner_moving':self.rpc.world['owner']['movementFlags']=1
+                elif mode=='owner_unknown_movement':self.rpc.world['owner']['movementFlagsKnown']=False
+                elif mode=='owner_map':self.rpc.world['owner']['mapId']=1
+                elif mode=='own_unknown_level':self.rpc.world['self']['levelKnown']=False
+                elif mode=='wallet_unknown':self.rpc.training['copperKnown']=False
+                elif mode=='no_money':self.rpc.training['copper']=0
+                elif mode=='too_far':self.rpc.trainer_x=101
+                try:self.tick()
+                except m.Error:pass
+                self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+
+    def test_changed_body_or_owner_after_acquire_never_moves_or_buys(self):
+        for mode in ('body','owner','intent'):
+            with self.subTest(mode=mode):
+                self.setUp();self.travel_rig()
+                def change(r):
+                    if mode=='body':r.training['sessionId']='replacement'
+                    elif mode=='owner':r.world['owner']['x']=1.
+                    else:r.actions['following']=True
+                self.rpc.before_acquire=change
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-actions.travel_trainer',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+                if mode!='body':self.assertIsNone(self.rpc.token)
+                self.assertEqual(self.saved,[])
+
+    def test_owner_move_after_route_and_body_change_during_list_never_reserves_purchase(self):
+        for mode in ('owner','body_list'):
+            with self.subTest(mode=mode):
+                self.setUp();self.travel_rig()
+                if mode=='owner':self.rpc.after_travel=lambda r:r.world['owner'].update(x=1.)
+                else:
+                    original=self.rpc.call
+                    def changed(method,params):
+                        if method=='buddy-training.list':self.rpc.training['sessionId']='replacement'
+                        return original(method,params)
+                    self.rpc.call=changed
+                with self.assertRaises(m.Error):self.tick()
+                self.assertNotIn('buddy-training.buy',self.methods())
+                self.assertIsNone(self.rpc.token)
+                self.assertEqual(self.saved,[])
+
+    def test_three_failed_class_trainer_routes_do_not_loop_or_purchase(self):
+        self.travel_rig();self.rpc.route_reason='navigation_partial_route'
+        for _ in range(6):self.tick()
+        self.assertEqual(self.methods().count('buddy-actions.travel_trainer'),3)
+        self.assertNotIn('buddy-training.list',self.methods())
+        self.assertNotIn('buddy-training.buy',self.methods())
+        self.assertIsNone(self.rpc.token)
+
+    def test_stop_during_trainer_route_releases_exact_token_without_intent_toggles(self):
+        self.travel_rig();self.rpc.block_travel=threading.Event()
+        stopped=threading.Event();self.agent.stopped=stopped.is_set
+        timer=threading.Timer(.05,stopped.set);timer.start()
+        try:
+            with self.assertRaises(m.Error):self.tick()
+        finally:timer.join()
+        self.assertIsNone(self.rpc.token)
+        self.assertTrue(self.rpc.block_travel.is_set())
+        self.assertNotIn('buddy-training.buy',self.methods())
+        self.assertNotIn('buddy-actions.follow',self.methods())
+
     def test_absent_owner_collects_existing_stipend_and_confirms_class_learning(self):
         for name,guid in (('Arlen',1),('Mira',4),('Rook',5)):
             for owner in (None, {}, {'guid':'3','present':False,'unitFlagsKnown':True,'unitFlags':0x80000}):

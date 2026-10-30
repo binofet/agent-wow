@@ -9,6 +9,10 @@ import math
 import os
 from pathlib import Path
 import signal
+import queue
+import threading
+import urllib.request
+import urllib.error
 import time
 import uuid
 
@@ -40,10 +44,46 @@ def confirmed_mail(receipt, mail_id):
 
 class RPC(sync.SyncRPC):
     EXTRA = sync.SyncRPC.EXTRA | {'buddy-mail.list', 'buddy-mail.state', 'buddy-mail.claim_stipend',
-        'buddy-training.discover', 'buddy-training.state', 'buddy-training.list', 'buddy-training.buy'}
+        'buddy-training.discover', 'buddy-training.state', 'buddy-training.list', 'buddy-training.buy',
+        'buddy-actions.travel_trainer'}
+
+    def fork(self):
+        return RPC(self.url, self.timeout)
+
+    def call(self, method, params):
+        if method != 'buddy-actions.travel_trainer':
+            return super().call(method, params)
+        self.request_id += 1
+        request_id = self.request_id
+        request = urllib.request.Request(self.url, data=json.dumps({'jsonrpc':'2.0','id':request_id,
+            'method':method,'params':params}, allow_nan=False).encode(), headers={'Content-Type':'application/json'})
+        try:
+            with self.opener.open(request, timeout=35) as response:
+                raw=response.read(262145)
+            value=json.loads(raw) if len(raw)<=262144 else None
+        except (OSError,ValueError,urllib.error.URLError):
+            raise Error('Class trainer travel response is unconfirmed') from None
+        if (not isinstance(value,dict) or value.get('jsonrpc')!='2.0' or type(value.get('id')) is not int
+                or value['id']!=request_id or 'error' in value or not isinstance(value.get('result'),dict)):
+            raise Error('Class trainer travel response is unconfirmed')
+        return value['result']
+
+def point(value):
+    return (isinstance(value,dict) and value.get('positionKnown') is True and value.get('mapKnown') is True
+        and all(type(value.get(k,0)) in (int,float) and math.isfinite(value.get(k,0))
+                and abs(value.get(k,0))<40000 for k in ('x','y','z')))
+
+def profession_active(guid):
+    folder=ROOT/'data/professions'/str(guid)
+    try:
+        if folder.is_symlink():return True
+        with os.fdopen(c.private_open(folder/'lock',os.O_RDONLY),'r') as lock:
+            return c.is_locked(lock)
+    except FileNotFoundError:return False
+    except (OSError,Error):return True
 
 class Maintenance:
-    def __init__(self, name, guid, rpc, save, stored=None, now=time.time):
+    def __init__(self, name, guid, rpc, save, stored=None, now=time.time, stopped=lambda:False):
         if (name, guid) not in {(n, g) for n, g, _ in ROSTER}:
             raise Error('Maintenance supports only the configured companion profiles')
         self.name, self.guid, self.rpc, self.save, self.now = name, guid, rpc, save, now
@@ -66,13 +106,142 @@ class Maintenance:
             raise Error('Training budget does not match reservations')
         self.status = {'name': name, 'guid': guid, 'phase': 'starting'}
         self.next_query = 0
+        self.stopped, self.travel_attempts = stopped, {}
+        self.endpoint = getattr(rpc, "url", None)
+        expected = "http://127.0.0.1:"+str(next(p for n,g,p in ROSTER if g==guid))+"/rpc"
+        if self.endpoint is not None and self.endpoint != expected:
+            raise Error("Maintenance endpoint differs from the fixed profile")
 
     def persist(self):
         self.save(self.data)
 
+    def activities(self):
+        return (c.quest_task_snapshot(self.guid).get('active') is True
+            or c.area_quest_snapshot(self.guid).get('active') is True
+            or c.party_town_snapshot(self.guid).get('active') is True or profession_active(self.guid))
+
+    def endpoint_bound(self):
+        if self.endpoint is not None and getattr(self.rpc,'url',None)!=self.endpoint:
+            raise Error('Maintenance endpoint changed')
+
+    def travel_scene(self, expected_session=None, anchor=None, controls=None, leased=False):
+        self.endpoint_bound()
+        if self.stopped() or self.activities():raise Error('Class training defers to an active routine or stop')
+        state=self.rpc.call('buddy-training.state',{})
+        body=sync.session_id(state)
+        if expected_session is not None and body!=expected_session:raise Error('Class training body changed')
+        if state.get('copperKnown') is not True or integer(state.get('copper',0))==0:
+            raise Error('Class training travel needs a positive actual wallet')
+        world=self.rpc.call('buddy-world.snapshot',{})
+        actions=self.rpc.call('buddy-actions.status',{})
+        own,owner=world.get('self',{}),world.get('owner') or {}
+        if (not c.BuddyControls.quest_scene_safe(actions,world,self.guid)
+                or own.get('levelKnown') is not True or own.get('classKnown') is not True
+                or integer(own.get('movementFlags',0)) & 0x080000ff
+                or any(actions.get(k) is True for k in ('practicing','autoAttackRequested'))
+                or state.get('actionInFlight') is True):
+            raise Error('Class training needs a safe actual idle character')
+        interaction=actions.get('interactionOwner','')
+        if interaction and not (leased and interaction=='training'):
+            raise Error('Another interaction owns the character')
+        if not leased and any(actions.get(k) is True for k in ('moving','traveling')):
+            raise Error('Class training waits for stationary movement')
+        if controls is not None and any(actions.get(k,False) is not v for k,v in controls.items()):
+            raise Error('Human control intent changed during training travel')
+        if not isinstance(owner,dict) or integer(owner.get('guid',0)) not in (0,3):
+            raise Error('Training owner identity changed')
+        current=None
+        if owner.get('present') is True:
+            if (integer(owner.get('guid',0))!=3 or not point(owner)
+                    or any(owner.get(k) is not True for k in ('aliveKnown','alive','unitFlagsKnown','movementFlagsKnown'))
+                    or integer(owner.get('unitFlags',0)) & 0x80000
+                    or integer(owner.get('movementFlags',0)) & 0x1ff
+                    or integer(owner.get('extraMovementFlags',0))
+                    or integer(owner.get('mapId',0))!=integer(own.get('mapId',0))):
+                raise Error('Class training waits for Joel to stop out of combat')
+            current=(integer(owner.get('mapId',0)), *(owner.get(k,0) for k in ('x','y','z')))
+        if anchor is not None:
+            old=anchor[0]
+            if ((old is None)!=(current is None) or old is not None and
+                    (old[0]!=current[0] or math.dist(old[1:],current[1:])>.35)):
+                raise Error('Joel moved or returned during class training travel')
+        return state,world,actions,current
+
+    def travel_trainer(self, discovery, candidate):
+        body=sync.session_id(discovery['state'])
+        state,world,actions,owner=self.travel_scene(body)
+        creature=candidate.get('creature',{})
+        npc=integer(creature.get('guid',0))
+        pos=actions['position']
+        if (npc>>48!=0xf130 or npc&0xffffff==0 or npc>>24&0xffffff!=integer(creature.get('entry',0))
+                or not point(creature) or creature.get('present') is not True
+                or any(creature.get(k) is not True for k in ('aliveKnown','alive','healthKnown'))
+                or integer(creature.get('health',0))==0 or integer(creature.get('npcFlags',0))&0x30!=0x30
+                or integer(creature.get('mapId',0))!=integer(pos.get('mapId',0))
+                or integer(creature.get('movementFlags',0))&0x080000ff
+                or integer(creature.get('unitFlags',0))&0x80000):
+            raise Error('Only an actual stationary same-map class trainer can be visited')
+        trajectory=creature.get('trajectory',{})
+        if trajectory.get('known') is True and (trajectory.get('stopped') is not True or trajectory.get('transportRelative') is True):
+            raise Error('Class trainer is moving')
+        distance=math.sqrt(sum((creature.get(k,0)-pos.get(k,0))**2 for k in ('x','y','z')))
+        key=(body,npc,integer(world['self'].get('level',0)))
+        if (not 4<distance<=100 or self.travel_attempts.get(key,0)>=3
+                or key not in self.travel_attempts and len(self.travel_attempts)>=128):
+            self.status['phase']='class_trainer_outside_local_travel_or_attempt_limit'
+            return None
+        controls={k:actions.get(k,False) for k in ('following','healing','assisting')}
+        lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'training','leaseMs':30000})
+        token=lease.get('token')
+        if not isinstance(token,str) or not 1<=len(token)<=128:
+            raise Error('Class trainer lease is unconfirmed')
+        try:
+            self.travel_scene(body,anchor=(owner,),controls=controls,leased=True)
+            self.travel_attempts[key]=self.travel_attempts.get(key,0)+1
+            self.status['phase']='traveling_to_observed_class_trainer'
+            traveler=self.rpc.fork() if isinstance(self.rpc,RPC) else self.rpc
+            result,finished=queue.Queue(maxsize=1),threading.Event()
+            def route():
+                try:result.put((traveler.call('buddy-actions.travel_trainer',{'token':token,'npcGuid':str(npc)}),None))
+                except Exception as exc:result.put((None,exc))
+                finally:finished.set()
+            threading.Thread(target=route,daemon=True).start()
+            deadline,next_guard=time.monotonic()+36,time.monotonic()+.5
+            while not finished.wait(.1):
+                if self.stopped() or time.monotonic()>=deadline:raise Error('Class trainer travel stopped')
+                if time.monotonic()>=next_guard:
+                    self.travel_scene(body,anchor=(owner,),controls=controls,leased=True)
+                    next_guard=time.monotonic()+.5
+            response,error=result.get_nowait()
+            if error is not None:raise Error('Class trainer travel is unconfirmed')
+            self.travel_scene(body,anchor=(owner,),controls=controls,leased=True)
+            if (response.get('reason')!='trainer_travel_within_distance' or response.get('moving') is True
+                    or response.get('motionUnconfirmed') is True):
+                self.status['phase']='class_trainer_route_stopped_before_arrival'
+                return None
+        finally:
+            # Exact lease release also stops owned travel, even after cancellation.
+            self.endpoint_bound()
+            fresh=self.rpc.call('buddy-training.state',{})
+            if sync.session_id(fresh)!=body:raise Error('Body changed; no stale trainer cleanup')
+            released=self.rpc.call('buddy-actions.release_interaction',{'owner':'training','token':token})
+            if released.get('interactionOwner','') or released.get('moving') is True or released.get('motionUnconfirmed') is True:
+                raise Error('Class trainer lease cleanup is unconfirmed')
+        state,world,actions,_=self.travel_scene(body,anchor=(owner,),controls=controls)
+        fresh=self.rpc.call('buddy-training.discover',{})
+        if sync.session_id(fresh.get('state',{}))!=body:raise Error('Trainer discovery body changed')
+        nearby=fresh.get('nearby',[])
+        if not isinstance(nearby,list) or len(nearby)>97:raise Error('Trainer observations exceed bound')
+        matches=[row for row in nearby if row.get('interactable') is True
+            and integer(row.get('creature',{}).get('guid',0))==npc]
+        if len(matches)!=1:
+            self.status['phase']='class_trainer_arrival_not_observed'
+            return None
+        return fresh,matches[0],world['self'],(body,owner,controls)
+
     def tick(self):
-        if c.quest_task_snapshot(self.guid).get('active') is True:
-            self.status['phase'] = 'waiting_for_requested_quest_task'
+        if self.stopped() or self.activities():
+            self.status['phase'] = 'waiting_for_requested_routine'
             return
         if self.now() < self.next_query:
             return
@@ -164,11 +333,23 @@ class Maintenance:
         if not isinstance(nearby, list) or len(nearby) > 97:
             raise Error('Trainer observations exceed bound')
         trainers = [row for row in nearby if row.get('interactable') is True]
+        travel_guard=None
         if not trainers:
-            self.status['phase'] = 'waiting_near_class_trainer_or_mailbox'
-            return
+            candidates=[row for row in nearby if row.get('blockedReason')=='trainer_outside_conservative_range'
+                and row.get('distanceKnown') is True and type(row.get('distance')) in (int,float)
+                and math.isfinite(row['distance']) and 4<row['distance']<=100
+                and self.travel_attempts.get((sync.session_id(state),integer(row.get('creature',{}).get('guid',0)),integer(own.get('level',0))),0)<3]
+            if not candidates:
+                self.status['phase'] = 'waiting_near_class_trainer_or_mailbox'
+                return
+            arrival=self.travel_trainer(discovery,min(candidates,key=lambda row:(row['distance'],integer(row['creature']['guid']))))
+            if arrival is None:return
+            discovery,trainer,own,travel_guard=arrival
+            state,trainers=discovery['state'],[trainer]
         npc = trainers[0].get('creature', {}).get('guid')
-        state = self.rpc.call('buddy-training.list', {'sessionId': sync.session_id(state), 'npcGuid': npc})
+        listed_body=sync.session_id(state)
+        state = self.rpc.call('buddy-training.list', {'sessionId': listed_body, 'npcGuid': npc})
+        if sync.session_id(state)!=listed_body:raise Error('Class trainer offer belongs to a changed body')
         offer = state.get('offer', {})
         if (integer(offer.get('npcGuid', 0)) != integer(npc) or integer(offer.get('expiresInMs', 0)) <= 0
                 or integer(offer.get('trainerType', 0)) != 0 or state.get('copperKnown') is not True):
@@ -189,6 +370,9 @@ class Maintenance:
             return
         spell = min(choices, key=lambda s:(integer(s.get('costCopper',0)), integer(s['spellId'])))
         cost, spell_id = integer(spell.get('costCopper',0)), integer(spell['spellId'])
+        if travel_guard is not None:
+            body,owner,controls=travel_guard
+            self.travel_scene(body,anchor=(owner,),controls=controls)
         self.data['training'].append({'session':sync.session_id(state), 'spell':spell_id, 'cost':cost,
             'npc':str(npc), 'baselineId':integer(state.get('lastPurchase',{}).get('id',0)), 'status':'reserved'})
         self.data['reservedCopper'] += cost
@@ -237,7 +421,7 @@ def main():
             path=folder/('character-'+str(guid)+'.json')
             stored=load_character(path)
             profiles.append(Maintenance(name,guid,RPC('http://127.0.0.1:'+str(port)+'/rpc',timeout=8),
-                lambda value,path=path:c.write_json(path,value),stored or None))
+                lambda value,path=path:c.write_json(path,value),stored or None,stopped=stopped))
         def status():
             record.update(updatedAt=time.time(),characters=[p.status for p in profiles])
             c.write_json(folder/'status.json',record)
