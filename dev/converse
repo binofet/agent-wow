@@ -142,8 +142,12 @@ within5yards and buys affordable actual class-training offers at an observed
 trainer within4yards. Explain its own reported phase when asked what you are
 doing. This does not provide general inventory management or travel to services.
 reservedCopper is budget already reserved for attempts, not your wallet balance
-or proof of spending. Only confirmedSpellIds and stipendStatus confirmed record
-confirmed outcomes; reserved or unrecorded outcomes remain unconfirmed. Do not
+or proof of spending. confirmedSpellIds records confirmed purchases in the saved
+recent history. In version2 journals, spentCopper is the lifetime total of
+confirmed quoted purchase costs; knownAtTrainerSpellIds records current trainer
+knowledge without proving the earlier purchase or debit. historyComplete false
+means the recent IDs are not the entire spellbook. stipendStatus confirmed
+records the stipend receipt; reserved or unrecorded outcomes remain unconfirmed. Do not
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
@@ -649,7 +653,7 @@ def party_maintenance_snapshot(character_guid):
     folder = ROOT / "data/party-maintenance"
     unknown = {"active": False}
     expected = {1: "Arlen", 4: "Mira", 5: "Rook"}
-    def read(path, limit):
+    def read(path, limit, with_size=False):
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as source:
             info = os.fstat(source.fileno())
@@ -662,7 +666,7 @@ def party_maintenance_snapshot(character_guid):
             value = json.loads(raw)
         if not isinstance(value, dict):
             raise ConversationError("Maintenance evidence is invalid")
-        return value
+        return (value,len(raw)) if with_size else value
     try:
         info = folder.lstat()
         if (character_guid not in expected or not stat.S_ISDIR(info.st_mode)
@@ -696,36 +700,59 @@ def party_maintenance_snapshot(character_guid):
             summary = {"name": expected[character_guid], "guid": character_guid, "phase": phase,
                        "recordsKnown": False, "reservedCopper": None, "confirmedSpellIds": [], "stipendStatus": "unrecorded"}
             try:
-                data = read(folder / ("character-" + str(character_guid) + ".json"), 65536)
+                data, data_size = read(folder / ("character-" + str(character_guid) + ".json"), 262144, True)
             except FileNotFoundError:
-                data = None
+                data, data_size = None, 0
             if data is not None:
-                identity = {"name": expected[character_guid], "guid": character_guid, "ownerGuid": 3, "budgetCopper": 10000}
-                reserved, training = data.get("reservedCopper"), data.get("training")
-                if (data.get("identity") != identity or type(reserved) is not int or not 0 <= reserved <= 10000
-                        or not isinstance(training, list) or len(training) > 128):
+                legacy = {"name": expected[character_guid], "guid": character_guid, "ownerGuid": 3, "budgetCopper": 10000}
+                current = {"version": 2, "name": expected[character_guid], "guid": character_guid, "ownerGuid": 3}
+                v2 = data.get("identity") == current
+                if data.get("identity") not in (legacy, current) or not v2 and data_size > 65536:
                     return unknown
-                confirmed, cost = set(), 0
-                for row in training:
-                    if (not isinstance(row, dict) or type(row.get("cost")) is not int or not 0 <= row["cost"] <= 10000
-                            or row.get("status") not in ("reserved", "confirmed", "rejected")
-                            or not 0 < integer(row.get("spell", 0)) <= 2**32 - 1):
-                        return unknown
-                    cost += row["cost"]
-                    if row["status"] == "confirmed":
-                        confirmed.add(integer(row["spell"]))
-                if cost != reserved:
-                    return unknown
-                mail = data.get("mail")
-                stipend = "not_requested"
-                if mail is not None:
-                    if (not isinstance(mail, dict) or mail.get("status") not in ("reserved", "confirmed")
-                            or not isinstance(mail.get("sessionId"), str) or not 1 <= len(mail["sessionId"]) <= 128
-                            or not 0 < integer(mail.get("mailId", 0)) <= 2**32 - 1
-                            or integer(mail.get("listRevision", 0)) == 0 or integer(mail.get("mailboxGuid", 0)) >> 48 != 0xf110):
-                        return unknown
-                    stipend = "confirmed" if mail["status"] == "confirmed" else "reserved_unconfirmed"
-                summary.update(recordsKnown=True, reservedCopper=reserved, confirmedSpellIds=sorted(confirmed), stipendStatus=stipend)
+                if v2:
+                    summary.update(spentCopper=None, knownAtTrainerSpellIds=[], historyComplete=False)
+                def training_records():
+                    reserved, training = data.get("reservedCopper"), data.get("training")
+                    if (type(reserved) is not int or not 0 <= reserved <= (2**63-1 if v2 else 10000)
+                            or not isinstance(training, list) or len(training) > (64 if v2 else 128)):
+                        raise ConversationError("Maintenance training totals are invalid")
+                    confirmed, known, cost, confirmed_cost = set(), set(), 0, 0
+                    statuses = ("reserved", "confirmed", "rejected", "known_at_trainer") if v2 else ("reserved", "confirmed", "rejected")
+                    for i,row in enumerate(training):
+                        if (not isinstance(row, dict) or type(row.get("cost")) is not int
+                                or not 0 <= row["cost"] <= (1000000 if v2 else 10000)
+                                or row.get("status") not in statuses
+                                or not 0 < integer(row.get("spell", 0)) <= 2**32-1
+                                or v2 and row["status"] == "reserved" and i != len(training)-1):
+                            raise ConversationError("Maintenance training history is invalid")
+                        cost += row["cost"]
+                        if row["status"] == "confirmed":
+                            confirmed.add(integer(row["spell"]));confirmed_cost += row["cost"]
+                        elif row["status"] == "known_at_trainer":known.add(integer(row["spell"]))
+                    if cost > reserved or not v2 and cost != reserved:
+                        raise ConversationError("Maintenance training history disagrees with its audit")
+                    spent=data.get("spentCopper")
+                    if v2 and (type(spent) is not int or not confirmed_cost <= spent <= reserved
+                            or not isinstance(data.get("rejections"),dict) or len(data["rejections"])>256):
+                        raise ConversationError("Maintenance lifetime audit is invalid")
+                    mail = data.get("mail")
+                    stipend = "not_requested"
+                    if mail is not None:
+                        if (not isinstance(mail, dict) or mail.get("status") not in ("reserved", "confirmed")
+                                or not isinstance(mail.get("sessionId"), str) or not 1 <= len(mail["sessionId"]) <= 128
+                                or not 0 < integer(mail.get("mailId", 0)) <= 2**32-1
+                                or integer(mail.get("listRevision", 0)) == 0 or integer(mail.get("mailboxGuid", 0)) >> 48 != 0xf110):
+                            raise ConversationError("Maintenance stipend record is invalid")
+                        stipend = "confirmed" if mail["status"] == "confirmed" else "reserved_unconfirmed"
+                    result=dict(recordsKnown=True, reservedCopper=reserved,
+                        confirmedSpellIds=sorted(confirmed),stipendStatus=stipend)
+                    if v2:result.update(spentCopper=spent,knownAtTrainerSpellIds=sorted(known),historyComplete=False)
+                    return result
+                try:summary.update(training_records())
+                except (ConversationError,TypeError,ValueError):
+                    # The private held lock still proves this routine is running.
+                    # A v2 journal with unknown facts must not invent an idle actor.
+                    if not v2:return unknown
             final = read(folder / "status.json", 8192)
             if (final.get("instance") != record["instance"] or final.get("phase") != "running"
                     or final.get("identity") != PARTY_MAINTENANCE_IDENTITY):

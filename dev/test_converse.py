@@ -1336,6 +1336,80 @@ class PartyMaintenanceContextTests(unittest.TestCase):
                 self.assertFalse(converse.party_maintenance_snapshot(99)["active"])
 
 
+    def v2_fixture(self,root):
+        folder,record,own=self.fixture(root)
+        own.update(identity=dict(version=2,name="Arlen",guid=1,ownerGuid=3),reservedCopper=500000,
+            spentCopper=400000,rejections={},training=[
+                dict(spell=585,cost=100,status="confirmed",session="private_purchase_body"),
+                dict(spell=1243,cost=50000,status="known_at_trainer",knowledgeSession="private_new_body"),
+                dict(spell=2050,cost=200,status="reserved")])
+        converse.write_json(folder/"character-1.json",own)
+        return folder,record,own
+
+    def test_v2_compacted_lifetime_audit_and_trainer_knowledge_are_distinct_private_facts(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,_,_=self.v2_fixture(Path(temp))
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                state=converse.party_maintenance_snapshot(1)
+                self.assertTrue(state["active"]);self.assertTrue(state["observationsCurrent"])
+                own=state["own"]
+                self.assertTrue(own["recordsKnown"])
+                self.assertEqual((own["reservedCopper"],own["spentCopper"]),(500000,400000))
+                self.assertEqual(own["confirmedSpellIds"],[585])
+                self.assertEqual(own["knownAtTrainerSpellIds"],[1243])
+                self.assertFalse(own["historyComplete"])
+                self.assertNotIn("private",json.dumps(state));self.assertNotIn("never_forward",json.dumps(state))
+                self.assertNotIn(2050,own["knownAtTrainerSpellIds"])
+
+    def test_running_owned_v2_with_unknown_record_facts_remains_active_without_partial_claims(self):
+        for mode in ("spent","history","status","cost","pending_order","sum","rejections"):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+                folder,_,own=self.v2_fixture(Path(temp))
+                if mode=="spent":own["spentCopper"]=500001
+                elif mode=="history":own["training"]*=22
+                elif mode=="status":own["training"][1]["status"]="future_unknown_status"
+                elif mode=="cost":own["training"][1]["cost"]=1000001
+                elif mode=="pending_order":own["training"][0]["status"]="reserved"
+                elif mode=="sum":own["reservedCopper"]=1
+                else:own["rejections"]="unknown"
+                converse.write_json(folder/"character-1.json",own)
+                with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                    converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                    state=converse.party_maintenance_snapshot(1)
+                    self.assertTrue(state["active"])
+                    self.assertFalse(state["own"]["recordsKnown"])
+                    self.assertEqual(state["own"]["confirmedSpellIds"],[])
+                    self.assertEqual(state["own"]["knownAtTrainerSpellIds"],[])
+                    self.assertIsNone(state["own"]["spentCopper"])
+                    self.assertIsNone(state["own"]["reservedCopper"])
+
+    def test_v2_larger_private_bound_and_exact_profile_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,_,own=self.v2_fixture(Path(temp));own["privatePadding"]="x"*70000
+            converse.write_json(folder/"character-1.json",own)
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                state=converse.party_maintenance_snapshot(1)
+                self.assertTrue(state["active"]);self.assertTrue(state["own"]["recordsKnown"])
+                self.assertNotIn("privatePadding",json.dumps(state))
+                own["identity"]["guid"]=4;converse.write_json(folder/"character-1.json",own)
+                self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+                own["identity"]["guid"]=1;own["privatePadding"]="x"*262144
+                converse.write_json(folder/"character-1.json",own)
+                self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+
+    def test_v2_journal_cannot_override_stopped_or_unlocked_routine(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,"ROOT",Path(temp)):
+            folder,record,_=self.v2_fixture(Path(temp))
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                record["phase"]="stopped";converse.write_json(folder/"status.json",record)
+                self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+            record["phase"]="running";converse.write_json(folder/"status.json",record)
+            self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
+
+
 class BoundaryTests(unittest.TestCase):
     def test_numeric_action_schema_is_required_bounded_and_legacy_compatible(self):
         for key in converse.NUMERIC_ARGS:

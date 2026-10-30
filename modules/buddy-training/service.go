@@ -370,8 +370,9 @@ func (s *Service) boundPurchaseLocked(r *trainingv1.BuyRequest, profession *trai
 			if spell.Usable != 0 || spell.CostCopper != r.ExpectedCostCopper || spell.CostCopper > r.MaxSpendCopper || len(spell.PointCost) != 2 || spell.PointCost[0] != 0 || spell.PointCost[1] != points {
 				return status.Error(codes.FailedPrecondition, "listed training availability, price or points changed")
 			}
-			if !s.state.CopperKnown || s.state.Copper < spell.CostCopper {
-				return status.Error(codes.FailedPrecondition, "known wallet cannot afford listed training")
+			if !s.state.CopperKnown || s.state.Copper < spell.CostCopper ||
+				profession == nil && spell.CostCopper > 0 && uint64(s.state.Copper) < uint64(spell.CostCopper)+uint64(r.ReserveCopper) {
+				return status.Error(codes.FailedPrecondition, "known wallet cannot afford listed training and requested reserve")
 			}
 			return nil
 		}
@@ -382,8 +383,12 @@ func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *train
 	return s.buy(ctx, r, nil)
 }
 func (s *Service) buy(ctx context.Context, r *trainingv1.BuyRequest, profession *trainingv1.ProfessionBuyRequest) (out *trainingv1.State, err error) {
-	if r == nil || !creatureGUID(r.NpcGuid) || r.SpellId == 0 || r.MaxSpendCopper == 0 || r.MaxSpendCopper > 10000 {
-		return nil, status.Error(codes.InvalidArgument, "bound trainer spell and explicit1..10000copper budget required")
+	cap := uint32(1_000_000)
+	if profession != nil {
+		cap = 10000
+	}
+	if r == nil || !creatureGUID(r.NpcGuid) || r.SpellId == 0 || r.MaxSpendCopper == 0 || r.MaxSpendCopper > cap || r.ReserveCopper > 1_000_000 {
+		return nil, status.Error(codes.InvalidArgument, "bound trainer spell and positive bounded purchase budget required")
 	}
 	if e := s.begin(r.SessionId); e != nil {
 		return nil, e
@@ -535,13 +540,20 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		s.state.Offer = o
 		s.offerUntil = s.now().Add(20 * time.Second)
 		s.queryNPC = 0
-		if p := s.state.LastPurchase; p != nil && p.ServerSuccessObserved && p.NpcGuid == o.NpcGuid {
+		if p := s.state.LastPurchase; p != nil && p.NpcGuid == o.NpcGuid &&
+			(p.ServerSuccessObserved || p.ProfessionSkillId == 0 && o.TrainerType == 0) {
 			for _, spell := range o.Spells {
 				if spell.SpellId == p.SpellId && spell.Usable == 2 {
 					p.RefreshedTrainerKnows = true
 				}
 			}
 			s.confirmLocked()
+			if p.ProfessionSkillId == 0 && p.RefreshedTrainerKnows && !p.ServerSuccessObserved && p.Status == trainingv1.PurchaseStatus_UNCONFIRMED_TIMEOUT {
+				// Current knowledge is positive evidence, not an old ACK or debit receipt.
+				p.Status = trainingv1.PurchaseStatus_KNOWN_AT_TRAINER
+				p.Failure = "original_purchase_unconfirmed_spell_known_at_trainer"
+				s.state.Reason = p.Failure
+			}
 		}
 		s.wakeLocked("list")
 	case opcode.SMSGTrainerBuySucceeded, opcode.SMSGTrainerBuyFailed:
@@ -557,6 +569,10 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			break
 		}
 		if failed {
+			if p.Status == trainingv1.PurchaseStatus_KNOWN_AT_TRAINER {
+				s.state.IgnoredPackets++
+				break
+			}
 			p.Status = trainingv1.PurchaseStatus_SERVER_REJECTED
 			p.ServerFailure = reason
 			p.Failure = "trainer_rejected_purchase"

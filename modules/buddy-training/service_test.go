@@ -203,7 +203,7 @@ func TestBuyRejectsBeforeAnyPacket(t *testing.T) {
 		{"revision", func(_ *Service, _ *fakeSession, r *trainingv1.BuyRequest) { r.OfferRevision++ }},
 		{"price", func(_ *Service, _ *fakeSession, r *trainingv1.BuyRequest) { r.ExpectedCostCopper++ }},
 		{"budget", func(_ *Service, _ *fakeSession, r *trainingv1.BuyRequest) { r.MaxSpendCopper = 9 }},
-		{"large_budget", func(_ *Service, _ *fakeSession, r *trainingv1.BuyRequest) { r.MaxSpendCopper = 10001 }},
+		{"large_budget", func(_ *Service, _ *fakeSession, r *trainingv1.BuyRequest) { r.MaxSpendCopper = 1000001 }},
 		{"unknown_wallet", func(_ *Service, f *fakeSession, _ *trainingv1.BuyRequest) { f.wallet.CopperKnown = false }},
 		{"poor", func(_ *Service, f *fakeSession, _ *trainingv1.BuyRequest) {
 			f.wallet.Copper = 9

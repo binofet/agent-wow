@@ -5,6 +5,8 @@ from pathlib import Path
 import unittest
 import threading
 import math
+import os
+import tempfile
 from unittest.mock import patch
 
 loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__).with_name('party-maintenance')))
@@ -14,7 +16,7 @@ m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 class RPC:
     def __init__(self):
         self.calls=[]
-        self.world={'self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,'mapKnown':True,'level':4},
+        self.world={'self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,'mapKnown':True,'levelKnown':True,'level':4},
             'owner':{'guid':'3','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True}}
         self.actions={'position':{'known':True,'mapKnown':True,'x':0,'y':0,'z':0}}
         self.group={'known':True,'inGroup':True,'leaderGuid':'3','members':[
@@ -449,7 +451,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(self.saved[0]['training'][0]['status'],'reserved')
         request=[p for method,p in self.rpc.calls if method=='buddy-training.buy'][0]
         self.assertEqual(request,{'sessionId':'body1','npcGuid':self.rpc.offer['npcGuid'],
-            'offerRevision':'2','spellId':123,'expectedCostCopper':100,'maxSpendCopper':10000})
+            'offerRevision':'2','spellId':123,'expectedCostCopper':100,'maxSpendCopper':9900,'reserveCopper':100})
     def test_save_failure_prevents_purchase(self):
         self.agent.save=lambda d:(_ for _ in ()).throw(OSError('disk full'))
         with self.assertRaises(OSError):self.tick()
@@ -469,13 +471,13 @@ class MaintenanceTests(unittest.TestCase):
         self.rpc.purchase['learnedSpellObserved']=True
         self.tick();self.assertEqual(self.methods().count('buddy-training.buy'),2)
         self.assertEqual(self.agent.data['reservedCopper'],150)
-    def test_actual_wallet_and_cumulative_budget(self):
+    def test_actual_wallet_reserve_and_no_lifetime_spending_limit(self):
         self.rpc.training['copper']=99;self.tick()
         self.assertNotIn('buddy-training.buy',self.methods())
-        self.rpc.training['copper']=10000;self.rpc.offer['spells']=[{'spellId':123,'costCopper':9990}]
-        self.tick();self.rpc.purchase={'id':1,'npcGuid':self.rpc.offer['npcGuid'],'spellId':123,'costCopper':9990,'status':'SERVER_REJECTED'}
+        self.rpc.training['copper']=10000;self.rpc.offer['spells']=[{'spellId':123,'costCopper':9900}]
+        self.tick();self.rpc.purchase={'id':1,'npcGuid':self.rpc.offer['npcGuid'],'spellId':123,'costCopper':9900,'status':'SERVER_REJECTED'}
         self.rpc.offer['spells']=[{'spellId':124,'costCopper':11}];self.tick()
-        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.assertEqual(self.methods().count('buddy-training.buy'),2)
     def test_prior_or_wrong_npc_receipt_cannot_release_pending_reservation(self):
         self.rpc.training['lastPurchase']={'id':7}
         self.tick()
@@ -519,12 +521,201 @@ class MaintenanceTests(unittest.TestCase):
         self.assertNotIn('buddy-mail.list',self.methods());self.assertIn('buddy-training.buy',self.methods())
     def test_invalid_saved_identity_and_budget_rejected(self):
         self.tick();stored=self.saved[-1]
-        for mutation in [('reservedCopper',101),('identity',{})]:
+        for mutation in [('reservedCopper',99),('identity',{})]:
             bad=copy.deepcopy(stored);bad[mutation[0]]=mutation[1]
             with self.assertRaises(m.Error):m.Maintenance('Arlen',1,self.rpc,lambda d:None,bad)
     def test_wrong_character_never_mutates(self):
         self.rpc.world['self']['guid']='4'
         with self.assertRaises(m.Error):self.tick()
         self.assertNotIn('buddy-training.buy',self.methods())
+
+
+class DurableClassTrainingTests(unittest.TestCase):
+    setUp=MaintenanceTests.setUp
+    tick=MaintenanceTests.tick
+    methods=MaintenanceTests.methods
+
+    def receipt(self,status='TRAINING_CONFIRMED',**extra):
+        row=self.agent.data['training'][-1]
+        self.rpc.purchase=dict(id=row['baselineId']+1,npcGuid=row['npc'],spellId=row['spell'],costCopper=row['cost'],
+            status=status,serverSuccessObserved=status=='TRAINING_CONFIRMED',learnedSpellObserved=status=='TRAINING_CONFIRMED',**extra)
+
+    def test_v1_migration_preserves_128_rows_totals_identity_and_ambiguous_tail(self):
+        rows=[dict(session='old-body',npc=self.rpc.offer['npcGuid'],spell=i+1,cost=1,baselineId=0,
+            status='reserved' if i==127 else 'confirmed') for i in range(128)]
+        old=dict(identity=dict(name='Arlen',guid=1,ownerGuid=3,budgetCopper=10000),reservedCopper=128,training=rows,mail=None)
+        untouched=copy.deepcopy(old)
+        agent=m.Maintenance('Arlen',1,self.rpc,lambda d:None,old,now=lambda:100)
+        self.assertEqual(old,untouched)
+        self.assertEqual(agent.data['identity'],dict(version=2,name='Arlen',guid=1,ownerGuid=3))
+        self.assertEqual(len(agent.data['training']),m.HISTORY_LIMIT)
+        self.assertEqual(agent.data['training'][-1],rows[-1])
+        self.assertEqual((agent.data['reservedCopper'],agent.data['spentCopper']),(128,127))
+        agent.tick()
+        self.assertNotIn('buddy-training.buy',self.methods())
+        for mutation in ('identity','sum','pending_order'):
+            broken=copy.deepcopy(old)
+            if mutation=='identity':broken['identity']['guid']=4
+            elif mutation=='sum':broken['reservedCopper']+=1
+            else:broken['training'][0]['status']='reserved'
+            with self.assertRaises(m.Error):m.Maintenance('Arlen',1,self.rpc,lambda d:None,broken)
+
+    def test_migrated_exhausted_stipend_can_buy_a_real_offer_above_one_gold(self):
+        old=dict(identity=dict(name='Arlen',guid=1,ownerGuid=3,budgetCopper=10000),reservedCopper=10000,
+            training=[dict(session='old',npc=self.rpc.offer['npcGuid'],spell=99,cost=10000,baselineId=0,status='confirmed')],mail=None)
+        self.agent=m.Maintenance('Arlen',1,self.rpc,self.agent.save,old,now=lambda:self.now[0])
+        self.rpc.training['copper']=50100;self.rpc.offer['spells']=[dict(spellId=124,costCopper=50000)]
+        self.tick()
+        request=next(p for method,p in self.rpc.calls if method=='buddy-training.buy')
+        self.assertEqual((request['expectedCostCopper'],request['maxSpendCopper'],request['reserveCopper']),(50000,50000,100))
+        self.assertEqual(self.agent.data['reservedCopper'],60000)
+        self.assertEqual(self.agent.data['spentCopper'],10000)
+
+    def test_actual_wallet_reserve_and_explicit_cap_include_free_zero_wallet_offer(self):
+        for wallet,cost,expected in ((199,100,False),(200,100,True),(0,0,True),(100,1,False),
+                (1000100,1000000,True),(2000100,1000001,False)):
+            with self.subTest(wallet=wallet,cost=cost):
+                self.setUp();self.rpc.training['copper']=wallet;self.rpc.offer['spells']=[dict(spellId=123,costCopper=cost)]
+                self.tick();buys=[p for method,p in self.rpc.calls if method=='buddy-training.buy']
+                self.assertEqual(bool(buys),expected)
+                if buys:self.assertGreaterEqual(buys[0]['maxSpendCopper'],1)
+
+    def test_compaction_and_restart_after_150_purchases_preserve_counters_and_next_offer(self):
+        self.rpc.training['copper']=100000
+        for i in range(150):
+            self.rpc.offer['spells']=[dict(spellId=1000+i,costCopper=100)]
+            self.tick();self.receipt();self.rpc.offer['spells'][0]['usable']=2;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),150)
+        self.assertEqual(len(self.agent.data['training']),m.HISTORY_LIMIT)
+        self.assertEqual((self.agent.data['reservedCopper'],self.agent.data['spentCopper']),(15000,15000))
+        stored=copy.deepcopy(self.saved[-1])
+        self.agent=m.Maintenance('Arlen',1,self.rpc,self.agent.save,stored,now=lambda:self.now[0])
+        self.rpc.offer['spells']=[dict(spellId=9999,costCopper=20000)]
+        self.tick();self.assertEqual(self.methods().count('buddy-training.buy'),151)
+        self.assertEqual(self.agent.data['reservedCopper'],35000)
+
+    def test_new_body_positive_trainer_knowledge_is_distinct_from_old_receipt(self):
+        self.tick();old_session=self.agent.data['training'][-1]['session']
+        self.rpc.training['sessionId']='body2'
+        self.rpc.offer['spells']=[dict(spellId=123,usable=2,costCopper=100),dict(spellId=124,costCopper=100)]
+        self.tick()
+        old=self.agent.data['training'][0]
+        self.assertEqual((old['session'],old['knowledgeSession'],old['status']),(old_session,'body2','known_at_trainer'))
+        self.assertEqual(self.agent.data['spentCopper'],0)
+        self.assertEqual([p['spellId'] for method,p in self.rpc.calls if method=='buddy-training.buy'],[123,124])
+
+    def test_same_body_known_row_requires_module_pending_retirement(self):
+        self.tick();self.rpc.offer['spells']=[dict(spellId=123,usable=2,costCopper=100)]
+        self.tick();self.assertEqual(self.agent.data['training'][-1]['status'],'reserved')
+        self.receipt('KNOWN_AT_TRAINER',refreshedTrainerKnows=True)
+        self.tick();self.assertEqual(self.agent.data['training'][-1]['status'],'known_at_trainer')
+        self.assertEqual(self.agent.data['spentCopper'],0)
+        self.assertFalse(self.rpc.purchase['serverSuccessObserved'])
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_new_body_available_unavailable_missing_or_foreign_trainer_never_replays(self):
+        for mode in ('available','unavailable','missing','foreign_npc'):
+            self.setUp();self.tick();self.rpc.training['sessionId']='body2'
+            if mode=='unavailable':self.rpc.offer['spells'][0]['usable']=1
+            elif mode=='missing':self.rpc.offer['spells']=[]
+            elif mode=='foreign_npc':self.rpc.offer['npcGuid']=str(int(self.rpc.offer['npcGuid'])+1)
+            self.tick();self.assertEqual(self.agent.data['training'][-1]['status'],'reserved')
+            self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_definite_rejection_retries_only_on_fresh_actual_higher_level_and_at_most_three(self):
+        self.tick();self.receipt('SERVER_REJECTED');self.tick()
+        self.rpc.offer['revision']='999';self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        for level in (5,6):
+            self.rpc.world['self']['level']=level;self.tick()
+            self.receipt('SERVER_REJECTED');self.tick()
+        self.rpc.world['self']['level']=7;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),3)
+        self.assertEqual(self.agent.data['spentCopper'],0)
+        self.assertEqual(self.agent.data['rejections']['123']['attempts'],3)
+
+    def test_rejection_requires_actual_matching_prerequisite_skill_progress(self):
+        self.rpc.offer['spells'][0]['requiredSkill']=171
+        self.rpc.world.update(selfSkillsKnown=True,selfSkills=[dict(slot=i) for i in range(128)])
+        self.rpc.world['selfSkills'][0].update(skillId=171,value=1)
+        self.tick();self.receipt('SERVER_REJECTED');self.tick()
+        self.rpc.world['selfSkills'][1].update(skillId=182,value=99);self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.world['selfSkills'][0]['value']=2;self.rpc.world['selfSkillsKnown']=False;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.world['selfSkillsKnown']=True;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),2)
+
+    def test_ambiguous_write_never_retries_even_after_new_actual_level_or_skill(self):
+        self.tick();self.rpc.world['self']['level']=80;self.tick()
+        self.rpc.offer['revision']='9999';self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.assertEqual(self.agent.data['training'][-1]['status'],'reserved')
+
+    def test_v1_rejection_needs_a_new_evidence_baseline_then_higher_level(self):
+        old=dict(identity=dict(name='Arlen',guid=1,ownerGuid=3,budgetCopper=10000),reservedCopper=100,
+            training=[dict(session='old',npc=self.rpc.offer['npcGuid'],spell=123,cost=100,baselineId=0,status='rejected')],mail=None)
+        self.agent=m.Maintenance('Arlen',1,self.rpc,self.agent.save,old,now=lambda:self.now[0])
+        self.tick();self.tick();self.assertNotIn('buddy-training.buy',self.methods())
+        self.rpc.world['self']['level']=5;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_settlement_save_failure_latches_without_a_second_purchase(self):
+        self.tick();self.receipt()
+        self.agent.save=lambda d:(_ for _ in ()).throw(OSError('disk full'))
+        with self.assertRaises(OSError):self.tick()
+        self.rpc.offer['spells']=[dict(spellId=124,costCopper=100)]
+        with self.assertRaises(m.Error):self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_rejection_and_counters_survive_restart_without_same_level_retry(self):
+        self.tick();self.receipt('SERVER_REJECTED');self.tick()
+        stored=copy.deepcopy(self.saved[-1])
+        self.agent=m.Maintenance('Arlen',1,self.rpc,self.agent.save,stored,now=lambda:self.now[0])
+        self.rpc.training['sessionId']='body2';self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.world['self']['level']=5;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),2)
+        self.assertEqual(self.agent.data['reservedCopper'],200)
+
+    def test_unknown_skill_baseline_needs_real_later_progress_and_unknown_level_never_retries(self):
+        self.rpc.offer['spells'][0]['requiredSkill']=171
+        self.tick();self.receipt('SERVER_REJECTED');self.tick()
+        self.rpc.world.update(selfSkillsKnown=True,selfSkills=[dict(slot=i) for i in range(128)])
+        self.rpc.world['selfSkills'][0].update(skillId=171,value=10)
+        self.tick();self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.world['selfSkills'][0]['value']=11
+        self.rpc.world['self']['levelKnown']=False;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.world['self']['levelKnown']=True;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.buy'),2)
+
+    def test_corrupt_v2_history_counters_and_retry_evidence_rejected(self):
+        self.tick();stored=copy.deepcopy(self.saved[-1])
+        for mode in ('spent','rows','pending','attempts','eligibility'):
+            broken=copy.deepcopy(stored)
+            if mode=='spent':broken['spentCopper']=101
+            elif mode=='rows':broken['training']*=m.HISTORY_LIMIT+1
+            elif mode=='pending':broken['training']*=2;broken['reservedCopper']=200
+            elif mode=='attempts':broken['rejections']={'123':dict(attempts=4,eligibility=None)}
+            else:broken['training'][0]['eligibility']['level']=81
+            with self.assertRaises(m.Error):m.Maintenance('Arlen',1,self.rpc,lambda d:None,broken)
+
+    def test_actual_v2_writer_journal_is_accepted_by_owned_running_chat_context_reader(self):
+        self.tick();self.receipt();self.rpc.offer['spells'][0]['usable']=2;self.tick()
+        with tempfile.TemporaryDirectory() as temp,patch.object(m.c,'ROOT',Path(temp)):
+            folder=m.c.ensure_state(Path(temp)/'data/party-maintenance')
+            m.c.write_json(folder/'character-1.json',self.agent.data)
+            m.c.write_json(folder/'status.json',dict(identity=m.c.PARTY_MAINTENANCE_IDENTITY,phase='running',
+                instance='d'*32,updatedAt=m.time.time(),characters=[dict(name=n,guid=g,phase='idle') for n,g,p in m.ROSTER]))
+            with os.fdopen(m.c.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                m.c.fcntl.flock(lock,m.c.fcntl.LOCK_EX)
+                state=m.c.party_maintenance_snapshot(1)
+                self.assertTrue(state['active']);self.assertTrue(state['own']['recordsKnown'])
+                self.assertEqual(state['own']['confirmedSpellIds'],[123])
+                self.assertEqual(state['own']['spentCopper'],100)
+                self.assertEqual(state['own']['knownAtTrainerSpellIds'],[])
+        bad=copy.deepcopy(self.agent.data);bad['spentCopper']=0
+        with self.assertRaises(m.Error):m.Maintenance('Arlen',1,self.rpc,lambda d:None,bad)
 
 if __name__=='__main__':unittest.main()

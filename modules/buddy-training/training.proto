@@ -34,6 +34,7 @@ enum PurchaseStatus {
   TRAINING_CONFIRMED = 3;
   SERVER_REJECTED = 4;
   UNCONFIRMED_TIMEOUT = 5;
+  KNOWN_AT_TRAINER = 6;
 }
 message Purchase {
   uint64 id = 1;
@@ -98,6 +99,7 @@ message BuyRequest {
   uint32 spell_id = 4;
   uint32 expected_cost_copper = 5;
   uint32 max_spend_copper = 6;
+  uint32 reserve_copper = 7;
 }
 message ProfessionBuyRequest {
   BuyRequest purchase = 1;

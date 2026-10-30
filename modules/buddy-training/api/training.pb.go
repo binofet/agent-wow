@@ -33,6 +33,7 @@ const (
 	PurchaseStatus_TRAINING_CONFIRMED  PurchaseStatus = 3
 	PurchaseStatus_SERVER_REJECTED     PurchaseStatus = 4
 	PurchaseStatus_UNCONFIRMED_TIMEOUT PurchaseStatus = 5
+	PurchaseStatus_KNOWN_AT_TRAINER    PurchaseStatus = 6
 )
 
 // Enum value maps for PurchaseStatus.
@@ -44,6 +45,7 @@ var (
 		3: "TRAINING_CONFIRMED",
 		4: "SERVER_REJECTED",
 		5: "UNCONFIRMED_TIMEOUT",
+		6: "KNOWN_AT_TRAINER",
 	}
 	PurchaseStatus_value = map[string]int32{
 		"PURCHASE_NONE":       0,
@@ -52,6 +54,7 @@ var (
 		"TRAINING_CONFIRMED":  3,
 		"SERVER_REJECTED":     4,
 		"UNCONFIRMED_TIMEOUT": 5,
+		"KNOWN_AT_TRAINER":    6,
 	}
 )
 
@@ -930,6 +933,7 @@ type BuyRequest struct {
 	SpellId            uint32                 `protobuf:"varint,4,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
 	ExpectedCostCopper uint32                 `protobuf:"varint,5,opt,name=expected_cost_copper,json=expectedCostCopper,proto3" json:"expected_cost_copper,omitempty"`
 	MaxSpendCopper     uint32                 `protobuf:"varint,6,opt,name=max_spend_copper,json=maxSpendCopper,proto3" json:"max_spend_copper,omitempty"`
+	ReserveCopper      uint32                 `protobuf:"varint,7,opt,name=reserve_copper,json=reserveCopper,proto3" json:"reserve_copper,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1002,6 +1006,13 @@ func (x *BuyRequest) GetExpectedCostCopper() uint32 {
 func (x *BuyRequest) GetMaxSpendCopper() uint32 {
 	if x != nil {
 		return x.MaxSpendCopper
+	}
+	return 0
+}
+
+func (x *BuyRequest) GetReserveCopper() uint32 {
+	if x != nil {
+		return x.ReserveCopper
 	}
 	return 0
 }
@@ -1155,7 +1166,7 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
 	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12!\n" +
-	"\ftrainer_type\x18\x03 \x01(\rR\vtrainerType\"\xe4\x01\n" +
+	"\ftrainer_type\x18\x03 \x01(\rR\vtrainerType\"\x8b\x02\n" +
 	"\n" +
 	"BuyRequest\x12\x1d\n" +
 	"\n" +
@@ -1164,18 +1175,20 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\x0eoffer_revision\x18\x03 \x01(\x04R\rofferRevision\x12\x19\n" +
 	"\bspell_id\x18\x04 \x01(\rR\aspellId\x120\n" +
 	"\x14expected_cost_copper\x18\x05 \x01(\rR\x12expectedCostCopper\x12(\n" +
-	"\x10max_spend_copper\x18\x06 \x01(\rR\x0emaxSpendCopper\"\xaa\x01\n" +
+	"\x10max_spend_copper\x18\x06 \x01(\rR\x0emaxSpendCopper\x12%\n" +
+	"\x0ereserve_copper\x18\a \x01(\rR\rreserveCopper\"\xaa\x01\n" +
 	"\x14ProfessionBuyRequest\x12A\n" +
 	"\bpurchase\x18\x01 \x01(\v2%.warcraftbuddy.training.v1.BuyRequestR\bpurchase\x12\x19\n" +
 	"\bskill_id\x18\x02 \x01(\rR\askillId\x124\n" +
-	"\x16allowed_primary_skills\x18\x03 \x03(\rR\x14allowedPrimarySkills*\x8f\x01\n" +
+	"\x16allowed_primary_skills\x18\x03 \x03(\rR\x14allowedPrimarySkills*\xa5\x01\n" +
 	"\x0ePurchaseStatus\x12\x11\n" +
 	"\rPURCHASE_NONE\x10\x00\x12\r\n" +
 	"\tREQUESTED\x10\x01\x12\x15\n" +
 	"\x11TRAINER_SUCCEEDED\x10\x02\x12\x16\n" +
 	"\x12TRAINING_CONFIRMED\x10\x03\x12\x13\n" +
 	"\x0fSERVER_REJECTED\x10\x04\x12\x17\n" +
-	"\x13UNCONFIRMED_TIMEOUT\x10\x052\xbf\x04\n" +
+	"\x13UNCONFIRMED_TIMEOUT\x10\x05\x12\x14\n" +
+	"\x10KNOWN_AT_TRAINER\x10\x062\xbf\x04\n" +
 	"\rBuddyTraining\x12H\n" +
 	"\bDiscover\x12\x16.google.protobuf.Empty\x1a$.warcraftbuddy.training.v1.Discovery\x12D\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a .warcraftbuddy.training.v1.State\x12P\n" +
