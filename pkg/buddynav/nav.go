@@ -20,7 +20,7 @@ import (
 
 const (
 	MaxPoints         = 256
-	MaxRouteLength    = 180.0
+	MaxRouteLength    = 240.0
 	EndpointTolerance = 2.0
 	MaxWadingDepth    = 1.8
 	// This exact terrain-loader dependency is tagged v1.0.10. Path queries
@@ -153,7 +153,7 @@ func validateRegionRequest(mapID uint32, region Region, start, dest Point) error
 		return fmt.Errorf("navigation endpoints must be finite and inside %s bounds", name)
 	}
 	if distance(start, dest) > MaxRouteLength {
-		return errors.New("navigation endpoints exceed 180 yard route budget")
+		return fmt.Errorf("navigation endpoints exceed %.0f yard route budget", MaxRouteLength)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 		length += distance(points[i-1], points[i])
 	}
 	if length > MaxRouteLength {
-		return nil, errors.New("navigation route exceeds 180 yards")
+		return nil, fmt.Errorf("navigation route exceeds %.0f yards", MaxRouteLength)
 	}
 	// Densify to at most one yard before querying the ground surface. No result
 	// can hide a water polygon, wall, or large vertical discontinuity between
@@ -298,7 +298,7 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 		length += distance(out[i-1], out[i])
 	}
 	if length > MaxRouteLength {
-		return nil, errors.New("navigation normalized route exceeds 180 yards")
+		return nil, fmt.Errorf("navigation normalized route exceeds %.0f yards", MaxRouteLength)
 	}
 	return out, nil
 }

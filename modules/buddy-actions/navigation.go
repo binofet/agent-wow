@@ -49,7 +49,7 @@ func validNavigationPath(path []position, from, to position) bool {
 			total += distance(path[i-1], p)
 		}
 	}
-	return total <= 180
+	return total <= buddynav.MaxRouteLength
 }
 
 func (s *Service) navigationPath(ctx context.Context, root string, from, to position) ([]position, error) {

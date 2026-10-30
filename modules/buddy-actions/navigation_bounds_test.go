@@ -69,3 +69,18 @@ func TestAdjacentVineyardGoldshireCorridorRemainsBounded(t *testing.T) {
 		t.Fatal("corridorescapessouthbound")
 	}
 }
+
+func TestControllerNavigationAccepts240YardsButRejectsLongerRoutes(t *testing.T) {
+	from, to := position{x: -8900, y: -100, z: 90}, position{x: -8660, y: -100, z: 90}
+	if !validNavigationPath([]position{from, to}, from, to) {
+		t.Fatal("complete 240 yard route rejected")
+	}
+	tooFar := to
+	tooFar.x += .01
+	if validNavigationPath([]position{from, tooFar}, from, tooFar) {
+		t.Fatal("route beyond 240 yards accepted")
+	}
+	if validNavigationPath([]position{from, {x: -8780, y: -80, z: 90}, to}, from, to) {
+		t.Fatal("over-budget detour accepted for nearby endpoints")
+	}
+}

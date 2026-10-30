@@ -107,7 +107,7 @@ func TestPlanRejectsIncompleteAndExcessiveGeometry(t *testing.T) {
 		"start displaced":          {{-8897, -100, 90}, testEnd},
 		"out of bounds midpoint":   {testStart, {-8399, -100, 90}, testEnd},
 		"nonfinite midpoint":       {testStart, {-8898, float32(math.NaN()), 90}, testEnd},
-		"detour over route budget": {testStart, {-8900, 0, 90}, testEnd},
+		"detour over route budget": {testStart, {-8900, 50, 90}, testEnd},
 		"one point":                {testStart},
 	}
 	tooMany := make([]Point, MaxPoints+1)
@@ -164,7 +164,7 @@ func TestPlanRejectsInvalidRequestBeforeAssets(t *testing.T) {
 		mapID      uint32
 		start, end Point
 	}{
-		{1, testStart, testEnd}, {0, Point{float32(math.Inf(1)), 0, 90}, testEnd}, {0, testStart, Point{-8900, -501, 90}}, {0, testStart, Point{-8700, -100, 90}}, {0, testStart, Point{-8895, -100, 39}},
+		{1, testStart, testEnd}, {0, Point{float32(math.Inf(1)), 0, 90}, testEnd}, {0, testStart, Point{-8900, -701, 90}}, {0, testStart, Point{-8659, -100, 90}}, {0, testStart, Point{-8895, -100, 39}},
 	} {
 		if _, err := Plan("", tc.mapID, tc.start, tc.end); err == nil {
 			t.Fatalf("accepted invalid request %+v", tc)
@@ -175,6 +175,28 @@ func TestPlanRejectsInvalidRequestBeforeAssets(t *testing.T) {
 	}
 	if _, err := Plan(t.TempDir(), 0, testStart, testEnd); err == nil {
 		t.Fatal("missing mesh accepted")
+	}
+}
+
+func TestRouteBudgetAccepts240AndRejectsLongerEndpointsAndDetours(t *testing.T) {
+	start, end := Point{-8900, -100, 90}, Point{-8660, -100, 90}
+	if err := validateRequest(0, start, end); err != nil {
+		t.Fatal("240 yard endpoints rejected", err)
+	}
+	tooFar := end
+	tooFar.X += .01
+	if err := validateRequest(0, start, tooFar); err == nil || !strings.Contains(err.Error(), "240") {
+		t.Fatal("endpoint cap not enforced", err)
+	}
+	if route, err := plan(context.Background(), fakeRoute(start, end), start, end); err != nil || len(route) != 241 {
+		t.Fatal("240 yard complete route rejected", len(route), err)
+	}
+	// Endpoints fit exactly, but the verified route takes a longer detour.
+	if _, err := plan(context.Background(), fakeRoute(start, Point{-8780, -80, 90}, end), start, end); err == nil || !strings.Contains(err.Error(), "240") {
+		t.Fatal("over-budget detour accepted", err)
+	}
+	if MaxPoints != 256 {
+		t.Fatal("route extension changed sample budget", MaxPoints)
 	}
 }
 
