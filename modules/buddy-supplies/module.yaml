@@ -1,0 +1,23 @@
+api_version: 1
+enabled: true
+description: Explicit bounded starter supplies from observed vendor offers and owned fishing-pole equipment with exact inventory, wallet and restore receipts
+requires: [buddy-world, buddy-actions, buddy-trade, buddy-loot, buddy-professions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  state: /warcraftbuddy.supplies.v1.BuddySupplies/GetState
+  discover: /warcraftbuddy.supplies.v1.BuddySupplies/Discover
+  list: /warcraftbuddy.supplies.v1.BuddySupplies/List
+  buy: /warcraftbuddy.supplies.v1.BuddySupplies/Buy
+  equip: /warcraftbuddy.supplies.v1.BuddySupplies/Equip
+  restore: /warcraftbuddy.supplies.v1.BuddySupplies/Restore
+packets:
+  SMSG_LIST_INVENTORY: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
+  SMSG_BUY_ITEM: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
+  SMSG_BUY_FAILED: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
+  SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.supplies.v1.BuddySupplies/BeforeLogout
