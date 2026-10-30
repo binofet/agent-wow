@@ -35,7 +35,7 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 	if !s.refreshPositionLocked(w) {
 		return nil, "trainer_travel_authoritative_position_changed"
 	}
-	if !northshire(s.pos) || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
+	if !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
 		return nil, "trainer_travel_supported_normal_ground_required"
 	}
 	if len(w.QuestGivers) > 64 || len(w.NearbyCreatures) > 32 || len(w.LootableCorpses) > 64 {
@@ -50,7 +50,7 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 				continue
 			}
 			p := position{c.X, c.Y, c.Z, c.Orientation}
-			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != 0 || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&0x50 != 0x50 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !northshire(p) {
+			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&0x50 != 0x50 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !finite(p) {
 				return nil, "trainer_travel_observed_stationary_profession_trainer_required"
 			}
 			if target != nil && (target.position != p || target.revision != c.PositionRevision) {
@@ -66,7 +66,7 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 }
 
 // TravelTrainer pauses other controls only under an exclusive training lease.
-// Every step uses the existing verified map0 NAV route and normal run physics;
+// Every step uses a verified route on the observed map and normal run physics;
 // completion reports proximity, never a trainer purchase or learned profession.
 func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestRequest) (result *actionsv1.State, err error) {
 	if r == nil || r.Token == "" || r.NpcGuid>>48 != 0xf130 || r.NpcGuid&0xffffff == 0 {
@@ -103,7 +103,7 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 		s.mu.Unlock()
 		return nil, nil
 	}
-	from, to, revision, baseRevision, root := s.pos, target.position, target.revision, s.positionRevision, s.navDataDir
+	from, to, revision, baseRevision, root, mapID := s.pos, target.position, target.revision, s.positionRevision, s.navDataDir, s.posMap
 	if distance(from, to) <= 3 {
 		s.state.Reason = "trainer_travel_within_distance"
 		s.mu.Unlock()
@@ -111,7 +111,7 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	}
 	s.state.Reason = "trainer_travel_planning_client_navmesh"
 	s.mu.Unlock()
-	path, planErr := s.navigationPath(call, root, from, to)
+	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
 	s.mu.Lock()
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "trainer_travel_navigation_unavailable"
@@ -124,6 +124,9 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	for step := 0; step < 150; step++ {
 		s.mu.Lock()
 		current, why := s.trainerTravelContextLocked(call, r)
+		if why == "" && s.posMap != mapID {
+			why = "trainer_travel_map_changed"
+		}
 		if why == "" && step == 0 && (s.positionRevision != baseRevision || distance(s.pos, from) > 0.05) {
 			why = "trainer_travel_position_changed_during_planning"
 		}
@@ -141,7 +144,7 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 			s.mu.Unlock()
 			return nil, nil
 		}
-		if !s.navigationStepLocked(call, path, &index) {
+		if !s.mapNavigationStepLocked(call, path, &index) {
 			s.state.Reason = "trainer_travel_step_or_transport_failed"
 			s.mu.Unlock()
 			return nil, nil

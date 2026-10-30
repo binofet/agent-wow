@@ -18,6 +18,9 @@ func safePracticeCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string 
 	}
 	// An active practice fight may set IN_COMBAT. All other own safety
 	// conditions are identical to local quest travel and still fail closed.
+	if !w.Self.MapKnown || w.Self.MapId != 0 {
+		return "practice_map_zero_required"
+	}
 	copy := proto.Clone(w.Self).(*worldv1.PlayerState)
 	copy.UnitFlags &^= 0x80000
 	return safeQuestCharacter(&worldv1.SnapshotResponse{Self: copy}, selfGUID)
@@ -84,7 +87,7 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
 		return s.startColdridgePracticeLocked(ctx, w)
 	}
-	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
+	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
 		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1..5 supported class safely in Northshire")
 	}
 	active33, incomplete33 := ownWolfQuest(w)

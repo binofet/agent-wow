@@ -87,7 +87,7 @@ func eligibleColdridgeWolf(c *worldv1.CreatureState) bool {
 
 func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.SnapshotResponse) (*actionsv1.State, error) {
 	_, incomplete := ownColdridgeQuest(w, s.selfGUID)
-	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !coldridge(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
+	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !coldridge(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
 		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own incompletequest179")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {

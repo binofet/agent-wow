@@ -38,13 +38,19 @@ type floorModel struct {
 	name   string
 }
 type floorReader struct {
-	region    Region
-	dir       string
-	tiles     map[string][]floorSpawn
-	models    map[string]*floorModel
-	lru       *list.List
-	bytes     int
-	lastModel string
+	region       Region
+	mapID        uint32
+	window       *mapWindow
+	modelLimit   int64
+	globalLoaded bool
+	globalTiled  bool
+	globalSpawns []floorSpawn
+	dir          string
+	tiles        map[string][]floorSpawn
+	models       map[string]*floorModel
+	lru          *list.List
+	bytes        int
+	lastModel    string
 }
 
 func newFloorReader(dir string) *floorReader {
@@ -89,26 +95,51 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 		return 0, false, err
 	}
 	f.lastModel = ""
-	regionName, err := f.region.name()
-	if err != nil {
-		return 0, false, err
-	}
 	gx, gy := int(math.Floor(32-float64(q.X)/533.33333333)), int(math.Floor(32-float64(q.Y)/533.33333333))
-	name := fmt.Sprintf("000_%02d_%02d.vmtile", gy, gx)
-	if !f.region.allowsFloorTile(name) {
-		return 0, false, fmt.Errorf("collision query leaves bounded %s tiles", regionName)
-	}
-	spawns, ok := f.tiles[name]
-	if !ok {
-		b, err := readBounded(filepath.Join(f.dir, name), 2<<20)
-		if err != nil {
-			return 0, false, fmt.Errorf("collision tile unavailable: %w", err)
+	name := fmt.Sprintf("%03d_%02d_%02d.vmtile", f.mapID, gy, gx)
+	if f.window != nil {
+		if !f.window.contains(q) {
+			return 0, false, errors.New("collision query leaves bounded map tile window")
 		}
-		spawns, err = parseFloorSpawns(b)
+	} else {
+		regionName, err := f.region.name()
 		if err != nil {
 			return 0, false, err
 		}
-		f.tiles[name] = spawns
+		if !f.region.allowsFloorTile(name) {
+			return 0, false, fmt.Errorf("collision query leaves bounded %s tiles", regionName)
+		}
+	}
+	var spawns []floorSpawn
+	global := false
+	if f.window != nil {
+		if !f.globalLoaded {
+			var err error
+			f.globalSpawns, f.globalTiled, err = readGlobalFloorSpawns(f.dir, f.mapID)
+			if err != nil {
+				return 0, false, fmt.Errorf("collision map tree unavailable: %w", err)
+			}
+			f.globalLoaded = true
+		}
+		global = !f.globalTiled
+		if global {
+			spawns = f.globalSpawns
+		}
+	}
+	if !global {
+		var ok bool
+		spawns, ok = f.tiles[name]
+		if !ok {
+			b, err := readBounded(filepath.Join(f.dir, name), 2<<20)
+			if err != nil {
+				return 0, false, fmt.Errorf("collision tile unavailable: %w", err)
+			}
+			spawns, err = parseFloorSpawns(b)
+			if err != nil {
+				return 0, false, err
+			}
+			f.tiles[name] = spawns
+		}
 	}
 	// Start close to the verified navigation layer. Terrain/collision more
 	// than 2yd below it or .5yd above it cannot substitute a roof/floor.
@@ -155,11 +186,15 @@ func (f *floorReader) model(name string) (*floorModel, error) {
 		f.lru.MoveToFront(m.elem)
 		return m, nil
 	}
-	b, err := readBounded(filepath.Join(f.dir, name+".vmo"), floorModelBytes)
+	limit := f.modelLimit
+	if limit == 0 {
+		limit = floorModelBytes
+	}
+	b, err := readBounded(filepath.Join(f.dir, name+".vmo"), limit)
 	if err != nil {
 		return nil, fmt.Errorf("collision model unavailable: %w", err)
 	}
-	m, err := parseFloorModel(b)
+	m, err := parseFloorModelBounded(b, int(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +328,13 @@ func parseFloorSpawns(b []byte) ([]floorSpawn, error) {
 	return out, nil
 }
 func parseFloorModel(b []byte) (*floorModel, error) {
+	return parseFloorModelBounded(b, floorModelBytes)
+}
+
+func parseFloorModelBounded(b []byte, maxDecoded int) (*floorModel, error) {
+	if maxDecoded < 1 || maxDecoded > floorCacheBytes || len(b) > maxDecoded {
+		return nil, errors.New("collision model exceeds bounded read/decode budget")
+	}
 	c := floorCursor{b: b}
 	c.tag("VMAP_4.8")
 	c.tag("WMOD")
@@ -358,7 +400,7 @@ func parseFloorModel(b []byte) (*floorModel, error) {
 		if c.err != nil {
 			return nil, c.err
 		}
-		if m.bytes > floorModelBytes {
+		if m.bytes > maxDecoded {
 			return nil, errors.New("decoded collision model exceeds budget")
 		}
 		m.groups = append(m.groups, g)

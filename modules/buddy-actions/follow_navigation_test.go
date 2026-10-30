@@ -21,6 +21,7 @@ func followNavRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), po
 	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 		return []position{from, to}, nil
 	}
+	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = s.pos.x, s.pos.y, s.pos.z
 	target := s.pos
 	target.x += 10
 	return s, f, advance, target
@@ -110,6 +111,7 @@ func TestFollowNavigationCorrectionOrOtherActuatorStopsUntilReplan(t *testing.T)
 			advance(200 * time.Millisecond)
 			if correction {
 				s.positionRevision++
+				f.world.Self.PositionRevision = s.positionRevision
 			} else {
 				s.pos.y++
 			}
@@ -198,6 +200,7 @@ func TestFollowNavigationLateCheckpointStopsAndAmbiguousStopFails(t *testing.T) 
 	s.followFormationStepLocked(context.Background(), target, 0.8)
 	advance(200 * time.Millisecond)
 	s.positionRevision++
+	f.world.Self.PositionRevision = s.positionRevision
 	f.failSend = true
 	if s.followFormationStepLocked(context.Background(), target, 0.8) || !s.state.MotionUnconfirmed {
 		t.Fatal("ambiguous stop was reported successful")

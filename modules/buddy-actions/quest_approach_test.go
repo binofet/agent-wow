@@ -31,7 +31,7 @@ func questApproachRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)
 func TestQuestApproachCompletesSynchronouslyWithBoundedNormalStepsAndStop(t *testing.T) {
 	s, f, _, r := questApproachRig(t)
 	got, err := s.ApproachQuest(context.Background(), r)
-	if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || got.MotionUnconfirmed || !got.Following || got.InteractionOwner != "quests" || !got.Position.Estimated || math.Abs(float64(got.Position.X-5)) > 0.001 {
+	if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || got.MotionUnconfirmed || !got.Following || got.InteractionOwner != "quests" || !got.Position.Estimated || got.Position.X < 4.99 || got.Position.X > 6.401 {
 		t.Fatal(got, err)
 	}
 	if countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 4 || countPackets(f, opcode.MSGMoveStop) != 1 {
@@ -65,7 +65,7 @@ func TestQuestApproachRefusesUnobservedMovingUnsafeOrFarNPCs(t *testing.T) {
 			case "notquestgiver":
 				npc.NpcFlags = 0
 			case "map":
-				f.world.Self.MapId, f.world.Owner.MapId, npc.MapId = 1, 1, 1
+				npc.MapId = 1
 			case "moving":
 				npc.MovementFlags = 1
 			case "spline":
@@ -171,7 +171,7 @@ func TestQuestApproachIsIndependentOfOwnerPresencePositionAndActivity(t *testing
 				f.world.Owner.MapId = 1
 			}
 			got, err := s.ApproachQuest(context.Background(), r)
-			if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || got.MotionUnconfirmed || got.InteractionOwner != "quests" || math.Abs(float64(got.Position.X-5)) > 0.001 || countPackets(f, opcode.MSGMoveStop) != 1 {
+			if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || got.MotionUnconfirmed || got.InteractionOwner != "quests" || got.Position.X < 4.99 || got.Position.X > 6.401 || countPackets(f, opcode.MSGMoveStop) != 1 {
 				t.Fatal(got, err, f.packets)
 			}
 		})

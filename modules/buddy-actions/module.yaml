@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Bounded outdoor following and class-aware priest mage rogue or warlock assistance to fixed owner Joel
+description: Bounded map-aware ground following and class-aware priest mage rogue or warlock assistance to fixed owner Joel
 requires: [buddy-world, buddy-party]
 compose:
   file: compose.yaml

@@ -100,8 +100,8 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 // This is bounded assistance to an already hostile engaged target, never an
 // autonomous pull or a general navigator. Normal server range checks still run.
 func (s *Service) approachMeleeLocked(ctx context.Context, w *worldv1.SnapshotResponse, target position, d, stopDistance float64) bool {
-	if s.navDataDir != "" {
-		if w.Self.MapId != 0 || d > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
+	{
+		if d > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
 			s.state.Reason = "rogue_target_outside_bounded_ground_approach"
 			s.stopLocked(ctx)
 			return false
@@ -120,33 +120,4 @@ func (s *Service) approachMeleeLocked(ctx context.Context, w *worldv1.SnapshotRe
 		}
 		return true
 	}
-	if w.Self.MapId != 0 || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
-		s.state.Reason = "rogue_target_outside_bounded_ground_approach"
-		s.stopLocked(ctx)
-		return false
-	}
-	now := s.now()
-	elapsed := now.Sub(s.lastStep).Seconds()
-	if elapsed < 0 || elapsed > 0.6 {
-		s.stopLocked(ctx)
-		s.state.Reason = "rogue_approach_tick_late"
-		return true
-	}
-	p := s.pos
-	p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
-	if p.o < 0 {
-		p.o += 2 * math.Pi
-	}
-	op := uint32(opcode.MSGMoveStartForward)
-	if s.state.Moving {
-		op = opcode.MSGMoveHeartbeat
-		step := math.Min(7*elapsed, d-stopDistance)
-		fraction := float32(step / d)
-		p.x += (target.x - p.x) * fraction
-		p.y += (target.y - p.y) * fraction
-		p.z += (target.z - p.z) * fraction
-	}
-	s.movementLocked(ctx, op, p, true)
-	s.state.Reason = "rogue_approaching_engaged_target_estimate"
-	return true
 }

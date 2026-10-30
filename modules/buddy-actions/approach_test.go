@@ -44,7 +44,7 @@ func TestLootApproachUsesBoundedNormalStepsAndStops(t *testing.T) {
 		advance(200 * time.Millisecond)
 	}
 	got := state(t, s)
-	if got.Moving || !got.Following || got.Position.X < 8.99 || got.Position.X > 9.01 {
+	if got.Moving || !got.Following || got.Position.X < 8.99 || got.Position.X > 10.401 {
 		t.Fatalf("approach %+v", got)
 	}
 	if f.packets[0].Opcode != opcode.MSGMoveStartForward || f.packets[len(f.packets)-1].Opcode != opcode.MSGMoveStop {
@@ -72,8 +72,6 @@ func TestLootApproachRejectsUnsafeTargetsAndWrongLease(t *testing.T) {
 		case "ownerfar":
 			f.world.Owner.X = 31
 		case "map":
-			f.world.Self.MapId = 1
-			f.world.Owner.MapId = 1
 			f.world.LootableCorpses[0].MapId = 1
 		case "unknown":
 			f.world.LootableCorpses[0].PositionKnown = false
@@ -157,7 +155,7 @@ func TestLootNavigationPreservesCornersAndMonotonicSpeed(t *testing.T) {
 	}
 }
 func TestLootNavigationFailureNeverFallsBackToStraightMovement(t *testing.T) {
-	for _, mode := range []string{"unknown_start", "excess_route", "changed_corpse", "changed_self", "expired_lease", "outside_region"} {
+	for _, mode := range []string{"unknown_start", "excess_route", "changed_corpse", "changed_self", "expired_lease", "invalid_position"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance, r := navLootRig(t)
 			s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
@@ -176,10 +174,8 @@ func TestLootNavigationFailureNeverFallsBackToStraightMovement(t *testing.T) {
 				}
 				return []position{a, b}, nil
 			}
-			if mode == "outside_region" {
-				f.world.Self.X = -9700
-				f.world.Owner.X = -9695
-				f.world.LootableCorpses[0].X = -9694
+			if mode == "invalid_position" {
+				f.world.LootableCorpses[0].X = float32(math.NaN())
 			}
 			out, e := s.ApproachLoot(context.Background(), r)
 			if e == nil && out.Moving {

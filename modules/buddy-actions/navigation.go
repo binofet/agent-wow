@@ -36,6 +36,54 @@ func planNavigation(ctx context.Context, root string, from, to position) ([]posi
 	return path, nil
 }
 
+// planMapNavigation is the production planner. Legacy planNavigation remains
+// restricted to the explicitly regional practice controllers.
+func planMapNavigation(ctx context.Context, root string, mapID uint32, from, to position) ([]position, error) {
+	points, err := buddynav.PlanMapContext(ctx, root, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: to.x, Y: to.y, Z: to.z})
+	if err != nil {
+		return nil, err
+	}
+	path := make([]position, len(points))
+	for i, p := range points {
+		path[i] = position{x: p.X, y: p.Y, z: p.Z}
+	}
+	return path, nil
+}
+
+func validMapNavigationPath(path []position, from, to position) bool {
+	if !finite(from) || !finite(to) || len(path) < 2 || len(path) > 256 || distance(path[0], from) > 2 || distance(path[len(path)-1], to) > 2 {
+		return false
+	}
+	total := distance(from, path[0])
+	for i, p := range path {
+		if !finite(p) {
+			return false
+		}
+		if i > 0 {
+			total += distance(path[i-1], p)
+		}
+	}
+	return total <= buddynav.MaxRouteLength
+}
+
+func (s *Service) mapNavigationPath(ctx context.Context, root string, mapID uint32, from, to position) ([]position, error) {
+	if s.planMapPath == nil {
+		return nil, errors.New("client navigation data is unavailable")
+	}
+	path, err := s.planMapPath(ctx, root, mapID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("client navmesh planner: %w", err)
+	}
+	if !validMapNavigationPath(path, from, to) {
+		return nil, errors.New("client navmesh route failed controller endpoint, length or finite-position validation")
+	}
+	return path, nil
+}
+
+func (s *Service) mapNavigationStepLocked(ctx context.Context, path []position, index *int) bool {
+	return s.navigationStepWithinLocked(ctx, path, index, finite)
+}
+
 func validNavigationPath(path []position, from, to position) bool {
 	if len(path) < 2 || len(path) > 2048 || distance(path[0], from) > 2 || distance(path[len(path)-1], to) > 2 {
 		return false

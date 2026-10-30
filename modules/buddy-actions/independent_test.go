@@ -58,7 +58,7 @@ func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T)
 func TestIndependentModeRetainsBoundedOwnPractice(t *testing.T) {
 	base, f, _ := practiceRig(t, 8)
 	s := NewIndependentService(f, 1)
-	s.now, s.planPath = base.now, base.planPath
+	s.now, s.planPath, s.planMapPath = base.now, base.planPath, base.planMapPath
 	s.SetNavigationDataDir("/fixture/client-data")
 	learnSpells(s, fireball)
 	// Even a stale companion world image must not make Joel a combat target.
@@ -78,7 +78,7 @@ func TestIndependentModeRetainsOwnedQuestTravelAndMapBounds(t *testing.T) {
 	for _, unsafe := range []bool{false, true} {
 		base, f, _, request := travelRig(t)
 		s := NewIndependentService(f, 1)
-		s.now, s.planPath, s.approachDelay = base.now, base.planPath, base.approachDelay
+		s.now, s.planPath, s.planMapPath, s.approachDelay = base.now, base.planPath, base.planMapPath, base.approachDelay
 		s.SetNavigationDataDir("/fixture/client-data")
 		lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "quests", LeaseMs: 30000})
 		if err != nil {

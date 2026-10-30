@@ -40,8 +40,8 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		classID = world.Self.ClassId
 	}
 	target := s.formation.Target(now, s.selfGUID, classID, owner, moving)
-	if !northshire(target.Position) {
-		pause("formation_position_outside_supported_area")
+	if !finite(target.Position) {
+		pause("formation_position_invalid")
 		return
 	}
 	// Hysteresis lets them stay put through tiny player adjustments instead

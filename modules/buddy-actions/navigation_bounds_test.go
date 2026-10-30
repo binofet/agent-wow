@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -41,14 +42,20 @@ func TestFormationFollowUsesMineNavigationWithElevenYardElevationChange(t *testi
 	}
 }
 
-func TestConfiguredNavigationNeverFallsThroughOutsideMineArea(t *testing.T) {
-	s, f, _ := formationRig(t, 1, 5)
+func TestConfiguredNavigationNeverFallsThroughMissingMeshOutsideFormerArea(t *testing.T) {
+	s, f, advance := formationRig(t, 1, 5)
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8401, -120, 75
 	f.world.Owner.X, f.world.Owner.Y, f.world.Owner.Z = -8390, -120, 75
+	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+		return nil, errors.New("installed navigation tile window missing")
+	}
 	toggle(t, s, true)
-	s.Tick(context.Background())
-	if s.state.Moving || len(f.packets) != 0 {
-		t.Fatal("unsupported nav area fell through to direct movement", &s.state, f.packets)
+	for range 6 {
+		s.Tick(context.Background())
+		advance(200 * time.Millisecond)
+	}
+	if s.state.Moving || s.state.NavAvailable || len(f.packets) != 0 || (s.state.Reason != "follow_navigation_unavailable" && s.state.Reason != "follow_navigation_replan_wait") || s.state.NavReason == "" {
+		t.Fatal("missing mesh fell through to direct movement", &s.state, f.packets)
 	}
 }
 

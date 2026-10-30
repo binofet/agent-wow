@@ -52,12 +52,12 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 	if !s.refreshPositionLocked(w) {
 		return nil, "quest_travel_authoritative_position_changed"
 	}
-	if !northshire(s.pos) || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
-		return nil, "quest_travel_northshire_normal_ground_required"
+	if !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(w.Self.RunSpeed)) {
+		return nil, "quest_travel_normal_ground_required"
 	}
 	landmark, entry, hasLandmark := northshireQuestLandmark(r.NpcGuid)
 	if entry == 0 || len(w.QuestGivers) > 64 || len(w.NearbyCreatures) > 32 || len(w.LootableCorpses) > 64 {
-		return nil, "quest_travel_allowed_northshire_giver_required"
+		return nil, "quest_travel_valid_giver_required"
 	}
 	// Search other bounded views too: an observed NPC that lost its questgiver
 	// flag, died or started moving must not silently become a landmark fallback.
@@ -69,7 +69,7 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 				continue
 			}
 			p := position{c.X, c.Y, c.Z, c.Orientation}
-			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != 0 || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&2 == 0 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !northshire(p) {
+			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&2 == 0 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !finite(p) {
 				return nil, "quest_travel_observed_stationary_giver_required"
 			}
 			if observed != nil && (observed.position != p || observed.revision != c.PositionRevision) {
@@ -81,14 +81,14 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 	if observed != nil {
 		return observed, ""
 	}
-	if !hasLandmark {
+	if !hasLandmark || w.Self.MapId != 0 {
 		return nil, "quest_travel_current_observed_giver_required"
 	}
 	return &questTravelTarget{position: landmark, landmark: true}, ""
 }
 
 // TravelQuest never accepts caller coordinates. It binds one currently observed
-// Northshire questgiver or one of three explicit remembered landmarks to a complete
+// questgiver on the current map or one of three explicit map-zero landmarks to a complete
 // static-client navmesh route. Landmark travel stops when the real NPC returns
 // to observation; interaction still requires a current actual NPC snapshot.
 func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestRequest) (result *actionsv1.State, err error) {
@@ -127,7 +127,7 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		return nil, nil
 	}
 	from, to := s.pos, npc.position
-	revision, landmark, baseRevision, root := npc.revision, npc.landmark, s.positionRevision, s.navDataDir
+	revision, landmark, baseRevision, root, mapID := npc.revision, npc.landmark, s.positionRevision, s.navDataDir, s.posMap
 	withinReason, planningReason, followingReason := "quest_travel_within_distance", "quest_travel_planning_client_navmesh", "quest_travel_following_client_navmesh_estimate"
 	if landmark {
 		withinReason, planningReason, followingReason = "quest_travel_landmark_reached_requires_observation", "quest_travel_landmark_planning_client_navmesh", "quest_travel_landmark_following_client_navmesh_estimate"
@@ -139,7 +139,7 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 	}
 	s.state.Reason = planningReason
 	s.mu.Unlock()
-	path, planErr := s.navigationPath(call, root, from, to)
+	path, planErr := s.mapNavigationPath(call, root, mapID, from, to)
 	s.mu.Lock()
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "quest_travel_navigation_unavailable"
@@ -152,6 +152,9 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 	for step := 0; step < 150; step++ {
 		s.mu.Lock()
 		current, why := s.questTravelContextLocked(call, r)
+		if why == "" && s.posMap != mapID {
+			why = "quest_travel_map_changed"
+		}
 		if why == "" && step == 0 && (s.positionRevision != baseRevision || distance(s.pos, from) > 0.05) {
 			why = "quest_travel_position_changed_during_planning"
 		}
@@ -175,7 +178,7 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 			s.mu.Unlock()
 			return nil, nil
 		}
-		if !s.navigationStepLocked(call, path, &index) {
+		if !s.mapNavigationStepLocked(call, path, &index) {
 			s.state.Reason = "quest_travel_step_or_transport_failed"
 			s.mu.Unlock()
 			return nil, nil

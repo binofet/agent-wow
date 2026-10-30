@@ -100,7 +100,7 @@ func TestQuestTravelUnobservedMillyNeverGetsLandmarkFallback(t *testing.T) {
 }
 
 func TestQuestTravelObservedGenericGiverRetainsAllSafetyGates(t *testing.T) {
-	for _, mode := range []string{"entry_mismatch", "absent", "position_unknown", "map_unknown", "other_map", "dead", "health_unknown", "not_questgiver", "combat", "moving", "spline", "trajectory", "outside_northshire", "conflicting_view"} {
+	for _, mode := range []string{"entry_mismatch", "absent", "position_unknown", "map_unknown", "other_map", "dead", "health_unknown", "not_questgiver", "combat", "moving", "spline", "trajectory", "invalid_position", "conflicting_view"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, r := travelRig(t)
 			r.NpcGuid = 0xf130002450000123
@@ -131,8 +131,8 @@ func TestQuestTravelObservedGenericGiverRetainsAllSafetyGates(t *testing.T) {
 				c.MovementFlags = 0x08000000
 			case "trajectory":
 				c.Trajectory = &worldv1.CreatureTrajectory{Known: true, Stopped: false}
-			case "outside_northshire":
-				c.X = -9700
+			case "invalid_position":
+				c.X = 40001
 			case "conflicting_view":
 				other := &worldv1.CreatureState{Guid: c.Guid, Entry: c.Entry, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: c.PositionRevision, X: c.X + 1, Y: c.Y, Z: c.Z, HealthKnown: true, Health: 100, AliveKnown: true, Alive: true, NpcFlags: 2}
 				f.world.NearbyCreatures = []*worldv1.CreatureState{other}
@@ -291,6 +291,7 @@ func TestQuestTravelRejectsMissingPartialLongAndOutOfBoundsRoutes(t *testing.T) 
 			switch mode {
 			case "assets":
 				s.navDataDir = ""
+				s.planMapPath = planMapNavigation
 			case "partial":
 				s.planPath = func(context.Context, string, position, position) ([]position, error) {
 					return nil, errors.New("partial mesh")

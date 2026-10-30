@@ -23,6 +23,7 @@ type followNavigation struct {
 	ownerArrival bool
 	expected     position
 	selfRevision uint64
+	mapID        uint32
 	nextPlanAt   time.Time
 	lastError    string
 }
@@ -40,7 +41,7 @@ func formationDestinationUnavailable(err error) bool {
 // complete ground route succeeds. All candidate queries share one deadline.
 // An invalid start never authorizes a candidate, snap or unverified recovery.
 func (s *Service) formationNavigationPath(ctx context.Context, target position, stop float64, ownerFallback ...position) ([]position, position, float64, bool, error) {
-	path, err := s.navigationPath(ctx, s.navDataDir, s.pos, target)
+	path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, target)
 	validate := func(path []position, candidate position, alternate bool) (position, float64, bool) {
 		if len(path) > 256 || !followAtTarget(path[len(path)-1], candidate, stop) {
 			return position{}, 0, false
@@ -78,10 +79,10 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 			candidate := target
 			candidate.x += offset[0]
 			candidate.y += offset[1]
-			if !northshire(candidate) {
+			if !finite(candidate) {
 				continue
 			}
-			path, candidateErr := s.navigationPath(ctx, s.navDataDir, s.pos, candidate)
+			path, candidateErr := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, candidate)
 			if candidateErr != nil {
 				continue
 			}
@@ -100,8 +101,8 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 		if ctx.Err() != nil {
 			return nil, position{}, 0, false, ctx.Err()
 		}
-		if northshire(owner) && followHorizontalDistance(owner, target) <= 6.5 && math.Abs(float64(owner.z-target.z)) <= 1.5 {
-			path, ownerErr := s.navigationPath(ctx, s.navDataDir, s.pos, owner)
+		if finite(owner) && followHorizontalDistance(owner, target) <= 6.5 && math.Abs(float64(owner.z-target.z)) <= 1.5 {
+			path, ownerErr := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, owner)
 			if ownerErr == nil && len(path) <= 256 && followAtTarget(path[len(path)-1], owner, 2) {
 				// Cache the actual owner separately from the wanted personal slot.
 				// Its Z check prevents stopping directly below the upstairs owner.
@@ -167,7 +168,7 @@ func followPathStep(from position, path []position, index int, budget float64) (
 	first := index
 	for index < len(path) && budget > 0.0001 {
 		goal := path[index]
-		if !northshire(goal) {
+		if !finite(goal) {
 			return from, index, false
 		}
 		d := distance(p, goal)
@@ -201,7 +202,7 @@ func followPathStep(from position, path []position, index int, budget float64) (
 			}
 		}
 	}
-	return p, index, northshire(p)
+	return p, index, finite(p)
 }
 
 func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64, ownerFallback ...position) bool {
@@ -218,7 +219,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		s.state.Reason = reason
 		return false
 	}
-	if !s.posKnown || !northshire(s.pos) || !northshire(target) || math.IsNaN(stopDistance) || math.IsInf(stopDistance, 0) || stopDistance < 0.1 || stopDistance > 4 {
+	if !s.posKnown || !finite(s.pos) || !finite(target) || math.IsNaN(stopDistance) || math.IsInf(stopDistance, 0) || stopDistance < 0.1 || stopDistance > 4 {
 		return fail("follow_navigation_invalid_target", errors.New("formation position or stop distance is invalid"))
 	}
 	if s.state.MotionUnconfirmed {
@@ -229,7 +230,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if f.ownerArrival && ownerArrivalValid {
 		arrival = ownerFallback[0]
 	}
-	if f.arrivalKnown && ownerArrivalValid && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05 && distance(f.target, target) <= 1.5 && followAtTarget(s.pos, arrival, f.arrivalStop) {
+	if f.arrivalKnown && ownerArrivalValid && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05 && distance(f.target, target) <= 1.5 && followAtTarget(s.pos, arrival, f.arrivalStop) {
 		ok := s.stopLocked(ctx)
 		if ok {
 			s.state.Reason = "within_follow_formation"
@@ -245,7 +246,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		return ok
 	}
-	validCached := len(f.path) != 0 && ownerArrivalValid && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05
+	validCached := len(f.path) != 0 && ownerArrivalValid && f.selfRevision == s.positionRevision && f.mapID == s.posMap && distance(f.expected, s.pos) <= 0.05
 	needsPlan := !validCached || f.index >= len(f.path) || distance(f.target, target) > 1.5
 	if needsPlan && !now.Before(f.nextPlanAt) {
 		f.path = nil
@@ -260,7 +261,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 			return fail("follow_navigation_unavailable", err)
 		}
 		f.path = append([]position(nil), path...)
-		f.index, f.target, f.expected, f.selfRevision = 0, target, s.pos, s.positionRevision
+		f.index, f.target, f.expected, f.selfRevision, f.mapID = 0, target, s.pos, s.positionRevision, s.posMap
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		f.ownerArrival = ownerArrival
 		validCached = true

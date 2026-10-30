@@ -43,6 +43,7 @@ type lootApproachNavigation struct {
 	path                         []position
 	start, target                position
 	selfRevision, targetRevision uint64
+	mapID                        uint32
 }
 
 func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.ApproachLootRequest, route *lootApproachNavigation) (*actionsv1.State, error) {
@@ -114,7 +115,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		}
 		quest33, _ := ownWolfQuest(w)
 		quest179, _ := ownColdridgeQuest(w, s.selfGUID)
-		coldridgeCorpse = quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
+		coldridgeCorpse = w.Self.MapId == 0 && quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
 		if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse {
 			if reason := safePlayers(w, s.selfGUID); reason != "" {
 				return pause("loot_approach_" + reason)
@@ -130,8 +131,8 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	if !targetKnown || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		return pause("loot_approach_target_unknown_far_or_vertical")
 	}
-	if s.navDataDir != "" {
-		inside := northshire
+	{
+		inside := finite
 		if coldridgeCorpse {
 			inside = coldridge
 		}
@@ -145,7 +146,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 			if coldridgeCorpse {
 				path, err = s.coldridgeNavigationPath(planCtx, s.pos, target)
 			} else {
-				path, err = s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+				path, err = s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, s.pos, target)
 			}
 			if err == nil {
 				err = planCtx.Err()
@@ -159,12 +160,12 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 				s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 				return pause("loot_approach_navigation_unavailable")
 			}
-			route = &lootApproachNavigation{path: append([]position(nil), path...), start: s.pos, target: target, selfRevision: s.positionRevision, targetRevision: targetRevision}
+			route = &lootApproachNavigation{path: append([]position(nil), path...), start: s.pos, target: target, selfRevision: s.positionRevision, targetRevision: targetRevision, mapID: s.posMap}
 			// Planning does not reserve a stale corpse, position, or lease.
 			// This second validation cannot recurse into another plan.
 			return s.approachLootStepLocked(ctx, r, route)
 		}
-		if route.selfRevision != s.positionRevision || distance(route.start, s.pos) > .05 || route.targetRevision != targetRevision || distance(route.target, target) > .01 {
+		if route.mapID != s.posMap || route.selfRevision != s.positionRevision || distance(route.start, s.pos) > .05 || route.targetRevision != targetRevision || distance(route.target, target) > .01 {
 			return pause("loot_approach_position_changed_after_planning")
 		}
 		s.state.NavAvailable = true
@@ -180,8 +181,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 			return pause("loot_approach_route_ended_outside_range")
 		}
 		if coldridgeCorpse {
-			// The formation chord helper is deliberately Northshire-only.
-			// Coldridge uses the existing region-bounded segment writer.
+			// Preserve the explicit Coldridge practice region on its own exception.
 			if !s.navigationStepWithinLocked(ctx, route.path, &index, coldridge) {
 				return pause("loot_approach_invalid_navigation_step")
 			}
@@ -220,10 +220,6 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		s.state.Reason = "loot_approaching_client_navmesh_estimate"
 		return s.stateLocked(), nil
 	}
-	if coldridgeCorpse {
-		return pause("loot_approach_coldridge_requires_verified_navigation")
-	}
-	return s.groundApproachStepLocked(ctx, target, "loot"), nil
 }
 
 // This movement exception is bound to the acting character's actual own quest
@@ -244,50 +240,4 @@ func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64) bool {
 		}
 	}
 	return found
-}
-
-// Both interaction approaches use the same monotonic, speed-bounded movement
-// writer. Eligibility and lease ownership are checked by each caller first.
-func (s *Service) groundApproachStepLocked(ctx context.Context, target position, kind string) *actionsv1.State {
-	pause := func(reason string) *actionsv1.State {
-		if s.stopLocked(ctx) {
-			s.state.Reason = kind + "_approach_" + reason
-		}
-		return s.stateLocked()
-	}
-	d := distance(s.pos, target)
-	if d <= 3 {
-		return pause("within_distance")
-	}
-	p := s.pos
-	p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
-	if p.o < 0 {
-		p.o += 2 * math.Pi
-	}
-	op := uint32(opcode.MSGMoveStartForward)
-	if s.state.Moving {
-		elapsed := s.now().Sub(s.posAt).Seconds()
-		if elapsed < 0 || elapsed > 0.6 {
-			return pause("tick_late")
-		}
-		// Duplicate calls cannot move farther without elapsed monotonic time.
-		if elapsed < 0.15 {
-			s.state.Reason = kind + "_approach_waiting_for_next_step"
-			return s.stateLocked()
-		}
-		step := math.Min(7*elapsed, d-3)
-		fraction := float32(step / d)
-		p.x += (target.x - p.x) * fraction
-		p.y += (target.y - p.y) * fraction
-		p.z += (target.z - p.z) * fraction
-		op = opcode.MSGMoveHeartbeat
-	}
-	if !s.movementLocked(ctx, op, p, true) {
-		return s.stateLocked()
-	}
-	if distance(s.pos, target) <= 3.01 {
-		return pause("within_distance")
-	}
-	s.state.Reason = kind + "_approaching_direct_ground_estimate"
-	return s.stateLocked()
 }

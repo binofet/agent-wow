@@ -29,6 +29,7 @@ type fakeSession struct {
 	party                             *partyv1.StateResponse
 	packets                           []*modv1.SendPacketRequest
 	clock                             uint32
+	onClock                           func()
 	lookupCreatures                   map[uint64]*worldv1.CreatureState
 	lookups                           []uint64
 	failSend, failClock, failSnapshot bool
@@ -53,6 +54,9 @@ func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.
 		return nil, errors.New("clock unavailable")
 	}
 	f.clock += 200
+	if f.onClock != nil {
+		f.onClock()
+	}
 	return &modv1.ClockResponse{ClientTimeMs: f.clock}, ctx.Err()
 }
 func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
@@ -95,6 +99,14 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	}
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: player(1, 0), Owner: player(3, 10)}}
 	s := NewService(f, 1)
+	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+		return []position{from, to}, nil
+	}
+	// Tests inject a complete fake verified route, never the production planner.
+	// Retain existing per-case regional planner overrides as mock inputs.
+	s.planMapPath = func(ctx context.Context, root string, _ uint32, from, to position) ([]position, error) {
+		return s.planPath(ctx, root, from, to)
+	}
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	return s, f, func(d time.Duration) { now = now.Add(d) }
@@ -213,8 +225,11 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 			}
-			if got := state(t, s); got.Moving || (got.Following != (mode == "correction" || mode == "lost")) {
+			if got := state(t, s); got.Moving || (got.Following != (mode == "correction")) {
 				t.Fatalf("failed to stop %+v", got)
+			}
+			if mode == "lost" && !s.state.MotionUnconfirmed {
+				t.Fatal("observer-loss STOP incorrectly treated as fresh confirmation")
 			}
 			if len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
 				t.Fatalf("stop packets %+v", f.packets)

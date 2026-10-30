@@ -1,4 +1,4 @@
-// Package buddynav plans bounded Northshire ground and shallow-wading routes from read-only
+// Package buddynav plans bounded ground and shallow-wading routes from read-only
 // client map assets. It does not connect to a game server or move a character.
 package buddynav
 
@@ -170,6 +170,14 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 		return nil, err
 	}
 	name, _ := region.name()
+	return planWithin(ctx, b, region.contains, name, start, dest)
+}
+
+// All regional and current-map requests share this exact physical sampler.
+func planWithin(ctx context.Context, b backend, contains func(Point) bool, name string, start, dest Point) ([]Point, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r, err := b.findPath(start, dest)
 	if err != nil {
 		return nil, fmt.Errorf("find navigation path: %w", err)
@@ -184,7 +192,7 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 	points = append(points, start)
 	for _, p := range r.Points {
 		q := Point{p.X, p.Y, p.Z}
-		if !region.contains(q) {
+		if !contains(q) {
 			return nil, fmt.Errorf("navigation path leaves %s bounds or contains non-finite coordinates", name)
 		}
 		if distance(points[len(points)-1], q) > 0.001 {
@@ -227,7 +235,14 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 		}
 		terrain, ok := b.terrain(q)
 		if !ok || !finite(terrain) || terrain <= -10000 {
-			return errors.New("navigation terrain height is unavailable")
+			// Some instance maps have only a physical VMAP floor. The current-
+			// map backend can prove that floor independently; NaN cannot become
+			// a candidate terrain height in selectPhysicalFloor.
+			collision, supported := b.(interface{ allowsCollisionOnlyFloor() bool })
+			if !supported || !collision.allowsCollisionOnlyFloor() {
+				return errors.New("navigation terrain height is unavailable")
+			}
+			terrain = float32(math.NaN())
 		}
 		meshPoint := Point{q.X, q.Y, h}
 		floor, err := b.floor(ctx, q, h, terrain)
@@ -241,7 +256,7 @@ func planRegion(ctx context.Context, b backend, region Region, start, dest Point
 			return errors.New("navigation water depth exceeds shallow wading limit")
 		}
 		q.Z = floor
-		if !region.contains(q) {
+		if !contains(q) {
 			return fmt.Errorf("navigation mesh height leaves %s bounds", name)
 		}
 		if len(out) > 0 {
@@ -314,12 +329,14 @@ func distance(a, b Point) float64 {
 
 type planner struct {
 	region         Region
+	mapID          uint32
 	gate           chan struct{}
 	terrainManager *pathfinding.TerrainManager
 	query          *detour.DtNavMeshQuery
 	mesh           *detour.DtNavMesh
 	filter         *detour.DtQueryFilter
 	floors         *floorReader
+	terrainHeaders map[string]bool
 }
 
 type plannerCacheKey struct {
@@ -418,7 +435,14 @@ func (p *planner) findPath(a, b Point) (*pathfinding.PathResult, error) {
 	return r, nil
 }
 func (p *planner) terrain(q Point) (float32, bool) {
-	return p.terrainManager.GetGridHeight(0, q.X, q.Y)
+	if p.floors != nil && p.floors.window != nil && !p.mapTerrainPresent(q) {
+		return 0, false
+	}
+	return p.terrainManager.GetGridHeight(p.mapID, q.X, q.Y)
+}
+
+func (p *planner) allowsCollisionOnlyFloor() bool {
+	return p.floors != nil && p.floors.window != nil
 }
 func recast(p Point) [3]float32 { return [3]float32{p.Y, p.Z, p.X} }
 func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
@@ -570,7 +594,23 @@ func loadMeshRegion(dir string, region Region) (mesh *detour.DtNavMesh, err erro
 	if err != nil {
 		return nil, err
 	}
-	data, err := readBounded(filepath.Join(dir, "000.mmap"), 28)
+	mesh, err = loadMeshTiles(context.Background(), dir, 0, tiles, 0)
+	if errors.Is(err, errNoMeshTiles) {
+		name, _ := region.name()
+		err = fmt.Errorf("%s navigation tiles are missing", name)
+	}
+	return mesh, err
+}
+
+var errNoMeshTiles = errors.New("navigation tile window is missing")
+
+func loadMeshTiles(ctx context.Context, dir string, mapID uint32, tiles []string, maxBytes int64) (mesh *detour.DtNavMesh, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			mesh, err = nil, errors.New("invalid navigation mesh data")
+		}
+	}()
+	data, err := readBounded(filepath.Join(dir, fmt.Sprintf("%03d.mmap", mapID)), 28)
 	if err != nil {
 		return nil, err
 	}
@@ -594,15 +634,23 @@ func loadMeshRegion(dir string, region Region) (mesh *detour.DtNavMesh, err erro
 		return nil, errors.New("initialize navigation mesh failed")
 	}
 	loaded := 0
+	var totalBytes int64
 	// Only the named region's sealed tile list is considered. Missing portions
 	// still fail closed rather than loading neighbors or returning a shortcut.
 	for _, name := range tiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data, err := readBounded(filepath.Join(dir, name), 32<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, err
+		}
+		totalBytes += int64(len(data))
+		if maxBytes > 0 && totalBytes > maxBytes {
+			return nil, errors.New("navigation tile window exceeds byte budget")
 		}
 		body, err := tileBody(data)
 		if err != nil {
@@ -615,8 +663,7 @@ func loadMeshRegion(dir string, region Region) (mesh *detour.DtNavMesh, err erro
 		loaded++
 	}
 	if loaded == 0 {
-		name, _ := region.name()
-		return nil, fmt.Errorf("%s navigation tiles are missing", name)
+		return nil, errNoMeshTiles
 	}
 	return mesh, nil
 }

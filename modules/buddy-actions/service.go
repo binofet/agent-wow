@@ -27,7 +27,7 @@ import (
 
 const (
 	lease      = 4 * time.Hour
-	limitation = "Configured navigation covers Northshire and the route to Goldshire, including shallow wading; unconfigured runtimes retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
+	limitation = "Navigation uses installed client map, terrain and collision data for the currently observed map; unavailable or unsafe routes pause movement. Spell transport and server spell-go are not health/damage confirmation."
 )
 
 type sessionAPI interface {
@@ -71,6 +71,7 @@ type Service struct {
 	approachDelay                                            func(context.Context, time.Duration) error
 	navDataDir                                               string
 	planPath                                                 func(context.Context, string, position, position) ([]position, error)
+	planMapPath                                              func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                                        func(context.Context, string, position, position) ([]position, error)
 	practiceUntil                                            time.Time
 	practiceRoute                                            []position
@@ -87,7 +88,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planColdridgePath: planColdridgeNavigation}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planColdridgePath: planColdridgeNavigation}
 }
 
 // NewIndependentService keeps self-scoped actions available without granting
@@ -534,7 +535,7 @@ func (s *Service) refreshPositionLocked(snapshot *worldv1.SnapshotResponse) bool
 		s.observePositionLocked(p)
 		return true
 	}
-	if p.PositionRevision != s.positionRevision {
+	if p.PositionRevision != s.positionRevision || !p.MapKnown || p.MapId != s.posMap {
 		s.pos = playerPosition(p)
 		s.positionRevision = p.PositionRevision
 		s.observePositionLocked(p)
@@ -586,6 +587,37 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		s.state.Reason = "session_clock_unavailable"
 		return false
 	}
+	// Clock/planning RPCs may race a transfer or authoritative correction. Bind
+	// every ordinary movement write to the actual current map and position
+	// revision. A STOP is rebased to the fresh observation instead of replaying
+	// an old map's coordinates.
+	w, snapshotErr := s.snapshot(ctx)
+	if snapshotErr != nil {
+		// Visibility/RPC loss must still permit one bounded STOP of movement
+		// already written at the last known position. It never permits travel.
+		if moving || !s.posKnown {
+			s.state.Reason = "movement_current_map_observation_unavailable"
+			return false
+		}
+	} else if w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.MapKnown || !w.Self.PositionKnown || !finite(playerPosition(w.Self)) {
+		s.state.Reason = "movement_current_map_observation_unavailable"
+		return false
+	}
+	changed := snapshotErr == nil && s.posKnown && (w.Self.MapId != s.posMap || w.Self.PositionRevision != s.positionRevision)
+	if changed {
+		s.refreshPositionLocked(w)
+		s.followNav.Reset()
+		s.meleeNav.Reset()
+		if moving {
+			s.state.Reason = "movement_map_or_authoritative_position_changed"
+			return false
+		}
+		p = s.pos
+	}
+	if moving && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
+		s.state.Reason = "movement_owner_map_changed"
+		return false
+	}
 	if !s.sendLocked(ctx, op, movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)) {
 		s.state.MotionUnconfirmed = true
 		return false
@@ -595,6 +627,10 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 	s.posEstimated = true
 	s.posAt = s.now()
 	s.posRevision++
+	if snapshotErr != nil {
+		s.state.MotionUnconfirmed = true
+		return false
+	}
 	return true
 }
 
@@ -764,7 +800,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 		return
 	}
-	if s.state.Following && s.navDataDir != "" && northshire(s.pos) && northshire(playerPosition(snapshot.Owner)) {
+	if s.state.Following && s.navDataDir != "" {
 		// Observe travel heading even while this actor is casting or assisting,
 		// so each role keeps the same formation frame after combat ends.
 		classID := uint32(0)
@@ -802,26 +838,15 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if snapshot.Self.MapId != 0 {
-		s.stopLocked(ctx)
-		s.lastStep = now
-		s.state.Reason = "follow_requires_outdoor_map_zero"
-		return
-	}
-	target := playerPosition(snapshot.Owner)
 	if s.navDataDir != "" {
-		if !northshire(s.pos) || !northshire(target) {
-			s.stopLocked(ctx)
-			s.lastStep = now
-			s.state.Reason = "follow_outside_supported_navigation_area"
-			return
-		}
 		formationUsed = true
 		s.followFormationLocked(ctx, snapshot, now)
 		return
 	}
-	// Preserve the previous short, almost-level follow outside the supported
-	// navigation area. A failed navigation plan never falls through here.
+	target := playerPosition(snapshot.Owner)
+	// An unconfigured runtime cannot travel without a successful client-data
+	// route either. This conservative near-owner mode also uses verified
+	// segments; it never substitutes a straight line for missing data.
 	d := distance(s.pos, target)
 	if d > 30 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		s.stopLocked(ctx)
@@ -848,24 +873,36 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "follow_tick_late"
 		return
 	}
-	p := s.pos
-	p.o = float32(math.Atan2(float64(target.y-p.y), float64(target.x-p.x)))
-	if p.o < 0 {
-		p.o += 2 * math.Pi
+	plan, finish := context.WithTimeout(ctx, 250*time.Millisecond)
+	path, planErr := s.mapNavigationPath(plan, s.navDataDir, s.posMap, s.pos, target)
+	if planErr == nil {
+		planErr = plan.Err()
 	}
-	op := uint32(opcode.MSGMoveHeartbeat)
-	step := 0.0
-	if !s.state.Moving {
-		op = opcode.MSGMoveStartForward
-	} else {
-		step = math.Min(math.Min(float64(snapshot.Self.RunSpeed), 7)*elapsed, d-3.0)
-		fraction := float32(step / d)
-		p.x += (target.x - p.x) * fraction
-		p.y += (target.y - p.y) * fraction
-		p.z += (target.z - p.z) * fraction
+	finish()
+	if planErr != nil {
+		s.stopLocked(ctx)
+		s.state.NavAvailable = false
+		s.state.NavReason = navigationDiagnostic(planErr, s.navDataDir)
+		s.state.Reason = "follow_navigation_unavailable"
+		return
+	}
+	s.state.NavAvailable = true
+	p := s.pos
+	op := uint32(opcode.MSGMoveStartForward)
+	if s.state.Moving {
+		var ok bool
+		p, _, ok = followPathStep(s.pos, path, 0, math.Min(7*elapsed, d-3))
+		if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 {
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_navigation_invalid_step"
+			return
+		}
+		op = opcode.MSGMoveHeartbeat
+	} else if len(path) > 1 {
+		p.o = followFacing(p, path[1])
 	}
 	if s.movementLocked(ctx, op, p, true) {
-		s.state.Reason = "following_direct_ground_estimate"
+		s.state.Reason = "following_client_navmesh_estimate"
 	} else {
 		s.state.Following = false
 		s.stopLocked(ctx)

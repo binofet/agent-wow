@@ -19,6 +19,7 @@ type questApproachNavigation struct {
 	index        int
 	expected     position
 	selfRevision uint64
+	mapID        uint32
 }
 
 func waitApproach(ctx context.Context, delay time.Duration) error {
@@ -43,8 +44,8 @@ func safeQuestCharacter(w *worldv1.SnapshotResponse, selfGUID uint64) string {
 		return "character_missing_or_identity_mismatch"
 	}
 	p := w.Self
-	if !p.MapKnown || p.MapId != 0 || !p.PositionKnown || !finite(playerPosition(p)) {
-		return "character_outdoor_position_unknown"
+	if !p.MapKnown || !p.PositionKnown || !finite(playerPosition(p)) {
+		return "character_position_unknown"
 	}
 	if !p.AliveKnown || !p.Alive {
 		return "character_dead_or_unknown"
@@ -172,11 +173,7 @@ func (s *Service) questApproachStepLocked(ctx context.Context, r *actionsv1.Appr
 	} else if *revision != npc.PositionRevision+1 || initial.x != target.x || initial.y != target.y || initial.z != target.z {
 		return pause("npc_position_changed")
 	}
-	if s.navDataDir != "" && northshire(s.pos) && northshire(target) {
-		return s.questApproachNavigationStepLocked(ctx, r, target, revision, initial, navigation)
-	}
-	state := s.groundApproachStepLocked(ctx, target, "quest")
-	return state, state.Moving && !state.MotionUnconfirmed, nil
+	return s.questApproachNavigationStepLocked(ctx, r, target, revision, initial, navigation)
 }
 
 func (s *Service) questApproachNavigationStepLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest, target position, revision *uint64, initial *position, route *questApproachNavigation) (*actionsv1.State, bool, error) {
@@ -189,7 +186,7 @@ func (s *Service) questApproachNavigationStepLocked(ctx context.Context, r *acti
 	}
 	if len(route.path) == 0 {
 		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-		path, err := s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+		path, err := s.mapNavigationPath(planCtx, s.navDataDir, s.posMap, s.pos, target)
 		if err == nil {
 			err = planCtx.Err()
 		}
@@ -201,14 +198,14 @@ func (s *Service) questApproachNavigationStepLocked(ctx context.Context, r *acti
 			s.state.NavAvailable, s.state.NavReason = false, navigationDiagnostic(err, s.navDataDir)
 			return pause("navigation_unavailable")
 		}
-		route.path, route.expected, route.selfRevision = append([]position(nil), path...), s.pos, s.positionRevision
+		route.path, route.expected, route.selfRevision, route.mapID = append([]position(nil), path...), s.pos, s.positionRevision, s.posMap
 		s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
 		// Planning can consume time. Fetch and check the NPC, lease and self
 		// once more before the first write; the nonempty route bounds this
 		// recursion to a single revalidation.
 		return s.questApproachStepLocked(ctx, r, revision, initial, route)
 	}
-	if route.selfRevision != s.positionRevision || distance(route.expected, s.pos) > 0.05 {
+	if route.mapID != s.posMap || route.selfRevision != s.positionRevision || distance(route.expected, s.pos) > 0.05 {
 		return pause("position_changed_after_planning")
 	}
 	if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, route.index) <= 3.01 {

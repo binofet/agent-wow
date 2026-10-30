@@ -62,6 +62,7 @@ func TestTrainerTravelNeverFallsBackWithoutActualNAVOrTrainer(t *testing.T) {
 			switch mode {
 			case "no_nav":
 				s.navDataDir = ""
+				s.planMapPath = planMapNavigation
 			case "planner_error":
 				s.planPath = func(context.Context, string, position, position) ([]position, error) {
 					return nil, errors.New("no path")
@@ -82,7 +83,7 @@ func TestTrainerTravelNeverFallsBackWithoutActualNAVOrTrainer(t *testing.T) {
 }
 
 func TestTrainerTravelRequiresSafeStationaryConsistentActualTeacher(t *testing.T) {
-	for _, mode := range []string{"entry", "dead", "map", "position", "health", "class_only", "moving", "spline", "combat", "outside_region", "speed", "views"} {
+	for _, mode := range []string{"entry", "dead", "map", "position", "health", "class_only", "moving", "spline", "combat", "invalid_position", "speed", "views"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, r := trainerTravelRig(t)
 			c := f.world.NearbyCreatures[0]
@@ -105,8 +106,8 @@ func TestTrainerTravelRequiresSafeStationaryConsistentActualTeacher(t *testing.T
 				c.Trajectory = &worldv1.CreatureTrajectory{Known: true}
 			case "combat":
 				c.UnitFlags = 0x80000
-			case "outside_region":
-				c.X = -9700
+			case "invalid_position":
+				c.X = 40001
 			case "speed":
 				f.world.Self.RunSpeed = 14
 			case "views":
