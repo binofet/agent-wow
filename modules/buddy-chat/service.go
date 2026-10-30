@@ -27,20 +27,28 @@ type packetSender interface {
 // message, retries a write, resolves player names, or reads authentication data.
 type Service struct {
 	chatv1.UnimplementedBuddyChatServer
-	session   packetSender
-	selfGUID  uint64
-	sessionID string
-	mu        sync.Mutex
-	messages  [messageCapacity]*chatv1.Message
-	latest    uint64
-	ignored   uint64
-	malformed uint64
-	now       func() time.Time
-	ownerFeed ownerFeedState
+	session     packetSender
+	selfGUID    uint64
+	independent bool
+	sessionID   string
+	mu          sync.Mutex
+	messages    [messageCapacity]*chatv1.Message
+	latest      uint64
+	ignored     uint64
+	malformed   uint64
+	now         func() time.Time
+	ownerFeed   ownerFeedState
 }
 
 func NewService(session packetSender, selfGUID uint64) *Service {
 	return &Service{session: session, selfGUID: selfGUID, sessionID: rand.Text(), now: time.Now}
+}
+
+// NewIndependentService provides ordinary chat without an owner addon authority.
+func NewIndependentService(session packetSender, selfGUID uint64) *Service {
+	s := NewService(session, selfGUID)
+	s.independent = true
+	return s
 }
 
 func (s *Service) Send(ctx context.Context, request *chatv1.SendRequest) (*chatv1.SendResponse, error) {

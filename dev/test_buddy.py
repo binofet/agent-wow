@@ -42,6 +42,9 @@ class BuddyLifecycleTests(unittest.TestCase):
             self.patch(buddy, name, value)
         for name,value in {"PROFILE":"default","CHARACTER":"Arlen","CHARACTER_GUID":None,"RPC_PORT":8086,"CONFIG_DIR":None,"DATA_DIR":None,"MODULE_DIR":None}.items():
             self.patch(buddy,name,value)
+        environment = mock.patch.dict(os.environ, {"BUDDY_INDEPENDENT": ""})
+        environment.start()
+        self.addCleanup(environment.stop)
         buddy.BINARY.write_text("mock executable")
         buddy.BINARY.chmod(0o700)
         buddy.CONFIG.write_text("{}")
@@ -110,11 +113,125 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.assertTrue(kwargs["close_fds"])
         self.assertEqual(kwargs["env"]["AGENT_WOW_MODULE_DIR"], str(buddy.ROOT / "modules"))
         self.assertEqual(kwargs["env"]["AGENT_WOW_LOG_LEVEL"], "debug")
+        self.assertEqual(kwargs["env"]["BUDDY_INDEPENDENT"], "false")
+        self.assertIs(record["independent"], False)
 
         self.assertEqual(buddy.start(), 0)
         self.assertEqual(self.spawn.call_count, 1)
         self.assertEqual(buddy.status(), 0)
         self.assertNotIn("PRIVATE_NEVER_PRINT", self.output.getvalue())
+
+    def test_new_launch_records_exact_mode_and_canonical_child_environment(self):
+        for requested, independent in ((None, False), ("", False), ("false", False), ("true", True)):
+            with self.subTest(requested=requested), mock.patch.dict(os.environ):
+                if requested is None:
+                    os.environ.pop("BUDDY_INDEPENDENT", None)
+                else:
+                    os.environ["BUDDY_INDEPENDENT"] = requested
+                # Every subcase is a new simulated launch, without a real process.
+                with mock.patch.object(buddy, "load_record", return_value=None):
+                    self.assertEqual(buddy.start(), 0)
+                record = buddy.load_record()
+                self.assertIs(record["independent"], independent)
+                self.assertEqual(self.spawn_arguments[1]["env"]["BUDDY_INDEPENDENT"], "true" if independent else "false")
+                self.assertEqual(buddy.start(), 0)
+        self.assertEqual(self.spawn.call_count, 4)
+        self.send_signal.assert_not_called()
+
+    def test_running_companion_mode_mismatch_cannot_restart_signal_or_rewrite(self):
+        self.launch()
+        original_record, original_log = buddy.PID_FILE.read_bytes(), buddy.LOG_FILE.read_bytes()
+        os.environ["BUDDY_INDEPENDENT"] = "true"
+        with self.assertRaisesRegex(buddy.BuddyError, "BUDDY_INDEPENDENT=false.*true was requested; no signal or restart"):
+            buddy.start()
+        self.assertEqual(buddy.PID_FILE.read_bytes(), original_record)
+        self.assertEqual(buddy.LOG_FILE.read_bytes(), original_log)
+        self.assertEqual(self.spawn.call_count, 1)
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_recorded_independent_mode_preserves_status_and_owned_stop_in_other_environment(self):
+        os.environ["BUDDY_INDEPENDENT"] = "true"
+        self.launch()
+        os.environ["BUDDY_INDEPENDENT"] = "false"
+        with self.assertRaisesRegex(buddy.BuddyError, "BUDDY_INDEPENDENT=true.*false was requested; no signal or restart"):
+            buddy.start()
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+        for mode in ("", "false", "invalid"):
+            with self.subTest(current_mode=mode):
+                os.environ["BUDDY_INDEPENDENT"] = mode
+                self.assertEqual(buddy.status(), 0)
+                self.assertIs(buddy.load_record()["independent"], True)
+        self.assertIn("Mode: independent", self.output.getvalue())
+
+        def terminate(pidfd, sent_signal):
+            self.assertEqual(sent_signal, signal.SIGTERM)
+            with buddy.LOG_FILE.open("ab") as log:
+                log.write(b'level=DEBUG msg="world packet" direction=read opcode=0x04d '
+                          b'opcode_label=SMSG_LOGOUT_COMPLETE bytes=0\n')
+            self.alive = False
+
+        self.send_signal.side_effect = terminate
+        self.assertEqual(buddy.stop(), 0)
+        self.send_signal.assert_called_once()
+        self.assertEqual(self.spawn.call_count, 1)
+
+    def test_invalid_requested_mode_fails_before_launch_or_already_running(self):
+        for active in (False, True):
+            if active:
+                self.launch()
+            before = self.spawn.call_count
+            for mode in ("TRUE", "False", "1", " true", "false ", "independent"):
+                with self.subTest(active=active, mode=mode), mock.patch.dict(os.environ, {"BUDDY_INDEPENDENT": mode}):
+                    with self.assertRaisesRegex(buddy.BuddyError, "BUDDY_INDEPENDENT must be true or false"):
+                        buddy.start()
+            self.assertEqual(self.spawn.call_count, before)
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_legacy_records_default_to_companion_without_losing_process_ownership(self):
+        original = self.launch()
+        for profile_metadata in (True, False):
+            with self.subTest(profile_metadata=profile_metadata):
+                legacy = dict(original)
+                legacy.pop("independent")
+                if not profile_metadata:
+                    legacy.pop("profile_identity")
+                buddy.save_record(legacy)
+                self.assertEqual(buddy.start(), 0)
+                with mock.patch.dict(os.environ, {"BUDDY_INDEPENDENT": "true"}):
+                    with self.assertRaisesRegex(buddy.BuddyError, "BUDDY_INDEPENDENT=false.*true was requested"):
+                        buddy.start()
+                    self.assertEqual(buddy.status(), 0)
+                self.assertIn("Mode: companion", self.output.getvalue())
+        self.assertEqual(self.spawn.call_count, 1)
+        self.send_signal.assert_not_called()
+
+    def test_invalid_recorded_mode_fails_closed_for_all_lifecycle_commands(self):
+        record = self.launch()
+        for invalid in (None, 0, 1, "true", "false", "", [], {}):
+            with self.subTest(recorded_mode=invalid):
+                buddy.save_record(dict(record, independent=invalid))
+                original = buddy.PID_FILE.read_bytes()
+                for action in (buddy.start, buddy.stop, buddy.status):
+                    with self.assertRaisesRegex(buddy.BuddyError, "invalid operating mode; left untouched"):
+                        action()
+                self.assertEqual(buddy.PID_FILE.read_bytes(), original)
+        self.assertEqual(self.spawn.call_count, 1)
+        self.pidfd.assert_not_called()
+        self.send_signal.assert_not_called()
+
+    def test_stale_record_does_not_prevent_new_launch_in_requested_mode(self):
+        self.launch()
+        os.environ["BUDDY_INDEPENDENT"] = "true"
+        # Only the old record's process is gone; the new simulated child is owned.
+        with mock.patch.object(buddy, "running_owned", side_effect=(False, True, True)):
+            record = self.launch()
+        self.assertIs(record["independent"], True)
+        self.assertEqual(self.spawn_arguments[1]["env"]["BUDDY_INDEPENDENT"], "true")
+        self.assertEqual(self.spawn.call_count, 2)
+        self.send_signal.assert_not_called()
 
     def test_exec_proc_race_waits_without_tracking_transient_argv_or_exe(self):
         exact = self.process_info(12345)

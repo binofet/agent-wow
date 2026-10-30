@@ -185,6 +185,10 @@ func (s *Service) ingestOwnerFeedLocked(payload []byte) bool {
 	if !handled {
 		return false
 	}
+	if s.independent {
+		s.ignored++
+		return true
+	}
 	f, now := &s.ownerFeed, s.now()
 	f.expire(now)
 	f.received++
@@ -258,6 +262,9 @@ func (s *Service) OwnerFeed(ctx context.Context, _ *emptypb.Empty) (*chatv1.Owne
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.independent {
+		return &chatv1.OwnerFeedResponse{BodySessionId: s.sessionID}, nil
+	}
 	f, now := &s.ownerFeed, s.now()
 	f.expire(now)
 	out := &chatv1.OwnerFeedResponse{}

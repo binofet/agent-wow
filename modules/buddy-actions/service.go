@@ -41,6 +41,7 @@ type Service struct {
 	mu                                                       sync.Mutex
 	session                                                  sessionAPI
 	selfGUID                                                 uint64
+	independent                                              bool
 	now                                                      func() time.Time
 	state                                                    actionsv1.State
 	closed                                                   bool
@@ -86,6 +87,15 @@ type Service struct {
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
 	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation}
+}
+
+// NewIndependentService keeps self-scoped actions available without granting
+// authority to the companion controllers or a nearby owner's observations.
+func NewIndependentService(session sessionAPI, selfGUID uint64) *Service {
+	s := NewService(session, selfGUID)
+	s.independent = true
+	s.state.Limitation += " Independent mode disables owner follow, healing and assistance; own quest travel and practice retain their existing safety bounds."
+	return s
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
@@ -264,6 +274,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
+	if r.Enabled && s.independent {
+		return nil, status.Error(codes.FailedPrecondition, "owner follow is unavailable in independent mode")
+	}
 	if r.Enabled {
 		if s.state.MotionUnconfirmed {
 			s.state.Reason = "motion_unconfirmed_explicit_stop_required"
@@ -300,6 +313,9 @@ func (s *Service) Healing(ctx context.Context, r *actionsv1.ToggleRequest) (*act
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
+	if r.Enabled && s.independent {
+		return nil, status.Error(codes.FailedPrecondition, "owner healing is unavailable in independent mode")
+	}
 	s.state.Healing = r.Enabled
 	if r.Enabled && s.state.MotionUnconfirmed {
 		s.state.Healing = false
@@ -326,6 +342,9 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if r.Enabled && s.independent {
+		return nil, status.Error(codes.FailedPrecondition, "owner assistance is unavailable in independent mode")
 	}
 	if r.Enabled && s.state.MotionUnconfirmed {
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
@@ -359,6 +378,9 @@ func (s *Service) HealOnce(ctx context.Context, _ *emptypb.Empty) (*actionsv1.St
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if s.independent {
+		return nil, status.Error(codes.FailedPrecondition, "owner healing is unavailable in independent mode")
 	}
 	s.expireInteractionLocked()
 	if s.state.InteractionOwner != "" {
@@ -439,6 +461,10 @@ func (s *Service) snapshot(ctx context.Context) (*worldv1.SnapshotResponse, erro
 	out := &worldv1.SnapshotResponse{}
 	if err := result.Result.UnmarshalTo(out); err != nil {
 		return nil, err
+	}
+	if s.independent {
+		// A mixed-version world module must not restore owner authority.
+		out.Owner, out.OwnerTarget = nil, nil
 	}
 	s.lastWorld = out
 	s.updateClassLocked()

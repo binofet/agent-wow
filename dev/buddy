@@ -50,6 +50,22 @@ def profile_identity():
             "module_dir": str(MODULE_DIR) if MODULE_DIR else None}
 
 
+def requested_independent():
+    value = os.environ.get("BUDDY_INDEPENDENT", "")
+    if value in ("", "false"):
+        return False
+    if value == "true":
+        return True
+    raise BuddyError("BUDDY_INDEPENDENT must be true or false")
+
+
+def recorded_independent(record):
+    value = record.get("independent", False)
+    if type(value) is not bool:
+        raise BuddyError(f"PID file has an invalid operating mode; left untouched: {PID_FILE}")
+    return value
+
+
 def configure(args):
     global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR
     global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT
@@ -102,6 +118,7 @@ def load_record():
             or (record.get("ready_offset") is not None and
                 (type(record["ready_offset"]) is not int or record["ready_offset"] < 0))):
         raise BuddyError(f"PID file does not identify this launcher's body; left untouched: {PID_FILE}")
+    recorded_independent(record)
     return record
 
 
@@ -263,9 +280,14 @@ def child_identity(child, deadline):
 
 
 def start():
+    independent = requested_independent()
     deadline = time.monotonic() + START_TIMEOUT
     record = load_record()
     if record is not None and running_owned(record):
+        if recorded_independent(record) != independent:
+            actual, requested = ("true" if value else "false" for value in (recorded_independent(record), independent))
+            raise BuddyError(f"PID {record['pid']} is running with BUDDY_INDEPENDENT={actual}, but {requested} was requested; "
+                             "no signal or restart sent. Stop this profile before starting in another mode.")
         if readiness(record):
             print(f"Already running: PID {record['pid']}; matching world session ready event observed.\nLog: {LOG_FILE}")
             return 0
@@ -286,7 +308,8 @@ def start():
         except OSError:
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
-    environment.update(AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
+    environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
+                       AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
                        AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))
     if CONFIG_DIR is not None:
         environment.update(AGENT_WOW_CONFIG_DIR=str(CONFIG_DIR),
@@ -301,7 +324,7 @@ def start():
         info = child_identity(child, deadline)
         log_info = os.fstat(log.fileno())
         record = dict(info, pid=child.pid, log_device=log_info.st_dev, log_inode=log_info.st_ino,
-                      ready_offset=None, profile_identity=profile_identity())
+                      ready_offset=None, profile_identity=profile_identity(), independent=independent)
         save_record(record)
     offset = 0
     while time.monotonic() < deadline:
@@ -358,7 +381,8 @@ def status():
         return 0
     running = running_owned(record)
     ready = running and readiness(record)
-    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nReadiness: {'matching ready event observed' if ready else 'not observed for a running body'}\nLog: {LOG_FILE}")
+    mode = "independent" if recorded_independent(record) else "companion"
+    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nMode: {mode}\nReadiness: {'matching ready event observed' if ready else 'not observed for a running body'}\nLog: {LOG_FILE}")
     return 0
 
 

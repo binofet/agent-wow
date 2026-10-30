@@ -1,4 +1,5 @@
-// Package buddyworld retains read-only, bounded observations of two players.
+// Package buddyworld retains read-only, bounded observations of a character and
+// its optional companion owner.
 package buddyworld
 
 import (
@@ -53,7 +54,16 @@ type Service struct {
 }
 
 func NewService(selfGUID uint64) *Service {
-	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: OwnerGUID}}, creatures: make(map[uint64]*observed), items: make(map[uint64]*observed), gameObjects: make(map[uint64]*observed)}, now: time.Now}
+	return newService(selfGUID, OwnerGUID)
+}
+
+// NewIndependentService observes only the session character, with no owner.
+func NewIndependentService(selfGUID uint64) *Service {
+	return newService(selfGUID, 0)
+}
+
+func newService(selfGUID, ownerGUID uint64) *Service {
+	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: ownerGUID}}, creatures: make(map[uint64]*observed), items: make(map[uint64]*observed), gameObjects: make(map[uint64]*observed)}, now: time.Now}
 }
 
 func age(now, observed time.Time) uint64 {
@@ -104,7 +114,10 @@ func (s *Service) Snapshot(context.Context, *worldv1.SnapshotRequest) (*worldv1.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	r := &worldv1.SnapshotResponse{Self: snapshot(s.state.players[0], now), Owner: snapshot(s.state.players[1], now), IgnoredPackets: s.ignored, MalformedPackets: s.malformed, ObservedPackets: s.observed, LastOpcode: s.lastOpcode, LastParseError: s.lastError}
+	r := &worldv1.SnapshotResponse{Self: snapshot(s.state.players[0], now), IgnoredPackets: s.ignored, MalformedPackets: s.malformed, ObservedPackets: s.observed, LastOpcode: s.lastOpcode, LastParseError: s.lastError}
+	if owner := s.state.players[1]; owner.guid != 0 {
+		r.Owner = snapshot(owner, now)
+	}
 	s.state.appendSnapshot(r, now)
 	return r, nil
 }

@@ -29,6 +29,7 @@ type Service struct {
 	tradev1.UnimplementedBuddyTradeServer
 	session                     sessionAPI
 	selfGUID                    uint64
+	independent                 bool
 	opMu                        sync.Mutex
 	mu                          sync.Mutex
 	state                       *tradev1.State
@@ -46,6 +47,15 @@ type Service struct {
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
 	return &Service{session: session, selfGUID: selfGUID, now: time.Now, names: map[uint32]string{}, queried: map[uint32]bool{}, metadata: map[uint32]itemMetadata{}, state: &tradev1.State{SessionId: sessionID, Phase: "IDLE", Limitation: "Joel only; whole backpack stacks; no equipment, bag contents, splitting or enchantments. Own requested offers are transport intentions. Completion requires server confirmation. Opt-in junk disposal removes one full gray miscellaneous junk stack only when all sixteen backpack slots are occupied."}}
+}
+
+// NewIndependentService retains own inventory operations without owner trades.
+func NewIndependentService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
+	s := NewService(session, sessionID, selfGUID)
+	s.independent = true
+	s.state.Reason = "trading_disabled_independent"
+	s.state.Limitation = "Independent mode disables trades. Own wallet, backpack observations and opt-in junk disposal remain available; disposal requires server inventory confirmation."
+	return s
 }
 func (s *Service) invoke(ctx context.Context, module, method string, input, output proto.Message) error {
 	if s.session == nil {
@@ -65,6 +75,12 @@ func (s *Service) invoke(ctx context.Context, module, method string, input, outp
 	return response.Result.UnmarshalTo(output)
 }
 func (s *Service) send(ctx context.Context, op uint32, payload []byte) error {
+	if s.independent {
+		switch op {
+		case opcode.CMSGInitiateTrade, opcode.CMSGBeginTrade, opcode.CMSGBusyTrade, opcode.CMSGIgnoreTrade, opcode.CMSGAcceptTrade, opcode.CMSGUnacceptTrade, opcode.CMSGSetTradeItem, opcode.CMSGClearTradeItem, opcode.CMSGSetTradeGold:
+			return status.Error(codes.FailedPrecondition, "trading is disabled in independent mode")
+		}
+	}
 	if s.session == nil {
 		return status.Error(codes.FailedPrecondition, "session unavailable")
 	}
@@ -207,6 +223,9 @@ func (s *Service) resetLocked(phase string) {
 	s.state.Revision++
 }
 func (s *Service) Open(ctx context.Context, r *tradev1.BoundRequest) (*tradev1.State, error) {
+	if s.independent {
+		return nil, status.Error(codes.FailedPrecondition, "trading is disabled in independent mode")
+	}
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	if r == nil {
@@ -248,6 +267,9 @@ func (s *Service) fail(reason string) {
 	s.mu.Unlock()
 }
 func (s *Service) offerGate(session string, revision uint64) error {
+	if s.independent {
+		return status.Error(codes.FailedPrecondition, "trading is disabled in independent mode")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.boundLocked(session, revision); err != nil {
@@ -399,6 +421,11 @@ func (s *Service) Tick(ctx context.Context) {
 		s.junkTick(call)
 		return
 	}
+	if s.independent {
+		s.fail("trading_disabled_independent")
+		_ = s.cancelTrade(call)
+		return
+	}
 	if !deadline.IsZero() && !s.now().Before(deadline) {
 		s.fail("trade_timed_out")
 		_ = s.cancelTrade(call)
@@ -491,6 +518,19 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		}
 		s.state.LastServerStatus = code
 		s.state.Revision++
+		if s.independent {
+			s.state.Phase = "CLOSED"
+			s.state.PartnerGuid = 0
+			s.state.PartnerAccepted = false
+			s.state.AcceptTransportWritten = false
+			s.state.Reason = "trading_disabled_independent"
+			s.pendingBegin = false
+			// Refuse any server-allocated trade without opening or consenting.
+			if code == 1 || code == 2 || code == 4 || code == 7 {
+				s.pendingCancel = true
+			}
+			break
+		}
 		switch code {
 		case 1:
 			if s.junkPending != nil {
@@ -547,6 +587,17 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		partner, copper, spell, items, err := parseExtended(p.Payload)
 		if err != nil {
 			s.state.MalformedPackets++
+			break
+		}
+		if s.independent {
+			s.pendingCancel = true
+			s.pendingBegin = false
+			s.state.Revision++
+			s.state.Phase = "CLOSED"
+			s.state.PartnerGuid = 0
+			s.state.PartnerAccepted = false
+			s.state.AcceptTransportWritten = false
+			s.state.Reason = "trading_disabled_independent"
 			break
 		}
 		if !active(s.state.Phase) || s.state.PartnerGuid != ownerGUID {

@@ -105,6 +105,9 @@ func (c *cursor) done() error {
 	return nil
 }
 func player(players *[2]observed, guid uint64) *observed {
+	if guid == 0 {
+		return nil
+	}
 	for i := range players {
 		if players[i].guid == guid {
 			return &players[i]
@@ -130,6 +133,9 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 	return nil
 }
 func markAbsent(p *observed, now time.Time) {
+	if p.guid == 0 {
+		return
+	}
 	p.present = false
 	p.positionKnown = false
 	p.movementKnown = false

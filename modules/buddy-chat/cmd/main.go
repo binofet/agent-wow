@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	buddychat "github.com/agent-wow/agent-wow/modules/buddy-chat"
 	chatv1 "github.com/agent-wow/agent-wow/modules/buddy-chat/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -31,9 +31,9 @@ func run() error {
 	if moduleSocket == "" || sessionSocket == "" {
 		return errors.New("AGENT_WOW_MODULE_SOCKET and AGENT_WOW_SESSION_SOCKET are required; start through agent-wow char play")
 	}
-	selfGUID, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
-	if err != nil || selfGUID == 0 {
-		return errors.New("AGENT_WOW_CHARACTER_GUID must identify the current character")
+	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
+	if err != nil {
+		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -52,7 +52,11 @@ func run() error {
 	}
 	defer connection.Close()
 	server := grpc.NewServer()
-	chatv1.RegisterBuddyChatServer(server, buddychat.NewService(modv1.NewSessionClient(connection), selfGUID))
+	service := buddychat.NewService(modv1.NewSessionClient(connection), identity.SelfGUID)
+	if identity.Independent() {
+		service = buddychat.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID)
+	}
+	chatv1.RegisterBuddyChatServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)

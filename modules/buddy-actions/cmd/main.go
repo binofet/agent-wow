@@ -7,12 +7,12 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	buddyactions "github.com/agent-wow/agent-wow/modules/buddy-actions"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,9 +33,9 @@ func run() error {
 	if moduleSocket == "" || sessionSocket == "" {
 		return errors.New("session-owned module/session sockets are required")
 	}
-	self, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
-	if err != nil || self == 0 || self>>48 != 0 || self == 3 {
-		return errors.New("runtime character must be a player distinct from fixed owner JoelGUID3")
+	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
+	if err != nil {
+		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -52,7 +52,10 @@ func run() error {
 		return err
 	}
 	defer connection.Close()
-	service := buddyactions.NewService(modv1.NewSessionClient(connection), self)
+	service := buddyactions.NewService(modv1.NewSessionClient(connection), identity.SelfGUID)
+	if identity.Independent() {
+		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID)
+	}
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)

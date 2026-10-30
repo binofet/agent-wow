@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -28,9 +28,9 @@ func run() error {
 	if socket == "" {
 		return errors.New("AGENT_WOW_MODULE_SOCKET is required; start through agent-wow char play")
 	}
-	guid, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
-	if err != nil || guid == 0 || guid == buddyworld.OwnerGUID {
-		return errors.New("AGENT_WOW_CHARACTER_GUID must identify the companion character")
+	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
+	if err != nil {
+		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -44,7 +44,11 @@ func run() error {
 		return err
 	}
 	server := grpc.NewServer(grpc.MaxRecvMsgSize(4 << 20))
-	worldv1.RegisterBuddyWorldServer(server, buddyworld.NewService(guid))
+	service := buddyworld.NewService(identity.SelfGUID)
+	if identity.Independent() {
+		service = buddyworld.NewIndependentService(identity.SelfGUID)
+	}
+	worldv1.RegisterBuddyWorldServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)

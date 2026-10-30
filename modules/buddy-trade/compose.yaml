@@ -5,6 +5,8 @@ services:
       dockerfile: modules/buddy-trade/Dockerfile
     network_mode: none
     read_only: true
+    environment:
+      BUDDY_INDEPENDENT: ${BUDDY_INDEPENDENT:-false}
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     logging:
