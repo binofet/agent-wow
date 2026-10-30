@@ -1,5 +1,5 @@
 // Package buddyactions implements an explicitly enabled, bounded controller.
-// It has no language model, arbitrary target/spell selector, teleport or pathfinder.
+// It has no language model, arbitrary target/spell selector or teleport.
 package buddyactions
 
 import (
@@ -27,7 +27,7 @@ import (
 
 const (
 	lease      = 4 * time.Hour
-	limitation = "Direct outdoor flat-ground follow only: no collision, navigation, terrain or local LOS query; spell transport and server spell-go are not health/damage confirmation."
+	limitation = "Northshire follow uses verified ground navigation and personal formation positions; other areas retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
 )
 
 type sessionAPI interface {
@@ -78,6 +78,8 @@ type Service struct {
 	practiceReplans                                          int
 	practiceKillCredited                                     bool
 	practiceQuestGoal                                        bool
+	formation                                                followFormation
+	followNav                                                followNavigation
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -265,12 +267,18 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 			s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 			return s.stateLocked(), nil
 		}
+		if !s.state.Following {
+			s.formation.Reset()
+			s.followNav.Reset()
+		}
 		s.state.Following = true
 		s.followUntil = s.now().Add(lease)
 		s.lastStep = s.now()
 		s.state.Reason = "follow_enabled_waiting_for_safe_observations"
 	} else {
 		s.state.Following = false
+		s.formation.Reset()
+		s.followNav.Reset()
 		if s.explicitStopLocked(ctx) {
 			s.state.Reason = "follow_disabled"
 		}
@@ -600,6 +608,15 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	formationUsed := false
+	defer func() {
+		// Combat, casts, interactions and corrections can change our position.
+		// A later follow must plan from that new position rather than reuse an
+		// earlier formation route through an unrelated action.
+		if !formationUsed {
+			s.followNav.Reset()
+		}
+	}()
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
 		s.stopLocked(ctx)
 	}
@@ -714,6 +731,15 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 		return
 	}
+	if s.state.Following && s.navDataDir != "" && northshire(s.pos) && northshire(playerPosition(snapshot.Owner)) {
+		// Observe travel heading even while this actor is casting or assisting,
+		// so each role keeps the same formation frame after combat ends.
+		classID := uint32(0)
+		if snapshot.Self.ClassKnown {
+			classID = snapshot.Self.ClassId
+		}
+		s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0)
+	}
 	if s.state.CastPending {
 		s.stopLocked(ctx)
 		s.lastStep = now
@@ -743,8 +769,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	// This first slice is restricted to Eastern Kingdoms outdoor map0 and
-	// nearby almost-level ground. It cannot determine walls or ground height.
 	if snapshot.Self.MapId != 0 {
 		s.stopLocked(ctx)
 		s.lastStep = now
@@ -752,6 +776,13 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	target := playerPosition(snapshot.Owner)
+	if s.navDataDir != "" && northshire(s.pos) && northshire(target) {
+		formationUsed = true
+		s.followFormationLocked(ctx, snapshot, now)
+		return
+	}
+	// Preserve the previous short, almost-level follow outside the supported
+	// navigation area. A failed navigation plan never falls through here.
 	d := distance(s.pos, target)
 	if d > 30 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		s.stopLocked(ctx)
