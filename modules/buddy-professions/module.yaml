@@ -1,0 +1,34 @@
+api_version: 1
+enabled: true
+description: Finite own-character starter first aid, cooking and fishing with known recipes, observed requirements and separate server, inventory and skill receipts
+requires: [buddy-world, buddy-actions, buddy-loot, buddy-trade]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  state: /warcraftbuddy.professions.v1.BuddyProfessions/GetState
+  attempt: /warcraftbuddy.professions.v1.BuddyProfessions/Attempt
+  cancel: /warcraftbuddy.professions.v1.BuddyProfessions/Cancel
+packets:
+  SMSG_INITIAL_SPELLS: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_LEARNED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_REMOVED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_SUPERCEDED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_GAMEOBJECT_QUERY_RESPONSE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_SPELL_START: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_SPELL_GO: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_SPELL_FAILURE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  MSG_CHANNEL_START: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  MSG_CHANNEL_UPDATE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_FISH_NOT_HOOKED: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_FISH_ESCAPED: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_ITEM_PUSH_RESULT: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_LOOT_RESPONSE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_LOOT_REMOVED: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_LOOT_RELEASE_RESPONSE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.professions.v1.BuddyProfessions/BeforeLogout

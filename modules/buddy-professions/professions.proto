@@ -1,0 +1,113 @@
+syntax = "proto3";
+package warcraftbuddy.professions.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-professions/api;professionsv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message Skill { uint32 skill_id = 1; uint32 rank = 2; uint32 maximum = 3; }
+message Recipe {
+  uint32 skill_id = 1;
+  uint32 spell_id = 2;
+  string name = 3;
+  bool known = 4;
+  bool requirements_verified = 5;
+  uint32 reagent_entry = 6;
+  uint32 reagent_count = 7;
+  uint32 output_entry = 8;
+  uint32 output_count = 9;
+  uint32 focus_id = 10;
+  uint32 cast_time_ms = 11;
+  uint32 channel_duration_ms = 12;
+  bool ready = 13;
+  string reason = 14;
+  string metadata_provenance = 15;
+}
+enum AttemptStatus {
+  STATUS_UNSPECIFIED = 0;
+  RESERVED = 1;
+  WAITING_CAST = 2;
+  WAITING_BOBBER = 3;
+  WAITING_LOOT = 4;
+  WAITING_OBSERVATIONS = 5;
+  COMPLETED = 6;
+  BLOCKED = 7;
+  SERVER_REJECTED = 8;
+  CANCELLED = 9;
+  OUTCOME_UNCONFIRMED = 10;
+}
+message Operation {
+  string operation_id = 1;
+  string request_id = 2;
+  uint32 skill_id = 3;
+  uint32 spell_id = 4;
+  uint32 cast_count = 5;
+  AttemptStatus status = 6;
+  string reason = 7;
+  bool cast_transport_written = 8;
+  bool own_start_observed = 9;
+  bool own_go_observed = 10;
+  uint32 failure_code = 11;
+  uint64 baseline_skills_revision = 12;
+  uint64 observed_skills_revision = 13;
+  uint32 before_rank = 14;
+  uint32 after_rank = 15;
+  bool skill_increased = 16;
+  uint64 baseline_backpack_revision = 17;
+  uint64 observed_backpack_revision = 18;
+  bool reagents_consumed_observed = 19;
+  bool output_inventory_observed = 20;
+  uint32 own_created_items_observed = 21;
+  uint32 own_looted_items_observed = 22;
+  uint64 bobber_guid = 23;
+  uint64 bobber_revision = 24;
+  bool own_bobber_observed = 25;
+  bool splash_observed = 26;
+  bool channel_start_observed = 27;
+  bool channel_stop_observed = 28;
+  bool loot_window_observed = 29;
+  uint32 loot_slots_removed = 30;
+  bool loot_release_observed = 31;
+  bool cancel_requested = 32;
+  bool cancel_transport_written = 33;
+  bool cleanup_unconfirmed = 34;
+  bool lease_released = 35;
+  uint64 age_ms = 36;
+  // Cast, inventory and skill evidence are independent; gray crafts can complete without a skill increase.
+  string limitation = 37;
+}
+message State {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 self_guid = 3;
+  bool skills_known = 4;
+  uint64 skills_revision = 5;
+  repeated Skill skills = 6;
+  bool spells_known = 7;
+  repeated Recipe recipes = 8;
+  bool backpack_known = 9;
+  uint64 backpack_revision = 10;
+  bool active = 11;
+  Operation operation = 12;
+  uint64 transport_writes = 13;
+  uint64 malformed_packets = 14;
+  bool closing = 15;
+  string limitation = 16;
+}
+message AttemptRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint64 expected_revision = 3;
+  uint32 skill_id = 4;
+  // Only an actual known spell from the small verified starter catalog.
+  uint32 spell_id = 5;
+  uint64 expected_skills_revision = 6;
+  uint64 expected_backpack_revision = 7;
+}
+message CancelRequest { string session_id = 1; string operation_id = 2; }
+service BuddyProfessions {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Attempt(AttemptRequest) returns (State);
+  rpc Cancel(CancelRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

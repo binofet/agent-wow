@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""Inspect or practice observed starter professions through one explicit client."""
+import argparse
+import copy
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG = {3275: 129, 2538: 185, 2540: 185, 7620: 356}
+STATUSES = ("STATUS_UNSPECIFIED", "RESERVED", "WAITING_CAST", "WAITING_BOBBER", "WAITING_LOOT",
+            "WAITING_OBSERVATIONS", "COMPLETED", "BLOCKED", "SERVER_REJECTED", "CANCELLED", "OUTCOME_UNCONFIRMED")
+TERMINAL = frozenset(STATUSES[6:])
+METHODS = frozenset(("buddy-professions.state", "buddy-professions.attempt", "buddy-professions.cancel"))
+MAX_RESPONSE, MAX_CALLS = 262144, 128
+
+
+class Error(Exception):
+    pass
+
+
+def number(value, maximum=2**64 - 1):
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise Error("invalid_integer_evidence")
+    return value
+
+
+def token(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value):
+        raise Error("invalid_session_or_operation_identity")
+    return value
+
+
+def rpc_url(value):
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except (ValueError, AttributeError):
+        raise Error("explicit_loopback_rpc_url_required") from None
+    if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or port is None
+            or not 1024 <= port <= 65535 or parsed.path != "/rpc" or parsed.query or parsed.fragment
+            or parsed.username is not None or parsed.password is not None
+            or value != f"http://127.0.0.1:{port}/rpc"):
+        raise Error("explicit_loopback_rpc_url_required")
+    return value
+
+
+def strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def decode_json(raw):
+    return json.loads(raw, object_pairs_hook=strict_object,
+                      parse_constant=lambda value: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, newurl):
+        raise Error("rpc_redirect_refused")
+
+
+class RPC:
+    def __init__(self, url, deadline, now=None, opener=None):
+        self.url, self.deadline, self.now = rpc_url(url), deadline, now or time.monotonic
+        if type(deadline) not in (int, float) or not math.isfinite(deadline) or deadline <= self.now():
+            raise Error("finite_future_rpc_deadline_required")
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        self.calls = 0
+
+    def remaining(self):
+        remaining = self.deadline - self.now()
+        if remaining <= 0:
+            raise Error("rpc_deadline_expired")
+        return remaining
+
+    def call(self, method, params):
+        if method not in METHODS or not isinstance(params, dict):
+            raise Error("rpc_method_not_allowed")
+        remaining = self.remaining()
+        if self.calls >= MAX_CALLS:
+            raise Error("rpc_call_limit_reached")
+        self.calls += 1
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
+            "method": method, "params": params}, allow_nan=False).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=min(5, remaining)) as response:
+                raw = response.read(MAX_RESPONSE + 1)
+            if len(raw) > MAX_RESPONSE:
+                raise Error("rpc_response_too_large")
+            reply = decode_json(raw)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("rpc_response_unconfirmed") from None
+        self.remaining()
+        if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0"
+                or type(reply.get("id")) is not int or reply["id"] != self.calls
+                or "error" in reply or not isinstance(reply.get("result"), dict)):
+            raise Error("rpc_matching_result_unconfirmed")
+        return reply["result"]
+
+
+def checked_state(raw, guid):
+    if not isinstance(raw, dict):
+        raise Error("invalid_profession_state")
+    result = copy.deepcopy(raw)
+    token(result.get("sessionId"))
+    if number(result.get("selfGuid", 0)) != guid:
+        raise Error("profession_character_identity_mismatch")
+    for field in ("revision", "skillsRevision", "backpackRevision"):
+        result[field] = number(result.get(field, 0))
+    for field in ("skillsKnown", "spellsKnown", "backpackKnown", "active", "closing"):
+        if type(result.get(field, False)) is not bool:
+            raise Error("invalid_profession_boolean")
+    skills, recipes = result.get("skills", []), result.get("recipes", [])
+    if not isinstance(skills, list) or len(skills) > 128 or not isinstance(recipes, list) or len(recipes) > 4:
+        raise Error("profession_evidence_exceeds_bound")
+    seen = set()
+    for row in skills:
+        if not isinstance(row, dict):
+            raise Error("invalid_skill_evidence")
+        skill, rank, maximum = (number(row.get(key, 0), 65535) for key in ("skillId", "rank", "maximum"))
+        if skill == 0 or skill in seen or not 0 < rank <= maximum:
+            raise Error("invalid_skill_evidence")
+        seen.add(skill)
+    seen = set()
+    for recipe in recipes:
+        if not isinstance(recipe, dict):
+            raise Error("invalid_recipe_evidence")
+        spell, skill = number(recipe.get("spellId", 0), 2**31 - 1), number(recipe.get("skillId", 0), 65535)
+        if CATALOG.get(spell) != skill or spell in seen:
+            raise Error("recipe_outside_starter_catalog")
+        seen.add(spell)
+        for field in ("known", "ready", "requirementsVerified"):
+            if type(recipe.get(field, False)) is not bool:
+                raise Error("invalid_recipe_boolean")
+        if not isinstance(recipe.get("reason", ""), str) or len(recipe.get("reason", "")) > 1024:
+            raise Error("invalid_recipe_reason")
+    operation = result.get("operation")
+    if operation is not None:
+        if not isinstance(operation, dict):
+            raise Error("invalid_operation_evidence")
+        token(operation.get("operationId"))
+        token(operation.get("requestId"))
+        status = operation.get("status", "STATUS_UNSPECIFIED")
+        if type(status) is int and 0 <= status < len(STATUSES):
+            status = STATUSES[status]
+        if status not in STATUSES or status == "STATUS_UNSPECIFIED":
+            raise Error("invalid_operation_status")
+        operation["status"] = status
+        if CATALOG.get(number(operation.get("spellId", 0), 2**31 - 1)) != number(operation.get("skillId", 0), 65535):
+            raise Error("operation_outside_starter_catalog")
+        for field in ("cleanupUnconfirmed", "skillIncreased", "cancelRequested", "leaseReleased"):
+            if type(operation.get(field, False)) is not bool:
+                raise Error("invalid_operation_boolean")
+        if operation.get("skillIncreased") is True and number(operation.get("afterRank", 0), 65535) <= number(operation.get("beforeRank", 0), 65535):
+            raise Error("contradictory_skill_increase")
+        if not isinstance(operation.get("reason", ""), str) or len(operation.get("reason", "")) > 1024:
+            raise Error("invalid_operation_reason")
+    return result
+
+
+class Journal:
+    def __init__(self, path, url, guid):
+        self.path, self.url, self.guid = Path(path).absolute(), url, guid
+        self.data = {"version": 1, "rpcUrl": url, "characterGuid": str(guid), "attempts": []}
+        self.lock = None
+
+    def __enter__(self):
+        missing, directory = [], self.path.parent
+        while not directory.exists():
+            missing.append(directory)
+            directory = directory.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700)
+            self.sync_directory(directory.parent)
+        info = self.path.parent.stat()
+        if self.path.parent.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise Error("receipt_directory_must_be_owned_and_private")
+        self.lock = os.open(str(self.path) + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            self.check_file(self.lock)
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.load()
+        except BaseException:
+            os.close(self.lock)
+            self.lock = None
+            raise
+        return self
+
+    def __exit__(self, *args):
+        os.close(self.lock)
+        self.lock = None
+
+    @staticmethod
+    def check_file(descriptor):
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise Error("receipt_file_must_be_owned_regular_and_mode0600")
+
+    @staticmethod
+    def sync_directory(directory):
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def load(self):
+        try:
+            with os.fdopen(os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
+                self.check_file(source.fileno())
+                raw = source.read(1048577)
+            data = decode_json(raw) if len(raw) <= 1048576 else None
+        except FileNotFoundError:
+            return
+        except ValueError:
+            raise Error("invalid_private_receipt") from None
+        if (not isinstance(data, dict) or data.get("version") != 1 or data.get("rpcUrl") != self.url
+                or data.get("characterGuid") != str(self.guid) or not isinstance(data.get("attempts"), list)
+                or len(data["attempts"]) > 64):
+            raise Error("private_receipt_identity_or_bound_mismatch")
+        seen = set()
+        for row in data["attempts"]:
+            if not isinstance(row, dict) or row.get("kind") not in ("attempt", "cancel"):
+                raise Error("invalid_private_attempt")
+            token(row.get("sessionId")); token(row.get("requestId"))
+            if CATALOG.get(number(row.get("spellId", 0), 2**31 - 1)) != number(row.get("skillId", 0), 65535):
+                raise Error("invalid_private_recipe_binding")
+            if row.get("operationId"):
+                token(row["operationId"])
+            key = (row["sessionId"], row["requestId"], row["kind"])
+            if key in seen or row.get("phase") not in ("reserved", "terminal", "preflight_blocked", "attempt_unconfirmed", "poll_unconfirmed", "cancel_reserved", "cancel_unconfirmed"):
+                raise Error("invalid_private_attempt_history")
+            seen.add(key)
+            if type(row.get("cancelReserved", False)) is not bool:
+                raise Error("invalid_private_cancel_reservation")
+        self.data = data
+
+    def save(self):
+        if self.lock is None:
+            raise Error("receipt_lock_required")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, prefix=".secondary-", delete=False) as output:
+                temporary = Path(output.name)
+                os.fchmod(output.fileno(), 0o600)
+                json.dump(self.data, output, separators=(",", ":"), allow_nan=False)
+                output.write("\n"); output.flush(); os.fsync(output.fileno())
+            os.replace(temporary, self.path)
+            temporary = None
+            self.sync_directory(self.path.parent)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
+class Worker:
+    def __init__(self, rpc, guid, journal=None, skills=(129, 185, 356), sleep=None):
+        self.rpc, self.guid, self.journal, self.skills = rpc, guid, journal, skills
+        self.sleep = sleep or time.sleep
+        self.session, self.revisions, self.current = None, None, None
+        self.created = []
+
+    def accept(self, raw):
+        state = checked_state(raw, self.guid)
+        if self.session is not None and state["sessionId"] != self.session:
+            raise Error("profession_module_session_changed")
+        revisions = tuple(state[key] for key in ("revision", "skillsRevision", "backpackRevision"))
+        if self.revisions is not None and any(new < old for new, old in zip(revisions, self.revisions)):
+            raise Error("profession_observation_revision_regressed")
+        self.session, self.revisions, self.current = state["sessionId"], revisions, state
+        return state
+
+    def read(self):
+        return self.accept(self.rpc.call("buddy-professions.state", {}))
+
+    def result(self, phase, reason=""):
+        result = {"characterGuid": str(self.guid), "rpcUrl": self.rpc.url, "phase": phase, "reason": reason,
+                  "state": self.current, "rpcCalls": self.rpc.calls}
+        if self.current is not None:
+            result["blockers"] = [{"skillId": number(recipe["skillId"]), "spellId": number(recipe["spellId"]),
+                                    "reason": recipe.get("reason", "")}
+                                   for recipe in self.current.get("recipes", [])
+                                   if number(recipe["skillId"]) in self.skills and not (recipe.get("ready") is True and recipe.get("known") is True)]
+        if self.journal is not None:
+            result.update(receiptPath=str(self.journal.path), receipts=self.journal.data["attempts"][-3:])
+        return result
+
+    def record(self, row, phase, reason=""):
+        row["phase"], row["reason"] = phase, reason
+        self.journal.save()
+
+    def bind(self, row, state):
+        operation = state.get("operation")
+        if (state["sessionId"] != row["sessionId"] or not operation or operation["requestId"] != row["requestId"]
+                or row.get("operationId") and operation["operationId"] != row["operationId"]
+                or number(operation["skillId"]) != row["skillId"] or number(operation["spellId"]) != row["spellId"]):
+            raise Error("owned_operation_identity_unconfirmed")
+        row["operationId"], row["operation"] = operation["operationId"], copy.deepcopy(operation)
+        return operation
+
+    def cancel(self, row, state):
+        operation = self.bind(row, state)
+        if operation["status"] in TERMINAL:
+            return state
+        if row.get("cancelReserved") or operation.get("cleanupUnconfirmed") is True:
+            raise Error("prior_cancel_or_cleanup_unconfirmed_no_retry")
+        self.rpc.remaining()
+        row["cancelReserved"] = True
+        self.record(row, "cancel_reserved")
+        try:
+            return self.accept(self.rpc.call("buddy-professions.cancel", {"sessionId": row["sessionId"], "operationId": row["operationId"]}))
+        except Error as error:
+            self.record(row, "cancel_unconfirmed", str(error))
+            raise
+
+    def poll(self, row, state, cleanup=False):
+        while True:
+            try:
+                operation = self.bind(row, state)
+                if operation["status"] in TERMINAL or operation.get("cleanupUnconfirmed") is True:
+                    uncertain = operation["status"] == "OUTCOME_UNCONFIRMED" or operation.get("cleanupUnconfirmed") is True
+                    self.record(row, "poll_unconfirmed" if uncertain else "terminal", operation.get("reason", ""))
+                    return operation["status"] == "COMPLETED" and not uncertain
+                if not state.get("active", False):
+                    raise Error("operation_not_terminal_or_active")
+                remaining = self.rpc.remaining()
+                if cleanup and remaining <= 2:
+                    state = self.read()  # Never cancel based on a stale or foreign operation.
+                    self.bind(row, state)
+                    state = self.cancel(row, state)
+                    cleanup = False
+                    continue
+                self.journal.save()
+                delay = min(.25, remaining if not cleanup else max(0, remaining - 2))
+                self.sleep(delay)
+                state = self.read()
+            except Error as error:
+                if row["phase"] not in ("cancel_reserved", "cancel_unconfirmed"):
+                    self.record(row, "poll_unconfirmed", str(error))
+                return False
+
+    def candidates(self, state):
+        if not all(state.get(key) is True for key in ("skillsKnown", "spellsKnown", "backpackKnown")):
+            return []
+        own_skills = {number(row["skillId"]) for row in state.get("skills", [])}
+        return [recipe for recipe in state.get("recipes", []) if number(recipe["skillId"]) in self.skills
+                and number(recipe["skillId"]) in own_skills
+                and recipe.get("known") is True and recipe.get("ready") is True and recipe.get("requirementsVerified") is True]
+
+    def practice(self, maximum):
+        if type(maximum) is not int or not 1 <= maximum <= 3:
+            raise Error("practice_cast_bound_invalid")
+        state = self.read()
+        rows = self.journal.data["attempts"]
+        pending = next((row for row in reversed(rows) if row["phase"] not in ("terminal", "preflight_blocked")), None)
+        if pending is not None:
+            self.poll(pending, state, cleanup=False)
+            return self.result("prior_attempt_reconciled_no_new_cast", pending.get("reason", ""))
+        for _ in range(maximum):
+            if state.get("closing") or state.get("active"):
+                return self.result("blocked", "module_closing" if state.get("closing") else "another_operation_active")
+            previous = state.get("operation", {})
+            if previous.get("status") == "OUTCOME_UNCONFIRMED" or previous.get("cleanupUnconfirmed") is True:
+                return self.result("blocked", previous.get("reason", "prior_operation_unconfirmed"))
+            choices = self.candidates(state)
+            if not choices:
+                return self.result("blocked", "no_currently_ready_known_recipe")
+            if len(rows) >= 64:
+                return self.result("blocked", "private_receipt_capacity_reached")
+            counts = {skill: sum(row.get("skillId") == skill for row in self.created) for skill in self.skills}
+            recipe = min(choices, key=lambda row: (counts[number(row["skillId"])], number(row["skillId"]), number(row["spellId"])))
+            request_id = str(uuid.uuid4())
+            if any(row["requestId"] == request_id for row in rows):
+                raise Error("duplicate_request_id_no_new_attempt")
+            row = {"kind": "attempt", "sessionId": self.session, "requestId": request_id,
+                   "skillId": number(recipe["skillId"]), "spellId": number(recipe["spellId"]), "phase": "reserved"}
+            rows.append(row); self.created.append(row)
+            self.journal.save()  # Durable reservation precedes every possible mutation.
+            try:
+                state = self.read()
+                prior = state.get("operation", {})
+                if (state.get("active") or state.get("closing") or prior.get("cleanupUnconfirmed") is True
+                        or prior.get("status") == "OUTCOME_UNCONFIRMED"
+                        or not any(number(r["spellId"]) == row["spellId"] for r in self.candidates(state))):
+                    self.record(row, "preflight_blocked", "recipe_or_operation_changed_before_attempt")
+                    return self.result("blocked", row["reason"])
+                params = {"sessionId": self.session, "requestId": request_id, "expectedRevision": str(state["revision"]),
+                          "skillId": row["skillId"], "spellId": row["spellId"], "expectedSkillsRevision": str(state["skillsRevision"]),
+                          "expectedBackpackRevision": str(state["backpackRevision"])}
+                row["request"] = params
+                self.journal.save()
+                state = self.accept(self.rpc.call("buddy-professions.attempt", params))
+            except Error as error:
+                self.record(row, "attempt_unconfirmed", str(error))
+                return self.result("outcome_unconfirmed", str(error))
+            if not self.poll(row, state, cleanup=True):
+                return self.result("stopped_after_attempt", row.get("reason", ""))
+            if len(self.created) < maximum:
+                state = self.read()
+        return self.result("bounded_practice_finished")
+
+    def stop(self, operation_id=None):
+        state = self.read()
+        rows = self.journal.data["attempts"]
+        row = next((row for row in reversed(rows) if row.get("operationId") == operation_id), None) if operation_id else (rows[-1] if rows else None)
+        if operation_id is None:
+            if row is None or not row.get("operationId"):
+                raise Error("explicit_operation_id_or_prior_attempt_receipt_required")
+            operation_id = row["operationId"]
+        token(operation_id)
+        operation = state.get("operation", {})
+        if operation.get("operationId") != operation_id:
+            raise Error("explicit_operation_not_current_no_cancel")
+        if row is None:
+            if len(rows) >= 64:
+                raise Error("private_receipt_capacity_reached")
+            row = {"kind": "cancel", "sessionId": self.session, "requestId": operation["requestId"],
+                   "operationId": operation_id, "skillId": number(operation["skillId"]),
+                   "spellId": number(operation["spellId"]), "phase": "reserved"}
+            rows.append(row)
+        try:
+            state = self.read()  # Exact identity is refreshed immediately before cancellation.
+            state = self.cancel(row, state)
+        except Error as error:
+            if row["phase"] not in ("cancel_reserved", "cancel_unconfirmed"):
+                self.record(row, "poll_unconfirmed", str(error))
+            return self.result("stop_unconfirmed", str(error))
+        self.poll(row, state, cleanup=False)
+        return self.result("stop_observed" if row["phase"] == "terminal" else "stop_unconfirmed", row.get("reason", ""))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("status", "practice", "stop"))
+    parser.add_argument("--rpc-url", required=True)
+    parser.add_argument("--character-guid", type=int, required=True)
+    parser.add_argument("--skill", choices=("129", "185", "356", "all"), default="all")
+    parser.add_argument("--max-casts", type=int, default=1)
+    parser.add_argument("--seconds", type=float, default=30)
+    parser.add_argument("--receipt", type=Path)
+    parser.add_argument("--operation-id")
+    args = parser.parse_args(argv)
+    url = rpc_url(args.rpc_url)
+    guid = args.character_guid
+    if not 0 < guid < 2**48 or guid & 0xffffffff == 0 or not 1 <= args.max_casts <= 3 or not math.isfinite(args.seconds) or not 0 < args.seconds <= 90:
+        raise Error("character_identity_or_practice_bound_invalid")
+    if args.command == "stop" and args.operation_id is None and args.receipt is None:
+        raise Error("stop_requires_explicit_operation_id_or_prior_receipt")
+    if args.operation_id is not None:
+        token(args.operation_id)
+    rpc = RPC(url, time.monotonic() + args.seconds)
+    skills = (129, 185, 356) if args.skill == "all" else (int(args.skill),)
+    if args.command == "status":
+        worker = Worker(rpc, guid, skills=skills)
+        worker.read()
+        result = worker.result("observed")
+    else:
+        path = args.receipt or ROOT / "data" / "secondary-professions" / f"{guid}-{urllib.parse.urlsplit(url).port}.json"
+        with Journal(path, url, guid) as journal:
+            worker = Worker(rpc, guid, journal, skills)
+            result = worker.practice(args.max_casts) if args.command == "practice" else worker.stop(args.operation_id)
+    print(json.dumps(result, separators=(",", ":"), allow_nan=False))
+    return 0 if result["phase"] in ("observed", "bounded_practice_finished", "stop_observed") else 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError) as error:
+        print(json.dumps({"phase": "blocked", "reason": str(error)}, separators=(",", ":")), file=sys.stderr)
+        sys.exit(2)
