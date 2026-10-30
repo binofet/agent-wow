@@ -342,9 +342,9 @@ local function send(payload)
     return pcall(SendAddonMessage, PREFIX, payload, "PARTY")
 end
 function I.Refresh()
-    if I.pending then I.status = "An inventory action is still pending."; render(); return false end
+    if I.pending then I.status = I.pending.kind == "D" and "Disenchant is pending. Keep connected; do not retry." or "An inventory action is still pending."; render(); return false end
     I.nonce, I.assembling, I.requestedAt = nonce(), {}, GetTime()
-    I.selected = nil
+    I.selected, I.confirmDisenchant = nil, nil
     local ok = send("1|R|" .. I.nonce)
     I.status = ok and "Waiting for companion inventory..." or "Join the party to inspect inventory."
     render(); return ok
@@ -393,10 +393,15 @@ function I.Receive(prefix, message, channel, sender)
         if #f ~= 6 or not p or f[3] ~= p.id or f[4] ~= p.snapshot or agent ~= p.agent
             or not f[5]:match("^[A-Z_]+$") or #f[5] > 32 or #f[6] > 48 then return false end
         I.status = agent .. ": " .. f[5] .. (f[6] ~= "" and " - " .. f[6] or "")
+        if p.kind == "D" and f[5] ~= "CONFIRMED" and f[5] ~= "BLOCKED" and f[5] ~= "SERVER_REJECTED" then
+            local waiting = f[5] == "QUEUED" or f[5] == "PENDING" or f[5] == "REQUESTED"
+            I.status = "Mira: disenchant " .. (waiting and "pending" or "unconfirmed") .. ". Keep connected; do not retry."
+            render(); return true
+        end
         local offered = f[5] == "QUEUED" and f[6] == "item_offered_review_normal_trade_window"
         if offered then I.status = agent .. ": item offered. Review the normal trade window." end
         if not offered and (f[5] == "QUEUED" or f[5] == "PENDING" or f[5] == "REQUESTED") then render(); return true end
-        I.pending, I.selected = nil, nil
+        I.pending, I.selected, I.confirmDisenchant = nil, nil, nil
         local receipt = I.status
         I.Refresh(); I.status = receipt; render(); return true
     end
@@ -421,7 +426,7 @@ function I.Receive(prefix, message, channel, sender)
 end
 function I.Command(kind, destinationBag, destinationSlot)
     local view, selected = I.views[I.agent], I.selected
-    if I.pending or not view or GetTime() - view.at > 30 then I.status="Refresh inventory before acting."; render(); return false end
+    if I.pending or not view or GetTime() - view.at > 30 then I.status=I.pending and I.pending.kind == "D" and "Disenchant is pending. Keep connected; do not retry." or "Refresh inventory before acting."; render(); return false end
     if kind ~= "J" and (not selected or selected.agent ~= I.agent) then I.status="Select an item first."; render(); return false end
     local id = nonce()
     local out = {"1",kind,id,view.snapshot,view.revision}
@@ -429,6 +434,17 @@ function I.Command(kind, destinationBag, destinationSlot)
         local b = view.bags[selected.bag]
         local item = b and b.slots[selected.slot]
         if not b or not b.known or not item or item.guid ~= selected.guid then return false end
+        if kind == "D" then
+            if I.agent ~= "Mira" or item.count ~= 1 then I.status="Select one carried item belonging to Mira."; render(); return false end
+            local c = I.confirmDisenchant
+            if not c or c.agent ~= I.agent or c.snapshot ~= view.snapshot or c.revision ~= view.revision
+                or c.bag ~= item.bag or c.slot ~= item.slot or c.guid ~= item.guid or c.entry ~= item.entry or c.count ~= item.count then
+                I.confirmDisenchant = {agent=I.agent,snapshot=view.snapshot,revision=view.revision,
+                    bag=item.bag,slot=item.slot,guid=item.guid,entry=item.entry,count=item.count}
+                I.status="The selected item will be consumed. Click Confirm disenchant to continue."
+                render(); return true
+            end
+        end
         out[#out+1], out[#out+2], out[#out+3] = tostring(item.bag), tostring(item.slot), item.guid
     end
     if kind == "M" then
@@ -438,9 +454,10 @@ function I.Command(kind, destinationBag, destinationSlot)
     elseif kind == "E" then
         if destinationBag < 1 or destinationBag > 4 or view.bags[destinationBag].count ~= 0 then return false end
         out[#out+1] = tostring(destinationBag)
-    elseif kind ~= "G" and kind ~= "J" then return false end
+    elseif kind ~= "G" and kind ~= "J" and kind ~= "D" then return false end
     if not send(table.concat(out,"|")) then return false end
-    I.pending = {id=id, snapshot=view.snapshot, agent=I.agent, at=GetTime(), deadline=GetTime()+190}
+    I.confirmDisenchant = nil
+    I.pending = {id=id, snapshot=view.snapshot, agent=I.agent, kind=kind, at=GetTime(), deadline=GetTime()+190, nextPoll=GetTime()+5}
     I.status = "Waiting for " .. I.agent .. " to confirm the action."
     render(); return true
 end
@@ -458,11 +475,11 @@ local function makeWindow()
     end
     for n,name in ipairs({"Arlen","Mira","Rook"}) do
         local selectedName=name
-        button(name,20+(n-1)*132,-48,126,function() I.agent=selectedName; I.selected=nil; render() end)
+        button(name,20+(n-1)*132,-48,126,function() I.agent=selectedName; I.selected=nil; I.confirmDisenchant=nil; render() end)
     end
     for bag=0,4 do
         local selectedBag=bag
-        button(bag==0 and "Pack" or "Bag "..bag,20+bag*80,-80,76,function() I.bag=selectedBag; render() end)
+        button(bag==0 and "Pack" or "Bag "..bag,20+bag*80,-80,76,function() I.bag=selectedBag; I.confirmDisenchant=nil; render() end)
     end
     local summary=window:CreateFontString(nil,"OVERLAY","GameFontHighlight"); summary:SetPoint("TOPLEFT",24,-116); summary:SetWidth(392); summary:SetJustifyH("LEFT")
     local slots={}
@@ -476,7 +493,7 @@ local function makeWindow()
             local v=I.views[I.agent]; local bag=v and v.bags[I.bag]
             if not bag or not bag.known or slot>=bag.count then return end
             local item=bag.slots[slot]
-            if item then I.selected={agent=I.agent,bag=I.bag,slot=slot,guid=item.guid}; render()
+            if item then I.selected={agent=I.agent,bag=I.bag,slot=slot,guid=item.guid}; I.confirmDisenchant=nil; render()
             elseif I.selected then I.Command("M",I.bag,slot) end
         end)
         b:SetScript("OnEnter",function(self)
@@ -495,11 +512,18 @@ local function makeWindow()
         I.status="No empty equipped-bag slot. Move its contents out first."; render()
     end)
     button("Sell junk",320,-365,94,function() I.Command("J") end)
+    local disenchant=button("Disenchant item",20,-397,394,function() I.Command("D") end)
     local status=window:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); status:SetPoint("TOPLEFT",24,-402); status:SetWidth(392); status:SetJustifyH("LEFT")
     render=function()
         if not window then return end
         local v=I.views[I.agent]; local b=v and v.bags[I.bag]
         local known=b and b.known
+        if I.agent == "Mira" then
+            disenchant:Show(); disenchant:SetText(I.confirmDisenchant and "Confirm disenchant" or "Disenchant item")
+            window:SetHeight(480); status:SetPoint("TOPLEFT",24,-436)
+        else
+            disenchant:Hide(); window:SetHeight(445); status:SetPoint("TOPLEFT",24,-402)
+        end
         local free=0
         if known then for slot=0,b.count-1 do if not b.slots[slot] then free=free+1 end end end
         summary:SetText(I.agent.." / "..(I.bag==0 and "Backpack" or "Bag "..I.bag)..(known and (" - "..free.."/"..b.count.." slots free") or " - inventory unknown"))
@@ -521,7 +545,14 @@ function I.Open()
 end
 function I.Tick()
     if I.pending and GetTime() > I.pending.deadline then
-        I.pending=nil; I.status="Action unconfirmed. Refresh before making another request."; render()
+        if I.pending.kind == "D" then
+            if not I.pending.timedOut then I.pending.timedOut=true; I.status="Mira: disenchant unconfirmed. Keep connected; do not retry."; render() end
+        else I.pending=nil; I.status="Action unconfirmed. Refresh before making another request."; render() end
+    end
+    local p=I.pending
+    if p and p.kind == "D" and GetTime() >= p.nextPoll then
+        p.nextPoll=GetTime()+5
+        send("1|P|"..p.id.."|"..p.snapshot)
     end
     if window and window:IsShown() and not I.pending and GetTime()-(I.requestedAt or -100)>20 then I.Refresh() end
 end

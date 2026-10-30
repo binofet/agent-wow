@@ -77,3 +77,69 @@ assert(I.views.Arlen.bags[1].known==false,'unknown occupied bag never becomes fr
 assert(I.Refresh());now=now+31
 assert(not receive(bags),'expired response rejected')
 print('Companion inventory protocol and action checks passed')
+
+-- Disenchant is an explicit Mira-only, exact selected-GUID, two-click action.
+I.agent='Mira'
+assert(I.Refresh())
+assert(receive(bags..';'..item,1,1,'Mira'))
+I.selected={agent='Mira',bag=1,slot=0,guid='4000000000000100'}
+local before=#sent
+assert(I.Command('D') and I.confirmDisenchant)
+assert(#sent==before,'arming destruction confirmation must not send an action')
+assert(I.Command('D'))
+assert(sent[#sent]:match('^1|D|%x+|abcdef123456|19|1|0|4000000000000100$'))
+pending=assert(I.pending)
+assert(pending.kind=='D' and pending.agent=='Mira' and not I.confirmDisenchant)
+assert(not I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|CONFIRMED|ok','PARTY','Arlen'))
+assert(not I.Receive('WBINV1','1|A|'..pending.id..'|ffffffffffff|CONFIRMED|ok','PARTY','Mira'))
+assert(I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|PENDING|still_working','PARTY','Mira'))
+assert(I.pending==pending and I.status:find('Keep connected',1,true))
+for _,status in ipairs({'QUEUED','REQUESTED','CANCELLED','WRITE_UNCONFIRMED'}) do
+ assert(I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|'..status..'|await_receipt','PARTY','Mira'))
+ assert(I.pending==pending and I.status:find('Keep connected',1,true),'nonterminal or unknown ACK must retain destructive ambiguity')
+end
+now=now+5;I.Tick()
+assert(sent[#sent]=='1|P|'..pending.id..'|'..pending.snapshot,'poll must bind the original action nonce/snapshot')
+before=#sent
+for n=1,10 do I.Tick() end
+assert(#sent==before,'receipt polls must be rate bounded')
+assert(I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|UNCONFIRMED|awaiting_evidence','PARTY','Mira'))
+assert(I.pending==pending and I.status:find('Keep connected',1,true))
+now=now+191;I.Tick()
+assert(I.pending==pending and pending.timedOut,'timeout must not clear destructive ambiguity')
+before=#sent
+assert(not I.Command('D') and not I.Command('G') and not I.Refresh())
+assert(#sent==before,'uncertainty must not send another mutation or a replacement request')
+now=now+5;I.Tick()
+assert(sent[#sent]=='1|P|'..pending.id..'|'..pending.snapshot)
+assert(I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|CONFIRMED|selected_item_materials_verified','PARTY','Mira'))
+assert(not I.pending and not I.selected and sent[#sent]:match('^1|R|'),'confirmed receipt refreshes actual inventory')
+
+-- A new selection/revision requires a new confirmation. No other companion can
+-- invoke D, even by calling the Lua command entry point directly.
+for _,agent in ipairs({'Arlen','Rook'}) do
+ I.agent=agent;assert(I.Refresh());assert(receive(bags..';'..item,1,1,agent))
+ I.selected={agent=agent,bag=1,slot=0,guid='4000000000000100'}
+ before=#sent;assert(not I.Command('D') and #sent==before)
+end
+I.agent='Mira';assert(I.Refresh());assert(receive(bags..';'..item,1,1,'Mira'))
+I.selected={agent='Mira',bag=1,slot=0,guid='4000000000000100'}
+assert(I.Command('D'));before=#sent
+I.views.Mira.revision='20'
+assert(I.Command('D') and #sent==before and I.confirmDisenchant.revision=='20','revision change must rearm, not consume')
+I.views.Mira.bags[1].slots[0].guid='4000000000000101'
+I.selected.guid='4000000000000101'
+assert(I.Command('D') and #sent==before and I.confirmDisenchant.guid=='4000000000000101','different GUID must rearm')
+I.views.Mira.bags[1].slots[0].count=2
+assert(not I.Command('D') and #sent==before,'DE accepts one explicitly selected item only')
+assert(I.Refresh() and not I.confirmDisenchant)
+assert(receive(bags..';'..item,1,1,'Mira'))
+for _,terminal in ipairs({'BLOCKED','SERVER_REJECTED'}) do
+ I.selected={agent='Mira',bag=1,slot=0,guid='4000000000000100'}
+ assert(I.Command('D'));assert(I.Command('D'));pending=I.pending
+ assert(I.Receive('WBINV1','1|A|'..pending.id..'|'..sid..'|'..terminal..'|definite_safe_terminal','PARTY','Mira'))
+ assert(not I.pending,'authenticated definite safe rejection may clear the pending request')
+ assert(receive(bags..';'..item,1,1,'Mira'))
+end
+assert(I.Refresh() and not I.confirmDisenchant)
+print('Mira selected disenchant confirmation and read-only receipt polling checks passed')

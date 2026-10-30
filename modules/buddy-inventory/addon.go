@@ -19,7 +19,10 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-type addonReceipt struct{ raw, snapshot, status, reason string }
+type addonReceipt struct {
+	raw, snapshot, status, reason string
+	disenchant                    *addonDisenchant
+}
 type addonSnapshot struct {
 	state *inventoryv1.State
 	at    time.Time
@@ -53,6 +56,16 @@ func (b *addonBridge) receive(payload []byte) {
 	if b.closed {
 		return
 	}
+	if c.kind == "P" {
+		old := b.requests[c.nonce]
+		if old != nil && old.snapshot == c.snapshot && strings.HasPrefix(old.raw, "1|D|") {
+			b.queueACKLocked(c.nonce, old.snapshot, old.status, old.reason)
+			if old.disenchant != nil && old.status != "CONFIRMED" && old.status != "BLOCKED" && old.status != "SERVER_REJECTED" && len(b.queue) < 16 {
+				b.queue = append(b.queue, c)
+			}
+		}
+		return
+	}
 	if c.kind == "R" {
 		for nonce, at := range b.readNonces {
 			if b.now().Sub(at) > 30*time.Second {
@@ -69,6 +82,12 @@ func (b *addonBridge) receive(payload []byte) {
 	if old := b.requests[c.nonce]; old != nil {
 		if old.raw == c.raw {
 			b.queueACKLocked(c.nonce, old.snapshot, old.status, old.reason)
+		} else if strings.HasPrefix(old.raw, "1|D|") {
+			if old.status == "CONFIRMED" || old.status == "BLOCKED" || old.status == "SERVER_REJECTED" {
+				b.queueACKLocked(c.nonce, old.snapshot, old.status, old.reason)
+			} else {
+				b.queueACKLocked(c.nonce, old.snapshot, "UNCONFIRMED", "de_request_changed_keep_connected_no_retry")
+			}
 		} else {
 			b.queueACKLocked(c.nonce, c.snapshot, "BLOCKED", "request_nonce_payload_changed")
 		}
@@ -94,6 +113,9 @@ func (b *addonBridge) queueACKLocked(nonce, snapshot, state, reason string) {
 func (b *addonBridge) finish(c *addonCommand, state, reason string) {
 	b.mu.Lock()
 	if r := b.requests[c.nonce]; r != nil {
+		if r.disenchant != nil && (r.status == "CONFIRMED" || r.status == "BLOCKED" || r.status == "SERVER_REJECTED") {
+			state, reason = r.status, r.reason
+		}
 		r.status, r.reason = state, reason
 	}
 	b.queueACKLocked(c.nonce, c.snapshot, state, reason)
@@ -289,6 +311,14 @@ func (b *addonBridge) wait(ctx context.Context, id string, state *inventoryv1.St
 func (b *addonBridge) process(c *addonCommand) {
 	ctx, cancel := context.WithTimeout(b.lifetime, 180*time.Second)
 	defer cancel()
+	if c.kind == "P" {
+		b.pollDisenchant(ctx, c)
+		return
+	}
+	if c.kind == "D" && b.service.selfGUID != 4 {
+		b.finish(c, "BLOCKED", "disenchant_is_only_available_for_mira")
+		return
+	}
 	state, cached, e := b.bound(ctx, c)
 	if e != nil {
 		b.finish(c, "BLOCKED", e.Error())
@@ -317,6 +347,9 @@ func (b *addonBridge) process(c *addonCommand) {
 		result, e = b.service.Equip(ctx, &inventoryv1.EquipRequest{SessionId: state.SessionId, RequestId: id, ExpectedRevision: state.Revision, ExpectedInventoryRevision: state.InventoryRevision, Source: addonRef(current), EquipmentSlot: 18 + c.destinationBag})
 	case "G":
 		b.give(ctx, c, state, current)
+		return
+	case "D":
+		b.disenchant(ctx, c, state, current)
 		return
 	default:
 		b.finish(c, "BLOCKED", "unsupported_inventory_command")

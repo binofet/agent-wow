@@ -26,7 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const limitation = "One bounded own-known starter recipe, fishing attempt or explicitly selected already-in-range skinning corpse or herbalism object. Transport, server cast, inventory output and pure skill-rank increase are separate evidence. Focus distance may use the stopped client's position estimate, which is not a server movement acknowledgement. Missing supplies, equipment, focus or observations block practice. No movement, buying, equipping, unlearning or level progression."
+const limitation = "One bounded own-known starter recipe, fishing attempt or explicitly selected already-in-range skinning corpse or herbalism object, or one explicitly selected carried item for disenchanting. Unconfirmed disenchanting materials require this companion to remain connected; never close its material loot window. Transport, server cast, inventory output and pure skill-rank increase are separate evidence. Focus distance may use the stopped client's position estimate, which is not a server movement acknowledgement. Missing supplies, equipment, focus or observations block practice. No movement, buying, equipping, unlearning or level progression."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -56,35 +56,41 @@ type operation struct {
 
 type Service struct {
 	professionsv1.UnimplementedBuddyProfessionsServer
-	mu               sync.Mutex
-	observeGate      chan struct{}
-	session          sessionAPI
-	selfGUID         uint64
-	now              func() time.Time
-	state            *professionsv1.State
-	book             spellBook
-	view             worldView
-	viewKnown        bool
-	viewReason       string
-	actions          *actionsv1.State
-	loot             *lootv1.State
-	tools            map[uint32]*tradev1.ItemDetails
-	focuses          map[uint32]focusTemplate
-	focusRequested   map[uint32]bool
-	skinLoot         *normalLootProof
-	fullLoot         map[uint64]time.Time
-	skinAttempted    map[uint64]bool
-	skinTemplates    map[uint32]skinTemplate
-	skinRequested    map[uint32]bool
-	herbTemplates    map[uint32]herbTemplate
-	herbRequested    map[uint32]bool
-	herbAttempted    map[uint64]bool
-	selectedHerbGUID uint64
-	nextQuery        time.Time
-	requests         map[string]*operation
-	active, last     *operation
-	castCount        byte
-	closed           bool
+	mu                     sync.Mutex
+	observeGate            chan struct{}
+	session                sessionAPI
+	selfGUID               uint64
+	now                    func() time.Time
+	state                  *professionsv1.State
+	book                   spellBook
+	view                   worldView
+	viewKnown              bool
+	viewReason             string
+	actions                *actionsv1.State
+	loot                   *lootv1.State
+	tools                  map[uint32]*tradev1.ItemDetails
+	focuses                map[uint32]focusTemplate
+	focusRequested         map[uint32]bool
+	skinLoot               *normalLootProof
+	fullLoot               map[uint64]time.Time
+	skinAttempted          map[uint64]bool
+	skinTemplates          map[uint32]skinTemplate
+	skinRequested          map[uint32]bool
+	herbTemplates          map[uint32]herbTemplate
+	herbRequested          map[uint32]bool
+	herbAttempted          map[uint64]bool
+	selectedHerbGUID       uint64
+	deTemplates            map[uint32]disenchantTemplate
+	deRequested            map[uint32]bool
+	deAttempted            map[uint64]bool
+	selectedDisenchantGUID uint64
+	pendingDisenchant      *operation
+	deTrade                *tradev1.State
+	nextQuery              time.Time
+	requests               map[string]*operation
+	active, last           *operation
+	castCount              byte
+	closed                 bool
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -92,7 +98,7 @@ func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service 
 		observeGate: make(chan struct{}, 1),
 		state:       &professionsv1.State{SessionId: sessionID, SelfGuid: selfGUID, Revision: 1, Limitation: limitation},
 		tools:       make(map[uint32]*tradev1.ItemDetails), focuses: make(map[uint32]focusTemplate),
-		focusRequested: make(map[uint32]bool), fullLoot: make(map[uint64]time.Time), skinAttempted: make(map[uint64]bool), skinTemplates: make(map[uint32]skinTemplate), skinRequested: make(map[uint32]bool), herbTemplates: make(map[uint32]herbTemplate), herbRequested: make(map[uint32]bool), herbAttempted: make(map[uint64]bool), requests: make(map[string]*operation)}
+		focusRequested: make(map[uint32]bool), fullLoot: make(map[uint64]time.Time), skinAttempted: make(map[uint64]bool), skinTemplates: make(map[uint32]skinTemplate), skinRequested: make(map[uint32]bool), herbTemplates: make(map[uint32]herbTemplate), herbRequested: make(map[uint32]bool), herbAttempted: make(map[uint64]bool), deTemplates: make(map[uint32]disenchantTemplate), deRequested: make(map[uint32]bool), deAttempted: make(map[uint64]bool), requests: make(map[string]*operation)}
 }
 
 func (s *Service) invoke(ctx context.Context, module, method string, input, output proto.Message) error {
@@ -138,7 +144,11 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 	}
 	s.mu.Lock()
 	targetGUID := s.selectedHerbGUID
-	if s.active != nil && (s.active.spec.skill == 393 || s.active.spec.skill == 182) && s.active.request != nil {
+	if s.selectedDisenchantGUID != 0 {
+		targetGUID = s.selectedDisenchantGUID
+	}
+	needDE := s.selectedDisenchantGUID != 0 || s.pendingDisenchant != nil || s.active != nil && s.active.spec.skill == 333
+	if s.active != nil && (s.active.spec.skill == 393 || s.active.spec.skill == 182 || s.active.spec.skill == 333) && s.active.request != nil {
 		targetGUID = s.active.request.TargetGuid
 	}
 	if len(target) == 1 {
@@ -148,7 +158,7 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 	request := &worldv1.SnapshotRequest{}
 	if targetGUID>>48 == 0xf110 {
 		request.GameObjectEntry = uint32(targetGUID>>24) & 0xffffff
-	} else {
+	} else if targetGUID>>48 == 0xf130 {
 		request.CreatureGuid = targetGUID
 	}
 	w := &worldv1.SnapshotResponse{}
@@ -164,7 +174,18 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 	if err == nil {
 		err = s.invoke(ctx, "buddy-loot", "state", &emptypb.Empty{}, l)
 	}
+	var deTrade *tradev1.State
+	if err == nil && needDE {
+		deTrade = &tradev1.State{}
+		err = s.invoke(ctx, "buddy-trade", "state", &emptypb.Empty{}, deTrade)
+		if err == nil && deTrade.SessionId != s.state.SessionId {
+			err = fail("actual_trade_session_mismatch")
+		}
+	}
 	s.mu.Lock()
+	if needDE {
+		s.deTrade = deTrade
+	}
 	if err == nil && (view.skillsRevision < s.state.SkillsRevision || view.inventoryRevision < s.state.InventoryRevision) {
 		err = fail("actual_world_revision_regressed")
 	}
@@ -178,7 +199,7 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 		s.state.BackpackKnown, s.state.BackpackRevision = w.BackpackKnown, view.backpackRevision
 		s.state.InventoryKnown, s.state.InventoryRevision = true, view.inventoryRevision
 		s.state.Skills = nil
-		for _, id := range []uint32{129, 185, 356, 393, 182} {
+		for _, id := range []uint32{129, 185, 356, 393, 182, 333} {
 			if rank, ok := view.skills[id]; ok {
 				s.state.Skills = append(s.state.Skills, &professionsv1.Skill{SkillId: id, Rank: rank.value, Maximum: rank.max})
 			}
@@ -243,6 +264,9 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 	}
 	s.querySkinTemplates(ctx, w)
 	s.queryHerbTemplates(ctx, w)
+	if needDE {
+		s.queryDisenchantTemplates(ctx, w)
+	}
 	return nil
 }
 
@@ -305,12 +329,24 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 	if recipe.reagentEntry != 0 && s.view.counts[recipe.reagentEntry] < recipe.reagentCount {
 		return "required_materials_not_observed_in_own_carried_inventory"
 	}
-	if recipe.skill == 393 || recipe.skill == 182 {
+	if recipe.skill == 393 || recipe.skill == 182 || recipe.skill == 333 {
 		if recipe.skill == 393 && s.view.counts[7005] == 0 {
 			return "actual_owned_skinning_knife7005_required"
 		}
 		if !s.view.self.ChannelSpellKnown || !s.view.self.ChannelObjectKnown || s.view.self.ChannelSpellId != 0 || s.view.self.ChannelObjectGuid != 0 {
 			return "own_channel_not_observed_idle"
+		}
+	}
+	if recipe.skill == 333 {
+		if s.state.StopPrepared {
+			return "normal_stop_prepared_no_new_disenchant_this_session"
+		}
+		if s.actions.Following || s.actions.Healing || s.actions.Assisting || s.actions.FollowLeaseRemainingMs != 0 || s.actions.HealingLeaseRemainingMs != 0 || s.actions.AssistLeaseRemainingMs != 0 {
+			return "disable_follow_heal_and_assist_before_selected_item_disenchanting"
+		}
+		t := s.deTrade
+		if t == nil || t.SessionId != s.state.SessionId || t.Phase != "IDLE" || t.PartnerGuid != 0 || t.PartnerAccepted || t.AcceptTransportWritten || t.JunkDisposalEnabled || t.LastJunkDisposal != nil && t.LastJunkDisposal.Status != "SERVER_SLOT_REMOVAL_CONFIRMED" {
+			return "actual_idle_trade_and_junk_state_required_for_disenchanting"
 		}
 	}
 	if recipe.skill == 356 {
@@ -409,13 +445,16 @@ func (s *Service) snapshotLocked() *professionsv1.State {
 	s.state.Recipes = nil
 	for _, spec := range starterRecipes {
 		reason := s.reasonLocked(spec)
-		if (spec.skill == 393 || spec.skill == 182) && reason == "" {
+		if spec.skill == 333 && reason == "" {
+			reason = "explicit_owned_carried_item_selection_required"
+		} else if (spec.skill == 393 || spec.skill == 182) && reason == "" {
 			reason = "explicit_observed_gathering_target_selection_required"
 		}
 		s.state.Recipes = append(s.state.Recipes, &professionsv1.Recipe{SkillId: spec.skill, SpellId: spec.spell, Name: spec.name, Known: s.book.has(spec.spell), RequirementsVerified: spec.requirementsVerified, ReagentEntry: spec.reagentEntry, ReagentCount: spec.reagentCount, OutputEntry: spec.itemEntry, OutputCount: spec.itemCount, FocusId: spec.focusID, CastTimeMs: spec.castTimeMs, ChannelDurationMs: spec.channelDurationMs, Ready: reason == "", Reason: reason, MetadataProvenance: metadataProvenance})
 	}
 	s.state.SkinningTargets = s.skinningTargetsLocked()
 	s.state.HerbTargets = s.herbTargetsLocked()
+	s.state.DisenchantItem = s.disenchantItemLocked()
 	if s.last != nil {
 		s.state.Operation = s.operationSnapshotLocked(s.last)
 	}
@@ -441,6 +480,9 @@ func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*professionsv
 	_ = s.observe(call)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pendingDisenchant != nil {
+		s.reconcileDisenchantLocked(s.pendingDisenchant)
+	}
 	return s.snapshotLocked(), nil
 }
 
@@ -457,6 +499,7 @@ func (s *Service) InspectHerb(ctx context.Context, r *professionsv1.HerbInspectR
 	}
 	if s.selectedHerbGUID != r.TargetGuid {
 		s.selectedHerbGUID = r.TargetGuid
+		s.selectedDisenchantGUID = 0
 		s.state.Revision++
 	}
 	s.mu.Unlock()
@@ -465,6 +508,34 @@ func (s *Service) InspectHerb(ctx context.Context, r *professionsv1.HerbInspectR
 	_ = s.observe(call, r.TargetGuid)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked(), nil
+}
+
+// InspectDisenchant only queries one explicitly selected actual carried item.
+// It neither ranks gear nor chooses what the user should consume.
+func (s *Service) InspectDisenchant(ctx context.Context, r *professionsv1.DisenchantInspectRequest) (*professionsv1.State, error) {
+	if r == nil || r.SessionId != s.state.SessionId || r.TargetGuid>>48 != 0x4000 || uint32(r.TargetGuid) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "bound_session_and_exact_carried_item_guid_required")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "session_closing")
+	}
+	if s.selectedDisenchantGUID != r.TargetGuid {
+		s.selectedDisenchantGUID = r.TargetGuid
+		s.selectedHerbGUID = 0
+		s.state.Revision++
+	}
+	s.mu.Unlock()
+	call, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_ = s.observe(call, r.TargetGuid)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingDisenchant != nil {
+		s.reconcileDisenchantLocked(s.pendingDisenchant)
+	}
 	return s.snapshotLocked(), nil
 }
 
@@ -504,7 +575,19 @@ func (s *Service) Attempt(ctx context.Context, r *professionsv1.AttemptRequest) 
 		s.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "state, skills or carried inventory changed; no cast reserved")
 	}
-	if spec.skill == 182 {
+	var selectedItem *worldv1.BackpackSlot
+	if spec.skill == 333 {
+		if r.TargetPositionRevision != 0 {
+			s.mu.Unlock()
+			return nil, status.Error(codes.InvalidArgument, "carried_item_target_has_no_position_revision")
+		}
+		var reason string
+		selectedItem, reason = s.disenchantTargetLocked(r.TargetGuid, nil)
+		if reason != "" {
+			s.mu.Unlock()
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
+	} else if spec.skill == 182 {
 		if _, reason := s.herbalismTargetLocked(r.TargetGuid, r.TargetPositionRevision, nil); reason != "" {
 			s.mu.Unlock()
 			return nil, status.Error(codes.FailedPrecondition, reason)
@@ -540,6 +623,14 @@ func (s *Service) Attempt(ctx context.Context, r *professionsv1.AttemptRequest) 
 	op := &operation{request: proto.Clone(r).(*professionsv1.AttemptRequest), spec: spec, baseline: s.view, started: s.now(), ctx: opCtx, cancel: stop, done: make(chan struct{}), stored: make(map[byte]bool), removed: make(map[byte]bool), pushed: make(map[byte]bool), pushCounts: make(map[uint32]uint32), receipt: &professionsv1.Operation{OperationId: hex.EncodeToString(id[:]), RequestId: r.RequestId, SkillId: r.SkillId, SpellId: r.SpellId, CastCount: uint32(s.castCount), Status: professionsv1.AttemptStatus_RESERVED, Reason: "reserved_before_cast", BaselineSkillsRevision: s.view.skillsRevision, BaselineBackpackRevision: s.view.backpackRevision, BaselineInventoryRevision: s.view.inventoryRevision, TargetGuid: r.TargetGuid, TargetPositionRevision: r.TargetPositionRevision, BeforeRank: s.view.skills[spec.skill].value, AfterRank: s.view.skills[spec.skill].value, Limitation: limitation}}
 	if spec.skill == 182 {
 		s.selectedHerbGUID = r.TargetGuid
+		s.selectedDisenchantGUID = 0
+	}
+	if spec.skill == 333 {
+		s.selectedDisenchantGUID = r.TargetGuid
+		s.selectedHerbGUID = 0
+		op.receipt.SourceBag = selectedItem.Bag
+		op.receipt.SourceSlot = selectedItem.Slot
+		op.receipt.TargetEntry = selectedItem.Entry
 	}
 	s.requests[r.RequestId] = op
 	s.active = op

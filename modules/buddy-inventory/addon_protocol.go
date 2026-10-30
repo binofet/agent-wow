@@ -66,13 +66,20 @@ func decodeInventoryAddon(p []byte) (*addonCommand, bool, error) {
 		return nil, true, bad
 	}
 	out := &addonCommand{kind: f[1], nonce: f[2], raw: body}
+	if out.kind == "P" {
+		if len(f) != 4 || !addonHex(f[3], 12) {
+			return nil, true, bad
+		}
+		out.snapshot = f[3]
+		return out, true, nil
+	}
 	if out.kind == "R" {
 		if len(f) != 3 {
 			return nil, true, bad
 		}
 		return out, true, nil
 	}
-	expected := map[string]int{"M": 10, "E": 9, "G": 8, "J": 5}
+	expected := map[string]int{"M": 10, "E": 9, "G": 8, "D": 8, "J": 5}
 	if expected[out.kind] != len(f) || !addonHex(f[3], 12) {
 		return nil, true, bad
 	}

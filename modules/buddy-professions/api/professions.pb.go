@@ -359,6 +359,9 @@ type Operation struct {
 	ObservedInventoryRevision uint64 `protobuf:"varint,41,opt,name=observed_inventory_revision,json=observedInventoryRevision,proto3" json:"observed_inventory_revision,omitempty"`
 	FullyLootedObserved       bool   `protobuf:"varint,42,opt,name=fully_looted_observed,json=fullyLootedObserved,proto3" json:"fully_looted_observed,omitempty"`
 	TargetEntry               uint32 `protobuf:"varint,43,opt,name=target_entry,json=targetEntry,proto3" json:"target_entry,omitempty"`
+	SourceBag                 uint32 `protobuf:"varint,44,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot                uint32 `protobuf:"varint,45,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InputConsumedObserved     bool   `protobuf:"varint,46,opt,name=input_consumed_observed,json=inputConsumedObserved,proto3" json:"input_consumed_observed,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -694,6 +697,27 @@ func (x *Operation) GetTargetEntry() uint32 {
 	return 0
 }
 
+func (x *Operation) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *Operation) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *Operation) GetInputConsumedObserved() bool {
+	if x != nil {
+		return x.InputConsumedObserved
+	}
+	return false
+}
+
 type SkinningTarget struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Public actual cached corpse; never a static spawn or navigation target.
@@ -899,6 +923,242 @@ func (x *HerbInspectRequest) GetTargetGuid() uint64 {
 	return 0
 }
 
+type DisenchantItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bag           uint32                 `protobuf:"varint,1,opt,name=bag,proto3" json:"bag,omitempty"`
+	Slot          uint32                 `protobuf:"varint,2,opt,name=slot,proto3" json:"slot,omitempty"`
+	ItemGuid      uint64                 `protobuf:"varint,3,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry         uint32                 `protobuf:"varint,4,opt,name=entry,proto3" json:"entry,omitempty"`
+	StackCount    uint32                 `protobuf:"varint,5,opt,name=stack_count,json=stackCount,proto3" json:"stack_count,omitempty"`
+	TemplateKnown bool                   `protobuf:"varint,6,opt,name=template_known,json=templateKnown,proto3" json:"template_known,omitempty"`
+	Quality       uint32                 `protobuf:"varint,7,opt,name=quality,proto3" json:"quality,omitempty"`
+	ItemClass     uint32                 `protobuf:"varint,8,opt,name=item_class,json=itemClass,proto3" json:"item_class,omitempty"`
+	RequiredSkill uint32                 `protobuf:"varint,9,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
+	Ready         bool                   `protobuf:"varint,10,opt,name=ready,proto3" json:"ready,omitempty"`
+	Reason        string                 `protobuf:"bytes,11,opt,name=reason,proto3" json:"reason,omitempty"`
+	Limitation    string                 `protobuf:"bytes,12,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisenchantItem) Reset() {
+	*x = DisenchantItem{}
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisenchantItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisenchantItem) ProtoMessage() {}
+
+func (x *DisenchantItem) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DisenchantItem.ProtoReflect.Descriptor instead.
+func (*DisenchantItem) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DisenchantItem) GetBag() uint32 {
+	if x != nil {
+		return x.Bag
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetItemGuid() uint64 {
+	if x != nil {
+		return x.ItemGuid
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetStackCount() uint32 {
+	if x != nil {
+		return x.StackCount
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetTemplateKnown() bool {
+	if x != nil {
+		return x.TemplateKnown
+	}
+	return false
+}
+
+func (x *DisenchantItem) GetQuality() uint32 {
+	if x != nil {
+		return x.Quality
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetItemClass() uint32 {
+	if x != nil {
+		return x.ItemClass
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetRequiredSkill() uint32 {
+	if x != nil {
+		return x.RequiredSkill
+	}
+	return 0
+}
+
+func (x *DisenchantItem) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *DisenchantItem) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *DisenchantItem) GetLimitation() string {
+	if x != nil {
+		return x.Limitation
+	}
+	return ""
+}
+
+type DisenchantInspectRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TargetGuid    uint64                 `protobuf:"varint,2,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisenchantInspectRequest) Reset() {
+	*x = DisenchantInspectRequest{}
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisenchantInspectRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisenchantInspectRequest) ProtoMessage() {}
+
+func (x *DisenchantInspectRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DisenchantInspectRequest.ProtoReflect.Descriptor instead.
+func (*DisenchantInspectRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DisenchantInspectRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *DisenchantInspectRequest) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+type StopRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopRequest) Reset() {
+	*x = StopRequest{}
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopRequest) ProtoMessage() {}
+
+func (x *StopRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopRequest.ProtoReflect.Descriptor instead.
+func (*StopRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *StopRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StopRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
 type State struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -921,13 +1181,15 @@ type State struct {
 	InventoryRevision uint64                 `protobuf:"varint,18,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
 	SkinningTargets   []*SkinningTarget      `protobuf:"bytes,19,rep,name=skinning_targets,json=skinningTargets,proto3" json:"skinning_targets,omitempty"`
 	HerbTargets       []*HerbTarget          `protobuf:"bytes,20,rep,name=herb_targets,json=herbTargets,proto3" json:"herb_targets,omitempty"`
+	DisenchantItem    *DisenchantItem        `protobuf:"bytes,21,opt,name=disenchant_item,json=disenchantItem,proto3" json:"disenchant_item,omitempty"`
+	StopPrepared      bool                   `protobuf:"varint,22,opt,name=stop_prepared,json=stopPrepared,proto3" json:"stop_prepared,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -939,7 +1201,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -952,7 +1214,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *State) GetSessionId() string {
@@ -1095,6 +1357,20 @@ func (x *State) GetHerbTargets() []*HerbTarget {
 	return nil
 }
 
+func (x *State) GetDisenchantItem() *DisenchantItem {
+	if x != nil {
+		return x.DisenchantItem
+	}
+	return nil
+}
+
+func (x *State) GetStopPrepared() bool {
+	if x != nil {
+		return x.StopPrepared
+	}
+	return false
+}
+
 type AttemptRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1106,7 +1382,8 @@ type AttemptRequest struct {
 	ExpectedSkillsRevision    uint64 `protobuf:"varint,6,opt,name=expected_skills_revision,json=expectedSkillsRevision,proto3" json:"expected_skills_revision,omitempty"`
 	ExpectedBackpackRevision  uint64 `protobuf:"varint,7,opt,name=expected_backpack_revision,json=expectedBackpackRevision,proto3" json:"expected_backpack_revision,omitempty"`
 	ExpectedInventoryRevision uint64 `protobuf:"varint,8,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
-	// Required only for the fixed Skinning8613 and Herbalism2366 paths.
+	// Exact selected target for Skinning8613, Herbalism2366 or Disenchant13262.
+	// target_position_revision must be zero for the carried-item path.
 	TargetGuid             uint64 `protobuf:"varint,9,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
 	TargetPositionRevision uint64 `protobuf:"varint,10,opt,name=target_position_revision,json=targetPositionRevision,proto3" json:"target_position_revision,omitempty"`
 	unknownFields          protoimpl.UnknownFields
@@ -1115,7 +1392,7 @@ type AttemptRequest struct {
 
 func (x *AttemptRequest) Reset() {
 	*x = AttemptRequest{}
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[7]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1127,7 +1404,7 @@ func (x *AttemptRequest) String() string {
 func (*AttemptRequest) ProtoMessage() {}
 
 func (x *AttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[7]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1140,7 +1417,7 @@ func (x *AttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptRequest.ProtoReflect.Descriptor instead.
 func (*AttemptRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AttemptRequest) GetSessionId() string {
@@ -1223,7 +1500,7 @@ type CancelRequest struct {
 
 func (x *CancelRequest) Reset() {
 	*x = CancelRequest{}
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[8]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1512,7 @@ func (x *CancelRequest) String() string {
 func (*CancelRequest) ProtoMessage() {}
 
 func (x *CancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_professions_professions_proto_msgTypes[8]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1525,7 @@ func (x *CancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CancelRequest) GetSessionId() string {
@@ -1291,7 +1568,7 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\x13channel_duration_ms\x18\f \x01(\rR\x11channelDurationMs\x12\x14\n" +
 	"\x05ready\x18\r \x01(\bR\x05ready\x12\x16\n" +
 	"\x06reason\x18\x0e \x01(\tR\x06reason\x12/\n" +
-	"\x13metadata_provenance\x18\x0f \x01(\tR\x12metadataProvenance\"\xc0\x0f\n" +
+	"\x13metadata_provenance\x18\x0f \x01(\tR\x12metadataProvenance\"\xb8\x10\n" +
 	"\tOperation\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12\x1d\n" +
 	"\n" +
@@ -1344,7 +1621,12 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\x1bbaseline_inventory_revision\x18( \x01(\x04R\x19baselineInventoryRevision\x12>\n" +
 	"\x1bobserved_inventory_revision\x18) \x01(\x04R\x19observedInventoryRevision\x122\n" +
 	"\x15fully_looted_observed\x18* \x01(\bR\x13fullyLootedObserved\x12!\n" +
-	"\ftarget_entry\x18+ \x01(\rR\vtargetEntry\"\xdc\x01\n" +
+	"\ftarget_entry\x18+ \x01(\rR\vtargetEntry\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18, \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18- \x01(\rR\n" +
+	"sourceSlot\x126\n" +
+	"\x17input_consumed_observed\x18. \x01(\bR\x15inputConsumedObserved\"\xdc\x01\n" +
 	"\x0eSkinningTarget\x12A\n" +
 	"\bcreature\x18\x01 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\bcreature\x122\n" +
 	"\x15fully_looted_observed\x18\x02 \x01(\bR\x13fullyLootedObserved\x12\x14\n" +
@@ -1362,7 +1644,34 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
-	"targetGuid\"\x8e\a\n" +
+	"targetGuid\"\xdf\x02\n" +
+	"\x0eDisenchantItem\x12\x10\n" +
+	"\x03bag\x18\x01 \x01(\rR\x03bag\x12\x12\n" +
+	"\x04slot\x18\x02 \x01(\rR\x04slot\x12\x1b\n" +
+	"\titem_guid\x18\x03 \x01(\x04R\bitemGuid\x12\x14\n" +
+	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
+	"\vstack_count\x18\x05 \x01(\rR\n" +
+	"stackCount\x12%\n" +
+	"\x0etemplate_known\x18\x06 \x01(\bR\rtemplateKnown\x12\x18\n" +
+	"\aquality\x18\a \x01(\rR\aquality\x12\x1d\n" +
+	"\n" +
+	"item_class\x18\b \x01(\rR\titemClass\x12%\n" +
+	"\x0erequired_skill\x18\t \x01(\rR\rrequiredSkill\x12\x14\n" +
+	"\x05ready\x18\n" +
+	" \x01(\bR\x05ready\x12\x16\n" +
+	"\x06reason\x18\v \x01(\tR\x06reason\x12\x1e\n" +
+	"\n" +
+	"limitation\x18\f \x01(\tR\n" +
+	"limitation\"Z\n" +
+	"\x18DisenchantInspectRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
+	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
+	"targetGuid\"I\n" +
+	"\vStopRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\"\x8a\b\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -1387,7 +1696,9 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\x0finventory_known\x18\x11 \x01(\bR\x0einventoryKnown\x12-\n" +
 	"\x12inventory_revision\x18\x12 \x01(\x04R\x11inventoryRevision\x12W\n" +
 	"\x10skinning_targets\x18\x13 \x03(\v2,.warcraftbuddy.professions.v1.SkinningTargetR\x0fskinningTargets\x12K\n" +
-	"\fherb_targets\x18\x14 \x03(\v2(.warcraftbuddy.professions.v1.HerbTargetR\vherbTargets\"\xc4\x03\n" +
+	"\fherb_targets\x18\x14 \x03(\v2(.warcraftbuddy.professions.v1.HerbTargetR\vherbTargets\x12U\n" +
+	"\x0fdisenchant_item\x18\x15 \x01(\v2,.warcraftbuddy.professions.v1.DisenchantItemR\x0edisenchantItem\x12#\n" +
+	"\rstop_prepared\x18\x16 \x01(\bR\fstopPrepared\"\xc4\x03\n" +
 	"\x0eAttemptRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -1419,10 +1730,12 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\x0fSERVER_REJECTED\x10\b\x12\r\n" +
 	"\tCANCELLED\x10\t\x12\x17\n" +
 	"\x13OUTCOME_UNCONFIRMED\x10\n" +
-	"2\x80\x04\n" +
+	"2\xd1\x05\n" +
 	"\x10BuddyProfessions\x12G\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a#.warcraftbuddy.professions.v1.State\x12d\n" +
-	"\vInspectHerb\x120.warcraftbuddy.professions.v1.HerbInspectRequest\x1a#.warcraftbuddy.professions.v1.State\x12\\\n" +
+	"\vInspectHerb\x120.warcraftbuddy.professions.v1.HerbInspectRequest\x1a#.warcraftbuddy.professions.v1.State\x12p\n" +
+	"\x11InspectDisenchant\x126.warcraftbuddy.professions.v1.DisenchantInspectRequest\x1a#.warcraftbuddy.professions.v1.State\x12]\n" +
+	"\vPrepareStop\x12).warcraftbuddy.professions.v1.StopRequest\x1a#.warcraftbuddy.professions.v1.State\x12\\\n" +
 	"\aAttempt\x12,.warcraftbuddy.professions.v1.AttemptRequest\x1a#.warcraftbuddy.professions.v1.State\x12Z\n" +
 	"\x06Cancel\x12+.warcraftbuddy.professions.v1.CancelRequest\x1a#.warcraftbuddy.professions.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
@@ -1441,49 +1754,57 @@ func file_modules_buddy_professions_professions_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_professions_professions_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_professions_professions_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_modules_buddy_professions_professions_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_modules_buddy_professions_professions_proto_goTypes = []any{
-	(AttemptStatus)(0),          // 0: warcraftbuddy.professions.v1.AttemptStatus
-	(*Skill)(nil),               // 1: warcraftbuddy.professions.v1.Skill
-	(*Recipe)(nil),              // 2: warcraftbuddy.professions.v1.Recipe
-	(*Operation)(nil),           // 3: warcraftbuddy.professions.v1.Operation
-	(*SkinningTarget)(nil),      // 4: warcraftbuddy.professions.v1.SkinningTarget
-	(*HerbTarget)(nil),          // 5: warcraftbuddy.professions.v1.HerbTarget
-	(*HerbInspectRequest)(nil),  // 6: warcraftbuddy.professions.v1.HerbInspectRequest
-	(*State)(nil),               // 7: warcraftbuddy.professions.v1.State
-	(*AttemptRequest)(nil),      // 8: warcraftbuddy.professions.v1.AttemptRequest
-	(*CancelRequest)(nil),       // 9: warcraftbuddy.professions.v1.CancelRequest
-	(*api.CreatureState)(nil),   // 10: warcraftbuddy.world.v1.CreatureState
-	(*api.GameObjectState)(nil), // 11: warcraftbuddy.world.v1.GameObjectState
-	(*emptypb.Empty)(nil),       // 12: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),      // 13: agentwow.module.v1.WorldPacket
+	(AttemptStatus)(0),               // 0: warcraftbuddy.professions.v1.AttemptStatus
+	(*Skill)(nil),                    // 1: warcraftbuddy.professions.v1.Skill
+	(*Recipe)(nil),                   // 2: warcraftbuddy.professions.v1.Recipe
+	(*Operation)(nil),                // 3: warcraftbuddy.professions.v1.Operation
+	(*SkinningTarget)(nil),           // 4: warcraftbuddy.professions.v1.SkinningTarget
+	(*HerbTarget)(nil),               // 5: warcraftbuddy.professions.v1.HerbTarget
+	(*HerbInspectRequest)(nil),       // 6: warcraftbuddy.professions.v1.HerbInspectRequest
+	(*DisenchantItem)(nil),           // 7: warcraftbuddy.professions.v1.DisenchantItem
+	(*DisenchantInspectRequest)(nil), // 8: warcraftbuddy.professions.v1.DisenchantInspectRequest
+	(*StopRequest)(nil),              // 9: warcraftbuddy.professions.v1.StopRequest
+	(*State)(nil),                    // 10: warcraftbuddy.professions.v1.State
+	(*AttemptRequest)(nil),           // 11: warcraftbuddy.professions.v1.AttemptRequest
+	(*CancelRequest)(nil),            // 12: warcraftbuddy.professions.v1.CancelRequest
+	(*api.CreatureState)(nil),        // 13: warcraftbuddy.world.v1.CreatureState
+	(*api.GameObjectState)(nil),      // 14: warcraftbuddy.world.v1.GameObjectState
+	(*emptypb.Empty)(nil),            // 15: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),           // 16: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_professions_professions_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.professions.v1.Operation.status:type_name -> warcraftbuddy.professions.v1.AttemptStatus
-	10, // 1: warcraftbuddy.professions.v1.SkinningTarget.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	11, // 2: warcraftbuddy.professions.v1.HerbTarget.object:type_name -> warcraftbuddy.world.v1.GameObjectState
+	13, // 1: warcraftbuddy.professions.v1.SkinningTarget.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	14, // 2: warcraftbuddy.professions.v1.HerbTarget.object:type_name -> warcraftbuddy.world.v1.GameObjectState
 	1,  // 3: warcraftbuddy.professions.v1.State.skills:type_name -> warcraftbuddy.professions.v1.Skill
 	2,  // 4: warcraftbuddy.professions.v1.State.recipes:type_name -> warcraftbuddy.professions.v1.Recipe
 	3,  // 5: warcraftbuddy.professions.v1.State.operation:type_name -> warcraftbuddy.professions.v1.Operation
 	4,  // 6: warcraftbuddy.professions.v1.State.skinning_targets:type_name -> warcraftbuddy.professions.v1.SkinningTarget
 	5,  // 7: warcraftbuddy.professions.v1.State.herb_targets:type_name -> warcraftbuddy.professions.v1.HerbTarget
-	12, // 8: warcraftbuddy.professions.v1.BuddyProfessions.GetState:input_type -> google.protobuf.Empty
-	6,  // 9: warcraftbuddy.professions.v1.BuddyProfessions.InspectHerb:input_type -> warcraftbuddy.professions.v1.HerbInspectRequest
-	8,  // 10: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:input_type -> warcraftbuddy.professions.v1.AttemptRequest
-	9,  // 11: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:input_type -> warcraftbuddy.professions.v1.CancelRequest
-	13, // 12: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	12, // 13: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:input_type -> google.protobuf.Empty
-	7,  // 14: warcraftbuddy.professions.v1.BuddyProfessions.GetState:output_type -> warcraftbuddy.professions.v1.State
-	7,  // 15: warcraftbuddy.professions.v1.BuddyProfessions.InspectHerb:output_type -> warcraftbuddy.professions.v1.State
-	7,  // 16: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:output_type -> warcraftbuddy.professions.v1.State
-	7,  // 17: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:output_type -> warcraftbuddy.professions.v1.State
-	12, // 18: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:output_type -> google.protobuf.Empty
-	12, // 19: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:output_type -> google.protobuf.Empty
-	14, // [14:20] is the sub-list for method output_type
-	8,  // [8:14] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	7,  // 8: warcraftbuddy.professions.v1.State.disenchant_item:type_name -> warcraftbuddy.professions.v1.DisenchantItem
+	15, // 9: warcraftbuddy.professions.v1.BuddyProfessions.GetState:input_type -> google.protobuf.Empty
+	6,  // 10: warcraftbuddy.professions.v1.BuddyProfessions.InspectHerb:input_type -> warcraftbuddy.professions.v1.HerbInspectRequest
+	8,  // 11: warcraftbuddy.professions.v1.BuddyProfessions.InspectDisenchant:input_type -> warcraftbuddy.professions.v1.DisenchantInspectRequest
+	9,  // 12: warcraftbuddy.professions.v1.BuddyProfessions.PrepareStop:input_type -> warcraftbuddy.professions.v1.StopRequest
+	11, // 13: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:input_type -> warcraftbuddy.professions.v1.AttemptRequest
+	12, // 14: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:input_type -> warcraftbuddy.professions.v1.CancelRequest
+	16, // 15: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	15, // 16: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:input_type -> google.protobuf.Empty
+	10, // 17: warcraftbuddy.professions.v1.BuddyProfessions.GetState:output_type -> warcraftbuddy.professions.v1.State
+	10, // 18: warcraftbuddy.professions.v1.BuddyProfessions.InspectHerb:output_type -> warcraftbuddy.professions.v1.State
+	10, // 19: warcraftbuddy.professions.v1.BuddyProfessions.InspectDisenchant:output_type -> warcraftbuddy.professions.v1.State
+	10, // 20: warcraftbuddy.professions.v1.BuddyProfessions.PrepareStop:output_type -> warcraftbuddy.professions.v1.State
+	10, // 21: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:output_type -> warcraftbuddy.professions.v1.State
+	10, // 22: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:output_type -> warcraftbuddy.professions.v1.State
+	15, // 23: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:output_type -> google.protobuf.Empty
+	15, // 24: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:output_type -> google.protobuf.Empty
+	17, // [17:25] is the sub-list for method output_type
+	9,  // [9:17] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_professions_professions_proto_init() }
@@ -1497,7 +1818,7 @@ func file_modules_buddy_professions_professions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_professions_professions_proto_rawDesc), len(file_modules_buddy_professions_professions_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

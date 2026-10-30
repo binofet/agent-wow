@@ -33,6 +33,7 @@ type professionSessionFixture struct {
 	world           *worldv1.SnapshotResponse
 	actions         *actionsv1.State
 	loot            *lootv1.State
+	trade           *tradev1.State
 	token           string
 	renewToken      string
 	worldErr        error
@@ -95,6 +96,8 @@ func (f *professionSessionFixture) InvokeModule(ctx context.Context, r *modv1.In
 		result = proto.Clone(f.actions)
 	case "buddy-loot/state":
 		result = proto.Clone(f.loot)
+	case "buddy-trade/state":
+		result = proto.Clone(f.trade)
 	case "buddy-actions/acquire_interaction":
 		input := &actionsv1.InteractionRequest{}
 		if err := r.Request.UnmarshalTo(input); err != nil {
@@ -166,7 +169,7 @@ func (f *professionSessionFixture) InvokeModule(ctx context.Context, r *modv1.In
 
 func newProfessionServiceFixture(t *testing.T) (*Service, *professionSessionFixture) {
 	t.Helper()
-	f := &professionSessionFixture{world: professionObservationFixture(), actions: &actionsv1.State{}, loot: &lootv1.State{Phase: "disabled"}, sendErr: map[uint32]error{}, writes: make(chan *modv1.SendPacketRequest, 128)}
+	f := &professionSessionFixture{world: professionObservationFixture(), actions: &actionsv1.State{}, loot: &lootv1.State{Phase: "disabled"}, trade: &tradev1.State{SessionId: "body", Phase: "IDLE"}, sendErr: map[uint32]error{}, writes: make(chan *modv1.SendPacketRequest, 128)}
 	s := NewService(f, "body", 7)
 	professionPacket(t, s, opcode.SMSGInitialSpells, professionInitialFixture(3275, 2538, 2540, 7620))
 	if _, err := s.GetState(context.Background(), &emptypb.Empty{}); err != nil {

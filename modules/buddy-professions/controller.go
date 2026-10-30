@@ -121,6 +121,10 @@ func (s *Service) setReason(op *operation, reason string, status professionsv1.A
 }
 
 func (s *Service) run(op *operation) {
+	if op.spec.skill == 333 {
+		s.runDisenchant(op)
+		return
+	}
 	if op.spec.skill == 182 {
 		s.runHerb(op)
 		return
@@ -550,7 +554,17 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	s.observeCorpseLootLocked(packet)
+	if s.onDisenchantTemplatePacketLocked(packet) {
+		return &emptypb.Empty{}, nil
+	}
 	op := s.active
+	if op == nil && s.pendingDisenchant != nil {
+		op = s.pendingDisenchant
+	}
+	if op != nil && op.spec.skill == 333 {
+		s.onDisenchantPacketLocked(op, packet)
+		return &emptypb.Empty{}, nil
+	}
 	if op != nil && op.spec.skill == 182 {
 		s.onHerbPacketLocked(op, packet)
 		return &emptypb.Empty{}, nil

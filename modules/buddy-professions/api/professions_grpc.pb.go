@@ -21,12 +21,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyProfessions_GetState_FullMethodName     = "/warcraftbuddy.professions.v1.BuddyProfessions/GetState"
-	BuddyProfessions_InspectHerb_FullMethodName  = "/warcraftbuddy.professions.v1.BuddyProfessions/InspectHerb"
-	BuddyProfessions_Attempt_FullMethodName      = "/warcraftbuddy.professions.v1.BuddyProfessions/Attempt"
-	BuddyProfessions_Cancel_FullMethodName       = "/warcraftbuddy.professions.v1.BuddyProfessions/Cancel"
-	BuddyProfessions_OnPacket_FullMethodName     = "/warcraftbuddy.professions.v1.BuddyProfessions/OnPacket"
-	BuddyProfessions_BeforeLogout_FullMethodName = "/warcraftbuddy.professions.v1.BuddyProfessions/BeforeLogout"
+	BuddyProfessions_GetState_FullMethodName          = "/warcraftbuddy.professions.v1.BuddyProfessions/GetState"
+	BuddyProfessions_InspectHerb_FullMethodName       = "/warcraftbuddy.professions.v1.BuddyProfessions/InspectHerb"
+	BuddyProfessions_InspectDisenchant_FullMethodName = "/warcraftbuddy.professions.v1.BuddyProfessions/InspectDisenchant"
+	BuddyProfessions_PrepareStop_FullMethodName       = "/warcraftbuddy.professions.v1.BuddyProfessions/PrepareStop"
+	BuddyProfessions_Attempt_FullMethodName           = "/warcraftbuddy.professions.v1.BuddyProfessions/Attempt"
+	BuddyProfessions_Cancel_FullMethodName            = "/warcraftbuddy.professions.v1.BuddyProfessions/Cancel"
+	BuddyProfessions_OnPacket_FullMethodName          = "/warcraftbuddy.professions.v1.BuddyProfessions/OnPacket"
+	BuddyProfessions_BeforeLogout_FullMethodName      = "/warcraftbuddy.professions.v1.BuddyProfessions/BeforeLogout"
 )
 
 // BuddyProfessionsClient is the client API for BuddyProfessions service.
@@ -35,6 +37,8 @@ const (
 type BuddyProfessionsClient interface {
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	InspectHerb(ctx context.Context, in *HerbInspectRequest, opts ...grpc.CallOption) (*State, error)
+	InspectDisenchant(ctx context.Context, in *DisenchantInspectRequest, opts ...grpc.CallOption) (*State, error)
+	PrepareStop(ctx context.Context, in *StopRequest, opts ...grpc.CallOption) (*State, error)
 	Attempt(ctx context.Context, in *AttemptRequest, opts ...grpc.CallOption) (*State, error)
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -63,6 +67,26 @@ func (c *buddyProfessionsClient) InspectHerb(ctx context.Context, in *HerbInspec
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyProfessions_InspectHerb_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyProfessionsClient) InspectDisenchant(ctx context.Context, in *DisenchantInspectRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyProfessions_InspectDisenchant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyProfessionsClient) PrepareStop(ctx context.Context, in *StopRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyProfessions_PrepareStop_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +139,8 @@ func (c *buddyProfessionsClient) BeforeLogout(ctx context.Context, in *emptypb.E
 type BuddyProfessionsServer interface {
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	InspectHerb(context.Context, *HerbInspectRequest) (*State, error)
+	InspectDisenchant(context.Context, *DisenchantInspectRequest) (*State, error)
+	PrepareStop(context.Context, *StopRequest) (*State, error)
 	Attempt(context.Context, *AttemptRequest) (*State, error)
 	Cancel(context.Context, *CancelRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
@@ -134,6 +160,12 @@ func (UnimplementedBuddyProfessionsServer) GetState(context.Context, *emptypb.Em
 }
 func (UnimplementedBuddyProfessionsServer) InspectHerb(context.Context, *HerbInspectRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InspectHerb not implemented")
+}
+func (UnimplementedBuddyProfessionsServer) InspectDisenchant(context.Context, *DisenchantInspectRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InspectDisenchant not implemented")
+}
+func (UnimplementedBuddyProfessionsServer) PrepareStop(context.Context, *StopRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrepareStop not implemented")
 }
 func (UnimplementedBuddyProfessionsServer) Attempt(context.Context, *AttemptRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Attempt not implemented")
@@ -200,6 +232,42 @@ func _BuddyProfessions_InspectHerb_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyProfessionsServer).InspectHerb(ctx, req.(*HerbInspectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyProfessions_InspectDisenchant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DisenchantInspectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyProfessionsServer).InspectDisenchant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyProfessions_InspectDisenchant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyProfessionsServer).InspectDisenchant(ctx, req.(*DisenchantInspectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyProfessions_PrepareStop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyProfessionsServer).PrepareStop(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyProfessions_PrepareStop_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyProfessionsServer).PrepareStop(ctx, req.(*StopRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -290,6 +358,14 @@ var BuddyProfessions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InspectHerb",
 			Handler:    _BuddyProfessions_InspectHerb_Handler,
+		},
+		{
+			MethodName: "InspectDisenchant",
+			Handler:    _BuddyProfessions_InspectDisenchant_Handler,
+		},
+		{
+			MethodName: "PrepareStop",
+			Handler:    _BuddyProfessions_PrepareStop_Handler,
 		},
 		{
 			MethodName: "Attempt",

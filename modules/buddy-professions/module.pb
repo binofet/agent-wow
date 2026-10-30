@@ -293,7 +293,7 @@ selfSkills@
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-‘+
+ß2
 +modules/buddy-professions/professions.protowarcraftbuddy.professions.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"P
 Skill
 skill_id (RskillId
@@ -316,7 +316,7 @@ castTimeMs.
 channel_duration_ms (RchannelDurationMs
 ready (Rready
 reason (	Rreason/
-metadata_provenance (	RmetadataProvenance"À
+metadata_provenance (	RmetadataProvenance"¸
 	Operation!
 operation_id (	RoperationId
 
@@ -369,7 +369,12 @@ targetGuid8
 baseline_inventory_revision( (RbaselineInventoryRevision>
 observed_inventory_revision) (RobservedInventoryRevision2
 fully_looted_observed* (RfullyLootedObserved!
-target_entry+ (RtargetEntry"Ü
+target_entry+ (RtargetEntry
+
+source_bag, (R	sourceBag
+source_slot- (R
+sourceSlot6
+input_consumed_observed. (RinputConsumedObserved"Ü
 SkinningTargetA
 creature (2%.warcraftbuddy.world.v1.CreatureStateRcreature2
 fully_looted_observed (RfullyLootedObserved
@@ -387,7 +392,34 @@ HerbTarget?
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid"Ž
+targetGuid"ß
+DisenchantItem
+bag (Rbag
+slot (Rslot
+	item_guid (RitemGuid
+entry (Rentry
+stack_count (R
+stackCount%
+template_known (RtemplateKnown
+quality (Rquality
+
+item_class (R	itemClass%
+required_skill	 (RrequiredSkill
+ready
+ (Rready
+reason (	Rreason
+
+limitation (	R
+limitation"Z
+DisenchantInspectRequest
+
+session_id (	R	sessionId
+target_guid (R
+targetGuid"I
+StopRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid"Š
 State
 
 session_id (	R	sessionId
@@ -412,7 +444,9 @@ limitation'
 inventory_known (RinventoryKnown-
 inventory_revision (RinventoryRevisionW
 skinning_targets (2,.warcraftbuddy.professions.v1.SkinningTargetRskinningTargetsK
-herb_targets (2(.warcraftbuddy.professions.v1.HerbTargetRherbTargets"Ä
+herb_targets (2(.warcraftbuddy.professions.v1.HerbTargetRherbTargetsU
+disenchant_item (2,.warcraftbuddy.professions.v1.DisenchantItemRdisenchantItem#
+stop_prepared (RstopPrepared"Ä
 AttemptRequest
 
 session_id (	R	sessionId
@@ -444,10 +478,12 @@ session_id (	R	sessionId!
 SERVER_REJECTED
 	CANCELLED	
 OUTCOME_UNCONFIRMED
-2€
+2Ñ
 BuddyProfessionsG
 GetState.google.protobuf.Empty#.warcraftbuddy.professions.v1.Stated
-InspectHerb0.warcraftbuddy.professions.v1.HerbInspectRequest#.warcraftbuddy.professions.v1.State\
+InspectHerb0.warcraftbuddy.professions.v1.HerbInspectRequest#.warcraftbuddy.professions.v1.Statep
+InspectDisenchant6.warcraftbuddy.professions.v1.DisenchantInspectRequest#.warcraftbuddy.professions.v1.State]
+PrepareStop).warcraftbuddy.professions.v1.StopRequest#.warcraftbuddy.professions.v1.State\
 Attempt,.warcraftbuddy.professions.v1.AttemptRequest#.warcraftbuddy.professions.v1.StateZ
 Cancel+.warcraftbuddy.professions.v1.CancelRequest#.warcraftbuddy.professions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>

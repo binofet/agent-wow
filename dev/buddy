@@ -3,6 +3,7 @@
 
 import argparse
 import fcntl
+import http.client
 import json
 import math
 import os
@@ -18,6 +19,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,10 +36,195 @@ CONFIG_DIR = DATA_DIR = MODULE_DIR = CHARACTER_GUID = None
 START_TIMEOUT, STOP_TIMEOUT = 330, 45
 EXEC_SETTLE_TIMEOUT = 2
 MAX_LINE = 64 << 10
+MAX_RPC_RESPONSE = 256 << 10
 
 
 class BuddyError(Exception):
     pass
+
+
+class StopRPCFault(Exception):
+    def __init__(self, error):
+        self.error = error
+
+
+def strict_json(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+
+
+class NoStopRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise BuddyError("Stop safeguard refused an RPC redirect; no signal sent")
+
+
+class StopRPC:
+    def __init__(self, opener=None):
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoStopRedirect())
+        self.sequence = 0
+
+    def call(self, method, params, deadline):
+        if method not in ("buddy-world.snapshot", "buddy-professions.state", "buddy-professions.prepare_stop") or not isinstance(params, dict) or self.sequence >= 4:
+            raise BuddyError("Stop safeguard request is invalid; no signal sent")
+        self.sequence += 1
+        expired = "Stop deadline expired before SIGTERM; no signal sent"
+        timeout = min(5, remaining_time(deadline, expired))
+        request = urllib.request.Request(f"http://{RPC_HOST}:{RPC_PORT}/rpc",
+            data=json.dumps({"jsonrpc": "2.0", "id": self.sequence, "method": method,
+                             "params": params}, allow_nan=False).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=timeout) as response:
+                raw = response.read(MAX_RPC_RESPONSE + 1)
+            remaining_time(deadline, expired)
+            if len(raw) > MAX_RPC_RESPONSE:
+                raise BuddyError("Stop safeguard RPC response exceeds its bound; no signal sent")
+            reply = strict_json(raw)
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            raise BuddyError("Stop safeguard RPC is unavailable or invalid; no signal sent") from None
+        if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0"
+                or type(reply.get("id")) is not int or reply["id"] != self.sequence
+                or ("result" in reply) == ("error" in reply)):
+            raise BuddyError("Stop safeguard RPC response identity is unconfirmed; no signal sent")
+        if "error" in reply:
+            if not isinstance(reply["error"], dict):
+                raise BuddyError("Stop safeguard RPC error is invalid; no signal sent")
+            raise StopRPCFault(reply["error"])
+        if not isinstance(reply["result"], dict):
+            raise BuddyError("Stop safeguard RPC state is invalid; no signal sent")
+        return reply["result"]
+
+
+def stop_integer(value, maximum=2**64 - 1):
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise BuddyError("Stop safeguard integer evidence is invalid; no signal sent")
+    return value
+
+
+def stop_boolean(state, key):
+    value = state.get(key, False)
+    if type(value) is not bool:
+        raise BuddyError("Stop safeguard boolean evidence is invalid; no signal sent")
+    return value
+
+
+def stop_body_guid(record):
+    # The world snapshot exposes no name/session field. Attribute the name and
+    # GUID to this exact PID's private ready event, then bind current RPC GUIDs.
+    at, _ = scan_log(record, record.get("ready_offset") or 0,
+                     lambda line: ready_line(line, record["pid"]))
+    if at is None:
+        raise BuddyError("Stop safeguard has no matching own ready identity; no signal sent")
+    with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as source:
+        info = os.fstat(source.fileno())
+        if (info.st_dev, info.st_ino) != (record["log_device"], record["log_inode"]):
+            raise BuddyError("Buddy log was replaced; stop identity is unconfirmed; no signal sent")
+        source.seek(at)
+        line = source.readline(MAX_LINE + 1)
+    if len(line) > MAX_LINE or not line.endswith(b"\n") or not ready_line(line, record["pid"]):
+        raise BuddyError("Stop ready identity changed; no signal sent")
+    guid = stop_integer(log_fields(line).get("character.guid"), 2**48 - 1)
+    if guid == 0 or CHARACTER_GUID is not None and guid != CHARACTER_GUID:
+        raise BuddyError("Stop character identity is unconfirmed; no signal sent")
+    return guid
+
+
+def checked_stop_world(state, guid):
+    own = state.get("self") if isinstance(state, dict) else None
+    if not isinstance(own, dict) or own.get("present") is not True or stop_integer(own.get("guid", 0), 2**48 - 1) != guid:
+        raise BuddyError("Stop RPC does not identify this profile's connected character; no signal sent")
+
+
+def checked_stop_professions(state, guid, expected_session=None, prepared=False):
+    if not isinstance(state, dict):
+        raise BuddyError("Profession stop state is invalid; no signal sent")
+    session = state.get("sessionId")
+    if (not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session)
+            or stop_integer(state.get("selfGuid", 0), 2**48 - 1) != guid
+            or expected_session is not None and session != expected_session
+            or stop_boolean(state, "closing")):
+        raise BuddyError("Profession stop session or character is unconfirmed; no signal sent")
+    active = stop_boolean(state, "active")
+    if prepared and not stop_boolean(state, "stopPrepared"):
+        raise BuddyError("Atomic profession stop preparation is unconfirmed; no signal sent")
+    operation = state.get("operation")
+    if operation is None:
+        if active:
+            raise BuddyError("Active profession identity is unknown; no signal sent")
+        return session
+    if not isinstance(operation, dict):
+        raise BuddyError("Profession operation evidence is invalid; no signal sent")
+    skill, spell = (stop_integer(operation.get(key, 0), 2**32 - 1) for key in ("skillId", "spellId"))
+    if skill == 0 or spell == 0 or (skill == 333) != (spell == 13262):
+        raise BuddyError("Profession operation identity is unconfirmed; no signal sent")
+    if skill != 333:
+        return session
+    if active or stop_boolean(operation, "cleanupUnconfirmed") or not stop_boolean(operation, "leaseReleased"):
+        raise BuddyError("Selected disenchant is active or has pending cleanup; keep connected and leave its material window open; no signal sent")
+    status = operation.get("status")
+    if status == "COMPLETED":
+        if (not all(stop_boolean(operation, key) for key in ("ownGoObserved", "lootWindowObserved", "lootReleaseObserved", "inputConsumedObserved", "outputInventoryObserved"))
+                or stop_integer(operation.get("lootSlotsRemoved", 0)) == 0
+                or stop_integer(operation.get("ownLootedItemsObserved", 0)) == 0):
+            raise BuddyError("Selected disenchant material proof is incomplete; keep connected; no signal sent")
+    elif status in ("BLOCKED", "SERVER_REJECTED", "CANCELLED"):
+        if any(stop_boolean(operation, key) for key in ("ownGoObserved", "lootWindowObserved", "inputConsumedObserved", "outputInventoryObserved")):
+            raise BuddyError("Selected disenchant has an unsettled material window; keep connected; no signal sent")
+    else:
+        raise BuddyError("Selected disenchant outcome is uncertain; keep connected; no signal sent")
+    return session
+
+
+def missing_professions_module(error):
+    # This exact structured fault originates in the running fixed registry's
+    # lookup, before forwarding. Missing methods and generic -32601 are unknown.
+    data = error.get("data")
+    return (type(error.get("code")) is int and error["code"] == -32601 and isinstance(data, dict)
+            and data.get("module") == "buddy-professions" and data.get("method") == "state"
+            and data.get("grpc_status") == "NotFound" and data.get("grpc_message") == "module not found")
+
+
+def prepare_owned_stop(record, deadline):
+    guid = stop_body_guid(record)
+    rpc = StopRPC()
+    try:
+        state = rpc.call("buddy-professions.state", {}, deadline)
+    except StopRPCFault as fault:
+        if missing_professions_module(fault.error):
+            return False
+        raise BuddyError("Profession stop safeguard is unavailable or unknown; no signal sent") from None
+    try:
+        checked_stop_world(rpc.call("buddy-world.snapshot", {}, deadline), guid)
+    except StopRPCFault:
+        raise BuddyError("Connected character stop safeguard is unavailable; no signal sent") from None
+    session = checked_stop_professions(state, guid)
+    try:
+        # This persistent module latch serializes with Attempt's reservation;
+        # repeated state reads alone cannot close the preflight/SIGTERM race.
+        prepared = rpc.call("buddy-professions.prepare_stop", {"sessionId": session, "selfGuid": str(guid)}, deadline)
+        checked_stop_professions(prepared, guid, session, prepared=True)
+        checked_stop_world(rpc.call("buddy-world.snapshot", {}, deadline), guid)
+    except (BuddyError, StopRPCFault) as error:
+        if isinstance(error, BuddyError):
+            detail = str(error)
+        else:
+            data = error.error.get("data")
+            missing_method = (error.error.get("code") == -32601 and isinstance(data, dict)
+                and data.get("module") == "buddy-professions" and data.get("method") == "prepare_stop"
+                and data.get("grpc_status") == "NotFound" and data.get("grpc_message") == "method not found")
+            detail = ("Atomic stop safeguard is missing; update this profile's professions module; no signal sent"
+                if missing_method else "Profession stop preparation was refused or unconfirmed; keep connected and leave any material window open; no signal sent")
+        raise BuddyError(detail + "; stop preparation may remain latched and disenchanting may stay disabled for this session") from None
+    return True
 
 
 def command_line():
@@ -385,33 +573,43 @@ def stop(*, deadline=None):
         raise BuddyError("Linux pidfd signal support is unavailable; refusing a signal that could race PID reuse.")
     expired = f"Stop deadline expired before SIGTERM; no signal sent. PID {record['pid']} preserved. Log: {LOG_FILE}"
     remaining_time(deadline, expired)
-    # pidfd pins the exact process while /proc identity is rechecked before SIGTERM.
-    pidfd = os.pidfd_open(record["pid"])
+    stop_prepared = False
     try:
-        if not running_owned(record):
-            raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
-        with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as log:
-            offset = os.fstat(log.fileno()).st_size
-        remaining_time(deadline, expired)
-        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-    finally:
-        os.close(pidfd)
-    confirmed = False
-    while time.monotonic() < deadline:
-        found, offset = scan_log(record, offset, logout_line)
-        confirmed = confirmed or found is not None
-        if not running_owned(record):
-            # Catch the final flushed line if exit raced the previous log snapshot.
+        # pidfd pins the exact process while /proc identity is rechecked before SIGTERM.
+        pidfd = os.pidfd_open(record["pid"])
+        try:
+            if not running_owned(record):
+                raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
+            with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as log:
+                offset = os.fstat(log.fileno()).st_size
+            remaining_time(deadline, expired)
+            stop_prepared = prepare_owned_stop(record, deadline)
+            if not running_owned(record):
+                raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
+            remaining_time(deadline, expired)
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        finally:
+            os.close(pidfd)
+        confirmed = False
+        while time.monotonic() < deadline:
             found, offset = scan_log(record, offset, logout_line)
             confirmed = confirmed or found is not None
-            if not confirmed:
-                raise BuddyError(f"PID {record['pid']} exited, but no server logout completion was observed; logout is unverified. Log: {LOG_FILE}")
-            remaining_time(deadline, f"Server logout completion and process exit were verified, but the stop deadline was not met; no force kill sent. Log: {LOG_FILE}")
-            print(f"Stopped: PID {record['pid']}; server logout completion and process exit verified.\nLog: {LOG_FILE}")
-            return 0
-        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
-    detail = "server logout was confirmed, but the process is still exiting" if confirmed else "server-confirmed exit was not observed"
-    raise BuddyError(f"Stop deadline expired: {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
+            if not running_owned(record):
+                # Catch the final flushed line if exit raced the previous log snapshot.
+                found, offset = scan_log(record, offset, logout_line)
+                confirmed = confirmed or found is not None
+                if not confirmed:
+                    raise BuddyError(f"PID {record['pid']} exited, but no server logout completion was observed; logout is unverified. Log: {LOG_FILE}")
+                remaining_time(deadline, f"Server logout completion and process exit were verified, but the stop deadline was not met; no force kill sent. Log: {LOG_FILE}")
+                print(f"Stopped: PID {record['pid']}; server logout completion and process exit verified.\nLog: {LOG_FILE}")
+                return 0
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        detail = "server logout was confirmed, but the process is still exiting" if confirmed else "server-confirmed exit was not observed"
+        raise BuddyError(f"Stop deadline expired: {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
+    except (BuddyError, OSError) as error:
+        if stop_prepared:
+            raise BuddyError(str(error) + "; disenchanting remains disabled by stop preparation for this connected session") from None
+        raise
 
 
 def status():

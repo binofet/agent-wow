@@ -81,6 +81,9 @@ message Operation {
   uint64 observed_inventory_revision = 41;
   bool fully_looted_observed = 42;
   uint32 target_entry = 43;
+  uint32 source_bag = 44;
+  uint32 source_slot = 45;
+  bool input_consumed_observed = 46;
 }
 message SkinningTarget {
   // Public actual cached corpse; never a static spawn or navigation target.
@@ -98,6 +101,22 @@ message HerbTarget {
   uint32 lock_id = 5;
 }
 message HerbInspectRequest { string session_id = 1; uint64 target_guid = 2; }
+message DisenchantItem {
+  uint32 bag = 1;
+  uint32 slot = 2;
+  uint64 item_guid = 3;
+  uint32 entry = 4;
+  uint32 stack_count = 5;
+  bool template_known = 6;
+  uint32 quality = 7;
+  uint32 item_class = 8;
+  uint32 required_skill = 9;
+  bool ready = 10;
+  string reason = 11;
+  string limitation = 12;
+}
+message DisenchantInspectRequest { string session_id = 1; uint64 target_guid = 2; }
+message StopRequest { string session_id = 1; uint64 self_guid = 2; }
 message State {
   string session_id = 1;
   uint64 revision = 2;
@@ -119,6 +138,8 @@ message State {
   uint64 inventory_revision = 18;
   repeated SkinningTarget skinning_targets = 19;
   repeated HerbTarget herb_targets = 20;
+  DisenchantItem disenchant_item = 21;
+  bool stop_prepared = 22;
 }
 message AttemptRequest {
   string session_id = 1;
@@ -130,7 +151,8 @@ message AttemptRequest {
   uint64 expected_skills_revision = 6;
   uint64 expected_backpack_revision = 7;
   uint64 expected_inventory_revision = 8;
-  // Required only for the fixed Skinning8613 and Herbalism2366 paths.
+  // Exact selected target for Skinning8613, Herbalism2366 or Disenchant13262.
+  // target_position_revision must be zero for the carried-item path.
   uint64 target_guid = 9;
   uint64 target_position_revision = 10;
 }
@@ -138,6 +160,8 @@ message CancelRequest { string session_id = 1; string operation_id = 2; }
 service BuddyProfessions {
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc InspectHerb(HerbInspectRequest) returns (State);
+  rpc InspectDisenchant(DisenchantInspectRequest) returns (State);
+  rpc PrepareStop(StopRequest) returns (State);
   rpc Attempt(AttemptRequest) returns (State);
   rpc Cancel(CancelRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
