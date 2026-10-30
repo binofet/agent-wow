@@ -23,7 +23,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Values match WoW 3.3.5a ChatMsg. Only SAY and PARTY can be sent.
+// Values match WoW 3.3.5a ChatMsg. WHISPER_INFORM is receive-only.
 type Channel int32
 
 const (
@@ -31,6 +31,7 @@ const (
 	Channel_SAY                 Channel = 1
 	Channel_PARTY               Channel = 2
 	Channel_WHISPER             Channel = 7
+	Channel_WHISPER_INFORM      Channel = 9
 	Channel_PARTY_LEADER        Channel = 51
 )
 
@@ -41,6 +42,7 @@ var (
 		1:  "SAY",
 		2:  "PARTY",
 		7:  "WHISPER",
+		9:  "WHISPER_INFORM",
 		51: "PARTY_LEADER",
 	}
 	Channel_value = map[string]int32{
@@ -48,6 +50,7 @@ var (
 		"SAY":                 1,
 		"PARTY":               2,
 		"WHISPER":             7,
+		"WHISPER_INFORM":      9,
 		"PARTY_LEADER":        51,
 	}
 )
@@ -241,7 +244,9 @@ type SendRequest struct {
 	Channel  Channel                `protobuf:"varint,1,opt,name=channel,proto3,enum=warcraftbuddy.chat.v1.Channel" json:"channel,omitempty"`
 	Language Language               `protobuf:"varint,2,opt,name=language,proto3,enum=warcraftbuddy.chat.v1.Language" json:"language,omitempty"`
 	// Plain UTF-8 text, 1–255 bytes; no controls, WoW markup, or .command/!command.
-	Text          string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	Text string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	// Required only for WHISPER. A plain character name, never a command/channel.
+	Recipient     string `protobuf:"bytes,4,opt,name=recipient,proto3" json:"recipient,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -297,6 +302,13 @@ func (x *SendRequest) GetText() string {
 	return ""
 }
 
+func (x *SendRequest) GetRecipient() string {
+	if x != nil {
+		return x.Recipient
+	}
+	return ""
+}
+
 type SendResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Transport write only: server acceptance/delivery/animation is not confirmed.
@@ -347,7 +359,10 @@ type PollRequest struct {
 	// Exclusive, session-local sequence cursor. Start with 0.
 	AfterSequence uint64 `protobuf:"varint,1,opt,name=after_sequence,json=afterSequence,proto3" json:"after_sequence,omitempty"`
 	// 0 means 50; maximum 256. Polling does not remove messages.
-	Limit         uint32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Limit uint32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Optional binding to the previously observed module session. A mismatch
+	// rejects the cursor even when the new session has already caught up to it.
+	SessionId     string `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -394,6 +409,13 @@ func (x *PollRequest) GetLimit() uint32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *PollRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type Message struct {
@@ -509,6 +531,7 @@ type PollResponse struct {
 	CursorLost       bool   `protobuf:"varint,5,opt,name=cursor_lost,json=cursorLost,proto3" json:"cursor_lost,omitempty"`
 	IgnoredPackets   uint64 `protobuf:"varint,6,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
 	MalformedPackets uint64 `protobuf:"varint,7,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	SessionId        string `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -592,6 +615,13 @@ func (x *PollResponse) GetMalformedPackets() uint64 {
 	return 0
 }
 
+func (x *PollResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 var File_modules_buddy_chat_chat_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_chat_chat_proto_rawDesc = "" +
@@ -600,16 +630,19 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\fEmoteRequest\x122\n" +
 	"\x05emote\x18\x01 \x01(\x0e2\x1c.warcraftbuddy.chat.v1.EmoteR\x05emote\x12\x1f\n" +
 	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
-	"targetGuid\"\x98\x01\n" +
+	"targetGuid\"\xb6\x01\n" +
 	"\vSendRequest\x128\n" +
 	"\achannel\x18\x01 \x01(\x0e2\x1e.warcraftbuddy.chat.v1.ChannelR\achannel\x12;\n" +
 	"\blanguage\x18\x02 \x01(\x0e2\x1f.warcraftbuddy.chat.v1.LanguageR\blanguage\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\";\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12\x1c\n" +
+	"\trecipient\x18\x04 \x01(\tR\trecipient\";\n" +
 	"\fSendResponse\x12+\n" +
-	"\x11transport_written\x18\x01 \x01(\bR\x10transportWritten\"J\n" +
+	"\x11transport_written\x18\x01 \x01(\bR\x10transportWritten\"i\n" +
 	"\vPollRequest\x12%\n" +
 	"\x0eafter_sequence\x18\x01 \x01(\x04R\rafterSequence\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\rR\x05limit\"\x84\x02\n" +
+	"\x05limit\x18\x02 \x01(\rR\x05limit\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"\x84\x02\n" +
 	"\aMessage\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x128\n" +
 	"\achannel\x18\x02 \x01(\x0e2\x1e.warcraftbuddy.chat.v1.ChannelR\achannel\x12\x1a\n" +
@@ -619,7 +652,7 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\rreceiver_guid\x18\x05 \x01(\x04R\freceiverGuid\x12\x12\n" +
 	"\x04text\x18\x06 \x01(\tR\x04text\x12\x19\n" +
 	"\bchat_tag\x18\a \x01(\rR\achatTag\x12\x12\n" +
-	"\x04self\x18\b \x01(\bR\x04self\"\xb8\x02\n" +
+	"\x04self\x18\b \x01(\bR\x04self\"\xd7\x02\n" +
 	"\fPollResponse\x12:\n" +
 	"\bmessages\x18\x01 \x03(\v2\x1e.warcraftbuddy.chat.v1.MessageR\bmessages\x12#\n" +
 	"\rnext_sequence\x18\x02 \x01(\x04R\fnextSequence\x12'\n" +
@@ -628,12 +661,15 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\vcursor_lost\x18\x05 \x01(\bR\n" +
 	"cursorLost\x12'\n" +
 	"\x0fignored_packets\x18\x06 \x01(\x04R\x0eignoredPackets\x12+\n" +
-	"\x11malformed_packets\x18\a \x01(\x04R\x10malformedPackets*U\n" +
+	"\x11malformed_packets\x18\a \x01(\x04R\x10malformedPackets\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\b \x01(\tR\tsessionId*i\n" +
 	"\aChannel\x12\x17\n" +
 	"\x13CHANNEL_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03SAY\x10\x01\x12\t\n" +
 	"\x05PARTY\x10\x02\x12\v\n" +
-	"\aWHISPER\x10\a\x12\x10\n" +
+	"\aWHISPER\x10\a\x12\x12\n" +
+	"\x0eWHISPER_INFORM\x10\t\x12\x10\n" +
 	"\fPARTY_LEADER\x103*<\n" +
 	"\bLanguage\x12\x18\n" +
 	"\x14LANGUAGE_UNSPECIFIED\x10\x00\x12\n" +

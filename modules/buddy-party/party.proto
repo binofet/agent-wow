@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package warcraftbuddy.party.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1";
+
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+enum InvitationDecision {
+  PENDING = 0;
+  ACCEPT_REQUESTED = 1;
+  DECLINE_REQUESTED = 2;
+}
+
+message PendingInvite {
+  uint64 sequence = 1;
+  string inviter_name = 2;
+  // Local decision reservation; only PENDING can be acted on. A requested
+  // decision is never retried, including an ambiguous transport failure.
+  InvitationDecision decision = 3;
+  bool transport_written = 4;
+}
+
+message Member {
+  uint64 guid = 1;
+  string name = 2;
+  bool self = 3;
+  bool online = 4;
+  uint32 subgroup = 5;
+  uint32 flags = 6;
+  uint32 roles = 7;
+  // Raw status is supplied for other members; self's online state is inferred
+  // from receiving this update on the live session.
+  uint32 wire_status = 8;
+}
+
+message Group {
+  // False until a valid group-list/destroyed/uninvite packet is observed.
+  bool known = 1;
+  bool in_group = 2;
+  uint64 group_guid = 3;
+  uint64 leader_guid = 4;
+  // Includes self; contains at most 40 members.
+  repeated Member members = 5;
+  uint32 type_flags = 6;
+  uint32 server_counter = 7;
+}
+
+message CommandResult {
+  uint32 operation = 1;
+  string member_name = 2;
+  // Server PartyResult code; 0 means this command succeeded, not necessarily
+  // that another player accepted an invitation. Group membership uses Group.
+  uint32 result = 3;
+  uint32 value = 4;
+}
+
+message StateResponse {
+  string session_id = 1;
+  uint64 revision = 2;
+  // Latest observed invitation, including its local decision state. May be
+  // absent. There are no automatic decisions and no inferred invite expiry.
+  PendingInvite pending_invite = 3;
+  Group group = 4;
+  CommandResult last_command_result = 5;
+  string last_declined_name = 6;
+  bool action_in_flight = 7;
+  uint64 malformed_packets = 8;
+  uint64 ignored_packets = 9;
+}
+
+message InviteDecisionRequest {
+  string session_id = 1;
+  uint64 invite_sequence = 2;
+  string inviter_name = 3;
+}
+
+message InviteRequest {
+  // Local-realm character name, 2–12 Unicode letters; no realm suffix.
+  string name = 1;
+}
+
+message LeaveRequest {
+  string session_id = 1;
+  uint64 expected_group_guid = 2;
+}
+
+message ActionResponse {
+  // Confirms a transport write only. Observe future server packets via state.
+  bool transport_written = 1;
+}
+
+service BuddyParty {
+  rpc State(google.protobuf.Empty) returns (StateResponse);
+  rpc Accept(InviteDecisionRequest) returns (ActionResponse);
+  rpc Decline(InviteDecisionRequest) returns (ActionResponse);
+  rpc Invite(InviteRequest) returns (ActionResponse);
+  rpc Leave(LeaveRequest) returns (ActionResponse);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+}

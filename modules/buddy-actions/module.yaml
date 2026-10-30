@@ -1,0 +1,25 @@
+api_version: 1
+enabled: true
+description: Bounded outdoor direct following and Lesser Heal for fixed owner Joel; disabled until explicitly enabled
+requires: [buddy-world]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
+  healing: /warcraftbuddy.actions.v1.BuddyActions/Healing
+  heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
+  status: /warcraftbuddy.actions.v1.BuddyActions/Status
+packets:
+  SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_LEARNED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_REMOVED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_GO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_FAILURE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout

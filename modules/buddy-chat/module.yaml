@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit SAY/PARTY chat, WAVE/BOW/CHEER emotes and cursor-based player chat polling; no automatic replies
+description: Explicit SAY/PARTY/WHISPER chat, WAVE/BOW/CHEER emotes and session-bound player chat polling; no automatic replies
 compose:
   file: compose.yaml
   service: module

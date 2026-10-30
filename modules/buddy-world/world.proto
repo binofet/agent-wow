@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package warcraftbuddy.world.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1";
+
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+// Read-only observations for the session character and fixed owner player 3.
+// Ages measure time since an actual observation, not a claim that an unchanged
+// stationary player disappeared. Positions are never predicted by this module.
+message PlayerState {
+  uint64 guid = 1;
+  bool present = 2;
+  bool map_known = 3;
+  uint32 map_id = 4;
+  bool position_known = 5;
+  float x = 6;
+  float y = 7;
+  float z = 8;
+  float orientation = 9;
+  uint64 position_age_ms = 10;
+  uint64 position_revision = 11;
+  bool movement_flags_known = 12;
+  uint32 movement_flags = 13;
+  uint32 extra_movement_flags = 14;
+  // Timestamp from this player's movement packet; not our session clock.
+  uint32 movement_time = 15;
+  bool health_known = 16;
+  uint32 health = 17;
+  uint32 max_health = 18;
+  bool power_known = 19;
+  uint32 power = 20;
+  uint32 max_power = 21;
+  uint32 power_type = 22;
+  bool unit_flags_known = 23;
+  uint32 unit_flags = 24;
+  bool alive_known = 25;
+  bool alive = 26;
+  uint64 vitals_age_ms = 27;
+  bool speeds_known = 28;
+  float walk_speed = 29;
+  float run_speed = 30;
+  uint64 observation_age_ms = 31;
+  uint32 player_flags = 32;
+  uint32 dynamic_flags = 33;
+}
+
+message SnapshotRequest {}
+message SnapshotResponse {
+  PlayerState self = 1;
+  PlayerState owner = 2;
+  uint64 ignored_packets = 3;
+  uint64 malformed_packets = 4;
+  uint32 last_opcode = 5;
+  // Fixed diagnostic strings only; no packet payloads or player text.
+  string last_parse_error = 6;
+  uint64 observed_packets = 7;
+}
+
+service BuddyWorld {
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+}

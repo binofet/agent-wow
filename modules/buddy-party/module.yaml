@@ -1,0 +1,22 @@
+api_version: 1
+enabled: true
+description: Explicit invitation decisions and server-observed party state; no automatic accepts
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  state: /warcraftbuddy.party.v1.BuddyParty/State
+  poll: /warcraftbuddy.party.v1.BuddyParty/State
+  accept: /warcraftbuddy.party.v1.BuddyParty/Accept
+  decline: /warcraftbuddy.party.v1.BuddyParty/Decline
+  invite: /warcraftbuddy.party.v1.BuddyParty/Invite
+  leave: /warcraftbuddy.party.v1.BuddyParty/Leave
+packets:
+  SMSG_GROUP_INVITE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  SMSG_GROUP_LIST: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  SMSG_GROUP_DECLINE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  SMSG_GROUP_DESTROYED: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  SMSG_GROUP_UNINVITE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  SMSG_PARTY_COMMAND_RESULT: /warcraftbuddy.party.v1.BuddyParty/OnPacket

@@ -1,0 +1,37 @@
+syntax = "proto3";
+package warcraftbuddy.actions.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message ToggleRequest { bool enabled = 1; }
+message State {
+  bool following = 1;
+  bool healing = 2;
+  bool moving = 3;
+  bool known_lesser_heal = 4;
+  bool cast_pending = 5;
+  string reason = 6;
+  // Observation of transport writes is not server movement/healing acceptance.
+  uint64 transport_writes = 7;
+  uint64 heal_attempts = 8;
+  uint64 server_cast_starts = 9;
+  uint64 server_cast_go = 10;
+  uint32 last_cast_failure = 11;
+  uint64 malformed_packets = 12;
+  uint64 follow_lease_remaining_ms = 13;
+  uint64 healing_lease_remaining_ms = 14;
+  // No collision, pathfinding, height-map or local line-of-sight query exists.
+  string limitation = 15;
+  // A failed movement-stop write blocks further movement/healing until an
+  // explicit stop succeeds or a new authoritative stopped position is seen.
+  bool motion_unconfirmed = 16;
+}
+service BuddyActions {
+  rpc Follow(ToggleRequest) returns (State);
+  rpc Healing(ToggleRequest) returns (State);
+  rpc HealOnce(google.protobuf.Empty) returns (State);
+  rpc Status(google.protobuf.Empty) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

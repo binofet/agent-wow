@@ -46,7 +46,7 @@ class FakeBrain:
         self.histories = []
         self.reply = reply or {"text": "Hello, Joel!", "emote": "WAVE"}
 
-    def generate(self, history):
+    def generate(self, history, control_state=None):
         self.histories.append(list(history))
         if isinstance(self.reply, Exception):
             raise self.reply
@@ -64,7 +64,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(loop.cursor, 1)
         self.assertTrue(all(method == "buddy-chat.poll" for method, _ in rpc.calls))
 
-    def test_only_joel_plain_public_chat_triggers_one_reply_per_burst(self):
+    def test_only_joel_plain_chat_triggers_one_reply_per_burst(self):
         entries = [message(1, sender=99), message(2, self=True),
                    message(3, channel="WHISPER", text="Private"),
                    message(4, text=".server shutdown"), message(5, text="Hi!"),
@@ -90,6 +90,56 @@ class ConversationTests(unittest.TestCase):
             loop.tick()
         self.assertEqual([call[1]["channel"] for call in rpc.calls if call[0] == "buddy-chat.send"], ["PARTY", "SAY"])
         self.assertNotIn("Party secret", json.dumps(brain.histories[1]))
+
+    def test_whisper_reply_stays_private_and_inform_never_triggers(self):
+        rpc = FakeRPC([poll(sessionId="one"), poll([message(1, "Private", channel="WHISPER")]), poll(latest=1, sessionId="one"),
+                       poll([message(2, "Private echo", channel="WHISPER_INFORM", self=True),
+                             message(3, "Public", channel="SAY")]), poll(latest=3, sessionId="one")])
+        brain = FakeBrain({"text": "Understood.", "emote": "NONE"})
+        loop = converse.Conversation(rpc, brain)
+        for _ in range(3):
+            loop.tick()
+        sends = [params for method, params in rpc.calls if method == "buddy-chat.send"]
+        self.assertEqual(sends[0], {"channel": "WHISPER", "language": "COMMON", "text": "Understood.", "recipient": "Joel"})
+        self.assertEqual(sends[1]["channel"], "SAY")
+        self.assertNotIn("Private", json.dumps(brain.histories[1]))
+        self.assertEqual(len(brain.histories), 2)
+        self.assertEqual(rpc.calls[1][1]["sessionId"], "one")
+
+    def test_session_binding_is_sent_even_after_replacement_counter_catches_up(self):
+        rpc = FakeRPC([poll(latest=5, sessionId="old"), converse.CursorReset(),
+                       poll(latest=10, sessionId="replacement"), poll(latest=10)])
+        loop = converse.Conversation(rpc, FakeBrain())
+        for _ in range(4):
+            loop.tick()
+        polls = [params for method, params in rpc.calls if method == "buddy-chat.poll"]
+        self.assertEqual(polls[1]["sessionId"], "old")
+        self.assertEqual(polls[3]["sessionId"], "replacement")
+        self.assertEqual(loop.cursor, 10)
+
+    def test_body_restart_during_generation_drops_action_and_reply(self):
+        class Controls:
+            def __init__(self):
+                self.events, self.executed = [], []
+            def refresh(self):
+                pass
+            def context(self):
+                return {}
+            def execute(self, action):
+                self.executed.append(action)
+        rpc = FakeRPC([poll(sessionId="old"), poll([message(1, "Follow me")]), converse.CursorReset(),
+                       poll(latest=7, sessionId="new")])
+        controls = Controls()
+        brain = FakeBrain({"text": "Coming along", "emote": "NONE", "action": "FOLLOW"})
+        loop = converse.Conversation(rpc, brain, controls=controls)
+        loop.tick()
+        loop.tick()
+        self.assertEqual(controls.executed, [])
+        self.assertFalse(any(method == "buddy-chat.send" for method, _ in rpc.calls))
+        self.assertFalse(loop.initialized)
+        self.assertTrue(all(not history for history in loop.history.values()))
+        loop.tick()
+        self.assertEqual(loop.session_id, "new")
 
     def test_restart_baselines_without_replaying_old_messages(self):
         rpc = FakeRPC([poll(latest=50), converse.CursorReset(),
@@ -157,6 +207,124 @@ class ConversationTests(unittest.TestCase):
         with self.assertRaises(converse.Stopped):
             loop.tick()
         self.assertTrue(all(method == "buddy-chat.poll" for method, _ in rpc.calls))
+
+    def test_occasional_conversation_is_private_throttled_and_cannot_start_controls(self):
+        class Controls:
+            def __init__(self):
+                self.events, self.executed = ["server_confirmed_party_join"], []
+            def refresh(self):
+                pass
+            def context(self):
+                return {"observations": {"owner": {"present": True, "aliveKnown": True, "alive": True}}}
+            def execute(self, action):
+                self.executed.append(action)
+        clock, controls = [0], Controls()
+        rpc = FakeRPC([poll(), poll(), poll(), poll()])
+        brain = FakeBrain({"text": "What brought you to Northshire?", "emote": "NONE", "action": "FOLLOW"})
+        with patch.object(converse.time, "monotonic", side_effect=lambda: clock[0]):
+            loop = converse.Conversation(rpc, brain, controls=controls, banter_seconds=180)
+            loop.tick()
+            clock[0] = 180
+            loop.tick()
+            clock[0] = 181
+            loop.tick()
+            clock[0] = 360
+            loop.tick()
+        self.assertEqual(len(brain.histories), 2)
+        self.assertEqual(controls.executed, [])
+        sends = [params for method, params in rpc.calls if method == "buddy-chat.send"]
+        self.assertEqual(len(sends), 2)
+        self.assertTrue(all(params["channel"] == "WHISPER" and params["recipient"] == "Joel" for params in sends))
+
+    def test_absent_owner_never_triggers_a_model_call(self):
+        class Controls:
+            events = []
+            def refresh(self):
+                pass
+            def context(self):
+                return {"observations": {"owner": {"present": False}}, "party": {"known": True}}
+        clock, brain = [0], FakeBrain()
+        rpc = FakeRPC([poll(), poll(), poll()])
+        with patch.object(converse.time, "monotonic", side_effect=lambda: clock[0]):
+            loop = converse.Conversation(rpc, brain, controls=Controls(), banter_seconds=180)
+            loop.tick()
+            clock[0] = 180
+            loop.tick()
+            clock[0] = 1000
+            loop.tick()
+        self.assertEqual(brain.histories, [])
+
+    def test_private_history_is_not_used_for_initiated_party_chat(self):
+        class Controls:
+            events = []
+            def refresh(self):
+                pass
+            def context(self):
+                return {"party": {"known": True, "inGroup": True,
+                                  "members": [{"guid": "3", "online": True}]}}
+        clock, brain = [0], FakeBrain()
+        rpc = FakeRPC([poll(), poll()])
+        with patch.object(converse.time, "monotonic", side_effect=lambda: clock[0]):
+            loop = converse.Conversation(rpc, brain, controls=Controls(), banter_seconds=180)
+            loop.history["WHISPER"].append({"speaker": "Joel", "text": "private health details"})
+            loop.tick()
+            clock[0] = 180
+            loop.tick()
+        self.assertNotIn("private health details", json.dumps(brain.histories))
+        send = next(params for method, params in rpc.calls if method == "buddy-chat.send")
+        self.assertEqual(send["channel"], "PARTY")
+
+
+class ControlsTests(unittest.TestCase):
+    def test_only_exact_owner_invitation_is_accepted_once_even_after_ambiguous_failure(self):
+        class RPC:
+            def __init__(self):
+                self.calls, self.session, self.name = [], "one", "Joel"
+            def call(self, method, params):
+                self.calls.append((method, params))
+                if method == "buddy-party.state":
+                    return {"sessionId": self.session, "pendingInvite": {"sequence": "1", "inviterName": self.name}}
+                if method == "buddy-party.accept":
+                    raise converse.ConversationError("ambiguous write")
+                return {}
+        rpc = RPC()
+        controls = converse.BuddyControls(rpc)
+        controls.refresh()
+        controls.refresh()
+        rpc.name = "Otherplayer"
+        controls.refresh()
+        rpc.name, rpc.session = "Joel", "replacement"
+        controls.refresh()
+        accepted = [params for method, params in rpc.calls if method == "buddy-party.accept"]
+        self.assertEqual(accepted, [{"sessionId": "one", "inviteSequence": "1", "inviterName": "Joel"},
+                                    {"sessionId": "replacement", "inviteSequence": "1", "inviterName": "Joel"}])
+
+    def test_model_action_maps_only_to_fixed_owner_control(self):
+        rpc = FakeRPC([])
+        controls = converse.BuddyControls(rpc)
+        self.assertEqual(controls.execute("FOLLOW"), "That ability isn't ready yet.")
+        self.assertEqual(rpc.calls, [])
+        controls.actions_available = True
+        controls.execute("FOLLOW")
+        controls.execute("HEAL_ONCE")
+        self.assertEqual(rpc.calls, [("buddy-actions.follow", {"enabled": True}), ("buddy-actions.heal_once", {})])
+        with self.assertRaises(converse.ConversationError):
+            converse.validate_reply({"text": "hello", "emote": "NONE", "action": "session.logout"})
+
+    def test_blocked_heal_is_never_described_as_a_cast_attempt(self):
+        class RPC:
+            def __init__(self):
+                self.reason = "mana_unknown_or_insufficient"
+            def call(self, method, params):
+                return {"reason": self.reason}
+        rpc = RPC()
+        controls = converse.BuddyControls(rpc)
+        controls.actions_available = True
+        self.assertIn("mana", controls.execute("HEAL_ONCE"))
+        rpc.reason = "heal_transport_written_waiting_for_server"
+        self.assertEqual(controls.execute("HEAL_ONCE"), "I'm trying Lesser Heal now.")
+        rpc.reason = "unknown_blocker"
+        self.assertEqual(controls.execute("HEAL_ONCE"), "I couldn't start Lesser Heal yet.")
 
 
 class BoundaryTests(unittest.TestCase):
@@ -241,7 +409,7 @@ class BoundaryTests(unittest.TestCase):
                             "print(json.dumps({'type':'turn.completed'}))\n")
             fake.chmod(0o700)
             reply = converse.CodexBrain(fake, folder).generate([{"speaker": "Joel", "text": "Hi"}])
-            self.assertEqual(reply, {"text": "Hi, Joel!", "emote": "WAVE"})
+            self.assertEqual(reply, {"text": "Hi, Joel!", "emote": "WAVE", "action": "NONE"})
             self.assertEqual(list(folder.iterdir()), [fake])
             fake.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n")
             started = time.monotonic()

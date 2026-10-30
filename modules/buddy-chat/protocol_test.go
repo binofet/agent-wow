@@ -57,6 +57,24 @@ func TestEncodeChatRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestWhisperNamesAndWireLayout(t *testing.T) {
+	request := &chatv1.SendRequest{Channel: chatv1.Channel_WHISPER, Language: chatv1.Language_COMMON, Recipient: "Joel", Text: "hello"}
+	packet, err := encodeChat(request)
+	if err != nil || hex.EncodeToString(packet) != "07000000070000004a6f656c0068656c6c6f00" {
+		t.Fatalf("wrong whisper payload: %x, %v", packet, err)
+	}
+	for _, name := range []string{"", "J", "Joel\x00other", "Joel-Realm", "Joel Name", ".gm", "Jo3l", strings.Repeat("a", 13), string([]byte{0xff})} {
+		request.Recipient = name
+		if _, err := encodeChat(request); err == nil {
+			t.Errorf("accepted invalid recipient %q", name)
+		}
+	}
+	request.Recipient, request.Channel = "Joel", chatv1.Channel_SAY
+	if _, err := encodeChat(request); err == nil {
+		t.Fatal("silently accepted a whisper recipient on public SAY")
+	}
+}
+
 func TestDecodePlayerChatGoldenPacket(t *testing.T) {
 	// Literal SMSG_MESSAGECHAT fixture following BuildChatPacket's default
 	// branch: SAY, COMMON, sender 42, flags 0, receiver 0, six text bytes, tag 0.

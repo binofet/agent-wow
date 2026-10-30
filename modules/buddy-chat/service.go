@@ -2,6 +2,7 @@ package buddychat
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"sync"
 
@@ -27,6 +28,7 @@ type Service struct {
 	chatv1.UnimplementedBuddyChatServer
 	session   packetSender
 	selfGUID  uint64
+	sessionID string
 	mu        sync.Mutex
 	messages  [messageCapacity]*chatv1.Message
 	latest    uint64
@@ -35,7 +37,7 @@ type Service struct {
 }
 
 func NewService(session packetSender, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID}
+	return &Service{session: session, selfGUID: selfGUID, sessionID: rand.Text()}
 }
 
 func (s *Service) Send(ctx context.Context, request *chatv1.SendRequest) (*chatv1.SendResponse, error) {
@@ -92,7 +94,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	s.latest++
 	message.Sequence = s.latest
-	message.Self = message.SenderGuid == s.selfGUID
+	// WHISPER_INFORM describes the recipient, not the local sender, on the
+	// wire. Treat it as our outbound echo regardless of its sender GUID.
+	message.Self = message.SenderGuid == s.selfGUID || message.Channel == chatv1.Channel_WHISPER_INFORM
 	s.messages[(s.latest-1)%messageCapacity] = message
 	return &emptypb.Empty{}, nil
 }
@@ -113,12 +117,15 @@ func (s *Service) Poll(ctx context.Context, request *chatv1.PollRequest) (*chatv
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if request.SessionId != "" && request.SessionId != s.sessionID {
+		return nil, status.Error(codes.FailedPrecondition, "chat module session changed; restart polling with after_sequence 0")
+	}
 	if request.AfterSequence > s.latest {
 		return nil, status.Error(codes.InvalidArgument, "cursor is newer than this module session; restart polling with after_sequence 0")
 	}
 	result := &chatv1.PollResponse{
 		Messages: []*chatv1.Message{}, NextSequence: request.AfterSequence,
-		LatestSequence: s.latest, IgnoredPackets: s.ignored, MalformedPackets: s.malformed,
+		LatestSequence: s.latest, IgnoredPackets: s.ignored, MalformedPackets: s.malformed, SessionId: s.sessionID,
 	}
 	if s.latest == 0 {
 		return result, nil

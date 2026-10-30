@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	chatv1 "github.com/agent-wow/agent-wow/modules/buddy-chat/api"
@@ -19,14 +20,27 @@ var errUnsupportedChat = errors.New("unsupported chat")
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Handlers/ChatHandler.cpp
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Chat/Chat.cpp#L250
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/shared/SharedDefines.h
-// Outbound: uint32 type, uint32 language, NUL-terminated message. Universal
+// Outbound: uint32 type, uint32 language, optional whisper recipient, message.
+// Both strings are NUL terminated. Universal
 // language is rejected by the server for ordinary client chat.
 func encodeChat(request *chatv1.SendRequest) ([]byte, error) {
 	if request == nil {
 		return nil, errors.New("send request is required")
 	}
-	if request.Channel != chatv1.Channel_SAY && request.Channel != chatv1.Channel_PARTY {
-		return nil, errors.New("send supports only SAY and PARTY")
+	if request.Channel != chatv1.Channel_SAY && request.Channel != chatv1.Channel_PARTY && request.Channel != chatv1.Channel_WHISPER {
+		return nil, errors.New("send supports only SAY, PARTY, and WHISPER")
+	}
+	if request.Channel == chatv1.Channel_WHISPER {
+		if len(request.Recipient) > 48 || utf8.RuneCountInString(request.Recipient) < 2 || utf8.RuneCountInString(request.Recipient) > 12 || !utf8.ValidString(request.Recipient) {
+			return nil, errors.New("whisper recipient must be a character name of 2–12 letters")
+		}
+		for _, c := range request.Recipient {
+			if !unicode.IsLetter(c) {
+				return nil, errors.New("whisper recipient must contain only letters")
+			}
+		}
+	} else if request.Recipient != "" {
+		return nil, errors.New("recipient is only valid for WHISPER")
 	}
 	if request.Language != chatv1.Language_COMMON && request.Language != chatv1.Language_ORCISH {
 		return nil, errors.New("choose COMMON or ORCISH explicitly; the character must know that language")
@@ -47,10 +61,19 @@ func encodeChat(request *chatv1.SendRequest) ([]byte, error) {
 			return nil, errors.New("text must be plain chat without NUL, control characters, or WoW markup (|)")
 		}
 	}
-	payload := make([]byte, 8+len(request.Text)+1)
+	size := 8 + len(request.Text) + 1
+	if request.Channel == chatv1.Channel_WHISPER {
+		size += len(request.Recipient) + 1
+	}
+	payload := make([]byte, size)
 	binary.LittleEndian.PutUint32(payload, uint32(request.Channel))
 	binary.LittleEndian.PutUint32(payload[4:], uint32(request.Language))
-	copy(payload[8:], request.Text)
+	offset := 8
+	if request.Channel == chatv1.Channel_WHISPER {
+		copy(payload[offset:], request.Recipient)
+		offset += len(request.Recipient) + 1
+	}
+	copy(payload[offset:], request.Text)
 	return payload, nil
 }
 
@@ -63,7 +86,7 @@ func decodeChat(payload []byte) (*chatv1.Message, error) {
 	}
 	channel := chatv1.Channel(payload[0])
 	switch channel {
-	case chatv1.Channel_SAY, chatv1.Channel_PARTY, chatv1.Channel_WHISPER, chatv1.Channel_PARTY_LEADER:
+	case chatv1.Channel_SAY, chatv1.Channel_PARTY, chatv1.Channel_WHISPER, chatv1.Channel_WHISPER_INFORM, chatv1.Channel_PARTY_LEADER:
 	default:
 		return nil, errUnsupportedChat
 	}

@@ -1,0 +1,51 @@
+api_version: 1
+enabled: true
+description: Read-only bounded positions and vitals for the companion and fixed owner player 3
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  snapshot: /warcraftbuddy.world.v1.BuddyWorld/Snapshot
+packets:
+  SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_TRANSFER_PENDING: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_COMPRESSED_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_DESTROY_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_POWER_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_TELEPORT_ACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_FORCE_MOVE_ROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_FORCE_MOVE_UNROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_FORCE_RUN_SPEED_CHANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_FORCE_WALK_SPEED_CHANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_MOVE_KNOCK_BACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_MONSTER_MOVE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_MONSTER_MOVE_TRANSPORT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_FORWARD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_BACKWARD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_STRAFE_LEFT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_STRAFE_RIGHT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP_STRAFE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_JUMP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_TURN_LEFT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_TURN_RIGHT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP_TURN: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_PITCH_UP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_PITCH_DOWN: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP_PITCH: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_SET_RUN_MODE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_SET_WALK_MODE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_TELEPORT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_FALL_LAND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_SWIM: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP_SWIM: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_SET_FACING: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_SET_PITCH: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_HEARTBEAT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_ASCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_STOP_ASCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  MSG_MOVE_START_DESCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

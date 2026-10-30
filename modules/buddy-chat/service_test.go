@@ -83,6 +83,36 @@ func TestServiceWriteFailureIsNotRetriedOrReportedAsDelivery(t *testing.T) {
 	}
 }
 
+func TestWhisperInformIsAlwaysAnOutboundEcho(t *testing.T) {
+	service := NewService(nil, 1)
+	// AzerothCore's WHISPER_INFORM deliberately identifies the recipient (Joel),
+	// so comparing only sender GUID would turn our own whisper into fresh input.
+	service.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: uint32(opcode.SMSGMessagechat), Payload: makePlayerChat(chatv1.Channel_WHISPER_INFORM, 3, 3, "private reply")})
+	service.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: uint32(opcode.SMSGMessagechat), Payload: makePlayerChat(chatv1.Channel_WHISPER, 3, 3, "new question")})
+	result, err := service.Poll(context.Background(), &chatv1.PollRequest{})
+	if err != nil || len(result.Messages) != 2 || !result.Messages[0].Self || result.Messages[1].Self {
+		t.Fatalf("whisper echo could cause a response loop: %v, %v", result, err)
+	}
+}
+
+func TestPollSessionBindingSurvivesCounterCatchup(t *testing.T) {
+	first, replacement := NewService(nil, 1), NewService(nil, 1)
+	old, _ := first.Poll(context.Background(), &chatv1.PollRequest{})
+	if old.SessionId == "" || old.SessionId == replacement.sessionID {
+		t.Fatal("poll sessions are not independently identified")
+	}
+	for range 3 {
+		replacement.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: uint32(opcode.SMSGMessagechat), Payload: makePlayerChat(chatv1.Channel_SAY, 3, 0, "new body")})
+	}
+	if _, err := replacement.Poll(context.Background(), &chatv1.PollRequest{SessionId: old.SessionId, AfterSequence: 1}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("stale cursor accepted after new ring caught up", err)
+	}
+	current, err := replacement.Poll(context.Background(), &chatv1.PollRequest{SessionId: replacement.sessionID, AfterSequence: 1})
+	if err != nil || current.SessionId != replacement.sessionID || len(current.Messages) != 2 {
+		t.Fatalf("valid session binding rejected: %v, %v", current, err)
+	}
+}
+
 func TestServiceMalformedPacketsDoNotBreakPolling(t *testing.T) {
 	service := NewService(nil, 42)
 	for _, packet := range []*modv1.WorldPacket{

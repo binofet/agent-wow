@@ -6,12 +6,13 @@ option go_package = "github.com/agent-wow/agent-wow/modules/buddy-chat/api;chatv
 import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 
-// Values match WoW 3.3.5a ChatMsg. Only SAY and PARTY can be sent.
+// Values match WoW 3.3.5a ChatMsg. WHISPER_INFORM is receive-only.
 enum Channel {
   CHANNEL_UNSPECIFIED = 0;
   SAY = 1;
   PARTY = 2;
   WHISPER = 7;
+  WHISPER_INFORM = 9;
   PARTY_LEADER = 51;
 }
 
@@ -42,6 +43,8 @@ message SendRequest {
   Language language = 2;
   // Plain UTF-8 text, 1–255 bytes; no controls, WoW markup, or .command/!command.
   string text = 3;
+  // Required only for WHISPER. A plain character name, never a command/channel.
+  string recipient = 4;
 }
 
 message SendResponse {
@@ -54,6 +57,9 @@ message PollRequest {
   uint64 after_sequence = 1;
   // 0 means 50; maximum 256. Polling does not remove messages.
   uint32 limit = 2;
+  // Optional binding to the previously observed module session. A mismatch
+  // rejects the cursor even when the new session has already caught up to it.
+  string session_id = 3;
 }
 
 message Message {
@@ -79,6 +85,7 @@ message PollResponse {
   bool cursor_lost = 5;
   uint64 ignored_packets = 6;
   uint64 malformed_packets = 7;
+  string session_id = 8;
 }
 
 service BuddyChat {
