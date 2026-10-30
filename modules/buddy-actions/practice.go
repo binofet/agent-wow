@@ -106,17 +106,43 @@ func eligiblePracticeWolf(c *worldv1.CreatureState) bool {
 	return c != nil && c.Guid>>48 == 0xf130 && c.Entry == 299 && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level == 1 && c.HealthKnown && c.MaxHealth > 0 && c.Health > 0 && c.AliveKnown && c.Alive && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0
 }
 
+// A previously selected target may bypass discovery truncation, using the same
+// cached server observation. Missing observations never authorize a new pull.
+func practiceTargetObservation(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureState {
+	if guid == 0 || w == nil || w.Self == nil || !w.Self.MapKnown {
+		return nil
+	}
+	target := w.RequestedCreature
+	if target == nil {
+		// An older world module can still expose the target in its normal list.
+		if len(w.NearbyCreatures) > 32 {
+			return nil
+		}
+		for _, c := range w.NearbyCreatures {
+			if c != nil && c.Guid == guid {
+				target = c
+				break
+			}
+		}
+	}
+	if target == nil || target.Guid != guid || !target.Present || !target.MapKnown || target.MapId != w.Self.MapId {
+		return nil
+	}
+	return target
+}
+
 func (s *Service) practiceTickLocked(ctx context.Context) {
 	if !s.now().Before(s.practiceUntil) {
 		s.stopPracticeLocked(ctx, "goal_expired")
 		return
 	}
-	w, err := s.snapshot(ctx)
+	w, err := s.snapshot(ctx, s.practiceTarget)
 	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
 	}
 	self := w.Self
+	target := practiceTargetObservation(w, s.practiceTarget)
 	active33, incomplete33 := ownWolfQuest(w)
 	questNeeded := incomplete33 && self.Level >= 1 && self.Level <= 5
 	xpNeeded := !active33 && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
@@ -126,11 +152,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	finishing := false
 	if !questNeeded && !xpNeeded {
 		if s.practicePullStarted && self.UnitFlags&0x80000 != 0 && len(w.NearbyCreatures) <= 32 {
-			for _, c := range w.NearbyCreatures {
-				if eligiblePracticeWolf(c) && c.Guid == s.practiceTarget && c.AttackVictimKnown && c.AttackVictimGuid == s.selfGUID && c.AttackAgeMs <= 30000 {
-					finishing = true
-				}
-			}
+			finishing = eligiblePracticeWolf(target) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 		}
 		if !finishing {
 			why := "level_two_observed"
@@ -156,6 +178,10 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 				s.state.PracticePhase = phase
 			}
 		}()
+	}
+	if s.practiceTarget != 0 && target == nil {
+		s.stopPracticeLocked(ctx, "selected_target_observation_unavailable")
+		return
 	}
 	if !questNeeded && !xpNeeded && !finishing || !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !s.refreshPositionLocked(w) || !northshire(s.pos) || s.state.MotionUnconfirmed {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
@@ -185,7 +211,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.state.PracticePhase = "verifying_equipped_weapon"
 		return
 	}
-	var target *worldv1.CreatureState
 	if len(w.NearbyCreatures) > 32 {
 		s.stopPracticeLocked(ctx, "creature_observations_invalid")
 		return
@@ -194,12 +219,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		if c != nil && c.Entry != 299 && c.Present && c.AliveKnown && c.Alive && c.AttackVictimKnown && c.AttackVictimGuid == s.selfGUID && c.AttackAgeMs <= 30000 {
 			s.stopPracticeLocked(ctx, "unexpected_hostile_requires_help")
 			return
-		}
-	}
-	for _, c := range w.NearbyCreatures {
-		if c != nil && c.Guid == s.practiceTarget {
-			target = c
-			break
 		}
 	}
 	if s.practiceTarget != 0 && target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {

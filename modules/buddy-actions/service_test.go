@@ -29,6 +29,8 @@ type fakeSession struct {
 	party                             *partyv1.StateResponse
 	packets                           []*modv1.SendPacketRequest
 	clock                             uint32
+	lookupCreatures                   map[uint64]*worldv1.CreatureState
+	lookups                           []uint64
 	failSend, failClock, failSnapshot bool
 }
 
@@ -69,7 +71,21 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 	if r.Module != "buddy-world" || r.Method != "snapshot" || !r.Request.MessageIs(&worldv1.SnapshotRequest{}) {
 		return nil, errors.New("wrong module invocation")
 	}
-	value, _ := anypb.New(f.world)
+	query := &worldv1.SnapshotRequest{}
+	if err := r.Request.UnmarshalTo(query); err != nil {
+		return nil, err
+	}
+	world := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+	if query.CreatureGuid != 0 {
+		f.lookups = append(f.lookups, query.CreatureGuid)
+		if f.lookupCreatures != nil {
+			world.RequestedCreature = nil
+			if c := f.lookupCreatures[query.CreatureGuid]; c != nil {
+				world.RequestedCreature = proto.Clone(c).(*worldv1.CreatureState)
+			}
+		}
+	}
+	value, _ := anypb.New(world)
 	return &modv1.InvokeModuleResponse{Result: value}, ctx.Err()
 }
 func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {

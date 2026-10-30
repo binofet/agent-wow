@@ -71,7 +71,11 @@ message EquippedWeapon {
   uint32 max_durability = 7;
 }
 
-message SnapshotRequest {}
+message SnapshotRequest {
+  // Optional exact lookup in the existing creature cache; zero requests none.
+  // This never changes the cache, discovery ranking or observed positions.
+  uint64 creature_guid = 1;
+}
 
 message GameObjectState {
   uint64 guid = 1;
@@ -215,6 +219,9 @@ message SnapshotResponse {
   repeated GameObjectState mailboxes = 21;
   // At most32 present Milly's Harvest entry161557/type3 quest chests.
   repeated GameObjectState quest_objects = 22;
+  // The requested creature, if still present in the bounded observation cache.
+  // Independent of nearby_creatures truncation; retains actual observation ages.
+  CreatureState requested_creature = 23;
 }
 
 service BuddyWorld {

@@ -443,11 +443,15 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-func (s *Service) snapshot(ctx context.Context) (*worldv1.SnapshotResponse, error) {
+func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
 	if s.session == nil {
 		return nil, errors.New("session callback unavailable")
 	}
-	request, err := anypb.New(&worldv1.SnapshotRequest{})
+	query := &worldv1.SnapshotRequest{}
+	if len(creatureGUID) != 0 {
+		query.CreatureGuid = creatureGUID[0]
+	}
+	request, err := anypb.New(query)
 	if err != nil {
 		return nil, err
 	}

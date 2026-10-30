@@ -540,7 +540,10 @@ func (x *EquippedWeapon) GetMaxDurability() uint32 {
 }
 
 type SnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Optional exact lookup in the existing creature cache; zero requests none.
+	// This never changes the cache, discovery ranking or observed positions.
+	CreatureGuid  uint64 `protobuf:"varint,1,opt,name=creature_guid,json=creatureGuid,proto3" json:"creature_guid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -573,6 +576,13 @@ func (x *SnapshotRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SnapshotRequest.ProtoReflect.Descriptor instead.
 func (*SnapshotRequest) Descriptor() ([]byte, []int) {
 	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SnapshotRequest) GetCreatureGuid() uint64 {
+	if x != nil {
+		return x.CreatureGuid
+	}
+	return 0
 }
 
 type GameObjectState struct {
@@ -1463,9 +1473,12 @@ type SnapshotResponse struct {
 	// At most32 actual, present GAMEOBJECTs whose public type byte is MAILBOX19.
 	Mailboxes []*GameObjectState `protobuf:"bytes,21,rep,name=mailboxes,proto3" json:"mailboxes,omitempty"`
 	// At most32 present Milly's Harvest entry161557/type3 quest chests.
-	QuestObjects  []*GameObjectState `protobuf:"bytes,22,rep,name=quest_objects,json=questObjects,proto3" json:"quest_objects,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	QuestObjects []*GameObjectState `protobuf:"bytes,22,rep,name=quest_objects,json=questObjects,proto3" json:"quest_objects,omitempty"`
+	// The requested creature, if still present in the bounded observation cache.
+	// Independent of nearby_creatures truncation; retains actual observation ages.
+	RequestedCreature *CreatureState `protobuf:"bytes,23,opt,name=requested_creature,json=requestedCreature,proto3" json:"requested_creature,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -1652,6 +1665,13 @@ func (x *SnapshotResponse) GetQuestObjects() []*GameObjectState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetRequestedCreature() *CreatureState {
+	if x != nil {
+		return x.RequestedCreature
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -1727,8 +1747,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
-	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x11\n" +
-	"\x0fSnapshotRequest\"\xd4\x04\n" +
+	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"6\n" +
+	"\x0fSnapshotRequest\x12#\n" +
+	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\"\xd4\x04\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -1832,7 +1853,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
 	"stackCount\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xe9\t\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xbf\n" +
+	"\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -1858,7 +1880,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"selfCopper\x120\n" +
 	"\x14self_copper_revision\x18\x14 \x01(\x04R\x12selfCopperRevision\x12E\n" +
 	"\tmailboxes\x18\x15 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\tmailboxes\x12L\n" +
-	"\rquest_objects\x18\x16 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fquestObjects2\xb0\x01\n" +
+	"\rquest_objects\x18\x16 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fquestObjects\x12T\n" +
+	"\x12requested_creature\x18\x17 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\x11requestedCreature2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -1903,15 +1926,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	4,  // 9: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
 	3,  // 10: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
 	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
-	2,  // 12: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	9,  // 13: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	8,  // 14: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	10, // 15: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	14, // [14:16] is the sub-list for method output_type
-	12, // [12:14] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	4,  // 12: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 13: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	9,  // 14: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	8,  // 15: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	10, // 16: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	15, // [15:17] is the sub-list for method output_type
+	13, // [13:15] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

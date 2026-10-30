@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-‹2
+†3
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
@@ -103,8 +103,9 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"
-SnapshotRequest"Ô
+max_durability (RmaxDurability"6
+SnapshotRequest#
+creature_guid (RcreatureGuid"Ô
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -208,7 +209,8 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"é	
+metadata_known (RmetadataKnown"¿
+
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -234,7 +236,8 @@ lastOpcode(
 selfCopper0
 self_copper_revision (RselfCopperRevisionE
 	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxesL
-quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjects2°
+quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjectsT
+requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

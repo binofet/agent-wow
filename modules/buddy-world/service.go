@@ -11,6 +11,8 @@ import (
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -110,7 +112,11 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	return r
 }
 
-func (s *Service) Snapshot(context.Context, *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+	guid := request.GetCreatureGuid()
+	if guid != 0 && !creatureGUID(guid) {
+		return nil, status.Error(codes.InvalidArgument, "creature_guid must identify a creature or be zero")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -119,6 +125,9 @@ func (s *Service) Snapshot(context.Context, *worldv1.SnapshotRequest) (*worldv1.
 		r.Owner = snapshot(owner, now)
 	}
 	s.state.appendSnapshot(r, now)
+	if p := s.state.creatures[guid]; guid != 0 && p != nil && p.present && p.known[objectEntry] && p.fields[objectEntry] != 0 {
+		r.RequestedCreature = creatureSnapshot(p, &s.state, now)
+	}
 	return r, nil
 }
 
