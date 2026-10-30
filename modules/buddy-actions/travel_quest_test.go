@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,23 @@ func travelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *acti
 		t.Fatal(err)
 	}
 	return s, f, advance, &actionsv1.ApproachQuestRequest{Token: lease.Token, NpcGuid: approachCorpseGUID}
+}
+
+func TestNavigationFailureDiagnosticRetainsStageButBoundsAndRedactsPaths(t *testing.T) {
+	root := "/private/client-assets"
+	err := errors.New("navigation ground sample: " + root + "/maps: bad polygon\n" + strings.Repeat("x", 400))
+	got := navigationDiagnostic(err, root)
+	if !strings.Contains(got, "navigation ground sample") || !strings.Contains(got, "<client-data>/maps") || strings.Contains(got, root) || strings.ContainsAny(got, "\n\r\t") || len(got) > 240 {
+		t.Fatal(got)
+	}
+	s, _, _, r := travelRig(t)
+	s.planPath = func(context.Context, string, position, position) ([]position, error) {
+		return nil, errors.New("ground polygon height unavailable")
+	}
+	state, err := s.TravelQuest(context.Background(), r)
+	if err != nil || !strings.Contains(state.NavReason, "ground polygon height unavailable") || state.NavAvailable || state.Moving {
+		t.Fatal(state, err)
+	}
 }
 
 func TestQuestTravelFollowsMeshCornersAndStopsWithoutOwner(t *testing.T) {

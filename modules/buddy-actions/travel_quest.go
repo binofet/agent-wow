@@ -96,7 +96,7 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 	path, planErr := s.navigationPath(call, root, from, to)
 	s.mu.Lock()
 	if planErr != nil {
-		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, "complete_bounded_route_unavailable", "quest_travel_navigation_unavailable"
+		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "quest_travel_navigation_unavailable"
 		s.mu.Unlock()
 		return nil, nil
 	}

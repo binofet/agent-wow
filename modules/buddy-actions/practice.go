@@ -286,7 +286,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			}
 			path, err := s.navigationPath(ctx, s.navDataDir, s.pos, targetPosition)
 			if err != nil {
-				s.state.NavAvailable, s.state.NavReason = false, "practice_complete_route_unavailable"
+				s.state.NavAvailable, s.state.NavReason = false, navigationDiagnostic(err, s.navDataDir)
 				s.stopPracticeLocked(ctx, "navigation_unavailable")
 				return
 			}

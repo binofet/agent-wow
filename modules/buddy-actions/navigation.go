@@ -3,8 +3,10 @@ package buddyactions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -55,10 +57,37 @@ func (s *Service) navigationPath(ctx context.Context, root string, from, to posi
 		return nil, errors.New("client navigation data is unavailable")
 	}
 	path, err := s.planPath(ctx, root, from, to)
-	if err != nil || !validNavigationPath(path, from, to) {
-		return nil, errors.New("complete bounded client navigation route unavailable")
+	if err != nil {
+		return nil, fmt.Errorf("client navmesh planner: %w", err)
+	}
+	if !validNavigationPath(path, from, to) {
+		return nil, errors.New("client navmesh route failed controller endpoint, length or bounds validation")
 	}
 	return path, nil
+}
+
+// Only local planner errors reach this diagnostic. Redact the configured root,
+// remove control/non-ASCII text and cap output; never expose game packet data.
+func navigationDiagnostic(err error, root string) string {
+	if err == nil {
+		return "client_navmesh_failure_unknown"
+	}
+	message := err.Error()
+	if root != "" {
+		message = strings.ReplaceAll(message, root, "<client-data>")
+	}
+	var out strings.Builder
+	for _, r := range message {
+		if out.Len() >= 240 {
+			break
+		}
+		if r < 32 || r > 126 {
+			out.WriteByte(' ')
+		} else {
+			out.WriteByte(byte(r))
+		}
+	}
+	return out.String()
 }
 
 // The route was produced by the client navmesh. Each transport write advances

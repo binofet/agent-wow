@@ -313,7 +313,16 @@ func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
 	}
 	var height float32
 	if st := p.query.GetPolyHeight(ref, nearest[:], &height); detour.DtStatusFailed(st) {
-		return 0, 0, errors.New("ground polygon height is unavailable")
+		// Shared float32 portal vertices can pass the polygon containment
+		// check but miss all detail triangles by rounding at their boundary.
+		// Sample at most 1cm inside this same already ground-only polygon;
+		// never substitute terrain height or a different navigation layer.
+		if err := p.insetRayPoint(ref, &nearest); err != nil {
+			return 0, 0, err
+		}
+		if st := p.query.GetPolyHeight(ref, nearest[:], &height); detour.DtStatusFailed(st) {
+			return 0, 0, errors.New("ground polygon height is unavailable")
+		}
 	}
 	return ref, height, nil
 }

@@ -328,6 +328,13 @@ func TestPhysicalNorthshireRoutes(t *testing.T) {
 			t.Fatalf("questgiver-to-questgiver route: %v", err)
 		}
 	}
+	// Live starter-chain positions exposed a detail-triangle precision edge
+	// at (-8895.999,-140.8) on both verified routes to Eagan (entry196).
+	for _, from := range []Point{{-8945.6455, -132.26312, 83.96853}, {-8944.947, -132.723, 84.00795}} {
+		if _, err := Plan(dir, 0, from, Point{-8869.22, -163.237, 80.9719}); err != nil {
+			t.Fatalf("Eagan route: %v", err)
+		}
+	}
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)
