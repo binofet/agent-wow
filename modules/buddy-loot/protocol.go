@@ -78,3 +78,20 @@ func decodePush(p []byte) (itemPush, error) {
 	}
 	return r, nil
 }
+
+// EffectOpenLock sends LOOT_SKINNING6 for a chest. Keep ordinary corpse
+// decoder strict, and accept this type only for the bound harvest transaction.
+func decodeGatherWindow(p []byte) (lootWindow, error) {
+	if len(p) < 9 {
+		return lootWindow{}, errors.New("short gather window")
+	}
+	if p[8] == 0 {
+		return decodeWindow(p)
+	}
+	if p[8] != 6 {
+		return lootWindow{}, errors.New("unsupported gather loot type")
+	}
+	wire := append([]byte(nil), p...)
+	wire[8] = 1
+	return decodeWindow(wire)
+}

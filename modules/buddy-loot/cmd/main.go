@@ -29,8 +29,9 @@ func main() {
 }
 func run() error {
 	moduleSocket, sessionSocket := os.Getenv("AGENT_WOW_MODULE_SOCKET"), os.Getenv("AGENT_WOW_SESSION_SOCKET")
-	if moduleSocket == "" || sessionSocket == "" {
-		return errors.New("session-owned module/session sockets required")
+	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
+	if moduleSocket == "" || sessionSocket == "" || sessionID == "" {
+		return errors.New("session-owned module/session sockets and body session ID required")
 	}
 	self, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
 	if err != nil || self == 0 || self>>48 != 0 {
@@ -51,7 +52,7 @@ func run() error {
 		return err
 	}
 	defer connection.Close()
-	service := buddyloot.NewService(modv1.NewSessionClient(connection), self)
+	service := buddyloot.NewService(modv1.NewSessionClient(connection), self, sessionID)
 	server := grpc.NewServer()
 	lootv1.RegisterBuddyLootServer(server, service)
 	readiness := health.NewServer()

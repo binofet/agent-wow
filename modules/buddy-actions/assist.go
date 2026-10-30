@@ -37,7 +37,8 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 	if kind := target.Guid >> 48; kind != 0xf130 && kind != 0xf150 {
 		return fail("assist_requires_creature_target")
 	}
-	if !target.AttackVictimKnown || (target.AttackVictimGuid != ownerGUID && target.AttackVictimGuid != s.selfGUID) || target.AttackAgeMs > 30000 || self.UnitFlags&0x80000 == 0 && owner.UnitFlags&0x80000 == 0 {
+	partyAttackStarted := target.AttackVictimGuid != ownerGUID && target.AttackVictimGuid != s.selfGUID && target.AttackAgeMs <= 5000
+	if !target.AttackVictimKnown || !s.defendsVictimLocked(ctx, target.AttackVictimGuid) || target.AttackAgeMs > 30000 || self.UnitFlags&0x80000 == 0 && owner.UnitFlags&0x80000 == 0 && !partyAttackStarted {
 		return fail("assist_requires_enemy_attacking_companions")
 	}
 	if target.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || target.UnitFlags_2&1 != 0 || target.DynamicFlags&0x20 != 0 {

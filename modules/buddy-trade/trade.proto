@@ -37,6 +37,27 @@ message State {
   bool copper_known = 20;
   uint32 copper = 21;
   uint64 copper_revision = 22;
+  bool junk_disposal_enabled = 23;
+  JunkDisposal last_junk_disposal = 24;
+  uint64 junk_stacks_destroyed = 25;
+  string junk_reason = 26;
+}
+message JunkDisposal {
+  uint32 backpack_slot = 1;
+  uint64 item_guid = 2;
+  uint32 entry = 3;
+  uint32 count = 4;
+  string name = 5;
+  string status = 6;
+  uint64 backpack_revision = 7;
+}
+message JunkToggle { bool enabled = 1; }
+message JunkRequest {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 backpack_revision = 3;
+  uint32 backpack_slot = 4;
+  uint64 expected_item_guid = 5;
 }
 message BoundRequest { string session_id = 1; uint64 revision = 2; }
 message ItemRequest {
@@ -54,6 +75,8 @@ service BuddyTrade {
   rpc OfferItem(ItemRequest) returns (State);
   rpc OfferGold(GoldRequest) returns (State);
   rpc Cancel(BoundRequest) returns (State);
+  rpc JunkDisposal(JunkToggle) returns (State);
+  rpc DestroyJunk(JunkRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

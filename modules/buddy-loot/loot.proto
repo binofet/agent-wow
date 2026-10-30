@@ -5,6 +5,34 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 message EnableRequest { bool enabled = 1; }
 message ItemReceipt { uint32 item_id = 1; uint32 count = 2; uint32 loot_slot = 3; }
+
+enum GatherStatus {
+  GATHER_NONE = 0;
+  GATHER_REQUESTED = 1;
+  GATHER_ITEM_STORED = 2;
+  GATHER_CONFIRMED = 3;
+  GATHER_SERVER_REJECTED = 4;
+  GATHER_UNCONFIRMED = 5;
+}
+message GatherReceipt {
+  uint64 id = 1;
+  uint64 object_guid = 2;
+  uint32 object_entry = 3;
+  uint32 quest_id = 4;
+  uint32 item_id = 5;
+  uint32 count = 6;
+  GatherStatus status = 7;
+  bool opening_transport_written = 8;
+  bool loot_window_observed = 9;
+  bool item_push_observed = 10;
+  bool slot_removed = 11;
+  bool release_observed = 12;
+  uint64 baseline_quest_log_revision = 13;
+  uint64 observed_quest_log_revision = 14;
+  bool own_quest_complete_observed = 15;
+  string reason = 16;
+}
+
 message State {
   bool enabled = 1;
   string phase = 2;
@@ -23,6 +51,10 @@ message State {
   uint64 malformed_packets = 14;
   repeated ItemReceipt recent_items = 15;
   uint64 enabled_remaining_ms = 16;
+  uint64 pending_game_object_guid = 17;
+  GatherReceipt last_gather = 18;
+  string session_id = 19;
+  bool inventory_paused = 20;
 }
 service BuddyLoot {
   rpc Enable(EnableRequest) returns (State);

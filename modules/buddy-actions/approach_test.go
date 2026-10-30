@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -110,5 +111,126 @@ func TestLootApproachLateCallStopsWithoutLeapAndCorrectionRebases(t *testing.T) 
 		if correction && x != 100 || !correction && x != 0 {
 			t.Fatalf("stale STOP x%v", x)
 		}
+	}
+}
+
+func navLootRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachLootRequest) {
+	t.Helper()
+	s, f, advance, r := approachRig(t)
+	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8933, -136, 81
+	f.world.Self.PositionRevision++
+	f.world.Owner.X, f.world.Owner.Y, f.world.Owner.Z = -8927, -136, 81
+	c := f.world.LootableCorpses[0]
+	c.X, c.Y, c.Z, c.PositionRevision = -8927, -136, 81, 1
+	s.SetNavigationDataDir("/fixture/client-data")
+	return s, f, advance, r
+}
+func TestLootNavigationPreservesCornersAndMonotonicSpeed(t *testing.T) {
+	s, f, advance, r := navLootRig(t)
+	calls := 0
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
+		calls++
+		return []position{a, {x: -8933, y: -134, z: 81}, {x: -8927, y: -134, z: 81}, b}, nil
+	}
+	out, e := s.ApproachLoot(context.Background(), r)
+	if e != nil || !out.Moving || !out.NavAvailable {
+		t.Fatal(out, e)
+	}
+	advance(200 * time.Millisecond)
+	out, e = s.ApproachLoot(context.Background(), r)
+	if e != nil || out.Position.X != -8933 || math.Abs(float64(out.Position.Y+134.6)) > .002 {
+		t.Fatal("cut first corner", out, e)
+	}
+	advance(200 * time.Millisecond)
+	out, e = s.ApproachLoot(context.Background(), r)
+	if e != nil || out.Position.X != -8933 || math.Abs(float64(out.Position.Y+134)) > .002 {
+		t.Fatal("cut bend", out, e)
+	}
+	if calls != 3 || len(f.packets) != 3 {
+		t.Fatal(calls, f.packets)
+	}
+	// Repeated same-time call cannot gain movement despite a freshly verified route.
+	before := len(f.packets)
+	_, _ = s.ApproachLoot(context.Background(), r)
+	if len(f.packets) != before {
+		t.Fatal("same-time call moved")
+	}
+}
+func TestLootNavigationFailureNeverFallsBackToStraightMovement(t *testing.T) {
+	for _, mode := range []string{"unknown_start", "excess_route", "changed_corpse", "changed_self", "expired_lease", "outside_region"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := navLootRig(t)
+			s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) {
+				switch mode {
+				case "unknown_start":
+					return nil, errors.New("start ground unavailable")
+				case "excess_route":
+					return []position{a, {x: a.x, y: a.y + 5, z: a.z}, b}, nil
+				case "changed_corpse":
+					f.world.LootableCorpses[0].PositionRevision++
+				case "changed_self":
+					f.world.Self.PositionRevision++
+					f.world.Self.X += .4
+				case "expired_lease":
+					advance(16 * time.Second)
+				}
+				return []position{a, b}, nil
+			}
+			if mode == "outside_region" {
+				f.world.Self.X = -9700
+				f.world.Owner.X = -9695
+				f.world.LootableCorpses[0].X = -9694
+			}
+			out, e := s.ApproachLoot(context.Background(), r)
+			if e == nil && out.Moving {
+				t.Fatal("unsafe route moved", out)
+			}
+			if len(f.packets) != 0 {
+				t.Fatal("unsafe route used direct fallback", f.packets)
+			}
+		})
+	}
+	s, f, advance, r := navLootRig(t)
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) { return []position{a, b}, nil }
+	_, _ = s.ApproachLoot(context.Background(), r)
+	advance(200 * time.Millisecond)
+	s.planPath = func(context.Context, string, position, position) ([]position, error) {
+		return nil, errors.New("start ground unavailable")
+	}
+	out, e := s.ApproachLoot(context.Background(), r)
+	if e != nil || out.Moving || len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
+		t.Fatal("failed route did not STOP", out, e, f.packets)
+	}
+}
+func TestLootNavigationPlannerDeadlineIsBounded(t *testing.T) {
+	s, f, _, r := navLootRig(t)
+	s.planPath = func(ctx context.Context, _ string, a, b position) ([]position, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	start := time.Now()
+	out, e := s.ApproachLoot(context.Background(), r)
+	if e != nil || out.Moving || out.NavAvailable || time.Since(start) > time.Second || len(f.packets) != 0 {
+		t.Fatal(out, e, time.Since(start))
+	}
+}
+
+func TestLootNavigationCancellationStopsOnlyItsOwnedMovement(t *testing.T) {
+	s, f, _, r := navLootRig(t)
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) { return []position{a, b}, nil }
+	_, _ = s.ApproachLoot(context.Background(), r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, e := s.ApproachLoot(ctx, r)
+	if e == nil || s.state.Moving || len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
+		t.Fatal("canceled owned approach continued", s.stateLocked(), e, f.packets)
+	}
+	s, f, _, r = navLootRig(t)
+	s.planPath = func(_ context.Context, _ string, a, b position) ([]position, error) { return []position{a, b}, nil }
+	_, _ = s.ApproachLoot(context.Background(), r)
+	s.interactionToken = "replacement-token"
+	_, _ = s.ApproachLoot(ctx, r)
+	if len(f.packets) != 1 {
+		t.Fatal("old canceled token stopped replacement lease")
 	}
 }

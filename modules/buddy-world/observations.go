@@ -223,7 +223,7 @@ func sortCreatures(items []*worldv1.CreatureState) {
 	})
 }
 func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time) {
-	s.appendMailboxes(r, now)
+	s.appendGameObjects(r, now)
 	owner := s.players[1]
 	target := uint64(owner.fields[0x12]) | uint64(owner.fields[0x13])<<32
 	if owner.present && owner.known[0x12] && owner.known[0x13] {

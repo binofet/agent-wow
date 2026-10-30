@@ -319,12 +319,12 @@ func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
 	s, f, advance := rig(t)
 	openItem(t, s)
 	failure := make([]byte, 18)
-	failure[0] = 50
+	failure[0] = 4 // Other inventory errors keep the existing fail-closed behavior.
 	emit(s, opcode.SMSGInventoryChangeFailure, failure)
 	s.Tick(context.Background())
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
 	s.Tick(context.Background())
-	if got := current(t, s); got.Enabled || got.LastInventoryError != 50 || got.ItemsStoredConfirmed != 0 {
+	if got := current(t, s); got.Enabled || got.LastInventoryError != 4 || got.ItemsStoredConfirmed != 0 {
 		t.Fatalf("inventory error %+v", got)
 	}
 	count := len(f.packets)
@@ -333,7 +333,7 @@ func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
 		s.Tick(context.Background())
 	}
 	if len(f.packets) != count {
-		t.Fatal("full inventory retried")
+		t.Fatal("inventory error retried")
 	}
 }
 

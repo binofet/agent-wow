@@ -81,6 +81,7 @@ type Service struct {
 	practiceQuestGoal                                        bool
 	formation                                                followFormation
 	followNav                                                followNavigation
+	meleeNav                                                 followNavigation
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -720,7 +721,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.autoTarget != 0 {
 		t := snapshot.OwnerTarget
-		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || (t.AttackVictimGuid != ownerGUID && t.AttackVictimGuid != s.selfGUID) {
+		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || !s.defendsVictimLocked(ctx, t.AttackVictimGuid) {
 			s.stopLocked(ctx)
 			s.stopAutoAttackLocked(ctx)
 			s.lastStep = now

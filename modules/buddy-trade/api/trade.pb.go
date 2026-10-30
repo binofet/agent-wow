@@ -117,24 +117,28 @@ type State struct {
 	AcceptTransportWritten bool                   `protobuf:"varint,6,opt,name=accept_transport_written,json=acceptTransportWritten,proto3" json:"accept_transport_written,omitempty"`
 	// Our requested offers are transport intentions; the server does not always
 	// echo them to their sender. Joel reviews them in his normal trade window.
-	OwnRequestedItems  []*Item `protobuf:"bytes,7,rep,name=own_requested_items,json=ownRequestedItems,proto3" json:"own_requested_items,omitempty"`
-	OwnRequestedCopper uint32  `protobuf:"varint,8,opt,name=own_requested_copper,json=ownRequestedCopper,proto3" json:"own_requested_copper,omitempty"`
-	PartnerItems       []*Item `protobuf:"bytes,9,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
-	PartnerCopper      uint32  `protobuf:"varint,10,opt,name=partner_copper,json=partnerCopper,proto3" json:"partner_copper,omitempty"`
-	LastServerStatus   uint32  `protobuf:"varint,11,opt,name=last_server_status,json=lastServerStatus,proto3" json:"last_server_status,omitempty"`
-	Reason             string  `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
-	CompletedTrades    uint64  `protobuf:"varint,13,opt,name=completed_trades,json=completedTrades,proto3" json:"completed_trades,omitempty"`
-	TransportWrites    uint64  `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	MalformedPackets   uint64  `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	BackpackKnown      bool    `protobuf:"varint,16,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
-	BackpackRevision   uint64  `protobuf:"varint,17,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	Backpack           []*Item `protobuf:"bytes,18,rep,name=backpack,proto3" json:"backpack,omitempty"`
-	Limitation         string  `protobuf:"bytes,19,opt,name=limitation,proto3" json:"limitation,omitempty"`
-	CopperKnown        bool    `protobuf:"varint,20,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
-	Copper             uint32  `protobuf:"varint,21,opt,name=copper,proto3" json:"copper,omitempty"`
-	CopperRevision     uint64  `protobuf:"varint,22,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	OwnRequestedItems   []*Item       `protobuf:"bytes,7,rep,name=own_requested_items,json=ownRequestedItems,proto3" json:"own_requested_items,omitempty"`
+	OwnRequestedCopper  uint32        `protobuf:"varint,8,opt,name=own_requested_copper,json=ownRequestedCopper,proto3" json:"own_requested_copper,omitempty"`
+	PartnerItems        []*Item       `protobuf:"bytes,9,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
+	PartnerCopper       uint32        `protobuf:"varint,10,opt,name=partner_copper,json=partnerCopper,proto3" json:"partner_copper,omitempty"`
+	LastServerStatus    uint32        `protobuf:"varint,11,opt,name=last_server_status,json=lastServerStatus,proto3" json:"last_server_status,omitempty"`
+	Reason              string        `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	CompletedTrades     uint64        `protobuf:"varint,13,opt,name=completed_trades,json=completedTrades,proto3" json:"completed_trades,omitempty"`
+	TransportWrites     uint64        `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	MalformedPackets    uint64        `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	BackpackKnown       bool          `protobuf:"varint,16,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
+	BackpackRevision    uint64        `protobuf:"varint,17,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	Backpack            []*Item       `protobuf:"bytes,18,rep,name=backpack,proto3" json:"backpack,omitempty"`
+	Limitation          string        `protobuf:"bytes,19,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	CopperKnown         bool          `protobuf:"varint,20,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
+	Copper              uint32        `protobuf:"varint,21,opt,name=copper,proto3" json:"copper,omitempty"`
+	CopperRevision      uint64        `protobuf:"varint,22,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
+	JunkDisposalEnabled bool          `protobuf:"varint,23,opt,name=junk_disposal_enabled,json=junkDisposalEnabled,proto3" json:"junk_disposal_enabled,omitempty"`
+	LastJunkDisposal    *JunkDisposal `protobuf:"bytes,24,opt,name=last_junk_disposal,json=lastJunkDisposal,proto3" json:"last_junk_disposal,omitempty"`
+	JunkStacksDestroyed uint64        `protobuf:"varint,25,opt,name=junk_stacks_destroyed,json=junkStacksDestroyed,proto3" json:"junk_stacks_destroyed,omitempty"`
+	JunkReason          string        `protobuf:"bytes,26,opt,name=junk_reason,json=junkReason,proto3" json:"junk_reason,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
@@ -321,6 +325,246 @@ func (x *State) GetCopperRevision() uint64 {
 	return 0
 }
 
+func (x *State) GetJunkDisposalEnabled() bool {
+	if x != nil {
+		return x.JunkDisposalEnabled
+	}
+	return false
+}
+
+func (x *State) GetLastJunkDisposal() *JunkDisposal {
+	if x != nil {
+		return x.LastJunkDisposal
+	}
+	return nil
+}
+
+func (x *State) GetJunkStacksDestroyed() uint64 {
+	if x != nil {
+		return x.JunkStacksDestroyed
+	}
+	return 0
+}
+
+func (x *State) GetJunkReason() string {
+	if x != nil {
+		return x.JunkReason
+	}
+	return ""
+}
+
+type JunkDisposal struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	BackpackSlot     uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ItemGuid         uint64                 `protobuf:"varint,2,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry            uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count            uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	Name             string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+	Status           string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	BackpackRevision uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *JunkDisposal) Reset() {
+	*x = JunkDisposal{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JunkDisposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JunkDisposal) ProtoMessage() {}
+
+func (x *JunkDisposal) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JunkDisposal.ProtoReflect.Descriptor instead.
+func (*JunkDisposal) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *JunkDisposal) GetBackpackSlot() uint32 {
+	if x != nil {
+		return x.BackpackSlot
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetItemGuid() uint64 {
+	if x != nil {
+		return x.ItemGuid
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *JunkDisposal) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *JunkDisposal) GetBackpackRevision() uint64 {
+	if x != nil {
+		return x.BackpackRevision
+	}
+	return 0
+}
+
+type JunkToggle struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JunkToggle) Reset() {
+	*x = JunkToggle{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JunkToggle) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JunkToggle) ProtoMessage() {}
+
+func (x *JunkToggle) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JunkToggle.ProtoReflect.Descriptor instead.
+func (*JunkToggle) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *JunkToggle) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type JunkRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision         uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	BackpackRevision uint64                 `protobuf:"varint,3,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	BackpackSlot     uint32                 `protobuf:"varint,4,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ExpectedItemGuid uint64                 `protobuf:"varint,5,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *JunkRequest) Reset() {
+	*x = JunkRequest{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JunkRequest) ProtoMessage() {}
+
+func (x *JunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JunkRequest.ProtoReflect.Descriptor instead.
+func (*JunkRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *JunkRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *JunkRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetBackpackRevision() uint64 {
+	if x != nil {
+		return x.BackpackRevision
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetBackpackSlot() uint32 {
+	if x != nil {
+		return x.BackpackSlot
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetExpectedItemGuid() uint64 {
+	if x != nil {
+		return x.ExpectedItemGuid
+	}
+	return 0
+}
+
 type BoundRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -331,7 +575,7 @@ type BoundRequest struct {
 
 func (x *BoundRequest) Reset() {
 	*x = BoundRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +587,7 @@ func (x *BoundRequest) String() string {
 func (*BoundRequest) ProtoMessage() {}
 
 func (x *BoundRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +600,7 @@ func (x *BoundRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BoundRequest.ProtoReflect.Descriptor instead.
 func (*BoundRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BoundRequest) GetSessionId() string {
@@ -387,7 +631,7 @@ type ItemRequest struct {
 
 func (x *ItemRequest) Reset() {
 	*x = ItemRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -399,7 +643,7 @@ func (x *ItemRequest) String() string {
 func (*ItemRequest) ProtoMessage() {}
 
 func (x *ItemRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -412,7 +656,7 @@ func (x *ItemRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ItemRequest.ProtoReflect.Descriptor instead.
 func (*ItemRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ItemRequest) GetSessionId() string {
@@ -468,7 +712,7 @@ type GoldRequest struct {
 
 func (x *GoldRequest) Reset() {
 	*x = GoldRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -480,7 +724,7 @@ func (x *GoldRequest) String() string {
 func (*GoldRequest) ProtoMessage() {}
 
 func (x *GoldRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -493,7 +737,7 @@ func (x *GoldRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GoldRequest.ProtoReflect.Descriptor instead.
 func (*GoldRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GoldRequest) GetSessionId() string {
@@ -528,7 +772,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1b\n" +
 	"\titem_guid\x18\x04 \x01(\x04R\bitemGuid\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xa5\a\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x82\t\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -555,7 +799,30 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"limitation\x12!\n" +
 	"\fcopper_known\x18\x14 \x01(\bR\vcopperKnown\x12\x16\n" +
 	"\x06copper\x18\x15 \x01(\rR\x06copper\x12'\n" +
-	"\x0fcopper_revision\x18\x16 \x01(\x04R\x0ecopperRevision\"I\n" +
+	"\x0fcopper_revision\x18\x16 \x01(\x04R\x0ecopperRevision\x122\n" +
+	"\x15junk_disposal_enabled\x18\x17 \x01(\bR\x13junkDisposalEnabled\x12R\n" +
+	"\x12last_junk_disposal\x18\x18 \x01(\v2$.warcraftbuddy.trade.v1.JunkDisposalR\x10lastJunkDisposal\x122\n" +
+	"\x15junk_stacks_destroyed\x18\x19 \x01(\x04R\x13junkStacksDestroyed\x12\x1f\n" +
+	"\vjunk_reason\x18\x1a \x01(\tR\n" +
+	"junkReason\"\xd5\x01\n" +
+	"\fJunkDisposal\x12#\n" +
+	"\rbackpack_slot\x18\x01 \x01(\rR\fbackpackSlot\x12\x1b\n" +
+	"\titem_guid\x18\x02 \x01(\x04R\bitemGuid\x12\x14\n" +
+	"\x05entry\x18\x03 \x01(\rR\x05entry\x12\x14\n" +
+	"\x05count\x18\x04 \x01(\rR\x05count\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\x12+\n" +
+	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\"&\n" +
+	"\n" +
+	"JunkToggle\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\"\xc8\x01\n" +
+	"\vJunkRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\x12+\n" +
+	"\x11backpack_revision\x18\x03 \x01(\x04R\x10backpackRevision\x12#\n" +
+	"\rbackpack_slot\x18\x04 \x01(\rR\fbackpackSlot\x12,\n" +
+	"\x12expected_item_guid\x18\x05 \x01(\x04R\x10expectedItemGuid\"I\n" +
 	"\fBoundRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -573,14 +840,16 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\x12\x16\n" +
-	"\x06copper\x18\x03 \x01(\rR\x06copper2\x92\x04\n" +
+	"\x06copper\x18\x03 \x01(\rR\x06copper2\xb8\x05\n" +
 	"\n" +
 	"BuddyTrade\x12A\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1d.warcraftbuddy.trade.v1.State\x12K\n" +
 	"\x04Open\x12$.warcraftbuddy.trade.v1.BoundRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12O\n" +
 	"\tOfferItem\x12#.warcraftbuddy.trade.v1.ItemRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12O\n" +
 	"\tOfferGold\x12#.warcraftbuddy.trade.v1.GoldRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12M\n" +
-	"\x06Cancel\x12$.warcraftbuddy.trade.v1.BoundRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12C\n" +
+	"\x06Cancel\x12$.warcraftbuddy.trade.v1.BoundRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12Q\n" +
+	"\fJunkDisposal\x12\".warcraftbuddy.trade.v1.JunkToggle\x1a\x1d.warcraftbuddy.trade.v1.State\x12Q\n" +
+	"\vDestroyJunk\x12#.warcraftbuddy.trade.v1.JunkRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-trade/api;tradev1b\x06proto3"
 
@@ -596,39 +865,47 @@ func file_modules_buddy_trade_trade_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_trade_trade_proto_rawDescData
 }
 
-var file_modules_buddy_trade_trade_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_modules_buddy_trade_trade_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_modules_buddy_trade_trade_proto_goTypes = []any{
 	(*Item)(nil),           // 0: warcraftbuddy.trade.v1.Item
 	(*State)(nil),          // 1: warcraftbuddy.trade.v1.State
-	(*BoundRequest)(nil),   // 2: warcraftbuddy.trade.v1.BoundRequest
-	(*ItemRequest)(nil),    // 3: warcraftbuddy.trade.v1.ItemRequest
-	(*GoldRequest)(nil),    // 4: warcraftbuddy.trade.v1.GoldRequest
-	(*emptypb.Empty)(nil),  // 5: google.protobuf.Empty
-	(*v1.WorldPacket)(nil), // 6: agentwow.module.v1.WorldPacket
+	(*JunkDisposal)(nil),   // 2: warcraftbuddy.trade.v1.JunkDisposal
+	(*JunkToggle)(nil),     // 3: warcraftbuddy.trade.v1.JunkToggle
+	(*JunkRequest)(nil),    // 4: warcraftbuddy.trade.v1.JunkRequest
+	(*BoundRequest)(nil),   // 5: warcraftbuddy.trade.v1.BoundRequest
+	(*ItemRequest)(nil),    // 6: warcraftbuddy.trade.v1.ItemRequest
+	(*GoldRequest)(nil),    // 7: warcraftbuddy.trade.v1.GoldRequest
+	(*emptypb.Empty)(nil),  // 8: google.protobuf.Empty
+	(*v1.WorldPacket)(nil), // 9: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_trade_trade_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.trade.v1.State.own_requested_items:type_name -> warcraftbuddy.trade.v1.Item
 	0,  // 1: warcraftbuddy.trade.v1.State.partner_items:type_name -> warcraftbuddy.trade.v1.Item
 	0,  // 2: warcraftbuddy.trade.v1.State.backpack:type_name -> warcraftbuddy.trade.v1.Item
-	5,  // 3: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
-	2,  // 4: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	3,  // 5: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
-	4,  // 6: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
-	2,  // 7: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	6,  // 8: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5,  // 9: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
-	1,  // 10: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 11: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 12: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 13: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 14: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
-	5,  // 15: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
-	5,  // 16: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	2,  // 3: warcraftbuddy.trade.v1.State.last_junk_disposal:type_name -> warcraftbuddy.trade.v1.JunkDisposal
+	8,  // 4: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
+	5,  // 5: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	6,  // 6: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
+	7,  // 7: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
+	5,  // 8: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	3,  // 9: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:input_type -> warcraftbuddy.trade.v1.JunkToggle
+	4,  // 10: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:input_type -> warcraftbuddy.trade.v1.JunkRequest
+	9,  // 11: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	8,  // 12: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
+	1,  // 13: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 14: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 15: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 16: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 17: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 18: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 19: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:output_type -> warcraftbuddy.trade.v1.State
+	8,  // 20: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
+	8,  // 21: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
+	13, // [13:22] is the sub-list for method output_type
+	4,  // [4:13] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_trade_trade_proto_init() }
@@ -642,7 +919,7 @@ func file_modules_buddy_trade_trade_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_trade_trade_proto_rawDesc), len(file_modules_buddy_trade_trade_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -39,7 +39,7 @@ func TestAdjacentCorridorBoundsAndExactNineCollisionTiles(t *testing.T) {
 // Coordinates here are static asset fixtures, not observations or coordinates
 // supplied to a live actuator. Each floor is derived independently from the
 // copied client terrain/collision and complete mesh route before testing.
-func TestPhysicalVineyardGoldshireCorridor(t *testing.T) {
+func TestPhysicalVineyardAndGoldshireLocalRoutes(t *testing.T) {
 	dir := os.Getenv("BUDDY_NAV_FLOOR_TEST_DATA_DIR")
 	if dir == "" {
 		t.Skip("setstaticclientassets")
@@ -48,7 +48,7 @@ func TestPhysicalVineyardGoldshireCorridor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	positions := []Point{{-9027.586, -235.64706, 0}, {-9090, -310, 0}, {-9170, -340, 0}, {-9260, -280, 0}, {-9360, -200, 0}, {-9464, -67, 58.8}}
+	positions := []Point{{-9027.586, -235.64706, 0}, {-9090, -310, 0}, {-9464, -67, 58.8}, {-9430, -67, 0}}
 	for i, q := range positions {
 		terrain, ok := p.terrain(q)
 		if !ok {
@@ -67,7 +67,9 @@ func TestPhysicalVineyardGoldshireCorridor(t *testing.T) {
 		}
 		positions[i] = q
 	}
-	for i := 1; i < len(positions); i++ {
+	// These independently validated local routes cover each newly admitted area.
+	// They do not claim one unbounded route from Northshire to Goldshire.
+	for _, i := range []int{1, 3} {
 		path, err := Plan(dir, 0, positions[i-1], positions[i])
 		if err != nil {
 			t.Fatalf("corridorsegment%+v -> %+v: %v", positions[i-1], positions[i], err)

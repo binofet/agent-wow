@@ -100,6 +100,26 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 // This is bounded assistance to an already hostile engaged target, never an
 // autonomous pull or a general navigator. Normal server range checks still run.
 func (s *Service) approachMeleeLocked(ctx context.Context, w *worldv1.SnapshotResponse, target position, d, stopDistance float64) bool {
+	if s.navDataDir != "" {
+		if w.Self.MapId != 0 || d > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
+			s.state.Reason = "rogue_target_outside_bounded_ground_approach"
+			s.stopLocked(ctx)
+			return false
+		}
+		if elapsed := s.now().Sub(s.lastStep); elapsed < 0 || elapsed > 600*time.Millisecond {
+			s.stopLocked(ctx)
+			s.state.Reason = "rogue_approach_tick_late"
+			return true
+		}
+		// A separate verified route survives the ordinary formation-cache reset
+		// after combat ticks. Failed navigation never falls through to a line.
+		s.followNav, s.meleeNav = s.meleeNav, s.followNav
+		defer func() { s.followNav, s.meleeNav = s.meleeNav, s.followNav }()
+		if s.followFormationStepLocked(ctx, target, stopDistance) {
+			s.state.Reason = "rogue_approaching_engaged_target_nav"
+		}
+		return true
+	}
 	if w.Self.MapId != 0 || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
 		s.state.Reason = "rogue_target_outside_bounded_ground_approach"
 		s.stopLocked(ctx)

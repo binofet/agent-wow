@@ -1,5 +1,5 @@
-// Package buddyloot collects only ordinary, server-permitted nearby corpse loot.
-// It never navigates, rolls, sells, destroys items or initiates mail/trades.
+// Package buddyloot collects server-permitted nearby corpse loot and the
+// fixed Milly harvest quest object. It never rolls, sells or destroys items.
 package buddyloot
 
 import (
@@ -42,12 +42,21 @@ type Service struct {
 	index                                      int
 	removed, pushed, moneySent, moneyCleared   bool
 	seen                                       map[uint64]bool
+	gatherSeen                                 map[uint64]bool
 	opened                                     bool
 	questWolf                                  bool
+	questGather                                bool
+	gatherCastCount                            byte
+	pausedSource                               uint64
+	pausedGather                               bool
 }
 
-func NewService(session sessionAPI, self uint64) *Service {
-	return &Service{session: session, selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}}
+func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
+	s := &Service{session: session, selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}}
+	if len(sessionID) > 0 {
+		s.state.SessionId = sessionID[0]
+	}
+	return s
 }
 func (s *Service) snapshotLocked() *lootv1.State {
 	r := proto.Clone(&s.state).(*lootv1.State)
@@ -72,6 +81,7 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 	if r.Enabled {
 		s.until = s.now().Add(4 * time.Hour)
 		s.seen = map[uint64]bool{}
+		s.gatherSeen = map[uint64]bool{}
 		if s.token == "" {
 			s.state.Phase = "idle"
 		}
@@ -132,8 +142,23 @@ func (s *Service) releaseLease(ctx context.Context) {
 }
 func (s *Service) finish(ctx context.Context) {
 	s.releaseLease(ctx)
-	s.state.LastCorpseGuid = s.state.PendingCorpseGuid
+	if s.questGather {
+		r := s.state.LastGather
+		if r != nil {
+			if r.ItemPushObserved && r.SlotRemoved && r.ReleaseObserved {
+				r.Status = lootv1.GatherStatus_GATHER_CONFIRMED
+				r.Reason = "server_item_slot_and_release_confirmed"
+			} else if r.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED {
+				r.Status = lootv1.GatherStatus_GATHER_UNCONFIRMED
+				r.Reason = s.state.Reason
+			}
+		}
+	} else {
+		s.state.LastCorpseGuid = s.state.PendingCorpseGuid
+	}
 	s.state.PendingCorpseGuid = 0
+	s.state.PendingGameObjectGuid = 0
+	s.questGather = false
 	s.items = nil
 	s.window = lootWindow{}
 	s.index = 0
@@ -147,13 +172,21 @@ func (s *Service) finish(ctx context.Context) {
 	s.nextTry = s.now().Add(time.Second)
 }
 func (s *Service) beginRelease(ctx context.Context) {
+	if s.questGather && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
+		packet := []byte{s.gatherCastCount}
+		packet = binary.LittleEndian.AppendUint32(packet, harvestOpenSpell)
+		if !s.write(ctx, opcode.CMSGCancelCast, packet) {
+			s.finish(ctx)
+			return
+		}
+	}
 	if !s.opened {
 		s.finish(ctx)
 		return
 	}
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
-	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.state.PendingCorpseGuid)) {
+	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.pendingGUID())) {
 		s.finish(ctx)
 	}
 }
@@ -162,8 +195,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	defer s.mu.Unlock()
 	s.closed = true
 	s.state.Enabled = false
-	if s.token != "" && s.opened && s.state.PendingCorpseGuid != 0 {
-		_ = s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.state.PendingCorpseGuid))
+	if s.token != "" && s.opened && s.pendingGUID() != 0 {
+		s.beginRelease(ctx)
 	}
 	s.finish(ctx)
 	s.state.Reason = "session_closing"
@@ -290,8 +323,18 @@ func (s *Service) openLocked(ctx context.Context) {
 	s.state.Phase = "waiting_open"
 	s.state.Reason = "loot_open_transport_pending"
 	s.deadline = s.now().Add(2 * time.Second)
+	if s.questGather {
+		s.deadline = s.now().Add(3 * time.Second)
+	}
 	s.opened = true // Reserve before an ambiguous transport write.
-	if !s.write(ctx, opcode.CMSGLoot, guidPacket(s.state.PendingCorpseGuid)) {
+	if s.questGather {
+		s.gatherCastCount++
+		if s.write(ctx, opcode.CMSGCastSpell, gatherOpenPacket(s.gatherCastCount, s.pendingGUID())) {
+			s.state.LastGather.OpeningTransportWritten = true
+		} else {
+			s.finish(ctx)
+		}
+	} else if !s.write(ctx, opcode.CMSGLoot, guidPacket(s.pendingGUID())) {
 		s.finish(ctx)
 	}
 }
@@ -305,7 +348,14 @@ func (s *Service) Tick(ctx context.Context) {
 	now := s.now()
 	if s.token != "" {
 		var observed *worldv1.SnapshotResponse
+		var currentActions *actionsv1.State
 		if s.state.Phase == "release_observed" {
+			if s.questGather {
+				w := &worldv1.SnapshotResponse{}
+				if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w) == nil {
+					s.observeGatherQuest(w)
+				}
+			}
 			s.finish(ctx)
 			return
 		}
@@ -334,7 +384,16 @@ func (s *Service) Tick(ctx context.Context) {
 				s.finish(ctx)
 				return
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) {
+			currentActions = active
+			if s.questGather {
+				s.observeGatherQuest(world)
+				if active.Moving || !harvestContext(world, active, s.selfGUID, false) {
+					s.state.Reason = "gather_character_or_quest_became_unsafe"
+					s.beginRelease(ctx)
+					return
+				}
+			}
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && !active.Moving && harvestContext(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -389,6 +448,16 @@ func (s *Service) Tick(ctx context.Context) {
 				s.state.Phase = "ready_item"
 			}
 		case "ready_item":
+			if s.questGather && s.index < len(s.items) && !gatherObjectCurrent(observed, currentActions, s.pendingGUID()) {
+				s.state.Reason = "harvest_object_no_longer_in_range"
+				s.beginRelease(ctx)
+				return
+			}
+			if s.questGather && !harvestQuest(observed, s.selfGUID, true) {
+				s.state.Reason = "harvest_quest_no_longer_incomplete"
+				s.beginRelease(ctx)
+				return
+			}
 			if s.index >= len(s.items) {
 				s.state.Reason = "ordinary_loot_cycle_released"
 				s.beginRelease(ctx)
@@ -428,6 +497,39 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "world_observations_unavailable"
 		return
 	}
+	if s.state.InventoryPaused {
+		if !ownKnownFreeSlot(world, s.selfGUID) {
+			s.state.Reason = "inventory_full_paused_until_known_free_slot"
+			return
+		}
+		s.state.InventoryPaused = false
+		if s.pausedGather {
+			delete(s.gatherSeen, s.pausedSource)
+		} else {
+			delete(s.seen, s.pausedSource)
+		}
+		s.pausedSource = 0
+		s.state.Reason = "inventory_space_observed_loot_resumed"
+	}
+	currentObjects := map[uint64]bool{}
+	for _, g := range world.QuestObjects {
+		if g != nil {
+			currentObjects[g.Guid] = true
+		}
+	}
+	for _, c := range world.LootableCorpses {
+		if c != nil {
+			currentObjects[c.Guid] = true
+		}
+	}
+	for guid := range s.seen {
+		if !currentObjects[guid] {
+			delete(s.seen, guid)
+		}
+	}
+	if s.tryGatherLocked(ctx, world) {
+		return
+	}
 	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
@@ -436,7 +538,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
-	current := map[uint64]bool{}
+	current := currentObjects
 	for _, c := range world.LootableCorpses {
 		if c != nil {
 			current[c.Guid] = true
@@ -545,19 +647,37 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 	p := r.Payload
 	bad := false
 	switch r.Opcode {
+	case opcode.SMSGCastFailed:
+		if len(p) < 6 || len(p) > 64 {
+			bad = true
+			break
+		}
+		if s.questGather && s.token != "" && s.state.Phase == "waiting_open" && p[0] == s.gatherCastCount && binary.LittleEndian.Uint32(p[1:]) == harvestOpenSpell {
+			s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
+			s.state.LastGather.Reason = "server_opening_cast_rejected"
+			s.state.Reason = "server_opening_cast_rejected"
+			s.state.Phase = "abort"
+		}
 	case opcode.SMSGLootResponse:
 		window, err := decodeWindow(p)
+		if s.questGather {
+			window, err = decodeGatherWindow(p)
+		}
 		if err != nil {
 			bad = true
 			break
 		}
-		if s.token == "" || window.guid != s.state.PendingCorpseGuid {
+		if s.token == "" || window.guid != s.pendingGUID() {
 			break
 		}
 		if window.failed {
 			s.state.LastLootError = uint32(window.errorCode)
 			s.state.Reason = "server_loot_error"
 			s.state.Phase = "abort"
+			if s.questGather {
+				s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
+				s.state.LastGather.Reason = "server_loot_error"
+			}
 			break
 		}
 		if s.state.Phase != "waiting_open" {
@@ -567,12 +687,23 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		s.items = nil
 		s.index = 0
 		s.state.LootWindowsObserved++
+		if s.questGather {
+			s.state.LastGather.LootWindowObserved = true
+		}
 		for _, item := range window.items {
+			if s.questGather && (item.id != harvestItemID || item.count > 8) {
+				continue
+			}
 			if item.slotType == 0 || item.slotType == 4 {
 				s.items = append(s.items, item)
 			}
 		}
-		if window.gold > 0 {
+		if s.questGather && len(s.items) != 1 {
+			s.state.Reason = "harvest_window_missing_unique_required_item"
+			s.state.Phase = "abort"
+			break
+		}
+		if window.gold > 0 && !s.questGather {
 			s.state.Phase = "ready_money"
 		} else {
 			s.state.Phase = "ready_item"
@@ -585,6 +716,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && p[0] == s.items[s.index].slot && !s.removed {
 			s.removed = true
 			s.state.LootSlotsRemoved++
+			if s.questGather {
+				s.state.LastGather.SlotRemoved = true
+			}
 		}
 	case opcode.SMSGItemPushResult:
 		push, err := decodePush(p)
@@ -595,6 +729,12 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && !s.pushed && push.player == s.selfGUID && push.received == 0 && push.created == 0 && push.id == s.items[s.index].id && push.count == s.items[s.index].count {
 			s.pushed = true
 			s.state.ItemsStoredConfirmed += uint64(push.count)
+			if s.questGather {
+				s.state.LastGather.ItemPushObserved = true
+				s.state.LastGather.Count = push.count
+				s.state.LastGather.Status = lootv1.GatherStatus_GATHER_ITEM_STORED
+				s.state.LastGather.Reason = "server_inventory_item_push_observed"
+			}
 			s.state.RecentItems = append(s.state.RecentItems, &lootv1.ItemReceipt{ItemId: push.id, Count: push.count, LootSlot: uint32(s.items[s.index].slot)})
 			if len(s.state.RecentItems) > 16 {
 				s.state.RecentItems = s.state.RecentItems[len(s.state.RecentItems)-16:]
@@ -617,9 +757,12 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 			break
 		}
-		if s.token != "" && binary.LittleEndian.Uint64(p) == s.state.PendingCorpseGuid {
+		if s.token != "" && binary.LittleEndian.Uint64(p) == s.pendingGUID() {
 			if p[8] == 1 {
 				s.state.ReleasesObserved++
+				if s.questGather {
+					s.state.LastGather.ReleaseObserved = true
+				}
 				s.state.Phase = "release_observed"
 			} else {
 				s.state.Enabled = false
@@ -634,8 +777,18 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		}
 		if p[0] != 0 && s.token != "" {
 			s.state.LastInventoryError = uint32(p[0])
-			s.state.Enabled = false
-			s.state.Reason = "inventory_error_automatic_loot_disabled"
+			if p[0] == 50 && s.state.Phase == "waiting_item" {
+				s.state.InventoryPaused = true
+				s.pausedSource, s.pausedGather = s.pendingGUID(), s.questGather
+				s.state.Reason = "inventory_full_paused_until_known_free_slot"
+			} else {
+				s.state.Enabled = false
+				s.state.Reason = "inventory_error_automatic_loot_disabled"
+			}
+			if s.questGather {
+				s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
+				s.state.LastGather.Reason = "server_inventory_rejected"
+			}
 			s.state.Phase = "abort"
 		}
 	}

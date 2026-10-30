@@ -3,7 +3,9 @@ package buddyactions
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"math"
+	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -15,15 +17,35 @@ import (
 // ApproachLoot advances at most one ordinary ground-movement step toward an
 // observed eligible corpse. Only the current loot interaction token permits it;
 // callers cannot select coordinates or an arbitrary living target.
-func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootRequest) (*actionsv1.State, error) {
+func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootRequest) (result *actionsv1.State, err error) {
 	if r == nil || r.Token == "" || r.CorpseGuid == 0 {
 		return nil, status.Error(codes.InvalidArgument, "loot token and corpse GUID are required")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, status.FromContextError(err).Err()
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// An owned approach already in motion still owes a STOP when its caller
+	// cancels. Use fresh bounded transport only for this exact active token.
+	defer func() {
+		if ctx.Err() != nil && !s.closed && s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) == 1 && s.state.Moving {
+			stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+			s.stopLocked(stop)
+			cancel()
+			result = s.stateLocked()
+		}
+	}()
+	if e := ctx.Err(); e != nil {
+		return nil, status.FromContextError(e).Err()
+	}
+	return s.approachLootStepLocked(ctx, r, nil)
+}
+
+type lootApproachNavigation struct {
+	path                         []position
+	start, target                position
+	selfRevision, targetRevision uint64
+}
+
+func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.ApproachLootRequest, route *lootApproachNavigation) (*actionsv1.State, error) {
 	s.expireInteractionLocked()
 	if s.closed || s.state.InteractionOwner != "loot" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "owned loot interaction is required")
@@ -34,7 +56,7 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 		}
 		return s.stateLocked(), nil
 	}
-	if s.state.CastPending || s.state.MotionUnconfirmed || s.interactionUntil.Sub(s.now()).Milliseconds() < 1000 {
+	if ctx.Err() != nil || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 || s.interactionUntil.Sub(s.now()).Milliseconds() < 1000 {
 		return pause("loot_approach_state_or_lease_unavailable")
 	}
 	w, err := s.snapshot(ctx)
@@ -75,6 +97,74 @@ func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootReq
 	d := distance(s.pos, target)
 	if !known || d > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		return pause("loot_approach_target_unknown_far_or_vertical")
+	}
+	if s.navDataDir != "" {
+		if !northshire(s.pos) || !northshire(target) {
+			return pause("loot_approach_outside_supported_navigation_area")
+		}
+		if route == nil {
+			planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+			path, err := s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+			if err == nil {
+				err = planCtx.Err()
+			}
+			cancel()
+			if err == nil && (len(path) > 256 || distance(s.pos, path[0])+routeRemaining(path[0], path, 1) > 12) {
+				err = errors.New("nearby loot route exceeds12yd or256points")
+			}
+			if err != nil {
+				s.state.NavAvailable = false
+				s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
+				return pause("loot_approach_navigation_unavailable")
+			}
+			route = &lootApproachNavigation{path: append([]position(nil), path...), start: s.pos, target: target, selfRevision: s.positionRevision, targetRevision: corpse.PositionRevision}
+			// Planning does not reserve a stale corpse, position, or lease.
+			// This second validation cannot recurse into another plan.
+			return s.approachLootStepLocked(ctx, r, route)
+		}
+		if route.selfRevision != s.positionRevision || distance(route.start, s.pos) > .05 || route.targetRevision != corpse.PositionRevision || distance(route.target, target) > .01 {
+			return pause("loot_approach_position_changed_after_planning")
+		}
+		s.state.NavAvailable = true
+		s.state.NavReason = "client_navmesh_route_verified"
+		if d <= 3.01 && routeRemaining(s.pos, route.path, 0) <= 3.01 {
+			return pause("loot_approach_within_distance")
+		}
+		index := 0
+		for index < len(route.path) && distance(s.pos, route.path[index]) <= .005 {
+			index++
+		}
+		if index == len(route.path) {
+			return pause("loot_approach_route_ended_outside_range")
+		}
+		p := s.pos
+		op := uint32(opcode.MSGMoveStartForward)
+		if s.state.Moving {
+			elapsed := s.now().Sub(s.posAt).Seconds()
+			if elapsed < 0 || elapsed > .6 {
+				return pause("loot_approach_tick_late")
+			}
+			if elapsed < .15 {
+				s.state.Reason = "loot_approach_waiting_for_next_step"
+				return s.stateLocked(), nil
+			}
+			var ok bool
+			p, index, ok = followPathStep(s.pos, route.path, index, 7*elapsed)
+			if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+.01 {
+				return pause("loot_approach_invalid_navigation_step")
+			}
+			op = opcode.MSGMoveHeartbeat
+		} else {
+			p.o = followFacing(p, route.path[index])
+		}
+		if !s.movementLocked(ctx, op, p, true) {
+			return s.stateLocked(), nil
+		}
+		if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, index) <= 3.01 {
+			return pause("loot_approach_within_distance")
+		}
+		s.state.Reason = "loot_approaching_client_navmesh_estimate"
+		return s.stateLocked(), nil
 	}
 	return s.groundApproachStepLocked(ctx, target, "loot"), nil
 }

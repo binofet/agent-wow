@@ -337,6 +337,7 @@ func FuzzObservationPackets(f *testing.F) {
 	f.Add(uint32(opcode.SMSGUpdateObject), npc)
 	mailbox, _ := hex.DecodeString(mailboxGolden)
 	f.Add(uint32(opcode.SMSGUpdateObject), mailbox)
+	f.Add(uint32(opcode.SMSGUpdateObject), gameObjectFixture(harvestGUID, map[int]uint32{objectEntry: 161557, gameObjectBytes: 3 << 8}))
 	f.Add(uint32(opcode.SMSGUpdateObject), deltaFixture(1, map[int]uint32{playerCoinage: 10000}))
 	f.Add(uint32(opcode.SMSGUpdateObject), deltaFixture(1, map[int]uint32{0x9e: 783, 0x172: 42, 0x173: 0x40000000}))
 	f.Add(uint32(opcode.SMSGUpdateObject), objectFixture(0x4000000000000042, 1, map[int]uint32{3: 159, 6: 1, 0xe: 2}))
@@ -349,7 +350,7 @@ func FuzzObservationPackets(f *testing.F) {
 		if r.Self.Guid != 1 || r.Owner.Guid != 3 {
 			t.Fatal("tracked identity changed")
 		}
-		if len(r.Mailboxes) > 32 || len(s.state.gameObjects) > maxGameObjects {
+		if len(r.Mailboxes) > 32 || len(r.QuestObjects) > 32 || len(s.state.gameObjects) > maxGameObjects {
 			t.Fatal("mailbox observation bounds exceeded")
 		}
 	})

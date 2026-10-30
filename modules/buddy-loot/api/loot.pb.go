@@ -23,6 +23,64 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type GatherStatus int32
+
+const (
+	GatherStatus_GATHER_NONE            GatherStatus = 0
+	GatherStatus_GATHER_REQUESTED       GatherStatus = 1
+	GatherStatus_GATHER_ITEM_STORED     GatherStatus = 2
+	GatherStatus_GATHER_CONFIRMED       GatherStatus = 3
+	GatherStatus_GATHER_SERVER_REJECTED GatherStatus = 4
+	GatherStatus_GATHER_UNCONFIRMED     GatherStatus = 5
+)
+
+// Enum value maps for GatherStatus.
+var (
+	GatherStatus_name = map[int32]string{
+		0: "GATHER_NONE",
+		1: "GATHER_REQUESTED",
+		2: "GATHER_ITEM_STORED",
+		3: "GATHER_CONFIRMED",
+		4: "GATHER_SERVER_REJECTED",
+		5: "GATHER_UNCONFIRMED",
+	}
+	GatherStatus_value = map[string]int32{
+		"GATHER_NONE":            0,
+		"GATHER_REQUESTED":       1,
+		"GATHER_ITEM_STORED":     2,
+		"GATHER_CONFIRMED":       3,
+		"GATHER_SERVER_REJECTED": 4,
+		"GATHER_UNCONFIRMED":     5,
+	}
+)
+
+func (x GatherStatus) Enum() *GatherStatus {
+	p := new(GatherStatus)
+	*p = x
+	return p
+}
+
+func (x GatherStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GatherStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_modules_buddy_loot_loot_proto_enumTypes[0].Descriptor()
+}
+
+func (GatherStatus) Type() protoreflect.EnumType {
+	return &file_modules_buddy_loot_loot_proto_enumTypes[0]
+}
+
+func (x GatherStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GatherStatus.Descriptor instead.
+func (GatherStatus) EnumDescriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{0}
+}
+
 type EnableRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -127,6 +185,170 @@ func (x *ItemReceipt) GetLootSlot() uint32 {
 	return 0
 }
 
+type GatherReceipt struct {
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	Id                       uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	ObjectGuid               uint64                 `protobuf:"varint,2,opt,name=object_guid,json=objectGuid,proto3" json:"object_guid,omitempty"`
+	ObjectEntry              uint32                 `protobuf:"varint,3,opt,name=object_entry,json=objectEntry,proto3" json:"object_entry,omitempty"`
+	QuestId                  uint32                 `protobuf:"varint,4,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	ItemId                   uint32                 `protobuf:"varint,5,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	Count                    uint32                 `protobuf:"varint,6,opt,name=count,proto3" json:"count,omitempty"`
+	Status                   GatherStatus           `protobuf:"varint,7,opt,name=status,proto3,enum=warcraftbuddy.loot.v1.GatherStatus" json:"status,omitempty"`
+	OpeningTransportWritten  bool                   `protobuf:"varint,8,opt,name=opening_transport_written,json=openingTransportWritten,proto3" json:"opening_transport_written,omitempty"`
+	LootWindowObserved       bool                   `protobuf:"varint,9,opt,name=loot_window_observed,json=lootWindowObserved,proto3" json:"loot_window_observed,omitempty"`
+	ItemPushObserved         bool                   `protobuf:"varint,10,opt,name=item_push_observed,json=itemPushObserved,proto3" json:"item_push_observed,omitempty"`
+	SlotRemoved              bool                   `protobuf:"varint,11,opt,name=slot_removed,json=slotRemoved,proto3" json:"slot_removed,omitempty"`
+	ReleaseObserved          bool                   `protobuf:"varint,12,opt,name=release_observed,json=releaseObserved,proto3" json:"release_observed,omitempty"`
+	BaselineQuestLogRevision uint64                 `protobuf:"varint,13,opt,name=baseline_quest_log_revision,json=baselineQuestLogRevision,proto3" json:"baseline_quest_log_revision,omitempty"`
+	ObservedQuestLogRevision uint64                 `protobuf:"varint,14,opt,name=observed_quest_log_revision,json=observedQuestLogRevision,proto3" json:"observed_quest_log_revision,omitempty"`
+	OwnQuestCompleteObserved bool                   `protobuf:"varint,15,opt,name=own_quest_complete_observed,json=ownQuestCompleteObserved,proto3" json:"own_quest_complete_observed,omitempty"`
+	Reason                   string                 `protobuf:"bytes,16,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *GatherReceipt) Reset() {
+	*x = GatherReceipt{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GatherReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GatherReceipt) ProtoMessage() {}
+
+func (x *GatherReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GatherReceipt.ProtoReflect.Descriptor instead.
+func (*GatherReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GatherReceipt) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetObjectGuid() uint64 {
+	if x != nil {
+		return x.ObjectGuid
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetObjectEntry() uint32 {
+	if x != nil {
+		return x.ObjectEntry
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetItemId() uint32 {
+	if x != nil {
+		return x.ItemId
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetStatus() GatherStatus {
+	if x != nil {
+		return x.Status
+	}
+	return GatherStatus_GATHER_NONE
+}
+
+func (x *GatherReceipt) GetOpeningTransportWritten() bool {
+	if x != nil {
+		return x.OpeningTransportWritten
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetLootWindowObserved() bool {
+	if x != nil {
+		return x.LootWindowObserved
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetItemPushObserved() bool {
+	if x != nil {
+		return x.ItemPushObserved
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetSlotRemoved() bool {
+	if x != nil {
+		return x.SlotRemoved
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetReleaseObserved() bool {
+	if x != nil {
+		return x.ReleaseObserved
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetBaselineQuestLogRevision() uint64 {
+	if x != nil {
+		return x.BaselineQuestLogRevision
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetObservedQuestLogRevision() uint64 {
+	if x != nil {
+		return x.ObservedQuestLogRevision
+	}
+	return 0
+}
+
+func (x *GatherReceipt) GetOwnQuestCompleteObserved() bool {
+	if x != nil {
+		return x.OwnQuestCompleteObserved
+	}
+	return false
+}
+
+func (x *GatherReceipt) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 type State struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Enabled             bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -137,22 +359,26 @@ type State struct {
 	TransportWrites     uint64                 `protobuf:"varint,6,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
 	LootWindowsObserved uint64                 `protobuf:"varint,7,opt,name=loot_windows_observed,json=lootWindowsObserved,proto3" json:"loot_windows_observed,omitempty"`
 	// Own SMSG_ITEM_PUSH_RESULT matched to our pending ordinary loot request.
-	ItemsStoredConfirmed uint64         `protobuf:"varint,8,opt,name=items_stored_confirmed,json=itemsStoredConfirmed,proto3" json:"items_stored_confirmed,omitempty"`
-	LootSlotsRemoved     uint64         `protobuf:"varint,9,opt,name=loot_slots_removed,json=lootSlotsRemoved,proto3" json:"loot_slots_removed,omitempty"`
-	MoneyAwardedNotified uint64         `protobuf:"varint,10,opt,name=money_awarded_notified,json=moneyAwardedNotified,proto3" json:"money_awarded_notified,omitempty"`
-	ReleasesObserved     uint64         `protobuf:"varint,11,opt,name=releases_observed,json=releasesObserved,proto3" json:"releases_observed,omitempty"`
-	LastLootError        uint32         `protobuf:"varint,12,opt,name=last_loot_error,json=lastLootError,proto3" json:"last_loot_error,omitempty"`
-	LastInventoryError   uint32         `protobuf:"varint,13,opt,name=last_inventory_error,json=lastInventoryError,proto3" json:"last_inventory_error,omitempty"`
-	MalformedPackets     uint64         `protobuf:"varint,14,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	RecentItems          []*ItemReceipt `protobuf:"bytes,15,rep,name=recent_items,json=recentItems,proto3" json:"recent_items,omitempty"`
-	EnabledRemainingMs   uint64         `protobuf:"varint,16,opt,name=enabled_remaining_ms,json=enabledRemainingMs,proto3" json:"enabled_remaining_ms,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	ItemsStoredConfirmed  uint64         `protobuf:"varint,8,opt,name=items_stored_confirmed,json=itemsStoredConfirmed,proto3" json:"items_stored_confirmed,omitempty"`
+	LootSlotsRemoved      uint64         `protobuf:"varint,9,opt,name=loot_slots_removed,json=lootSlotsRemoved,proto3" json:"loot_slots_removed,omitempty"`
+	MoneyAwardedNotified  uint64         `protobuf:"varint,10,opt,name=money_awarded_notified,json=moneyAwardedNotified,proto3" json:"money_awarded_notified,omitempty"`
+	ReleasesObserved      uint64         `protobuf:"varint,11,opt,name=releases_observed,json=releasesObserved,proto3" json:"releases_observed,omitempty"`
+	LastLootError         uint32         `protobuf:"varint,12,opt,name=last_loot_error,json=lastLootError,proto3" json:"last_loot_error,omitempty"`
+	LastInventoryError    uint32         `protobuf:"varint,13,opt,name=last_inventory_error,json=lastInventoryError,proto3" json:"last_inventory_error,omitempty"`
+	MalformedPackets      uint64         `protobuf:"varint,14,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	RecentItems           []*ItemReceipt `protobuf:"bytes,15,rep,name=recent_items,json=recentItems,proto3" json:"recent_items,omitempty"`
+	EnabledRemainingMs    uint64         `protobuf:"varint,16,opt,name=enabled_remaining_ms,json=enabledRemainingMs,proto3" json:"enabled_remaining_ms,omitempty"`
+	PendingGameObjectGuid uint64         `protobuf:"varint,17,opt,name=pending_game_object_guid,json=pendingGameObjectGuid,proto3" json:"pending_game_object_guid,omitempty"`
+	LastGather            *GatherReceipt `protobuf:"bytes,18,opt,name=last_gather,json=lastGather,proto3" json:"last_gather,omitempty"`
+	SessionId             string         `protobuf:"bytes,19,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	InventoryPaused       bool           `protobuf:"varint,20,opt,name=inventory_paused,json=inventoryPaused,proto3" json:"inventory_paused,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[2]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -164,7 +390,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[2]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -177,7 +403,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *State) GetEnabled() bool {
@@ -292,6 +518,34 @@ func (x *State) GetEnabledRemainingMs() uint64 {
 	return 0
 }
 
+func (x *State) GetPendingGameObjectGuid() uint64 {
+	if x != nil {
+		return x.PendingGameObjectGuid
+	}
+	return 0
+}
+
+func (x *State) GetLastGather() *GatherReceipt {
+	if x != nil {
+		return x.LastGather
+	}
+	return nil
+}
+
+func (x *State) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *State) GetInventoryPaused() bool {
+	if x != nil {
+		return x.InventoryPaused
+	}
+	return false
+}
+
 var File_modules_buddy_loot_loot_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_loot_loot_proto_rawDesc = "" +
@@ -302,7 +556,26 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\vItemReceipt\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\rR\x05count\x12\x1b\n" +
-	"\tloot_slot\x18\x03 \x01(\rR\blootSlot\"\xcf\x05\n" +
+	"\tloot_slot\x18\x03 \x01(\rR\blootSlot\"\xa9\x05\n" +
+	"\rGatherReceipt\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1f\n" +
+	"\vobject_guid\x18\x02 \x01(\x04R\n" +
+	"objectGuid\x12!\n" +
+	"\fobject_entry\x18\x03 \x01(\rR\vobjectEntry\x12\x19\n" +
+	"\bquest_id\x18\x04 \x01(\rR\aquestId\x12\x17\n" +
+	"\aitem_id\x18\x05 \x01(\rR\x06itemId\x12\x14\n" +
+	"\x05count\x18\x06 \x01(\rR\x05count\x12;\n" +
+	"\x06status\x18\a \x01(\x0e2#.warcraftbuddy.loot.v1.GatherStatusR\x06status\x12:\n" +
+	"\x19opening_transport_written\x18\b \x01(\bR\x17openingTransportWritten\x120\n" +
+	"\x14loot_window_observed\x18\t \x01(\bR\x12lootWindowObserved\x12,\n" +
+	"\x12item_push_observed\x18\n" +
+	" \x01(\bR\x10itemPushObserved\x12!\n" +
+	"\fslot_removed\x18\v \x01(\bR\vslotRemoved\x12)\n" +
+	"\x10release_observed\x18\f \x01(\bR\x0freleaseObserved\x12=\n" +
+	"\x1bbaseline_quest_log_revision\x18\r \x01(\x04R\x18baselineQuestLogRevision\x12=\n" +
+	"\x1bobserved_quest_log_revision\x18\x0e \x01(\x04R\x18observedQuestLogRevision\x12=\n" +
+	"\x1bown_quest_complete_observed\x18\x0f \x01(\bR\x18ownQuestCompleteObserved\x12\x16\n" +
+	"\x06reason\x18\x10 \x01(\tR\x06reason\"\x99\a\n" +
 	"\x05State\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x16\n" +
@@ -320,7 +593,20 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x14last_inventory_error\x18\r \x01(\rR\x12lastInventoryError\x12+\n" +
 	"\x11malformed_packets\x18\x0e \x01(\x04R\x10malformedPackets\x12E\n" +
 	"\frecent_items\x18\x0f \x03(\v2\".warcraftbuddy.loot.v1.ItemReceiptR\vrecentItems\x120\n" +
-	"\x14enabled_remaining_ms\x18\x10 \x01(\x04R\x12enabledRemainingMs2\xa0\x02\n" +
+	"\x14enabled_remaining_ms\x18\x10 \x01(\x04R\x12enabledRemainingMs\x127\n" +
+	"\x18pending_game_object_guid\x18\x11 \x01(\x04R\x15pendingGameObjectGuid\x12E\n" +
+	"\vlast_gather\x18\x12 \x01(\v2$.warcraftbuddy.loot.v1.GatherReceiptR\n" +
+	"lastGather\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x13 \x01(\tR\tsessionId\x12)\n" +
+	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused*\x97\x01\n" +
+	"\fGatherStatus\x12\x0f\n" +
+	"\vGATHER_NONE\x10\x00\x12\x14\n" +
+	"\x10GATHER_REQUESTED\x10\x01\x12\x16\n" +
+	"\x12GATHER_ITEM_STORED\x10\x02\x12\x14\n" +
+	"\x10GATHER_CONFIRMED\x10\x03\x12\x1a\n" +
+	"\x16GATHER_SERVER_REJECTED\x10\x04\x12\x16\n" +
+	"\x12GATHER_UNCONFIRMED\x10\x052\xa0\x02\n" +
 	"\tBuddyLoot\x12L\n" +
 	"\x06Enable\x12$.warcraftbuddy.loot.v1.EnableRequest\x1a\x1c.warcraftbuddy.loot.v1.State\x12@\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1c.warcraftbuddy.loot.v1.State\x12C\n" +
@@ -339,29 +625,34 @@ func file_modules_buddy_loot_loot_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_loot_loot_proto_rawDescData
 }
 
-var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_modules_buddy_loot_loot_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_modules_buddy_loot_loot_proto_goTypes = []any{
-	(*EnableRequest)(nil),  // 0: warcraftbuddy.loot.v1.EnableRequest
-	(*ItemReceipt)(nil),    // 1: warcraftbuddy.loot.v1.ItemReceipt
-	(*State)(nil),          // 2: warcraftbuddy.loot.v1.State
-	(*emptypb.Empty)(nil),  // 3: google.protobuf.Empty
-	(*v1.WorldPacket)(nil), // 4: agentwow.module.v1.WorldPacket
+	(GatherStatus)(0),      // 0: warcraftbuddy.loot.v1.GatherStatus
+	(*EnableRequest)(nil),  // 1: warcraftbuddy.loot.v1.EnableRequest
+	(*ItemReceipt)(nil),    // 2: warcraftbuddy.loot.v1.ItemReceipt
+	(*GatherReceipt)(nil),  // 3: warcraftbuddy.loot.v1.GatherReceipt
+	(*State)(nil),          // 4: warcraftbuddy.loot.v1.State
+	(*emptypb.Empty)(nil),  // 5: google.protobuf.Empty
+	(*v1.WorldPacket)(nil), // 6: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
-	1, // 0: warcraftbuddy.loot.v1.State.recent_items:type_name -> warcraftbuddy.loot.v1.ItemReceipt
-	0, // 1: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
-	3, // 2: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
-	4, // 3: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	3, // 4: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
-	2, // 5: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
-	2, // 6: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
-	3, // 7: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
-	3, // 8: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: warcraftbuddy.loot.v1.GatherReceipt.status:type_name -> warcraftbuddy.loot.v1.GatherStatus
+	2, // 1: warcraftbuddy.loot.v1.State.recent_items:type_name -> warcraftbuddy.loot.v1.ItemReceipt
+	3, // 2: warcraftbuddy.loot.v1.State.last_gather:type_name -> warcraftbuddy.loot.v1.GatherReceipt
+	1, // 3: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
+	5, // 4: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
+	6, // 5: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	5, // 6: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
+	4, // 7: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
+	4, // 8: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
+	5, // 9: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
+	5, // 10: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_loot_loot_proto_init() }
@@ -374,13 +665,14 @@ func file_modules_buddy_loot_loot_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_loot_loot_proto_rawDesc), len(file_modules_buddy_loot_loot_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   3,
+			NumEnums:      1,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_modules_buddy_loot_loot_proto_goTypes,
 		DependencyIndexes: file_modules_buddy_loot_loot_proto_depIdxs,
+		EnumInfos:         file_modules_buddy_loot_loot_proto_enumTypes,
 		MessageInfos:      file_modules_buddy_loot_loot_proto_msgTypes,
 	}.Build()
 	File_modules_buddy_loot_loot_proto = out.File

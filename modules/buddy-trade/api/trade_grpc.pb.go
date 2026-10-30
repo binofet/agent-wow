@@ -26,6 +26,8 @@ const (
 	BuddyTrade_OfferItem_FullMethodName    = "/warcraftbuddy.trade.v1.BuddyTrade/OfferItem"
 	BuddyTrade_OfferGold_FullMethodName    = "/warcraftbuddy.trade.v1.BuddyTrade/OfferGold"
 	BuddyTrade_Cancel_FullMethodName       = "/warcraftbuddy.trade.v1.BuddyTrade/Cancel"
+	BuddyTrade_JunkDisposal_FullMethodName = "/warcraftbuddy.trade.v1.BuddyTrade/JunkDisposal"
+	BuddyTrade_DestroyJunk_FullMethodName  = "/warcraftbuddy.trade.v1.BuddyTrade/DestroyJunk"
 	BuddyTrade_OnPacket_FullMethodName     = "/warcraftbuddy.trade.v1.BuddyTrade/OnPacket"
 	BuddyTrade_BeforeLogout_FullMethodName = "/warcraftbuddy.trade.v1.BuddyTrade/BeforeLogout"
 )
@@ -39,6 +41,8 @@ type BuddyTradeClient interface {
 	OfferItem(ctx context.Context, in *ItemRequest, opts ...grpc.CallOption) (*State, error)
 	OfferGold(ctx context.Context, in *GoldRequest, opts ...grpc.CallOption) (*State, error)
 	Cancel(ctx context.Context, in *BoundRequest, opts ...grpc.CallOption) (*State, error)
+	JunkDisposal(ctx context.Context, in *JunkToggle, opts ...grpc.CallOption) (*State, error)
+	DestroyJunk(ctx context.Context, in *JunkRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -101,6 +105,26 @@ func (c *buddyTradeClient) Cancel(ctx context.Context, in *BoundRequest, opts ..
 	return out, nil
 }
 
+func (c *buddyTradeClient) JunkDisposal(ctx context.Context, in *JunkToggle, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyTrade_JunkDisposal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyTradeClient) DestroyJunk(ctx context.Context, in *JunkRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyTrade_DestroyJunk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyTradeClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -130,6 +154,8 @@ type BuddyTradeServer interface {
 	OfferItem(context.Context, *ItemRequest) (*State, error)
 	OfferGold(context.Context, *GoldRequest) (*State, error)
 	Cancel(context.Context, *BoundRequest) (*State, error)
+	JunkDisposal(context.Context, *JunkToggle) (*State, error)
+	DestroyJunk(context.Context, *JunkRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyTradeServer()
@@ -156,6 +182,12 @@ func (UnimplementedBuddyTradeServer) OfferGold(context.Context, *GoldRequest) (*
 }
 func (UnimplementedBuddyTradeServer) Cancel(context.Context, *BoundRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Cancel not implemented")
+}
+func (UnimplementedBuddyTradeServer) JunkDisposal(context.Context, *JunkToggle) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method JunkDisposal not implemented")
+}
+func (UnimplementedBuddyTradeServer) DestroyJunk(context.Context, *JunkRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DestroyJunk not implemented")
 }
 func (UnimplementedBuddyTradeServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -274,6 +306,42 @@ func _BuddyTrade_Cancel_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyTrade_JunkDisposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JunkToggle)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTradeServer).JunkDisposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTrade_JunkDisposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTradeServer).JunkDisposal(ctx, req.(*JunkToggle))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyTrade_DestroyJunk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JunkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTradeServer).DestroyJunk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTrade_DestroyJunk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTradeServer).DestroyJunk(ctx, req.(*JunkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyTrade_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -336,6 +404,14 @@ var BuddyTrade_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cancel",
 			Handler:    _BuddyTrade_Cancel_Handler,
+		},
+		{
+			MethodName: "JunkDisposal",
+			Handler:    _BuddyTrade_JunkDisposal_Handler,
+		},
+		{
+			MethodName: "DestroyJunk",
+			Handler:    _BuddyTrade_DestroyJunk_Handler,
 		},
 		{
 			MethodName: "OnPacket",

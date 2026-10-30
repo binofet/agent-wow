@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-²
+€
 modules/buddy-trade/trade.protowarcraftbuddy.trade.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ž
 Item
 slot (Rslot
@@ -39,7 +39,7 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 count (Rcount
 	item_guid (RitemGuid
 name (	Rname%
-metadata_known (RmetadataKnown"¥
+metadata_known (RmetadataKnown"‚	
 State
 
 session_id (	R	sessionId
@@ -66,7 +66,30 @@ limitation (	R
 limitation!
 copper_known (RcopperKnown
 copper (Rcopper'
-copper_revision (RcopperRevision"I
+copper_revision (RcopperRevision2
+junk_disposal_enabled (RjunkDisposalEnabledR
+last_junk_disposal (2$.warcraftbuddy.trade.v1.JunkDisposalRlastJunkDisposal2
+junk_stacks_destroyed (RjunkStacksDestroyed
+junk_reason (	R
+junkReason"Õ
+JunkDisposal#
+backpack_slot (RbackpackSlot
+	item_guid (RitemGuid
+entry (Rentry
+count (Rcount
+name (	Rname
+status (	Rstatus+
+backpack_revision (RbackpackRevision"&
+
+JunkToggle
+enabled (Renabled"È
+JunkRequest
+
+session_id (	R	sessionId
+revision (Rrevision+
+backpack_revision (RbackpackRevision#
+backpack_slot (RbackpackSlot,
+expected_item_guid (RexpectedItemGuid"I
 BoundRequest
 
 session_id (	R	sessionId
@@ -84,13 +107,15 @@ trade_slot (R	tradeSlot"`
 
 session_id (	R	sessionId
 revision (Rrevision
-copper (Rcopper2’
+copper (Rcopper2¸
 
 BuddyTradeA
 GetState.google.protobuf.Empty.warcraftbuddy.trade.v1.StateK
 Open$.warcraftbuddy.trade.v1.BoundRequest.warcraftbuddy.trade.v1.StateO
 	OfferItem#.warcraftbuddy.trade.v1.ItemRequest.warcraftbuddy.trade.v1.StateO
 	OfferGold#.warcraftbuddy.trade.v1.GoldRequest.warcraftbuddy.trade.v1.StateM
-Cancel$.warcraftbuddy.trade.v1.BoundRequest.warcraftbuddy.trade.v1.StateC
+Cancel$.warcraftbuddy.trade.v1.BoundRequest.warcraftbuddy.trade.v1.StateQ
+JunkDisposal".warcraftbuddy.trade.v1.JunkToggle.warcraftbuddy.trade.v1.StateQ
+DestroyJunk#.warcraftbuddy.trade.v1.JunkRequest.warcraftbuddy.trade.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-trade/api;tradev1bproto3

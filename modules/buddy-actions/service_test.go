@@ -11,6 +11,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -25,6 +26,7 @@ import (
 type fakeSession struct {
 	mu                                sync.Mutex
 	world                             *worldv1.SnapshotResponse
+	party                             *partyv1.StateResponse
 	packets                           []*modv1.SendPacketRequest
 	clock                             uint32
 	failSend, failClock, failSnapshot bool
@@ -56,6 +58,13 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 	defer f.mu.Unlock()
 	if f.failSnapshot {
 		return nil, errors.New("snapshot unavailable")
+	}
+	if r.Module == "buddy-party" && r.Method == "state" && r.Request.MessageIs(&emptypb.Empty{}) {
+		if f.party == nil {
+			return nil, errors.New("party unavailable")
+		}
+		value, _ := anypb.New(f.party)
+		return &modv1.InvokeModuleResponse{Result: value}, ctx.Err()
 	}
 	if r.Module != "buddy-world" || r.Method != "snapshot" || !r.Request.MessageIs(&worldv1.SnapshotRequest{}) {
 		return nil, errors.New("wrong module invocation")

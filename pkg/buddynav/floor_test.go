@@ -92,7 +92,7 @@ func TestPhysicalFormationDiagnostic(t *testing.T) {
 	f := detour.DtAllocDtQueryFilter()
 	f.SetIncludeFlags(0xffff)
 	f.SetExcludeFlags(0)
-	for _, q := range []Point{{-9026.6514, -234.0776, 69.2486}, {-9027.586, -235.64706, 69.07536}, {-9014.413, -214.67183, 71.12956}, {-9020, -230, 70}} {
+	for _, q := range []Point{{-9026.6514, -234.0776, 69.2486}, {-9027.586, -235.64706, 69.07536}, {-9014.413, -214.67183, 71.12956}, {-9020, -230, 70}, {-9035.813, -303.05133, 74.51197}} {
 		v := recast(q)
 		ext := [3]float32{1, 20, 1}
 		var ref detour.DtPolyRef

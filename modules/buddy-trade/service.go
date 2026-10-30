@@ -39,10 +39,13 @@ type Service struct {
 	spell                       uint32
 	names                       map[uint32]string
 	queried                     map[uint32]bool
+	metadata                    map[uint32]itemMetadata
+	junkPending                 *tradev1.JunkDisposal
+	junkUntil, junkNext         time.Time
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, names: map[uint32]string{}, queried: map[uint32]bool{}, state: &tradev1.State{SessionId: sessionID, Phase: "IDLE", Limitation: "Joel only; whole backpack stacks; no equipment, bag contents, splitting or enchantments. Own requested offers are transport intentions. Completion requires server confirmation."}}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, names: map[uint32]string{}, queried: map[uint32]bool{}, metadata: map[uint32]itemMetadata{}, state: &tradev1.State{SessionId: sessionID, Phase: "IDLE", Limitation: "Joel only; whole backpack stacks; no equipment, bag contents, splitting or enchantments. Own requested offers are transport intentions. Completion requires server confirmation. Opt-in junk disposal removes one full gray miscellaneous junk stack only when all sixteen backpack slots are occupied."}}
 }
 func (s *Service) invoke(ctx context.Context, module, method string, input, output proto.Message) error {
 	if s.session == nil {
@@ -211,7 +214,7 @@ func (s *Service) Open(ctx context.Context, r *tradev1.BoundRequest) (*tradev1.S
 	}
 	s.mu.Lock()
 	err := s.boundLocked(r.SessionId, r.Revision)
-	busy := active(s.state.Phase)
+	busy := active(s.state.Phase) || s.junkPending != nil
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -393,7 +396,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if !active(phase) {
-		s.release(call)
+		s.junkTick(call)
 		return
 	}
 	if !deadline.IsZero() && !s.now().Before(deadline) {
@@ -490,6 +493,11 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		s.state.Revision++
 		switch code {
 		case 1:
+			if s.junkPending != nil {
+				s.pendingCancel = true
+				s.state.Reason = "inventory_mutation_awaits_confirmation"
+				break
+			}
 			if guid != ownerGUID {
 				s.pendingCancel = true
 				s.state.Reason = "only_Joel_may_trade"
@@ -583,6 +591,9 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		}
 		if s.queried[entry] && len(s.names) < 128 {
 			s.names[entry] = name
+			if metadata, metadataErr := parseItemMetadata(p.Payload); metadataErr == nil && metadata.known {
+				s.metadata[entry] = metadata
+			}
 			for _, item := range s.state.Backpack {
 				if item.Entry == entry {
 					item.Name = name

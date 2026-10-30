@@ -26,6 +26,7 @@ type fakeSession struct {
 	packets          []*modv1.SendPacketRequest
 	fail             uint32
 	leases, releases int
+	leaseChange      func()
 }
 
 func fixture() (*Service, *fakeSession) {
@@ -60,6 +61,9 @@ func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleReque
 		result = f.actions
 	case "buddy-actions.acquire_interaction":
 		f.leases++
+		if f.leaseChange != nil {
+			f.leaseChange()
+		}
 		result = &actionsv1.InteractionLease{Token: "lease-token", State: f.actions}
 	case "buddy-actions.release_interaction":
 		f.releases++

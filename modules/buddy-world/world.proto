@@ -89,6 +89,10 @@ message GameObjectState {
   uint64 observation_age_ms = 13;
   bool type_known = 14;
   uint32 game_object_type = 15;
+  bool flags_known = 16;
+  uint32 flags = 17;
+  bool dynamic_flags_known = 18;
+  uint32 dynamic_flags = 19;
 }
 
 // Public, server-observed creature state. No database lookup or invented name.
@@ -209,6 +213,8 @@ message SnapshotResponse {
   uint64 self_copper_revision = 20;
   // At most32 actual, present GAMEOBJECTs whose public type byte is MAILBOX19.
   repeated GameObjectState mailboxes = 21;
+  // At most32 present Milly's Harvest entry161557/type3 quest chests.
+  repeated GameObjectState quest_objects = 22;
 }
 
 service BuddyWorld {

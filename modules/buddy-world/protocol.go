@@ -459,6 +459,8 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					setMap(p, players[0])
 					p.known[objectEntry] = true
 					p.known[gameObjectBytes] = true
+					p.known[gameObjectFlags] = true
+					p.known[gameObjectDynamic] = true
 					newGameObject = true
 				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
 					p = &observed{guid: guid, present: true, observedAt: now}

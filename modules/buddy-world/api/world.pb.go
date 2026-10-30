@@ -576,24 +576,28 @@ func (*SnapshotRequest) Descriptor() ([]byte, []int) {
 }
 
 type GameObjectState struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Guid             uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
-	Entry            uint32                 `protobuf:"varint,2,opt,name=entry,proto3" json:"entry,omitempty"`
-	Present          bool                   `protobuf:"varint,3,opt,name=present,proto3" json:"present,omitempty"`
-	MapKnown         bool                   `protobuf:"varint,4,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
-	MapId            uint32                 `protobuf:"varint,5,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
-	PositionKnown    bool                   `protobuf:"varint,6,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
-	X                float32                `protobuf:"fixed32,7,opt,name=x,proto3" json:"x,omitempty"`
-	Y                float32                `protobuf:"fixed32,8,opt,name=y,proto3" json:"y,omitempty"`
-	Z                float32                `protobuf:"fixed32,9,opt,name=z,proto3" json:"z,omitempty"`
-	Orientation      float32                `protobuf:"fixed32,10,opt,name=orientation,proto3" json:"orientation,omitempty"`
-	PositionRevision uint64                 `protobuf:"varint,11,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
-	PositionAgeMs    uint64                 `protobuf:"varint,12,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
-	ObservationAgeMs uint64                 `protobuf:"varint,13,opt,name=observation_age_ms,json=observationAgeMs,proto3" json:"observation_age_ms,omitempty"`
-	TypeKnown        bool                   `protobuf:"varint,14,opt,name=type_known,json=typeKnown,proto3" json:"type_known,omitempty"`
-	GameObjectType   uint32                 `protobuf:"varint,15,opt,name=game_object_type,json=gameObjectType,proto3" json:"game_object_type,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Guid              uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
+	Entry             uint32                 `protobuf:"varint,2,opt,name=entry,proto3" json:"entry,omitempty"`
+	Present           bool                   `protobuf:"varint,3,opt,name=present,proto3" json:"present,omitempty"`
+	MapKnown          bool                   `protobuf:"varint,4,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
+	MapId             uint32                 `protobuf:"varint,5,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
+	PositionKnown     bool                   `protobuf:"varint,6,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
+	X                 float32                `protobuf:"fixed32,7,opt,name=x,proto3" json:"x,omitempty"`
+	Y                 float32                `protobuf:"fixed32,8,opt,name=y,proto3" json:"y,omitempty"`
+	Z                 float32                `protobuf:"fixed32,9,opt,name=z,proto3" json:"z,omitempty"`
+	Orientation       float32                `protobuf:"fixed32,10,opt,name=orientation,proto3" json:"orientation,omitempty"`
+	PositionRevision  uint64                 `protobuf:"varint,11,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
+	PositionAgeMs     uint64                 `protobuf:"varint,12,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
+	ObservationAgeMs  uint64                 `protobuf:"varint,13,opt,name=observation_age_ms,json=observationAgeMs,proto3" json:"observation_age_ms,omitempty"`
+	TypeKnown         bool                   `protobuf:"varint,14,opt,name=type_known,json=typeKnown,proto3" json:"type_known,omitempty"`
+	GameObjectType    uint32                 `protobuf:"varint,15,opt,name=game_object_type,json=gameObjectType,proto3" json:"game_object_type,omitempty"`
+	FlagsKnown        bool                   `protobuf:"varint,16,opt,name=flags_known,json=flagsKnown,proto3" json:"flags_known,omitempty"`
+	Flags             uint32                 `protobuf:"varint,17,opt,name=flags,proto3" json:"flags,omitempty"`
+	DynamicFlagsKnown bool                   `protobuf:"varint,18,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
+	DynamicFlags      uint32                 `protobuf:"varint,19,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GameObjectState) Reset() {
@@ -727,6 +731,34 @@ func (x *GameObjectState) GetTypeKnown() bool {
 func (x *GameObjectState) GetGameObjectType() uint32 {
 	if x != nil {
 		return x.GameObjectType
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetFlagsKnown() bool {
+	if x != nil {
+		return x.FlagsKnown
+	}
+	return false
+}
+
+func (x *GameObjectState) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *GameObjectState) GetDynamicFlagsKnown() bool {
+	if x != nil {
+		return x.DynamicFlagsKnown
+	}
+	return false
+}
+
+func (x *GameObjectState) GetDynamicFlags() uint32 {
+	if x != nil {
+		return x.DynamicFlags
 	}
 	return 0
 }
@@ -1429,7 +1461,9 @@ type SnapshotResponse struct {
 	// Advances only when the own coinage value/known baseline changes.
 	SelfCopperRevision uint64 `protobuf:"varint,20,opt,name=self_copper_revision,json=selfCopperRevision,proto3" json:"self_copper_revision,omitempty"`
 	// At most32 actual, present GAMEOBJECTs whose public type byte is MAILBOX19.
-	Mailboxes     []*GameObjectState `protobuf:"bytes,21,rep,name=mailboxes,proto3" json:"mailboxes,omitempty"`
+	Mailboxes []*GameObjectState `protobuf:"bytes,21,rep,name=mailboxes,proto3" json:"mailboxes,omitempty"`
+	// At most32 present Milly's Harvest entry161557/type3 quest chests.
+	QuestObjects  []*GameObjectState `protobuf:"bytes,22,rep,name=quest_objects,json=questObjects,proto3" json:"quest_objects,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1611,6 +1645,13 @@ func (x *SnapshotResponse) GetMailboxes() []*GameObjectState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetQuestObjects() []*GameObjectState {
+	if x != nil {
+		return x.QuestObjects
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -1687,7 +1728,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
 	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x11\n" +
-	"\x0fSnapshotRequest\"\xc8\x03\n" +
+	"\x0fSnapshotRequest\"\xd4\x04\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -1705,7 +1746,12 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x12observation_age_ms\x18\r \x01(\x04R\x10observationAgeMs\x12\x1d\n" +
 	"\n" +
 	"type_known\x18\x0e \x01(\bR\ttypeKnown\x12(\n" +
-	"\x10game_object_type\x18\x0f \x01(\rR\x0egameObjectType\"\x83\v\n" +
+	"\x10game_object_type\x18\x0f \x01(\rR\x0egameObjectType\x12\x1f\n" +
+	"\vflags_known\x18\x10 \x01(\bR\n" +
+	"flagsKnown\x12\x14\n" +
+	"\x05flags\x18\x11 \x01(\rR\x05flags\x12.\n" +
+	"\x13dynamic_flags_known\x18\x12 \x01(\bR\x11dynamicFlagsKnown\x12#\n" +
+	"\rdynamic_flags\x18\x13 \x01(\rR\fdynamicFlags\"\x83\v\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -1786,7 +1832,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
 	"stackCount\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x9b\t\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xe9\t\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -1811,7 +1857,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\vself_copper\x18\x13 \x01(\rR\n" +
 	"selfCopper\x120\n" +
 	"\x14self_copper_revision\x18\x14 \x01(\x04R\x12selfCopperRevision\x12E\n" +
-	"\tmailboxes\x18\x15 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\tmailboxes2\xb0\x01\n" +
+	"\tmailboxes\x18\x15 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\tmailboxes\x12L\n" +
+	"\rquest_objects\x18\x16 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fquestObjects2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -1855,15 +1902,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	4,  // 8: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
 	4,  // 9: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
 	3,  // 10: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
-	2,  // 11: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	9,  // 12: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	8,  // 13: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	10, // 14: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	13, // [13:15] is the sub-list for method output_type
-	11, // [11:13] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	2,  // 12: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	9,  // 13: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	8,  // 14: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	10, // 15: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	14, // [14:16] is the sub-list for method output_type
+	12, // [12:14] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
