@@ -834,6 +834,13 @@ class QuestJournalRewardTests(unittest.TestCase):
 
 
 class QuestApproachCandidateTests(unittest.TestCase):
+    @staticmethod
+    def safe_scene():
+        return ({"moving": True, "position": {"known": True, "mapKnown": True}},
+                {"self": {"guid": "1", "present": True, "mapKnown": True,
+                          "aliveKnown": True, "alive": True, "unitFlagsKnown": True,
+                          "movementFlagsKnown": True}})
+
     def candidate(self, **overrides):
         candidate={"distanceKnown":True,"distance":8,"blockedReason":"questgiver_outside_conservative_range",
                    "creature":{"guid":"17379390962878382081","present":True,"mapKnown":True,
@@ -883,6 +890,53 @@ class QuestApproachCandidateTests(unittest.TestCase):
         discovery["nearby"]=[self.candidate(blockedReason="character_motion_or_cast_unconfirmed")]
         self.assertIn("observed questgiver",controls.execute("TURN_IN_QUEST",quest_id=783))
         self.assertFalse(any(method=="buddy-quests.turn_in" for method,_ in rpc.calls))
+
+    def test_ordinary_formation_movement_uses_normal_quest_endpoint_without_outer_lease(self):
+        actions, world = self.safe_scene()
+        candidate = self.candidate(distance=3, blockedReason="character_motion_or_cast_unconfirmed")
+        candidate["creature"]["x"] = 3
+        class RPC:
+            def __init__(self): self.calls = []
+            def call(self, method, params):
+                self.calls.append((method, params))
+                if method == "buddy-quests.discover":
+                    return {"sessionId": "quests", "nearby": [candidate]}
+                if method == "buddy-actions.status": return actions
+                if method == "buddy-world.snapshot": return world
+                if method == "buddy-quests.offer":
+                    return {"serverResponseReceived": True, "state": {"offer": {"npcGuid": params["npcGuid"], "quests": []}}}
+                raise AssertionError(method)
+        rpc = RPC(); controls = converse.BuddyControls(rpc)
+        controls.quest_offer()
+        self.assertEqual(rpc.calls[-1], ("buddy-quests.offer", {"sessionId": "quests", "npcGuid": candidate["creature"]["guid"]}))
+        self.assertFalse(any(m in ("buddy-actions.acquire_interaction", "buddy-actions.travel_quest") for m, _ in rpc.calls))
+
+        controls, rpc, discovery, _ = QuestJournalRewardTests().reward_controls()
+        discovery["nearby"] = [candidate]
+        original = rpc.call
+        def call(method, params):
+            if method == "buddy-actions.status": return actions
+            if method == "buddy-world.snapshot": return world
+            return original(method, params)
+        rpc.call = call
+        self.assertIn("Turn-in confirmed", controls.execute("TURN_IN_QUEST", quest_id=783))
+
+    def test_moving_candidate_requires_actual_safe_self_and_current_distance(self):
+        candidate = self.candidate(distance=3, blockedReason="character_motion_or_cast_unconfirmed")
+        candidate["creature"]["x"] = 3
+        for mode in ("stopped", "casting", "motion_unconfirmed", "combat", "foreign_self", "unknown_position", "other_map", "jumping", "now_far"):
+            with self.subTest(mode=mode):
+                actions, world = self.safe_scene()
+                if mode == "stopped": actions["moving"] = False
+                elif mode == "casting": actions["castPending"] = True
+                elif mode == "motion_unconfirmed": actions["motionUnconfirmed"] = True
+                elif mode == "combat": world["self"]["unitFlags"] = 0x80000
+                elif mode == "foreign_self": world["self"]["guid"] = "4"
+                elif mode == "unknown_position": actions["position"]["known"] = False
+                elif mode == "other_map": actions["position"]["mapId"] = world["self"]["mapId"] = 1
+                elif mode == "jumping": world["self"]["movementFlags"] = 0x2000
+                elif mode == "now_far": actions["position"]["x"] = 20
+                self.assertEqual(converse.BuddyControls.quest_candidates([candidate], actions, world), [])
 
 
 class OwnerFeedTests(unittest.TestCase):

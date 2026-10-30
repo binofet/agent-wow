@@ -150,3 +150,59 @@ func TestFormationCatchUpUsesVerifiedRoutesUpTo120Yards(t *testing.T) {
 		}
 	}
 }
+
+func TestFormationFollowsVerifiedStairsInsteadOfSettlingOnFloorBelow(t *testing.T) {
+	s, f, advance := formationRig(t, 1, 5)
+	f.world.Owner.Z = 113.24
+	// Start directly beneath the requested personal slot, not just beneath
+	// Joel. Horizontal-only hysteresis previously treated this as arrival.
+	frame := followFormation{}
+	slot := frame.Target(s.now(), 1, 5, playerPosition(f.world.Owner), false).Position
+	f.world.Self.X, f.world.Self.Y = slot.x, slot.y
+	plans := 0
+	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+		plans++
+		return []position{from, {x: from.x + 8, y: from.y, z: from.z}, {x: from.x + 8, y: from.y + 8, z: 92}, {x: from.x - 8, y: from.y + 8, z: 102}, {x: from.x - 8, y: from.y, z: to.z}, to}, nil
+	}
+	toggle(t, s, true)
+	started := false
+	for range 140 {
+		s.Tick(context.Background())
+		started = started || s.state.Moving
+		advance(200 * time.Millisecond)
+	}
+	if plans != 1 || !started || s.state.Moving || !followAtTarget(s.pos, slot, 1) || math.Abs(float64(s.pos.z-f.world.Owner.Z)) > 1.5 {
+		t.Fatal("stairs not followed", s.stateLocked(), plans)
+	}
+}
+
+func TestMultiFloorFollowStillRequiresCompleteNavigationAndLegacyStaysFlat(t *testing.T) {
+	for _, mode := range []string{"blocked_nav", "no_nav"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance := formationRig(t, 1, 5)
+			f.world.Owner.Z = 113.24
+			if mode == "no_nav" {
+				s.navDataDir = ""
+			}
+			plans := 0
+			s.planPath = func(context.Context, string, position, position) ([]position, error) {
+				plans++
+				return nil, errors.New("ground surface ray blocked")
+			}
+			toggle(t, s, true)
+			for range 6 {
+				s.Tick(context.Background())
+				advance(200 * time.Millisecond)
+			}
+			if s.state.Moving || len(f.packets) != 0 || !s.state.Following {
+				t.Fatal(s.stateLocked(), f.packets)
+			}
+			if mode == "no_nav" && (plans != 0 || s.state.Reason != "follow_target_too_far_or_vertical") {
+				t.Fatal("legacy follow broadened", s.stateLocked(), plans)
+			}
+			if mode == "blocked_nav" && (plans == 0 || s.state.NavAvailable) {
+				t.Fatal("missing route accepted", s.stateLocked(), plans)
+			}
+		})
+	}
+}

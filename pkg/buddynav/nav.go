@@ -465,7 +465,7 @@ func (p *planner) water(q Point) (bool, error) {
 	}
 	return flags&8 != 0, nil
 }
-func (p *planner) walkable(a, b Point) error {
+func (p *planner) walkablePrimary(a, b Point) error {
 	// Prefer the polygon containing the segment interior when a portal vertex
 	// belongs to several polygons. Nearest-poly tie order at the vertex alone
 	// can otherwise select a ground polygon on the wrong side of a wall.

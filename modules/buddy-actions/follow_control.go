@@ -17,9 +17,9 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		s.state.Reason = reason
 	}
 	owner := playerPosition(world.Owner)
-	// Ground navigation supports hills and a modest catch-up distance. It
-	// does not chase a vanished owner or bridge arbitrary map gaps.
-	if distance(s.pos, owner) > 120 || math.Abs(float64(owner.z-s.pos.z)) > 12 {
+	// A complete verified ground route can include stairs between floors.
+	// The three-dimensional catch-up bound still limits the observed owner.
+	if distance(s.pos, owner) > 120 {
 		pause("formation_owner_outside_supported_range")
 		return
 	}
@@ -44,10 +44,9 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		pause("formation_position_outside_supported_area")
 		return
 	}
-	d := math.Hypot(float64(target.Position.x-s.pos.x), float64(target.Position.y-s.pos.y))
 	// Hysteresis lets them stay put through tiny player adjustments instead
-	// of constantly shuffling back to an exact coordinate.
-	if d <= target.StopDistance || !s.state.Moving && d <= target.StartDistance {
+	// of constantly shuffling, while a different floor still requires a route.
+	if !s.followNav.ownerArrival && (followAtTarget(s.pos, target.Position, target.StopDistance) || !s.state.Moving && followAtTarget(s.pos, target.Position, target.StartDistance)) {
 		pause("within_personal_follow_space")
 		return
 	}
@@ -55,5 +54,5 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		pause("formation_reaction_delay")
 		return
 	}
-	s.followFormationStepLocked(ctx, target.Position, target.StopDistance)
+	s.followFormationStepLocked(ctx, target.Position, target.StopDistance, owner)
 }

@@ -870,7 +870,7 @@ class BuddyControls:
         return {"sessionId": session, "revision": str(integer(state.get("revision", "0")))}
 
     @staticmethod
-    def quest_candidates(nearby):
+    def quest_candidates(nearby, actions=None, world=None, character_guid=1):
         if not isinstance(nearby, list) or len(nearby) > 64:
             raise ConversationError("Questgiver observations are invalid")
         candidates = []
@@ -890,12 +890,15 @@ class BuddyControls:
                 if reason or not 0 <= distance <= 4:
                     continue
             else:
-                # Discovery must identify range as the sole blocker. The
-                # quest endpoint owns the bounded approach and rechecks every
-                # movement/owner/map/interaction condition before a packet.
+                # Normal formation movement is stoppable by the quest
+                # endpoint's own lease. Unknown movement and casts are not.
+                moving = reason == "character_motion_or_cast_unconfirmed"
+                safe_motion = (isinstance(actions, dict) and actions.get("moving") is True
+                               and BuddyControls.quest_scene_safe(actions, world, character_guid))
                 if (giver.get("canInteract", False) is not False
-                        or reason != "questgiver_outside_conservative_range"
-                        or not 4 < distance <= 8
+                        or (not moving and reason != "questgiver_outside_conservative_range")
+                        or (moving and not safe_motion)
+                        or not (0 <= distance <= 8 if moving else 4 < distance <= 8)
                         or any(creature.get(key) is not True for key in
                                ("present", "mapKnown", "positionKnown", "aliveKnown", "alive"))
                         or integer(creature.get("mapId", "0")) != 0
@@ -908,13 +911,48 @@ class BuddyControls:
                 flags = integer(creature.get("movementFlags", "0"))
                 if flags & ~0x1ff or flags & 0xff and integer(creature.get("positionAgeMs", "0")) > 1500:
                     continue
+                if moving:
+                    pos = actions["position"]
+                    if integer(creature.get("mapId", "0")) != integer(pos.get("mapId", "0")):
+                        continue
+                    distance = math.sqrt(sum((creature.get(k, 0) - pos.get(k, 0)) ** 2 for k in ("x", "y", "z")))
+                    if distance > 8:
+                        continue
             candidates.append((0 if immediate else 1, distance, guid))
         return candidates
+
+    @staticmethod
+    def quest_scene_safe(actions, world, character_guid):
+        if not isinstance(actions, dict) or not isinstance(world, dict):
+            return False
+        own, pos = world.get("self", {}), actions.get("position", {})
+        if not isinstance(own, dict) or not isinstance(pos, dict):
+            return False
+        if (integer(own.get("guid", "0")) != character_guid
+                or any(own.get(k) is not True for k in ("present", "mapKnown", "aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
+                or integer(own.get("unitFlags", "0")) & (0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
+                or integer(own.get("movementFlags", "0")) & ~0x1ff
+                or integer(own.get("extraMovementFlags", "0")) != 0
+                or any(actions.get(k) is True for k in ("castPending", "motionUnconfirmed", "autoAttackUnconfirmed", "autoAttacking", "autoAttackRequested"))
+                or pos.get("known") is not True or pos.get("mapKnown") is not True
+                or integer(pos.get("mapId", "0")) != integer(own.get("mapId", "0"))):
+            return False
+        return all(type(pos.get(k, 0)) in (int, float) and math.isfinite(pos.get(k, 0))
+                   and abs(pos.get(k, 0)) < 40000 for k in ("x", "y", "z"))
+
+    def quest_discovery_candidates(self, discovery):
+        nearby = discovery.get("nearby", [])
+        actions = world = None
+        if isinstance(nearby, list) and any(isinstance(g, dict) and
+                g.get("blockedReason") == "character_motion_or_cast_unconfirmed" for g in nearby):
+            actions = self.rpc.call("buddy-actions.status", {})
+            world = self.rpc.call("buddy-world.snapshot", {})
+        return self.quest_candidates(nearby, actions, world, self.character_guid)
 
     def quest_offer(self):
         discovery = self.rpc.call("buddy-quests.discover", {})
         bound = self.bound(discovery)
-        candidates = self.quest_candidates(discovery.get("nearby", []))
+        candidates = self.quest_discovery_candidates(discovery)
         if not candidates:
             return None
         _, _, guid = min(candidates)
@@ -1042,7 +1080,7 @@ class BuddyControls:
         if refresh_binding and (self.bound(state)["sessionId"] != refresh_binding[0]
                 or matches[0].get("complete") is not True or matches[0].get("failed") is True):
             return "I couldn't confirm the same completed quest after its reward offer expired."
-        candidates = self.quest_candidates(state.get("nearby", []))
+        candidates = self.quest_discovery_candidates(state)
         if refresh_binding:
             candidates = [row for row in candidates if row[2] == refresh_binding[1]]
         if not candidates:

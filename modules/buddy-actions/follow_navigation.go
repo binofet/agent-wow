@@ -20,6 +20,7 @@ type followNavigation struct {
 	arrival      position
 	arrivalStop  float64
 	arrivalKnown bool
+	ownerArrival bool
 	expected     position
 	selfRevision uint64
 	nextPlanAt   time.Time
@@ -36,9 +37,9 @@ func formationDestinationUnavailable(err error) bool {
 }
 
 // A blocked personal slot can use a nearby pocket only after that pocket's
-// complete ground route succeeds. All five queries share one caller deadline.
+// complete ground route succeeds. All candidate queries share one deadline.
 // An invalid start never authorizes a candidate, snap or unverified recovery.
-func (s *Service) formationNavigationPath(ctx context.Context, target position, stop float64) ([]position, position, float64, error) {
+func (s *Service) formationNavigationPath(ctx context.Context, target position, stop float64, ownerFallback ...position) ([]position, position, float64, bool, error) {
 	path, err := s.navigationPath(ctx, s.navDataDir, s.pos, target)
 	validate := func(path []position, candidate position, alternate bool) (position, float64, bool) {
 		if len(path) > 256 || !followAtTarget(path[len(path)-1], candidate, stop) {
@@ -65,32 +66,50 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 	}
 	if err == nil {
 		if arrival, radius, ok := validate(path, target, false); ok {
-			return path, arrival, radius, nil
+			return path, arrival, radius, false, nil
 		}
-		return nil, position{}, 0, errors.New("formation route exceeds point limit or ends outside the slot")
+		return nil, position{}, 0, false, errors.New("formation route exceeds point limit or ends outside the slot")
 	}
-	if !formationDestinationUnavailable(err) {
-		return nil, position{}, 0, err
+	if formationDestinationUnavailable(err) {
+		for _, offset := range [][2]float32{{1.25, 0}, {-1.25, 0}, {0, 1.25}, {0, -1.25}} {
+			if ctx.Err() != nil {
+				return nil, position{}, 0, false, ctx.Err()
+			}
+			candidate := target
+			candidate.x += offset[0]
+			candidate.y += offset[1]
+			if !northshire(candidate) {
+				continue
+			}
+			path, candidateErr := s.navigationPath(ctx, s.navDataDir, s.pos, candidate)
+			if candidateErr != nil {
+				continue
+			}
+			if arrival, radius, ok := validate(path, candidate, true); ok {
+				return path, arrival, radius, false, nil
+			}
+		}
 	}
-	for _, offset := range [][2]float32{{1.25, 0}, {-1.25, 0}, {0, 1.25}, {0, -1.25}} {
+	// A formation offset can land outside an upstairs floor or on another
+	// disconnected layer. Only the follow controller supplies this fallback;
+	// melee and other users never change their target to the owner. A complete
+	// separate route still has to validate the actual observed owner's floor.
+	partial := strings.Contains(err.Error(), "navigation polygon path is partial, exhausted, or unavailable") || strings.Contains(err.Error(), "navigation straight path is partial or unavailable")
+	if len(ownerFallback) == 1 && (formationDestinationUnavailable(err) || partial) {
+		owner := ownerFallback[0]
 		if ctx.Err() != nil {
-			return nil, position{}, 0, ctx.Err()
+			return nil, position{}, 0, false, ctx.Err()
 		}
-		candidate := target
-		candidate.x += offset[0]
-		candidate.y += offset[1]
-		if !northshire(candidate) {
-			continue
-		}
-		path, candidateErr := s.navigationPath(ctx, s.navDataDir, s.pos, candidate)
-		if candidateErr != nil {
-			continue
-		}
-		if arrival, radius, ok := validate(path, candidate, true); ok {
-			return path, arrival, radius, nil
+		if northshire(owner) && followHorizontalDistance(owner, target) <= 6.5 && math.Abs(float64(owner.z-target.z)) <= 1.5 {
+			path, ownerErr := s.navigationPath(ctx, s.navDataDir, s.pos, owner)
+			if ownerErr == nil && len(path) <= 256 && followAtTarget(path[len(path)-1], owner, 2) {
+				// Cache the actual owner separately from the wanted personal slot.
+				// Its Z check prevents stopping directly below the upstairs owner.
+				return path, owner, 2, true, nil
+			}
 		}
 	}
-	return nil, position{}, 0, err
+	return nil, position{}, 0, false, err
 }
 
 func followHorizontalDistance(a, b position) float64 {
@@ -185,12 +204,13 @@ func followPathStep(from position, path []position, index int, budget float64) (
 	return p, index, northshire(p)
 }
 
-func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64) bool {
+func (s *Service) followFormationStepLocked(ctx context.Context, target position, stopDistance float64, ownerFallback ...position) bool {
 	now := s.now()
 	f := &s.followNav
 	fail := func(reason string, err error) bool {
 		f.path = nil
 		f.arrivalKnown = false
+		f.ownerArrival = false
 		s.state.NavAvailable = false
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 		f.lastError = s.state.NavReason
@@ -204,14 +224,19 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}
-	if f.arrivalKnown && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05 && distance(f.target, target) <= 1.5 && followAtTarget(s.pos, f.arrival, f.arrivalStop) {
+	ownerArrivalValid := !f.ownerArrival || len(ownerFallback) == 1 && distance(f.arrival, ownerFallback[0]) <= .25
+	arrival := f.arrival
+	if f.ownerArrival && ownerArrivalValid {
+		arrival = ownerFallback[0]
+	}
+	if f.arrivalKnown && ownerArrivalValid && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05 && distance(f.target, target) <= 1.5 && followAtTarget(s.pos, arrival, f.arrivalStop) {
 		ok := s.stopLocked(ctx)
 		if ok {
 			s.state.Reason = "within_follow_formation"
 		}
 		return ok
 	}
-	if followAtTarget(s.pos, target, stopDistance) {
+	if !f.ownerArrival && followAtTarget(s.pos, target, stopDistance) {
 		f.path = nil
 		f.arrivalKnown = false
 		ok := s.stopLocked(ctx)
@@ -220,13 +245,13 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		return ok
 	}
-	validCached := len(f.path) != 0 && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05
+	validCached := len(f.path) != 0 && ownerArrivalValid && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05
 	needsPlan := !validCached || f.index >= len(f.path) || distance(f.target, target) > 1.5
 	if needsPlan && !now.Before(f.nextPlanAt) {
 		f.path = nil
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
 		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-		path, arrival, arrivalStop, err := s.formationNavigationPath(planCtx, target, stopDistance)
+		path, arrival, arrivalStop, ownerArrival, err := s.formationNavigationPath(planCtx, target, stopDistance, ownerFallback...)
 		if err == nil {
 			err = planCtx.Err()
 		}
@@ -237,6 +262,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.path = append([]position(nil), path...)
 		f.index, f.target, f.expected, f.selfRevision = 0, target, s.pos, s.positionRevision
 		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
+		f.ownerArrival = ownerArrival
 		validCached = true
 		s.state.NavAvailable = true
 		s.state.NavReason = "client_ground_navmesh"
@@ -292,7 +318,11 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	}
 	f.index, f.expected = index, s.pos
 	s.state.Reason = "following_formation"
-	if followAtTarget(s.pos, f.arrival, f.arrivalStop) {
+	arrival = f.arrival
+	if f.ownerArrival && len(ownerFallback) == 1 {
+		arrival = ownerFallback[0]
+	}
+	if followAtTarget(s.pos, arrival, f.arrivalStop) {
 		if !s.stopLocked(ctx) {
 			return false
 		}
