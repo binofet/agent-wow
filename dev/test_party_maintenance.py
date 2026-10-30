@@ -116,6 +116,8 @@ class MaintenanceTests(unittest.TestCase):
                 owner=m if name=='profession_active' else m.c
                 with patch.object(owner,name,return_value=True if name=='profession_active' else {'active':True}):self.tick()
                 self.assertEqual(self.methods(),[])
+                expected='waiting_for_requested_quest_task' if name=='quest_task_snapshot' else 'waiting_for_requested_routine'
+                self.assertEqual(self.agent.status['phase'],expected)
 
     def test_travel_requires_stationary_safe_owner_and_positive_actual_wallet(self):
         for mode in ('owner_moving','owner_unknown_movement','owner_map','own_unknown_level','wallet_unknown','no_money','too_far'):

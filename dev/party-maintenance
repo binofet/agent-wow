@@ -115,10 +115,16 @@ class Maintenance:
     def persist(self):
         self.save(self.data)
 
+    def activity_phase(self):
+        if c.quest_task_snapshot(self.guid).get('active') is True:
+            return 'waiting_for_requested_quest_task'
+        if (c.area_quest_snapshot(self.guid).get('active') is True
+                or c.party_town_snapshot(self.guid).get('active') is True or profession_active(self.guid)):
+            return 'waiting_for_requested_routine'
+        return None
+
     def activities(self):
-        return (c.quest_task_snapshot(self.guid).get('active') is True
-            or c.area_quest_snapshot(self.guid).get('active') is True
-            or c.party_town_snapshot(self.guid).get('active') is True or profession_active(self.guid))
+        return self.activity_phase() is not None
 
     def endpoint_bound(self):
         if self.endpoint is not None and getattr(self.rpc,'url',None)!=self.endpoint:
@@ -240,8 +246,9 @@ class Maintenance:
         return fresh,matches[0],world['self'],(body,owner,controls)
 
     def tick(self):
-        if self.stopped() or self.activities():
-            self.status['phase'] = 'waiting_for_requested_routine'
+        activity=self.activity_phase()
+        if self.stopped() or activity is not None:
+            self.status['phase'] = activity or 'waiting_for_requested_routine'
             return
         if self.now() < self.next_query:
             return
