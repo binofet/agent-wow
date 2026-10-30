@@ -134,6 +134,14 @@ class PartyQuestTests(unittest.TestCase):
         self.assertEqual(profile.status["sharedQuestPhase"],"confirmed_in_own_quest_log")
         self.assertFalse(any(method in ("buddy-chat.owner_feed","buddy-actions.travel_quest") for method,_ in rpc.calls))
 
+    def test_alternate_autocomplete_share_uses_the_same_bound_acceptance(self):
+        for kind in ("SHARED_AUTOCOMPLETE", 3):
+            profile,rpc,_,_=self.rig()
+            self.shared_offer(rpc,kind=kind)
+            self.assertTrue(profile.poll_shared_quest())
+            self.assertEqual(rpc.share_calls,1)
+            self.assertIn(62,rpc.active)
+
     def test_shared_acceptance_ambiguity_is_not_replayed_or_reported_confirmed(self):
         profile,rpc,_,_=self.rig()
         self.shared_offer(rpc)

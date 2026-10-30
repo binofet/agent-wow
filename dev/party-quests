@@ -110,7 +110,7 @@ class PartyQuestSync:
         sequence = integer(share.get("sequence", 0))
         if (not 0 < qid <= 2147483647 or not 0 < sequence < 2**64
                 or integer(share.get("sharerGuid", 0)) != 3
-                or share.get("kind") not in ("SHARED_DETAILS", "PARTY_CONFIRM", 1, 2)):
+                or share.get("kind") not in ("SHARED_DETAILS", "PARTY_CONFIRM", "SHARED_AUTOCOMPLETE", 1, 2, 3)):
             return False
         self.status.update(sharedQuestId=qid, sharedQuestSequence=str(sequence))
         own = sync.active_log(state)

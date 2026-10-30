@@ -35,6 +35,16 @@ func rewardItems(r *reader, limit uint32) []*questsv1.RewardItem {
 // Public PlayerMenu::SendQuestGiver{OfferReward,RequestItems} wire layouts.
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Creature/GossipDef.cpp
 func decodeTurnIn(payload []byte, reward bool) (*questsv1.TurnInOffer, error) {
+	o, err := decodeTurnInFields(payload, reward)
+	if err != nil || !creatureGUID(o.GetNpcGuid()) {
+		return nil, malformed
+	}
+	return o, nil
+}
+
+// The same full frames also carry player-origin shared method-zero/auto-
+// complete quests. Identity validation belongs to the separate strict callers.
+func decodeTurnInFields(payload []byte, reward bool) (*questsv1.TurnInOffer, error) {
 	if len(payload) > 65536 {
 		return nil, malformed
 	}
@@ -75,7 +85,7 @@ func decodeTurnIn(payload []byte, reward bool) (*questsv1.TurnInOffer, error) {
 			r.err = malformed
 		}
 	}
-	if !creatureGUID(o.NpcGuid) || o.QuestId == 0 || o.Title == "" {
+	if o.QuestId == 0 || o.Title == "" {
 		r.err = malformed
 	}
 	return o, r.done()

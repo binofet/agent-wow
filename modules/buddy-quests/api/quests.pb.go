@@ -97,9 +97,10 @@ func (AcceptanceStatus) EnumDescriptor() ([]byte, []int) {
 type SharedQuestKind int32
 
 const (
-	SharedQuestKind_SHARED_KIND_NONE SharedQuestKind = 0
-	SharedQuestKind_SHARED_DETAILS   SharedQuestKind = 1
-	SharedQuestKind_PARTY_CONFIRM    SharedQuestKind = 2
+	SharedQuestKind_SHARED_KIND_NONE    SharedQuestKind = 0
+	SharedQuestKind_SHARED_DETAILS      SharedQuestKind = 1
+	SharedQuestKind_PARTY_CONFIRM       SharedQuestKind = 2
+	SharedQuestKind_SHARED_AUTOCOMPLETE SharedQuestKind = 3
 )
 
 // Enum value maps for SharedQuestKind.
@@ -108,11 +109,13 @@ var (
 		0: "SHARED_KIND_NONE",
 		1: "SHARED_DETAILS",
 		2: "PARTY_CONFIRM",
+		3: "SHARED_AUTOCOMPLETE",
 	}
 	SharedQuestKind_value = map[string]int32{
-		"SHARED_KIND_NONE": 0,
-		"SHARED_DETAILS":   1,
-		"PARTY_CONFIRM":    2,
+		"SHARED_KIND_NONE":    0,
+		"SHARED_DETAILS":      1,
+		"PARTY_CONFIRM":       2,
+		"SHARED_AUTOCOMPLETE": 3,
 	}
 )
 
@@ -2444,11 +2447,12 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x0eALREADY_IN_LOG\x10\x06\x12\x11\n" +
 	"\rSHARE_EXPIRED\x10\a\x12\x12\n" +
 	"\x0eSHARE_LOG_FULL\x10\b\x12\x1b\n" +
-	"\x17SHARE_ALREADY_REQUESTED\x10\t*N\n" +
+	"\x17SHARE_ALREADY_REQUESTED\x10\t*g\n" +
 	"\x0fSharedQuestKind\x12\x14\n" +
 	"\x10SHARED_KIND_NONE\x10\x00\x12\x12\n" +
 	"\x0eSHARED_DETAILS\x10\x01\x12\x11\n" +
-	"\rPARTY_CONFIRM\x10\x02*\x96\x01\n" +
+	"\rPARTY_CONFIRM\x10\x02\x12\x17\n" +
+	"\x13SHARED_AUTOCOMPLETE\x10\x03*\x96\x01\n" +
 	"\fRewardStatus\x12\x0f\n" +
 	"\vREWARD_NONE\x10\x00\x12\x14\n" +
 	"\x10REWARD_REQUESTED\x10\x01\x12\x14\n" +

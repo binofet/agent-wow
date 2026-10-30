@@ -75,7 +75,7 @@ message StateResponse {
   SharedQuestAcceptance last_shared_acceptance = 16;
   bool shared_quests_enabled = 17;
 }
-enum SharedQuestKind { SHARED_KIND_NONE = 0; SHARED_DETAILS = 1; PARTY_CONFIRM = 2; }
+enum SharedQuestKind { SHARED_KIND_NONE = 0; SHARED_DETAILS = 1; PARTY_CONFIRM = 2; SHARED_AUTOCOMPLETE = 3; }
 message SharedQuestOffer {
   uint64 sequence = 1;
   uint64 sharer_guid = 2;

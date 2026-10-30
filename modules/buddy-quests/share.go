@@ -44,6 +44,35 @@ func decodeSharedConfirm(payload []byte) (*questsv1.SharedQuestOffer, error) {
 	}
 	return &questsv1.SharedQuestOffer{SharerGuid: sharer, Quest: q, Kind: questsv1.SharedQuestKind_PARTY_CONFIRM}, nil
 }
+
+// Manual method-zero/auto-complete shares have the sharer's GUID in the
+// REQUEST_ITEMS/OFFER_REWARD frame, with no divider. Neither frame includes
+// quest Method; require its actual SHARABLE flag, not an inferred method bit.
+// These frames authorize acceptance only, never player-origin reward claims.
+func decodeSharedAutocomplete(payload []byte, reward bool) (*questsv1.SharedQuestOffer, error) {
+	o, err := decodeTurnInFields(payload, reward)
+	if err != nil || o.GetNpcGuid() != 3 || o.Flags&8 == 0 {
+		return nil, malformed
+	}
+	r := reader{data: payload[12:]}
+	r.text(512)
+	r.text(16384)
+	if reward {
+		if r.u8() != 1 { // SendQuestGiverOfferReward(..., true).
+			return nil, malformed
+		}
+	} else {
+		r.u32()
+		r.u32()
+		if r.u32() != 1 { // Manual sharing requests close-on-cancel=true.
+			return nil, malformed
+		}
+	}
+	q := &questsv1.Quest{QuestId: o.QuestId, Title: o.Title, Flags: o.Flags, Available: true}
+	// Request/reward prose is not quest objectives or quest details.
+	return &questsv1.SharedQuestOffer{SharerGuid: 3, Quest: q, Kind: questsv1.SharedQuestKind_SHARED_AUTOCOMPLETE}, nil
+}
+
 func (s *Service) handleSharedPacket(packet *modv1.WorldPacket) bool {
 	var offer *questsv1.SharedQuestOffer
 	var err error
@@ -55,11 +84,11 @@ func (s *Service) handleSharedPacket(packet *modv1.WorldPacket) bool {
 		offer, err = decodeSharedDetails(packet.Payload, s.selfGUID)
 	case opcode.SMSGQuestConfirmAccept:
 		offer, err = decodeSharedConfirm(packet.Payload)
-	case opcode.SMSGQuestgiverRequestItems:
-		// Auto-complete/manual-share reward interactions are a different flow.
+	case opcode.SMSGQuestgiverRequestItems, opcode.SMSGQuestgiverOfferReward:
 		if len(packet.Payload) < 8 || binary.LittleEndian.Uint64(packet.Payload) == 0 || binary.LittleEndian.Uint64(packet.Payload)>>48 != 0 {
 			return false
 		}
+		offer, err = decodeSharedAutocomplete(packet.Payload, packet.Opcode == opcode.SMSGQuestgiverOfferReward)
 	default:
 		return false
 	}
@@ -82,7 +111,7 @@ func (s *Service) handleSharedPacket(packet *modv1.WorldPacket) bool {
 		// A new real offer may follow a definite rejection/cleanup, however.
 		resolvedCleanup := false
 		if a := s.state.LastSharedAcceptance; a != nil && a.ShareSequence == old.Sequence {
-			resolvedCleanup = a.Status == questsv1.AcceptanceStatus_SERVER_REJECTED || a.TransportWritten && (a.Status == questsv1.AcceptanceStatus_ALREADY_IN_LOG || a.Status == questsv1.AcceptanceStatus_SHARE_EXPIRED || a.Status == questsv1.AcceptanceStatus_SHARE_LOG_FULL)
+			resolvedCleanup = a.Status == questsv1.AcceptanceStatus_SERVER_REJECTED || (a.TransportWritten || old.Kind == questsv1.SharedQuestKind_SHARED_AUTOCOMPLETE) && (a.Status == questsv1.AcceptanceStatus_ALREADY_IN_LOG || a.Status == questsv1.AcceptanceStatus_SHARE_EXPIRED || a.Status == questsv1.AcceptanceStatus_SHARE_LOG_FULL)
 		}
 		if old.AcceptRequested && !resolvedCleanup || !old.AcceptRequested && s.now().Before(s.shares.until) {
 			s.state.IgnoredPackets++
@@ -139,7 +168,7 @@ func (s *Service) sharedContext(ctx context.Context) error {
 }
 func (s *Service) validateSharedLocked(r *questsv1.SharedQuestRequest) (*questsv1.SharedQuestOffer, error) {
 	p := s.state.PendingShare
-	if !s.state.SharedQuestsEnabled || s.selfGUID == 0 || s.selfGUID == 3 || s.selfGUID>>48 != 0 || r.SessionId == "" || r.SessionId != s.state.SessionId || r.SharerGuid != 3 || p == nil || p.Quest == nil || p.Sequence != r.ShareSequence || p.SharerGuid != r.SharerGuid || p.Quest.QuestId != r.QuestId || p.AcceptRequested || p.Kind != questsv1.SharedQuestKind_SHARED_DETAILS && p.Kind != questsv1.SharedQuestKind_PARTY_CONFIRM {
+	if !s.state.SharedQuestsEnabled || s.selfGUID == 0 || s.selfGUID == 3 || s.selfGUID>>48 != 0 || r.SessionId == "" || r.SessionId != s.state.SessionId || r.SharerGuid != 3 || p == nil || p.Quest == nil || p.Sequence != r.ShareSequence || p.SharerGuid != r.SharerGuid || p.Quest.QuestId != r.QuestId || p.AcceptRequested || p.Kind != questsv1.SharedQuestKind_SHARED_DETAILS && p.Kind != questsv1.SharedQuestKind_PARTY_CONFIRM && p.Kind != questsv1.SharedQuestKind_SHARED_AUTOCOMPLETE {
 		return nil, status.Error(codes.FailedPrecondition, "shared quest session, sender or pending sequence changed")
 	}
 	if !s.state.QuestLogKnown || len(s.state.QuestLog) != 25 {
@@ -252,6 +281,15 @@ func (s *Service) AcceptShared(ctx context.Context, r *questsv1.SharedQuestReque
 	s.state.LastSharedAcceptance = a
 	s.shares.acceptUntil = s.now().Add(responseTimeout)
 	s.state.Revision++
+	if message != 0 && p.Kind == questsv1.SharedQuestKind_SHARED_AUTOCOMPLETE {
+		// This producer never set Divider. Retire only this local offer rather
+		// than sending a divider-clearing decision for another possible share.
+		a.Failure = "shared_alternate_offer_retired_without_acceptance"
+		result := s.snapshotLocked()
+		result.ActionInFlight = false
+		s.mu.Unlock()
+		return &questsv1.OperationResult{State: result}, nil
+	}
 	op, payload := uint32(opcode.CMSGQuestgiverAcceptQuest), questPacket(3, r.QuestId, true)
 	if p.Kind == questsv1.SharedQuestKind_PARTY_CONFIRM {
 		op = opcode.CMSGQuestConfirmAccept

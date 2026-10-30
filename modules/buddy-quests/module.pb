@@ -242,7 +242,7 @@ selfCopper0
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-™@
+²@
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"›
 Quest
 quest_id (RquestId
@@ -460,11 +460,12 @@ session_id (	R	sessionId%
 ALREADY_IN_LOG
 SHARE_EXPIRED
 SHARE_LOG_FULL
-SHARE_ALREADY_REQUESTED	*N
+SHARE_ALREADY_REQUESTED	*g
 SharedQuestKind
 SHARED_KIND_NONE 
 SHARED_DETAILS
-PARTY_CONFIRM*–
+PARTY_CONFIRM
+SHARED_AUTOCOMPLETE*–
 RewardStatus
 REWARD_NONE 
 REWARD_REQUESTED
