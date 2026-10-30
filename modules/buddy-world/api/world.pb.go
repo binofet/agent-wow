@@ -83,8 +83,11 @@ type PlayerState struct {
 	ChannelSpellId      uint32          `protobuf:"varint,52,opt,name=channel_spell_id,json=channelSpellId,proto3" json:"channel_spell_id,omitempty"`
 	ShapeshiftFormKnown bool            `protobuf:"varint,53,opt,name=shapeshift_form_known,json=shapeshiftFormKnown,proto3" json:"shapeshift_form_known,omitempty"`
 	ShapeshiftForm      uint32          `protobuf:"varint,54,opt,name=shapeshift_form,json=shapeshiftForm,proto3" json:"shapeshift_form,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Private own equipment slot16, including an explicitly known empty slot.
+	Offhand         *EquippedWeapon `protobuf:"bytes,55,opt,name=offhand,proto3" json:"offhand,omitempty"`
+	OffhandRevision uint64          `protobuf:"varint,56,opt,name=offhand_revision,json=offhandRevision,proto3" json:"offhand_revision,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PlayerState) Reset() {
@@ -491,6 +494,20 @@ func (x *PlayerState) GetShapeshiftFormKnown() bool {
 func (x *PlayerState) GetShapeshiftForm() uint32 {
 	if x != nil {
 		return x.ShapeshiftForm
+	}
+	return 0
+}
+
+func (x *PlayerState) GetOffhand() *EquippedWeapon {
+	if x != nil {
+		return x.Offhand
+	}
+	return nil
+}
+
+func (x *PlayerState) GetOffhandRevision() uint64 {
+	if x != nil {
+		return x.OffhandRevision
 	}
 	return 0
 }
@@ -1917,7 +1934,7 @@ var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
-	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\x88\x0f\n" +
+	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xf5\x0f\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -1983,7 +2000,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x13channel_spell_known\x183 \x01(\bR\x11channelSpellKnown\x12(\n" +
 	"\x10channel_spell_id\x184 \x01(\rR\x0echannelSpellId\x122\n" +
 	"\x15shapeshift_form_known\x185 \x01(\bR\x13shapeshiftFormKnown\x12'\n" +
-	"\x0fshapeshift_form\x186 \x01(\rR\x0eshapeshiftForm\"\xfb\x01\n" +
+	"\x0fshapeshift_form\x186 \x01(\rR\x0eshapeshiftForm\x12@\n" +
+	"\aoffhand\x187 \x01(\v2&.warcraftbuddy.world.v1.EquippedWeaponR\aoffhand\x12)\n" +
+	"\x10offhand_revision\x188 \x01(\x04R\x0foffhandRevision\"\xfb\x01\n" +
 	"\x0eEquippedWeapon\x12\x1d\n" +
 	"\n" +
 	"slot_known\x18\x01 \x01(\bR\tslotKnown\x12\x1b\n" +
@@ -2185,30 +2204,31 @@ var file_modules_buddy_world_world_proto_goTypes = []any{
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	1,  // 0: warcraftbuddy.world.v1.PlayerState.mainhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
-	5,  // 1: warcraftbuddy.world.v1.CreatureState.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
-	0,  // 2: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
-	0,  // 3: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
-	4,  // 4: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
-	6,  // 5: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	4,  // 6: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
-	7,  // 7: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
-	4,  // 8: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
-	4,  // 9: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
-	3,  // 10: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
-	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
-	4,  // 12: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	8,  // 13: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
-	3,  // 14: warcraftbuddy.world.v1.SnapshotResponse.spell_focuses:type_name -> warcraftbuddy.world.v1.GameObjectState
-	3,  // 15: warcraftbuddy.world.v1.SnapshotResponse.own_fishing_bobbers:type_name -> warcraftbuddy.world.v1.GameObjectState
-	2,  // 16: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	10, // 17: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	9,  // 18: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	11, // 19: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	18, // [18:20] is the sub-list for method output_type
-	16, // [16:18] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	1,  // 1: warcraftbuddy.world.v1.PlayerState.offhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
+	5,  // 2: warcraftbuddy.world.v1.CreatureState.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
+	0,  // 3: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
+	0,  // 4: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
+	4,  // 5: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
+	6,  // 6: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	4,  // 7: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	7,  // 8: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
+	4,  // 9: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
+	4,  // 10: warcraftbuddy.world.v1.SnapshotResponse.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
+	3,  // 12: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	4,  // 13: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	8,  // 14: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
+	3,  // 15: warcraftbuddy.world.v1.SnapshotResponse.spell_focuses:type_name -> warcraftbuddy.world.v1.GameObjectState
+	3,  // 16: warcraftbuddy.world.v1.SnapshotResponse.own_fishing_bobbers:type_name -> warcraftbuddy.world.v1.GameObjectState
+	2,  // 17: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	10, // 18: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 19: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	11, // 20: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	19, // [19:21] is the sub-list for method output_type
+	17, // [17:19] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

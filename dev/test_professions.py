@@ -32,6 +32,7 @@ def offered(skill, cost=10):
 class RPC:
     def __init__(self, guid=1):
         self.guid, self.calls, self.session, self.revision = guid, [], "profession-body", 1
+        self.map_id, self.npc_map, self.action_map, self.map_known = 0, None, None, True
         self.known, self.free_known, self.free, self.copper, self.copper_known = True, True, 2, 100, True
         self.primary, self.secondary = {}, {}
         self.level, self.level_known, self.combat, self.x, self.npc_x = 5, True, False, 0., 2.
@@ -48,18 +49,18 @@ class RPC:
 
     def creature(self):
         return dict(guid=str(NPC), entry=NPC >> 24 & 0xffffff, present=self.npc_present,
-                    aliveKnown=True, alive=True, positionKnown=True, mapKnown=True, mapId=0,
+                    aliveKnown=True, alive=True, positionKnown=True, mapKnown=True, mapId=self.map_id if self.npc_map is None else self.npc_map,
                     x=self.npc_x, y=0., z=0., npcFlags=self.npc_flags)
 
     def call(self, method, params):
         self.calls.append((method, copy.deepcopy(params)))
         if method == "buddy-world.snapshot":
-            return {"self": dict(guid=str(self.guid), present=True, aliveKnown=True, alive=True,
+            return {"self": dict(guid=str(self.guid), present=True, mapKnown=self.map_known, mapId=self.map_id, aliveKnown=True, alive=True,
                                  unitFlagsKnown=True, unitFlags=0x80000 if self.combat else 0,
                                  levelKnown=self.level_known, level=self.level)}
         if method == "buddy-actions.status":
             return dict(moving=True, following=True, interactionOwner=self.owner,
-                        position=dict(known=True, mapKnown=True, x=self.x, y=0., z=0.))
+                        position=dict(known=True, mapKnown=self.map_known, mapId=self.map_id if self.action_map is None else self.action_map, x=self.x, y=0., z=0.))
         if method == "buddy-training.state": return self.state()
         if method == "buddy-training.discover_professions":
             return dict(state=self.state(), nearby=[dict(creature=self.creature())])
@@ -118,6 +119,40 @@ class ProfessionTests(unittest.TestCase):
         for _ in range(count): actor.tick(); now[0] += 10
 
     def buys(self, rpc): return [params for method, params in rpc.calls if method == "buddy-training.buy_profession"]
+
+    def test_nonzero_maps_learn_only_actual_same_map_trainer_offers(self):
+        for map_id in (1,530):
+            actor,rpc,now,_=self.rig()
+            rpc.map_id=map_id
+            self.step(actor,now,8)
+            self.assertTrue(actor.done)
+            self.assertEqual(set(actor.status["confirmedPurchases"]),set(p.PRIMARY[1])|set(p.SECONDARY))
+            self.assertEqual(actor.anchor["mapId"],map_id)
+
+    def test_unknown_or_cross_map_observations_never_list_or_buy(self):
+        for mode in ("unknown","actions_disagree","npc_disagree"):
+            actor,rpc,now,_=self.rig()
+            rpc.map_id=530
+            if mode=="unknown":rpc.map_known=False
+            elif mode=="actions_disagree":rpc.action_map=1
+            else:rpc.npc_map=1
+            self.step(actor,now)
+            self.assertFalse(any(method in ("buddy-training.list","buddy-training.buy_profession","buddy-actions.travel_trainer") for method,_ in rpc.calls))
+
+    def test_map_change_during_travel_lease_or_offer_prevents_stale_profession_write(self):
+        for during in ("lease","offer"):
+            actor,rpc,now,_=self.rig(allow_travel=True)
+            rpc.map_id=1
+            if during=="lease":
+                rpc.npc_x=20
+                rpc.after_acquire=lambda mock:setattr(mock,"map_id",530)
+            else:rpc.after_list=lambda mock:setattr(mock,"map_id",530)
+            self.step(actor,now)
+            self.assertEqual(self.buys(rpc),[])
+            self.assertEqual(actor.data["attempts"],[])
+            self.assertFalse(any(method=="buddy-actions.travel_trainer" for method,_ in rpc.calls))
+            if during=="lease":self.assertEqual(rpc.calls[-1][0],"buddy-actions.release_interaction")
+
 
     def test_all_three_profiles_learn_only_actual_assigned_pair_and_three_secondary_skills(self):
         for guid in (1, 4, 5):

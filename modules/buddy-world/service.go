@@ -13,6 +13,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -41,6 +42,8 @@ type observed struct {
 	trajectory        observedTrajectory
 	mainhandKnown     bool
 	mainhand          uint64
+	offhandKnown      bool
+	offhand           uint64
 	copperKnown       bool
 	copper            uint32
 	skillsKnown       bool
@@ -167,6 +170,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		}
 		if old.freePrimaryKnown != current.freePrimaryKnown || old.freePrimary != current.freePrimary {
 			next.freePrimaryRevision++
+		}
+		if !proto.Equal(s.state.offhandSnapshot(), next.offhandSnapshot()) {
+			next.offhandRevision++
 		}
 		next.edited = nil
 		s.state = next

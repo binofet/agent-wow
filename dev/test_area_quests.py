@@ -22,6 +22,7 @@ A, B = 0xf1300000c500022b, 0xf130000337000210
 class RPC:
     def __init__(self):
         self.calls, self.session, self.x = [], "body-quests", 0.
+        self.map_id, self.action_map, self.map_known = 0, None, True
         self.active, self.complete, self.following = {7}, {7}, True
         self.offer, self.reward, self.receipt, self.revision = {}, {}, {}, 1
         self.offers = {A: [dict(questId=7, available=False), dict(questId=15, available=True)],
@@ -49,11 +50,11 @@ class RPC:
         if method in ("buddy-quests.discover", "buddy-quests.state"):
             return self.quests()
         if method == "buddy-world.snapshot":
-            return {"self": dict(guid="1", present=True, mapKnown=True, aliveKnown=True, alive=True,
+            return {"self": dict(guid="1", present=True, mapKnown=self.map_known, mapId=self.map_id, aliveKnown=True, alive=True,
                 unitFlagsKnown=True, unitFlags=0x80000 if self.combat else 0, movementFlagsKnown=True,
                 classKnown=True, classId=5, levelKnown=True, level=6)}
         if method == "buddy-actions.status":
-            return dict(following=self.following, position=dict(known=True, mapKnown=True, mapId=0, x=self.x, y=0., z=0.))
+            return dict(following=self.following, position=dict(known=True, mapKnown=self.map_known, mapId=self.map_id if self.action_map is None else self.action_map, x=self.x, y=0., z=0.))
         if method == "buddy-quests.journal":
             return {"entries": [dict(questId=7, observedRewardNpcGuid=str(A))] if self.journal else []}
         if method == "buddy-actions.follow":
@@ -141,6 +142,48 @@ class AreaTests(unittest.TestCase):
         actor.cleanup()
         self.assertTrue(rpc.following)
         self.assertEqual(actor.status["cleanup"], "previous_follow_intent_restored")
+
+    def test_nonzero_map_sweep_uses_actual_same_map_givers_and_rewards(self):
+        for map_id in (1,530):
+            actor,rpc,clock,_=self.rig()
+            rpc.map_id=map_id
+            for creature in rpc.creatures.values():creature["mapId"]=map_id
+            self.run_sweep(actor,clock)
+            self.assertEqual(rpc.active,{15,18})
+            self.assertEqual(actor.rewarded,{7})
+            self.assertEqual(actor.anchor["mapId"],map_id)
+            actor.cleanup()
+            self.assertTrue(rpc.following)
+
+    def test_map_transition_after_lease_stops_sweep_releases_and_restores_follow_intent(self):
+        for mode in ("changed","transfer_pending"):
+            actor,rpc,clock,_=self.rig()
+            actor.tick()
+            self.assertFalse(rpc.following)
+            def change(mock):
+                if mode=="changed":
+                    mock.map_id=530
+                    for creature in mock.creatures.values():creature["mapId"]=530
+                else:mock.map_known=False
+            rpc.after_acquire=change
+            clock[0]+=10
+            actor.tick()
+            self.assertTrue(actor.done)
+            self.assertEqual(actor.status["phase"],"stopped_after_area_map_transition")
+            self.assertEqual(rpc.calls[-1][0],"buddy-actions.release_interaction")
+            self.assertFalse(any(method in ("buddy-actions.travel_quest","buddy-quests.offer","buddy-quests.turn_in","buddy-quests.claim_reward","buddy-quests.accept") for method,_ in rpc.calls))
+            actor.cleanup()
+            self.assertTrue(rpc.following)
+            self.assertEqual(actor.status["cleanup"],"previous_follow_intent_restored")
+
+    def test_unknown_or_disagreeing_initial_map_never_starts_area_work(self):
+        for mode in ("unknown","actions_disagree"):
+            actor,rpc,_,_=self.rig()
+            if mode=="unknown":rpc.map_known=False
+            else:rpc.action_map=1
+            actor.tick()
+            self.assertIsNone(actor.anchor)
+            self.assertFalse(any(method in ("buddy-actions.follow","buddy-actions.travel_quest","buddy-quests.offer") for method,_ in rpc.calls))
 
     def test_actual_menu_finds_complete_turnin_even_without_prior_journal_npc(self):
         actor, rpc, clock, _ = self.rig()

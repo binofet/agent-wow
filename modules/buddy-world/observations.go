@@ -22,6 +22,7 @@ const (
 	playerCoinage      = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
 	playerSkillsFirst  = 0x27c // UNIT_END0x94 + PLAYER_SKILL_INFO_1_1 0x1e8, 384 private words.
 	playerFreePrimary  = 0x3fd // UNIT_END0x94 + PLAYER_CHARACTER_POINTS2 0x369.
+	playerOffhand      = 0x164 // PLAYER_FIELD_INV_SLOT_HEAD0x144 + equipment slot16 *2.
 )
 
 // Maps are shallow-cloned per packet. target copies each touched object once,
@@ -36,6 +37,7 @@ type observations struct {
 	copperRevision      uint64
 	skillsRevision      uint64
 	freePrimaryRevision uint64
+	offhandRevision     uint64
 }
 
 func (s observations) clone() observations {
@@ -152,7 +154,7 @@ func (s *observations) putItem(p *observed) {
 		// Keep the currently referenced backpack objects when possible.
 		var oldest *observed
 		for _, candidate := range s.items {
-			inBackpack := candidate.guid == s.players[0].mainhand
+			inBackpack := candidate.guid == s.players[0].mainhand || candidate.guid == s.players[0].offhand
 			for _, guid := range s.players[0].backpack {
 				if guid == candidate.guid {
 					inBackpack = true
@@ -294,6 +296,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		weapon.MaxDurability = item.fields[0x3d]
 		weapon.DurabilityKnown = item.known[0x3c] && item.known[0x3d] && weapon.Durability <= weapon.MaxDurability
 	}
+	r.Self.Offhand, r.Self.OffhandRevision = s.offhandSnapshot(), s.offhandRevision
 	r.BackpackKnown = p.backpackKnown
 	r.BackpackRevision = p.backpackRevision + s.itemRevision
 	if p.backpackKnown {

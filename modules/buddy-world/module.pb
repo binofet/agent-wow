@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Š<
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ˆ
+÷<
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -98,7 +98,9 @@ levelKnown
 channel_spell_known3 (RchannelSpellKnown(
 channel_spell_id4 (RchannelSpellId2
 shapeshift_form_known5 (RshapeshiftFormKnown'
-shapeshift_form6 (RshapeshiftForm"û
+shapeshift_form6 (RshapeshiftForm@
+offhand7 (2&.warcraftbuddy.world.v1.EquippedWeaponRoffhand)
+offhand_revision8 (RoffhandRevision"û
 EquippedWeapon
 
 slot_known (R	slotKnown

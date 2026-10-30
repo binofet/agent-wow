@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Conversation acceptance tests with fake RPC and a local fake Codex process."""
 
+import copy
 import importlib.machinery
 import importlib.util
 import json
@@ -765,6 +766,8 @@ class QuestJournalRewardTests(unittest.TestCase):
             def call(self,method,params):
                 self.calls.append((method,params))
                 if method=="buddy-quests.discover":return discovery
+                if method=="buddy-actions.status":return QuestApproachCandidateTests.safe_scene()[0]
+                if method=="buddy-world.snapshot":return QuestApproachCandidateTests.safe_scene()[1]
                 if method=="buddy-quests.turn_in":return {"transportWritten":True,"serverResponseReceived":True,"state":state}
                 if method=="buddy-quests.state":return state
                 if method=="buddy-quests.claim_reward":return {"transportWritten":True,"state":dict(state,lastReward=result)}
@@ -1013,6 +1016,8 @@ class QuestApproachCandidateTests(unittest.TestCase):
             def call(self,method,params):
                 self.calls.append((method,params))
                 if method=="buddy-quests.discover":return {"sessionId":"quests","revision":"1","nearby":self.nearby}
+                if method=="buddy-actions.status":return QuestApproachCandidateTests.safe_scene()[0]
+                if method=="buddy-world.snapshot":return QuestApproachCandidateTests.safe_scene()[1]
                 if method=="buddy-quests.offer":return {"serverResponseReceived":True,"state":{"offer":{"npcGuid":params["npcGuid"],"quests":[]}}}
                 raise AssertionError(method)
         rpc=RPC();controls=converse.BuddyControls(rpc)
@@ -1021,7 +1026,7 @@ class QuestApproachCandidateTests(unittest.TestCase):
         rpc.nearby.append({"distanceKnown":True,"distance":3.9,"canInteract":True,"creature":{"guid":"17379390962878382082"}})
         controls.quest_offer()
         self.assertEqual(rpc.calls[-1][1]["npcGuid"],"17379390962878382082")
-        self.assertFalse(any(method.startswith("buddy-actions.") for method,_ in rpc.calls))
+        self.assertFalse(any(method in ("buddy-actions.acquire_interaction", "buddy-actions.travel_quest") for method,_ in rpc.calls))
 
     def test_proto_omitted_zero_distance_is_valid_only_with_known_distance(self):
         zero={"distanceKnown":True,"canInteract":True,"creature":{"guid":"17379390962878382081"}}
@@ -1052,6 +1057,8 @@ class QuestApproachCandidateTests(unittest.TestCase):
         self.assertEqual(request["npcGuid"],discovery["nearby"][0]["creature"]["guid"])
         controls,rpc,discovery,_=helper.reward_controls()
         discovery["nearby"]=[self.candidate(blockedReason="character_motion_or_cast_unconfirmed")]
+        original=rpc.call
+        rpc.call=lambda method,params: {} if method in ("buddy-actions.status","buddy-world.snapshot") else original(method,params)
         self.assertIn("observed questgiver",controls.execute("TURN_IN_QUEST",quest_id=783))
         self.assertFalse(any(method=="buddy-quests.turn_in" for method,_ in rpc.calls))
 
@@ -1084,6 +1091,24 @@ class QuestApproachCandidateTests(unittest.TestCase):
             return original(method, params)
         rpc.call = call
         self.assertIn("Turn-in confirmed", controls.execute("TURN_IN_QUEST", quest_id=783))
+
+    def test_nonzero_map_fallback_candidates_require_known_matching_self_actions_and_npc(self):
+        for map_id in (1,530):
+            for moving in (False,True):
+                actions,world=self.safe_scene()
+                actions["moving"]=moving
+                actions["position"]["mapId"]=world["self"]["mapId"]=map_id
+                candidate=self.candidate(distance=6,blockedReason="character_motion_or_cast_unconfirmed" if moving else "questgiver_outside_conservative_range")
+                candidate["creature"].update(mapId=map_id,x=6)
+                self.assertEqual(converse.BuddyControls.quest_candidates([candidate],actions,world),[(1,6.,17379390962878382081)])
+                for mode in ("npc_map","action_map","world_unknown","missing_context"):
+                    a,w=copy.deepcopy(actions),copy.deepcopy(world)
+                    c=copy.deepcopy(candidate)
+                    if mode=="npc_map": c["creature"]["mapId"]=571
+                    elif mode=="action_map":a["position"]["mapId"]=571
+                    elif mode=="world_unknown":w["self"]["mapKnown"]=False
+                    else:a=w=None
+                    self.assertEqual(converse.BuddyControls.quest_candidates([c],a,w),[],mode)
 
     def test_moving_candidate_requires_actual_safe_self_and_current_distance(self):
         candidate = self.candidate(distance=3, blockedReason="character_motion_or_cast_unconfirmed")

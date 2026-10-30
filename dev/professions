@@ -176,7 +176,9 @@ class Learner:
                 or integer(own.get("unitFlags", 0)) & 0x80000):
             self.status["phase"] = "waiting_out_of_combat_for_professions"
             return False
-        if (not position(actions.get("position")) or integer(actions["position"].get("mapId", 0)) != 0
+        if (not position(actions.get("position")) or own.get("mapKnown") is not True
+                or integer(actions["position"].get("mapId", 0)) != integer(own.get("mapId", 0))
+                or self.anchor is not None and integer(self.anchor.get("mapId", 0)) != integer(own.get("mapId", 0))
                 or any(actions.get(key) is True for key in ("castPending", "motionUnconfirmed", "autoAttacking", "autoAttackUnconfirmed", "traveling", "practicing"))
                 or actions.get("interactionOwner") or context["state"].get("actionInFlight") is True):
             self.status["phase"] = "waiting_for_safe_profession_interaction"

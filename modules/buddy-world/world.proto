@@ -65,6 +65,9 @@ message PlayerState {
   uint32 channel_spell_id = 52;
   bool shapeshift_form_known = 53;
   uint32 shapeshift_form = 54;
+  // Private own equipment slot16, including an explicitly known empty slot.
+  EquippedWeapon offhand = 55;
+  uint64 offhand_revision = 56;
 }
 
 message EquippedWeapon {

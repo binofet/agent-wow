@@ -1017,15 +1017,16 @@ class BuddyControls:
                 # Normal formation movement is stoppable by the quest
                 # endpoint's own lease. Unknown movement and casts are not.
                 moving = reason == "character_motion_or_cast_unconfirmed"
-                safe_motion = (isinstance(actions, dict) and actions.get("moving") is True
-                               and BuddyControls.quest_scene_safe(actions, world, character_guid))
+                safe_scene = BuddyControls.quest_scene_safe(actions, world, character_guid)
+                safe_motion = (safe_scene and actions.get("moving") is True)
                 if (giver.get("canInteract", False) is not False
                         or (not moving and reason != "questgiver_outside_conservative_range")
                         or (moving and not safe_motion)
                         or not (0 <= distance <= 8 if moving else 4 < distance <= 8)
                         or any(creature.get(key) is not True for key in
                                ("present", "mapKnown", "positionKnown", "aliveKnown", "alive"))
-                        or integer(creature.get("mapId", "0")) != 0
+                        or not safe_scene
+                        or integer(creature.get("mapId", "0")) != integer(actions["position"].get("mapId", "0"))
                         or integer(creature.get("npcFlags", "0")) & 2 == 0):
                     continue
                 coordinates = [creature.get(key, 0) for key in ("x", "y", "z")]
@@ -1035,13 +1036,10 @@ class BuddyControls:
                 flags = integer(creature.get("movementFlags", "0"))
                 if flags & ~0x1ff or flags & 0xff and integer(creature.get("positionAgeMs", "0")) > 1500:
                     continue
-                if moving:
-                    pos = actions["position"]
-                    if integer(creature.get("mapId", "0")) != integer(pos.get("mapId", "0")):
-                        continue
-                    distance = math.sqrt(sum((creature.get(k, 0) - pos.get(k, 0)) ** 2 for k in ("x", "y", "z")))
-                    if distance > 8:
-                        continue
+                pos = actions["position"]
+                distance = math.sqrt(sum((creature.get(k, 0) - pos.get(k, 0)) ** 2 for k in ("x", "y", "z")))
+                if distance > 8:
+                    continue
             candidates.append((0 if immediate else 1, distance, guid))
         return candidates
 
@@ -1067,8 +1065,8 @@ class BuddyControls:
     def quest_discovery_candidates(self, discovery):
         nearby = discovery.get("nearby", [])
         actions = world = None
-        if isinstance(nearby, list) and any(isinstance(g, dict) and
-                g.get("blockedReason") == "character_motion_or_cast_unconfirmed" for g in nearby):
+        if isinstance(nearby, list) and any(isinstance(g, dict) and g.get("canInteract") is not True and
+                g.get("blockedReason") in ("character_motion_or_cast_unconfirmed", "questgiver_outside_conservative_range") for g in nearby):
             actions = self.rpc.call("buddy-actions.status", {})
             world = self.rpc.call("buddy-world.snapshot", {})
         return self.quest_candidates(nearby, actions, world, self.character_guid)

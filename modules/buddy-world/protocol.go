@@ -145,6 +145,7 @@ func markAbsent(p *observed, now time.Time) {
 	p.attackVictim = 0
 	p.trajectory = observedTrajectory{}
 	clearCastingContext(p)
+	p.offhandKnown, p.offhand = false, 0
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
 
@@ -163,6 +164,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		}
 		p := &players[0]
 		clearCastingContext(p)
+		p.offhandKnown, p.offhand = false, 0
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
 			state.creatures = make(map[uint64]*observed)
@@ -432,7 +434,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
@@ -683,6 +685,10 @@ func values(c *cursor, p *observed, now time.Time) error {
 				if field == 0x162 || field == 0x163 {
 					shift := uint((field - 0x162) * 32)
 					p.mainhand = p.mainhand&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
+				}
+				if field == playerOffhand || field == playerOffhand+1 {
+					shift := uint((field - playerOffhand) * 32)
+					p.offhand = p.offhand&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
 				}
 				if field >= backpackFirst && field < backpackFirst+32 {
 					slot, half := (field-backpackFirst)/2, (field-backpackFirst)%2

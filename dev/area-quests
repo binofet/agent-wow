@@ -46,12 +46,19 @@ class AreaSweep(party.PartyQuestSync):
 
     def safe(self, context):
         player, actions = context["world"]["self"], context["actions"]
+        pos = actions.get("position", {})
+        if self.anchor is not None and (player.get("mapKnown") is not True or not isinstance(pos, dict)
+                or pos.get("mapKnown") is not True
+                or integer(player.get("mapId", 0)) != integer(self.anchor.get("mapId", 0))
+                or integer(pos.get("mapId", 0)) != integer(self.anchor.get("mapId", 0))):
+            self.done = True
+            self.status["phase"] = "stopped_after_area_map_transition"
+            return False
         if (any(player.get(key) is not True for key in ("present", "aliveKnown", "alive", "unitFlagsKnown"))
                 or integer(player.get("unitFlags", 0)) & 0x80000):
             self.status["phase"] = "paused_for_combat_or_character_state"
             return False
         if (not party.finite_position(actions.get("position"), "known")
-                or integer(actions["position"].get("mapId", 0)) != 0
                 or not converse.BuddyControls.quest_scene_safe(actions, context["world"], self.guid)):
             self.status["phase"] = "waiting_for_safe_known_character_position"
             return False
@@ -69,7 +76,9 @@ class AreaSweep(party.PartyQuestSync):
             creature = row.get("creature", {}) if isinstance(row, dict) else {}
             if (not party.finite_position(creature)
                     or any(creature.get(key) is not True for key in ("present", "aliveKnown", "alive"))
-                    or integer(creature.get("mapId", 0)) != 0
+                    or integer(creature.get("mapId", 0)) != integer(own.get("mapId", 0))
+                    or self.anchor is None or self.anchor.get("mapKnown") is not True
+                    or integer(creature.get("mapId", 0)) != integer(self.anchor.get("mapId", 0))
                     or integer(creature.get("npcFlags", 0)) & 2 == 0
                     or integer(creature.get("movementFlags", 0)) != 0
                     or integer(creature.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000 | 0x100000 | 0x2000000)
@@ -287,7 +296,8 @@ class AreaSweep(party.PartyQuestSync):
         try:
             world = self.rpc.call("buddy-world.snapshot", {})
             state = self.rpc.call("buddy-quests.state", {})
-            if integer(world.get("self", {}).get("guid", 0)) != self.guid or sync.session_id(state) != self.session:
+            own = world.get("self", {})
+            if integer(own.get("guid", 0)) != self.guid or sync.session_id(state) != self.session:
                 self.status["cleanup"] = "body_changed_no_stale_follow_restore"
                 return
             result = self.rpc.call("buddy-actions.follow", {"enabled": True})
