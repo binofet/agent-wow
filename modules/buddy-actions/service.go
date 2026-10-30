@@ -82,6 +82,7 @@ type Service struct {
 	practiceReplans                                          int
 	practiceKillCredited                                     bool
 	practiceQuestGoal                                        bool
+	coldridgeGoal                                            coldridgePracticeGoal
 	formation                                                followFormation
 	followNav                                                followNavigation
 	meleeNav                                                 followNavigation

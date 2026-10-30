@@ -89,8 +89,19 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 	// an identical owner label alone cannot prove this operation still owns it.
 	preliminary := &actionsv1.State{}
 	lease := &actionsv1.InteractionLease{}
-	if ctx.Err() != nil || s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, preliminary) != nil || !stoppedLootLease(preliminary) || s.token == "" ||
-		s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || !stoppedLootLease(lease.State) {
+	if ctx.Err() != nil || s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, preliminary) != nil || !stoppedLootLease(preliminary) || s.token == "" {
+		s.state.Reason = "loot_exact_owned_stopped_lease_required_before_open"
+		s.finish(ctx)
+		return nil
+	}
+	// Retain progress already seen by this operation before a later response can
+	// regress it. This is pure validation against the same bound quest and GUID.
+	if s.questColdridge && !s.coldridgeGoal.context(baseline, preliminary.Position, s.selfGUID, s.pendingGUID()) {
+		s.state.Reason = "coldridge_loot_scope_changed_before_final_observation"
+		s.finish(ctx)
+		return nil
+	}
+	if s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || !stoppedLootLease(lease.State) {
 		s.state.Reason = "loot_exact_owned_stopped_lease_required_before_open"
 		s.finish(ctx)
 		return nil
@@ -129,7 +140,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 		}
 		return false
 	}
-	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !coldridgeQuestContext(w, a.Position, s.selfGUID) {
+	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
 	if !s.questWolf && !s.questColdridge {
@@ -148,7 +159,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 	var corpse *worldv1.CreatureState
 	for _, c := range w.LootableCorpses {
 		if c != nil && c.Guid == s.pendingGUID() {
-			if corpse != nil || s.questWolf && c.Entry != 299 || s.questColdridge && !coldridgeCorpse(c) {
+			if corpse != nil || s.questWolf && c.Entry != 299 || s.questColdridge && !s.coldridgeGoal.matchesCorpse(c) {
 				return false
 			}
 			corpse = c

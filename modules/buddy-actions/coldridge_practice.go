@@ -85,15 +85,23 @@ func eligibleColdridgeWolf(c *worldv1.CreatureState) bool {
 	return c != nil && c.Guid>>48 == 0xf130 && c.Guid&0xffffff != 0 && uint32(c.Guid>>24&0xffffff) == 705 && c.Entry == 705 && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level == 1 && c.HealthKnown && c.MaxHealth > 0 && c.Health > 0 && c.AliveKnown && c.Alive && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0
 }
 
+func unclaimedColdridgePull(c *worldv1.CreatureState) bool {
+	return c != nil && c.UnitFlags&0x80000 == 0 && c.DynamicFlags == 0 && !c.AttackVictimKnown && (!c.TargetKnown || c.TargetGuid == 0)
+}
+
 func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.SnapshotResponse) (*actionsv1.State, error) {
-	_, incomplete := ownColdridgeQuest(w, s.selfGUID)
+	goal, incomplete := selectColdridgePracticeGoal(w, s.selfGUID)
 	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !coldridge(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
-		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own incompletequest179")
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own supported incompletequest179 or170")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
 	}
 	s.state.Practicing, s.state.PracticePhase = true, "waiting_for_safe_coldridge_pull"
+	s.coldridgeGoal = goal
+	if goal.questID == 170 {
+		s.state.PracticePhase = "waiting_for_safe_quest_170_pull"
+	}
 	s.practiceUntil, s.practiceQuestGoal = s.now().Add(10*time.Minute), true
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 	s.practiceRoute, s.practicePullStarted, s.failedAssistTarget = nil, false, 0
@@ -115,10 +123,20 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	target := practiceTargetObservation(w, s.practiceTarget)
-	active, needed := ownColdridgeQuest(w, s.selfGUID)
-	finishing := active && !needed && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && eligibleColdridgeWolf(target) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
+	goal := &s.coldridgeGoal
+	active, needed := goal.observe(w, s.selfGUID)
+	selectedObjectiveComplete := target != nil && !goal.targetNeeded(target.Entry)
+	finishing := active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 	if !needed && !finishing {
-		s.stopPracticeLocked(ctx, "quest_179_complete_absent_or_level_limit")
+		why := "quest_179_complete_absent_or_level_limit"
+		if goal.questID == 170 {
+			why = "quest_170_complete_absent_or_invalid"
+		}
+		s.stopPracticeLocked(ctx, why)
+		return
+	}
+	if needed && selectedObjectiveComplete && s.practicePullStarted && !finishing {
+		s.stopPracticeLocked(ctx, "selected_quest_objective_complete_without_owned_fight")
 		return
 	}
 	if finishing {
@@ -151,6 +169,16 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.state.PracticePhase = "target_death_observed"
 		return
 	}
+	// Another actual objective update may satisfy this target while a route is
+	// being planned. A selected but unpulled target never creates authority to
+	// begin an unnecessary fight, even when the other objective still needs work.
+	if target != nil && !s.practicePullStarted && !goal.targetNeeded(target.Entry) {
+		s.stopLocked(ctx)
+		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
+		s.practiceRoute = nil
+		s.state.PracticePhase = "selected_quest_objective_already_satisfied"
+		return
+	}
 	if s.practiceTarget == 0 {
 		if !s.stopLocked(ctx) || self.UnitFlags&0x80000 != 0 || !s.stopAutoAttackLocked(ctx) {
 			s.state.PracticePhase = "waiting_out_of_combat"
@@ -162,7 +190,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 		best := float64(120)
 		for _, c := range w.NearbyCreatures {
-			if !eligibleColdridgeWolf(c) || c.UnitFlags&0x80000 != 0 || c.DynamicFlags != 0 || c.AttackVictimKnown || c.TargetKnown && c.TargetGuid != 0 {
+			if !goal.eligible(c, self) || !goal.targetNeeded(c.Entry) || !unclaimedColdridgePull(c) {
 				continue
 			}
 			p, known, _ := creaturePosition(c)
@@ -172,12 +200,15 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 		if target == nil {
 			s.state.PracticePhase = "waiting_for_observed_level_one_ragged_young_wolf"
+			if goal.questID == 170 {
+				s.state.PracticePhase = "waiting_for_observed_required_quest_170_target"
+			}
 			return
 		}
 		s.practiceTarget, s.state.PracticeTargetGuid = target.Guid, target.Guid
 		s.practiceRoute, s.practicePullStarted, s.practiceReplans, s.practiceKillCredited = nil, false, 0, false
 	}
-	if !eligibleColdridgeWolf(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget || self.UnitFlags&0x80000 != 0 && !s.practicePullStarted {
+	if !goal.eligible(target, self) || !s.practicePullStarted && !unclaimedColdridgePull(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget || self.UnitFlags&0x80000 != 0 && !s.practicePullStarted {
 		s.stopPracticeLocked(ctx, "coldridge_target_claimed_unsafe_or_cast_failed")
 		return
 	}
@@ -185,6 +216,9 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	if !known || !coldridge(p) {
 		s.stopLocked(ctx)
 		s.state.PracticePhase = "waiting_for_observed_wolf_position"
+		if goal.questID == 170 {
+			s.state.PracticePhase = "waiting_for_observed_quest_170_target_position"
+		}
 		return
 	}
 	if s.state.CastPending {
@@ -221,6 +255,9 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			return
 		}
 		s.state.PracticePhase = "approaching_observed_coldridge_wolf_on_navmesh"
+		if goal.questID == 170 {
+			s.state.PracticePhase = "approaching_observed_quest_170_target_on_navmesh"
+		}
 		return
 	}
 	if !s.stopLocked(ctx) {
@@ -228,12 +265,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	if !s.practicePullStarted {
-		if self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
+		if !goal.targetNeeded(target.Entry) || self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
 			s.stopPracticeLocked(ctx, "pull_prerequisites_changed")
 			return
 		}
-		s.practicePullStarted, s.practiceRoute = true, nil
-		s.state.PracticePulls++
 	}
 	rank := s.selectedSpellLocked(shadowBolt)
 	if rank.id != shadowBolt {
@@ -241,10 +276,78 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) && s.faceEnemyLocked(ctx, p) {
+		if !s.coldridgeCastReadyLocked(ctx, w, p, rank) {
+			return
+		}
+		if !s.practicePullStarted {
+			// Only dispatching the first cast reserves an owned pull. Waiting
+			// for cooldown, mana or facing cannot waive fresh claim checks.
+			s.practicePullStarted, s.practiceRoute = true, nil
+			s.state.PracticePulls++
+		}
 		s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second)
 	}
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
+	if goal.questID == 170 {
+		s.state.PracticePhase = "fighting_observed_quest_170_target"
+	}
 	if finishing {
 		s.state.PracticePhase = "finishing_current_fight_to_goal"
 	}
+}
+
+// Facing itself obtains clock/world observations. Use a final requested-target
+// snapshot so neither that newer evidence nor discovery truncation can leave a
+// stale goal, claim or physical baseline immediately before cast dispatch.
+func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv1.SnapshotResponse, aimed position, rank spellRank) bool {
+	reject := func(reason string) bool {
+		s.stopPracticeLocked(ctx, "coldridge_precast_"+reason)
+		return false
+	}
+	w, err := s.snapshot(ctx, s.practiceTarget)
+	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" {
+		return reject("own_observations_unavailable_or_unsafe")
+	}
+	self := w.Self
+	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision || !coldridge(playerPosition(self)) || !coldridge(s.pos) || s.state.MotionUnconfirmed {
+		return reject("physical_baseline_changed")
+	}
+	if !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || self.UnitFlags&0x2000 != 0 || uint64(self.Power) < manaBudget(self, uint64(rank.manaPercent)) {
+		return reject("own_combat_prerequisites_changed")
+	}
+	goal := &s.coldridgeGoal
+	active, needed := goal.observe(w, s.selfGUID)
+	if !active {
+		return reject("bound_goal_absent_or_invalid")
+	}
+	target := practiceTargetObservation(w, s.practiceTarget)
+	if !goal.eligible(target, self) || len(w.NearbyCreatures) > 32 {
+		return reject("target_observations_unavailable_or_unsafe")
+	}
+	if !s.practicePullStarted {
+		if !needed || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) || self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
+			return reject("fresh_pull_authority_changed")
+		}
+	} else {
+		if target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 {
+			return reject("started_target_claim_changed")
+		}
+		if (!needed || !goal.targetNeeded(target.Entry)) && (self.UnitFlags&0x80000 == 0 || !target.AttackVictimKnown || target.AttackVictimGuid != s.selfGUID || target.AttackAgeMs > 30000) {
+			return reject("completed_objective_without_owned_fight")
+		}
+	}
+	for _, other := range w.NearbyCreatures {
+		if other != nil && other.Guid != target.Guid && other.Present && other.AliveKnown && other.Alive && other.AttackVictimKnown && other.AttackVictimGuid == s.selfGUID && other.AttackAgeMs <= 30000 {
+			return reject("unexpected_hostile_requires_help")
+		}
+	}
+	position, known, _ := creaturePosition(target)
+	if !known || !coldridge(position) || distance(s.pos, position) > 25 || distance(aimed, position) > 2 {
+		// A roaming target may need another bounded route/facing cycle. This
+		// grants no pull authority and never reuses the earlier facing now.
+		s.practiceRoute = nil
+		s.state.PracticePhase = "waiting_for_fresh_coldridge_target_position"
+		return false
+	}
+	return true
 }

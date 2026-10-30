@@ -46,6 +46,7 @@ type Service struct {
 	opened                                     bool
 	questWolf                                  bool
 	questColdridge                             bool
+	coldridgeGoal                              coldridgeLootGoal
 	questGather                                bool
 	gatherCastCount                            byte
 	gatherObjectRevision                       uint64
@@ -151,6 +152,7 @@ func (s *Service) releaseLease(ctx context.Context) {
 		s.token = ""
 		s.questWolf = false
 		s.questColdridge = false
+		s.coldridgeGoal = coldridgeLootGoal{}
 	}
 }
 func (s *Service) finish(ctx context.Context) {
@@ -179,6 +181,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.opened = false
 	s.questWolf = false
 	s.questColdridge = false
+	s.coldridgeGoal = coldridgeLootGoal{}
 	if s.state.Enabled {
 		s.state.Phase = "idle"
 	} else {
@@ -207,6 +210,14 @@ func (s *Service) beginRelease(ctx context.Context) {
 	if !s.opened {
 		s.finish(ctx)
 		return
+	}
+	if s.questColdridge {
+		if _, owned := s.renewColdridgeLease(ctx); !owned {
+			s.state.Enabled = false
+			s.state.Reason = "coldridge_interaction_token_lost_no_further_loot_writes"
+			s.finish(ctx)
+			return
+		}
 	}
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
@@ -350,6 +361,15 @@ func eligibleWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *w
 	return dx*dx+dy*dy+dz*dz <= maxRange*maxRange && math.Abs(dz) <= maxHeight
 }
 
+// Renew the retained token; an owner label cannot identify this operation.
+func (s *Service) renewColdridgeLease(ctx context.Context) (*actionsv1.State, bool) {
+	lease := &actionsv1.InteractionLease{}
+	if s.token == "" || s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || lease.State == nil || lease.State.InteractionOwner != "loot" || lease.State.InteractionLeaseRemainingMs < 1000 {
+		return nil, false
+	}
+	return lease.State, true
+}
+
 func (s *Service) openLocked(ctx context.Context) {
 	world := s.openingCapacity(ctx)
 	if world == nil {
@@ -417,10 +437,26 @@ func (s *Service) Tick(ctx context.Context) {
 				return
 			}
 			currentActions = active
-			if s.questColdridge && (active.MotionUnconfirmed || !coldridgeQuestContext(world, active.Position, s.selfGUID)) {
-				s.state.Reason = "coldridge_loot_scope_became_unsafe"
-				s.beginRelease(ctx)
-				return
+			if s.questColdridge {
+				if active.MotionUnconfirmed || !s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid) {
+					s.state.Reason = "coldridge_loot_scope_became_unsafe"
+					s.beginRelease(ctx)
+					return
+				}
+				renewed, owned := s.renewColdridgeLease(ctx)
+				if !owned {
+					s.state.Enabled = false
+					s.state.Reason = "coldridge_interaction_token_lost_no_further_loot_writes"
+					s.finish(ctx)
+					return
+				}
+				latest := &worldv1.SnapshotResponse{}
+				if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, latest) != nil || renewed.MotionUnconfirmed || renewed.Moving && s.state.Phase != "approaching" || !s.coldridgeGoal.context(latest, renewed.Position, s.selfGUID, s.state.PendingCorpseGuid) {
+					s.state.Reason = "coldridge_loot_scope_became_unsafe"
+					s.beginRelease(ctx)
+					return
+				}
+				world, observed, active, currentActions = latest, latest, renewed, renewed
 			}
 			if s.questGather {
 				s.observeGatherQuest(world)
@@ -430,7 +466,7 @@ func (s *Service) Tick(ctx context.Context) {
 					return
 				}
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questColdridge && !active.MotionUnconfirmed && coldridgeQuestContext(world, active.Position, s.selfGUID)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -621,12 +657,14 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	var selected *worldv1.CreatureState
+	var selectedColdridgeGoal coldridgeLootGoal
 	best := math.Inf(1)
 	for _, c := range world.LootableCorpses {
 		if c == nil {
 			continue
 		}
-		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && coldridgeCorpse(c)) {
+		goal, matchesColdridge := selectColdridgeLootGoal(world, s.selfGUID, c)
+		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) {
 			continue
 		}
 		if s.seen[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -637,6 +675,10 @@ func (s *Service) Tick(ctx context.Context) {
 		if d < best {
 			best = d
 			selected = c
+			selectedColdridgeGoal = coldridgeLootGoal{}
+			if coldridgeScope && matchesColdridge {
+				selectedColdridgeGoal = goal
+			}
 		}
 	}
 	if selected == nil {
@@ -653,7 +695,8 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.token = lease.Token
 	s.questWolf = selected.Entry == 299 && wolfScope
-	s.questColdridge = coldridgeScope && coldridgeCorpse(selected)
+	s.coldridgeGoal = selectedColdridgeGoal
+	s.questColdridge = selectedColdridgeGoal.questID != 0
 	if s.questWolf || s.questColdridge {
 		selectedGUID := selected.Guid
 		fresh := &worldv1.SnapshotResponse{}
@@ -668,7 +711,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 			lease.State = freshActions
 		}
-		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !coldridgeQuestContext(fresh, lease.State.Position, s.selfGUID) {
+		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) {
 			s.releaseLease(ctx)
 			s.questWolf = false
 			s.questColdridge = false
@@ -679,7 +722,7 @@ func (s *Service) Tick(ctx context.Context) {
 		selected = nil
 		if len(fresh.LootableCorpses) <= 64 {
 			for _, c := range fresh.LootableCorpses {
-				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && coldridgeCorpse(c)) {
+				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c)) {
 					selected = c
 					break
 				}
