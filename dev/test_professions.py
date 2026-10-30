@@ -18,7 +18,8 @@ p = importlib.util.module_from_spec(spec)
 loader.exec_module(p)
 NPC = 0xf130000202000001
 SPELLS = {165: (2155, 2108), 171: (2275, 2259), 182: (2372, 2366), 197: (3911, 3908),
-          333: (7414, 7411), 393: (8615, 8613), 129: (3279, 3273), 185: (2551, 2550), 356: (7733, 7620)}
+          333: (7414, 7411), 393: (8615, 8613), 129: (3279, 3273), 185: (2551, 2550), 356: (7733, 7620),
+          164: (2020, 2018), 186: (2581, 2575), 202: (4039, 4036), 755: (25245, 25229), 773: (45375, 45357)}
 
 
 def offered(skill, cost=10):
@@ -30,14 +31,16 @@ def offered(skill, cost=10):
 
 
 class RPC:
-    def __init__(self, guid=1):
+    def __init__(self, guid=1, primary_skills=None, url=None):
         self.guid, self.calls, self.session, self.revision = guid, [], "profession-body", 1
+        self.primary_skills = tuple(primary_skills) if primary_skills is not None else p.PRIMARY[guid]
+        self.url = url
         self.map_id, self.npc_map, self.action_map, self.map_known = 0, None, None, True
         self.known, self.free_known, self.free, self.copper, self.copper_known = True, True, 2, 100, True
         self.primary, self.secondary = {}, {}
         self.level, self.level_known, self.combat, self.x, self.npc_x = 5, True, False, 0., 2.
         self.npc_present, self.npc_flags, self.owner, self.offer, self.purchase = True, 0x50, "", {}, {}
-        self.spells = [offered(skill) for skill in (*p.PRIMARY[guid], *p.SECONDARY)]
+        self.spells = [offered(skill) for skill in (*self.primary_skills, *p.SECONDARY)]
         self.apply, self.error_buy, self.prove, self.after_list, self.after_acquire = True, False, True, None, None
         self.reject,self.offer_revision=False,20
 
@@ -88,7 +91,7 @@ class RPC:
         purchase, skill = params["purchase"], params["skillId"]
         assert purchase["sessionId"] == self.session and purchase["npcGuid"] == str(NPC)
         assert purchase["offerRevision"] == self.offer["revision"]
-        assert params["allowedPrimarySkills"] == list(p.PRIMARY[self.guid])
+        assert params["allowedPrimarySkills"] == list(self.primary_skills)
         spell = next(row for row in self.offer["spells"] if row["spellId"] == purchase["spellId"])
         assert spell["professionSkillId"] == skill
         assert skill not in self.primary and skill not in self.secondary
@@ -119,6 +122,163 @@ class ProfessionTests(unittest.TestCase):
         for _ in range(count): actor.tick(); now[0] += 10
 
     def buys(self, rpc): return [params for method, params in rpc.calls if method == "buddy-training.buy_profession"]
+
+    def generic_rig(self, guid=8, name="Nixwick", primary=(186,202), url="http://127.0.0.1:8111/rpc", stored=None):
+        binding = p.bind_profile(guid, name, url, primary)
+        rpc, now, saved = RPC(guid, binding.primary_skills, url), [100.], []
+        actor = p.Learner(guid, rpc, binding=binding, stored=stored, now=lambda: now[0],
+                          save=lambda value: saved.append(copy.deepcopy(value)))
+        return actor, rpc, now, saved
+
+    def test_generic_nixwick_mining_engineering_and_independent_cloth_pair(self):
+        original_primary, original_roster = copy.deepcopy(p.PRIMARY), copy.deepcopy(p.ROSTER)
+        for guid,name,primary,url in ((8,"Nixwick",(186,202),"http://127.0.0.1:8111/rpc"),
+                                      (6,"Solace",(197,333),"http://127.0.0.1:8112/rpc")):
+            actor,rpc,now,_=self.generic_rig(guid,name,primary,url)
+            rpc.map_id=1
+            self.step(actor,now,6)
+            self.assertTrue(actor.done)
+            self.assertEqual(set(rpc.primary),set(primary))
+            self.assertEqual(set(rpc.secondary),set(p.SECONDARY))
+            self.assertEqual(set(actor.status["confirmedPurchases"]),set(primary)|set(p.SECONDARY))
+            self.assertTrue(all(row["allowedPrimarySkills"]==list(sorted(primary)) for row in self.buys(rpc)))
+            self.assertEqual(actor.identity["guid"],guid)
+            self.assertEqual(actor.identity["name"],name)
+            self.assertEqual(actor.identity["rpcUrl"],url)
+            self.assertEqual(actor.identity["budgetCopper"],10000)
+            self.assertFalse(any(method=="buddy-actions.follow" for method,_ in rpc.calls))
+        self.assertEqual(p.PRIMARY,original_primary)
+        self.assertEqual(p.ROSTER,original_roster)
+        self.assertEqual(set(p.PRIMARY_SKILLS),set(SPELLS)-set(p.SECONDARY))
+
+    def test_generic_profile_is_immutable_and_never_adds_a_third_or_replaces_primary(self):
+        pair=[186,202]
+        binding=p.bind_profile(8,"Nixwick","http://127.0.0.1:8111/rpc",pair)
+        pair[0]=171
+        self.assertEqual(binding.primary_skills,(186,202))
+        with self.assertRaises(AttributeError):binding.name="Joel"
+        actor,rpc,now,_=self.generic_rig()
+        rpc.primary={165:dict(skillId=165,rank=42,maxRank=75)}
+        rpc.free=1
+        self.step(actor,now,6)
+        self.assertEqual(rpc.primary,{165:dict(skillId=165,rank=42,maxRank=75)})
+        self.assertEqual({row["skillId"] for row in self.buys(rpc)},set(p.SECONDARY))
+        self.assertEqual(actor.status["preservingUnassignedPrimarySkills"],[165])
+
+    def test_generic_low_level_unknown_slots_or_foreign_self_never_purchase_primary(self):
+        for mode in ("foreign_self","human_self","level_four","unknown_slots","full_slots","unknown_skills"):
+            actor,rpc,now,_=self.generic_rig()
+            if mode=="foreign_self":rpc.guid=9
+            elif mode=="human_self":rpc.guid=3
+            elif mode=="level_four":rpc.level=4
+            elif mode=="unknown_slots":rpc.free_known=False
+            elif mode=="full_slots":rpc.free=0
+            else:rpc.known=False
+            if mode in ("foreign_self","human_self"):
+                with self.assertRaises(p.Error):actor.tick()
+            else:self.step(actor,now,6)
+            self.assertFalse(any(row["skillId"] in (186,202) for row in self.buys(rpc)),mode)
+            if mode not in ("unknown_slots","full_slots"):self.assertEqual(self.buys(rpc),[],mode)
+
+    def test_default_secondary_level_rules_and_saved_v1_identity_remain_compatible(self):
+        actor,rpc,now,_=self.rig()
+        rpc.level=1
+        self.step(actor,now,4)
+        self.assertEqual({row["skillId"] for row in self.buys(rpc)},set(p.SECONDARY))
+        self.assertEqual(actor.identity,dict(version=1,mode="initial_profession_learning",name="Arlen",guid=1,
+            port=8086,primarySkills=[171,182],secondarySkills=[129,185,356],budgetCopper=10000))
+
+    def test_generic_travel_cleanup_binds_endpoint_but_still_cleans_up_on_stop(self):
+        actor,rpc,_,_=self.generic_rig()
+        actor.allow_travel=True
+        rpc.npc_x=30
+        original=rpc.call
+        def change_after_travel(method,params):
+            result=original(method,params)
+            if method=="buddy-actions.travel_trainer":rpc.url="http://127.0.0.1:8112/rpc"
+            return result
+        rpc.call=change_after_travel
+        actor.tick()
+        self.assertEqual(actor.status["cleanup"],"trainer_travel_release_unconfirmed")
+        self.assertFalse(any(method=="buddy-actions.release_interaction" for method,_ in rpc.calls))
+        self.assertEqual(self.buys(rpc),[])
+        actor,rpc,_,_=self.generic_rig()
+        actor.allow_travel=True
+        rpc.npc_x=30
+        stopped=[False]
+        actor.stopped=lambda:stopped[0]
+        rpc.after_acquire=lambda mock:stopped.__setitem__(0,True)
+        with self.assertRaises(p.c.Stopped):actor.tick()
+        self.assertEqual(rpc.calls[-1],("buddy-actions.release_interaction",{"owner":"training","token":"profession-token"}))
+        self.assertEqual(self.buys(rpc),[])
+
+    def test_generic_identity_and_runtime_endpoint_mismatch_refuse_without_reset(self):
+        actor,rpc,now,saved=self.generic_rig()
+        rpc.apply,rpc.prove,rpc.error_buy=False,False,True
+        with self.assertRaises(p.Error):actor.tick()
+        stored=copy.deepcopy(saved[-1])
+        for mode in ("name","guid","rpc","skills"):
+            args=dict(guid=8,name="Nixwick",rpc_url="http://127.0.0.1:8111/rpc",primary_skills=(186,202))
+            if mode=="name":args["name"]="Nixwix"
+            elif mode=="guid":args["guid"]=9
+            elif mode=="rpc":args["rpc_url"]="http://127.0.0.1:8112/rpc"
+            else:args["primary_skills"]=(197,333)
+            binding=p.bind_profile(**args)
+            other=RPC(binding.guid,binding.primary_skills,binding.rpc_url)
+            with self.assertRaises(p.Error):p.Learner(binding.guid,other,binding=binding,stored=copy.deepcopy(stored))
+            self.assertEqual(other.calls,[])
+        restarted=p.Learner(8,rpc,binding=actor.binding,stored=stored,now=lambda:now[0]+100)
+        rpc.session="new-body"
+        restarted.tick()
+        self.assertEqual(len(self.buys(rpc)),1)
+        self.assertEqual(restarted.status["phase"],"waiting_for_unconfirmed_profession_purchase")
+        rpc.calls.clear()
+        rpc.url="http://127.0.0.1:8112/rpc"
+        with self.assertRaises(p.Error):restarted.tick()
+        self.assertEqual(rpc.calls,[])
+        self.assertEqual(stored,saved[-1])
+
+    def test_generic_cli_rejects_partial_invalid_or_human_bindings_before_network(self):
+        base=["run","--character-guid","8"]
+        complete=["--character-name","Nixwick","--rpc-url","http://127.0.0.1:8111/rpc","--primary-skill","186","--primary-skill","202"]
+        invalid=[base,base+complete[:2],base+complete[2:4],base+complete[4:],
+                 base+complete[:-2],base+complete+["--primary-skill","197"]]
+        for guid in ("0","-1","3",str(2**48)):
+            invalid.append(["run","--character-guid",guid]+complete)
+        for url in ("http://localhost:8111/rpc","http://example.com:8111/rpc","https://127.0.0.1:8111/rpc",
+                    "http://127.0.0.1:0/rpc","http://127.0.0.1:80/rpc","http://127.0.0.1:65536/rpc",
+                    "http://127.0.0.1/rpc","http://user@127.0.0.1:8111/rpc","http://127.0.0.1:8111/rpc?x=1"):
+            args=complete.copy();args[3]=url;invalid.append(base+args)
+        for skills in ((186,186),(129,202),(999,202)):
+            args=complete.copy();args[5],args[7]=map(str,skills);invalid.append(base+args)
+        for name in ("J","bad name","Nixwicktoolong"):
+            args=complete.copy();args[1]=name;invalid.append(base+args)
+        with tempfile.TemporaryDirectory() as temporary,patch.object(p,"ROOT",Path(temporary)),patch.object(p,"RPC") as rpc,contextlib.redirect_stderr(io.StringIO()):
+            for args in invalid:
+                with self.assertRaises((p.Error,SystemExit),msg=str(args)):p.main(args)
+            rpc.assert_not_called()
+            self.assertFalse((Path(temporary)/"data").exists())
+
+    def test_generic_cli_private_ledger_identity_and_expired_run_compatibility(self):
+        args=["run","--character-guid","8","--character-name","Nixwick","--rpc-url","http://127.0.0.1:8111/rpc", "--primary-skill","186","--primary-skill","202"]
+        actor,rpc,_,_=self.generic_rig()
+        with tempfile.TemporaryDirectory() as temporary,patch.object(p,"ROOT",Path(temporary)),\
+                patch.object(p.time,"monotonic",side_effect=[0]+[100]*30),patch.object(p.signal,"signal"),patch.object(p,"RPC",return_value=rpc):
+            self.assertEqual(p.main(args+["--max-minutes",".001"]),0)
+            self.assertEqual(rpc.calls,[])
+            folder=Path(temporary)/"data/professions/8"
+            record=p.private_state(folder/"status.json")
+            self.assertEqual(record["identity"],actor.identity)
+            self.assertFalse(record["routineActive"])
+            self.assertEqual((folder/"status.json").stat().st_mode&0o777,0o600)
+        with tempfile.TemporaryDirectory() as temporary,patch.object(p,"ROOT",Path(temporary)),patch.object(p,"RPC") as rpc_constructor:
+            folder=p.c.ensure_state(Path(temporary)/"data/professions/8")
+            original=copy.deepcopy(actor.data)
+            p.c.write_json(folder/"operations.json",original)
+            changed=args.copy();changed[6]="http://127.0.0.1:8112/rpc"
+            with self.assertRaises(p.Error):p.main(changed)
+            rpc_constructor.assert_not_called()
+            self.assertEqual(p.private_state(folder/"operations.json"),original)
 
     def test_nonzero_maps_learn_only_actual_same_map_trainer_offers(self):
         for map_id in (1,530):

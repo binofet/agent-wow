@@ -11,7 +11,7 @@ m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 class RPC:
     def __init__(self):
         self.calls=[]
-        self.world={'self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,'level':4},
+        self.world={'self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,'mapKnown':True,'level':4},
             'owner':{'guid':'3','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True}}
         self.actions={'position':{'known':True,'mapKnown':True,'x':0,'y':0,'z':0}}
         self.group={'known':True,'inGroup':True,'leaderGuid':'3','members':[
@@ -37,7 +37,9 @@ class RPC:
             value=self.training
         elif method=='buddy-mail.list':value=self.mail
         elif method=='buddy-mail.state':value=dict(self.mail,lastClaim=self.claim)
-        elif method=='buddy-mail.claim_stipend':value={'lastClaim':self.claim}
+        elif method=='buddy-mail.claim_stipend':
+            if m.confirmed_mail(self.claim,params['mailId']):self.training['copper']+=10000
+            value={'lastClaim':self.claim}
         else:raise AssertionError(method)
         return copy.deepcopy(value)
 
@@ -49,6 +51,83 @@ class MaintenanceTests(unittest.TestCase):
     def methods(self):return [x[0] for x in self.rpc.calls]
     def box(self,x=0):
         self.rpc.world['mailboxes']=[{'present':True,'positionKnown':True,'mapKnown':True,'x':x,'y':0,'z':0}]
+    def test_absent_owner_collects_existing_stipend_and_confirms_class_learning(self):
+        for name,guid in (('Arlen',1),('Mira',4),('Rook',5)):
+            for owner in (None, {}, {'guid':'3','present':False,'unitFlagsKnown':True,'unitFlags':0x80000}):
+                with self.subTest(guid=guid,owner=owner):
+                    self.setUp()
+                    self.rpc.world['self']['guid']=str(guid)
+                    self.rpc.world['owner']=owner
+                    self.rpc.group={'known':False}
+                    self.agent=m.Maintenance(name,guid,self.rpc,lambda d:self.saved.append(copy.deepcopy(d)),now=lambda:self.now[0])
+                    self.rpc.training['copper']=99
+                    self.box()
+                    self.tick()
+                    self.assertEqual(self.agent.data['mail']['status'],'confirmed')
+                    self.assertEqual(self.rpc.training['copper'],10099)
+                    self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+                    self.tick()
+                    self.assertEqual(self.methods().count('buddy-training.buy'),1)
+                    self.assertEqual(self.agent.data['training'][0]['status'],'reserved')
+                    self.rpc.purchase={'id':1,'npcGuid':self.rpc.offer['npcGuid'],'spellId':123,'costCopper':100,
+                        'status':'TRAINING_CONFIRMED','serverSuccessObserved':True,'learnedSpellObserved':True}
+                    self.tick()
+                    self.assertEqual(self.agent.data['training'][0]['status'],'confirmed')
+                    self.assertEqual(self.agent.data['reservedCopper'],100)
+                    self.assertNotIn('buddy-party.state',self.methods())
+                    self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+                    self.assertEqual(self.methods().count('buddy-training.buy'),1)
+
+    def test_only_actually_present_known_owner_combat_defers_local_services(self):
+        for known,present,expected in ((True,True,False),(False,True,True),(True,False,True)):
+            with self.subTest(known=known,present=present):
+                self.setUp()
+                self.rpc.world['owner']={'guid':'3','present':present,'unitFlagsKnown':known,'unitFlags':0x80000}
+                self.tick()
+                self.assertEqual('buddy-training.buy' in self.methods(),expected)
+                self.assertNotIn('buddy-party.state',self.methods())
+        self.setUp()
+        self.rpc.world['owner']={'guid':'0','present':True,'unitFlagsKnown':True,'unitFlags':0x80000}
+        self.tick()
+        self.assertIn('buddy-training.buy',self.methods())
+
+    def test_absent_owner_does_not_relax_own_position_identity_or_busy_gates(self):
+        for mode in ('dead','unknown_alive','own_combat','own_map_unknown','position_unknown','map_mismatch','nonfinite',
+                     'moving','motionUnconfirmed','castPending','autoAttacking','autoAttackRequested','autoAttackUnconfirmed',
+                     'interactionOwner','traveling','practicing'):
+            with self.subTest(mode=mode):
+                self.setUp();self.rpc.world['owner']=None;self.box()
+                if mode=='dead':self.rpc.world['self']['alive']=False
+                elif mode=='unknown_alive':self.rpc.world['self']['aliveKnown']=False
+                elif mode=='own_combat':self.rpc.world['self']['unitFlags']=0x80000
+                elif mode=='own_map_unknown':self.rpc.world['self']['mapKnown']=False
+                elif mode=='position_unknown':self.rpc.actions['position']['known']=False
+                elif mode=='map_mismatch':self.rpc.actions['position']['mapId']=530
+                elif mode=='nonfinite':self.rpc.actions['position']['x']=float('nan')
+                else:self.rpc.actions[mode]=True
+                self.tick()
+                self.assertNotIn('buddy-mail.list',self.methods())
+                self.assertNotIn('buddy-training.discover',self.methods())
+                self.assertEqual(self.saved,[])
+        self.setUp();self.rpc.world['owner']={'guid':'4','present':False}
+        with self.assertRaises(m.Error):self.tick()
+        self.assertEqual(self.methods(),['buddy-world.snapshot'])
+        for name,guid in (('Nixwick',8),('Mira',1)):
+            with self.assertRaises(m.Error):m.Maintenance(name,guid,self.rpc,lambda d:None)
+
+    def test_offline_owner_ambiguous_mail_reservation_survives_body_change_without_replay(self):
+        self.rpc.world['owner']=None;self.rpc.training['copper']=99;self.box()
+        self.rpc.claim={'mailId':5,'status':'CLAIM_REQUESTED'}
+        self.tick()
+        stored=copy.deepcopy(self.saved[-1])
+        self.agent=m.Maintenance('Arlen',1,self.rpc,lambda d:None,stored,now=lambda:200)
+        self.rpc.mail['sessionId']='replacement'
+        self.agent.tick()
+        self.assertEqual(self.agent.data['mail']['status'],'reserved')
+        self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+        self.assertNotIn('buddy-training.buy',self.methods())
+        self.assertEqual(self.agent.data['identity'],stored['identity'])
+
     def test_budget_reserved_before_write_and_exact_offer(self):
         self.tick()
         self.assertEqual(self.saved[0]['reservedCopper'],100)

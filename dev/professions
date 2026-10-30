@@ -11,7 +11,9 @@ from pathlib import Path
 import signal
 import sys
 import time
+from typing import NamedTuple
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -21,16 +23,55 @@ sync = importlib.util.module_from_spec(spec)
 loader.exec_module(sync)
 c, Error, integer, ROOT = sync.converse, sync.Error, sync.integer, sync.converse.ROOT
 PRIMARY = {1: (171, 182), 4: (197, 333), 5: (165, 393)}
+PRIMARY_SKILLS = frozenset((164, 165, 171, 182, 186, 197, 202, 333, 393, 755, 773))
 SECONDARY = (129, 185, 356)
-NAMES = {129: "First Aid", 165: "Leatherworking", 171: "Alchemy", 182: "Herbalism",
-         185: "Cooking", 197: "Tailoring", 333: "Enchanting", 356: "Fishing", 393: "Skinning"}
+NAMES = {129: "First Aid", 164: "Blacksmithing", 165: "Leatherworking", 171: "Alchemy", 182: "Herbalism",
+         185: "Cooking", 186: "Mining", 197: "Tailoring", 202: "Engineering", 333: "Enchanting",
+         356: "Fishing", 393: "Skinning", 755: "Jewelcrafting", 773: "Inscription"}
 ROSTER = {guid: (name, port) for name, guid, port in sync.ROSTER}
 BUDGET = 10000
 
 
-def identity(guid):
+class BoundProfile(NamedTuple):
+    guid: int
+    name: str
+    rpc_url: str
+    primary_skills: tuple
+
+
+def bind_profile(guid, name, rpc_url, primary_skills):
+    if type(guid) is not int or not 0 < guid < 2**48 or guid == 3:
+        raise Error("Profession profile requires a companion player GUID other than human Joel3")
+    name = c.character_name(name)
+    if not isinstance(rpc_url, str):
+        raise Error("Profession RPC URL must be a controlled loopback endpoint")
+    try:
+        parsed = urllib.parse.urlsplit(rpc_url)
+        port = parsed.port
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username is not None
+                or parsed.password is not None or parsed.path != "/rpc" or parsed.query or parsed.fragment
+                or port is None or not 1024 <= port <= 65535
+                or rpc_url != f"http://127.0.0.1:{port}/rpc"):
+            raise ValueError
+    except ValueError:
+        raise Error("Profession RPC must be exactly http://127.0.0.1:1024..65535/rpc") from None
+    if (not isinstance(primary_skills, (list, tuple)) or len(primary_skills) != 2
+            or any(type(skill) is not int or skill not in PRIMARY_SKILLS for skill in primary_skills)
+            or len(set(primary_skills)) != 2):
+        raise Error("Exactly two distinct supported primary profession skills are required")
+    return BoundProfile(guid, name, rpc_url, tuple(sorted(primary_skills)))
+
+
+def identity(guid, binding=None):
+    if binding is not None:
+        if not isinstance(binding, BoundProfile) or binding.guid != guid:
+            raise Error("Bound profession profile does not match the requested character")
+        binding = bind_profile(*binding)
+        return dict(version=2, mode="initial_profession_learning", name=binding.name, guid=guid,
+                    port=urllib.parse.urlsplit(binding.rpc_url).port, rpcUrl=binding.rpc_url,
+                    primarySkills=list(binding.primary_skills), secondarySkills=list(SECONDARY), budgetCopper=BUDGET)
     if type(guid) is not int or guid not in ROSTER:
-        raise Error("Only the three configured companion profiles are supported")
+        raise Error("Other companions require --character-name, --rpc-url and exactly two --primary-skill arguments")
     name, port = ROSTER[guid]
     return dict(version=1, mode="initial_profession_learning", name=name, guid=guid, port=port,
                 primarySkills=list(PRIMARY[guid]), secondarySkills=list(SECONDARY), budgetCopper=BUDGET)
@@ -105,11 +146,15 @@ def skills(state):
 
 class Learner:
     def __init__(self, guid, rpc, save=lambda value: None, stored=None, now=time.time,
-                 stopped=lambda: False, allow_travel=False):
+                 stopped=lambda: False, allow_travel=False, binding=None):
         self.guid, self.rpc, self.save, self.now, self.stopped = guid, rpc, save, now, stopped
-        self.identity = identity(guid)
-        self.assigned = set(PRIMARY[guid])
-        self.wanted = self.assigned | set(SECONDARY)
+        self.identity = identity(guid, binding)
+        self.binding = bind_profile(*binding) if binding is not None else None
+        if self.binding is not None and getattr(rpc, "url", None) != self.binding.rpc_url:
+            raise Error("Profession runtime RPC does not match its bound profile")
+        self.primary_skills = self.binding.primary_skills if self.binding else tuple(PRIMARY[guid])
+        self.assigned = frozenset(self.primary_skills)
+        self.wanted = self.assigned | frozenset(SECONDARY)
         self.allow_travel, self.done, self.anchor = allow_travel, False, None
         self.data = stored or dict(identity=self.identity, reservedCopper=0, attempts=[], queried=[], travelAttempts={})
         if (self.data.get("identity") != self.identity or type(self.data.get("reservedCopper")) is not int
@@ -150,7 +195,12 @@ class Learner:
                            confirmedPurchases=[], reservedCopper=self.data["reservedCopper"])
         self.next_operation = 0
 
+    def check_runtime_binding(self):
+        if self.binding is not None and (self.guid != self.binding.guid or getattr(self.rpc, "url", None) != self.binding.rpc_url):
+            raise Error("Profession runtime identity or endpoint changed")
+
     def call(self, method, params):
+        self.check_runtime_binding()
         if self.stopped():
             raise c.Stopped("Profession learning stop requested")
         return self.rpc.call(method, params)
@@ -261,6 +311,8 @@ class Learner:
             self.call("buddy-actions.travel_trainer", {"token": token, "npcGuid": str(trainer["guid"])})
         finally:
             try:
+                # Cleanup bypasses cooperative stop, never the bound endpoint.
+                self.check_runtime_binding()
                 self.rpc.call("buddy-actions.release_interaction", {"owner": "training", "token": token})
             except Error:
                 self.status["cleanup"] = "trainer_travel_release_unconfirmed"
@@ -288,6 +340,9 @@ class Learner:
             return
         if context["own"].get("levelKnown") is not True:
             self.status["phase"] = "waiting_for_actual_character_level"
+            return
+        if self.binding is not None and integer(context["own"].get("level", 0)) < 5:
+            self.status["phase"] = "waiting_for_character_level_five"
             return
         if not self.safe(context):
             return
@@ -377,7 +432,7 @@ class Learner:
                 or skill in fresh_skills or primary_changed
                 or fresh["state"].get("copperKnown") is not True or integer(fresh["state"].get("copper", 0)) < cost
                 or fresh["own"].get("levelKnown") is not True
-                or integer(fresh["own"].get("level", 0)) < max(integer(spell.get("requiredLevel", 0)), 5 if skill in self.assigned else 1)
+                or integer(fresh["own"].get("level", 0)) < max(integer(spell.get("requiredLevel", 0)), 5 if self.binding is not None or skill in self.assigned else 1)
                 or any(integer(latest.get(key, 0)) != integer(offer.get(key, 0)) for key in ("revision", "npcGuid"))
                 or integer(latest.get("expiresInMs", 0)) <= 0
                 or spell not in latest.get("spells", [])
@@ -395,7 +450,7 @@ class Learner:
         result = self.call("buddy-training.buy_profession", {"purchase": dict(sessionId=context["session"],
             npcGuid=str(trainer["guid"]), offerRevision=str(integer(offer.get("revision", 0))),
             spellId=attempt["spell"], expectedCostCopper=cost, maxSpendCopper=budget),
-            "skillId": skill, "allowedPrimarySkills": list(PRIMARY[self.guid])})
+            "skillId": skill, "allowedPrimarySkills": list(self.primary_skills)})
         current = skills(result)
         if current is not None:
             self.reconcile(result, current)
@@ -406,10 +461,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("run", "status", "stop"))
     parser.add_argument("--character-guid", type=int, required=True)
+    parser.add_argument("--character-name")
+    parser.add_argument("--rpc-url")
+    parser.add_argument("--primary-skill", type=int, action="append")
     parser.add_argument("--max-minutes", type=float, default=10)
     parser.add_argument("--travel-trainers", action="store_true", help="Use the deployed verified trainer navigation endpoint")
     args = parser.parse_args(argv)
-    expected = identity(args.character_guid)
+    binding = None
+    if any(value is not None for value in (args.character_name, args.rpc_url, args.primary_skill)):
+        if args.character_name is None or args.rpc_url is None or args.primary_skill is None:
+            parser.error("Generic profiles require --character-name, --rpc-url and exactly two --primary-skill arguments")
+        binding = bind_profile(args.character_guid, args.character_name, args.rpc_url, args.primary_skill)
+    expected = identity(args.character_guid, binding)
     if not math.isfinite(args.max_minutes) or not 0 < args.max_minutes <= 10:
         parser.error("Profession routine must last greater than0 and at most10minutes")
     base = c.ensure_state(ROOT/"data/professions")
@@ -433,6 +496,12 @@ def main(argv=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Error("This character already has a profession routine") from None
+        prior = private_state(folder/"status.json")
+        if prior and prior.get("identity") != expected:
+            raise Error("Directory tracks a different profession profile")
+        stored = private_state(folder/"operations.json") or None
+        if stored is not None and stored.get("identity") != expected:
+            raise Error("Saved profession identity differs; refusing to reset or replay its ledger")
         record = dict(identity=expected, instance=uuid.uuid4().hex, pid=os.getpid(), routineActive=True)
         end, stop_requested = time.monotonic()+args.max_minutes*60, False
         def stop(signum, frame):
@@ -447,8 +516,8 @@ def main(argv=None):
             if len(json.dumps(value)) > 65536:
                 raise Error("Profession receipts exceed their bound")
             c.write_json(folder/"operations.json", value)
-        actor = Learner(args.character_guid, RPC(f"http://127.0.0.1:{expected['port']}/rpc", timeout=6), save,
-                        private_state(folder/"operations.json") or None, stopped=stopped, allow_travel=args.travel_trainers)
+        actor = Learner(args.character_guid, RPC(binding.rpc_url if binding else f"http://127.0.0.1:{expected['port']}/rpc", timeout=6), save,
+                        stored, stopped=stopped, allow_travel=args.travel_trainers, binding=binding)
         def status():
             record.update(updatedAt=time.time(), remainingSeconds=max(0, int(end-time.monotonic())), own=actor.status)
             c.write_json(folder/"status.json", record)

@@ -44,6 +44,8 @@ class RPC(sync.SyncRPC):
 
 class Maintenance:
     def __init__(self, name, guid, rpc, save, stored=None, now=time.time):
+        if (name, guid) not in {(n, g) for n, g, _ in ROSTER}:
+            raise Error('Maintenance supports only the configured companion profiles')
         self.name, self.guid, self.rpc, self.save, self.now = name, guid, rpc, save, now
         identity = {'name': name, 'guid': guid, 'ownerGuid': 3, 'budgetCopper': 10000}
         self.data = stored or {'identity': identity, 'reservedCopper': 0, 'training': [], 'mail': None}
@@ -73,21 +75,33 @@ class Maintenance:
             return
         self.next_query = self.now() + 10
         world = self.rpc.call('buddy-world.snapshot', {})
-        own, owner = world.get('self', {}), world.get('owner', {})
-        party = self.rpc.call('buddy-party.state', {}).get('group', {})
-        if integer(own.get('guid', 0)) != self.guid or integer(owner.get('guid', 0)) != 3:
+        own, owner = world.get('self', {}), world.get('owner')
+        if owner is None:
+            owner = {}
+        if (not isinstance(own, dict) or not isinstance(owner, dict)
+                or integer(own.get('guid', 0)) != self.guid
+                or integer(owner.get('guid', 0)) not in (0, 3)):
             raise Error('Maintenance character identity changed')
-        if not c.owner_party_known(party, self.guid):
-            self.status['phase'] = 'waiting_for_joels_party'
-            return
-        if any(p.get('present') is not True or p.get('aliveKnown') is not True or p.get('alive') is not True
-               or p.get('unitFlagsKnown') is not True or integer(p.get('unitFlags', 0)) & 0x80000
-               for p in (own,owner)):
+        # Local own mail and class training do not borrow Joel's party or
+        # presence as authority. A fresh observed fight still takes priority.
+        if (any(own.get(key) is not True for key in ('present','aliveKnown','alive','unitFlagsKnown'))
+                or integer(own.get('unitFlags', 0)) & 0x80000
+                or (integer(owner.get('guid', 0)) == 3 and owner.get('present') is True and owner.get('unitFlagsKnown') is True
+                    and integer(owner.get('unitFlags', 0)) & 0x80000)):
             self.status['phase'] = 'waiting_out_of_combat'
             return
         a = self.rpc.call('buddy-actions.status', {})
-        if any(a.get(k) for k in ('moving','castPending','motionUnconfirmed','autoAttacking','autoAttackUnconfirmed','interactionOwner')):
+        if any(a.get(k) for k in ('moving','castPending','motionUnconfirmed','autoAttacking','autoAttackRequested',
+                                 'autoAttackUnconfirmed','interactionOwner','traveling','practicing')):
             self.status['phase'] = 'waiting_for_idle_companion'
+            return
+        pos = a.get('position', {})
+        if (not isinstance(pos, dict) or own.get('mapKnown') is not True
+                or pos.get('known') is not True or pos.get('mapKnown') is not True
+                or integer(pos.get('mapId',0)) != integer(own.get('mapId',0))
+                or any(type(pos.get(k)) not in (int,float) or not math.isfinite(pos[k])
+                       or abs(pos[k]) >= 40000 for k in ('x','y','z'))):
+            self.status['phase'] = 'waiting_for_known_companion_position'
             return
         if self.data['mail'] and self.data['mail'].get('status') == 'reserved':
             state=self.rpc.call('buddy-mail.state',{})
@@ -95,7 +109,6 @@ class Maintenance:
                     and confirmed_mail(state.get('lastClaim',{}),self.data['mail']['mailId'])):
                 self.data['mail']['status']='confirmed'
                 self.persist()
-        pos = a.get('position', {})
         boxes = world.get('mailboxes', [])
         mailbox_near = (pos.get('known') is True and pos.get('mapKnown') is True
             and isinstance(boxes, list) and len(boxes) <= 32
