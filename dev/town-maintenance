@@ -142,7 +142,7 @@ def checked_state(raw, guid):
             or len(state.get("inventoryBags", [])) > 5 or len(state.get("items", [])) > 164):
         raise Error("inventory_response_bound_exceeded")
     operation = state.get("operation")
-    if operation is not None and (not isinstance(operation, dict) or operation.get("kind") not in ("move", "equip", "sell")
+    if operation is not None and (not isinstance(operation, dict) or operation.get("kind") not in ("move", "equip", "sell", "equip_gear")
                                   or operation.get("status") not in ("REQUESTED", "CONFIRMED", "SERVER_REJECTED", "BLOCKED", "OUTCOME_UNCONFIRMED")):
         raise Error("invalid_inventory_operation")
     if state.get("inventoryKnown"):

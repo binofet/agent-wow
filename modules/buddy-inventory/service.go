@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const limitation = "Explicit whole-stack moves to empty normal carried slots; observed empty-slot bag41599 equipment; exact safe-gray-junk vendor sales. No destruction, bank, split, merge, replacement, travel, retry after ambiguous writes, or positive sell acknowledgement. Confirmation requires newer coherent exact inventory vectors; sales additionally require exact newer wallet credit."
+const limitation = "Exact owned ordinary cloth/leather/mail/plate armor equipment, including replacement with the old item returned to its source slot; conservative unenhanced armor/stat upgrades; empty-slot carried moves and bag41599 equipment; safe-gray-junk vendor sales. No weapons, jewelry, special/scaling armor, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -128,11 +128,15 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 	if e == nil && (w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision) {
 		e = fail("inventory_or_wallet_revision_regressed")
 	}
+	if e == nil && w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision {
+		e = fail("equipment_revision_regressed")
+	}
 	s.known = e == nil
 	s.state.BlockedReason = ""
 	if e != nil {
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
+		s.state.EquipmentKnown = false
 		s.state.BlockedReason = "coherent_current_observations_unavailable"
 	} else {
 		s.view, s.actions, s.trade, s.loot, s.prof = v, a, t, l, p
@@ -142,6 +146,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		s.state.CopperKnown = w.SelfCopperKnown
 		s.state.Copper = w.SelfCopper
 		s.state.CopperRevision = w.SelfCopperRevision
+		s.equipmentStateLocked(v)
 		s.evidenceLocked(v)
 	}
 	s.eligibilityLocked()
@@ -159,6 +164,13 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		for _, b := range v.bags {
 			if b.ContainerGuid != 0 && b.MetadataKnown {
 				owned[b.Entry] = true
+			}
+		}
+		if equipment, known := equipmentView(v); known {
+			for _, i := range equipment {
+				if i.ItemGuid != 0 && i.MetadataKnown {
+					owned[i.Entry] = true
+				}
 			}
 		}
 		for id := range owned {
@@ -218,11 +230,13 @@ func (s *Service) eligibilityLocked() {
 	for _, k := range keys {
 		i := s.view.slots[k]
 		m := s.metadata[i.Entry]
-		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && normalBag(m), ContainerSlots: m.containerSlots}
+		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && normalBag(m), ContainerSlots: m.containerSlots, Name: m.name}
+		r.GearEquipmentSlot, r.ExpectedEquippedItemGuid, r.ConservativeUpgrade, r.GearBlockedReason = s.gearEligibilityLocked(i)
+		r.GearEquipEligible = r.GearBlockedReason == "" && s.ordinaryBagLocked(i.Bag)
 		if !i.MetadataKnown || !m.known {
 			r.BlockedReason = "complete_owned_item_metadata_pending"
-		} else if !r.SafeJunkSaleEligible && !r.NormalBag {
-			r.BlockedReason = "not_safe_gray_junk_or_supported_bag"
+		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible {
+			r.BlockedReason = "not_supported_sale_bag_or_armor"
 		}
 		s.state.Items = append(s.state.Items, r)
 	}
@@ -252,7 +266,7 @@ func (s *Service) idleLocked(leased bool) string {
 	if !leased && a.InteractionOwner != "" || leased && (a.InteractionOwner != "trade" || a.InteractionLeaseRemainingMs < 11000) {
 		return "exclusive_trade_lease_required"
 	}
-	if s.trade == nil || s.trade.Phase != "IDLE" || s.trade.PartnerGuid != 0 || s.trade.AcceptTransportWritten || s.trade.JunkDisposalEnabled || s.trade.LastJunkDisposal != nil && (s.trade.LastJunkDisposal.Status == "AWAITING_SERVER_SLOT_UPDATE" || s.trade.LastJunkDisposal.Status == "TRANSPORT_UNCONFIRMED_NO_RETRY") {
+	if !settledTrade(s.trade) {
 		return "trade_or_junk_operation_busy"
 	}
 	if s.loot == nil || s.loot.Enabled || s.loot.PendingCorpseGuid != 0 || s.loot.PendingGameObjectGuid != 0 || (s.loot.Phase != "disabled" && s.loot.Phase != "idle") || s.prof == nil || s.prof.Active || s.prof.Closing || s.prof.Operation != nil && (s.prof.Operation.CleanupUnconfirmed || s.prof.Operation.Status == professionsv1.AttemptStatus_OUTCOME_UNCONFIRMED) {
@@ -264,6 +278,19 @@ func (s *Service) idleLocked(leased bool) string {
 		}
 	}
 	return ""
+}
+
+// A completed trade retains its offers for the receipt. Those historical fields
+// do not represent a live window after the server positively confirmed status8.
+// Disposal enabled is also an intent; its actual unresolved receipt still blocks.
+func settledTrade(t *tradev1.State) bool {
+	if t == nil || t.LastJunkDisposal != nil && t.LastJunkDisposal.Status != "SERVER_SLOT_REMOVAL_CONFIRMED" {
+		return false
+	}
+	if t.Phase == "COMPLETE" {
+		return t.PartnerGuid == 3 && t.LastServerStatus == 8 && t.Reason == "server_confirmed_trade_complete" && t.CompletedTrades > 0
+	}
+	return t.Phase == "IDLE" && t.PartnerGuid == 0 && !t.PartnerAccepted && !t.AcceptTransportWritten && len(t.OwnRequestedItems) == 0 && len(t.PartnerItems) == 0 && t.OwnRequestedCopper == 0 && t.PartnerCopper == 0
 }
 func (s *Service) ordinaryBagLocked(n uint32) bool {
 	if n == 0 {
@@ -382,6 +409,21 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 	case "equip":
 		if r.EquipmentSlot < 19 || r.EquipmentSlot > 22 || !normalBag(m) || source.StackCount != 1 || s.view.bags[r.EquipmentSlot-18].ContainerGuid != 0 {
 			return "only_41599_single_bag_to_known_empty_equipment_slot"
+		}
+	case "equip_gear":
+		if s.view.w.SelfEquipmentRevision != r.BaselineEquipmentRevision {
+			return "equipment_revision_changed"
+		}
+		slot, displaced, upgrade, reason := s.gearEligibilityLocked(source)
+		if reason != "" {
+			return reason
+		}
+		if slot != r.EquipmentSlot || displaced != r.DisplacedItemGuid {
+			return "exact_equipment_destination_changed"
+		}
+		request, ok := op.request.(*inventoryv1.EquipGearRequest)
+		if !ok || request.RequireConservativeUpgrade && !upgrade {
+			return "conservative_upgrade_not_proven"
 		}
 	case "sell":
 		if !m.disposable() || m.sellPrice == 0 || m.sellPrice != r.UnitSellPriceCopper {
@@ -558,10 +600,11 @@ func (s *Service) run(op *operation) {
 		v, e = validateWorld(w, s.selfGUID)
 	}
 	s.mu.Lock()
-	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision {
+	if e != nil || w.InventoryRevision < s.state.InventoryRevision || w.SelfCopperRevision < s.state.CopperRevision || w.SelfEquipmentKnown && w.SelfEquipmentRevision < s.state.EquipmentRevision {
 		s.known = false
 		s.state.InventoryKnown = false
 		s.state.CopperKnown = false
+		s.state.EquipmentKnown = false
 		s.mu.Unlock()
 		unlockWrite()
 		s.finish(op, "BLOCKED", "final_world_observation_unavailable_or_regressed")
@@ -574,6 +617,7 @@ func (s *Service) run(op *operation) {
 	s.state.CopperKnown = w.SelfCopperKnown
 	s.state.Copper = w.SelfCopper
 	s.state.CopperRevision = w.SelfCopperRevision
+	s.equipmentStateLocked(v)
 	s.actions = proto.Clone(renewed.State).(*actionsv1.State)
 	reason := s.gateLocked(op, true)
 	if preRenewSelf == nil || w.Self.PositionRevision != preRenewSelf.PositionRevision || w.Self.MapKnown != preRenewSelf.MapKnown || w.Self.MapId != preRenewSelf.MapId {
@@ -607,6 +651,9 @@ func (s *Service) run(op *operation) {
 	case "equip":
 		code = opcode.CMSGAutoequipItemSlot
 		payload = equipPacket(r.Source.ItemGuid, r.EquipmentSlot)
+	case "equip_gear":
+		code = opcode.CMSGAutoequipItemSlot
+		payload = equipGearPacket(r.Source.ItemGuid, r.EquipmentSlot)
 	case "sell":
 		code = opcode.CMSGSellItem
 		payload = sellPacket(r.VendorGuid, r.Source.ItemGuid, r.Source.StackCount)
@@ -661,6 +708,7 @@ func (s *Service) evidenceLocked(v view) {
 	}
 	r := op.receipt
 	r.ObservedInventoryRevision = v.w.InventoryRevision
+	r.ObservedEquipmentRevision = v.w.SelfEquipmentRevision
 	r.ObservedCopperRevision = v.w.SelfCopperRevision
 	r.ObservedCopper = v.w.SelfCopper
 	if v.w.InventoryRevision <= r.BaselineInventoryRevision {
@@ -670,14 +718,20 @@ func (s *Service) evidenceLocked(v view) {
 	if r.Kind == "equip" {
 		r.EquipmentConfirmed = r.InventoryConfirmed
 	}
+	if r.Kind == "equip_gear" {
+		r.EquipmentConfirmed = v.w.SelfEquipmentRevision > r.BaselineEquipmentRevision && exactEquipmentVector(op.expected, v)
+	}
 	if r.Kind == "sell" {
 		r.CopperConfirmed = v.w.SelfCopperKnown && v.w.SelfCopperRevision > r.BaselineCopperRevision && uint64(v.w.SelfCopper) == uint64(r.BaselineCopper)+uint64(r.ExpectedCreditCopper)
 	}
-	if r.InventoryConfirmed && (r.Kind != "sell" || r.CopperConfirmed) {
+	if r.InventoryConfirmed && (r.Kind != "sell" || r.CopperConfirmed) && (r.Kind != "equip_gear" || r.EquipmentConfirmed) {
 		r.Status = "CONFIRMED"
 		r.Reason = "newer_exact_server_inventory_vector_confirmed"
 		if r.Kind == "sell" {
 			r.Reason = "newer_exact_stack_removal_and_wallet_credit_confirmed"
+		}
+		if r.Kind == "equip_gear" {
+			r.Reason = "newer_exact_equipment_and_displaced_item_inventory_confirmed"
 		}
 	}
 }

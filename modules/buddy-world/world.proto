@@ -68,6 +68,24 @@ message PlayerState {
   // Private own equipment slot16, including an explicitly known empty slot.
   EquippedWeapon offhand = 55;
   uint64 offhand_revision = 56;
+  // Observed public UNIT_FIELD_BYTES_0 race byte, not an inferred race.
+  bool race_known = 57;
+  uint32 race_id = 58;
+}
+
+// Private own equipment slots0..18; bags and bank slots are excluded.
+message EquipmentSlotState {
+  uint32 slot = 1;
+  bool slot_known = 2;
+  uint64 item_guid = 3;
+  bool metadata_known = 4;
+  uint32 entry = 5;
+  uint32 stack_count = 6;
+  bool durability_known = 7;
+  uint32 durability = 8;
+  uint32 max_durability = 9;
+  bool enhancements_known = 10;
+  bool has_enhancements = 11;
 }
 
 message EquippedWeapon {
@@ -206,6 +224,11 @@ message BackpackSlot {
   uint32 stack_count = 5;
   // Requires an owned ITEM/CONTAINER observation matching the current GUID.
   bool metadata_known = 6;
+  bool durability_known = 7;
+  uint32 durability = 8;
+  uint32 max_durability = 9;
+  bool enhancements_known = 10;
+  bool has_enhancements = 11;
 }
 
 // Only private own carried inventory: built-in backpack plus four equipped bags.
@@ -302,6 +325,12 @@ message SnapshotResponse {
   // independent of nearby_creatures truncation. Ordered by observed self
   // distance; no trainer type, range, availability or interaction is inferred.
   repeated CreatureState trainer_creatures = 40;
+  // Coherent private own equipment GUID references. Nonempty item metadata
+  // is qualified separately and requires an actual owned current-epoch ITEM.
+  bool self_equipment_known = 41;
+  uint64 self_equipment_revision = 42;
+  // Exactly19 logical slots after own CREATE; empty slots have item_guid0.
+  repeated EquipmentSlotState self_equipment = 43;
 }
 
 service BuddyWorld {

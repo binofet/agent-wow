@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ÏB
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
+ŽM
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"­
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -100,7 +100,27 @@ levelKnown
 shapeshift_form_known5 (RshapeshiftFormKnown'
 shapeshift_form6 (RshapeshiftForm@
 offhand7 (2&.warcraftbuddy.world.v1.EquippedWeaponRoffhand)
-offhand_revision8 (RoffhandRevision"û
+offhand_revision8 (RoffhandRevision
+
+race_known9 (R	raceKnown
+race_id: (RraceId"Ž
+EquipmentSlotState
+slot (Rslot
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry
+stack_count (R
+stackCount)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"û
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -111,11 +131,12 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"‰
+max_durability (RmaxDurability"Å
 SnapshotRequest#
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
-game_object_entry (RgameObjectEntry"Ý
+game_object_entry (RgameObjectEntry:
+include_gathering_objects (RincludeGatheringObjects"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -143,7 +164,7 @@ flagsKnown
 created_by_guid (RcreatedByGuid
 state_known (R
 stateKnown
-state (Rstate"ƒ
+state (Rstate"Ý
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -191,7 +212,9 @@ trajectory,
 combat_reach$ (RcombatReach
 level_known% (R
 levelKnown
-level& (Rlevel"Ã
+level& (Rlevel(
+unit_flags_known' (RunitFlagsKnown.
+dynamic_flags_known( (RdynamicFlagsKnown"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -216,7 +239,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"¯
+expireTime"û
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -224,7 +247,15 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"¥
+metadata_known (RmetadataKnown)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"¥
 InventoryBag
 bag (Rbag
 
@@ -244,7 +275,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"¦
+permanent_bonus (RpermanentBonus"º
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -285,12 +316,19 @@ selfSkills@
 requested_game_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRrequestedGameObjects'
 inventory_known" (RinventoryKnown-
 inventory_revision# (RinventoryRevisionK
-inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBags2°
+inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
+skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
+nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
+nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
+trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures0
+self_equipment_known) (RselfEquipmentKnown6
+self_equipment_revision* (RselfEquipmentRevisionQ
+self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipment2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-½$
+è-
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"ƒ
 ItemRef
 bag (Rbag
@@ -298,7 +336,7 @@ BuddyWorld]
 	item_guid (RitemGuid
 entry (Rentry
 stack_count (R
-stackCount"Ì
+stackCount"â
 ItemEligibility7
 item (2#.warcraftbuddy.inventory.v1.ItemRefRitem%
 metadata_known (RmetadataKnown5
@@ -307,7 +345,15 @@ stackCount"Ì
 
 normal_bag (R	normalBag'
 container_slots (RcontainerSlots%
-blocked_reason (	RblockedReason"á
+blocked_reason (	RblockedReason
+name (	Rname.
+gear_equip_eligible	 (RgearEquipEligible.
+gear_equipment_slot
+ (RgearEquipmentSlot=
+expected_equipped_item_guid (RexpectedEquippedItemGuid1
+conservative_upgrade (RconservativeUpgrade.
+gear_blocked_reason (	RgearBlockedReason"‘
+
 	Operation
 
 request_id (	R	requestId
@@ -336,7 +382,10 @@ vendorGuid3
 baseline_copper_revision (RbaselineCopperRevision8
 observed_copper_revision (RobservedCopperRevision'
 baseline_copper (RbaselineCopper'
-observed_copper (RobservedCopper"Á
+observed_copper (RobservedCopper>
+baseline_equipment_revision (RbaselineEquipmentRevision>
+observed_equipment_revision (RobservedEquipmentRevision.
+displaced_item_guid (RdisplacedItemGuid"ã
 State
 
 session_id (	R	sessionId
@@ -358,7 +407,10 @@ session_id (	R	sessionId
 
 limitation (	R
 limitation
-closing (Rclosing"U
+closing (Rclosing'
+equipment_known (RequipmentKnown-
+equipment_revision (RequipmentRevisionH
+	equipment (2*.warcraftbuddy.world.v1.EquipmentSlotStateR	equipment"U
 DiscoverRequest!
 vendor_entry (RvendorEntry
 vendor_guid (R
@@ -403,12 +455,25 @@ request_id (	R	requestId+
 vendor_guid (R
 vendorGuidD
 expected_unit_sell_price_copper (RexpectedUnitSellPriceCopper8
-expected_copper_revision (RexpectedCopperRevision2º
+expected_copper_revision (RexpectedCopperRevision"â
+EquipGearRequest
+
+session_id (	R	sessionId
+
+request_id (	R	requestId+
+expected_revision (RexpectedRevision>
+expected_inventory_revision (RexpectedInventoryRevision;
+source (2#.warcraftbuddy.inventory.v1.ItemRefRsource%
+equipment_slot (RequipmentSlot>
+expected_equipment_revision (RexpectedEquipmentRevision=
+expected_equipped_item_guid (RexpectedEquippedItemGuid@
+require_conservative_upgrade	 (RrequireConservativeUpgrade2˜
 BuddyInventoryE
 GetState.google.protobuf.Empty!.warcraftbuddy.inventory.v1.State^
 Discover+.warcraftbuddy.inventory.v1.DiscoverRequest%.warcraftbuddy.inventory.v1.DiscoveryR
 Move'.warcraftbuddy.inventory.v1.MoveRequest!.warcraftbuddy.inventory.v1.StateT
-Equip(.warcraftbuddy.inventory.v1.EquipRequest!.warcraftbuddy.inventory.v1.StateR
+Equip(.warcraftbuddy.inventory.v1.EquipRequest!.warcraftbuddy.inventory.v1.State\
+	EquipGear,.warcraftbuddy.inventory.v1.EquipGearRequest!.warcraftbuddy.inventory.v1.StateR
 Sell'.warcraftbuddy.inventory.v1.SellRequest!.warcraftbuddy.inventory.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBHZFgithub.com/agent-wow/agent-wow/modules/buddy-inventory/api;inventoryv1bproto3

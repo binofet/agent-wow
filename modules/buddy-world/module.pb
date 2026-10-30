@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¼F
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
+ŽM
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"­
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -100,7 +100,27 @@ levelKnown
 shapeshift_form_known5 (RshapeshiftFormKnown'
 shapeshift_form6 (RshapeshiftForm@
 offhand7 (2&.warcraftbuddy.world.v1.EquippedWeaponRoffhand)
-offhand_revision8 (RoffhandRevision"û
+offhand_revision8 (RoffhandRevision
+
+race_known9 (R	raceKnown
+race_id: (RraceId"Ž
+EquipmentSlotState
+slot (Rslot
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry
+stack_count (R
+stackCount)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"û
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -219,7 +239,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"¯
+expireTime"û
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -227,7 +247,15 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"¥
+metadata_known (RmetadataKnown)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"¥
 InventoryBag
 bag (Rbag
 
@@ -247,7 +275,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"ý
+permanent_bonus (RpermanentBonus"º
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -292,7 +320,10 @@ selfSkills@
 skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
 nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
 nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
-trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures2°
+trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures0
+self_equipment_known) (RselfEquipmentKnown6
+self_equipment_revision* (RselfEquipmentRevisionQ
+self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipment2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

@@ -7,6 +7,7 @@ import threading
 import math
 import os
 import tempfile
+import types
 from unittest.mock import patch
 
 loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__).with_name('party-maintenance')))
@@ -843,5 +844,36 @@ class ExhaustedTrainerTests(unittest.TestCase):
         self.rpc.training['sessionId']='new-body';self.rpc.offer['expiresInMs']=0
         self.tick();self.assertFalse(self.agent.exhausted_trainers)
         self.assertEqual(self.agent.exhausted_body,'new-body')
+
+class HarvestStatusTests(unittest.TestCase):
+    def test_fresh_combat_deferral_still_reports_configured_harvest_without_any_worker_rpc(self):
+        actor=types.SimpleNamespace(next_query=10,status=dict(phase='waiting_out_of_combat'),data=dict(training=[],mail=None))
+        worker=m.harvest.Worker(5,types.SimpleNamespace(url='http://127.0.0.1:8088/rpc'),priority=lambda:False)
+        worker.tick=lambda:self.fail('Combat must not invoke harvest RPCs')
+        m.harvest_after_maintenance(actor,worker,9)
+        self.assertEqual((actor.status['harvest']['guid'],actor.status['harvest']['skillId']),(5,393))
+        self.assertEqual(actor.status['harvest']['reason'],'maintenance_out_of_combat')
+        self.assertNotIn('lastReceipt',actor.status['harvest'])
+
+    def test_last_priority_harvest_keeps_exact_wait_reason_without_changing_training_cache(self):
+        actor=types.SimpleNamespace(next_query=10,status=dict(phase='no_affordable_unattempted_class_training'),
+            data=dict(training=[],mail=None),exhausted_trainers={9:'retained'})
+        worker=m.harvest.Worker(1,types.SimpleNamespace(url='http://127.0.0.1:8086/rpc'),priority=lambda:False)
+        calls=[]
+        def tick():
+            calls.append('tick')
+            raise m.harvest.Error('Harvest yields to observed party combat or healing')
+        worker.tick=tick
+        m.harvest_after_maintenance(actor,worker,9)
+        self.assertEqual(actor.status['harvest']['reason'],'combat_or_healing')
+        self.assertEqual(actor.exhausted_trainers,{9:'retained'})
+        self.assertEqual(actor.status['phase'],'no_affordable_unattempted_class_training')
+        m.harvest_after_maintenance(actor,worker,10)
+        actor.status['phase']='waiting_for_training_confirmation'
+        m.harvest_after_maintenance(actor,worker,9)
+        actor.status['phase']='no_affordable_unattempted_class_training'
+        actor.data['training']=[dict(status='reserved')]
+        m.harvest_after_maintenance(actor,worker,9)
+        self.assertEqual(calls,['tick'])
 
 if __name__=='__main__':unittest.main()

@@ -24,9 +24,10 @@ def load(name, filename):
     return module
 
 c, town = load("party_town_converse", "converse"), load("party_town_finite", "town-maintenance")
+gear = load('party_town_gear', 'party-gear')
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
 ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088)}
-MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
+MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.equip_gear", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
 CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
             ("assist", "buddy-actions.assist", "assisting", "actions"),
             ("healing", "buddy-actions.healing", "healing", "actions"),
@@ -90,9 +91,13 @@ def profession_active(guid):
 
 class GuardedWorkerRPC:
     def __init__(self, actor, rpc): self.actor, self.rpc = actor, rpc
+    @property
+    def url(self):return self.rpc.url
     def call(self, method, params):
         if method in MUTATIONS:
             self.actor.guard()
+        if method=='buddy-inventory.sell' and integer(params.get('source',{}).get('itemGuid',0)) in self.actor.gear_protected:
+            raise Error('Displaced equipment is retained, not automatically sold')
         return self.rpc.call(method, params)
 
 class GuardedWorker(town.Worker):
@@ -102,6 +107,15 @@ class GuardedWorker(town.Worker):
     def ready(self, state):
         self.actor.guard()
         return super().ready(state)
+    def protect(self,state):
+        for row in state.get('items',[]):
+            if integer(row.get('item',{}).get('itemGuid',0)) in self.actor.gear_protected:
+                row['safeJunkSaleEligible']=False
+        return state
+    def state(self):return self.protect(super().state())
+    def discovery(self,vendor_guid=None):
+        state,vendors=super().discovery(vendor_guid)
+        return self.protect(state),vendors
 
 class Supervisor:
     def __init__(self, guid, rpc=None, save=lambda value: None, stored=None, now=time.time,
@@ -124,6 +138,7 @@ class Supervisor:
         self.token, self.activity_id, self.held, self.original_follow = None, "", False, False
         self.release_uncertain, self.worker = False, worker or self.run_worker
         self.held_controls, self.controls_paused, self.pause_uncertain, self.worker_uncertain = {}, False, False, False
+        self.gear_protected=set()
 
     def persist(self): self.save(copy.deepcopy(self.data))
     def controls_revoked(self):
@@ -168,7 +183,7 @@ class Supervisor:
         if (context["quests"].get("actionInFlight") is True or integer(context["loot"].get("pendingCorpseGuid", 0))
                 or integer(context["loot"].get("pendingGameObjectGuid", 0))):
             raise Error("Town defers to quest or loot interaction")
-        if context["trade"].get("phase") not in ("IDLE", "NONE", "COMPLETED", "CANCELLED", "idle", "", "CANCEL_CONFIRMED"):
+        if not c.trade_idle(context['trade']):
             raise Error("Town defers to trading")
         if inv.get("active") is True or inv.get("closing") is True or inv.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
             if not own_worker: raise Error("Town waits for inventory receipt")
@@ -315,6 +330,12 @@ class Supervisor:
         with town.Journal(default, self.rpc.url, self.guid) as existing:
             if any(row["phase"] not in town.TERMINAL for row in existing.data["attempts"]):
                 raise Error("Existing finite town worker has an unresolved receipt")
+            with gear.Journal(folder/'gear.json',self.rpc.url,self.guid) as gear_journal:
+                if kind=='gear':
+                    return gear.Worker(GuardedWorkerRPC(self,gear.RPC(self.rpc.url)),self.guid,gear_journal,
+                        guard=self.guard,stopped=self.stopped).run()
+                if any(row['phase'] not in gear.TERMINAL for row in gear_journal.data['attempts']):
+                    raise Error('Existing gear swap has an unresolved receipt')
             path = folder / ("supervisor-"+hashlib.sha256(self.session.encode()).hexdigest()[:24]+".json")
             with town.Journal(path, self.rpc.url, self.guid) as journal:
                 worker = GuardedWorker(self, town.RPC(self.rpc.url), journal)
@@ -340,13 +361,16 @@ class Supervisor:
             self.status["phase"] = "waiting_for_joel_to_remain_stationary"; return
         self.owner_anchor = owner
         inv = context["inv"]
+        pending,self.gear_protected=gear.ledger_facts(self.guid)
         summary = c.inventory_context(inv, self.guid)
         self.status.update(observationsCurrent=True, freeSlots=summary["freeSlots"], totalSlots=summary["totalSlots"], bodySessionId=self.session)
         bags, slots = town.layout(inv)
         empty = any(not integer(bags[b].get("containerGuid", 0)) for b in range(1,5))
         carried = any(i.get("metadataKnown") is True and integer(i.get("entry", 0)) == 41599 for i in slots.values())
         kind, target, mode = "", 0, "local"
-        if empty and carried:
+        if pending or inv.get('equipmentKnown') is True and gear.candidates(inv):
+            kind='gear'
+        elif empty and carried:
             kind = "bags"
         elif empty and summary["freeSlots"]:
             boxes = context["world"].get("mailboxes", [])
@@ -376,10 +400,13 @@ class Supervisor:
                         and not mail.get("operationInFlight")):
                     kind,target="bags",integer(mailbox["guid"])
         if not kind:
+            if any(row.get('safeJunkSaleEligible') is True and row.get('gearBlockedReason') in gear.PENDING_METADATA for row in inv.get('items',[]) if isinstance(row,dict)):
+                self.status['phase']='waiting_for_gear_comparison_metadata';return
             eligible=[]
             for item in inv.get("items",[]):
                 if (not isinstance(item,dict) or item.get("metadataKnown") is not True
-                        or item.get("safeJunkSaleEligible") is not True or not integer(item.get("unitSellPriceCopper",0))): continue
+                        or item.get("safeJunkSaleEligible") is not True or not integer(item.get("unitSellPriceCopper",0))
+                        or integer(item.get('item',{}).get('itemGuid',0)) in self.gear_protected): continue
                 source=town.ref(item.get("item"))
                 actual=slots.get((source["bag"],source["slot"]),{})
                 if actual.get("metadataKnown") is True and town.ref(actual) == source: eligible.append(item)
@@ -415,7 +442,8 @@ class Supervisor:
             self.worker_uncertain=phase not in ("complete","blocked","server_rejected")
             row["phase"]="complete" if phase == "complete" else "blocked" if phase == "blocked" else "unconfirmed"
             self.status.update(phase="town_upkeep_"+row["phase"], confirmedOperations=result.get("newConfirmedOperations",0))
-        except (Error,town.Error,OSError,ValueError,KeyError,TypeError):
+            if kind=='gear':self.status['equippedItems']=result.get('equippedItems',[])
+        except (Error,town.Error,gear.Error,OSError,ValueError,KeyError,TypeError):
             row["phase"]="unconfirmed"
             self.status["phase"]="town_upkeep_stopped_or_unconfirmed"
         finally:
@@ -473,7 +501,7 @@ def main(argv=None):
         try:
             while not stopped():
                 try: actor.tick()
-                except (Error,town.Error,OSError,KeyError,ValueError,TypeError):
+                except (Error,town.Error,gear.Error,OSError,KeyError,ValueError,TypeError):
                     actor.status.update(phase="waiting_for_safe_known_town_state",observationsCurrent=False)
                 status()
                 until=time.monotonic()+5
@@ -484,4 +512,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try: sys.exit(main())
-    except (Error,town.Error,OSError) as error: print("Party town: "+str(error),file=sys.stderr);sys.exit(1)
+    except (Error,town.Error,gear.Error,OSError) as error: print("Party town: "+str(error),file=sys.stderr);sys.exit(1)

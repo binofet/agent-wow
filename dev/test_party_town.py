@@ -85,6 +85,52 @@ class TownTests(unittest.TestCase):
                       patch.object(m.c,"area_quest_snapshot",return_value={"active":False}),
                       patch.object(m,"profession_active",return_value=False)]
         for p in self.patches:p.start();self.addCleanup(p.stop)
+
+    def test_actual_conservative_gear_upgrade_precedes_sale_in_field_without_town_or_vendor(self):
+        gear_fakes=load('town_gear_fakes','test_party_gear.py')
+        actor,rpc,clock,_,calls=self.rig()
+        rpc.inv=gear_fakes.initial();rpc.inv['selfGuid']='1';rpc.resting=False;rpc.vendor_present=False
+        self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('gear',0)])
+        self.assertEqual(actor.status['lastKind'],'gear')
+        self.assertNotIn('buddy-actions.travel_vendor',[name for name,_ in rpc.calls])
+        self.assertTrue(rpc.following)
+
+    def test_gear_comparison_pending_and_retained_displaced_item_are_not_sold(self):
+        for reason in ('displaced_item_template_pending','enhancement_context_pending'):
+            actor,rpc,clock,_,calls=self.rig()
+            rpc.inv['items'][0]['gearBlockedReason']=reason
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+            self.assertFalse(calls);self.assertEqual(actor.status['phase'],'waiting_for_gear_comparison_metadata')
+        actor,rpc,clock,_,calls=self.rig()
+        protected=int(rpc.inv['items'][0]['item']['itemGuid'])
+        with patch.object(m.gear,'ledger_facts',return_value=(False,{protected})):
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertFalse(calls)
+
+    def test_existing_gear_reservation_is_reconciled_before_any_sale(self):
+        actor,rpc,clock,_,calls=self.rig()
+        with patch.object(m.gear,'ledger_facts',return_value=(True,set())):
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('gear',0)])
+
+    def test_actual_complete_trade_with_historical_pants_allows_safe_upkeep(self):
+        actor,rpc,clock,_,calls=self.rig()
+        original=rpc.call
+        completed=dict(sessionId='body1',phase='COMPLETE',partnerGuid='3',acceptTransportWritten=True,partnerAccepted=True,
+            partnerItems=[dict(entry=2962,count=1)],lastServerStatus=8,reason='server_confirmed_trade_complete',completedTrades='1')
+        def call(method,params):
+            if method=='buddy-trade.state':return copy.deepcopy(completed)
+            return original(method,params)
+        rpc.call=call
+        self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('sell',VENDOR)])
+        self.assertTrue(rpc.following)
+        actor,rpc,clock,_,calls=self.rig();original=rpc.call
+        completed['lastJunkDisposal']={'status':'TRANSPORT_UNCONFIRMED_NO_RETRY'}
+        rpc.call=call
+        with self.assertRaises(m.Error):self.run_tick(actor,clock)
+        self.assertFalse(calls)
     def rig(self,worker=None,stored=None,revoked=lambda:False):
         rpc,clock,saved,calls=RPC(),[100.],[],[]
         def finite_worker(kind,target):

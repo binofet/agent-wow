@@ -98,6 +98,19 @@ def profession_active(guid):
     except FileNotFoundError:return False
     except (OSError,Error):return True
 
+def harvest_after_maintenance(actor, worker, prior_query):
+    if worker is None:return
+    if not harvest.maintenance_idle(actor):
+        if actor.next_query!=prior_query or 'harvest' not in actor.status:
+            message=('Harvest waits for maintenance out-of-combat safety' if actor.status.get('phase')=='waiting_out_of_combat'
+                else 'Harvest yields to stop or higher-priority work')
+            actor.status['harvest']=worker.report_wait(harvest.Error(message))
+        return
+    if actor.next_query==prior_query:return
+    try:actor.status['harvest']=worker.tick()
+    except (harvest.Error,harvest.prof.Error,OSError,KeyError,TypeError,ValueError) as exc:
+        actor.status['harvest']=worker.report_wait(exc)
+
 class Maintenance:
     def __init__(self, name, guid, rpc, save, stored=None, now=time.time, stopped=lambda:False,
                  reserve_copper=DEFAULT_RESERVE):
@@ -759,11 +772,7 @@ def main():
                     except (Error,KeyError,TypeError,ValueError):p.status['phase']='service_request_or_observation_unavailable'
                     # Harvest is the last, lowest-priority opportunity. It never
                     # holds a standing profession lock or changes intent toggles.
-                    worker=harvesters.get(p.guid)
-                    if worker is not None and p.next_query!=prior_query and harvest.maintenance_idle(p):
-                        try:p.status['harvest']=worker.tick()
-                        except (harvest.Error,harvest.prof.Error,OSError,KeyError,TypeError,ValueError):
-                            p.status['harvest']={'guid':p.guid,'phase':'harvest_observations_or_cleanup_unavailable','busy':False}
+                    harvest_after_maintenance(p,harvesters.get(p.guid),prior_query)
                     status()
                 until=time.monotonic()+1
                 while time.monotonic()<until and not stopped():time.sleep(.1)

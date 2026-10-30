@@ -102,6 +102,9 @@ func exactVector(expected, actual view) bool {
 	return true
 }
 func expectedAfter(before view, r *inventoryv1.Operation) (view, error) {
+	if r.Kind == "equip_gear" {
+		return expectedGearAfter(before, r)
+	}
 	w := proto.Clone(before.w).(*worldv1.SnapshotResponse)
 	v, e := validateWorld(w, w.Self.Guid)
 	if e != nil {

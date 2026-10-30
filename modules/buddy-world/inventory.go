@@ -12,9 +12,12 @@ const (
 )
 
 type inventoryItemView struct {
-	guid         uint64
-	entry, count uint32
-	metadata     bool
+	guid                            uint64
+	entry, count                    uint32
+	metadata                        bool
+	durabilityKnown                 bool
+	durability, maximum             uint32
+	enhancementsKnown, enhancements bool
 }
 type inventoryBagView struct {
 	guid                          uint64
@@ -33,6 +36,8 @@ func clearInventoryContext(p *observed) {
 	}
 	p.bagSlotsKnown = false
 	p.bags = [4]uint64{}
+	p.equipmentKnown = false
+	p.equipment = [19]uint64{}
 	p.inventoryEpoch++
 }
 
@@ -49,6 +54,9 @@ func (s *observations) carriedItem(guid uint64) inventoryItemView {
 	p := s.ownedItem(guid)
 	if p != nil && p.inventoryEpoch == s.players[0].inventoryEpoch && p.known[objectEntry] && p.known[itemStack] && p.fields[objectEntry] != 0 && p.fields[itemStack] != 0 {
 		r.entry, r.count, r.metadata = p.fields[objectEntry], p.fields[itemStack], true
+		r.durability, r.maximum = p.fields[0x3c], p.fields[0x3d]
+		r.durabilityKnown = p.known[0x3c] && p.known[0x3d] && r.durability <= r.maximum
+		r.enhancementsKnown, r.enhancements = itemEnhancements(p)
 	}
 	return r
 }
@@ -136,7 +144,7 @@ func (s *observations) appendInventory(r *worldv1.SnapshotResponse) {
 		if b.contents {
 			for slot := uint32(0); slot < b.count; slot++ {
 				item := b.slots[slot]
-				p.Slots = append(p.Slots, &worldv1.BackpackSlot{Bag: uint32(bag), Slot: slot, ItemGuid: item.guid, Entry: item.entry, StackCount: item.count, MetadataKnown: item.metadata})
+				p.Slots = append(p.Slots, &worldv1.BackpackSlot{Bag: uint32(bag), Slot: slot, ItemGuid: item.guid, Entry: item.entry, StackCount: item.count, MetadataKnown: item.metadata, DurabilityKnown: item.durabilityKnown, Durability: item.durability, MaxDurability: item.maximum, EnhancementsKnown: item.enhancementsKnown, HasEnhancements: item.enhancements})
 			}
 		}
 		r.InventoryBags = append(r.InventoryBags, p)
@@ -149,6 +157,13 @@ func (s *observations) protectedItem(guid uint64) bool {
 	p := s.players[0]
 	if guid == p.mainhand || guid == p.offhand {
 		return true
+	}
+	if p.equipmentKnown {
+		for _, g := range p.equipment {
+			if g == guid {
+				return true
+			}
+		}
 	}
 	for _, g := range p.backpack {
 		if g == guid {

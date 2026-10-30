@@ -14,6 +14,12 @@ message ItemEligibility {
   bool normal_bag = 5;
   uint32 container_slots = 6;
   string blocked_reason = 7;
+  string name = 8;
+  bool gear_equip_eligible = 9;
+  uint32 gear_equipment_slot = 10;
+  uint64 expected_equipped_item_guid = 11;
+  bool conservative_upgrade = 12;
+  string gear_blocked_reason = 13;
 }
 message Operation {
   string request_id = 1;
@@ -41,6 +47,9 @@ message Operation {
   uint64 observed_copper_revision = 23;
   uint32 baseline_copper = 24;
   uint32 observed_copper = 25;
+  uint64 baseline_equipment_revision = 26;
+  uint64 observed_equipment_revision = 27;
+  uint64 displaced_item_guid = 28;
 }
 message State {
   string session_id = 1;
@@ -60,6 +69,9 @@ message State {
   uint64 malformed_packets = 15;
   string limitation = 16;
   bool closing = 17;
+  bool equipment_known = 18;
+  uint64 equipment_revision = 19;
+  repeated warcraftbuddy.world.v1.EquipmentSlotState equipment = 20;
 }
 message DiscoverRequest { uint32 vendor_entry = 1; uint64 vendor_guid = 2; }
 message Vendor { warcraftbuddy.world.v1.CreatureState creature = 1; bool interactable = 2; string blocked_reason = 3; double distance = 4; }
@@ -76,11 +88,17 @@ message SellRequest {
   string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
   ItemRef source = 5; uint64 vendor_guid = 6; uint32 expected_unit_sell_price_copper = 7; uint64 expected_copper_revision = 8;
 }
+message EquipGearRequest {
+  string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
+  ItemRef source = 5; uint32 equipment_slot = 6; uint64 expected_equipment_revision = 7;
+  uint64 expected_equipped_item_guid = 8; bool require_conservative_upgrade = 9;
+}
 service BuddyInventory {
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc Discover(DiscoverRequest) returns (Discovery);
   rpc Move(MoveRequest) returns (State);
   rpc Equip(EquipRequest) returns (State);
+  rpc EquipGear(EquipGearRequest) returns (State);
   rpc Sell(SellRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);

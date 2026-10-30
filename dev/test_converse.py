@@ -1409,6 +1409,122 @@ class PartyMaintenanceContextTests(unittest.TestCase):
             record["phase"]="running";converse.write_json(folder/"status.json",record)
             self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
 
+    def harvest_record(self,guid=5):
+        now=time.time()
+        skill,spell=(393,8613) if guid==5 else (182,2366)
+        return dict(guid=guid,skillId=skill,spellId=spell,phase='waiting_for_harvest',reason='combat_or_healing',
+            busy=False,updatedAt=now,bodySessionId='actual_body',privateToken='never_forward',
+            lastReceipt=dict(status='COMPLETED',bodySessionId='actual_body',targetGuid=str((0xf130 if guid==5 else 0xf110)<<48|30<<24|17),
+                targetEntry=30,ownGoObserved=True,lootWindowObserved=True,lootReleaseObserved=True,
+                outputInventoryObserved=True,ownLootedItemsObserved=2,lootSlotsRemoved=1,
+                leaseReleased=True,baselineInventoryRevision='8',observedInventoryRevision='9',
+                beforeRank=1,afterRank=2,skillIncreased=True,observedAt=now-5,privateToken='never_forward'))
+
+    def test_harvest_context_reads_only_owned_locked_fixed_role_status_and_confirmed_material_proof(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
+            folder,record,_=self.fixture(Path(temp))
+            next(row for row in record['characters'] if row['guid']==5)['harvest']=self.harvest_record()
+            converse.write_json(folder/'status.json',record)
+            with os.fdopen(converse.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                state=converse.party_maintenance_snapshot(5,'actual_body')
+                harvest=state['own']['harvest']
+                self.assertTrue(harvest['configured']);self.assertTrue(harvest['observationsCurrent'])
+                self.assertEqual((harvest['skillId'],harvest['spellId']),(393,8613))
+                self.assertIn('party member',harvest['reasonText'])
+                self.assertEqual(harvest['lastReceipt']['status'],'COMPLETED')
+                self.assertTrue(harvest['lastReceipt']['skillIncreased'])
+                self.assertNotIn('private',json.dumps(harvest));self.assertNotIn('never_forward',json.dumps(harvest))
+                self.assertNotIn('bodySessionId',json.dumps(harvest))
+                self.assertFalse(converse.party_maintenance_snapshot(5,'replacement_body')['own']['harvest']['observationsCurrent'])
+                self.assertFalse(converse.party_maintenance_snapshot(5)['own']['harvest']['observationsCurrent'])
+                controls=converse.BuddyControls(FakeRPC([]),character_guid=5,character_class='rogue')
+                self.assertFalse(controls.quests_available)
+                self.assertFalse(controls.context()['party_maintenance']['own']['harvest']['observationsCurrent'])
+                record['phase']='stopped';converse.write_json(folder/'status.json',record)
+                self.assertFalse(converse.party_maintenance_snapshot(5)['active'])
+            self.assertFalse(converse.party_maintenance_snapshot(5)['active'])
+
+    def test_harvest_snapshot_rejects_unknown_identity_and_never_promotes_missing_receipt_proof(self):
+        for mode in ('role','skill','spell','phase','reason','phase_shape','reason_shape','time','busy'):
+            row=self.harvest_record()
+            if mode=='role':row['guid']=1
+            elif mode=='skill':row['skillId']=333
+            elif mode=='spell':row['spellId']=13262
+            elif mode=='phase':row['phase']='run private command'
+            elif mode=='reason':row['reason']='arbitrary_private_error'
+            elif mode=='phase_shape':row['phase']={}
+            elif mode=='reason_shape':row['reason']=[]
+            elif mode=='time':row['updatedAt']=float('nan')
+            else:row['busy']='false'
+            self.assertEqual(converse.harvest_snapshot(row,5),{'configured':False},mode)
+        self.assertEqual(converse.harvest_snapshot(self.harvest_record(),4),{'configured':False})
+        for mode in ('pending','foreign_body','foreign_kind','no_inventory','no_release','no_output','no_slots','lease','cleanup','old_inventory'):
+            row=self.harvest_record();receipt=row['lastReceipt']
+            if mode=='pending':receipt['status']='REQUESTED'
+            elif mode=='foreign_body':receipt['bodySessionId']='old_body'
+            elif mode=='foreign_kind':receipt['targetGuid']=str(0xf110001e000011)
+            elif mode=='no_inventory':receipt['outputInventoryObserved']=False
+            elif mode=='no_release':receipt['lootReleaseObserved']=False
+            elif mode=='no_output':receipt['ownLootedItemsObserved']=0
+            elif mode=='lease':receipt['leaseReleased']=False
+            elif mode=='cleanup':receipt['cleanupUnconfirmed']=True
+            elif mode=='old_inventory':receipt['observedInventoryRevision']='8'
+            else:receipt['lootSlotsRemoved']=0
+            self.assertNotIn('lastReceipt',converse.harvest_snapshot(row,5),mode)
+        row=self.harvest_record();row['updatedAt']-=120;row['lastReceipt']['observedAt']-=120
+        self.assertFalse(converse.harvest_snapshot(row,5)['observationsCurrent'])
+        self.assertTrue(converse.harvest_snapshot(self.harvest_record(1),1)['configured'])
+        self.assertNotIn('SKIN',converse.ACTIONS)
+        with self.assertRaises(converse.ConversationError):
+            converse.RPC('http://127.0.0.1:8088/rpc').call('buddy-professions.attempt',{})
+
+
+class TradeIdleProofTests(unittest.TestCase):
+    def completed(self):
+        return json.loads('{"phase":"COMPLETE","partnerGuid":"3","partnerAccepted":true,"acceptTransportWritten":true,"partnerItems":[{"entry":2962,"count":1}],"ownRequestedItems":[{"entry":7070,"count":1}],"ownRequestedCopper":7,"partnerCopper":9,"lastServerStatus":8,"reason":"server_confirmed_trade_complete","completedTrades":"1","junkDisposalEnabled":true}')
+    def test_exact_server_completion_allows_retained_historical_offers(self):
+        self.assertTrue(converse.trade_idle(self.completed()))
+        self.assertTrue(converse.trade_idle(dict(phase='IDLE',junkDisposalEnabled=True)))
+        for field,value in (('partnerGuid','4'),('lastServerStatus',7),('reason','unexpected_completion_status'),('completedTrades','0')):
+            with self.subTest(field=field):
+                state=self.completed();state[field]=value;self.assertFalse(converse.trade_idle(state))
+    def test_unknown_closed_accept_or_junk_states_are_never_inferred_idle(self):
+        for phase in ('CLOSED','CANCELLED','CANCEL_SENT','CANCEL_CONFIRMED','COMPLETED','ACCEPT_SENT','OPEN',''):
+            state=self.completed();state['phase']=phase;self.assertFalse(converse.trade_idle(state),phase)
+        for status in ('AWAITING_SERVER_SLOT_UPDATE','TRANSPORT_UNCONFIRMED_NO_RETRY','UNKNOWN',''):
+            state=self.completed();state['lastJunkDisposal']={'status':status};self.assertFalse(converse.trade_idle(state))
+        for extra in (dict(partnerGuid='3'),dict(acceptTransportWritten=True),dict(partnerAccepted=True),
+                dict(partnerItems=[{'entry':2962}]),dict(ownRequestedCopper=1),dict(partnerItems={})):
+            self.assertFalse(converse.trade_idle(dict(phase='IDLE',**extra)))
+        state=self.completed();state['lastJunkDisposal']={'status':'SERVER_SLOT_REMOVAL_CONFIRMED'}
+        self.assertTrue(converse.trade_idle(state))
+
+
+class GearContextTests(unittest.TestCase):
+    def test_only_bound_confirmed_gear_facts_are_exposed_from_owned_town_status(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
+            folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'5')
+            identity=dict(version=1,mode='party_town',characterGuid=5,rpcUrl='http://127.0.0.1:8088/rpc')
+            receipt=dict(entry=2962,equipmentSlot=6,status='CONFIRMED',bodySessionId='actual_body',name='Burnt Leather Breeches',
+                inventoryConfirmed=True,equipmentConfirmed=True,leaseReleased=True,displacedRetained=True,
+                baselineInventoryRevision='3',observedInventoryRevision='4',baselineEquipmentRevision='7',observedEquipmentRevision='8',
+                privateToken='never_forward')
+            own=dict(lastKind='gear',phase='town_upkeep_complete',busy=False,bodySessionId='actual_body',confirmedOperations=1,equippedItems=[receipt])
+            record=dict(identity=identity,instance='a'*32,routineActive=True,own=own)
+            with os.fdopen(converse.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                converse.write_json(folder/'status.json',record)
+                result=converse.party_town_snapshot(5)
+                self.assertEqual(result['kind'],'gear');self.assertEqual(result['equippedItems'][0]['name'],'Burnt Leather Breeches')
+                self.assertNotIn('private',json.dumps(result));self.assertNotIn('bodySessionId',json.dumps(result))
+                for key in ('inventoryConfirmed','equipmentConfirmed','leaseReleased','displacedRetained'):
+                    receipt[key]=False;converse.write_json(folder/'status.json',record)
+                    self.assertNotIn('equippedItems',converse.party_town_snapshot(5));receipt[key]=True
+                receipt['bodySessionId']='old_body';converse.write_json(folder/'status.json',record)
+                self.assertNotIn('equippedItems',converse.party_town_snapshot(5))
+        self.assertNotIn('EQUIP_GEAR',converse.ACTIONS)
+
 
 class BoundaryTests(unittest.TestCase):
     def test_numeric_action_schema_is_required_bounded_and_legacy_compatible(self):

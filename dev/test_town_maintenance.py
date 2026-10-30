@@ -37,6 +37,14 @@ def initial():
     return state
 
 
+class GearCompatibilityTests(unittest.TestCase):
+    def test_actual_gear_receipt_does_not_make_existing_inventory_consumer_unreadable(self):
+        state=initial();state['operation']={'kind':'equip_gear','status':'CONFIRMED'}
+        self.assertEqual(m.checked_state(state,6)['operation']['kind'],'equip_gear')
+        state['operation']['kind']='unknown_item_action'
+        with self.assertRaises(m.Error):m.checked_state(state,6)
+
+
 class FakeRPC:
     def __init__(self):
         self.current, self.calls, self.before, self.after = initial(), [], None, None

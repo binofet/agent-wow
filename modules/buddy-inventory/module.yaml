@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit whole-stack empty-slot moves, observed empty-slot normal bag equipment and server inventory/wallet confirmed safe junk sales
+description: Exact owned armor equipment, empty-slot moves and bags, and server-confirmed safe junk sales
 requires: [buddy-world, buddy-actions, buddy-trade, buddy-loot, buddy-professions]
 compose:
   file: compose.yaml
@@ -12,6 +12,7 @@ rpc:
   discover: /warcraftbuddy.inventory.v1.BuddyInventory/Discover
   move: /warcraftbuddy.inventory.v1.BuddyInventory/Move
   equip: /warcraftbuddy.inventory.v1.BuddyInventory/Equip
+  equip_gear: /warcraftbuddy.inventory.v1.BuddyInventory/EquipGear
   sell: /warcraftbuddy.inventory.v1.BuddyInventory/Sell
 packets:
   SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket

@@ -107,6 +107,35 @@ def binding(target):
     return tuple(target.get(k,0) for k in ('guid','entry','mapId','x','y','z','positionRevision',
         'unitFlags','dynamicFlags','level','gameObjectType','flags','state','createdByGuid'))
 
+WAIT_REASONS = {
+    'Harvest yields to stop or higher-priority work':'higher_priority',
+    'Harvest waits for maintenance out-of-combat safety':'maintenance_out_of_combat',
+    'Harvest body changed':'body_changed',
+    'Harvest connected party or module identity is unconfirmed':'identity_unknown',
+    'Harvest yields to character danger':'own_state_unsafe',
+    'Harvest yields to active actions':'active_actions',
+    'Harvest waits for stopped movement':'stopped_movement',
+    'Harvest yields to another lease':'lease_busy',
+    'Harvest yields to ordinary quest/loot work':'quest_or_loot_busy',
+    'Harvest yields to trading':'trade_busy',
+    'Harvest yields to unsettled inventory work':'inventory_busy',
+    'Harvest waits for existing profession cleanup':'profession_cleanup',
+    'Harvest needs current complete all-five-bag capacity':'inventory_capacity',
+    'Harvest needs actual known carried items and skinning knife':'knife_or_item_metadata',
+    'Harvest needs actual learned skill and known fixed spell':'learning_unknown',
+    'Harvest yields to observed party combat or healing':'combat_or_healing',
+    'Harvest yields to an actual current attacker':'active_attacker',
+    'Harvest waits for the observed owner to stop':'owner_not_stopped',
+    'Harvest stays near the observed owner':'owner_too_far',
+    'Owner or human control intent changed during harvest':'control_intent_changed',
+}
+TARGET_REASONS = {
+    'own_complete_normal_loot_and_positive_release_within_sixty_seconds_required':'own_loot_receipt_required',
+    'observed_pure_skinning_rank_below_creature_requirement':'skill_rank_too_low',
+    'actual_public_creature_template_query_required':'target_metadata_pending',
+    'known_skinnable_and_normal_lootable_clear_required':'not_yet_skinnable',
+}
+
 class Worker:
     def __init__(self,guid,rpc,save=lambda value:None,stored=None,now=time.monotonic,
                  stopped=lambda:False,priority=None,sleep=time.sleep):
@@ -125,14 +154,20 @@ class Worker:
                     or not 0<integer(row.get('guid',0))<2**64 or not isinstance(row.get('target'),dict)):
                 raise Error('Harvest ledger reservation is invalid')
         self.priority=priority or (lambda:higher_priority(guid))
-        self.status={'guid':guid,'phase':'starting','busy':False}
+        self.status={'guid':guid,'skillId':self.skill,'spellId':self.spell,'phase':'starting','reason':'starting','busy':False}
         self.probe,self.next_query,self.session,self.token,self.controls,self.anchor=0,0,None,None,None,None
 
     def persist(self): self.save(copy.deepcopy(self.data))
+    def report_wait(self, exc):
+        self.status.update(phase='waiting_for_harvest',reason=WAIT_REASONS.get(str(exc),'observation_or_cleanup_unavailable'),
+                           busy=False,updatedAt=time.time())
+        return self.status
+
     def state(self):
         state=self.rpc.call('buddy-professions.state',{})
         if integer(state.get('selfGuid',0))!=self.guid: raise Error('Harvest character changed')
         prof.token(state.get('sessionId'))
+        self.status['bodySessionId']=state['sessionId']
         return state
 
     def read(self,traveling=False):
@@ -157,10 +192,9 @@ class Worker:
         if owner and not (traveling and owner=='exploration' and a.get('interactionHarvest') is True): raise Error('Harvest yields to another lease')
         if q.get('actionInFlight') is True or loot.get('phase') not in ('idle','disabled') or integer(loot.get('pendingCorpseGuid',0)) or integer(loot.get('pendingGameObjectGuid',0)):
             raise Error('Harvest yields to ordinary quest/loot work')
-        if (trade.get('phase')!='IDLE' or trade.get('junkDisposalEnabled') is True or trade.get('partnerGuid') not in (None,0,'0')
-                or trade.get('partnerAccepted') is True or trade.get('acceptTransportWritten') is True
-                or trade.get('ownRequestedItems') or trade.get('partnerItems') or integer(trade.get('ownRequestedCopper',0))
-                or integer(trade.get('partnerCopper',0)) or (trade.get('lastJunkDisposal') or {}).get('status','SERVER_SLOT_REMOVAL_CONFIRMED')!='SERVER_SLOT_REMOVAL_CONFIRMED'):
+        # Enabled disposal is a standing intent. Only actual unsettled work or
+        # its exclusive action lease competes with this harvest operation.
+        if not c.trade_idle(trade):
             raise Error('Harvest yields to trading')
         operation=inventory.get('operation') or {}
         if (integer(inventory.get('selfGuid',0))!=self.guid or inventory.get('active') is True or inventory.get('closing') is True
@@ -234,6 +268,13 @@ class Worker:
         choices=[self.target(r) for r in rows]
         choices=[t for t in choices if t is not None and (p['sessionId'],integer(t['guid'])) not in attempted
             and integer(t.get('mapId',0))==integer(a['position'].get('mapId',0)) and distance(t,a['position'])<=20 and distance(t,w['owner'])<=30 and abs(t['z']-a['position']['z'])<=1.5]
+        if not choices and self.skill==393:
+            nearby=[r for r in rows if isinstance(r,dict) and point(r.get('creature'))
+                and r['creature'].get('present') is True and integer(r['creature'].get('mapId',0))==integer(a['position'].get('mapId',0))
+                and distance(r['creature'],a['position'])<=20]
+            if nearby:
+                nearest=min(nearby,key=lambda r:distance(r['creature'],a['position']))
+                self.status['reason']=TARGET_REASONS.get(nearest.get('approachReason') or nearest.get('reason'),'no_verified_target')
         return min(choices,key=lambda t:(distance(t,a['position']),integer(t['guid']))) if choices else None
 
     def exact_target(self,scene,row,traveling=False):
@@ -305,6 +346,11 @@ class Worker:
             'ownLootedItemsObserved','lootSlotsRemoved','cleanupUnconfirmed','leaseReleased','observedInventoryRevision','beforeRank','afterRank','skillIncreased') if k in o}
         if state.get('active') is True or o.get('cleanupUnconfirmed') is True or o.get('leaseReleased') is not True:return False
         if o.get('status')=='COMPLETED' and all(o.get(k) is True for k in ('ownGoObserved','lootWindowObserved','lootReleaseObserved','outputInventoryObserved')) and integer(o.get('ownLootedItemsObserved',0))>0 and integer(o.get('lootSlotsRemoved',0))>0 and state.get('inventoryKnown') is True and row['inventory']<integer(o.get('observedInventoryRevision',0))<=integer(state.get('inventoryRevision',0)):
+            self.status['lastReceipt']={k:o[k] for k in ('ownGoObserved','lootWindowObserved','lootReleaseObserved',
+                'outputInventoryObserved','ownLootedItemsObserved','lootSlotsRemoved','beforeRank','afterRank','skillIncreased',
+                'leaseReleased','cleanupUnconfirmed','observedInventoryRevision') if k in o}
+            self.status['lastReceipt'].update(status='COMPLETED',bodySessionId=row['session'],targetGuid=str(row['guid']),
+                targetEntry=integer(row['target'].get('entry',0)),baselineInventoryRevision=row['inventory'],observedAt=time.time())
             row['phase']='completed';self.persist();return True
         if o.get('status') in ('BLOCKED','SERVER_REJECTED','CANCELLED'):
             row['phase']='blocked';self.persist();return True
@@ -318,25 +364,28 @@ class Worker:
             self.rpc.call('buddy-professions.cancel',{'sessionId':row['session'],'operationId':row['operationId']})
 
     def tick(self):
+        self.status.update(updatedAt=time.time(),reason='')
         self.deadline=self.now()+20
         if isinstance(self.rpc,RPC):self.rpc.deadline=self.deadline;self.rpc.calls=0
         pending=next((r for r in self.data['attempts'] if r['phase'] in ('approaching','attempt_reserved','unconfirmed')),None)
         if pending is not None:
             if pending.get('attempted') is True:self.receipt(self.state(),pending)
-            self.status['phase']='harvest_'+pending['phase'];return self.status
-        if self.stopped() or self.priority() or self.now()<self.next_query:return self.status
+            self.status.update(phase='harvest_'+pending['phase'],reason={'completed':'','blocked':'attempt_blocked'}.get(pending['phase'],'attempt_unconfirmed'))
+            return self.status
+        if self.stopped() or self.priority():return self.report_wait(Error('Harvest yields to stop or higher-priority work'))
+        if self.now()<self.next_query:return self.status
         self.next_query=self.now()+2
-        if len(self.data['attempts'])>=128:self.status['phase']='harvest_reservation_bound';return self.status
+        if len(self.data['attempts'])>=128:self.status.update(phase='harvest_reservation_bound',reason='reservation_bound');return self.status
         self.session,self.anchor,self.controls=None,None,None
         scene=self.read();self.session=scene[0]['sessionId'];self.anchor,self.controls=scene[3:]
         target=self.candidates(scene)
-        if target is None:self.status['phase']='no_verified_harvest_opportunity';return self.status
+        if target is None:self.status.update(phase='no_verified_harvest_opportunity',reason=self.status['reason'] or 'no_verified_target');return self.status
         row={'session':self.session,'guid':integer(target['guid']),'target':copy.deepcopy(target),'request':'harvest_'+uuid.uuid4().hex,'phase':'approaching','attempted':False}
         self.status.update(phase='harvesting_observed_target',busy=True)
         folder=c.ensure_state(ROOT/'data/professions'/str(self.guid))
         with os.fdopen(c.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            except BlockingIOError:self.status.update(phase='waiting_for_requested_profession',busy=False);return self.status
+            except BlockingIOError:self.status.update(phase='waiting_for_requested_profession',reason='profession_busy',busy=False);return self.status
             self.data['attempts'].append(row);self.persist()
             sent=False
             try:
@@ -360,5 +409,6 @@ class Worker:
                 if row['attempted'] and row.get('operationId'):
                     try:self.cancel_owned(row)
                     except (Error,prof.Error):pass
+                self.status['reason']=WAIT_REASONS.get(str(exc),'attempt_unconfirmed' if row['phase']=='unconfirmed' else 'attempt_blocked')
             finally:self.status.update(phase='harvest_'+row['phase'],busy=False)
         return self.status

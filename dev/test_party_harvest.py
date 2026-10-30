@@ -350,6 +350,22 @@ class HarvestTests(unittest.TestCase):
                 with self.assertRaises(m.Error): worker.read()
                 self.assertFalse(any(method == "buddy-professions.attempt" for method, _ in rpc.calls))
 
+    def test_actual_completed_trade_history_no_longer_blocks_skinning_but_incomplete_proof_does(self):
+        complete=dict(phase='COMPLETE',partnerGuid='3',partnerAccepted=True,acceptTransportWritten=True,
+            partnerItems=[dict(entry=2962,count=1)],ownRequestedItems=[dict(entry=7070,count=1)],
+            lastServerStatus=8,reason='server_confirmed_trade_complete',completedTrades='1')
+        worker,rpc,_=self.rig();rpc.trade.update(complete);worker.tick()
+        self.assertEqual(sum(method=='buddy-professions.attempt' for method,_ in rpc.calls),1)
+        for mode in ('missing_status','missing_reason','no_completed_counter','junk_pending'):
+            with self.subTest(mode=mode):
+                worker,rpc,_=self.rig();rpc.trade.update(copy.deepcopy(complete));worker.deadline=120
+                if mode=='missing_status':rpc.trade.pop('lastServerStatus')
+                elif mode=='missing_reason':rpc.trade.pop('reason')
+                elif mode=='no_completed_counter':rpc.trade['completedTrades']='0'
+                else:rpc.trade['lastJunkDisposal']={'status':'AWAITING_SERVER_SLOT_UPDATE'}
+                with self.assertRaises(m.Error):worker.read()
+                self.assertFalse(any(method=='buddy-professions.attempt' for method,_ in rpc.calls))
+
     def test_actual_inventory_identity_knownness_and_pending_operation_take_priority(self):
         for changes in (dict(sessionId="foreign"), dict(selfGuid="4"), dict(inventoryRevision="24"),
                         dict(inventoryKnown=False), dict(active=True), dict(closing=True),
@@ -426,6 +442,59 @@ class HarvestTests(unittest.TestCase):
             worker.tick()
         self.assertEqual(worker.data["attempts"], [])
         self.assertFalse(any(method == "buddy-professions.attempt" for method, _ in rpc.calls))
+
+    def test_enabled_idle_junk_intent_does_not_block_but_unsettled_work_and_trade_lease_do(self):
+        worker,rpc,_=self.rig()
+        rpc.trade.update(junkDisposalEnabled=True,lastJunkDisposal=dict(status='SERVER_SLOT_REMOVAL_CONFIRMED'))
+        worker.tick()
+        self.assertEqual(sum(method=='buddy-professions.attempt' for method,_ in rpc.calls),1)
+        self.assertTrue(rpc.trade['junkDisposalEnabled'])
+        self.assertEqual(worker.status['lastReceipt']['status'],'COMPLETED')
+        for mode in ('pending','ambiguous','unknown','open_trade','trade_lease'):
+            with self.subTest(mode=mode):
+                worker,rpc,_=self.rig()
+                rpc.trade['junkDisposalEnabled']=True
+                if mode=='trade_lease':rpc.actions['interactionOwner']='trade'
+                elif mode=='open_trade':rpc.trade['phase']='OPEN'
+                else:rpc.trade['lastJunkDisposal']={'status':dict(pending='AWAITING_SERVER_SLOT_UPDATE',ambiguous='TRANSPORT_UNCONFIRMED_NO_RETRY',unknown='UNKNOWN')[mode]}
+                worker.deadline=120
+                with self.assertRaises(m.Error):worker.read()
+                self.assertFalse(any(method in ('buddy-professions.attempt','buddy-actions.acquire_interaction') for method,_ in rpc.calls))
+
+    def test_reported_waits_are_fixed_codes_and_only_exact_completed_proofs_publish_receipt(self):
+        for message,reason in (('Harvest yields to observed party combat or healing','combat_or_healing'),
+                ('Harvest needs actual known carried items and skinning knife','knife_or_item_metadata'),
+                ('private unknown error with credentials','observation_or_cleanup_unavailable')):
+            worker,rpc,_=self.rig()
+            status=worker.report_wait(m.Error(message))
+            self.assertEqual((status['phase'],status['reason']),('waiting_for_harvest',reason))
+            self.assertNotIn('credentials',str(status))
+            self.assertEqual((status['skillId'],status['spellId']),(393,8613))
+        worker,rpc,_=self.rig();worker.tick()
+        row=copy.deepcopy(worker.data['attempts'][0]);state=rpc.state()
+        self.assertEqual(worker.status['bodySessionId'],'body1')
+        receipt=worker.status.pop('lastReceipt')
+        for mode in ('unmatched','unconfirmed','missing_inventory','release_pending'):
+            with self.subTest(mode=mode):
+                bad=copy.deepcopy(state)
+                if mode=='unmatched':bad['operation']['requestId']='other'
+                elif mode=='unconfirmed':bad['operation']['status']='OUTCOME_UNCONFIRMED'
+                elif mode=='missing_inventory':bad['operation']['outputInventoryObserved']=False
+                else:bad['operation']['leaseReleased']=False
+                self.assertFalse(worker.receipt(bad,copy.deepcopy(row)))
+                self.assertNotIn('lastReceipt',worker.status)
+        self.assertTrue(worker.receipt(state,copy.deepcopy(row)))
+        self.assertEqual(worker.status['lastReceipt']['targetGuid'],receipt['targetGuid'])
+
+    def test_nearby_actual_skinning_wait_reason_is_projected_without_module_free_text(self):
+        for raw,expected in list(m.TARGET_REASONS.items())+[('untrusted private error','no_verified_target')]:
+            worker,rpc,_=self.rig();rpc.approachable=False
+            original=rpc.target_row
+            rpc.target_row=lambda:dict(original(),approachReason=raw)
+            worker.tick()
+            self.assertEqual(worker.status['reason'],expected)
+            self.assertNotIn('private',str(worker.status))
+            self.assertFalse(any(method=='buddy-professions.attempt' for method,_ in rpc.calls))
 
 
 if __name__ == "__main__": unittest.main()

@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Equip finite, actual conservative armor upgrades; keep displaced equipment."""
+import argparse
+import copy
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import time
+import uuid
+
+def load(name,file):
+    loader=importlib.machinery.SourceFileLoader(name,str(Path(__file__).with_name(file)))
+    spec=importlib.util.spec_from_loader(loader.name,loader)
+    module=importlib.util.module_from_spec(spec);loader.exec_module(module);return module
+
+town=load('party_gear_town','town-maintenance')
+c=load('party_gear_converse','converse')
+Error,number,positive,token=town.Error,town.number,town.positive,town.token
+ROOT=Path(__file__).resolve().parent.parent
+ROSTER={1:8086,4:8087,5:8088}
+TERMINAL={'confirmed','blocked','server_rejected'}
+PHASES=TERMINAL|{'reserved','requested','unconfirmed','new_session_requires_review'}
+ARMOR_SLOTS={0,2,4,5,6,7,8,9,14}
+PENDING_METADATA={'complete_owned_item_metadata_pending','actual_class_race_level_required',
+    'complete_own_skill_baseline_required','complete_own_equipment_baseline_required',
+    'displaced_owned_item_metadata_required','displaced_item_template_pending','enhancement_context_pending'}
+
+def endpoint(guid):
+    if type(guid) is not int or guid not in ROSTER:raise Error('owned_party_gear_profile_required')
+    return f'http://127.0.0.1:{ROSTER[guid]}/rpc'
+
+class RPC(town.RPC):
+    def call(self,method,params):
+        if method not in ('buddy-inventory.state','buddy-inventory.equip_gear','buddy-world.snapshot',
+                          'buddy-actions.status','buddy-loot.state','buddy-trade.state','buddy-quests.state'):
+            raise Error('unsupported_gear_method')
+        if not isinstance(params,dict) or self.calls>=4096:raise Error('bounded_gear_rpc_required')
+        self.calls+=1
+        request=town.urllib.request.Request(self.url,data=json.dumps(dict(jsonrpc='2.0',id=self.calls,method=method,params=params),allow_nan=False).encode(),headers={'Content-Type':'application/json'})
+        try:
+            with self.opener.open(request,timeout=12) as response:raw=response.read(262145)
+            value=town.base.decode_json(raw) if len(raw)<=262144 else None
+        except (OSError,ValueError):raise Error('gear_response_unconfirmed') from None
+        if (not isinstance(value,dict) or value.get('jsonrpc')!='2.0' or type(value.get('id')) is not int
+                or value['id']!=self.calls or 'error' in value or not isinstance(value.get('result'),dict)):raise Error('gear_response_unconfirmed')
+        return value['result']
+
+def equipment(state):
+    rows=state.get('equipment',[])
+    if state.get('equipmentKnown') is not True or not positive(state.get('equipmentRevision',0)) or not isinstance(rows,list) or len(rows)!=19:
+        raise Error('complete_equipment_observation_required')
+    bags,slots=town.layout(state)
+    out,seen={}, {number(i.get('itemGuid',0)) for i in slots.values() if number(i.get('itemGuid',0))}
+    seen.update(number(b.get('containerGuid',0)) for b in bags.values() if number(b.get('containerGuid',0)))
+    for row in rows:
+        if not isinstance(row,dict):raise Error('invalid_equipment_observation')
+        slot=number(row.get('slot',0),18);guid=town.item_guid(row.get('itemGuid',0),allow_empty=True)
+        if slot in out or row.get('slotKnown') is not True or guid and guid in seen:raise Error('invalid_equipment_observation')
+        if not guid and (number(row.get('entry',0)) or number(row.get('stackCount',0)) or row.get('metadataKnown') is True):raise Error('invalid_equipment_observation')
+        if guid and row.get('metadataKnown') is True and (not positive(row.get('entry',0),2**32-1) or number(row.get('stackCount',0))!=1):raise Error('invalid_equipment_observation')
+        out[slot]=row;seen.add(guid)
+    return out
+
+def candidates(state):
+    _,slots=town.layout(state);equipped=equipment(state);out=[]
+    for row in state.get('items',[]):
+        if (not isinstance(row,dict) or row.get('metadataKnown') is not True or row.get('gearEquipEligible') is not True
+                or row.get('conservativeUpgrade') is not True):continue
+        source=town.ref(row.get('item'));slot=number(row.get('gearEquipmentSlot',0),18)
+        if slot not in ARMOR_SLOTS:raise Error('unsupported_automatic_armor_slot')
+        actual=slots.get((source['bag'],source['slot']))
+        old=town.item_guid(row.get('expectedEquippedItemGuid',0),allow_empty=True)
+        if actual is None or actual.get('metadataKnown') is not True or town.ref(actual)!=source or source['stackCount']!=1:
+            raise Error('gear_source_binding_changed')
+        if old!=number(equipped[slot].get('itemGuid',0)):raise Error('gear_destination_binding_changed')
+        out.append(row)
+    return sorted(out,key=lambda row:(number(row.get('gearEquipmentSlot',0)),number(row['item'].get('bag',0)),number(row['item'].get('slot',0))))
+
+class Journal(town.base.Journal):
+    def __init__(self,path,url,guid):
+        if url!=endpoint(guid):raise Error('gear_endpoint_identity_mismatch')
+        super().__init__(path,url,guid)
+        self.data['mode']='party_gear'
+    def validate(self):
+        d=self.data
+        if (not isinstance(d,dict) or d.get('version')!=1 or d.get('mode')!='party_gear'
+                or d.get('rpcUrl')!=endpoint(self.guid) or d.get('characterGuid')!=str(self.guid)
+                or not isinstance(d.get('attempts'),list) or len(d['attempts'])>128):raise Error('gear_journal_identity_or_bound')
+        seen=set()
+        for row in d['attempts']:
+            if not isinstance(row,dict) or row.get('phase') not in PHASES:raise Error('invalid_gear_journal_row')
+            req=row.get('request')
+            if not isinstance(req,dict) or set(req)!={'sessionId','requestId','expectedRevision','expectedInventoryRevision','source',
+                    'equipmentSlot','expectedEquipmentRevision','expectedEquippedItemGuid','requireConservativeUpgrade'}:raise Error('invalid_gear_request')
+            token(req['sessionId']);rid=token(req['requestId'])
+            if rid in seen or req['requireConservativeUpgrade'] is not True:raise Error('invalid_gear_request')
+            seen.add(rid);town.ref(req['source']);number(req['equipmentSlot'],18)
+            if req['equipmentSlot'] not in ARMOR_SLOTS or req['source']['stackCount']!=1:raise Error('unsupported_automatic_armor_slot')
+            for field in ('expectedRevision','expectedInventoryRevision','expectedEquipmentRevision'):positive(req[field])
+            town.item_guid(req['expectedEquippedItemGuid'],allow_empty=True)
+            if row['phase'] in TERMINAL:
+                op=row.get('receipt',{})
+                if not matches(req,op) or op.get('leaseReleased') is not True or op.get('status')!=row['phase'].upper():raise Error('invalid_gear_terminal_receipt')
+                if row['phase']=='confirmed' and not proof(req,op):raise Error('invalid_gear_confirmation')
+                if row['phase']=='blocked' and op.get('transportAttempted',False) is not False:raise Error('written_gear_marked_blocked')
+                if row['phase']=='server_rejected' and op.get('serverErrorObserved') is not True:raise Error('gear_rejection_unproven')
+        if len(json.dumps(d,allow_nan=False).encode())>262144:raise Error('gear_journal_size_bound')
+
+def ledger_facts(guid):
+    path=ROOT/'data/autonomy/town-maintenance'/f'{guid}-{ROSTER[guid]}'/'gear.json'
+    try:
+        with os.fdopen(c.private_open(path,os.O_RDONLY),'rb') as source:raw=source.read(262145)
+    except FileNotFoundError:return False,set()
+    if len(raw)>262144:raise Error('gear_journal_size_bound')
+    journal=Journal(path,endpoint(guid),guid);journal.data=town.base.decode_json(raw);journal.validate()
+    rows=journal.data['attempts']
+    return (any(r['phase'] not in TERMINAL for r in rows),
+        {number(r['request']['expectedEquippedItemGuid']) for r in rows if r['phase']=='confirmed' and number(r['request']['expectedEquippedItemGuid'])})
+
+def matches(req,op):
+    return (isinstance(op,dict) and op.get('requestId')==req['requestId'] and op.get('kind')=='equip_gear'
+        and town.ref(op.get('source'))==req['source'] and number(op.get('equipmentSlot',0))==req['equipmentSlot']
+        and number(op.get('baselineInventoryRevision',0))==number(req['expectedInventoryRevision'])
+        and number(op.get('baselineEquipmentRevision',0))==number(req['expectedEquipmentRevision'])
+        and number(op.get('displacedItemGuid',0))==number(req['expectedEquippedItemGuid']))
+
+def proof(req,op):
+    return (all(op.get(k) is True for k in ('inventoryConfirmed','equipmentConfirmed','leaseReleased'))
+        and number(op.get('observedInventoryRevision',0))>number(req['expectedInventoryRevision'])
+        and number(op.get('observedEquipmentRevision',0))>number(req['expectedEquipmentRevision']))
+
+class Worker:
+    def __init__(self,rpc,guid,journal,guard=None,stopped=lambda:False,now=time.monotonic,sleep=time.sleep):
+        self.rpc,self.guid,self.journal,self.stopped,self.now,self.sleep=rpc,guid,journal,stopped,now,sleep
+        self.guard=guard or self.safe
+        self.confirmed=[]
+        endpoint(guid)
+        if getattr(rpc,'url',endpoint(guid))!=endpoint(guid) or journal.guid!=guid or journal.url!=endpoint(guid):raise Error('gear_endpoint_identity_mismatch')
+    def state(self):
+        if getattr(self.rpc,'url',None)!=endpoint(self.guid):raise Error('gear_endpoint_identity_mismatch')
+        state=town.checked_state(self.rpc.call('buddy-inventory.state',{}),self.guid)
+        self.current_session=state['sessionId'];return state
+    def safe(self):
+        world=self.rpc.call('buddy-world.snapshot',{});actions=self.rpc.call('buddy-actions.status',{})
+        if not c.BuddyControls.quest_scene_safe(actions,world,self.guid):raise Error('gear_waits_for_safe_own_state')
+        if actions.get('interactionOwner') or any(actions.get(k) is True for k in ('moving','traveling','castPending','autoAttacking',
+                'autoAttackRequested','autoAttackUnconfirmed','practicing','following','healing','assisting')):raise Error('gear_requires_confirmed_control_hold')
+        for method in ('buddy-loot.state','buddy-trade.state','buddy-quests.state'):
+            state=self.rpc.call(method,{})
+            if state.get('sessionId')!=self.current_session:raise Error('gear_body_changed')
+            if method=='buddy-loot.state' and (state.get('enabled') is True or state.get('phase') not in ('idle','disabled')):raise Error('gear_requires_confirmed_control_hold')
+            if method=='buddy-trade.state' and not c.trade_idle(state):raise Error('gear_waits_for_trade')
+            if method=='buddy-quests.state' and state.get('actionInFlight') is True:raise Error('gear_waits_for_quest_interaction')
+    def ready(self,state):
+        if self.stopped():raise Error('gear_stop_requested')
+        self.guard()
+        if state.get('active') is True or state.get('closing') is True:raise Error('gear_waits_for_inventory_operation')
+        op=state.get('operation') or {}
+        if op and (op.get('status') not in ('CONFIRMED','BLOCKED','SERVER_REJECTED') or op.get('leaseReleased') is not True):raise Error('gear_waits_for_inventory_receipt')
+        equipment(state);town.layout(state)
+    def receipt(self,row,state):
+        req=row['request'];op=state.get('operation') or {};before=row['phase']
+        if state['sessionId']!=req['sessionId']:row['phase']='new_session_requires_review'
+        elif matches(req,op):
+            row['receipt']=copy.deepcopy(op)
+            if op.get('status')=='CONFIRMED' and proof(req,op) and state.get('active') is not True:
+                _,slots=town.layout(state);equipped=equipment(state)
+                target=equipped[req['equipmentSlot']];source=slots.get((req['source']['bag'],req['source']['slot']),{})
+                exact=(target.get('metadataKnown') is True and number(target.get('itemGuid',0))==number(req['source']['itemGuid'])
+                    and number(target.get('entry',0))==req['source']['entry'] and number(target.get('stackCount',0))==1
+                    and number(source.get('itemGuid',0))==number(req['expectedEquippedItemGuid'])
+                    and (not number(req['expectedEquippedItemGuid']) or source.get('metadataKnown') is True)
+                    and number(state['inventoryRevision'])>=number(op['observedInventoryRevision'])
+                    and number(state['equipmentRevision'])>=number(op['observedEquipmentRevision']))
+                row['phase']='confirmed' if exact else 'unconfirmed'
+            elif op.get('status')=='BLOCKED' and not op.get('transportAttempted',False) and op.get('leaseReleased') is True:row['phase']='blocked'
+            elif op.get('status')=='SERVER_REJECTED' and op.get('serverErrorObserved') is True and op.get('leaseReleased') is True:row['phase']='server_rejected'
+            else:row['phase']='requested' if op.get('status')=='REQUESTED' else 'unconfirmed'
+        else:row['phase']='unconfirmed'
+        self.journal.save()
+        if row['phase']=='confirmed' and before!='confirmed':
+            clean=dict(entry=req['source']['entry'],equipmentSlot=req['equipmentSlot'],status='CONFIRMED',bodySessionId=req['sessionId'],
+                inventoryConfirmed=True,equipmentConfirmed=True,leaseReleased=True,displacedRetained=True,
+                baselineInventoryRevision=req['expectedInventoryRevision'],observedInventoryRevision=op['observedInventoryRevision'],
+                baselineEquipmentRevision=req['expectedEquipmentRevision'],observedEquipmentRevision=op['observedEquipmentRevision'])
+            try:clean['name']=c.plain_text(row.get('name'),120)
+            except c.ConversationError:pass
+            self.confirmed.append(clean)
+        return row['phase']
+    def result(self,phase):return dict(phase=phase,newConfirmedOperations=len(self.confirmed),equippedItems=self.confirmed[:4])
+    def run(self,max_seconds=25):
+        if not 0<max_seconds<=30 or self.journal.lock is None:raise Error('finite_locked_gear_worker_required')
+        self.confirmed=[]
+        end=self.now()+max_seconds;confirmed=0
+        pending=next((r for r in self.journal.data['attempts'] if r['phase'] not in TERMINAL),None)
+        if pending is not None:
+            phase=self.receipt(pending,self.state())
+            if phase not in TERMINAL:return self.result('unconfirmed')
+        for _ in range(4):
+            if self.stopped() or self.now()>=end:return self.result('blocked')
+            state=self.state();self.ready(state);choices=candidates(state)
+            attempted={(r['request']['sessionId'],number(r['request']['source']['itemGuid'])) for r in self.journal.data['attempts']}
+            choices=[r for r in choices if (state['sessionId'],number(r['item']['itemGuid'])) not in attempted]
+            if not choices:return self.result('complete')
+            if len(self.journal.data['attempts'])>=128:return self.result('blocked')
+            choice=choices[0];source=town.ref(choice['item'])
+            fresh=self.state();self.ready(fresh)
+            latest=self.state()
+            if latest['sessionId']!=fresh['sessionId'] or any(number(latest[k])!=number(fresh[k]) for k in ('revision','inventoryRevision','equipmentRevision')):
+                return self.result('blocked')
+            if (fresh['sessionId']!=state['sessionId'] or any(number(fresh[k])!=number(state[k]) for k in ('revision','inventoryRevision','equipmentRevision'))):
+                return self.result('blocked')
+            if not any(town.ref(r['item'])==source and r.get('gearEquipmentSlot',0)==choice.get('gearEquipmentSlot',0) for r in candidates(fresh)):
+                return self.result('blocked')
+            if self.stopped() or self.now()>=end:return self.result('blocked')
+            req=dict(sessionId=fresh['sessionId'],requestId='gear_'+uuid.uuid4().hex,expectedRevision=str(number(fresh['revision'])),
+                expectedInventoryRevision=str(number(fresh['inventoryRevision'])),source=source,equipmentSlot=number(choice.get('gearEquipmentSlot',0)),
+                expectedEquipmentRevision=str(number(fresh['equipmentRevision'])),expectedEquippedItemGuid=str(number(choice.get('expectedEquippedItemGuid',0))),
+                requireConservativeUpgrade=True)
+            row=dict(request=req,phase='reserved',name=choice.get('name',''))
+            self.journal.data['attempts'].append(row);self.journal.save()
+            if self.stopped():return self.result('unconfirmed')
+            try:
+                self.guard()
+                current=self.state()
+                if (current['sessionId']!=req['sessionId'] or any(number(current[field])!=number(req[bound]) for field,bound in
+                        (('revision','expectedRevision'),('inventoryRevision','expectedInventoryRevision'),('equipmentRevision','expectedEquipmentRevision')))):
+                    row['phase']='unconfirmed';self.journal.save();return self.result('unconfirmed')
+                if self.stopped() or self.now()>=end:
+                    row['phase']='unconfirmed';self.journal.save();return self.result('unconfirmed')
+                response=self.rpc.call('buddy-inventory.equip_gear',req)
+                phase=self.receipt(row,town.checked_state(response,self.guid))
+                while phase=='requested' and self.now()<end and not self.stopped():
+                    self.sleep(.2);phase=self.receipt(row,self.state())
+            except (Error,OSError,ValueError,KeyError,TypeError):
+                row['phase']='unconfirmed';self.journal.save()
+                try:phase=self.receipt(row,self.state())
+                except (Error,OSError,ValueError,KeyError,TypeError):phase='unconfirmed'
+            if phase=='confirmed':confirmed+=1
+            elif phase not in TERMINAL:return self.result('unconfirmed')
+        return self.result('complete')
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command',choices=('run','status'));parser.add_argument('--character-guid',type=int,required=True,choices=tuple(ROSTER))
+    args=parser.parse_args(argv);url=endpoint(args.character_guid)
+    folder=ROOT/'data/autonomy/town-maintenance'/f'{args.character_guid}-{ROSTER[args.character_guid]}'
+    with town.Journal(folder/'receipts.json',url,args.character_guid) as existing:
+        if any(r['phase'] not in town.TERMINAL for r in existing.data['attempts']):raise Error('existing_town_receipt_unsettled')
+        with Journal(folder/'gear.json',url,args.character_guid) as journal:
+            if args.command=='status':print(json.dumps(journal.data,indent=2));return
+            result=Worker(RPC(url),args.character_guid,journal).run();print(json.dumps(result,indent=2))
+
+if __name__=='__main__':
+    try:main()
+    except (Error,OSError) as exc:raise SystemExit('Party gear: '+str(exc))

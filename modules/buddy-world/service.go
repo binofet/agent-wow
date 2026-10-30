@@ -39,6 +39,8 @@ type observed struct {
 	backpackRevision            uint64
 	bagSlotsKnown               bool
 	bags                        [4]uint64
+	equipmentKnown              bool
+	equipment                   [19]uint64
 	inventoryEpoch              uint64
 	isContainer, containerKnown bool
 	inventoryItemKnown          bool
@@ -106,6 +108,8 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	r.PowerType = p.fields[unitBytes0] >> 24
 	r.ClassId = (p.fields[unitBytes0] >> 8) & 0xff
 	r.ClassKnown = p.known[unitBytes0] && r.ClassId > 0 && r.ClassId <= 11 && r.ClassId != 10
+	r.RaceId = p.fields[unitBytes0] & 0xff
+	r.RaceKnown = p.present && p.known[unitBytes0] && r.RaceId > 0 && r.RaceId <= 11 && r.RaceId != 9
 	r.Level = p.fields[0x36]
 	r.LevelKnown = p.known[0x36] && r.Level > 0
 	r.BaseMana = p.fields[0x78]
@@ -186,6 +190,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		}
 		if s.state.inventoryView() != next.inventoryView() {
 			next.inventoryRevision++
+		}
+		if s.state.equipmentView() != next.equipmentView() {
+			next.equipmentRevision++
 		}
 		if !proto.Equal(s.state.offhandSnapshot(), next.offhandSnapshot()) {
 			next.offhandRevision++

@@ -101,16 +101,22 @@ func (x *ItemRef) GetStackCount() uint32 {
 }
 
 type ItemEligibility struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Item                 *ItemRef               `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
-	MetadataKnown        bool                   `protobuf:"varint,2,opt,name=metadata_known,json=metadataKnown,proto3" json:"metadata_known,omitempty"`
-	SafeJunkSaleEligible bool                   `protobuf:"varint,3,opt,name=safe_junk_sale_eligible,json=safeJunkSaleEligible,proto3" json:"safe_junk_sale_eligible,omitempty"`
-	UnitSellPriceCopper  uint32                 `protobuf:"varint,4,opt,name=unit_sell_price_copper,json=unitSellPriceCopper,proto3" json:"unit_sell_price_copper,omitempty"`
-	NormalBag            bool                   `protobuf:"varint,5,opt,name=normal_bag,json=normalBag,proto3" json:"normal_bag,omitempty"`
-	ContainerSlots       uint32                 `protobuf:"varint,6,opt,name=container_slots,json=containerSlots,proto3" json:"container_slots,omitempty"`
-	BlockedReason        string                 `protobuf:"bytes,7,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	Item                     *ItemRef               `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
+	MetadataKnown            bool                   `protobuf:"varint,2,opt,name=metadata_known,json=metadataKnown,proto3" json:"metadata_known,omitempty"`
+	SafeJunkSaleEligible     bool                   `protobuf:"varint,3,opt,name=safe_junk_sale_eligible,json=safeJunkSaleEligible,proto3" json:"safe_junk_sale_eligible,omitempty"`
+	UnitSellPriceCopper      uint32                 `protobuf:"varint,4,opt,name=unit_sell_price_copper,json=unitSellPriceCopper,proto3" json:"unit_sell_price_copper,omitempty"`
+	NormalBag                bool                   `protobuf:"varint,5,opt,name=normal_bag,json=normalBag,proto3" json:"normal_bag,omitempty"`
+	ContainerSlots           uint32                 `protobuf:"varint,6,opt,name=container_slots,json=containerSlots,proto3" json:"container_slots,omitempty"`
+	BlockedReason            string                 `protobuf:"bytes,7,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
+	Name                     string                 `protobuf:"bytes,8,opt,name=name,proto3" json:"name,omitempty"`
+	GearEquipEligible        bool                   `protobuf:"varint,9,opt,name=gear_equip_eligible,json=gearEquipEligible,proto3" json:"gear_equip_eligible,omitempty"`
+	GearEquipmentSlot        uint32                 `protobuf:"varint,10,opt,name=gear_equipment_slot,json=gearEquipmentSlot,proto3" json:"gear_equipment_slot,omitempty"`
+	ExpectedEquippedItemGuid uint64                 `protobuf:"varint,11,opt,name=expected_equipped_item_guid,json=expectedEquippedItemGuid,proto3" json:"expected_equipped_item_guid,omitempty"`
+	ConservativeUpgrade      bool                   `protobuf:"varint,12,opt,name=conservative_upgrade,json=conservativeUpgrade,proto3" json:"conservative_upgrade,omitempty"`
+	GearBlockedReason        string                 `protobuf:"bytes,13,opt,name=gear_blocked_reason,json=gearBlockedReason,proto3" json:"gear_blocked_reason,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ItemEligibility) Reset() {
@@ -192,6 +198,48 @@ func (x *ItemEligibility) GetBlockedReason() string {
 	return ""
 }
 
+func (x *ItemEligibility) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ItemEligibility) GetGearEquipEligible() bool {
+	if x != nil {
+		return x.GearEquipEligible
+	}
+	return false
+}
+
+func (x *ItemEligibility) GetGearEquipmentSlot() uint32 {
+	if x != nil {
+		return x.GearEquipmentSlot
+	}
+	return 0
+}
+
+func (x *ItemEligibility) GetExpectedEquippedItemGuid() uint64 {
+	if x != nil {
+		return x.ExpectedEquippedItemGuid
+	}
+	return 0
+}
+
+func (x *ItemEligibility) GetConservativeUpgrade() bool {
+	if x != nil {
+		return x.ConservativeUpgrade
+	}
+	return false
+}
+
+func (x *ItemEligibility) GetGearBlockedReason() string {
+	if x != nil {
+		return x.GearBlockedReason
+	}
+	return ""
+}
+
 type Operation struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	RequestId                 string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -219,6 +267,9 @@ type Operation struct {
 	ObservedCopperRevision    uint64                 `protobuf:"varint,23,opt,name=observed_copper_revision,json=observedCopperRevision,proto3" json:"observed_copper_revision,omitempty"`
 	BaselineCopper            uint32                 `protobuf:"varint,24,opt,name=baseline_copper,json=baselineCopper,proto3" json:"baseline_copper,omitempty"`
 	ObservedCopper            uint32                 `protobuf:"varint,25,opt,name=observed_copper,json=observedCopper,proto3" json:"observed_copper,omitempty"`
+	BaselineEquipmentRevision uint64                 `protobuf:"varint,26,opt,name=baseline_equipment_revision,json=baselineEquipmentRevision,proto3" json:"baseline_equipment_revision,omitempty"`
+	ObservedEquipmentRevision uint64                 `protobuf:"varint,27,opt,name=observed_equipment_revision,json=observedEquipmentRevision,proto3" json:"observed_equipment_revision,omitempty"`
+	DisplacedItemGuid         uint64                 `protobuf:"varint,28,opt,name=displaced_item_guid,json=displacedItemGuid,proto3" json:"displaced_item_guid,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -428,25 +479,49 @@ func (x *Operation) GetObservedCopper() uint32 {
 	return 0
 }
 
+func (x *Operation) GetBaselineEquipmentRevision() uint64 {
+	if x != nil {
+		return x.BaselineEquipmentRevision
+	}
+	return 0
+}
+
+func (x *Operation) GetObservedEquipmentRevision() uint64 {
+	if x != nil {
+		return x.ObservedEquipmentRevision
+	}
+	return 0
+}
+
+func (x *Operation) GetDisplacedItemGuid() uint64 {
+	if x != nil {
+		return x.DisplacedItemGuid
+	}
+	return 0
+}
+
 type State struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid          uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	Revision          uint64                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
-	InventoryKnown    bool                   `protobuf:"varint,4,opt,name=inventory_known,json=inventoryKnown,proto3" json:"inventory_known,omitempty"`
-	InventoryRevision uint64                 `protobuf:"varint,5,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
-	InventoryBags     []*api.InventoryBag    `protobuf:"bytes,6,rep,name=inventory_bags,json=inventoryBags,proto3" json:"inventory_bags,omitempty"`
-	CopperKnown       bool                   `protobuf:"varint,7,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
-	Copper            uint32                 `protobuf:"varint,8,opt,name=copper,proto3" json:"copper,omitempty"`
-	CopperRevision    uint64                 `protobuf:"varint,9,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
-	Active            bool                   `protobuf:"varint,10,opt,name=active,proto3" json:"active,omitempty"`
-	Operation         *Operation             `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`
-	Items             []*ItemEligibility     `protobuf:"bytes,12,rep,name=items,proto3" json:"items,omitempty"`
-	BlockedReason     string                 `protobuf:"bytes,13,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
-	TransportWrites   uint64                 `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	MalformedPackets  uint64                 `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	Limitation        string                 `protobuf:"bytes,16,opt,name=limitation,proto3" json:"limitation,omitempty"`
-	Closing           bool                   `protobuf:"varint,17,opt,name=closing,proto3" json:"closing,omitempty"`
+	state             protoimpl.MessageState    `protogen:"open.v1"`
+	SessionId         string                    `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid          uint64                    `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	Revision          uint64                    `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	InventoryKnown    bool                      `protobuf:"varint,4,opt,name=inventory_known,json=inventoryKnown,proto3" json:"inventory_known,omitempty"`
+	InventoryRevision uint64                    `protobuf:"varint,5,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	InventoryBags     []*api.InventoryBag       `protobuf:"bytes,6,rep,name=inventory_bags,json=inventoryBags,proto3" json:"inventory_bags,omitempty"`
+	CopperKnown       bool                      `protobuf:"varint,7,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
+	Copper            uint32                    `protobuf:"varint,8,opt,name=copper,proto3" json:"copper,omitempty"`
+	CopperRevision    uint64                    `protobuf:"varint,9,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
+	Active            bool                      `protobuf:"varint,10,opt,name=active,proto3" json:"active,omitempty"`
+	Operation         *Operation                `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`
+	Items             []*ItemEligibility        `protobuf:"bytes,12,rep,name=items,proto3" json:"items,omitempty"`
+	BlockedReason     string                    `protobuf:"bytes,13,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
+	TransportWrites   uint64                    `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	MalformedPackets  uint64                    `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	Limitation        string                    `protobuf:"bytes,16,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	Closing           bool                      `protobuf:"varint,17,opt,name=closing,proto3" json:"closing,omitempty"`
+	EquipmentKnown    bool                      `protobuf:"varint,18,opt,name=equipment_known,json=equipmentKnown,proto3" json:"equipment_known,omitempty"`
+	EquipmentRevision uint64                    `protobuf:"varint,19,opt,name=equipment_revision,json=equipmentRevision,proto3" json:"equipment_revision,omitempty"`
+	Equipment         []*api.EquipmentSlotState `protobuf:"bytes,20,rep,name=equipment,proto3" json:"equipment,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -598,6 +673,27 @@ func (x *State) GetClosing() bool {
 		return x.Closing
 	}
 	return false
+}
+
+func (x *State) GetEquipmentKnown() bool {
+	if x != nil {
+		return x.EquipmentKnown
+	}
+	return false
+}
+
+func (x *State) GetEquipmentRevision() uint64 {
+	if x != nil {
+		return x.EquipmentRevision
+	}
+	return 0
+}
+
+func (x *State) GetEquipment() []*api.EquipmentSlotState {
+	if x != nil {
+		return x.Equipment
+	}
+	return nil
 }
 
 type DiscoverRequest struct {
@@ -1064,6 +1160,114 @@ func (x *SellRequest) GetExpectedCopperRevision() uint64 {
 	return 0
 }
 
+type EquipGearRequest struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId                  string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	ExpectedRevision           uint64                 `protobuf:"varint,3,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
+	ExpectedInventoryRevision  uint64                 `protobuf:"varint,4,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	Source                     *ItemRef               `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	EquipmentSlot              uint32                 `protobuf:"varint,6,opt,name=equipment_slot,json=equipmentSlot,proto3" json:"equipment_slot,omitempty"`
+	ExpectedEquipmentRevision  uint64                 `protobuf:"varint,7,opt,name=expected_equipment_revision,json=expectedEquipmentRevision,proto3" json:"expected_equipment_revision,omitempty"`
+	ExpectedEquippedItemGuid   uint64                 `protobuf:"varint,8,opt,name=expected_equipped_item_guid,json=expectedEquippedItemGuid,proto3" json:"expected_equipped_item_guid,omitempty"`
+	RequireConservativeUpgrade bool                   `protobuf:"varint,9,opt,name=require_conservative_upgrade,json=requireConservativeUpgrade,proto3" json:"require_conservative_upgrade,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *EquipGearRequest) Reset() {
+	*x = EquipGearRequest{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EquipGearRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EquipGearRequest) ProtoMessage() {}
+
+func (x *EquipGearRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EquipGearRequest.ProtoReflect.Descriptor instead.
+func (*EquipGearRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *EquipGearRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *EquipGearRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *EquipGearRequest) GetExpectedRevision() uint64 {
+	if x != nil {
+		return x.ExpectedRevision
+	}
+	return 0
+}
+
+func (x *EquipGearRequest) GetExpectedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ExpectedInventoryRevision
+	}
+	return 0
+}
+
+func (x *EquipGearRequest) GetSource() *ItemRef {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *EquipGearRequest) GetEquipmentSlot() uint32 {
+	if x != nil {
+		return x.EquipmentSlot
+	}
+	return 0
+}
+
+func (x *EquipGearRequest) GetExpectedEquipmentRevision() uint64 {
+	if x != nil {
+		return x.ExpectedEquipmentRevision
+	}
+	return 0
+}
+
+func (x *EquipGearRequest) GetExpectedEquippedItemGuid() uint64 {
+	if x != nil {
+		return x.ExpectedEquippedItemGuid
+	}
+	return 0
+}
+
+func (x *EquipGearRequest) GetRequireConservativeUpgrade() bool {
+	if x != nil {
+		return x.RequireConservativeUpgrade
+	}
+	return false
+}
+
 var File_modules_buddy_inventory_inventory_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
@@ -1075,7 +1279,7 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\titem_guid\x18\x03 \x01(\x04R\bitemGuid\x12\x14\n" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
-	"stackCount\"\xcc\x02\n" +
+	"stackCount\"\xe2\x04\n" +
 	"\x0fItemEligibility\x127\n" +
 	"\x04item\x18\x01 \x01(\v2#.warcraftbuddy.inventory.v1.ItemRefR\x04item\x12%\n" +
 	"\x0emetadata_known\x18\x02 \x01(\bR\rmetadataKnown\x125\n" +
@@ -1084,7 +1288,15 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\n" +
 	"normal_bag\x18\x05 \x01(\bR\tnormalBag\x12'\n" +
 	"\x0fcontainer_slots\x18\x06 \x01(\rR\x0econtainerSlots\x12%\n" +
-	"\x0eblocked_reason\x18\a \x01(\tR\rblockedReason\"\xe1\b\n" +
+	"\x0eblocked_reason\x18\a \x01(\tR\rblockedReason\x12\x12\n" +
+	"\x04name\x18\b \x01(\tR\x04name\x12.\n" +
+	"\x13gear_equip_eligible\x18\t \x01(\bR\x11gearEquipEligible\x12.\n" +
+	"\x13gear_equipment_slot\x18\n" +
+	" \x01(\rR\x11gearEquipmentSlot\x12=\n" +
+	"\x1bexpected_equipped_item_guid\x18\v \x01(\x04R\x18expectedEquippedItemGuid\x121\n" +
+	"\x14conservative_upgrade\x18\f \x01(\bR\x13conservativeUpgrade\x12.\n" +
+	"\x13gear_blocked_reason\x18\r \x01(\tR\x11gearBlockedReason\"\x91\n" +
+	"\n" +
 	"\tOperation\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x12\n" +
@@ -1113,7 +1325,10 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\x18baseline_copper_revision\x18\x16 \x01(\x04R\x16baselineCopperRevision\x128\n" +
 	"\x18observed_copper_revision\x18\x17 \x01(\x04R\x16observedCopperRevision\x12'\n" +
 	"\x0fbaseline_copper\x18\x18 \x01(\rR\x0ebaselineCopper\x12'\n" +
-	"\x0fobserved_copper\x18\x19 \x01(\rR\x0eobservedCopper\"\xc1\x05\n" +
+	"\x0fobserved_copper\x18\x19 \x01(\rR\x0eobservedCopper\x12>\n" +
+	"\x1bbaseline_equipment_revision\x18\x1a \x01(\x04R\x19baselineEquipmentRevision\x12>\n" +
+	"\x1bobserved_equipment_revision\x18\x1b \x01(\x04R\x19observedEquipmentRevision\x12.\n" +
+	"\x13displaced_item_guid\x18\x1c \x01(\x04R\x11displacedItemGuid\"\xe3\x06\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1135,7 +1350,10 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\n" +
 	"limitation\x18\x10 \x01(\tR\n" +
 	"limitation\x12\x18\n" +
-	"\aclosing\x18\x11 \x01(\bR\aclosing\"U\n" +
+	"\aclosing\x18\x11 \x01(\bR\aclosing\x12'\n" +
+	"\x0fequipment_known\x18\x12 \x01(\bR\x0eequipmentKnown\x12-\n" +
+	"\x12equipment_revision\x18\x13 \x01(\x04R\x11equipmentRevision\x12H\n" +
+	"\tequipment\x18\x14 \x03(\v2*.warcraftbuddy.world.v1.EquipmentSlotStateR\tequipment\"U\n" +
 	"\x0fDiscoverRequest\x12!\n" +
 	"\fvendor_entry\x18\x01 \x01(\rR\vvendorEntry\x12\x1f\n" +
 	"\vvendor_guid\x18\x02 \x01(\x04R\n" +
@@ -1180,12 +1398,25 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\vvendor_guid\x18\x06 \x01(\x04R\n" +
 	"vendorGuid\x12D\n" +
 	"\x1fexpected_unit_sell_price_copper\x18\a \x01(\rR\x1bexpectedUnitSellPriceCopper\x128\n" +
-	"\x18expected_copper_revision\x18\b \x01(\x04R\x16expectedCopperRevision2\xba\x04\n" +
+	"\x18expected_copper_revision\x18\b \x01(\x04R\x16expectedCopperRevision\"\xe2\x03\n" +
+	"\x10EquipGearRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12+\n" +
+	"\x11expected_revision\x18\x03 \x01(\x04R\x10expectedRevision\x12>\n" +
+	"\x1bexpected_inventory_revision\x18\x04 \x01(\x04R\x19expectedInventoryRevision\x12;\n" +
+	"\x06source\x18\x05 \x01(\v2#.warcraftbuddy.inventory.v1.ItemRefR\x06source\x12%\n" +
+	"\x0eequipment_slot\x18\x06 \x01(\rR\requipmentSlot\x12>\n" +
+	"\x1bexpected_equipment_revision\x18\a \x01(\x04R\x19expectedEquipmentRevision\x12=\n" +
+	"\x1bexpected_equipped_item_guid\x18\b \x01(\x04R\x18expectedEquippedItemGuid\x12@\n" +
+	"\x1crequire_conservative_upgrade\x18\t \x01(\bR\x1arequireConservativeUpgrade2\x98\x05\n" +
 	"\x0eBuddyInventory\x12E\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a!.warcraftbuddy.inventory.v1.State\x12^\n" +
 	"\bDiscover\x12+.warcraftbuddy.inventory.v1.DiscoverRequest\x1a%.warcraftbuddy.inventory.v1.Discovery\x12R\n" +
 	"\x04Move\x12'.warcraftbuddy.inventory.v1.MoveRequest\x1a!.warcraftbuddy.inventory.v1.State\x12T\n" +
-	"\x05Equip\x12(.warcraftbuddy.inventory.v1.EquipRequest\x1a!.warcraftbuddy.inventory.v1.State\x12R\n" +
+	"\x05Equip\x12(.warcraftbuddy.inventory.v1.EquipRequest\x1a!.warcraftbuddy.inventory.v1.State\x12\\\n" +
+	"\tEquipGear\x12,.warcraftbuddy.inventory.v1.EquipGearRequest\x1a!.warcraftbuddy.inventory.v1.State\x12R\n" +
 	"\x04Sell\x12'.warcraftbuddy.inventory.v1.SellRequest\x1a!.warcraftbuddy.inventory.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyBHZFgithub.com/agent-wow/agent-wow/modules/buddy-inventory/api;inventoryv1b\x06proto3"
@@ -1202,54 +1433,60 @@ func file_modules_buddy_inventory_inventory_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_inventory_inventory_proto_rawDescData
 }
 
-var file_modules_buddy_inventory_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_modules_buddy_inventory_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_modules_buddy_inventory_inventory_proto_goTypes = []any{
-	(*ItemRef)(nil),           // 0: warcraftbuddy.inventory.v1.ItemRef
-	(*ItemEligibility)(nil),   // 1: warcraftbuddy.inventory.v1.ItemEligibility
-	(*Operation)(nil),         // 2: warcraftbuddy.inventory.v1.Operation
-	(*State)(nil),             // 3: warcraftbuddy.inventory.v1.State
-	(*DiscoverRequest)(nil),   // 4: warcraftbuddy.inventory.v1.DiscoverRequest
-	(*Vendor)(nil),            // 5: warcraftbuddy.inventory.v1.Vendor
-	(*Discovery)(nil),         // 6: warcraftbuddy.inventory.v1.Discovery
-	(*MoveRequest)(nil),       // 7: warcraftbuddy.inventory.v1.MoveRequest
-	(*EquipRequest)(nil),      // 8: warcraftbuddy.inventory.v1.EquipRequest
-	(*SellRequest)(nil),       // 9: warcraftbuddy.inventory.v1.SellRequest
-	(*api.InventoryBag)(nil),  // 10: warcraftbuddy.world.v1.InventoryBag
-	(*api.CreatureState)(nil), // 11: warcraftbuddy.world.v1.CreatureState
-	(*emptypb.Empty)(nil),     // 12: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),    // 13: agentwow.module.v1.WorldPacket
+	(*ItemRef)(nil),                // 0: warcraftbuddy.inventory.v1.ItemRef
+	(*ItemEligibility)(nil),        // 1: warcraftbuddy.inventory.v1.ItemEligibility
+	(*Operation)(nil),              // 2: warcraftbuddy.inventory.v1.Operation
+	(*State)(nil),                  // 3: warcraftbuddy.inventory.v1.State
+	(*DiscoverRequest)(nil),        // 4: warcraftbuddy.inventory.v1.DiscoverRequest
+	(*Vendor)(nil),                 // 5: warcraftbuddy.inventory.v1.Vendor
+	(*Discovery)(nil),              // 6: warcraftbuddy.inventory.v1.Discovery
+	(*MoveRequest)(nil),            // 7: warcraftbuddy.inventory.v1.MoveRequest
+	(*EquipRequest)(nil),           // 8: warcraftbuddy.inventory.v1.EquipRequest
+	(*SellRequest)(nil),            // 9: warcraftbuddy.inventory.v1.SellRequest
+	(*EquipGearRequest)(nil),       // 10: warcraftbuddy.inventory.v1.EquipGearRequest
+	(*api.InventoryBag)(nil),       // 11: warcraftbuddy.world.v1.InventoryBag
+	(*api.EquipmentSlotState)(nil), // 12: warcraftbuddy.world.v1.EquipmentSlotState
+	(*api.CreatureState)(nil),      // 13: warcraftbuddy.world.v1.CreatureState
+	(*emptypb.Empty)(nil),          // 14: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),         // 15: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_inventory_inventory_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.inventory.v1.ItemEligibility.item:type_name -> warcraftbuddy.inventory.v1.ItemRef
 	0,  // 1: warcraftbuddy.inventory.v1.Operation.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	10, // 2: warcraftbuddy.inventory.v1.State.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
+	11, // 2: warcraftbuddy.inventory.v1.State.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
 	2,  // 3: warcraftbuddy.inventory.v1.State.operation:type_name -> warcraftbuddy.inventory.v1.Operation
 	1,  // 4: warcraftbuddy.inventory.v1.State.items:type_name -> warcraftbuddy.inventory.v1.ItemEligibility
-	11, // 5: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	3,  // 6: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
-	5,  // 7: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
-	0,  // 8: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 9: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 10: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	12, // 11: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
-	4,  // 12: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
-	7,  // 13: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
-	8,  // 14: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
-	9,  // 15: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
-	13, // 16: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	12, // 17: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
-	3,  // 18: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
-	6,  // 19: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
-	3,  // 20: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 21: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 22: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
-	12, // 23: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
-	12, // 24: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
-	18, // [18:25] is the sub-list for method output_type
-	11, // [11:18] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 5: warcraftbuddy.inventory.v1.State.equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
+	13, // 6: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	3,  // 7: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
+	5,  // 8: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
+	0,  // 9: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 10: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 11: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 12: warcraftbuddy.inventory.v1.EquipGearRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	14, // 13: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
+	4,  // 14: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
+	7,  // 15: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
+	8,  // 16: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
+	10, // 17: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
+	9,  // 18: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
+	15, // 19: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	14, // 20: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
+	3,  // 21: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
+	6,  // 22: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
+	3,  // 23: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 24: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 25: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 26: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
+	14, // 27: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
+	14, // 28: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
+	21, // [21:29] is the sub-list for method output_type
+	13, // [13:21] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_inventory_inventory_proto_init() }
@@ -1263,7 +1500,7 @@ func file_modules_buddy_inventory_inventory_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_inventory_inventory_proto_rawDesc), len(file_modules_buddy_inventory_inventory_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

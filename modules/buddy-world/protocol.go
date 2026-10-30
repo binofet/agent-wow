@@ -438,7 +438,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision, inventoryEpoch := p.positionRevision, p.questRevision, p.backpackRevision, p.inventoryEpoch
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, inventoryEpoch: inventoryEpoch}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
@@ -507,6 +507,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 						}
 					}
 					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack, 0x3c, 0x3d} {
+						p.known[f] = true
+					}
+					for f := itemEnhancementFirst; f < itemEnhancementEnd; f++ {
 						p.known[f] = true
 					}
 					newItem = true
@@ -703,6 +706,10 @@ func values(c *cursor, p *observed, now time.Time) error {
 				return errBounds
 			}
 			if p != nil && p.isSelf {
+				if field >= playerEquipmentFirst && field < playerEquipmentFirst+equipmentSlots*2 {
+					slot, shift := (field-playerEquipmentFirst)/2, uint((field-playerEquipmentFirst)%2*32)
+					p.equipment[slot] = p.equipment[slot]&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift
+				}
 				if field >= playerSkillsFirst && field < playerSkillsFirst+128*3 {
 					slot, part := (field-playerSkillsFirst)/3, (field-playerSkillsFirst)%3
 					p.skills[slot][part] = v

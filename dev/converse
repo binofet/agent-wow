@@ -151,6 +151,19 @@ records the stipend receipt; reserved or unrecorded outcomes remain unconfirmed.
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
+party_maintenance.own.harvest describes separate automatic field harvesting:
+Rook skins eligible observed corpses after his own normal loot and confirmed
+release; Arlen gathers eligible observed herbs. This is installed automatic
+behavior, not a chat action, and ordinary looting is a separate capability.
+Use its reported reason to explain waits for combat, healing, movement, bag
+space or other work. It stays near stationary Joel and yields to party safety.
+Do not say automatic skinning is unavailable when this configured routine is
+reported. configured does not prove a learned skill, knife or suitable target;
+the controller checks those actual facts before each attempt. A COMPLETED
+lastReceipt confirms received materials only with its listed cast, loot and
+inventory proofs. Never invent leather/herb names, a skill increase, or success
+from a request or phase alone. If harvest.observationsCurrent is false, describe
+it as the last report. It never requires the model to call a profession RPC.
 AREA_QUESTS starts one bounded nearby quest sweep only when Joel explicitly asks
 you to turn in and gather quests in this area. It visits actual observed local
 questgivers, turns in your completed quests, chooses actual rewards and accepts
@@ -176,6 +189,13 @@ totalSlots/freeSlots and server-confirmed item names; itemsTruncated means the
 48-item excerpt is incomplete. town_upkeep is separate automatic safe-gray-junk
 sales and exact41599 bag upkeep near observed services. Its phase or travel is
 not a sale receipt; claim confirmed operations only when explicitly reported.
+town_upkeep also equips actual conservative single-slot armor upgrades before
+selling, including out in the field when safely stopped. It pauses its own held
+controls and honors new human commands. equippedItems lists only confirmed
+equipment swaps with newer carried/equipment observations and released leases;
+use actual names there. Displaced equipment stays in carried bags and is
+protected from automatic sale. A comparison-pending or unconfirmed phase is a
+wait, never an equipped result. The routine requires no model equip action.
 """
 
 
@@ -495,8 +515,23 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
         if not isinstance(own, dict):
             return unknown
         result = {"active": active, "busy": active and own.get("busy") is True}
-        if own.get("lastKind") in ("bags", "sell"):
+        if own.get("lastKind") in ("bags", "sell", "gear"):
             result["kind"] = own["lastKind"]
+        equipped=own.get('equippedItems',[])
+        if isinstance(equipped,list) and len(equipped)<=4:
+            clean=[]
+            for row in equipped:
+                if (not isinstance(row,dict) or row.get('status')!='CONFIRMED'
+                        or not isinstance(own.get('bodySessionId'),str) or row.get('bodySessionId')!=own['bodySessionId']):continue
+                if (not all(row.get(k) is True for k in ('inventoryConfirmed','equipmentConfirmed','leaseReleased','displacedRetained'))
+                        or not 0<integer(row.get('entry',0))<=2**32-1 or integer(row.get('equipmentSlot',99))>18
+                        or not 0<integer(row.get('baselineInventoryRevision',0))<integer(row.get('observedInventoryRevision',0))<2**64
+                        or not 0<integer(row.get('baselineEquipmentRevision',0))<integer(row.get('observedEquipmentRevision',0))<2**64):continue
+                item={k:row[k] for k in ('entry','equipmentSlot','status','displacedRetained')}
+                try:item['name']=plain_text(row.get('name'),120)
+                except ConversationError:pass
+                clean.append(item)
+            if clean:result['equippedItems']=clean
         confirmed = integer(own.get("confirmedOperations", 0))
         if confirmed <= 168:
             result["confirmedOperations"] = confirmed
@@ -649,7 +684,88 @@ def quest_task_snapshot(character_guid, rpc_url=None, quest_id=0, stop=False, re
         return unknown
 
 
-def party_maintenance_snapshot(character_guid):
+HARVEST_REASONS = {
+    'starting':'Waiting for the first harvest observation.',
+    '':'',
+    'higher_priority':'Waiting for higher-priority work or a stop request.',
+    'maintenance_out_of_combat':'Waiting for confirmed party safety and out-of-combat state.',
+    'body_changed':'Waiting for the current character connection.',
+    'identity_unknown':'Waiting for confirmed party and character observations.',
+    'own_state_unsafe':'Waiting for safe character observations.',
+    'active_actions':'Waiting for combat actions or casting to finish.',
+    'stopped_movement':'Waiting for movement to stop.',
+    'lease_busy':'Waiting for another interaction to finish.',
+    'quest_or_loot_busy':'Waiting for ordinary quest or corpse looting to finish.',
+    'trade_busy':'Waiting for trading or an unsettled junk disposal.',
+    'inventory_busy':'Waiting for another inventory operation to finish.',
+    'profession_cleanup':'Waiting for a previous profession operation to settle.',
+    'inventory_capacity':'Waiting for confirmed free carried bag space.',
+    'knife_or_item_metadata':'Waiting for confirmed carried items and a skinning knife.',
+    'learning_unknown':'Waiting for the actual learned skill and spell.',
+    'combat_or_healing':'Waiting while an observed party member is fighting or needs healing.',
+    'active_attacker':'Waiting while an observed creature attacks the party.',
+    'owner_not_stopped':'Waiting for Joel to be observed standing still.',
+    'owner_too_far':'Waiting to remain near Joel.',
+    'control_intent_changed':'Waiting because Joel moved or control intentions changed.',
+    'observation_or_cleanup_unavailable':'Waiting for confirmed observations or cleanup.',
+    'attempt_unconfirmed':'Waiting for an earlier harvest outcome; it will not be repeated blindly.',
+    'attempt_blocked':'The last harvest attempt was blocked.',
+    'reservation_bound':'The bounded harvest attempt ledger is full.',
+    'no_verified_target':'No currently verified eligible harvest target.',
+    'profession_busy':'Waiting for requested profession work to finish.',
+    'own_loot_receipt_required':'Waiting for confirmed complete own corpse looting and release.',
+    'skill_rank_too_low':'The observed creature requires a higher skinning rank.',
+    'target_metadata_pending':'Waiting for the normal server creature information.',
+    'not_yet_skinnable':'The observed corpse is not yet eligible for skinning.',
+}
+
+
+def harvest_snapshot(value, character_guid, body_session=None):
+    """Project only fixed-role controller facts; never forward runtime tokens."""
+    roles={1:(182,2366),5:(393,8613)}
+    unknown={'configured':False}
+    phases={'starting','waiting_for_harvest','harvest_approaching','harvest_attempt_reserved',
+        'harvest_unconfirmed','harvest_completed','harvest_blocked','harvest_reservation_bound',
+        'no_verified_harvest_opportunity','harvesting_observed_target','waiting_for_requested_profession'}
+    if (character_guid not in roles or not isinstance(value,dict) or type(value.get('guid')) is not int or value.get('guid')!=character_guid
+            or (value.get('skillId'),value.get('spellId'))!=roles[character_guid]
+            or not isinstance(value.get('phase'),str) or value['phase'] not in phases
+            or not isinstance(value.get('reason'),str) or value['reason'] not in HARVEST_REASONS
+            or type(value.get('busy')) is not bool):return unknown
+    updated=value.get('updatedAt')
+    if type(updated) not in (int,float) or not math.isfinite(updated) or not 0<=updated<=time.time()+5:return unknown
+    session=value.get('bodySessionId')
+    if session is not None and (not isinstance(session,str) or not 1<=len(session)<=128):return unknown
+    result={'configured':True,'skillId':roles[character_guid][0],'spellId':roles[character_guid][1],
+        'phase':value['phase'],'reason':value['reason'],'reasonText':HARVEST_REASONS[value['reason']],
+        'busy':value['busy'],'updatedAt':updated,
+        'observationsCurrent':time.time()-updated<=15 and isinstance(body_session,str) and 1<=len(body_session)<=128 and session==body_session}
+    receipt=value.get('lastReceipt')
+    if isinstance(receipt,dict):
+        try:
+            guid,entry=integer(receipt.get('targetGuid',0)),integer(receipt.get('targetEntry',0))
+            observed=receipt.get('observedAt')
+            count,slots=integer(receipt.get('ownLootedItemsObserved',0)),integer(receipt.get('lootSlotsRemoved',0))
+            proofs=('ownGoObserved','lootWindowObserved','lootReleaseObserved','outputInventoryObserved','leaseReleased')
+            baseline,revision=integer(receipt.get('baselineInventoryRevision',0)),integer(receipt.get('observedInventoryRevision',0))
+            if (receipt.get('status')=='COMPLETED' and receipt.get('bodySessionId')==session and session is not None
+                    and guid>>48==(0xf130 if character_guid==5 else 0xf110) and guid&0xffffff and guid>>24&0xffffff==entry
+                    and 0<entry<=0xffffff and 0<count<=2**32-1 and 0<slots<=64
+                    and all(receipt.get(k) is True for k in proofs) and receipt.get('cleanupUnconfirmed') is not True
+                    and 0<=baseline<revision<2**64 and type(observed) in (int,float)
+                    and math.isfinite(observed) and 0<=observed<=updated+5):
+                clean={'status':'COMPLETED','targetEntry':entry,'ownLootedItemsObserved':count,'lootSlotsRemoved':slots,
+                    'observedAt':observed,'baselineInventoryRevision':str(baseline),'observedInventoryRevision':str(revision),
+                    **{k:True for k in proofs}}
+                before,after=receipt.get('beforeRank'),receipt.get('afterRank')
+                if type(before) is int and type(after) is int and 0<=before<=after<=450:
+                    clean.update(beforeRank=before,afterRank=after,skillIncreased=receipt.get('skillIncreased') is True and after>before)
+                result['lastReceipt']=clean
+        except (ConversationError,ValueError,TypeError):pass
+    return result
+
+
+def party_maintenance_snapshot(character_guid, body_session=None):
     folder = ROOT / "data/party-maintenance"
     unknown = {"active": False}
     expected = {1: "Arlen", 4: "Mira", 5: "Rook"}
@@ -699,6 +815,8 @@ def party_maintenance_snapshot(character_guid):
                 return unknown
             summary = {"name": expected[character_guid], "guid": character_guid, "phase": phase,
                        "recordsKnown": False, "reservedCopper": None, "confirmedSpellIds": [], "stipendStatus": "unrecorded"}
+            if 'harvest' in own:
+                summary['harvest']=harvest_snapshot(own['harvest'],character_guid,body_session)
             try:
                 data, data_size = read(folder / ("character-" + str(character_guid) + ".json"), 262144, True)
             except FileNotFoundError:
@@ -761,6 +879,23 @@ def party_maintenance_snapshot(character_guid):
                 "observationsCurrent": time.time() - updated <= 60}
     except (OSError, ValueError, TypeError, ConversationError):
         return unknown
+
+
+def trade_idle(state):
+    """A completed server receipt closes a trade even when offers stay in history."""
+    if not isinstance(state,dict):return False
+    try:
+        junk=state.get('lastJunkDisposal')
+        if junk is not None and (not isinstance(junk,dict) or junk.get('status')!='SERVER_SLOT_REMOVAL_CONFIRMED'):
+            return False
+        if state.get('phase')=='COMPLETE':
+            return (integer(state.get('partnerGuid',0))==3 and integer(state.get('lastServerStatus',0))==8
+                and state.get('reason')=='server_confirmed_trade_complete' and 0<integer(state.get('completedTrades',0))<2**64)
+        return (state.get('phase')=='IDLE' and integer(state.get('partnerGuid',0))==0
+            and all(state.get(key,False) is False for key in ('partnerAccepted','acceptTransportWritten'))
+            and all(isinstance(state.get(key,[]),list) and not state.get(key,[]) for key in ('ownRequestedItems','partnerItems'))
+            and all(integer(state.get(key,0))==0 for key in ('ownRequestedCopper','partnerCopper')))
+    except (ConversationError,ValueError,TypeError):return False
 
 
 def owner_party_known(group, self_guid):
@@ -1213,7 +1348,7 @@ class BuddyControls:
                  "quest_execution": self.quest_items if self.quest_items_available else {"available": False},
                  "inventory": self.inventory,
                  "town_upkeep": party_town_snapshot(self.character_guid),
-                 "party_maintenance": party_maintenance_snapshot(self.character_guid),
+                 "party_maintenance": party_maintenance_snapshot(self.character_guid,self.quests.get('sessionId') if self.quests_available else None),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
                  "quests": self.quests if self.quests_available else {},

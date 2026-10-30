@@ -108,7 +108,7 @@ func TestNearbyPlayersNeverAcquirePrivateOwnAuthorityOrExposeOtherFields(t *test
 	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 	before := packet(t, s, opcode.SMSGUpdateObject, createFixture(1, vitalFields()))
 	fields := vitalFields()
-	for key, value := range map[int]uint32{questLogFirst: 999, playerCoinage: 50000, playerSkillsFirst: 333, playerSkillsFirst + 1: 75, playerFreePrimary: 0, backpackFirst: 42, backpackFirst + 1: 0x40000000, playerOffhand: 43, playerOffhand + 1: 0x40000000, 0x162: 44, 0x163: 0x40000000, 0x55: 99, 0x78: 500, 0x12: 123, 0x13: 1, unitChannelSpell: 42340, unitChannelObject: 99} {
+	for key, value := range map[int]uint32{questLogFirst: 999, playerCoinage: 50000, playerSkillsFirst: 333, playerSkillsFirst + 1: 75, playerFreePrimary: 0, backpackFirst: 42, backpackFirst + 1: 0x40000000, playerOffhand: 43, playerOffhand + 1: 0x40000000, 0x144: 45, 0x145: 0x40000000, 0x162: 44, 0x163: 0x40000000, 0x55: 99, 0x78: 500, 0x12: 123, 0x13: 1, unitChannelSpell: 42340, unitChannelObject: 99} {
 		fields[key] = value
 	}
 	r := packet(t, s, opcode.SMSGUpdateObject, objectFixture(4, 4, fields))
@@ -117,11 +117,11 @@ func TestNearbyPlayersNeverAcquirePrivateOwnAuthorityOrExposeOtherFields(t *test
 		t.Fatal("foreign private data mutated self", r)
 	}
 	cached := s.state.nearbyPlayers[4]
-	if cached.isSelf || cached.questLogKnown || cached.backpackKnown || cached.copperKnown || cached.skillsKnown || cached.freePrimaryKnown || cached.mainhandKnown || cached.offhandKnown || cached.known[0x55] || cached.known[0x78] || cached.known[0x12] || cached.known[unitChannelSpell] {
+	if cached.isSelf || cached.questLogKnown || cached.backpackKnown || cached.copperKnown || cached.skillsKnown || cached.freePrimaryKnown || cached.mainhandKnown || cached.offhandKnown || cached.equipmentKnown || cached.equipment != [19]uint64{} || cached.known[0x55] || cached.known[0x78] || cached.known[0x12] || cached.known[unitChannelSpell] {
 		t.Fatal("foreign private/non-whitelisted evidence retained", cached)
 	}
 	allowed := map[string]bool{}
-	for _, name := range []string{"guid", "present", "map_known", "map_id", "position_known", "x", "y", "z", "orientation", "position_age_ms", "position_revision", "movement_flags_known", "movement_flags", "extra_movement_flags", "movement_time", "health_known", "health", "max_health", "power_known", "power", "max_power", "power_type", "unit_flags_known", "unit_flags", "unit_flags_2", "player_flags", "dynamic_flags", "alive_known", "alive", "vitals_age_ms", "class_known", "class_id", "level_known", "level", "observation_age_ms"} {
+	for _, name := range []string{"guid", "present", "map_known", "map_id", "position_known", "x", "y", "z", "orientation", "position_age_ms", "position_revision", "movement_flags_known", "movement_flags", "extra_movement_flags", "movement_time", "health_known", "health", "max_health", "power_known", "power", "max_power", "power_type", "unit_flags_known", "unit_flags", "unit_flags_2", "player_flags", "dynamic_flags", "alive_known", "alive", "vitals_age_ms", "class_known", "class_id", "race_known", "race_id", "level_known", "level", "observation_age_ms"} {
 		allowed[name] = true
 	}
 	p.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {

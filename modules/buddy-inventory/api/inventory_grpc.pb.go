@@ -25,6 +25,7 @@ const (
 	BuddyInventory_Discover_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/Discover"
 	BuddyInventory_Move_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Move"
 	BuddyInventory_Equip_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Equip"
+	BuddyInventory_EquipGear_FullMethodName    = "/warcraftbuddy.inventory.v1.BuddyInventory/EquipGear"
 	BuddyInventory_Sell_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Sell"
 	BuddyInventory_OnPacket_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/OnPacket"
 	BuddyInventory_BeforeLogout_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/BeforeLogout"
@@ -38,6 +39,7 @@ type BuddyInventoryClient interface {
 	Discover(ctx context.Context, in *DiscoverRequest, opts ...grpc.CallOption) (*Discovery, error)
 	Move(ctx context.Context, in *MoveRequest, opts ...grpc.CallOption) (*State, error)
 	Equip(ctx context.Context, in *EquipRequest, opts ...grpc.CallOption) (*State, error)
+	EquipGear(ctx context.Context, in *EquipGearRequest, opts ...grpc.CallOption) (*State, error)
 	Sell(ctx context.Context, in *SellRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -91,6 +93,16 @@ func (c *buddyInventoryClient) Equip(ctx context.Context, in *EquipRequest, opts
 	return out, nil
 }
 
+func (c *buddyInventoryClient) EquipGear(ctx context.Context, in *EquipGearRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyInventory_EquipGear_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyInventoryClient) Sell(ctx context.Context, in *SellRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -129,6 +141,7 @@ type BuddyInventoryServer interface {
 	Discover(context.Context, *DiscoverRequest) (*Discovery, error)
 	Move(context.Context, *MoveRequest) (*State, error)
 	Equip(context.Context, *EquipRequest) (*State, error)
+	EquipGear(context.Context, *EquipGearRequest) (*State, error)
 	Sell(context.Context, *SellRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
@@ -153,6 +166,9 @@ func (UnimplementedBuddyInventoryServer) Move(context.Context, *MoveRequest) (*S
 }
 func (UnimplementedBuddyInventoryServer) Equip(context.Context, *EquipRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Equip not implemented")
+}
+func (UnimplementedBuddyInventoryServer) EquipGear(context.Context, *EquipGearRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EquipGear not implemented")
 }
 func (UnimplementedBuddyInventoryServer) Sell(context.Context, *SellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Sell not implemented")
@@ -256,6 +272,24 @@ func _BuddyInventory_Equip_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyInventory_EquipGear_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EquipGearRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).EquipGear(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_EquipGear_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).EquipGear(ctx, req.(*EquipGearRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyInventory_Sell_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SellRequest)
 	if err := dec(in); err != nil {
@@ -332,6 +366,10 @@ var BuddyInventory_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Equip",
 			Handler:    _BuddyInventory_Equip_Handler,
+		},
+		{
+			MethodName: "EquipGear",
+			Handler:    _BuddyInventory_EquipGear_Handler,
 		},
 		{
 			MethodName: "Sell",

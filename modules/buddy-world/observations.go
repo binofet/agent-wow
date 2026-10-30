@@ -40,6 +40,7 @@ type observations struct {
 	freePrimaryRevision uint64
 	offhandRevision     uint64
 	inventoryRevision   uint64
+	equipmentRevision   uint64
 }
 
 func (s observations) clone() observations {
@@ -297,6 +298,7 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		r.SkinnableCorpses = r.SkinnableCorpses[:32]
 	}
 	s.appendInventory(r)
+	s.appendEquipment(r)
 	p := s.players[0]
 	r.SelfCopperKnown, r.SelfCopper, r.SelfCopperRevision = p.copperKnown, p.copper, s.copperRevision
 	r.SelfSkillsKnown, r.SelfSkillsRevision = p.skillsKnown, s.skillsRevision
@@ -329,6 +331,9 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	if p.backpackKnown {
 		for slot, guid := range p.backpack {
 			item := &worldv1.BackpackSlot{Bag: 0, Slot: uint32(slot), ItemGuid: guid}
+			current := s.carriedItem(guid)
+			item.DurabilityKnown, item.Durability, item.MaxDurability = current.durabilityKnown, current.durability, current.maximum
+			item.EnhancementsKnown, item.HasEnhancements = current.enhancementsKnown, current.enhancements
 			if obj := s.items[guid]; obj != nil {
 				owner := uint64(obj.fields[itemOwner]) | uint64(obj.fields[itemOwner+1])<<32
 				item.Entry, item.StackCount = obj.fields[objectEntry], obj.fields[itemStack]

@@ -470,38 +470,7 @@ func (p *planner) terrain(q Point) (float32, bool) {
 func (p *planner) allowsCollisionOnlyFloor() bool {
 	return p.floors != nil && p.floors.window != nil
 }
-func recast(p Point) [3]float32 { return [3]float32{p.Y, p.Z, p.X} }
-func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
-	v := recast(q)
-	ext := [3]float32{0.5, 2, 0.5}
-	var ref detour.DtPolyRef
-	var nearest [3]float32
-	if st := p.query.FindNearestPoly(v[:], ext[:], p.filter, &ref, nearest[:]); detour.DtStatusFailed(st) || ref == 0 {
-		return 0, 0, errors.New("no nearby ground polygon")
-	}
-	var flags uint16
-	if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || !walkSurfaceFlags(flags) {
-		return 0, 0, errors.New("polygon is not ground or shallow-wading candidate")
-	}
-	var over bool
-	if st := p.query.ClosestPointOnPoly(ref, v[:], nearest[:], &over); detour.DtStatusFailed(st) || (!over && math.Hypot(float64(nearest[0]-v[0]), float64(nearest[2]-v[2])) > 0.02) {
-		return 0, 0, errors.New("sample is outside ground polygon")
-	}
-	var height float32
-	if st := p.query.GetPolyHeight(ref, nearest[:], &height); detour.DtStatusFailed(st) {
-		// Shared float32 portal vertices can pass the polygon containment
-		// check but miss all detail triangles by rounding at their boundary.
-		// Sample at most 1cm inside this same already ground-only polygon;
-		// never substitute terrain height or a different navigation layer.
-		if err := p.insetRayPoint(ref, &nearest); err != nil {
-			return 0, 0, err
-		}
-		if st := p.query.GetPolyHeight(ref, nearest[:], &height); detour.DtStatusFailed(st) {
-			return 0, 0, errors.New("ground polygon height is unavailable")
-		}
-	}
-	return ref, height, nil
-}
+func recast(p Point) [3]float32                    { return [3]float32{p.Y, p.Z, p.X} }
 func (p *planner) ground(q Point) (float32, error) { _, h, err := p.groundRef(q); return h, err }
 func walkSurfaceFlags(flags uint16) bool           { return flags != 0 && flags & ^uint16(1|8) == 0 }
 func (p *planner) water(q Point) (bool, error) {
