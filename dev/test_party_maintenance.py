@@ -301,6 +301,27 @@ class MaintenanceTests(unittest.TestCase):
                 expected='waiting_for_requested_quest_task' if name=='quest_task_snapshot' else 'waiting_for_requested_routine'
                 self.assertEqual(self.agent.status['phase'],expected)
 
+    def test_idle_standing_town_does_not_starve_class_or_last_harvest_opportunity(self):
+        with patch.object(m.c,'party_town_snapshot',return_value={'active':True,'busy':False}):
+            self.rpc.training['copper']=0
+            self.assertIsNone(self.agent.activity_phase())
+            self.rpc.training['copper']=10000
+            self.rpc.offer['spells']=[]
+            self.tick()
+        self.assertEqual(self.agent.status['phase'],'no_affordable_unattempted_class_training')
+        self.assertTrue(m.harvest.maintenance_idle(self.agent))
+
+    def test_busy_or_unknown_town_and_reserved_class_work_precede_harvest(self):
+        for town in ({'active':True,'busy':True},{'active':True}):
+            with patch.object(m.c,'party_town_snapshot',return_value=town):
+                self.assertEqual(self.agent.activity_phase(),'waiting_for_requested_routine')
+        self.agent.status['phase']='no_affordable_unattempted_class_training'
+        self.agent.data['training']=[{'status':'reserved'}]
+        self.assertFalse(m.harvest.maintenance_idle(self.agent))
+        self.agent.data['training']=[]
+        self.agent.data['mail']={'status':'reserved'}
+        self.assertFalse(m.harvest.maintenance_idle(self.agent))
+
     def test_travel_requires_stationary_safe_owner_and_positive_actual_wallet(self):
         for mode in ('owner_moving','owner_unknown_movement','owner_map','own_unknown_level','wallet_unknown','no_money','too_far'):
             with self.subTest(mode=mode):
@@ -717,5 +738,28 @@ class DurableClassTrainingTests(unittest.TestCase):
                 self.assertEqual(state['own']['knownAtTrainerSpellIds'],[])
         bad=copy.deepcopy(self.agent.data);bad['spentCopper']=0
         with self.assertRaises(m.Error):m.Maintenance('Arlen',1,self.rpc,lambda d:None,bad)
+
+    def test_integrated_v2_class_work_preempts_harvest_until_positive_knowledge_or_idle(self):
+        self.tick()
+        self.assertFalse(m.harvest.maintenance_idle(self.agent))
+        buy=next(p for method,p in self.rpc.calls if method=='buddy-training.buy')
+        self.assertEqual((buy['maxSpendCopper'],buy['reserveCopper']),(9900,100))
+        self.rpc.training['sessionId']='body2'
+        self.tick()
+        self.assertEqual(self.agent.status['phase'],'waiting_for_training_confirmation')
+        self.assertFalse(m.harvest.maintenance_idle(self.agent))
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.rpc.offer['spells'][0]['usable']=2
+        self.tick()
+        self.assertEqual(self.agent.data['training'][-1]['status'],'known_at_trainer')
+        self.assertEqual(self.agent.data['spentCopper'],0)
+        self.assertTrue(m.harvest.maintenance_idle(self.agent))
+        self.rpc.training['copper']=0
+        self.rpc.offer['spells']=[dict(spellId=124,costCopper=0)]
+        self.tick()
+        self.assertFalse(m.harvest.maintenance_idle(self.agent))
+        self.assertEqual(self.agent.data['training'][-1]['status'],'reserved')
+        free=[p for method,p in self.rpc.calls if method=='buddy-training.buy'][-1]
+        self.assertEqual((free['maxSpendCopper'],free['reserveCopper']),(1,100))
 
 if __name__=='__main__':unittest.main()

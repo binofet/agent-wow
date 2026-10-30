@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-·+
+²,
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -46,11 +46,12 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 	estimated (R	estimated
 age_ms	 (RageMs
 revision
- (Rrevision"[
+ (Rrevision"u
 InteractionRequest
 owner (	Rowner
 token (	Rtoken
-lease_ms (RleaseMs"@
+lease_ms (RleaseMs
+harvest (Rharvest"@
 InteractionRelease
 owner (	Rowner
 token (	Rtoken"v
@@ -73,7 +74,7 @@ corpseGuid(
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"ê
+state (2.warcraftbuddy.actions.v1.StateRstate"Ë
 State
 	following (R	following
 healing (Rhealing
@@ -148,7 +149,9 @@ practicing%
 practice_kills> (RpracticeKills*
 known_shadow_bolt? (RknownShadowBolt9
 shadow_bolt_damage_events@ (RshadowBoltDamageEvents7
-shadow_bolt_damage_totalA (RshadowBoltDamageTotal2Ú
+shadow_bolt_damage_totalA (RshadowBoltDamageTotal/
+interaction_harvestB (RinteractionHarvest.
+harvest_guard_guidsC (RharvestGuardGuids2Ú
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

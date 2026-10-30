@@ -87,6 +87,10 @@ message SnapshotRequest {
   // Optional exact-entry filters in existing bounded caches; zero requests none.
   uint32 creature_entry = 2;
   uint32 game_object_entry = 3;
+  // Optional bounded discovery from actual cached same-map type3 objects.
+  // Raw server distance only orders candidates; the current client position
+  // and public template proof remain required before approach or gathering.
+  bool include_gathering_objects = 4;
 }
 
 message GameObjectState {
@@ -293,6 +297,7 @@ message SnapshotResponse {
   // and the fixed owner. Public pose/vitals/flags/class/level only: no private
   // equipment, inventory, skills or quest state. No party membership is inferred.
   repeated PlayerState nearby_players = 38;
+  repeated GameObjectState nearby_gathering_objects = 39;
   // At most64 actual present cached NPCs with observed TRAINER(0x10),
   // independent of nearby_creatures truncation. Ordered by observed self
   // distance; no trainer type, range, availability or interaction is inferred.

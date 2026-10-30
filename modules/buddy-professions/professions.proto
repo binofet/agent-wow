@@ -92,6 +92,8 @@ message SkinningTarget {
   bool ready = 3;
   string reason = 4;
   uint32 required_skill = 5;
+  bool approachable = 6;
+  string approach_reason = 7;
 }
 message HerbTarget {
   warcraftbuddy.world.v1.GameObjectState object = 1;
@@ -99,6 +101,8 @@ message HerbTarget {
   string reason = 3;
   uint32 required_skill = 4;
   uint32 lock_id = 5;
+  bool approachable = 6;
+  string approach_reason = 7;
 }
 message HerbInspectRequest { string session_id = 1; uint64 target_guid = 2; }
 message DisenchantItem {

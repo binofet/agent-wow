@@ -612,8 +612,12 @@ type SnapshotRequest struct {
 	// Optional exact-entry filters in existing bounded caches; zero requests none.
 	CreatureEntry   uint32 `protobuf:"varint,2,opt,name=creature_entry,json=creatureEntry,proto3" json:"creature_entry,omitempty"`
 	GameObjectEntry uint32 `protobuf:"varint,3,opt,name=game_object_entry,json=gameObjectEntry,proto3" json:"game_object_entry,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional bounded discovery from actual cached same-map type3 objects.
+	// Raw server distance only orders candidates; the current client position
+	// and public template proof remain required before approach or gathering.
+	IncludeGatheringObjects bool `protobuf:"varint,4,opt,name=include_gathering_objects,json=includeGatheringObjects,proto3" json:"include_gathering_objects,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *SnapshotRequest) Reset() {
@@ -665,6 +669,13 @@ func (x *SnapshotRequest) GetGameObjectEntry() uint32 {
 		return x.GameObjectEntry
 	}
 	return 0
+}
+
+func (x *SnapshotRequest) GetIncludeGatheringObjects() bool {
+	if x != nil {
+		return x.IncludeGatheringObjects
+	}
+	return false
 }
 
 type GameObjectState struct {
@@ -1830,7 +1841,8 @@ type SnapshotResponse struct {
 	// At most64 other actual present PLAYER CREATE observations, excluding self
 	// and the fixed owner. Public pose/vitals/flags/class/level only: no private
 	// equipment, inventory, skills or quest state. No party membership is inferred.
-	NearbyPlayers []*PlayerState `protobuf:"bytes,38,rep,name=nearby_players,json=nearbyPlayers,proto3" json:"nearby_players,omitempty"`
+	NearbyPlayers          []*PlayerState     `protobuf:"bytes,38,rep,name=nearby_players,json=nearbyPlayers,proto3" json:"nearby_players,omitempty"`
+	NearbyGatheringObjects []*GameObjectState `protobuf:"bytes,39,rep,name=nearby_gathering_objects,json=nearbyGatheringObjects,proto3" json:"nearby_gathering_objects,omitempty"`
 	// At most64 actual present cached NPCs with observed TRAINER(0x10),
 	// independent of nearby_creatures truncation. Ordered by observed self
 	// distance; no trainer type, range, availability or interaction is inferred.
@@ -2135,6 +2147,13 @@ func (x *SnapshotResponse) GetNearbyPlayers() []*PlayerState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetNearbyGatheringObjects() []*GameObjectState {
+	if x != nil {
+		return x.NearbyGatheringObjects
+	}
+	return nil
+}
+
 func (x *SnapshotResponse) GetTrainerCreatures() []*CreatureState {
 	if x != nil {
 		return x.TrainerCreatures
@@ -2225,11 +2244,12 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
-	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x89\x01\n" +
+	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\xc5\x01\n" +
 	"\x0fSnapshotRequest\x12#\n" +
 	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\x12%\n" +
 	"\x0ecreature_entry\x18\x02 \x01(\rR\rcreatureEntry\x12*\n" +
-	"\x11game_object_entry\x18\x03 \x01(\rR\x0fgameObjectEntry\"\xdd\x05\n" +
+	"\x11game_object_entry\x18\x03 \x01(\rR\x0fgameObjectEntry\x12:\n" +
+	"\x19include_gathering_objects\x18\x04 \x01(\bR\x17includeGatheringObjects\"\xdd\x05\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -2360,7 +2380,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x9a\x13\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xfd\x13\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -2403,7 +2423,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x12inventory_revision\x18# \x01(\x04R\x11inventoryRevision\x12K\n" +
 	"\x0einventory_bags\x18$ \x03(\v2$.warcraftbuddy.world.v1.InventoryBagR\rinventoryBags\x12R\n" +
 	"\x11skinnable_corpses\x18% \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10skinnableCorpses\x12J\n" +
-	"\x0enearby_players\x18& \x03(\v2#.warcraftbuddy.world.v1.PlayerStateR\rnearbyPlayers\x12R\n" +
+	"\x0enearby_players\x18& \x03(\v2#.warcraftbuddy.world.v1.PlayerStateR\rnearbyPlayers\x12a\n" +
+	"\x18nearby_gathering_objects\x18' \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x16nearbyGatheringObjects\x12R\n" +
 	"\x11trainer_creatures\x18( \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10trainerCreatures2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
@@ -2462,16 +2483,17 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	8,  // 20: warcraftbuddy.world.v1.SnapshotResponse.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
 	4,  // 21: warcraftbuddy.world.v1.SnapshotResponse.skinnable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
 	0,  // 22: warcraftbuddy.world.v1.SnapshotResponse.nearby_players:type_name -> warcraftbuddy.world.v1.PlayerState
-	4,  // 23: warcraftbuddy.world.v1.SnapshotResponse.trainer_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
-	2,  // 24: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	11, // 25: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	10, // 26: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	12, // 27: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	26, // [26:28] is the sub-list for method output_type
-	24, // [24:26] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	3,  // 23: warcraftbuddy.world.v1.SnapshotResponse.nearby_gathering_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
+	4,  // 24: warcraftbuddy.world.v1.SnapshotResponse.trainer_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 25: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	11, // 26: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	10, // 27: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	12, // 28: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	27, // [27:29] is the sub-list for method output_type
+	25, // [25:27] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

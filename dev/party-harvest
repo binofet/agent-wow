@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""One bounded harvest opportunity after higher-priority party maintenance."""
+import copy
+import fcntl
+import http.client
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import threading
+import time
+import urllib.request
+import uuid
+
+def load(name, filename):
+    loader = importlib.machinery.SourceFileLoader(name, str(Path(__file__).with_name(filename)))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec); loader.exec_module(module)
+    return module
+
+c, prof = load('harvest_converse', 'converse'), load('harvest_professions', 'secondary-professions')
+Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
+ROLES = {1: ('Arlen', 8086, 182, 2366), 5: ('Rook', 8088, 393, 8613)}
+IDLE_PHASES = frozenset(('waiting_near_class_trainer_or_mailbox', 'no_affordable_unattempted_class_training', 'training_budget_reserved'))
+PASSIVE_QUEST_PHASES = frozenset(('following_joels_quest_changes', 'waiting_for_own_quest_objectives'))
+METHODS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state',
+    'buddy-loot.state', 'buddy-trade.state', 'buddy-inventory.state', 'buddy-professions.state', 'buddy-professions.inspect_herb',
+    'buddy-professions.attempt', 'buddy-professions.cancel', 'buddy-actions.acquire_interaction',
+    'buddy-actions.release_interaction', 'buddy-actions.travel_to'))
+
+class RPCFault(Error):
+    def __init__(self,error):self.error=error;super().__init__('Harvest server request was rejected')
+    def before_attempt(self):
+        d=self.error.get('data') or {}
+        if not isinstance(d,dict):return False
+        return (self.error.get('code') in (-32602,-32000) and d.get('module')=='buddy-professions' and d.get('method')=='attempt'
+            and d.get('grpc_status') in ('InvalidArgument','FailedPrecondition','ResourceExhausted'))
+
+class RPC(prof.RPC):
+    def __init__(self, url, deadline=None):
+        super().__init__(url, deadline or time.monotonic()+20)
+    def fork(self, deadline): return RPC(self.url, deadline)
+    def call(self, method, params):
+        if method not in METHODS or not isinstance(params, dict) or self.calls >= 512:
+            raise Error('Harvest RPC method or finite call bound is invalid')
+        self.calls += 1
+        remaining = self.remaining()
+        request = urllib.request.Request(self.url, data=json.dumps({'jsonrpc':'2.0','id':self.calls,
+            'method':method,'params':params}, allow_nan=False).encode(), headers={'Content-Type':'application/json'})
+        try:
+            with self.opener.open(request,timeout=min(5,remaining)) as response: raw=response.read(262145)
+            result=prof.decode_json(raw) if len(raw)<=262144 else None
+        except (OSError,ValueError,http.client.HTTPException): raise Error('Harvest response is unconfirmed') from None
+        self.remaining()
+        if (not isinstance(result,dict) or result.get('jsonrpc')!='2.0' or type(result.get('id')) is not int
+                or result['id']!=self.calls or ('result' in result)==('error' in result)):
+            raise Error('Harvest response is unconfirmed')
+        if isinstance(result.get('error'),dict):raise RPCFault(result['error'])
+        if not isinstance(result.get('result'),dict):raise Error('Harvest response is unconfirmed')
+        return result['result']
+
+def point(p, field='positionKnown'):
+    return (isinstance(p,dict) and p.get(field) is True and p.get('mapKnown') is True
+        and all(type(p.get(k)) in (int,float) and math.isfinite(p[k]) and abs(p[k])<40000 for k in ('x','y','z')))
+
+def distance(a,b): return math.dist(tuple(a[k] for k in ('x','y','z')),tuple(b[k] for k in ('x','y','z')))
+
+def routine_locked(path):
+    try:
+        if path.parent.is_symlink(): return True
+        with os.fdopen(c.private_open(path,os.O_RDONLY),'r') as lock: return c.is_locked(lock)
+    except FileNotFoundError: return False
+    except (OSError,Error): return True
+
+def higher_priority(guid):
+    for folder, snapshot in [('quest-task',c.quest_task_snapshot(guid)),('area-quests',c.area_quest_snapshot(guid))]:
+        if snapshot.get('active') is True or routine_locked(ROOT/'data'/folder/str(guid)/'lock'): return True
+    town = c.party_town_snapshot(guid)
+    if town.get('active') is True and town.get('busy') is not False or routine_locked(ROOT/'data/party-town'/str(guid)/'lock') and town.get('active') is not True: return True
+    sync = c.party_quest_sync_snapshot(guid)
+    if sync.get('active') is True:
+        updated=sync.get('updatedAt')
+        if (type(updated) not in (int,float) or not math.isfinite(updated) or not 0<=time.time()-updated<=15
+                or sync.get('own',{}).get('phase') not in PASSIVE_QUEST_PHASES): return True
+    elif routine_locked(ROOT/'data/party-quests/lock'): return True
+    return False
+
+def maintenance_idle(actor):
+    return (actor.status.get('phase') in IDLE_PHASES
+        and not any(row.get('status')=='reserved' for row in actor.data.get('training',[]))
+        and (actor.data.get('mail') or {}).get('status')!='reserved')
+
+def load_ledger(path):
+    try:
+        with os.fdopen(c.private_open(path,os.O_RDONLY),'r') as source:raw=source.read(262145)
+        if len(raw)>262144:raise Error('Harvest ledger exceeds its bound')
+        value=prof.decode_json(raw)
+        if not isinstance(value,dict):raise ValueError
+        return value
+    except FileNotFoundError:return None
+    except ValueError:raise Error('Harvest ledger is invalid') from None
+
+def binding(target):
+    return tuple(target.get(k,0) for k in ('guid','entry','mapId','x','y','z','positionRevision',
+        'unitFlags','dynamicFlags','level','gameObjectType','flags','state','createdByGuid'))
+
+class Worker:
+    def __init__(self,guid,rpc,save=lambda value:None,stored=None,now=time.monotonic,
+                 stopped=lambda:False,priority=None,sleep=time.sleep):
+        if guid not in ROLES: raise Error('Harvest is limited to learned Arlen herbalism and Rook skinning')
+        name,port,self.skill,self.spell=ROLES[guid]
+        self.guid,self.rpc,self.save,self.now,self.stopped,self.sleep=guid,rpc,save,now,stopped,sleep
+        self.identity={'version':1,'guid':guid,'name':name,'skill':self.skill,'spell':self.spell,'rpcUrl':f'http://127.0.0.1:{port}/rpc'}
+        if getattr(rpc,'url',None)!=self.identity['rpcUrl']: raise Error('Harvest endpoint differs from owned profile')
+        self.data=stored or {'identity':self.identity,'attempts':[]}
+        if self.data.get('identity')!=self.identity or not isinstance(self.data.get('attempts'),list) or len(self.data['attempts'])>128:
+            raise Error('Harvest ledger identity or bound is invalid')
+        for row in self.data['attempts']:
+            if (not isinstance(row,dict) or row.get('phase') not in ('approaching','attempt_reserved','completed','blocked','unconfirmed')
+                    or not isinstance(row.get('session'),str) or not 1<=len(row['session'])<=128
+                    or not isinstance(row.get('request'),str) or not 1<=len(row['request'])<=64
+                    or not 0<integer(row.get('guid',0))<2**64 or not isinstance(row.get('target'),dict)):
+                raise Error('Harvest ledger reservation is invalid')
+        self.priority=priority or (lambda:higher_priority(guid))
+        self.status={'guid':guid,'phase':'starting','busy':False}
+        self.probe,self.next_query,self.session,self.token,self.controls,self.anchor=0,0,None,None,None,None
+
+    def persist(self): self.save(copy.deepcopy(self.data))
+    def state(self):
+        state=self.rpc.call('buddy-professions.state',{})
+        if integer(state.get('selfGuid',0))!=self.guid: raise Error('Harvest character changed')
+        prof.token(state.get('sessionId'))
+        return state
+
+    def read(self,traveling=False):
+        if self.stopped() or self.priority() or self.now()>=self.deadline: raise Error('Harvest yields to stop or higher-priority work')
+        p=self.state()
+        if self.session is not None and p['sessionId']!=self.session: raise Error('Harvest body changed')
+        w=self.rpc.call('buddy-world.snapshot',{'includeGatheringObjects':True})
+        a=self.rpc.call('buddy-actions.status',{})
+        group=self.rpc.call('buddy-party.state',{})
+        q=self.rpc.call('buddy-quests.state',{})
+        loot=self.rpc.call('buddy-loot.state',{})
+        trade=self.rpc.call('buddy-trade.state',{})
+        inventory=self.rpc.call('buddy-inventory.state',{})
+        if any(s.get('sessionId')!=p['sessionId'] for s in (group,q,loot,trade,inventory)) or not c.owner_party_known(group.get('group'),self.guid):
+            raise Error('Harvest connected party or module identity is unconfirmed')
+        own=w.get('self',{})
+        if not c.BuddyControls.quest_scene_safe(a,w,self.guid): raise Error('Harvest yields to character danger')
+        if any(a.get(k) is True for k in ('practicing','castPending','autoAttacking','autoAttackRequested','autoAttackUnconfirmed')):
+            raise Error('Harvest yields to active actions')
+        if not traveling and any(a.get(k) is True for k in ('moving','traveling')): raise Error('Harvest waits for stopped movement')
+        owner=a.get('interactionOwner','')
+        if owner and not (traveling and owner=='exploration' and a.get('interactionHarvest') is True): raise Error('Harvest yields to another lease')
+        if q.get('actionInFlight') is True or loot.get('phase') not in ('idle','disabled') or integer(loot.get('pendingCorpseGuid',0)) or integer(loot.get('pendingGameObjectGuid',0)):
+            raise Error('Harvest yields to ordinary quest/loot work')
+        if (trade.get('phase')!='IDLE' or trade.get('junkDisposalEnabled') is True or trade.get('partnerGuid') not in (None,0,'0')
+                or trade.get('partnerAccepted') is True or trade.get('acceptTransportWritten') is True
+                or trade.get('ownRequestedItems') or trade.get('partnerItems') or integer(trade.get('ownRequestedCopper',0))
+                or integer(trade.get('partnerCopper',0)) or (trade.get('lastJunkDisposal') or {}).get('status','SERVER_SLOT_REMOVAL_CONFIRMED')!='SERVER_SLOT_REMOVAL_CONFIRMED'):
+            raise Error('Harvest yields to trading')
+        operation=inventory.get('operation') or {}
+        if (integer(inventory.get('selfGuid',0))!=self.guid or inventory.get('active') is True or inventory.get('closing') is True
+                or inventory.get('inventoryKnown') is not True or integer(inventory.get('inventoryRevision',0))!=integer(w.get('inventoryRevision',0))
+                or operation and (operation.get('status') not in ('CONFIRMED','BLOCKED','SERVER_REJECTED') or operation.get('leaseReleased') is not True)):
+            raise Error('Harvest yields to unsettled inventory work')
+        if p.get('active') is True or p.get('closing') is True or p.get('operation',{}).get('cleanupUnconfirmed') is True or p.get('operation',{}).get('status')=='OUTCOME_UNCONFIRMED':
+            raise Error('Harvest waits for existing profession cleanup')
+        inv=c.inventory_context({'selfGuid':str(self.guid),'sessionId':p['sessionId'],'inventoryKnown':w.get('inventoryKnown'),
+            'inventoryRevision':w.get('inventoryRevision'),'inventoryBags':w.get('inventoryBags')},self.guid)
+        if inv.get('known') is not True or inv.get('freeSlots',0)<1 or integer(w.get('inventoryRevision',0))!=integer(p.get('inventoryRevision',0)):
+            raise Error('Harvest needs current complete all-five-bag capacity')
+        items=[item for bag in w.get('inventoryBags',[]) for item in bag.get('slots',[]) if integer(item.get('itemGuid',0))]
+        if any(item.get('metadataKnown') is not True for item in items) or self.skill==393 and not any(integer(i.get('entry',0))==7005 for i in items):
+            raise Error('Harvest needs actual known carried items and skinning knife')
+        if p.get('skillsKnown') is not True or p.get('spellsKnown') is not True or not any(integer(s.get('skillId',0))==self.skill and integer(s.get('rank',0))>0 for s in p.get('skills',[])) or not any(integer(r.get('spellId',0))==self.spell and integer(r.get('skillId',0))==self.skill and r.get('known') is True for r in p.get('recipes',[])):
+            raise Error('Harvest needs actual learned skill and known fixed spell')
+        protected={integer(m['guid']) for m in group['group']['members'] if m.get('online') is True}
+        players=[own,w.get('owner') or {}]+w.get('nearbyPlayers',[])
+        for player in players:
+            if player.get('present') is True and integer(player.get('guid',0)) in protected:
+                if (player.get('unitFlagsKnown') is not True or integer(player.get('unitFlags',0))&0x80000
+                        or player.get('aliveKnown') is not True or player.get('alive') is not True
+                        or player.get('healthKnown') is not True or not integer(player.get('maxHealth',0))
+                        or integer(player.get('health',0))>integer(player.get('maxHealth',0))
+                        or integer(player.get('health',0))*100<integer(player.get('maxHealth',0))*85):
+                    raise Error('Harvest yields to observed party combat or healing')
+        creatures=w.get('nearbyCreatures',[])
+        if not isinstance(creatures,list) or len(creatures)>32: raise Error('Harvest threat observation exceeds its bound')
+        if any(n.get('present') is True and n.get('alive') is True and n.get('attackVictimKnown') is True and integer(n.get('attackVictimGuid',0)) in protected and integer(n.get('attackAgeMs',0))<=5000 for n in creatures):
+            raise Error('Harvest yields to an actual current attacker')
+        owner=w.get('owner') or {}
+        if owner.get('present') is not True or not point(owner) or integer(owner.get('guid',0))!=3 or owner.get('movementFlagsKnown') is not True or integer(owner.get('movementFlags',0)) or integer(owner.get('mapId',0))!=integer(own.get('mapId',0)):
+            raise Error('Harvest waits for the observed owner to stop')
+        if distance(owner,a['position'])>30:raise Error('Harvest stays near the observed owner')
+        anchor=tuple(owner.get(k,0) for k in ('mapId','x','y','z','positionRevision'))
+        controls=tuple(a.get(k,False) for k in ('following','healing','assisting'))+(loot.get('enabled',False),)
+        if self.anchor is not None and anchor!=self.anchor or self.controls is not None and controls!=self.controls:
+            raise Error('Owner or human control intent changed during harvest')
+        return p,w,a,anchor,controls
+
+    def target(self,row):
+        key='creature' if self.skill==393 else 'object'
+        target=row.get(key,{})
+        if row.get('approachable') is not True or self.skill==393 and row.get('fullyLootedObserved') is not True:
+            return None
+        guid,entry=integer(target.get('guid',0)),integer(target.get('entry',0))
+        if guid>>48!=(0xf130 if self.skill==393 else 0xf110) or not guid&0xffffff or not entry or guid>>24&0xffffff!=entry:
+            return None
+        if self.skill==182 and not integer(row.get('lockId',0)):return None
+        if not point(target) or target.get('present') is not True or not integer(target.get('positionRevision',0)):
+            return None
+        return target
+
+    def candidates(self,scene):
+        p,w,a,_,_=scene
+        if self.skill==393: rows=p.get('skinningTargets',[])
+        else:
+            candidates=w.get('nearbyGatheringObjects',[])
+            if not isinstance(candidates,list) or len(candidates)>32: raise Error('Harvest candidate bound exceeded')
+            rows=[]
+            for offset in range(min(4,len(candidates))):
+                g=candidates[(self.probe+offset)%len(candidates)]
+                if not point(g) or g.get('present') is not True: continue
+                state=self.rpc.call('buddy-professions.inspect_herb',{'sessionId':p['sessionId'],'targetGuid':str(integer(g['guid']))})
+                if state.get('sessionId')!=p['sessionId'] or integer(state.get('selfGuid',0))!=self.guid: raise Error('Herb inspection body changed')
+                rows.extend(r for r in state.get('herbTargets',[]) if integer(r.get('object',{}).get('guid',0))==integer(g['guid']))
+            self.probe=(self.probe+4)%max(1,len(candidates))
+        if not isinstance(rows,list) or len(rows)>32: raise Error('Harvest target bound exceeded')
+        attempted={(r['session'],integer(r['guid'])) for r in self.data['attempts']}
+        choices=[self.target(r) for r in rows]
+        choices=[t for t in choices if t is not None and (p['sessionId'],integer(t['guid'])) not in attempted
+            and integer(t.get('mapId',0))==integer(a['position'].get('mapId',0)) and distance(t,a['position'])<=20 and distance(t,w['owner'])<=30 and abs(t['z']-a['position']['z'])<=1.5]
+        return min(choices,key=lambda t:(distance(t,a['position']),integer(t['guid']))) if choices else None
+
+    def exact_target(self,scene,row,traveling=False):
+        p,w,a,_,_=scene
+        if self.skill==182:
+            p=self.rpc.call('buddy-professions.inspect_herb',{'sessionId':row['session'],'targetGuid':str(row['guid'])})
+            if p.get('sessionId')!=row['session'] or integer(p.get('selfGuid',0))!=self.guid: raise Error('Herb body changed')
+        rows=p.get('skinningTargets' if self.skill==393 else 'herbTargets',[])
+        matches=[r for r in rows if integer(r.get('creature' if self.skill==393 else 'object',{}).get('guid',0))==row['guid']]
+        if len(matches)!=1:raise Error('Actual harvest target changed')
+        current=matches[0]
+        target=current.get('creature' if self.skill==393 else 'object',{})
+        if (binding(target)!=binding(row['target']) or not point(target) or target.get('present') is not True
+                or self.skill==393 and current.get('fullyLootedObserved') is not True
+                or not traveling and self.target(current) is None):raise Error('Actual harvest target changed')
+        return p,matches[0]
+
+    def release_route(self,row):
+        if not self.token: return True
+        state=self.state()
+        if state['sessionId']!=row['session']: return False
+        actions=self.rpc.call('buddy-actions.status',{})
+        if actions.get('interactionOwner')=='exploration' and actions.get('interactionHarvest') is True:
+            actions=self.rpc.call('buddy-actions.release_interaction',{'owner':'exploration','token':self.token})
+        clean=not actions.get('interactionOwner') and not any(actions.get(k) is True for k in ('moving','traveling','motionUnconfirmed'))
+        if clean:self.token=None
+        return clean
+
+    def approach(self,row):
+        lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'exploration','leaseMs':8000,'harvest':True})
+        self.token=lease.get('token')
+        if not isinstance(self.token,str) or not 1<=len(self.token)<=128 or lease.get('state',{}).get('interactionHarvest') is not True:
+            raise Error('Guarded harvest approach lease is unconfirmed')
+        limit=min(self.deadline,self.now()+6)
+        if isinstance(self.rpc,RPC):self.rpc.deadline=limit
+        result,done=queue.Queue(maxsize=1),threading.Event()
+        traveler=self.rpc.fork(limit) if isinstance(self.rpc,RPC) else self.rpc
+        target=row['target']
+        token=self.token
+        def route():
+            try:result.put((traveler.call('buddy-actions.travel_to',dict(token=token,mapId=target.get('mapId',0),x=target['x'],y=target['y'],z=target['z'],arrivalDistance=2.5)),None))
+            except Exception as exc:result.put((None,exc))
+            finally:done.set()
+        try:
+            self.exact_target(self.read(traveling=True),row,traveling=True)
+            threading.Thread(target=route,daemon=True).start()
+            while not done.wait(.1):
+                if self.now()>=limit:raise Error('Harvest finite approach time limit')
+                self.exact_target(self.read(traveling=True),row,traveling=True)
+            response,error=result.get_nowait()
+            if error is not None or response.get('reason')!='exploration_within_distance':raise Error('Harvest approach is unconfirmed')
+        finally:
+            if isinstance(self.rpc,RPC):self.rpc.deadline=self.now()+2
+            if not self.release_route(row):raise Error('Harvest owned approach cleanup is unconfirmed')
+            if isinstance(self.rpc,RPC):self.rpc.deadline=self.deadline
+        if not done.is_set():raise Error('Harvest route is still settling')
+
+    def receipt(self,state,row):
+        o=state.get('operation') or {}
+        if (state.get('sessionId')!=row['session'] or integer(state.get('selfGuid',0))!=self.guid or o.get('requestId')!=row['request']
+                or not o.get('operationId') or integer(o.get('targetGuid',0))!=row['guid']
+                or integer(o.get('targetPositionRevision',0))!=integer(row['target'].get('positionRevision',0))
+                or integer(o.get('baselineInventoryRevision',0))!=row.get('inventory') or integer(o.get('baselineSkillsRevision',0))!=row.get('skills')
+                or integer(o.get('spellId',0))!=self.spell or integer(o.get('skillId',0))!=self.skill):
+            return False
+        row['operationId']=o.get('operationId','')
+        if integer(o.get('targetEntry',0))!=integer(row['target'].get('entry',0)):return False
+        row['receipt']={k:o[k] for k in ('status','reason','ownGoObserved','lootWindowObserved','lootReleaseObserved','outputInventoryObserved',
+            'ownLootedItemsObserved','lootSlotsRemoved','cleanupUnconfirmed','leaseReleased','observedInventoryRevision','beforeRank','afterRank','skillIncreased') if k in o}
+        if state.get('active') is True or o.get('cleanupUnconfirmed') is True or o.get('leaseReleased') is not True:return False
+        if o.get('status')=='COMPLETED' and all(o.get(k) is True for k in ('ownGoObserved','lootWindowObserved','lootReleaseObserved','outputInventoryObserved')) and integer(o.get('ownLootedItemsObserved',0))>0 and integer(o.get('lootSlotsRemoved',0))>0 and state.get('inventoryKnown') is True and row['inventory']<integer(o.get('observedInventoryRevision',0))<=integer(state.get('inventoryRevision',0)):
+            row['phase']='completed';self.persist();return True
+        if o.get('status') in ('BLOCKED','SERVER_REJECTED','CANCELLED'):
+            row['phase']='blocked';self.persist();return True
+        return False
+
+    def cancel_owned(self,row):
+        state=self.state();op=state.get('operation') or {}
+        if (state['sessionId']==row['session'] and state.get('active') is True and op.get('requestId')==row['request']
+                and op.get('operationId')==row.get('operationId') and integer(op.get('targetGuid',0))==row['guid']
+                and integer(op.get('skillId',0))==self.skill and integer(op.get('spellId',0))==self.spell):
+            self.rpc.call('buddy-professions.cancel',{'sessionId':row['session'],'operationId':row['operationId']})
+
+    def tick(self):
+        self.deadline=self.now()+20
+        if isinstance(self.rpc,RPC):self.rpc.deadline=self.deadline;self.rpc.calls=0
+        pending=next((r for r in self.data['attempts'] if r['phase'] in ('approaching','attempt_reserved','unconfirmed')),None)
+        if pending is not None:
+            if pending.get('attempted') is True:self.receipt(self.state(),pending)
+            self.status['phase']='harvest_'+pending['phase'];return self.status
+        if self.stopped() or self.priority() or self.now()<self.next_query:return self.status
+        self.next_query=self.now()+2
+        if len(self.data['attempts'])>=128:self.status['phase']='harvest_reservation_bound';return self.status
+        self.session,self.anchor,self.controls=None,None,None
+        scene=self.read();self.session=scene[0]['sessionId'];self.anchor,self.controls=scene[3:]
+        target=self.candidates(scene)
+        if target is None:self.status['phase']='no_verified_harvest_opportunity';return self.status
+        row={'session':self.session,'guid':integer(target['guid']),'target':copy.deepcopy(target),'request':'harvest_'+uuid.uuid4().hex,'phase':'approaching','attempted':False}
+        self.status.update(phase='harvesting_observed_target',busy=True)
+        folder=c.ensure_state(ROOT/'data/professions'/str(self.guid))
+        with os.fdopen(c.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:self.status.update(phase='waiting_for_requested_profession',busy=False);return self.status
+            self.data['attempts'].append(row);self.persist()
+            sent=False
+            try:
+                current=self.read();self.exact_target(current,row)
+                if distance(target,current[2]['position'])>3:self.approach(row)
+                state,ready=self.exact_target(self.read(),row)
+                if ready.get('ready') is not True:raise Error('Harvest cast target is not ready')
+                row.update(phase='attempt_reserved',attempted=True,inventory=integer(state.get('inventoryRevision',0)),skills=integer(state.get('skillsRevision',0)))
+                self.persist()
+                if self.stopped() or self.priority() or self.now()>=self.deadline:raise Error('Harvest yielded before its attempt write')
+                sent=True
+                response=self.rpc.call('buddy-professions.attempt',dict(sessionId=self.session,requestId=row['request'],skillId=self.skill,spellId=self.spell,targetGuid=str(row['guid']),targetPositionRevision=str(integer(target['positionRevision'])),expectedRevision=str(integer(state['revision'])),expectedSkillsRevision=str(row['skills']),expectedInventoryRevision=str(row['inventory'])))
+                while not self.receipt(response,row):
+                    if self.stopped() or self.priority() or self.now()>=self.deadline:raise Error('Harvest stopped while awaiting its finite receipt')
+                    self.sleep(.25);response=self.state()
+            except (Error,prof.Error,OSError,KeyError,TypeError,ValueError) as exc:
+                rejected=isinstance(exc,RPCFault) and row['attempted'] and exc.before_attempt()
+                row['phase']='blocked' if rejected else 'unconfirmed' if sent or self.token else 'blocked'
+                if not sent:row['attempted']=False
+                self.persist()
+                if row['attempted'] and row.get('operationId'):
+                    try:self.cancel_owned(row)
+                    except (Error,prof.Error):pass
+            finally:self.status.update(phase='harvest_'+row['phase'],busy=False)
+        return self.status

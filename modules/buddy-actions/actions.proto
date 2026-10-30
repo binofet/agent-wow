@@ -26,6 +26,9 @@ message InteractionRequest {
   string token = 2;
   // 0 means15000; allowed1000..30000ms.
   uint32 lease_ms = 3;
+  // Explicit non-destructive gathering/exploration guard; immutable per token.
+  // Only professions and exploration may request it. Defense intent stays on.
+  bool harvest = 4;
 }
 message InteractionRelease { string owner = 1; string token = 2; }
 message ApproachLootRequest {
@@ -120,6 +123,10 @@ message State {
   bool known_shadow_bolt = 63;
   uint64 shadow_bolt_damage_events = 64;
   uint64 shadow_bolt_damage_total = 65;
+  bool interaction_harvest = 66;
+  // Actual online party plus self/fixed owner, refreshed by guarded renewal.
+  // Only present while interaction_harvest is true; at most42 unique GUIDs.
+  repeated uint64 harvest_guard_guids = 67;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);

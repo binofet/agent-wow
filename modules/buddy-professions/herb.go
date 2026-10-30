@@ -11,18 +11,20 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	professionsv1 "github.com/agent-wow/agent-wow/modules/buddy-professions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
 )
 
 func (s *Service) queryHerbTemplates(ctx context.Context, w *worldv1.SnapshotResponse) {
-	if w == nil || len(w.RequestedGameObjects) > 32 {
+	objects, ok := herbObservations(w)
+	if !ok {
 		return
 	}
 	query := []*worldv1.GameObjectState{}
 	s.mu.Lock()
-	for _, g := range w.RequestedGameObjects {
+	for _, g := range objects {
 		if len(query) >= 4 || len(s.herbRequested) >= 32 {
 			break
 		}
@@ -61,11 +63,16 @@ func (s *Service) onHerbTemplatePacketLocked(p *modv1.WorldPacket) bool {
 }
 
 func herbSource(v worldView, a *actionsv1.State, guid, revision uint64) (*worldv1.GameObjectState, string) {
-	if v.raw == nil || v.self == nil || len(v.raw.RequestedGameObjects) > 32 {
+	return herbSourceRange(v, a, guid, revision, 3)
+}
+
+func herbSourceRange(v worldView, a *actionsv1.State, guid, revision uint64, maxDistance float64) (*worldv1.GameObjectState, string) {
+	objects, ok := herbObservations(v.raw)
+	if !ok || v.self == nil {
 		return nil, "bounded_actual_herb_observation_required"
 	}
 	var g *worldv1.GameObjectState
-	for _, row := range v.raw.RequestedGameObjects {
+	for _, row := range objects {
 		if row != nil && row.Guid == guid {
 			if g != nil {
 				return nil, "duplicate_actual_herb_guid"
@@ -86,13 +93,20 @@ func herbSource(v worldView, a *actionsv1.State, guid, revision uint64) (*worldv
 		}
 	}
 	dx, dy, dz := float64(g.X-p.X), float64(g.Y-p.Y), float64(g.Z-p.Z)
-	if dx*dx+dy*dy+dz*dz > 9 || math.Abs(dz) > 1.5 {
+	if dx*dx+dy*dy+dz*dz > maxDistance*maxDistance || math.Abs(dz) > 1.5 {
+		if maxDistance == 20 {
+			return nil, "selected_herb_outside_twenty_yard_approach_bound"
+		}
 		return nil, "selected_herb_must_already_be_within_three_yards"
 	}
 	return g, ""
 }
 
 func (s *Service) herbalismTargetLocked(guid, revision uint64, own *operation) (*worldv1.GameObjectState, string) {
+	return s.herbalismTargetRangeLocked(guid, revision, own, 3)
+}
+
+func (s *Service) herbalismTargetRangeLocked(guid, revision uint64, own *operation, maxDistance float64) (*worldv1.GameObjectState, string) {
 	if !s.viewKnown || s.view.self == nil {
 		return nil, "actual_own_observations_required"
 	}
@@ -100,7 +114,7 @@ func (s *Service) herbalismTargetLocked(guid, revision uint64, own *operation) (
 	if reason := s.readinessLocked(spec, own); reason != "" {
 		return nil, reason
 	}
-	g, reason := herbSource(s.view, s.actions, guid, revision)
+	g, reason := herbSourceRange(s.view, s.actions, guid, revision, maxDistance)
 	if reason != "" {
 		return nil, reason
 	}
@@ -126,17 +140,22 @@ func (s *Service) herbalismTargetLocked(guid, revision uint64, own *operation) (
 }
 
 func (s *Service) herbTargetsLocked() []*professionsv1.HerbTarget {
-	if !s.viewKnown || s.view.raw == nil || len(s.view.raw.RequestedGameObjects) > 32 {
+	objects, ok := herbObservations(s.view.raw)
+	if !s.viewKnown || !ok && len(objects) == 0 {
 		return nil
 	}
 	out := []*professionsv1.HerbTarget{}
-	for _, g := range s.view.raw.RequestedGameObjects {
+	if len(objects) > 32 {
+		objects = objects[:32]
+	}
+	for _, g := range objects {
 		if g == nil {
 			continue
 		}
 		_, reason := s.herbalismTargetLocked(g.Guid, g.PositionRevision, nil)
+		_, approachReason := s.herbalismTargetRangeLocked(g.Guid, g.PositionRevision, nil, 20)
 		m := s.herbTemplates[g.Entry]
-		out = append(out, &professionsv1.HerbTarget{Object: proto.Clone(g).(*worldv1.GameObjectState), Ready: reason == "", Reason: reason, RequiredSkill: m.requiredSkill, LockId: m.lockID})
+		out = append(out, &professionsv1.HerbTarget{Object: proto.Clone(g).(*worldv1.GameObjectState), Ready: reason == "", Reason: reason, RequiredSkill: m.requiredSkill, LockId: m.lockID, Approachable: approachReason == "", ApproachReason: approachReason})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Object.Guid < out[j].Object.Guid })
 	return out
@@ -168,7 +187,7 @@ func (s *Service) herbWrite(ctx context.Context, op *operation, code uint32, pay
 		return false, err
 	}
 	s.mu.Lock()
-	valid := s.active == op && !s.closed && !terminalStatus(op.receipt.Status) && !op.windowInvalid && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision
+	valid := s.active == op && !s.closed && !terminalStatus(op.receipt.Status) && !op.windowInvalid && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision && harvestguard.WorldReason(w, s.selfGUID, op.harvestGuard) == ""
 	if valid {
 		s.view, s.viewKnown = v, true
 		s.state.InventoryKnown, s.state.InventoryRevision = true, v.inventoryRevision
@@ -221,14 +240,15 @@ func (s *Service) runHerb(op *operation) {
 	defer s.finishHerb(op)
 	lease := &actionsv1.InteractionLease{}
 	call, cancel := context.WithTimeout(op.ctx, 2*time.Second)
-	err := s.invoke(call, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", LeaseMs: 30000}, lease)
+	err := s.invoke(call, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", LeaseMs: 30000, Harvest: true}, lease)
 	cancel()
-	if err != nil || lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "professions" {
+	if err != nil || lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "professions" || !validHarvestLease(lease.State, s.selfGUID) {
 		s.setHerbReason(op, "herbalism_interaction_lease_unavailable", professionsv1.AttemptStatus_BLOCKED)
 		return
 	}
 	s.mu.Lock()
 	op.token = lease.Token
+	op.harvestGuard = append([]uint64(nil), lease.State.HarvestGuardGuids...)
 	s.mu.Unlock()
 	call, cancel = context.WithTimeout(op.ctx, 2*time.Second)
 	err = s.observe(call)
@@ -605,13 +625,9 @@ func (s *Service) finishHerb(op *operation) {
 	op.receipt.LeaseReleased = token == ""
 	s.mu.Unlock()
 	if token != "" {
-		err := s.renew(ctx, op)
-		out := &actionsv1.State{}
-		if err == nil {
-			err = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "professions", Token: token}, out)
-		}
+		released := s.releaseHarvestLease(ctx, op, token)
 		s.mu.Lock()
-		op.receipt.LeaseReleased = err == nil && out.InteractionOwner == ""
+		op.receipt.LeaseReleased = released
 		op.receipt.CleanupUnconfirmed = op.receipt.CleanupUnconfirmed || !op.receipt.LeaseReleased
 		s.mu.Unlock()
 	}

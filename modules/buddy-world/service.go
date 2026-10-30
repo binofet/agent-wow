@@ -148,6 +148,9 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	}
 	s.state.appendSnapshot(r, now)
 	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry())
+	if request.GetIncludeGatheringObjects() {
+		s.state.appendGatheringObjects(r, now)
+	}
 	if p := s.state.creatures[guid]; guid != 0 && p != nil && p.present && p.known[objectEntry] && p.fields[objectEntry] != 0 {
 		r.RequestedCreature = creatureSnapshot(p, &s.state, now)
 	}

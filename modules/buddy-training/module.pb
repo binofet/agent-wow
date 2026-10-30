@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ùE
+ºF
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ı
 PlayerState
 guid (Rguid
@@ -111,11 +111,12 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"â
+max_durability (RmaxDurability"≈
 SnapshotRequest#
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
-game_object_entry (RgameObjectEntry"›
+game_object_entry (RgameObjectEntry:
+include_gathering_objects (RincludeGatheringObjects"›
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -246,7 +247,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"ö
+permanent_bonus (RpermanentBonus"˝
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -289,7 +290,8 @@ selfSkills@
 inventory_revision# (RinventoryRevisionK
 inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
 skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
-nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersR
+nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
+nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
 trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures2∞
 
 BuddyWorld]

@@ -41,6 +41,7 @@ type operation struct {
 	spec                                                        recipeSpec
 	baseline                                                    worldView
 	token                                                       string
+	harvestGuard                                                []uint64
 	started                                                     time.Time
 	ctx                                                         context.Context
 	cancel                                                      context.CancelFunc
@@ -155,7 +156,7 @@ func (s *Service) observe(ctx context.Context, target ...uint64) error {
 		targetGUID = target[0]
 	}
 	s.mu.Unlock()
-	request := &worldv1.SnapshotRequest{}
+	request := &worldv1.SnapshotRequest{IncludeGatheringObjects: true}
 	if targetGUID>>48 == 0xf110 {
 		request.GameObjectEntry = uint32(targetGUID>>24) & 0xffffff
 	} else if targetGUID>>48 == 0xf130 {
@@ -317,7 +318,7 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 	if s.last != nil && (s.last.receipt.CleanupUnconfirmed || s.last.receipt.Status == professionsv1.AttemptStatus_OUTCOME_UNCONFIRMED) {
 		return "previous_attempt_requires_reconciliation"
 	}
-	if s.loot == nil || s.loot.Enabled || s.loot.PendingCorpseGuid != 0 || s.loot.PendingGameObjectGuid != 0 || (s.loot.Phase != "" && s.loot.Phase != "idle" && s.loot.Phase != "disabled") {
+	if !s.ordinaryLootIdleLocked(recipe.skill) {
 		return "loot_controller_or_window_active"
 	}
 	if s.actions == nil || s.actions.Moving || s.actions.Traveling || s.actions.Practicing || s.actions.CastPending || s.actions.MotionUnconfirmed || s.actions.AutoAttacking || s.actions.AutoAttackRequested || s.actions.AutoAttackUnconfirmed || (s.actions.InteractionOwner != "" && !(own != nil && s.actions.InteractionOwner == "professions")) {

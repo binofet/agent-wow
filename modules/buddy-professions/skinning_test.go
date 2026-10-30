@@ -24,6 +24,8 @@ func skinningFixture(t *testing.T) (*Service, *professionSessionFixture) {
 	f.mu.Lock()
 	w := f.world
 	w.Self.PositionRevision = 11
+	w.Self.MovementFlagsKnown = true
+	w.Self.MovementFlags, w.Self.ExtraMovementFlags = 0, 0
 	w.Self.ChannelObjectKnown, w.Self.ChannelSpellKnown = true, true
 	w.SelfSkills[1] = &worldv1.SkillState{Slot: 1, SkillId: 393, Value: 75, MaxValue: 75, Step: 1}
 	w.InventoryBags[0].Slots[2] = &worldv1.BackpackSlot{Slot: 2, ItemGuid: 0x4000000000000099, Entry: 7005, StackCount: 1, MetadataKnown: true}
@@ -59,6 +61,8 @@ func skinningDirect(t *testing.T, s *Service, f *professionSessionFixture) *oper
 	f.mu.Lock()
 	f.token = op.token
 	f.actions.InteractionOwner = "professions"
+	f.actions.InteractionHarvest = true
+	f.actions.HarvestGuardGuids = []uint64{s.selfGUID, 3}
 	f.actions.InteractionLeaseRemainingMs = 30000
 	f.mu.Unlock()
 	return op

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,9 +26,23 @@ func (s *Service) explorationContextLocked(ctx context.Context, token string, ma
 	if ctx.Err() != nil {
 		return "exploration_canceled_or_time_limit"
 	}
+	if s.state.InteractionHarvest {
+		_, guids, reason := s.harvestContextLocked(ctx)
+		if reason != "" {
+			s.revokeHarvestLocked(ctx, reason)
+			return reason
+		}
+		s.state.HarvestGuardGuids, s.harvestGuardAt = guids, s.now()
+	}
 	w, err := s.snapshot(ctx)
 	if err != nil {
 		return "exploration_observations_unavailable"
+	}
+	if s.state.InteractionHarvest {
+		if reason := harvestguard.WorldReason(w, s.selfGUID, s.state.HarvestGuardGuids); reason != "" {
+			s.revokeHarvestLocked(ctx, reason)
+			return reason
+		}
 	}
 	if reason := safeQuestCharacter(w, s.selfGUID); reason != "" {
 		return "exploration_" + reason
@@ -80,7 +95,11 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.ownsExploration(token) {
-			s.stopLocked(stop)
+			if s.state.InteractionHarvest {
+				s.stopHarvestMovementLocked(stop)
+			} else {
+				s.stopLocked(stop)
+			}
 		}
 		if s.ownsExploration(token) || s.state.InteractionOwner == "" {
 			s.state.Traveling = false

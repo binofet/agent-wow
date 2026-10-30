@@ -27,14 +27,21 @@ func (s *Service) renew(ctx context.Context, op *operation) error {
 		return fail("operation no longer owns an interaction token")
 	}
 	out := &actionsv1.InteractionLease{}
-	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", Token: token, LeaseMs: 30000}, out); err != nil {
+	harvest := op.spec.skill == 393 || op.spec.skill == 182
+	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", Token: token, LeaseMs: 30000, Harvest: harvest}, out); err != nil {
 		return err
 	}
 	if out.Token != token || out.State == nil || out.State.InteractionOwner != "professions" || out.State.InteractionLeaseRemainingMs < 2000 || out.State.Moving || out.State.MotionUnconfirmed {
 		return fail("exact interaction lease or stopped position changed")
 	}
+	if harvest && !validHarvestLease(out.State, s.selfGUID) {
+		return fail("harvest guard identity or lease changed")
+	}
 	s.mu.Lock()
 	s.actions = out.State
+	if harvest {
+		op.harvestGuard = append([]uint64(nil), out.State.HarvestGuardGuids...)
+	}
 	s.mu.Unlock()
 	return ctx.Err()
 }
@@ -388,7 +395,7 @@ func (s *Service) activeSafetyLocked(op *operation) string {
 	if s.actions == nil || s.actions.Moving || s.actions.MotionUnconfirmed || s.actions.Traveling || s.actions.Practicing || s.actions.CastPending || s.actions.AutoAttacking || s.actions.AutoAttackRequested || s.actions.AutoAttackUnconfirmed || (s.actions.InteractionOwner != "" && s.actions.InteractionOwner != "professions") {
 		return "controller_changed_during_attempt"
 	}
-	if s.loot == nil || s.loot.Enabled || s.loot.PendingCorpseGuid != 0 || s.loot.PendingGameObjectGuid != 0 || (s.loot.Phase != "" && s.loot.Phase != "idle" && s.loot.Phase != "disabled") {
+	if !s.ordinaryLootIdleLocked(op.spec.skill) {
 		return "loot_controller_changed_during_attempt"
 	}
 	return ""

@@ -11,6 +11,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	professionsv1 "github.com/agent-wow/agent-wow/modules/buddy-professions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/proto"
@@ -169,6 +170,10 @@ func skinCreature(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureSta
 }
 
 func skinSource(v worldView, a *actionsv1.State, guid, revision uint64) (*worldv1.CreatureState, string) {
+	return skinSourceRange(v, a, guid, revision, 3)
+}
+
+func skinSourceRange(v worldView, a *actionsv1.State, guid, revision uint64, maxDistance float64) (*worldv1.CreatureState, string) {
 	c := skinCreature(v.raw, guid)
 	if c == nil || guid>>48 != 0xf130 || uint32(guid) == 0 || c.Entry == 0 || uint32(guid>>24&0xffffff) != c.Entry || !c.Present || !c.HealthKnown || c.Health != 0 || c.MaxHealth == 0 || !c.AliveKnown || c.Alive || !c.UnitFlagsKnown || !c.DynamicFlagsKnown || !c.MapKnown || c.MapId != v.self.MapId || !c.PositionKnown || revision == 0 || c.PositionRevision != revision || !c.LevelKnown || c.Level == 0 || c.Level > 60 {
 		return nil, "exact_current_dead_corpse_flags_level_pose_required"
@@ -181,13 +186,20 @@ func skinSource(v worldView, a *actionsv1.State, guid, revision uint64) (*worldv
 	}
 	p := a.Position
 	dx, dy, dz := float64(c.X-p.X), float64(c.Y-p.Y), float64(c.Z-p.Z)
-	if math.IsNaN(dx+dy+dz) || math.IsInf(dx+dy+dz, 0) || dx*dx+dy*dy+dz*dz > 9 || math.Abs(dz) > 1.5 {
+	if math.IsNaN(dx+dy+dz) || math.IsInf(dx+dy+dz, 0) || dx*dx+dy*dy+dz*dz > maxDistance*maxDistance || math.Abs(dz) > 1.5 {
+		if maxDistance == 20 {
+			return nil, "selected_corpse_outside_twenty_yard_approach_bound"
+		}
 		return nil, "selected_corpse_must_already_be_within_three_yards"
 	}
 	return c, ""
 }
 
 func (s *Service) skinningTargetLocked(guid, revision uint64, own *operation) (*worldv1.CreatureState, string) {
+	return s.skinningTargetRangeLocked(guid, revision, own, 3)
+}
+
+func (s *Service) skinningTargetRangeLocked(guid, revision uint64, own *operation, maxDistance float64) (*worldv1.CreatureState, string) {
 	if !s.viewKnown || s.view.self == nil {
 		return nil, "actual_own_observations_required"
 	}
@@ -195,7 +207,7 @@ func (s *Service) skinningTargetLocked(guid, revision uint64, own *operation) (*
 	if reason := s.readinessLocked(spec, own); reason != "" {
 		return nil, reason
 	}
-	c, reason := skinSource(s.view, s.actions, guid, revision)
+	c, reason := skinSourceRange(s.view, s.actions, guid, revision, maxDistance)
 	if reason != "" {
 		return nil, reason
 	}
@@ -236,13 +248,10 @@ func (s *Service) skinningTargetsLocked() []*professionsv1.SkinningTarget {
 			continue
 		}
 		_, reason := s.skinningTargetLocked(c.Guid, c.PositionRevision, nil)
-		if reason == "" {
-			spec, _ := recipeForSpell(skinSpell)
-			reason = s.readinessLocked(spec, nil)
-		}
+		_, approachReason := s.skinningTargetRangeLocked(c.Guid, c.PositionRevision, nil, 20)
 		at, ok := s.fullLoot[c.Guid]
 		age := s.now().Sub(at)
-		out = append(out, &professionsv1.SkinningTarget{Creature: proto.Clone(c).(*worldv1.CreatureState), FullyLootedObserved: ok && age >= 0 && age <= 60*time.Second, Ready: reason == "", Reason: reason, RequiredSkill: skinRequiredSkill(c.Level)})
+		out = append(out, &professionsv1.SkinningTarget{Creature: proto.Clone(c).(*worldv1.CreatureState), FullyLootedObserved: ok && age >= 0 && age <= 60*time.Second, Ready: reason == "", Reason: reason, RequiredSkill: skinRequiredSkill(c.Level), Approachable: approachReason == "", ApproachReason: approachReason})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Creature.Guid < out[j].Creature.Guid })
 	return out
@@ -274,7 +283,7 @@ func (s *Service) skinWrite(ctx context.Context, op *operation, code uint32, pay
 		return false, err
 	}
 	s.mu.Lock()
-	valid := s.active == op && !op.windowInvalid && !terminalStatus(op.receipt.Status) && !s.closed && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision
+	valid := s.active == op && !op.windowInvalid && !terminalStatus(op.receipt.Status) && !s.closed && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision && harvestguard.WorldReason(w, s.selfGUID, op.harvestGuard) == ""
 	if valid {
 		s.view, s.viewKnown = v, true
 		s.state.InventoryKnown, s.state.InventoryRevision = true, v.inventoryRevision
@@ -327,14 +336,15 @@ func (s *Service) runSkin(op *operation) {
 	defer s.finishSkin(op)
 	lease := &actionsv1.InteractionLease{}
 	call, cancel := context.WithTimeout(op.ctx, 2*time.Second)
-	err := s.invoke(call, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", LeaseMs: 30000}, lease)
+	err := s.invoke(call, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", LeaseMs: 30000, Harvest: true}, lease)
 	cancel()
-	if err != nil || lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "professions" {
+	if err != nil || lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "professions" || !validHarvestLease(lease.State, s.selfGUID) {
 		s.setSkinReason(op, "skinning_interaction_lease_unavailable", professionsv1.AttemptStatus_BLOCKED)
 		return
 	}
 	s.mu.Lock()
 	op.token = lease.Token
+	op.harvestGuard = append([]uint64(nil), lease.State.HarvestGuardGuids...)
 	s.mu.Unlock()
 	call, cancel = context.WithTimeout(op.ctx, 2*time.Second)
 	err = s.observe(call)
@@ -705,13 +715,9 @@ func (s *Service) finishSkin(op *operation) {
 	op.receipt.LeaseReleased = token == ""
 	s.mu.Unlock()
 	if token != "" {
-		err := s.renew(ctx, op)
-		out := &actionsv1.State{}
-		if err == nil {
-			err = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "professions", Token: token}, out)
-		}
+		released := s.releaseHarvestLease(ctx, op, token)
 		s.mu.Lock()
-		op.receipt.LeaseReleased = err == nil && out.InteractionOwner == ""
+		op.receipt.LeaseReleased = released
 		op.receipt.CleanupUnconfirmed = op.receipt.CleanupUnconfirmed || !op.receipt.LeaseReleased
 		s.mu.Unlock()
 	}

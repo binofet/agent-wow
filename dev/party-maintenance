@@ -22,6 +22,10 @@ loader = importlib.machinery.SourceFileLoader('maintenance_sync', str(Path(__fil
 spec = importlib.util.spec_from_loader(loader.name, loader)
 sync = importlib.util.module_from_spec(spec)
 loader.exec_module(sync)
+_harvest_loader = importlib.machinery.SourceFileLoader('maintenance_harvest', str(Path(__file__).with_name('party-harvest')))
+_harvest_spec = importlib.util.spec_from_loader(_harvest_loader.name, _harvest_loader)
+harvest = importlib.util.module_from_spec(_harvest_spec)
+_harvest_loader.exec_module(harvest)
 c, Error, integer = sync.converse, sync.Error, sync.integer
 ROSTER = sync.ROSTER
 IDENTITY = {'version': 1, 'ownerGuid': 3, 'mode': 'training_stipend_and_class_training',
@@ -230,8 +234,10 @@ class Maintenance:
     def activity_phase(self):
         if c.quest_task_snapshot(self.guid).get('active') is True:
             return 'waiting_for_requested_quest_task'
-        if (c.area_quest_snapshot(self.guid).get('active') is True
-                or c.party_town_snapshot(self.guid).get('active') is True or profession_active(self.guid)):
+        town=c.party_town_snapshot(self.guid)
+        town_busy=(town.get('active') is True and town.get('busy') is not False or town.get('active') is not True and
+            harvest.routine_locked(ROOT/'data/party-town'/str(self.guid)/'lock'))
+        if (c.area_quest_snapshot(self.guid).get('active') is True or town_busy or profession_active(self.guid)):
             return 'waiting_for_requested_routine'
         return None
 
@@ -660,6 +666,11 @@ def main():
             stored=load_character(path)
             profiles.append(Maintenance(name,guid,RPC('http://127.0.0.1:'+str(port)+'/rpc',timeout=8),
                 lambda value,path=path:c.write_json(path,value),stored or None,stopped=stopped,reserve_copper=args.reserve_copper))
+        harvesters={}
+        for guid in harvest.ROLES:
+            path=folder/('harvest-'+str(guid)+'.json')
+            harvesters[guid]=harvest.Worker(guid,harvest.RPC('http://127.0.0.1:'+str(harvest.ROLES[guid][1])+'/rpc'),
+                save=lambda value,path=path:c.write_json(path,value),stored=harvest.load_ledger(path),stopped=stopped)
         def status():
             record.update(updatedAt=time.time(),characters=[p.status for p in profiles])
             c.write_json(folder/'status.json',record)
@@ -667,8 +678,16 @@ def main():
             while not stopped():
                 for p in profiles:
                     if stopped():break
+                    prior_query=p.next_query
                     try:p.tick()
                     except (Error,KeyError,TypeError,ValueError):p.status['phase']='service_request_or_observation_unavailable'
+                    # Harvest is the last, lowest-priority opportunity. It never
+                    # holds a standing profession lock or changes intent toggles.
+                    worker=harvesters.get(p.guid)
+                    if worker is not None and p.next_query!=prior_query and harvest.maintenance_idle(p):
+                        try:p.status['harvest']=worker.tick()
+                        except (harvest.Error,harvest.prof.Error,OSError,KeyError,TypeError,ValueError):
+                            p.status['harvest']={'guid':p.guid,'phase':'harvest_observations_or_cleanup_unavailable','busy':False}
                     status()
                 until=time.monotonic()+1
                 while time.monotonic()<until and not stopped():time.sleep(.1)

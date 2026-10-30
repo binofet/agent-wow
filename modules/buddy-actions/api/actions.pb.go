@@ -192,7 +192,10 @@ type InteractionRequest struct {
 	// Required only to renew an existing lease; never returned by Status.
 	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
 	// 0 means15000; allowed1000..30000ms.
-	LeaseMs       uint32 `protobuf:"varint,3,opt,name=lease_ms,json=leaseMs,proto3" json:"lease_ms,omitempty"`
+	LeaseMs uint32 `protobuf:"varint,3,opt,name=lease_ms,json=leaseMs,proto3" json:"lease_ms,omitempty"`
+	// Explicit non-destructive gathering/exploration guard; immutable per token.
+	// Only professions and exploration may request it. Defense intent stays on.
+	Harvest       bool `protobuf:"varint,4,opt,name=harvest,proto3" json:"harvest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -246,6 +249,13 @@ func (x *InteractionRequest) GetLeaseMs() uint32 {
 		return x.LeaseMs
 	}
 	return 0
+}
+
+func (x *InteractionRequest) GetHarvest() bool {
+	if x != nil {
+		return x.Harvest
+	}
+	return false
 }
 
 type InteractionRelease struct {
@@ -669,8 +679,12 @@ type State struct {
 	KnownShadowBolt          bool   `protobuf:"varint,63,opt,name=known_shadow_bolt,json=knownShadowBolt,proto3" json:"known_shadow_bolt,omitempty"`
 	ShadowBoltDamageEvents   uint64 `protobuf:"varint,64,opt,name=shadow_bolt_damage_events,json=shadowBoltDamageEvents,proto3" json:"shadow_bolt_damage_events,omitempty"`
 	ShadowBoltDamageTotal    uint64 `protobuf:"varint,65,opt,name=shadow_bolt_damage_total,json=shadowBoltDamageTotal,proto3" json:"shadow_bolt_damage_total,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	InteractionHarvest       bool   `protobuf:"varint,66,opt,name=interaction_harvest,json=interactionHarvest,proto3" json:"interaction_harvest,omitempty"`
+	// Actual online party plus self/fixed owner, refreshed by guarded renewal.
+	// Only present while interaction_harvest is true; at most42 unique GUIDs.
+	HarvestGuardGuids []uint64 `protobuf:"varint,67,rep,packed,name=harvest_guard_guids,json=harvestGuardGuids,proto3" json:"harvest_guard_guids,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
@@ -1158,6 +1172,20 @@ func (x *State) GetShadowBoltDamageTotal() uint64 {
 	return 0
 }
 
+func (x *State) GetInteractionHarvest() bool {
+	if x != nil {
+		return x.InteractionHarvest
+	}
+	return false
+}
+
+func (x *State) GetHarvestGuardGuids() []uint64 {
+	if x != nil {
+		return x.HarvestGuardGuids
+	}
+	return nil
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -1176,11 +1204,12 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\testimated\x18\b \x01(\bR\testimated\x12\x15\n" +
 	"\x06age_ms\x18\t \x01(\x04R\x05ageMs\x12\x1a\n" +
 	"\brevision\x18\n" +
-	" \x01(\x04R\brevision\"[\n" +
+	" \x01(\x04R\brevision\"u\n" +
 	"\x12InteractionRequest\x12\x14\n" +
 	"\x05owner\x18\x01 \x01(\tR\x05owner\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x19\n" +
-	"\blease_ms\x18\x03 \x01(\rR\aleaseMs\"@\n" +
+	"\blease_ms\x18\x03 \x01(\rR\aleaseMs\x12\x18\n" +
+	"\aharvest\x18\x04 \x01(\bR\aharvest\"@\n" +
 	"\x12InteractionRelease\x12\x14\n" +
 	"\x05owner\x18\x01 \x01(\tR\x05owner\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\"v\n" +
@@ -1203,7 +1232,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"_\n" +
 	"\x10InteractionLease\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x125\n" +
-	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xea\x16\n" +
+	"\x05state\x18\x02 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\x05state\"\xcb\x17\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -1278,7 +1307,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0epractice_kills\x18> \x01(\x04R\rpracticeKills\x12*\n" +
 	"\x11known_shadow_bolt\x18? \x01(\bR\x0fknownShadowBolt\x129\n" +
 	"\x19shadow_bolt_damage_events\x18@ \x01(\x04R\x16shadowBoltDamageEvents\x127\n" +
-	"\x18shadow_bolt_damage_total\x18A \x01(\x04R\x15shadowBoltDamageTotal2\xda\v\n" +
+	"\x18shadow_bolt_damage_total\x18A \x01(\x04R\x15shadowBoltDamageTotal\x12/\n" +
+	"\x13interaction_harvest\x18B \x01(\bR\x12interactionHarvest\x12.\n" +
+	"\x13harvest_guard_guids\x18C \x03(\x04R\x11harvestGuardGuids2\xda\v\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +

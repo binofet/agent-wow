@@ -726,6 +726,8 @@ type SkinningTarget struct {
 	Ready               bool               `protobuf:"varint,3,opt,name=ready,proto3" json:"ready,omitempty"`
 	Reason              string             `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	RequiredSkill       uint32             `protobuf:"varint,5,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
+	Approachable        bool               `protobuf:"varint,6,opt,name=approachable,proto3" json:"approachable,omitempty"`
+	ApproachReason      string             `protobuf:"bytes,7,opt,name=approach_reason,json=approachReason,proto3" json:"approach_reason,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -795,15 +797,31 @@ func (x *SkinningTarget) GetRequiredSkill() uint32 {
 	return 0
 }
 
+func (x *SkinningTarget) GetApproachable() bool {
+	if x != nil {
+		return x.Approachable
+	}
+	return false
+}
+
+func (x *SkinningTarget) GetApproachReason() string {
+	if x != nil {
+		return x.ApproachReason
+	}
+	return ""
+}
+
 type HerbTarget struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Object        *api.GameObjectState   `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
-	Ready         bool                   `protobuf:"varint,2,opt,name=ready,proto3" json:"ready,omitempty"`
-	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
-	RequiredSkill uint32                 `protobuf:"varint,4,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
-	LockId        uint32                 `protobuf:"varint,5,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Object         *api.GameObjectState   `protobuf:"bytes,1,opt,name=object,proto3" json:"object,omitempty"`
+	Ready          bool                   `protobuf:"varint,2,opt,name=ready,proto3" json:"ready,omitempty"`
+	Reason         string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	RequiredSkill  uint32                 `protobuf:"varint,4,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
+	LockId         uint32                 `protobuf:"varint,5,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
+	Approachable   bool                   `protobuf:"varint,6,opt,name=approachable,proto3" json:"approachable,omitempty"`
+	ApproachReason string                 `protobuf:"bytes,7,opt,name=approach_reason,json=approachReason,proto3" json:"approach_reason,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HerbTarget) Reset() {
@@ -869,6 +887,20 @@ func (x *HerbTarget) GetLockId() uint32 {
 		return x.LockId
 	}
 	return 0
+}
+
+func (x *HerbTarget) GetApproachable() bool {
+	if x != nil {
+		return x.Approachable
+	}
+	return false
+}
+
+func (x *HerbTarget) GetApproachReason() string {
+	if x != nil {
+		return x.ApproachReason
+	}
+	return ""
 }
 
 type HerbInspectRequest struct {
@@ -1626,20 +1658,24 @@ const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"source_bag\x18, \x01(\rR\tsourceBag\x12\x1f\n" +
 	"\vsource_slot\x18- \x01(\rR\n" +
 	"sourceSlot\x126\n" +
-	"\x17input_consumed_observed\x18. \x01(\bR\x15inputConsumedObserved\"\xdc\x01\n" +
+	"\x17input_consumed_observed\x18. \x01(\bR\x15inputConsumedObserved\"\xa9\x02\n" +
 	"\x0eSkinningTarget\x12A\n" +
 	"\bcreature\x18\x01 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\bcreature\x122\n" +
 	"\x15fully_looted_observed\x18\x02 \x01(\bR\x13fullyLootedObserved\x12\x14\n" +
 	"\x05ready\x18\x03 \x01(\bR\x05ready\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12%\n" +
-	"\x0erequired_skill\x18\x05 \x01(\rR\rrequiredSkill\"\xbb\x01\n" +
+	"\x0erequired_skill\x18\x05 \x01(\rR\rrequiredSkill\x12\"\n" +
+	"\fapproachable\x18\x06 \x01(\bR\fapproachable\x12'\n" +
+	"\x0fapproach_reason\x18\a \x01(\tR\x0eapproachReason\"\x88\x02\n" +
 	"\n" +
 	"HerbTarget\x12?\n" +
 	"\x06object\x18\x01 \x01(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x06object\x12\x14\n" +
 	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12%\n" +
 	"\x0erequired_skill\x18\x04 \x01(\rR\rrequiredSkill\x12\x17\n" +
-	"\alock_id\x18\x05 \x01(\rR\x06lockId\"T\n" +
+	"\alock_id\x18\x05 \x01(\rR\x06lockId\x12\"\n" +
+	"\fapproachable\x18\x06 \x01(\bR\fapproachable\x12'\n" +
+	"\x0fapproach_reason\x18\a \x01(\tR\x0eapproachReason\"T\n" +
 	"\x12HerbInspectRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +

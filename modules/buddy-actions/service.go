@@ -15,6 +15,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
@@ -57,6 +58,7 @@ type Service struct {
 	posRevision                                              uint64
 	interactionToken                                         string
 	interactionUntil                                         time.Time
+	harvestGuardAt                                           time.Time
 	assistUntil, nextAssist                                  time.Time
 	pendingSpell                                             uint32
 	pendingTarget, failedAssistTarget                        uint64
@@ -134,10 +136,12 @@ func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
 		// An approach must stop before its expired lease can be discarded.
 		// Tick owns the bounded transport write; status remains read-only.
-		if s.state.Moving {
+		if s.state.Moving || s.state.InteractionHarvest && s.state.MotionUnconfirmed {
 			return
 		}
 		s.state.InteractionOwner = ""
+		s.state.InteractionHarvest = false
+		s.state.HarvestGuardGuids = nil
 		s.interactionToken = ""
 		s.lastStep = s.now()
 	}
@@ -146,6 +150,9 @@ func (s *Service) expireInteractionLocked() {
 func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.InteractionRequest) (*actionsv1.InteractionLease, error) {
 	if r == nil || !validInteractionOwner(r.Owner) {
 		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, mail, professions, or exploration")
+	}
+	if r.Harvest && r.Owner != "exploration" && r.Owner != "professions" {
+		return nil, status.Error(codes.InvalidArgument, "harvest guard only supports exploration and professions")
 	}
 	duration := r.LeaseMs
 	if duration == 0 {
@@ -170,6 +177,17 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 		if r.Owner != s.state.InteractionOwner || r.Token == "" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 			return nil, status.Error(codes.FailedPrecondition, "another interaction is active")
 		}
+		if r.Harvest != s.state.InteractionHarvest {
+			return nil, status.Error(codes.FailedPrecondition, "interaction harvest guard cannot change for this token")
+		}
+		if r.Harvest {
+			_, guids, reason := s.harvestContextLocked(ctx)
+			if reason != "" {
+				s.revokeHarvestLocked(ctx, reason)
+				return nil, status.Error(codes.FailedPrecondition, reason)
+			}
+			s.state.HarvestGuardGuids, s.harvestGuardAt = guids, s.now()
+		}
 		s.interactionUntil = s.now().Add(time.Duration(duration) * time.Millisecond)
 		return &actionsv1.InteractionLease{Token: s.interactionToken, State: s.stateLocked()}, nil
 	}
@@ -179,10 +197,28 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	if s.state.CastPending || s.state.MotionUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "casting or movement state is unconfirmed")
 	}
+	var harvestWorld *worldv1.SnapshotResponse
+	var harvestGuids []uint64
+	if r.Harvest {
+		if s.state.Moving || s.state.AutoAttacking || s.state.AutoAttackRequested || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.Practicing || s.state.Traveling {
+			return nil, status.Error(codes.FailedPrecondition, "harvest_defense_or_other_action_pending")
+		}
+		var reason string
+		harvestWorld, harvestGuids, reason = s.harvestContextLocked(ctx)
+		if reason != "" {
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
+		if harvestWorld.Self.MovementFlags&0xff != 0 {
+			return nil, status.Error(codes.FailedPrecondition, "harvest_initial_stationary_observation_required")
+		}
+	}
 	if !s.stopAutoAttackLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "auto attack stop awaits server confirmation")
 	}
-	w, err := s.snapshot(ctx)
+	w, err := harvestWorld, error(nil)
+	if !r.Harvest {
+		w, err = s.snapshot(ctx)
+	}
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, "world observations unavailable")
 	}
@@ -192,8 +228,21 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	// A server correction can arrive between controller ticks. Rebase before
 	// writing STOP so an interaction never writes the superseded estimate.
 	s.refreshPositionLocked(w)
-	if !s.stopLocked(ctx) {
+	stopped := false
+	if r.Harvest {
+		stopped = s.stopHarvestMovementLocked(ctx)
+	} else {
+		stopped = s.stopLocked(ctx)
+	}
+	if !stopped {
 		return nil, status.Error(codes.FailedPrecondition, "movement stop could not be written")
+	}
+	if r.Harvest {
+		// STOP obtains its own final world snapshot. A fresh attacker arriving
+		// there must not be hidden by granting the lease from the earlier view.
+		if reason := harvestguard.WorldReason(s.lastWorld, s.selfGUID, harvestGuids); reason != "" {
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
 	}
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -202,6 +251,10 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	s.interactionToken = hex.EncodeToString(token[:])
 	s.interactionUntil = s.now().Add(time.Duration(duration) * time.Millisecond)
 	s.state.InteractionOwner = r.Owner
+	s.state.InteractionHarvest = r.Harvest
+	if r.Harvest {
+		s.state.HarvestGuardGuids, s.harvestGuardAt = harvestGuids, s.now()
+	}
 	s.lastStep = s.now()
 	return &actionsv1.InteractionLease{Token: s.interactionToken, State: s.stateLocked()}, nil
 }
@@ -219,10 +272,18 @@ func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.Interacti
 	if s.state.InteractionOwner != r.Owner || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease does not match")
 	}
-	if !s.stopLocked(ctx) {
+	stopped := false
+	if s.state.InteractionHarvest {
+		stopped = s.stopHarvestMovementLocked(ctx)
+	} else {
+		stopped = s.stopLocked(ctx)
+	}
+	if !stopped {
 		return nil, status.Error(codes.FailedPrecondition, "interaction movement stop unconfirmed")
 	}
 	s.state.InteractionOwner = ""
+	s.state.InteractionHarvest = false
+	s.state.HarvestGuardGuids = nil
 	s.interactionToken = ""
 	s.lastStep = s.now()
 	return s.stateLocked(), nil
@@ -421,6 +482,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.AutoAttackUnconfirmed = false
 	s.stopAutoAttackLocked(ctx)
 	s.state.InteractionOwner = ""
+	s.state.InteractionHarvest = false
+	s.state.HarvestGuardGuids = nil
 	s.interactionToken = ""
 	s.state.Following = false
 	s.state.Healing = false
@@ -625,7 +688,23 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		s.state.Reason = "movement_interaction_lease_expired"
 		return false
 	}
+	if moving && s.state.InteractionHarvest {
+		reason := ""
+		if s.now().Sub(s.harvestGuardAt) < 0 || s.now().Sub(s.harvestGuardAt) > time.Second {
+			reason = "harvest_party_proof_expired_before_movement"
+		} else {
+			reason = harvestguard.WorldReason(w, s.selfGUID, s.state.HarvestGuardGuids)
+		}
+		if reason != "" {
+			s.revokeHarvestLocked(ctx, reason)
+			return false
+		}
+	}
+	follow, heal, assist := s.state.Following, s.state.Healing, s.state.Assisting
 	if !s.sendLocked(ctx, op, movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)) {
+		if s.state.InteractionHarvest {
+			s.state.Following, s.state.Healing, s.state.Assisting = follow, heal, assist
+		}
 		s.state.MotionUnconfirmed = true
 		return false
 	}
@@ -693,6 +772,19 @@ func (s *Service) Tick(ctx context.Context) {
 			s.followNav.Reset()
 		}
 	}()
+	if s.state.InteractionHarvest && s.state.InteractionOwner != "" {
+		_, guids, reason := s.harvestContextLocked(ctx)
+		if !s.now().Before(s.interactionUntil) {
+			reason = "harvest_interaction_lease_expired"
+		}
+		if reason != "" {
+			if !s.revokeHarvestLocked(ctx, reason) {
+				return
+			}
+		} else {
+			s.state.HarvestGuardGuids, s.harvestGuardAt = guids, s.now()
+		}
+	}
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
 		s.stopLocked(ctx)
 	}

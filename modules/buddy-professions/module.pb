@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ýC
+¼F
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
 PlayerState
 guid (Rguid
@@ -111,11 +111,12 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"‰
+max_durability (RmaxDurability"Å
 SnapshotRequest#
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
-game_object_entry (RgameObjectEntry"Ý
+game_object_entry (RgameObjectEntry:
+include_gathering_objects (RincludeGatheringObjects"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -246,7 +247,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"ú
+permanent_bonus (RpermanentBonus"ý
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -288,12 +289,15 @@ selfSkills@
 inventory_known" (RinventoryKnown-
 inventory_revision# (RinventoryRevisionK
 inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
-skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpses2°
+skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
+nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
+nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
+trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-ß2
+ù3
 +modules/buddy-professions/professions.protowarcraftbuddy.professions.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"P
 Skill
 skill_id (RskillId
@@ -374,20 +378,24 @@ targetGuid8
 source_bag, (R	sourceBag
 source_slot- (R
 sourceSlot6
-input_consumed_observed. (RinputConsumedObserved"Ü
+input_consumed_observed. (RinputConsumedObserved"©
 SkinningTargetA
 creature (2%.warcraftbuddy.world.v1.CreatureStateRcreature2
 fully_looted_observed (RfullyLootedObserved
 ready (Rready
 reason (	Rreason%
-required_skill (RrequiredSkill"»
+required_skill (RrequiredSkill"
+approachable (Rapproachable'
+approach_reason (	RapproachReason"ˆ
 
 HerbTarget?
 object (2'.warcraftbuddy.world.v1.GameObjectStateRobject
 ready (Rready
 reason (	Rreason%
 required_skill (RrequiredSkill
-lock_id (RlockId"T
+lock_id (RlockId"
+approachable (Rapproachable'
+approach_reason (	RapproachReason"T
 HerbInspectRequest
 
 session_id (	R	sessionId

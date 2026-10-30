@@ -113,11 +113,20 @@ func (f *professionSessionFixture) InvokeModule(ctx context.Context, r *modv1.In
 			}
 			f.token = "MOCK-professions-token-1"
 			f.actions.InteractionOwner = "professions"
+			f.actions.InteractionHarvest = input.Harvest
+			if input.Harvest {
+				f.actions.HarvestGuardGuids = []uint64{f.world.Self.Guid, 3}
+			} else {
+				f.actions.HarvestGuardGuids = nil
+			}
 			f.actions.InteractionLeaseRemainingMs = 30000
 		} else {
 			f.events = append(f.events, "renew:"+input.Token)
 			if input.Token != f.token {
 				return nil, status.Error(codes.FailedPrecondition, "exact token mismatch")
+			}
+			if input.Harvest != f.actions.InteractionHarvest {
+				return nil, status.Error(codes.FailedPrecondition, "harvest lease mode mismatch")
 			}
 		}
 		token := f.token
