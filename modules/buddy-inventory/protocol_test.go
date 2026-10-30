@@ -152,7 +152,7 @@ func FuzzInventoryMetadataAndErrors(f *testing.F) {
 	f.Add(metadataFixture(4865, 15, 0, 0, 0))
 	f.Add([]byte{0})
 	f.Fuzz(func(t *testing.T, p []byte) {
-		if m, e := parseItemMetadata(p); e == nil && m.disposable() && (!m.known || m.class != 15 || m.quality != 0 || m.entry == 0) {
+		if m, e := parseItemMetadata(p); e == nil && m.disposable() && (!m.known || m.class != 15 && m.class != 4 || m.quality != 0 || m.entry == 0) {
 			t.Fatal(m)
 		}
 		_, _ = parseInventoryChangeFailure(p)

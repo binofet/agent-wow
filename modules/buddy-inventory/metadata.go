@@ -11,13 +11,32 @@ type itemMetadata struct {
 	entry, class, subclass, quality, flags, flags2, inventoryType, containerSlots uint32
 	bonding, startQuest, lockID, pageText, bagFamily, duration, maxDurability     uint32
 	hasSpell                                                                      bool
+	hasRequirement                                                                bool
 }
 
+// This module only offers vendor sales. Carried slot/GUID binding in the
+// service excludes equipped items; destruction has its separate unchanged
+// predicate in buddy-trade. Primary ItemTemplate.h defines class4, armor
+// subclasses1..4 and these ordinary armor inventory types.
 func (m itemMetadata) disposable() bool {
-	return m.known && m.entry != 0 && m.class == 15 && m.subclass == 0 && m.quality == 0 &&
-		m.flags == 0 && m.flags2 == 0 && m.inventoryType == 0 && m.containerSlots == 0 && !m.hasSpell &&
+	ordinary := m.known && m.entry != 0 && m.quality == 0 &&
+		m.flags == 0 && m.flags2 == 0 && m.containerSlots == 0 && !m.hasSpell &&
 		m.bonding == 0 && m.startQuest == 0 && m.lockID == 0 && m.pageText == 0 &&
-		m.bagFamily == 0 && m.duration == 0 && m.maxDurability == 0
+		m.bagFamily == 0 && m.duration == 0
+	if !ordinary {
+		return false
+	}
+	if m.class == 15 {
+		return m.subclass == 0 && m.inventoryType == 0 && m.maxDurability == 0
+	}
+	if m.class != 4 || m.subclass < 1 || m.subclass > 4 || m.hasRequirement {
+		return false
+	}
+	switch m.inventoryType {
+	case 1, 3, 5, 6, 7, 8, 9, 10, 16, 20: // head, shoulder, chest, waist, legs, feet, wrist, hands, cloak, robe
+		return true // Ordinary armor durability is expected and does not make it a usable tool.
+	}
+	return false
 }
 
 // Complete 3.3.5 ItemHandler::HandleItemQuerySingleOpcode framing. A short name
@@ -71,6 +90,11 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 	}
 	m.quality, m.flags, m.flags2, m.inventoryType, m.containerSlots = prefix[1], prefix[2], prefix[3], prefix[6], prefix[20]
 	m.sellPrice = prefix[5]
+	// Required skill/rank/spell, honor/city rank and reputation faction/rank.
+	// Required level alone is normal for armor and is not a special use.
+	for _, requirement := range prefix[11:18] {
+		m.hasRequirement = m.hasRequirement || requirement != 0
+	}
 	stats := prefix[21]
 	if m.class > 16 || m.quality > 7 || stats > 10 {
 		return m, malformed
