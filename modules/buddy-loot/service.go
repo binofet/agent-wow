@@ -89,7 +89,15 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 		}
 		s.state.Reason = "automatic_nearby_ordinary_loot_enabled"
 	} else if s.token != "" {
-		s.state.Phase = "abort"
+		switch s.state.Phase {
+		case "release_observed":
+			s.finishReleased(ctx)
+		case "waiting_release":
+			// Disabling new loot does not resend an outstanding release or
+			// restart its receipt deadline. Its ACK/timeout still finishes it.
+		default:
+			s.state.Phase = "abort"
+		}
 		s.state.Reason = "disabled_by_request"
 	} else {
 		s.state.Phase = "disabled"
@@ -175,6 +183,15 @@ func (s *Service) finish(ctx context.Context) {
 		s.state.Phase = "disabled"
 	}
 	s.nextTry = s.now().Add(time.Second)
+}
+func (s *Service) finishReleased(ctx context.Context) {
+	if s.questGather {
+		w := &worldv1.SnapshotResponse{}
+		if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w) == nil {
+			s.observeGatherQuest(w)
+		}
+	}
+	s.finish(ctx)
 }
 func (s *Service) beginRelease(ctx context.Context) {
 	if s.questGather && s.opened && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
@@ -362,13 +379,7 @@ func (s *Service) Tick(ctx context.Context) {
 		var observed *worldv1.SnapshotResponse
 		var currentActions *actionsv1.State
 		if s.state.Phase == "release_observed" {
-			if s.questGather {
-				w := &worldv1.SnapshotResponse{}
-				if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w) == nil {
-					s.observeGatherQuest(w)
-				}
-			}
-			s.finish(ctx)
+			s.finishReleased(ctx)
 			return
 		}
 		if s.state.Phase != "waiting_release" && !now.Before(s.transactionUntil) {
