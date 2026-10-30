@@ -167,6 +167,11 @@ item ownership and ground targets are chosen by the installed controller, never
 by model coordinates or spell IDs. Do not claim a practice fire's burning aura
 is observed when the capability says it is unknown. Unknown or stale counters
 remain unknown. A stopped request remains pending until cleanup is observed.
+inventory describes all five actually observed carried bags. Use its known
+totalSlots/freeSlots and server-confirmed item names; itemsTruncated means the
+48-item excerpt is incomplete. town_upkeep is separate automatic safe-gray-junk
+sales and exact41599 bag upkeep near observed services. Its phase or travel is
+not a sale receipt; claim confirmed operations only when explicitly reported.
 """
 
 
@@ -461,6 +466,112 @@ def quest_task_identity(character_guid, rpc_url, quest_id):
     RPC(rpc_url)  # Endpoint validation only; no network operation.
     return {"version": 1, "mode": "quest_recipe", "characterGuid": character_guid,
             "rpcUrl": rpc_url, "questId": quest_id}
+
+
+def party_town_snapshot(character_guid, revoke_follow=False):
+    unknown = {"active": False, "busy": False}
+    try:
+        ports = {1: 8086, 4: 8087, 5: 8088}
+        guid = integer(character_guid)
+        if guid not in ports:
+            return unknown
+        folder = ROOT / "data/party-town" / str(guid)
+        for path in (folder.parent, folder):
+            if path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077:
+                return unknown
+        record = read_json(folder / "status.json")
+        expected = {"version": 1, "mode": "party_town", "characterGuid": guid,
+                    "rpcUrl": f"http://127.0.0.1:{ports[guid]}/rpc"}
+        if (record.get("identity") != expected or not isinstance(record.get("instance"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", record["instance"])):
+            return unknown
+        with os.fdopen(private_open(folder / "lock", os.O_RDONLY), "r") as lock:
+            active = record.get("routineActive") is True and is_locked(lock)
+        own = record.get("own", {})
+        if not isinstance(own, dict):
+            return unknown
+        result = {"active": active, "busy": active and own.get("busy") is True}
+        if own.get("lastKind") in ("bags", "sell"):
+            result["kind"] = own["lastKind"]
+        confirmed = integer(own.get("confirmedOperations", 0))
+        if confirmed <= 168:
+            result["confirmedOperations"] = confirmed
+        phase = own.get("phase", "")
+        if isinstance(phase, str) and re.fullmatch(r"[a-z0-9_]{1,120}", phase):
+            result["phase"] = phase
+        if revoke_follow and result["busy"]:
+            activity = record.get("activityId", "")
+            if isinstance(activity, str) and re.fullmatch(r"[0-9a-f]{32}", activity):
+                write_json(folder / "follow-revoked.json", {"identity": expected, "instance": record["instance"],
+                                                          "activityId": activity})
+                result["followRevoked"] = True
+        return result
+    except (OSError, ValueError, TypeError, ConversationError):
+        return unknown
+
+
+def inventory_context(state, character_guid, names=None):
+    """Describe actual carried slots; template names alone never imply ownership."""
+    if (not isinstance(state, dict) or integer(state.get("selfGuid", 0)) != character_guid
+            or not isinstance(state.get("sessionId"), str) or not 1 <= len(state["sessionId"]) <= 128):
+        raise ConversationError("Inventory actor identity is unavailable")
+    result = {"available": True, "known": state.get("inventoryKnown") is True,
+              "sessionId": state["sessionId"], "inventoryRevision": state.get("inventoryRevision", "0")}
+    if not result["known"]:
+        return result
+    bags = state.get("inventoryBags", [])
+    if not isinstance(bags, list) or len(bags) != 5:
+        raise ConversationError("Inventory bag frame is incomplete")
+    seen_bags, seen_items, items, bag_entries, total, free = set(), set(), [], [], 0, 0
+    for bag in bags:
+        if not isinstance(bag, dict):
+            raise ConversationError("Inventory bag is invalid")
+        b, count = integer(bag.get("bag", 0)), integer(bag.get("slotCount", 0))
+        guid = integer(bag.get("containerGuid", 0))
+        if b > 4 or b in seen_bags or count > 36 or bag.get("slotKnown") is not True or bag.get("contentsKnown") is not True:
+            raise ConversationError("Inventory bag layout is unknown")
+        seen_bags.add(b)
+        if b == 0 and (count != 16 or guid) or b > 0 and not guid and count:
+            raise ConversationError("Inventory bag capacity is inconsistent")
+        if guid:
+            if guid >> 48 != 0x4000 or guid in seen_items or bag.get("metadataKnown") is not True:
+                raise ConversationError("Inventory container is invalid")
+            seen_items.add(guid)
+            bag_entries.append({"bag": b, "entry": integer(bag.get("entry", 0)), "slots": count})
+        slots = bag.get("slots", [])
+        if not isinstance(slots, list) or len(slots) != count:
+            raise ConversationError("Inventory slots are incomplete")
+        seen_slots = set()
+        for item in slots:
+            if not isinstance(item, dict):
+                raise ConversationError("Inventory slot is invalid")
+            slot, g = integer(item.get("slot", 0)), integer(item.get("itemGuid", 0))
+            if integer(item.get("bag", 0)) != b or slot >= count or slot in seen_slots:
+                raise ConversationError("Inventory slot is duplicated")
+            seen_slots.add(slot)
+            if not g:
+                if integer(item.get("entry", 0)) or integer(item.get("stackCount", 0)) or item.get("metadataKnown") is True:
+                    raise ConversationError("Empty inventory slot is inconsistent")
+                free += 1
+            else:
+                if g >> 48 != 0x4000 or g in seen_items:
+                    raise ConversationError("Inventory item is duplicated")
+                seen_items.add(g)
+                row = {"bag": b, "slot": slot, "itemGuid": str(g), "metadataKnown": item.get("metadataKnown") is True}
+                if row["metadataKnown"]:
+                    entry, stack = integer(item.get("entry", 0)), integer(item.get("stackCount", 0))
+                    if not 0 < entry < 2**32 or not 0 < stack < 2**32:
+                        raise ConversationError("Inventory item metadata is invalid")
+                    row.update(entry=entry, count=stack)
+                    if names and entry in names:
+                        row["name"] = names[entry]
+                items.append(row)
+        total += count
+    if total > 160:
+        raise ConversationError("Inventory capacity exceeds its bound")
+    result.update(totalSlots=total, freeSlots=free, occupiedSlots=total-free, bags=bag_entries,
+                  items=sorted(items, key=lambda row: (row["bag"], row["slot"]))[:48], itemsTruncated=len(items) > 48)
+    return result
 
 
 def quest_task_snapshot(character_guid, rpc_url=None, quest_id=0, stop=False, restore_follow=True):
@@ -767,6 +878,7 @@ class RPC:
                           "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
                           "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
                           "buddy-quest-items.state",
+                          "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist"):
             raise ConversationError("Unsupported chat method")
@@ -942,6 +1054,7 @@ class BuddyControls:
         self.previous_loot_items = self.previous_completed_trades = None
         self.reward_items = {"available": False, "items": []}
         self.quest_items, self.quest_items_available = {}, False
+        self.inventory, self.inventory_names, self.inventory_session = {"available": False}, {}, ""
 
     def refresh(self):
         try:
@@ -1015,6 +1128,28 @@ class BuddyControls:
                 except ConversationError:
                     setattr(self, name + "_available", False)
         self.events = self.events[-8:]
+        try:
+            raw = self.rpc.call("buddy-inventory.state", {})
+            inventory = inventory_context(raw, self.character_guid)
+            if inventory["sessionId"] != self.inventory_session:
+                self.inventory_names, self.inventory_session = {}, inventory["sessionId"]
+            missing = list(dict.fromkeys(row["entry"] for row in inventory.get("items", [])
+                                       if row.get("metadataKnown") and row["entry"] not in self.inventory_names))[:6]
+            if missing:
+                try:
+                    reply = self.rpc.call("buddy-trade.lookup_items", {"itemIds": missing})
+                    rows = reply.get("items", [])
+                    if reply.get("sessionId") == self.inventory_session and isinstance(rows, list) and len(rows) <= 6:
+                        for row in rows:
+                            if isinstance(row, dict) and row.get("available") is True and integer(row.get("itemId", 0)) in missing:
+                                name = plain_text(row.get("name"), 120)
+                                if len(self.inventory_names) < 128:
+                                    self.inventory_names[integer(row["itemId"])] = name
+                except ConversationError:
+                    pass
+            self.inventory = inventory_context(raw, self.character_guid, self.inventory_names)
+        except ConversationError:
+            self.inventory = {"available": False}
 
     def context(self):
         goal = quest_sync_snapshot(self.character_guid)
@@ -1038,6 +1173,8 @@ class BuddyControls:
                  "area_quests": area,
                  "quest_task": task,
                  "quest_execution": self.quest_items if self.quest_items_available else {"available": False},
+                 "inventory": self.inventory,
+                 "town_upkeep": party_town_snapshot(self.character_guid),
                  "party_maintenance": party_maintenance_snapshot(self.character_guid),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
@@ -1533,6 +1670,7 @@ class BuddyControls:
                     if initial.get("stopRequested") is True or standing.get("stopRequested") is True
                     else "I don't see an active matching quest-sync routine to stop.")
         if action in ("FOLLOW", "STOP_FOLLOWING"):
+            party_town_snapshot(self.character_guid, revoke_follow=True)
             area_quest_snapshot(self.character_guid, stop=True, restore_follow=False)
             quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None), stop=True, restore_follow=False)
         try:
