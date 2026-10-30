@@ -1831,8 +1831,12 @@ type SnapshotResponse struct {
 	// and the fixed owner. Public pose/vitals/flags/class/level only: no private
 	// equipment, inventory, skills or quest state. No party membership is inferred.
 	NearbyPlayers []*PlayerState `protobuf:"bytes,38,rep,name=nearby_players,json=nearbyPlayers,proto3" json:"nearby_players,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// At most64 actual present cached NPCs with observed TRAINER(0x10),
+	// independent of nearby_creatures truncation. Ordered by observed self
+	// distance; no trainer type, range, availability or interaction is inferred.
+	TrainerCreatures []*CreatureState `protobuf:"bytes,40,rep,name=trainer_creatures,json=trainerCreatures,proto3" json:"trainer_creatures,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -2131,6 +2135,13 @@ func (x *SnapshotResponse) GetNearbyPlayers() []*PlayerState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetTrainerCreatures() []*CreatureState {
+	if x != nil {
+		return x.TrainerCreatures
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -2349,7 +2360,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xc6\x12\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x9a\x13\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -2392,7 +2403,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x12inventory_revision\x18# \x01(\x04R\x11inventoryRevision\x12K\n" +
 	"\x0einventory_bags\x18$ \x03(\v2$.warcraftbuddy.world.v1.InventoryBagR\rinventoryBags\x12R\n" +
 	"\x11skinnable_corpses\x18% \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10skinnableCorpses\x12J\n" +
-	"\x0enearby_players\x18& \x03(\v2#.warcraftbuddy.world.v1.PlayerStateR\rnearbyPlayers2\xb0\x01\n" +
+	"\x0enearby_players\x18& \x03(\v2#.warcraftbuddy.world.v1.PlayerStateR\rnearbyPlayers\x12R\n" +
+	"\x11trainer_creatures\x18( \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10trainerCreatures2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -2450,15 +2462,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	8,  // 20: warcraftbuddy.world.v1.SnapshotResponse.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
 	4,  // 21: warcraftbuddy.world.v1.SnapshotResponse.skinnable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
 	0,  // 22: warcraftbuddy.world.v1.SnapshotResponse.nearby_players:type_name -> warcraftbuddy.world.v1.PlayerState
-	2,  // 23: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	11, // 24: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	10, // 25: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	12, // 26: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	25, // [25:27] is the sub-list for method output_type
-	23, // [23:25] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	4,  // 23: warcraftbuddy.world.v1.SnapshotResponse.trainer_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 24: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	11, // 25: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	10, // 26: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	12, // 27: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	26, // [26:28] is the sub-list for method output_type
+	24, // [24:26] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

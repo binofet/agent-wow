@@ -101,10 +101,17 @@ func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*trainingv1.S
 	defer s.mu.Unlock()
 	return s.snapshotLocked(), nil
 }
-func (s *Service) observations(ctx context.Context) (*worldv1.SnapshotResponse, *actionsv1.State, error) {
+func (s *Service) observations(ctx context.Context, selected ...uint64) (*worldv1.SnapshotResponse, *actionsv1.State, error) {
 	w, a := &worldv1.SnapshotResponse{}, &actionsv1.State{}
-	if e := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); e != nil {
+	request := &worldv1.SnapshotRequest{}
+	if len(selected) == 1 {
+		request.CreatureGuid = selected[0]
+	}
+	if e := s.invoke(ctx, "buddy-world", "snapshot", request, w); e != nil {
 		return nil, nil, e
+	}
+	if request.CreatureGuid != 0 && w.RequestedCreature != nil && w.RequestedCreature.Guid != request.CreatureGuid {
+		return nil, nil, status.Error(codes.FailedPrecondition, "requested trainer observation differs from selected NPC")
 	}
 	if w.Self == nil || w.Self.Guid != s.selfGUID {
 		return nil, nil, status.Error(codes.FailedPrecondition, "world belongs to another character")
@@ -122,13 +129,13 @@ func finite(n float32) bool {
 	return !math.IsNaN(float64(n)) && !math.IsInf(float64(n), 0) && math.Abs(float64(n)) <= 40000
 }
 func trainers(w *worldv1.SnapshotResponse) ([]*worldv1.CreatureState, error) {
-	if len(w.NearbyCreatures) > 32 || len(w.QuestGivers) > 64 {
+	if w == nil || len(w.NearbyCreatures) > 32 || len(w.QuestGivers) > 64 || len(w.TrainerCreatures) > 64 || len(w.RequestedCreatures) > 32 {
 		return nil, status.Error(codes.FailedPrecondition, "creature observations exceed bound")
 	}
 	by := map[uint64]*worldv1.CreatureState{}
-	for _, view := range [][]*worldv1.CreatureState{w.NearbyCreatures, w.QuestGivers, {w.OwnerTarget}} {
+	for _, view := range [][]*worldv1.CreatureState{w.NearbyCreatures, w.QuestGivers, w.TrainerCreatures, w.RequestedCreatures, {w.OwnerTarget, w.RequestedCreature}} {
 		for _, c := range view {
-			if c == nil || c.NpcFlags&0x10 == 0 {
+			if c == nil {
 				continue
 			}
 			if old := by[c.Guid]; old != nil && !proto.Equal(old, c) {
@@ -139,7 +146,9 @@ func trainers(w *worldv1.SnapshotResponse) ([]*worldv1.CreatureState, error) {
 	}
 	rows := make([]*worldv1.CreatureState, 0, len(by))
 	for _, c := range by {
-		rows = append(rows, c)
+		if c.NpcFlags&0x10 != 0 {
+			rows = append(rows, c)
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Guid < rows[j].Guid })
 	return rows, nil
@@ -213,6 +222,21 @@ func (s *Service) discover(ctx context.Context, kind uint32) (*trainingv1.Discov
 		}
 		out.Nearby = append(out.Nearby, r)
 	}
+	// Preserve the existing consumer bound while selecting against the current
+	// stopped client estimate, rather than an old server movement baseline.
+	sort.Slice(out.Nearby, func(i, j int) bool {
+		a, b := out.Nearby[i], out.Nearby[j]
+		if a.DistanceKnown != b.DistanceKnown {
+			return a.DistanceKnown
+		}
+		if a.Distance != b.Distance {
+			return a.Distance < b.Distance
+		}
+		return a.Creature.Guid < b.Creature.Guid
+	})
+	if len(out.Nearby) > 97 {
+		out.Nearby = out.Nearby[:97]
+	}
 	return out, nil
 }
 func (s *Service) begin(session string) error {
@@ -257,7 +281,7 @@ func (s *Service) gate(ctx context.Context, guid uint64) error {
 	return s.typedGate(ctx, guid, 0)
 }
 func (s *Service) typedGate(ctx context.Context, guid uint64, kind uint32) error {
-	w, a, e := s.observations(ctx)
+	w, a, e := s.observations(ctx, guid)
 	if e != nil {
 		return e
 	}

@@ -245,6 +245,9 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 			continue
 		}
 		r.NearbyCreatures = append(r.NearbyCreatures, creatureSnapshot(p, s, now))
+		if p.known[unitNPCFlags] && p.fields[unitNPCFlags]&0x10 != 0 {
+			r.TrainerCreatures = append(r.TrainerCreatures, creatureSnapshot(p, s, now))
+		}
 		if p.known[unitNPCFlags] && p.fields[unitNPCFlags]&2 != 0 {
 			r.QuestGivers = append(r.QuestGivers, creatureSnapshot(p, s, now))
 		}
@@ -268,6 +271,19 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		}
 		return a.Guid < b.Guid
 	})
+	sort.Slice(r.TrainerCreatures, func(i, j int) bool {
+		a, b := r.TrainerCreatures[i], r.TrainerCreatures[j]
+		if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
+			return a.DistanceToSelfObservedKnown
+		}
+		if a.DistanceToSelfObserved != b.DistanceToSelfObserved {
+			return a.DistanceToSelfObserved < b.DistanceToSelfObserved
+		}
+		return a.Guid < b.Guid
+	})
+	if len(r.TrainerCreatures) > maxCreatureResults {
+		r.TrainerCreatures = r.TrainerCreatures[:maxCreatureResults]
+	}
 	if len(r.NearbyCreatures) > 32 {
 		r.NearbyCreatures = r.NearbyCreatures[:32]
 	}

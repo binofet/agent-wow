@@ -293,6 +293,10 @@ message SnapshotResponse {
   // and the fixed owner. Public pose/vitals/flags/class/level only: no private
   // equipment, inventory, skills or quest state. No party membership is inferred.
   repeated PlayerState nearby_players = 38;
+  // At most64 actual present cached NPCs with observed TRAINER(0x10),
+  // independent of nearby_creatures truncation. Ordered by observed self
+  // distance; no trainer type, range, availability or interaction is inferred.
+  repeated CreatureState trainer_creatures = 40;
 }
 
 service BuddyWorld {
