@@ -23,9 +23,9 @@ func PlanInteractionContext(ctx context.Context, dataDir string, mapID uint32, s
 
 // PlanInteractionWith adapts an existing trusted ground planner. Controllers
 // can retain their normal planner injection without adding a raw-route RPC.
-// All attempts share one 250ms deadline and at most24 total goal queries.
+// All attempts share one second and at most24 total goal queries.
 func PlanInteractionWith(ctx context.Context, start, npc Point, plan func(context.Context, Point, Point) ([]Point, error)) ([]Point, error) {
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if !worldPoint(start) || !worldPoint(npc) || plan == nil {
 		return nil, errors.New("interaction navigation requires finite world points and a ground planner")

@@ -17,7 +17,7 @@ func TestInteractionStandoffUsesOneDeadlineObservedZAndBoundedGroundGoal(t *test
 	path, err := PlanInteractionWith(context.Background(), a, npc, func(ctx context.Context, from, goal Point) ([]Point, error) {
 		calls++
 		d, ok := ctx.Deadline()
-		if !ok || time.Until(d) > 250*time.Millisecond || !deadline.IsZero() && !d.Equal(deadline) {
+		if !ok || time.Until(d) > time.Second || !deadline.IsZero() && !d.Equal(deadline) {
 			t.Fatal("candidate reset or omitted shared deadline")
 		}
 		deadline = d

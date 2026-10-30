@@ -144,7 +144,7 @@ func init() { currentMapPlanners.gate <- struct{}{} }
 // At most two map/window planners are cached, each with a 24MiB encoded-mesh
 // budget, nine terrain/spawn grids and a 32MiB decoded collision-model LRU.
 func PlanMapContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) (points []Point, err error) {
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	defer func() {
 		if recover() != nil {
