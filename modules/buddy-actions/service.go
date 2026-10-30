@@ -75,6 +75,7 @@ type Service struct {
 	planPath                                                 func(context.Context, string, position, position) ([]position, error)
 	planMapPath                                              func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                                        func(context.Context, string, position, position) ([]position, error)
+	planColdridge182Path                                     func(context.Context, string, position, position) ([]position, error)
 	practiceUntil                                            time.Time
 	practiceRoute                                            []position
 	practiceRouteIndex                                       int
@@ -91,7 +92,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planColdridgePath: planColdridgeNavigation}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
 }
 
 // NewIndependentService keeps self-scoped actions available without granting

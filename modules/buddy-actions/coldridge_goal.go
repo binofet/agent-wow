@@ -12,7 +12,7 @@ type coldridgePracticeGoal struct {
 }
 
 func selectColdridgePracticeGoal(w *worldv1.SnapshotResponse, selfGUID uint64) (coldridgePracticeGoal, bool) {
-	for _, questID := range []uint32{179, 170, 183} {
+	for _, questID := range []uint32{179, 170, 183, 182} {
 		goal := coldridgePracticeGoal{questID: questID}
 		if _, needed := goal.observe(w, selfGUID); needed {
 			return goal, true
@@ -26,10 +26,10 @@ func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID ui
 		return false, false
 	}
 	g.needed = false
-	if g.questID != 179 && g.questID != 170 && g.questID != 183 || selfGUID == 0 || selfGUID>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+	if g.questID != 179 && g.questID != 170 && g.questID != 183 && g.questID != 182 || selfGUID == 0 || selfGUID>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != selfGUID || !w.Self.Present || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 || g.questID != 182 && w.Self.Level > 5 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
 		return false, false
 	}
-	if g.questID == 170 && w.Self.Level < 2 || g.questID == 183 && w.Self.Level < 3 {
+	if g.questID == 170 && w.Self.Level < 2 || g.questID == 183 && w.Self.Level < 3 || g.questID == 182 && (w.Self.Level < 4 || w.Self.Level > 6) {
 		return false, false
 	}
 	var slots [25]bool
@@ -46,6 +46,9 @@ func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID ui
 		if q.QuestId == 170 && !validColdridgeThreatCounts(q.ObjectiveCounts) || q.QuestId == 183 && !validColdridge183Counts(q.ObjectiveCounts) {
 			return false, false
 		}
+		if g.questID == 182 && q.QuestId == 182 && !validColdridge182Counts(q.ObjectiveCounts) {
+			return false, false
+		}
 		if q.QuestId == g.questID {
 			own = q
 		}
@@ -54,7 +57,7 @@ func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID ui
 		return false, false
 	}
 	needed = !own.Complete && own.State&1 == 0
-	if g.questID == 170 || g.questID == 183 {
+	if g.questID == 170 || g.questID == 183 || g.questID == 182 {
 		for i := range g.counts {
 			if own.ObjectiveCounts[i] < g.counts[i] {
 				return false, false
@@ -63,8 +66,10 @@ func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID ui
 		copy(g.counts[:], own.ObjectiveCounts)
 		if g.questID == 170 {
 			needed = needed && (g.counts[0] < 6 || g.counts[1] < 6)
-		} else {
+		} else if g.questID == 183 {
 			needed = needed && g.counts[0] < 12
+		} else {
+			needed = needed && g.counts[0] < 10
 		}
 	}
 	g.needed = needed
@@ -87,6 +92,10 @@ func validColdridge183Counts(counts []uint32) bool {
 	return len(counts) == 4 && counts[0] <= 12 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0
 }
 
+func validColdridge182Counts(counts []uint32) bool {
+	return len(counts) == 4 && counts[0] <= 10 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0
+}
+
 func (g coldridgePracticeGoal) targetNeeded(entry uint32) bool {
 	if !g.needed {
 		return false
@@ -100,11 +109,14 @@ func (g coldridgePracticeGoal) targetNeeded(entry uint32) bool {
 	if g.questID == 183 {
 		return entry == 708 && g.counts[0] < 12
 	}
+	if g.questID == 182 {
+		return entry == 706 && g.counts[0] < 10
+	}
 	return false
 }
 
 func (g coldridgePracticeGoal) supportsEntry(entry uint32) bool {
-	return g.questID == 179 && entry == 705 || g.questID == 170 && (entry == 707 || entry == 724) || g.questID == 183 && entry == 708
+	return g.questID == 179 && entry == 705 || g.questID == 170 && (entry == 707 || entry == 724) || g.questID == 183 && entry == 708 || g.questID == 182 && entry == 706
 }
 
 func (g coldridgePracticeGoal) creatureProfile() (level, maxHealth, faction uint32) {
@@ -115,6 +127,15 @@ func (g coldridgePracticeGoal) creatureProfile() (level, maxHealth, faction uint
 		return 3, 71, 189
 	}
 	return 0, 0, 0
+}
+
+// Saved public proof mekkatorque-coldridge-182-public-proof.json, SHA256
+// 84e76d3570162b8fabc05a98bd3cf8d7991293d3d433fb6d18a740cd628821bb,
+// binds quest182 objective0 to706x10 and records these two actual map0 profiles.
+// This structural matcher also accepts the retained profile on a corpse;
+// current health, alive/loot state, GUID, position and claims remain caller gates.
+func matches182Profile(c *worldv1.CreatureState) bool {
+	return c != nil && c.Entry == 706 && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.FactionTemplate == 190 && (c.Level == 3 && c.MaxHealth == 71 || c.Level == 4 && c.MaxHealth == 86)
 }
 
 // Local public-client receipts under data/autonomy/uther/roster establish the
@@ -141,5 +162,11 @@ func (g coldridgePracticeGoal) eligible(c *worldv1.CreatureState, self *worldv1.
 		return eligibleColdridgeWolf(c)
 	}
 	level, maxHealth, faction := g.creatureProfile()
+	if g.questID == 182 {
+		if !matches182Profile(c) {
+			return false
+		}
+		level, maxHealth, faction = c.Level, c.MaxHealth, c.FactionTemplate
+	}
 	return level != 0 && c != nil && g.supportsEntry(c.Entry) && c.Guid>>48 == 0xf130 && c.Guid&0xffffff != 0 && uint32(c.Guid>>24&0xffffff) == c.Entry && c.Present && c.MapKnown && c.MapId == 0 && c.LevelKnown && c.Level == level && c.HealthKnown && c.MaxHealth == maxHealth && c.Health > 0 && c.Health <= c.MaxHealth && c.AliveKnown && c.Alive && c.FactionTemplate == faction && c.NpcFlags == 0 && c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && self != nil && self.MapKnown && self.MapId == 0 && self.LevelKnown && self.Level >= c.Level
 }

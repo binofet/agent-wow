@@ -8,7 +8,7 @@ import (
 // This is read-only preflight for an own observed quest. It does not authorize
 // any corpse: every operation must select and retain a matched loot goal below.
 func ownColdridgeQuest(w *worldv1.SnapshotResponse, self uint64) bool {
-	for _, questID := range []uint32{179, 170, 183} {
+	for _, questID := range []uint32{179, 170, 183, 182} {
 		if _, ok := coldridgeLootQuest(w, self, questID); ok {
 			return true
 		}
@@ -28,7 +28,19 @@ type coldridgeLootGoal struct {
 }
 
 func coldridgeLootQuest(w *worldv1.SnapshotResponse, self uint64, questID uint32) (*worldv1.QuestLogEntry, bool) {
-	if questID != 179 && questID != 170 && questID != 183 || self == 0 || self>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.Present || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || questID == 170 && w.Self.Level < 2 || questID == 183 && w.Self.Level < 3 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+	if questID != 179 && questID != 170 && questID != 183 && questID != 182 || self == 0 || self>>48 != 0 || w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.Present || !w.Self.ClassKnown || w.Self.ClassId != 9 || !w.Self.LevelKnown || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
+		return nil, false
+	}
+	minLevel, maxLevel := uint32(1), uint32(5)
+	switch questID {
+	case 170:
+		minLevel = 2
+	case 183:
+		minLevel = 3
+	case 182:
+		minLevel, maxLevel = 4, 6
+	}
+	if w.Self.Level < minLevel || w.Self.Level > maxLevel {
 		return nil, false
 	}
 	var slots [25]bool
@@ -49,6 +61,10 @@ func coldridgeLootQuest(w *worldv1.SnapshotResponse, self uint64, questID uint32
 			return nil, false
 		}
 		if q.QuestId == questID {
+			// An unrelated182 row must not change legacy quest admission.
+			if questID == 182 && !validColdridge182LootCounts(q.ObjectiveCounts) {
+				return nil, false
+			}
 			own = q
 		}
 	}
@@ -71,18 +87,22 @@ func validColdridge183LootCounts(counts []uint32) bool {
 	return len(counts) == 4 && counts[0] <= 12 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0
 }
 
+func validColdridge182LootCounts(counts []uint32) bool {
+	return len(counts) == 4 && counts[0] <= 10 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0
+}
+
 func selectColdridgeLootGoal(w *worldv1.SnapshotResponse, self uint64, c *worldv1.CreatureState) (coldridgeLootGoal, bool) {
 	if c == nil {
 		return coldridgeLootGoal{}, false
 	}
-	for _, questID := range []uint32{179, 170, 183} {
+	for _, questID := range []uint32{179, 170, 183, 182} {
 		goal := coldridgeLootGoal{questID: questID, corpseGUID: c.Guid}
 		if !goal.matchesCorpse(c) {
 			continue
 		}
 		if q, ok := coldridgeLootQuest(w, self, questID); ok {
 			goal.positionRevision = w.Self.PositionRevision
-			if questID == 170 || questID == 183 {
+			if questID == 170 || questID == 183 || questID == 182 {
 				copy(goal.counts[:], q.ObjectiveCounts)
 			}
 			return goal, true
@@ -96,14 +116,28 @@ func (g *coldridgeLootGoal) context(w *worldv1.SnapshotResponse, p *actionsv1.Cl
 		return false
 	}
 	entry := uint32(g.corpseGUID >> 24 & 0xffffff)
-	if g.corpseGUID>>48 != 0xf130 || g.corpseGUID&0xffffff == 0 || g.questID == 179 && entry != 705 || g.questID == 170 && entry != 707 && entry != 724 || g.questID == 183 && entry != 708 {
+	if g.corpseGUID>>48 != 0xf130 || g.corpseGUID&0xffffff == 0 || g.questID == 179 && entry != 705 || g.questID == 170 && entry != 707 && entry != 724 || g.questID == 183 && entry != 708 || g.questID == 182 && entry != 706 {
 		return false
 	}
 	q, ok := coldridgeLootQuest(w, self, g.questID)
-	if !ok || w.Self.PositionRevision != g.positionRevision || !safeOwnQuestLootContext(w, p) || !coldridgePoint(w.Self.X, w.Self.Y, w.Self.Z) || !coldridgePoint(p.X, p.Y, p.Z) {
+	if !ok || w.Self.PositionRevision != g.positionRevision || !safeOwnQuestLootContext(w, p) || !g.baselineContainsPoint(w.Self.X, w.Self.Y, w.Self.Z) || !g.containsPoint(p.X, p.Y, p.Z) {
 		return false
 	}
-	if g.questID == 170 || g.questID == 183 {
+	if g.questID == 182 {
+		if len(w.LootableCorpses) > 64 {
+			return false
+		}
+		seen := false
+		for _, c := range w.LootableCorpses {
+			if c != nil && c.Guid == g.corpseGUID {
+				if seen || c.Present && !g.matchesCorpse(c) {
+					return false
+				}
+				seen = true
+			}
+		}
+	}
+	if g.questID == 170 || g.questID == 183 || g.questID == 182 {
 		for i := range g.counts {
 			if q.ObjectiveCounts[i] < g.counts[i] {
 				return false
@@ -144,6 +178,10 @@ func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 		if c.Entry != 708 || c.Level != 3 || c.MaxHealth != 71 || c.FactionTemplate != 189 {
 			return false
 		}
+	case 182:
+		if !coldridge182CorpseProfile(c) || !coldridge182PositionEvidenceWithin(c) {
+			return false
+		}
 	default:
 		return false
 	}
@@ -151,7 +189,28 @@ func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 		return false
 	}
 	x, y, z, known := corpsePosition(c)
-	return known && coldridgePoint(x, y, z)
+	return known && g.containsPoint(x, y, z)
+}
+
+// The actual public-client706 observations contain two exact profiles. Their
+// levels and maximum health values are paired, never independently combined.
+// Death, visibility, lootability and range remain the common caller's checks.
+func coldridge182CorpseProfile(c *worldv1.CreatureState) bool {
+	return c != nil && c.Entry == 706 && c.Guid>>48 == 0xf130 && c.Guid&0xffffff != 0 && uint32(c.Guid>>24&0xffffff) == 706 && c.MapKnown && c.MapId == 0 && c.LevelKnown && (c.Level == 3 && c.MaxHealth == 71 || c.Level == 4 && c.MaxHealth == 86) && c.FactionTemplate == 190
+}
+
+func (g coldridgeLootGoal) containsPoint(x, y, z float32) bool {
+	switch g.questID {
+	case 179, 170, 183:
+		return coldridgePoint(x, y, z)
+	case 182:
+		return coldridge182Point(x, y, z)
+	}
+	return false
+}
+
+func (g coldridgeLootGoal) baselineContainsPoint(x, y, z float32) bool {
+	return g.questID == 182 && coldridgePoint(x, y, z) || g.containsPoint(x, y, z)
 }
 
 func coldridgePoint(x, y, z float32) bool {
@@ -159,7 +218,16 @@ func coldridgePoint(x, y, z float32) bool {
 }
 
 func coldridgeQuestContext(w *worldv1.SnapshotResponse, p *actionsv1.ClientPosition, self uint64) bool {
-	return ownColdridgeQuest(w, self) && safeOwnQuestLootContext(w, p) && coldridgePoint(w.Self.X, w.Self.Y, w.Self.Z) && coldridgePoint(p.X, p.Y, p.Z)
+	if !safeOwnQuestLootContext(w, p) {
+		return false
+	}
+	for _, questID := range []uint32{179, 170, 183, 182} {
+		goal := coldridgeLootGoal{questID: questID}
+		if _, ok := coldridgeLootQuest(w, self, questID); ok && goal.baselineContainsPoint(w.Self.X, w.Self.Y, w.Self.Z) && goal.containsPoint(p.X, p.Y, p.Z) {
+			return true
+		}
+	}
+	return false
 }
 
 func coldridgeCorpse(c *worldv1.CreatureState) bool {

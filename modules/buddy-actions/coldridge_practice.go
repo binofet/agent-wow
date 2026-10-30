@@ -35,7 +35,15 @@ func ownColdridgeQuest(w *worldv1.SnapshotResponse, self uint64) (active, incomp
 }
 
 func planColdridgeNavigation(ctx context.Context, root string, from, to position) ([]position, error) {
-	points, err := buddynav.PlanRegionContext(ctx, root, 0, buddynav.RegionColdridge, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: to.x, Y: to.y, Z: to.z})
+	return planColdridgeRegion(ctx, root, buddynav.RegionColdridge, from, to)
+}
+
+func planColdridge182Navigation(ctx context.Context, root string, from, to position) ([]position, error) {
+	return planColdridgeRegion(ctx, root, buddynav.RegionColdridgeTrollCave, from, to)
+}
+
+func planColdridgeRegion(ctx context.Context, root string, region buddynav.Region, from, to position) ([]position, error) {
+	points, err := buddynav.PlanRegionContext(ctx, root, 0, region, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: to.x, Y: to.y, Z: to.z})
 	if err != nil {
 		return nil, err
 	}
@@ -47,12 +55,20 @@ func planColdridgeNavigation(ctx context.Context, root string, from, to position
 }
 
 func (s *Service) coldridgeNavigationPath(ctx context.Context, from, to position) ([]position, error) {
-	if s.navDataDir == "" || s.planColdridgePath == nil || !coldridge(from) || !coldridge(to) {
+	return s.coldridgeGoalNavigationPath(ctx, coldridgePracticeGoal{questID: 179}, from, to)
+}
+
+func (s *Service) coldridgeGoalNavigationPath(ctx context.Context, goal coldridgePracticeGoal, from, to position) ([]position, error) {
+	plan := s.planColdridgePath
+	if goal.questID == 182 {
+		plan = s.planColdridge182Path
+	}
+	if s.navDataDir == "" || plan == nil || !goal.contains(from) || !goal.contains(to) {
 		return nil, errors.New("Coldridge client navigation data and bounded endpoints required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
-	path, err := s.planColdridgePath(ctx, s.navDataDir, from, to)
+	path, err := plan(ctx, s.navDataDir, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +80,7 @@ func (s *Service) coldridgeNavigationPath(ctx context.Context, from, to position
 	}
 	length := distance(from, path[0])
 	for i, p := range path {
-		if !coldridge(p) {
+		if !goal.contains(p) {
 			return nil, errors.New("Coldridge route escaped sealed bounds")
 		}
 		if i > 0 {
@@ -91,8 +107,11 @@ func unclaimedColdridgePull(c *worldv1.CreatureState) bool {
 
 func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.SnapshotResponse) (*actionsv1.State, error) {
 	goal, incomplete := selectColdridgePracticeGoal(w, s.selfGUID)
-	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !coldridge(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
-		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock, knownShadowBolt and own supported incompletequest179,170 or183")
+	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !goal.baselineContains(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
+		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock (quest182 level4..6), knownShadowBolt and own supported incompletequest179,170,183 or182")
+	}
+	if goal.questID == 182 && (!s.refreshPositionLocked(w) || !goal.contains(s.pos)) {
+		return nil, status.Error(codes.FailedPrecondition, "quest182 practice requires a stopped client position in its verified troll area")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
@@ -103,6 +122,8 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 		s.state.PracticePhase = "waiting_for_safe_quest_170_pull"
 	} else if goal.questID == 183 {
 		s.state.PracticePhase = "waiting_for_safe_quest_183_pull"
+	} else if goal.questID == 182 {
+		s.state.PracticePhase = "waiting_for_safe_quest_182_pull"
 	}
 	s.practiceUntil, s.practiceQuestGoal = s.now().Add(10*time.Minute), true
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
@@ -113,6 +134,7 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 
 func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) {
 	self := w.Self
+	goal := &s.coldridgeGoal
 	// A new authoritative baseline invalidates any route and pull selected from
 	// the old client estimate. Rebase before stopping so STOP cannot undo it.
 	if s.posKnown && self.PositionRevision != s.positionRevision {
@@ -120,12 +142,11 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.stopPracticeLocked(ctx, "coldridge_authoritative_position_changed")
 		return
 	}
-	if safePracticeCharacter(w, s.selfGUID) != "" || !self.ClassKnown || self.ClassId != 9 || !self.LevelKnown || self.Level < 1 || !self.HealthKnown || !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || !coldridge(playerPosition(self)) || !s.refreshPositionLocked(w) || !coldridge(s.pos) || s.state.MotionUnconfirmed || self.UnitFlags&0x2000 != 0 || !s.state.KnownShadowBolt {
+	if safePracticeCharacter(w, s.selfGUID) != "" || !self.ClassKnown || self.ClassId != 9 || !self.LevelKnown || self.Level < 1 || !self.HealthKnown || !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || !goal.baselineContains(playerPosition(self)) || !s.refreshPositionLocked(w) || !goal.contains(s.pos) || s.state.MotionUnconfirmed || self.UnitFlags&0x2000 != 0 || !s.state.KnownShadowBolt {
 		s.stopPracticeLocked(ctx, "coldridge_own_state_unknown_or_unsafe")
 		return
 	}
 	target := practiceTargetObservation(w, s.practiceTarget)
-	goal := &s.coldridgeGoal
 	active, needed := goal.observe(w, s.selfGUID)
 	selectedObjectiveComplete := target != nil && !goal.targetNeeded(target.Entry)
 	finishing := active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
@@ -135,6 +156,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			why = "quest_170_complete_absent_or_invalid"
 		} else if goal.questID == 183 {
 			why = "quest_183_complete_absent_or_invalid"
+		} else if goal.questID == 182 {
+			why = "quest_182_complete_absent_or_invalid"
 		}
 		s.stopPracticeLocked(ctx, why)
 		return
@@ -194,11 +217,11 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 		best := float64(120)
 		for _, c := range w.NearbyCreatures {
-			if !goal.eligible(c, self) || !goal.targetNeeded(c.Entry) || !unclaimedColdridgePull(c) {
+			if !goal.eligible(c, self) || !goal.positionEvidenceWithin(c) || !goal.targetNeeded(c.Entry) || !unclaimedColdridgePull(c) {
 				continue
 			}
 			p, known, _ := creaturePosition(c)
-			if d := distance(s.pos, p); known && coldridge(p) && d < best {
+			if d := distance(s.pos, p); known && goal.contains(p) && d < best {
 				best, target = d, c
 			}
 		}
@@ -208,6 +231,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 				s.state.PracticePhase = "waiting_for_observed_required_quest_170_target"
 			} else if goal.questID == 183 {
 				s.state.PracticePhase = "waiting_for_observed_required_quest_183_target"
+			} else if goal.questID == 182 {
+				s.state.PracticePhase = "waiting_for_observed_required_quest_182_target"
 			}
 			return
 		}
@@ -219,13 +244,15 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	p, known, _ := creaturePosition(target)
-	if !known || !coldridge(p) {
+	if !known || !goal.contains(p) || !goal.positionEvidenceWithin(target) {
 		s.stopLocked(ctx)
 		s.state.PracticePhase = "waiting_for_observed_wolf_position"
 		if goal.questID == 170 {
 			s.state.PracticePhase = "waiting_for_observed_quest_170_target_position"
 		} else if goal.questID == 183 {
 			s.state.PracticePhase = "waiting_for_observed_quest_183_target_position"
+		} else if goal.questID == 182 {
+			s.state.PracticePhase = "waiting_for_observed_quest_182_target_position"
 		}
 		return
 	}
@@ -242,7 +269,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 				s.stopPracticeLocked(ctx, "coldridge_target_moved_beyond_route_budget")
 				return
 			}
-			path, err := s.coldridgeNavigationPath(ctx, s.pos, p)
+			path, err := s.coldridgeGoalNavigationPath(ctx, *goal, s.pos, p)
 			if err != nil {
 				s.state.NavAvailable, s.state.NavReason = false, navigationDiagnostic(err, s.navDataDir)
 				s.stopPracticeLocked(ctx, "navigation_unavailable")
@@ -258,7 +285,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 	}
 	if distance(s.pos, p) > 25 || s.practiceRoute != nil && (routeRemaining(s.pos, s.practiceRoute, s.practiceRouteIndex) > 25 || !directRemainingRoute(s.pos, p, s.practiceRoute, s.practiceRouteIndex)) {
-		if s.practiceRouteIndex >= len(s.practiceRoute) || !s.navigationStepWithinLocked(ctx, s.practiceRoute, &s.practiceRouteIndex, coldridge) {
+		if s.practiceRouteIndex >= len(s.practiceRoute) || !s.navigationStepWithinLocked(ctx, s.practiceRoute, &s.practiceRouteIndex, goal.contains) {
 			s.stopPracticeLocked(ctx, "navigation_step_failed")
 			return
 		}
@@ -267,6 +294,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			s.state.PracticePhase = "approaching_observed_quest_170_target_on_navmesh"
 		} else if goal.questID == 183 {
 			s.state.PracticePhase = "approaching_observed_quest_183_target_on_navmesh"
+		} else if goal.questID == 182 {
+			s.state.PracticePhase = "approaching_observed_quest_182_target_on_navmesh"
 		}
 		return
 	}
@@ -302,6 +331,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.state.PracticePhase = "fighting_observed_quest_170_target"
 	} else if goal.questID == 183 {
 		s.state.PracticePhase = "fighting_observed_quest_183_target"
+	} else if goal.questID == 182 {
+		s.state.PracticePhase = "fighting_observed_quest_182_target"
 	}
 	if finishing {
 		s.state.PracticePhase = "finishing_current_fight_to_goal"
@@ -321,13 +352,13 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 		return reject("own_observations_unavailable_or_unsafe")
 	}
 	self := w.Self
-	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision || !coldridge(playerPosition(self)) || !coldridge(s.pos) || s.state.MotionUnconfirmed {
+	goal := &s.coldridgeGoal
+	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision || !goal.baselineContains(playerPosition(self)) || !goal.contains(s.pos) || s.state.MotionUnconfirmed {
 		return reject("physical_baseline_changed")
 	}
 	if !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || self.UnitFlags&0x2000 != 0 || uint64(self.Power) < manaBudget(self, uint64(rank.manaPercent)) {
 		return reject("own_combat_prerequisites_changed")
 	}
-	goal := &s.coldridgeGoal
 	active, needed := goal.observe(w, s.selfGUID)
 	if !active {
 		return reject("bound_goal_absent_or_invalid")
@@ -354,7 +385,7 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 		}
 	}
 	position, known, _ := creaturePosition(target)
-	if !known || !coldridge(position) || distance(s.pos, position) > 25 || distance(aimed, position) > 2 {
+	if !known || !goal.contains(position) || !goal.positionEvidenceWithin(target) || distance(s.pos, position) > 25 || distance(aimed, position) > 2 {
 		// A roaming target may need another bounded route/facing cycle. This
 		// grants no pull authority and never reuses the earlier facing now.
 		s.practiceRoute = nil
