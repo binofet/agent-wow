@@ -90,6 +90,14 @@ message SkinningTarget {
   string reason = 4;
   uint32 required_skill = 5;
 }
+message HerbTarget {
+  warcraftbuddy.world.v1.GameObjectState object = 1;
+  bool ready = 2;
+  string reason = 3;
+  uint32 required_skill = 4;
+  uint32 lock_id = 5;
+}
+message HerbInspectRequest { string session_id = 1; uint64 target_guid = 2; }
 message State {
   string session_id = 1;
   uint64 revision = 2;
@@ -110,6 +118,7 @@ message State {
   bool inventory_known = 17;
   uint64 inventory_revision = 18;
   repeated SkinningTarget skinning_targets = 19;
+  repeated HerbTarget herb_targets = 20;
 }
 message AttemptRequest {
   string session_id = 1;
@@ -121,13 +130,14 @@ message AttemptRequest {
   uint64 expected_skills_revision = 6;
   uint64 expected_backpack_revision = 7;
   uint64 expected_inventory_revision = 8;
-  // Required only for the fixed Skinning8613 path. Other spells reject these.
+  // Required only for the fixed Skinning8613 and Herbalism2366 paths.
   uint64 target_guid = 9;
   uint64 target_position_revision = 10;
 }
 message CancelRequest { string session_id = 1; string operation_id = 2; }
 service BuddyProfessions {
   rpc GetState(google.protobuf.Empty) returns (State);
+  rpc InspectHerb(HerbInspectRequest) returns (State);
   rpc Attempt(AttemptRequest) returns (State);
   rpc Cancel(CancelRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);

@@ -43,6 +43,7 @@ var starterRecipes = []recipeSpec{
 	// Dispatch also requires the actual own form, idle channel and equipped pole.
 	{skill: 356, spell: 7620, itemClass: 2, subclassMask: 1 << 20, minimumSkill: 1, stanceNotMask: 2, channelDurationMs: 17000, channelDurationKnown: true, name: "Fishing", requirementsVerified: true},
 	{skill: 393, spell: 8613, itemClass: -1, minimumSkill: 1, castTimeMs: 1500, name: "Skinning", requirementsVerified: true, channelDurationKnown: true},
+	{skill: 182, spell: 2366, itemClass: -1, minimumSkill: 1, castTimeMs: 3000, name: "Herbalism", requirementsVerified: true, channelDurationKnown: true},
 }
 
 func recipeForSpell(spell uint32) (recipeSpec, bool) {

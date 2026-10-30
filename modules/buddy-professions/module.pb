@@ -293,7 +293,7 @@ selfSkills@
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-Ê'
+‘+
 +modules/buddy-professions/professions.protowarcraftbuddy.professions.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"P
 Skill
 skill_id (RskillId
@@ -375,7 +375,19 @@ targetGuid8
 fully_looted_observed (RfullyLootedObserved
 ready (Rready
 reason (	Rreason%
-required_skill (RrequiredSkill"Á
+required_skill (RrequiredSkill"»
+
+HerbTarget?
+object (2'.warcraftbuddy.world.v1.GameObjectStateRobject
+ready (Rready
+reason (	Rreason%
+required_skill (RrequiredSkill
+lock_id (RlockId"T
+HerbInspectRequest
+
+session_id (	R	sessionId
+target_guid (R
+targetGuid"Ž
 State
 
 session_id (	R	sessionId
@@ -399,7 +411,8 @@ limitation (	R
 limitation'
 inventory_known (RinventoryKnown-
 inventory_revision (RinventoryRevisionW
-skinning_targets (2,.warcraftbuddy.professions.v1.SkinningTargetRskinningTargets"Ä
+skinning_targets (2,.warcraftbuddy.professions.v1.SkinningTargetRskinningTargetsK
+herb_targets (2(.warcraftbuddy.professions.v1.HerbTargetRherbTargets"Ä
 AttemptRequest
 
 session_id (	R	sessionId
@@ -431,9 +444,10 @@ session_id (	R	sessionId!
 SERVER_REJECTED
 	CANCELLED	
 OUTCOME_UNCONFIRMED
-2š
+2€
 BuddyProfessionsG
-GetState.google.protobuf.Empty#.warcraftbuddy.professions.v1.State\
+GetState.google.protobuf.Empty#.warcraftbuddy.professions.v1.Stated
+InspectHerb0.warcraftbuddy.professions.v1.HerbInspectRequest#.warcraftbuddy.professions.v1.State\
 Attempt,.warcraftbuddy.professions.v1.AttemptRequest#.warcraftbuddy.professions.v1.StateZ
 Cancel+.warcraftbuddy.professions.v1.CancelRequest#.warcraftbuddy.professions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>

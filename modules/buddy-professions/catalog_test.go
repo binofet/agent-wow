@@ -41,7 +41,7 @@ func TestCatalogDoesNotTreatTrainingWrappersOrOtherRanksAsStarterRecipes(t *test
 		}
 		seen[recipe.spell] = true
 	}
-	if len(seen) != 5 {
+	if len(seen) != 6 {
 		t.Fatal("starter scope expanded without validation", seen)
 	}
 	for _, id := range []uint32{0, 3273, 3279, 2550, 2551, 7733, 7731, 3276, 585, 0xffffffff} {

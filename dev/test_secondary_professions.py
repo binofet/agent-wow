@@ -19,7 +19,7 @@ URL = "http://127.0.0.1:8192/rpc"
 
 def initial_state():
     return {"sessionId": "body1", "selfGuid": "7", "revision": "5", "skillsKnown": True,
-            "skillsRevision": "8", "skills": [{"skillId": skill, "rank": 1, "maximum": 75} for skill in (129, 185, 356, 393)],
+            "skillsRevision": "8", "skills": [{"skillId": skill, "rank": 1, "maximum": 75} for skill in (129, 185, 356, 393, 182)],
             "spellsKnown": True, "backpackKnown": True, "backpackRevision": "11",
             "inventoryKnown": True, "inventoryRevision": "23", "recipes": [
                 {"skillId": skill, "spellId": spell, "known": True, "ready": True, "requirementsVerified": True}
@@ -250,17 +250,19 @@ class SecondaryProfessionTests(unittest.TestCase):
                 self.practice(maximum=3)
                 self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
 
-    def test_fifth_skinning_recipe_is_readable_but_never_selected_for_practice(self):
+    def test_gathering_recipes_are_readable_but_never_selected_for_practice(self):
         state = m.checked_state(initial_state(), 7)
-        self.assertEqual(len(state["recipes"]), 5)
+        self.assertEqual(len(state["recipes"]), 6)
         self.assertEqual(next(r for r in state["recipes"] if r["spellId"] == 8613)["skillId"], 393)
-        for recipe in self.http.state["recipes"]:
-            recipe["ready"] = recipe["spellId"] == 8613
-        self.assertEqual(self.practice(maximum=3, skills=(129, 185, 356, 393))["phase"], "blocked")
-        self.assertEqual(self.practice(maximum=3, skills=(393,))["phase"], "blocked")
-        self.assertNotIn("buddy-professions.attempt", self.http.methods())
-        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
-            m.main(["practice", "--rpc-url", URL, "--character-guid", "7", "--skill", "393"])
+        for spell, skill in ((8613, 393), (2366, 182)):
+            self.assertEqual(next(r for r in state["recipes"] if r["spellId"] == spell)["skillId"], skill)
+            for recipe in self.http.state["recipes"]:
+                recipe["ready"] = recipe["spellId"] == spell
+            self.assertEqual(self.practice(maximum=3, skills=(129, 185, 356, 393, 182))["phase"], "blocked")
+            self.assertEqual(self.practice(maximum=3, skills=(skill,))["phase"], "blocked")
+            self.assertNotIn("buddy-professions.attempt", self.http.methods())
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                m.main(["practice", "--rpc-url", URL, "--character-guid", "7", "--skill", str(skill)])
 
     def test_empty_fishing_completes_without_inventory_delta_only_with_exact_actual_proof(self):
         def empty_window(http):

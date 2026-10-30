@@ -121,6 +121,10 @@ func (s *Service) setReason(op *operation, reason string, status professionsv1.A
 }
 
 func (s *Service) run(op *operation) {
+	if op.spec.skill == 182 {
+		s.runHerb(op)
+		return
+	}
 	if op.spec.skill == 393 {
 		s.runSkin(op)
 		return
@@ -523,6 +527,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.state.Revision++
 		return &emptypb.Empty{}, nil
 	case opcode.SMSGGameobjectQueryResponse:
+		if s.onHerbTemplatePacketLocked(packet) {
+			return &emptypb.Empty{}, nil
+		}
 		if len(packet.Payload) < 4 {
 			return &emptypb.Empty{}, nil
 		}
@@ -544,6 +551,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	s.observeCorpseLootLocked(packet)
 	op := s.active
+	if op != nil && op.spec.skill == 182 {
+		s.onHerbPacketLocked(op, packet)
+		return &emptypb.Empty{}, nil
+	}
 	if op != nil && op.spec.skill == 393 {
 		s.onSkinPacketLocked(op, packet)
 		return &emptypb.Empty{}, nil

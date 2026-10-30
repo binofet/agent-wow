@@ -274,7 +274,7 @@ func (s *Service) skinWrite(ctx context.Context, op *operation, code uint32, pay
 		return false, err
 	}
 	s.mu.Lock()
-	valid := s.active == op && !s.closed && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision
+	valid := s.active == op && !op.windowInvalid && !terminalStatus(op.receipt.Status) && !s.closed && call.Err() == nil && op.ctx.Err() == nil && op.baseline.self.PositionRevision > 0 && v.self.PositionRevision == op.baseline.self.PositionRevision && v.self.MapId == op.baseline.self.MapId && v.inventoryRevision >= s.state.InventoryRevision && v.skillsRevision >= s.state.SkillsRevision
 	if valid {
 		s.view, s.viewKnown = v, true
 		s.state.InventoryKnown, s.state.InventoryRevision = true, v.inventoryRevision
@@ -485,6 +485,9 @@ func (s *Service) onSkinPacketLocked(op *operation, p *modv1.WorldPacket) {
 	if !op.castReserved {
 		return
 	}
+	if op.windowInvalid && (p.Opcode == opcode.SMSGLootRemoved || p.Opcode == opcode.SMSGItemPushResult || p.Opcode == opcode.SMSGLootReleaseResponse) {
+		return
+	}
 	r := op.receipt
 	switch p.Opcode {
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo, opcode.SMSGCastFailed, opcode.SMSGSpellFailure:
@@ -514,9 +517,28 @@ func (s *Service) onSkinPacketLocked(op *operation, p *modv1.WorldPacket) {
 			}
 		}
 	case opcode.SMSGLootResponse:
+		// A slot-only store/release cannot retain authority after a newer
+		// foreign, repeated or unparseable current-window observation.
+		invalidate := func() {
+			op.windowInvalid = true
+			r.CleanupUnconfirmed = true
+			if !terminalStatus(r.Status) {
+				r.Status = professionsv1.AttemptStatus_OUTCOME_UNCONFIRMED
+				r.Reason = "skinning_current_loot_window_changed_or_unparseable_no_further_window_writes"
+			}
+			s.state.Revision++
+		}
+		if op.windowInvalid {
+			return
+		}
 		if len(p.Payload) >= 10 && binary.LittleEndian.Uint64(p.Payload) == r.TargetGuid && p.Payload[8] == 0 {
 			if len(p.Payload) != 10 {
 				s.state.MalformedPackets++
+				invalidate()
+				return
+			}
+			if op.window != nil {
+				invalidate()
 				return
 			}
 			if !terminalStatus(r.Status) {
@@ -528,9 +550,11 @@ func (s *Service) onSkinPacketLocked(op *operation, p *modv1.WorldPacket) {
 		w, err := decodeSkinLoot(p.Payload)
 		if err != nil {
 			s.state.MalformedPackets++
+			invalidate()
 			return
 		}
 		if w.guid != r.TargetGuid || op.window != nil {
+			invalidate()
 			return
 		}
 		op.window = &w
@@ -609,7 +633,7 @@ func (s *Service) skinCleanupWrite(ctx context.Context, op *operation, code uint
 		return err
 	}
 	s.mu.Lock()
-	valid := s.active == op
+	valid := s.active == op && (code != opcode.CMSGLootRelease || !op.windowInvalid && op.window != nil && op.window.guid == op.request.TargetGuid)
 	s.mu.Unlock()
 	if !valid {
 		return fail("skin_cleanup_operation_replaced")
@@ -625,7 +649,7 @@ func (s *Service) skinCleanupWrite(ctx context.Context, op *operation, code uint
 
 func skinCleanupPending(op *operation) bool {
 	r := op.receipt
-	return op.window != nil && !r.LootReleaseObserved || op.castReserved && !r.OwnGoObserved && r.FailureCode == 0 || op.castReserved && r.OwnGoObserved && op.window == nil && r.Status != professionsv1.AttemptStatus_SERVER_REJECTED
+	return op.windowInvalid || op.window != nil && !r.LootReleaseObserved || op.castReserved && !r.OwnGoObserved && r.FailureCode == 0 || op.castReserved && r.OwnGoObserved && op.window == nil && r.Status != professionsv1.AttemptStatus_SERVER_REJECTED
 }
 
 func (s *Service) finishSkin(op *operation) {
@@ -638,7 +662,7 @@ func (s *Service) finishSkin(op *operation) {
 	}
 	token := op.token
 	window := op.window != nil && !op.receipt.LootReleaseObserved
-	release := window && !op.releaseReserved
+	release := window && !op.windowInvalid && !op.releaseReserved
 	if release {
 		op.releaseReserved = true
 	}
@@ -659,7 +683,7 @@ func (s *Service) finishSkin(op *operation) {
 	until := time.Now().Add(1100 * time.Millisecond)
 	for time.Now().Before(until) {
 		s.mu.Lock()
-		late := op.window != nil && !op.receipt.LootReleaseObserved && !op.releaseReserved
+		late := op.window != nil && !op.windowInvalid && !op.receipt.LootReleaseObserved && !op.releaseReserved
 		if late {
 			op.releaseReserved = true
 		}

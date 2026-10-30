@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Finite own-character starter first aid, cooking, fishing and explicitly selected in-range skinning with known recipes, observed requirements and separate server, inventory and skill receipts
+description: Finite own-character starter first aid, cooking, fishing and explicitly selected in-range skinning and herbalism with known recipes, observed requirements and separate server, inventory and skill receipts
 requires: [buddy-world, buddy-actions, buddy-loot, buddy-trade]
 compose:
   file: compose.yaml
@@ -9,6 +9,7 @@ grpc:
   descriptor_set: module.pb
 rpc:
   state: /warcraftbuddy.professions.v1.BuddyProfessions/GetState
+  inspect_herb: /warcraftbuddy.professions.v1.BuddyProfessions/InspectHerb
   attempt: /warcraftbuddy.professions.v1.BuddyProfessions/Attempt
   cancel: /warcraftbuddy.professions.v1.BuddyProfessions/Cancel
 packets:
