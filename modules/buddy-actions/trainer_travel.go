@@ -22,6 +22,9 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 	if !s.ownsTrainerTravel(r) || s.interactionUntil.Sub(s.now()) < time.Second {
 		return nil, "trainer_travel_lease_changed_or_expiring"
 	}
+	if ctx.Err() != nil {
+		return nil, "trainer_travel_canceled_or_time_limit"
+	}
 	if s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.AutoAttacking {
 		return nil, "trainer_travel_motion_or_spell_unconfirmed"
 	}
@@ -75,6 +78,7 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	r = &actionsv1.ApproachQuestRequest{Token: r.Token, NpcGuid: r.NpcGuid}
 	s.mu.Lock()
 	s.expireInteractionLocked()
 	if !s.ownsTrainerTravel(r) || s.questApproaching {
@@ -82,6 +86,8 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 		return nil, status.Error(codes.FailedPrecondition, "exclusive owned training lease is required")
 	}
 	s.questApproaching, s.state.Traveling, s.state.TravelNpcGuid = true, true, r.NpcGuid
+	phase, moving := "trainer_travel_planning_client_navmesh", s.state.Moving
+	s.state.Reason = phase
 	s.mu.Unlock()
 	defer func() {
 		stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
@@ -91,16 +97,35 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 		if s.ownsTrainerTravel(r) {
 			s.stopLocked(stop)
 		}
-		s.questApproaching, s.state.Traveling = false, false
+		if s.ownsTrainerTravel(r) || s.state.InteractionOwner == "" {
+			s.state.Traveling = false
+		}
+		s.questApproaching = false
 		result = s.stateLocked()
 	}()
 	call, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s.mu.Lock()
-	target, reason := s.trainerTravelContextLocked(call, r)
+	if !s.ownsTrainerTravel(r) {
+		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
+		return nil, nil
+	}
+	var target *questTravelTarget
+	reason := ""
+	if s.state.Reason != phase || s.state.Moving != moving {
+		reason = "trainer_travel_interrupted_by_controller_change"
+	} else {
+		target, reason = s.trainerTravelContextLocked(call, r)
+	}
 	if reason != "" {
 		s.state.Reason = reason
 		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
 		return nil, nil
 	}
 	from, to, revision, baseRevision, root, mapID := s.pos, target.position, target.revision, s.positionRevision, s.navDataDir, s.posMap
@@ -113,6 +138,25 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	s.mu.Unlock()
 	path, planErr := s.interactionNavigationPath(call, root, mapID, from, to)
 	s.mu.Lock()
+	// A planner runs unlocked; a revoked lease or explicit stop must not
+	// publish old diagnostics or restart a movement frame that is already idle.
+	if !s.ownsTrainerTravel(r) {
+		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
+		return nil, nil
+	}
+	if call.Err() != nil {
+		s.state.Reason = "trainer_travel_canceled_or_time_limit"
+		s.mu.Unlock()
+		return nil, status.FromContextError(call.Err()).Err()
+	}
+	if s.state.Reason != phase || s.state.Moving != moving {
+		s.state.Reason = "trainer_travel_interrupted_by_controller_change"
+		s.mu.Unlock()
+		return nil, nil
+	}
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "trainer_travel_navigation_unavailable"
 		s.mu.Unlock()
@@ -120,14 +164,27 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 	}
 	s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
 	s.mu.Unlock()
-	index := 0
+	expected, index := from, 0
 	for step := 0; step < 150; step++ {
 		s.mu.Lock()
-		current, why := s.trainerTravelContextLocked(call, r)
+		if !s.ownsTrainerTravel(r) {
+			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
+			return nil, nil
+		}
+		var current *questTravelTarget
+		why := ""
+		if s.state.Reason != phase || s.state.Moving != moving {
+			why = "trainer_travel_interrupted_by_controller_change"
+		} else {
+			current, why = s.trainerTravelContextLocked(call, r)
+		}
 		if why == "" && s.posMap != mapID {
 			why = "trainer_travel_map_changed"
 		}
-		if why == "" && step == 0 && (s.positionRevision != baseRevision || distance(s.pos, from) > 0.05) {
+		if why == "" && (s.positionRevision != baseRevision || distance(s.pos, expected) > 0.05) {
 			why = "trainer_travel_position_changed_during_planning"
 		}
 		if why == "" && (current.revision != revision || current.position != to) {
@@ -142,26 +199,44 @@ func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestR
 		if why != "" {
 			s.state.Reason = why
 			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
 			return nil, nil
 		}
 		if !s.mapNavigationStepLocked(call, path, &index) {
 			s.state.Reason = "trainer_travel_step_or_transport_failed"
+			if call.Err() != nil {
+				s.state.Reason = "trainer_travel_canceled_or_time_limit"
+			}
 			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
 			return nil, nil
 		}
+		expected = s.pos
 		if distance(s.pos, to) <= 3 && routeRemaining(s.pos, path, index) <= 3 {
 			s.state.Reason = "trainer_travel_within_distance"
 			s.mu.Unlock()
 			return nil, nil
 		}
 		s.state.Reason = "trainer_travel_following_client_navmesh_estimate"
+		moving, phase = s.state.Moving, s.state.Reason
 		s.mu.Unlock()
 		if err := s.approachDelay(call, 200*time.Millisecond); err != nil {
+			s.mu.Lock()
+			if s.ownsTrainerTravel(r) {
+				s.state.Reason = "trainer_travel_canceled_or_time_limit"
+			}
+			s.mu.Unlock()
 			return nil, status.FromContextError(err).Err()
 		}
 	}
 	s.mu.Lock()
-	s.state.Reason = "trainer_travel_step_limit"
+	if s.ownsTrainerTravel(r) {
+		s.state.Reason = "trainer_travel_step_limit"
+	}
 	s.mu.Unlock()
 	return nil, nil
 }

@@ -39,6 +39,9 @@ func (s *Service) questTravelContextLocked(ctx context.Context, r *actionsv1.App
 	if !s.ownsQuestApproach(r) || s.interactionUntil.Sub(s.now()) < time.Second {
 		return nil, "quest_travel_lease_changed_or_expiring"
 	}
+	if ctx.Err() != nil {
+		return nil, "quest_travel_canceled_or_time_limit"
+	}
 	if s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.AutoAttacking {
 		return nil, "quest_travel_motion_or_spell_unconfirmed"
 	}
@@ -105,6 +108,8 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		return nil, status.Error(codes.FailedPrecondition, "exclusive quests lease is required")
 	}
 	s.questApproaching, s.state.Traveling, s.state.TravelNpcGuid = true, true, r.NpcGuid
+	phase, moving := "quest_travel_planning_client_navmesh", s.state.Moving
+	s.state.Reason = phase
 	s.mu.Unlock()
 	defer func() {
 		stop, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
@@ -114,16 +119,29 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		if s.ownsQuestApproach(r) {
 			s.stopLocked(stop)
 		}
-		s.questApproaching, s.state.Traveling = false, false
+		if s.ownsQuestApproach(r) || s.state.InteractionOwner == "" {
+			s.state.Traveling = false
+		}
+		s.questApproaching = false
 		result = s.stateLocked()
 	}()
 	call, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s.mu.Lock()
+	if !s.ownsQuestApproach(r) {
+		s.mu.Unlock()
+		return nil, nil
+	}
 	npc, reason := s.questTravelContextLocked(call, r)
+	if reason == "" && (s.state.Reason != phase || s.state.Moving != moving) {
+		reason = "quest_travel_interrupted_by_controller_change"
+	}
 	if reason != "" {
 		s.state.Reason = reason
 		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
 		return nil, nil
 	}
 	from, to := s.pos, npc.position
@@ -138,6 +156,7 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		return nil, nil
 	}
 	s.state.Reason = planningReason
+	phase = planningReason
 	s.mu.Unlock()
 	var path []position
 	var planErr error
@@ -148,6 +167,22 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		path, planErr = s.interactionNavigationPath(call, root, mapID, from, to)
 	}
 	s.mu.Lock()
+	// The unlocked planner may finish after an explicit stop or lease change.
+	// Neither its result nor diagnostics may overwrite a replacement owner.
+	if !s.ownsQuestApproach(r) {
+		s.mu.Unlock()
+		return nil, nil
+	}
+	if s.state.Reason != phase || s.state.Moving != moving {
+		s.state.Reason = "quest_travel_interrupted_by_controller_change"
+		s.mu.Unlock()
+		return nil, nil
+	}
+	if call.Err() != nil {
+		s.state.Reason = "quest_travel_canceled_or_time_limit"
+		s.mu.Unlock()
+		return nil, status.FromContextError(call.Err()).Err()
+	}
 	if planErr != nil {
 		s.state.NavAvailable, s.state.NavReason, s.state.Reason = false, navigationDiagnostic(planErr, root), "quest_travel_navigation_unavailable"
 		s.mu.Unlock()
@@ -158,7 +193,14 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 	index := 0
 	for step := 0; step < 150; step++ {
 		s.mu.Lock()
+		if !s.ownsQuestApproach(r) {
+			s.mu.Unlock()
+			return nil, nil
+		}
 		current, why := s.questTravelContextLocked(call, r)
+		if why == "" && (s.state.Reason != phase || s.state.Moving != moving) {
+			why = "quest_travel_interrupted_by_controller_change"
+		}
 		if why == "" && s.posMap != mapID {
 			why = "quest_travel_map_changed"
 		}
@@ -183,6 +225,9 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 		if why != "" {
 			s.state.Reason = why
 			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
 			return nil, nil
 		}
 		if !s.mapNavigationStepLocked(call, path, &index) {
@@ -196,13 +241,21 @@ func (s *Service) TravelQuest(ctx context.Context, r *actionsv1.ApproachQuestReq
 			return nil, nil
 		}
 		s.state.Reason = followingReason
+		moving, phase = s.state.Moving, s.state.Reason
 		s.mu.Unlock()
 		if err := s.approachDelay(call, 200*time.Millisecond); err != nil {
+			s.mu.Lock()
+			if s.ownsQuestApproach(r) {
+				s.state.Reason = "quest_travel_canceled_or_time_limit"
+			}
+			s.mu.Unlock()
 			return nil, status.FromContextError(err).Err()
 		}
 	}
 	s.mu.Lock()
-	s.state.Reason = "quest_travel_step_limit"
+	if s.ownsQuestApproach(r) {
+		s.state.Reason = "quest_travel_step_limit"
+	}
 	s.mu.Unlock()
 	return nil, nil
 }

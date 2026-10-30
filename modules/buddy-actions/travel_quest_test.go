@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -403,5 +405,270 @@ func TestQuestTravelStopsOnCancellationExpiryCombatTargetLossAndTeleport(t *test
 				t.Fatal(got, err, f.packets)
 			}
 		})
+	}
+}
+
+func TestQuestTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
+	for _, landmark := range []bool{false, true} {
+		for _, assist := range []bool{false, true} {
+			for _, planFails := range []bool{false, true} {
+				t.Run(fmt.Sprintf("landmark=%t/assist=%t/error=%t", landmark, assist, planFails), func(t *testing.T) {
+					s, f, _, r := travelRig(t)
+					if landmark {
+						f.world.QuestGivers = nil
+					}
+					s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+						var got *actionsv1.State
+						var err error
+						if assist {
+							got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+						} else {
+							got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+						}
+						if err != nil || got.Moving {
+							t.Fatal(got, err)
+						}
+						if planFails {
+							return nil, errors.New("late planner failure")
+						}
+						return []position{a, b}, nil
+					}
+					got, err := s.TravelQuest(context.Background(), r)
+					if err != nil || got.Moving || got.Traveling || got.NavAvailable || got.Reason != "quest_travel_interrupted_by_controller_change" || len(f.packets) != 0 {
+						t.Fatal(got, err, f.packets)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestQuestTravelExplicitStopBetweenMovingAndIdleFramesNeverRestarts(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		for _, idle := range []bool{false, true} {
+			t.Run(fmt.Sprintf("assist=%t/idle=%t", assist, idle), func(t *testing.T) {
+				s, f, advance, r := travelRig(t)
+				s.approachDelay = func(ctx context.Context, d time.Duration) error {
+					advance(d)
+					if idle {
+						s.mu.Lock()
+						stopped := s.stopLocked(ctx)
+						s.mu.Unlock()
+						if !stopped {
+							t.Fatal("frame stop failed")
+						}
+					}
+					var got *actionsv1.State
+					var err error
+					if assist {
+						got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					} else {
+						got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					}
+					if err != nil || got.Moving {
+						t.Fatal(got, err)
+					}
+					return ctx.Err()
+				}
+				got, err := s.TravelQuest(context.Background(), r)
+				if err != nil || got.Moving || got.Traveling || got.MotionUnconfirmed || got.Reason != "quest_travel_interrupted_by_controller_change" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+func TestQuestTravelLatePlannerNeverOverwritesReplacement(t *testing.T) {
+	for _, owner := range []string{"quests", "exploration"} {
+		for _, planFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("owner=%s/error=%t", owner, planFails), func(t *testing.T) {
+				s, f, _, r := travelRig(t)
+				replacement := ""
+				s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					if replacement != "" {
+						if planFails {
+							return nil, errors.New("old planner failure")
+						}
+						return []position{a, b}, nil
+					}
+					if _, err := s.ReleaseInteraction(ctx, &actionsv1.InteractionRelease{Owner: "quests", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					lease, err := s.AcquireInteraction(ctx, &actionsv1.InteractionRequest{Owner: owner, LeaseMs: 30000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					replacement = lease.Token
+					s.state.Reason = "replacement_reason"
+					s.state.NavReason = "replacement_nav"
+					s.state.NavAvailable = true
+					s.state.Moving = true
+					s.state.Traveling = true
+					s.state.TravelNpcGuid = 777
+					if planFails {
+						return nil, errors.New("old planner failure")
+					}
+					return []position{a, b}, nil
+				}
+				got, err := s.TravelQuest(context.Background(), r)
+				if err != nil || got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 777 || s.questApproaching || s.interactionToken != replacement || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+type questTravelSetupContext struct {
+	context.Context
+	once      sync.Once
+	interrupt func()
+}
+
+func (c *questTravelSetupContext) Deadline() (time.Time, bool) {
+	c.once.Do(c.interrupt)
+	return c.Context.Deadline()
+}
+
+func TestQuestTravelInitialReservationInterruption(t *testing.T) {
+	for _, mode := range []string{"follow", "assist", "cancel", "release", "replacement", "expiry"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := travelRig(t)
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			replacement := ""
+			ctx := &questTravelSetupContext{Context: parent, interrupt: func() {
+				switch mode {
+				case "follow":
+					if _, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				case "assist":
+					if _, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				case "cancel":
+					cancel()
+				case "expiry":
+					advance(31 * time.Second)
+					s.Tick(context.Background())
+				default:
+					if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "quests", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					if mode == "replacement" {
+						lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "quests", LeaseMs: 30000})
+						if err != nil {
+							t.Fatal(err)
+						}
+						replacement = lease.Token
+						s.state.Reason = "replacement_reason"
+						s.state.NavReason = "replacement_nav"
+						s.state.NavAvailable = true
+						s.state.Moving = true
+						s.state.Traveling = true
+						s.state.TravelNpcGuid = 778
+					}
+				}
+			}}
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("interrupted reservation reached planner")
+				return nil, nil
+			}
+			got, err := s.TravelQuest(ctx, r)
+			if mode == "cancel" {
+				if status.Code(err) != codes.Canceled || got.Reason != "quest_travel_canceled_or_time_limit" {
+					t.Fatal(got, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if len(f.packets) != 0 || s.questApproaching {
+				t.Fatal(got, f.packets)
+			}
+			if mode == "replacement" {
+				if got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 778 || s.interactionToken != replacement {
+					t.Fatal(got)
+				}
+			} else if got.Moving || got.Traveling {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestQuestTravelCanceledPlannerAndReplacementDelayCleanup(t *testing.T) {
+	for _, mode := range []string{"planner", "delay", "replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := travelRig(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			replacement := ""
+			if mode == "planner" {
+				s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+					cancel()
+					return nil, context.Canceled
+				}
+			} else {
+				s.approachDelay = func(call context.Context, d time.Duration) error {
+					advance(d)
+					if mode == "replacement" {
+						if _, err := s.ReleaseInteraction(call, &actionsv1.InteractionRelease{Owner: "quests", Token: r.Token}); err != nil {
+							t.Fatal(err)
+						}
+						lease, err := s.AcquireInteraction(call, &actionsv1.InteractionRequest{Owner: "exploration", LeaseMs: 30000})
+						if err != nil {
+							t.Fatal(err)
+						}
+						replacement = lease.Token
+						s.state.Reason = "replacement_reason"
+						s.state.NavReason = "replacement_nav"
+						s.state.NavAvailable = true
+						s.state.Moving = true
+						s.state.Traveling = true
+						s.state.TravelNpcGuid = 779
+					}
+					cancel()
+					return call.Err()
+				}
+			}
+			got, err := s.TravelQuest(ctx, r)
+			if status.Code(err) != codes.Canceled || s.questApproaching {
+				t.Fatal(got, err)
+			}
+			want := 1
+			if mode == "planner" {
+				want = 0
+			}
+			if countPackets(f, opcode.MSGMoveStartForward) != want || countPackets(f, opcode.MSGMoveStop) != want {
+				t.Fatal(got, f.packets)
+			}
+			if mode == "replacement" {
+				if got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 779 || s.interactionToken != replacement {
+					t.Fatal(got)
+				}
+			} else if got.Moving || got.Traveling || got.Reason != "quest_travel_canceled_or_time_limit" {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestQuestTravelReleasedIdlePlannerReturnsIdle(t *testing.T) {
+	s, f, _, r := travelRig(t)
+	released := false
+	s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+		if !released {
+			if _, err := s.ReleaseInteraction(ctx, &actionsv1.InteractionRelease{Owner: "quests", Token: r.Token}); err != nil {
+				t.Fatal(err)
+			}
+			released = true
+		}
+		return nil, errors.New("late planner failure")
+	}
+	got, err := s.TravelQuest(context.Background(), r)
+	if err != nil || got.Moving || got.Traveling || got.InteractionOwner != "" || s.questApproaching || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
 	}
 }
