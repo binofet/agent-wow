@@ -254,6 +254,24 @@ class ConversationTests(unittest.TestCase):
             loop.tick()
         self.assertEqual(brain.histories, [])
 
+    def test_afk_or_dnd_owner_is_not_interrupted_by_banter(self):
+        class Controls:
+            events = []
+            def refresh(self):
+                pass
+            def context(self):
+                return {"observations": {"owner": {"present": True, "playerFlags": 2}},
+                        "party": {"known": True, "inGroup": True,
+                                  "members": [{"guid": "3", "online": True}]}}
+        clock, brain = [0], FakeBrain()
+        rpc = FakeRPC([poll(), poll()])
+        with patch.object(converse.time, "monotonic", side_effect=lambda: clock[0]):
+            loop = converse.Conversation(rpc, brain, controls=Controls(), banter_seconds=180)
+            loop.tick()
+            clock[0] = 500
+            loop.tick()
+        self.assertEqual(brain.histories, [])
+
     def test_private_history_is_not_used_for_initiated_party_chat(self):
         class Controls:
             events = []

@@ -559,6 +559,10 @@ class Conversation:
         self.next_banter_check = now + 15
         state = self.controls.context()
         owner = state.get("observations", {}).get("owner", {})
+        # AFK/DND are explicit server-observed preferences; replies to a new
+        # message still work, but initiated banter waits until Joel returns.
+        if integer(owner.get("playerFlags", 0), "player flags") & 0x6:
+            return
         nearby = owner.get("present") is True and not (owner.get("aliveKnown") is True and owner.get("alive") is not True)
         group = state.get("party", {})
         members = group.get("members", []) if isinstance(group, dict) else []
