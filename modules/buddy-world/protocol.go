@@ -430,7 +430,7 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
 					selfMap := players[0]
 					self := guid == players[0].guid
-					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, copperKnown: self}
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self}
 					if self {
 						p.questRevision++
 						p.backpackRevision++
@@ -653,6 +653,14 @@ func values(c *cursor, p *observed, now time.Time) error {
 			v := c.u32()
 			field := block*32 + bit
 			if p != nil && p.isSelf {
+				if field >= playerSkillsFirst && field < playerSkillsFirst+128*3 {
+					slot, part := (field-playerSkillsFirst)/3, (field-playerSkillsFirst)%3
+					p.skills[slot][part] = v
+				}
+				if field == playerFreePrimary {
+					p.freePrimaryKnown = true
+					p.freePrimary = v
+				}
 				if field == playerCoinage {
 					p.copperKnown = true
 					p.copper = v

@@ -20,18 +20,22 @@ const (
 	itemOwner          = 6
 	itemStack          = 0xe
 	playerCoinage      = 0x492 // UNIT_END0x94 + PLAYER_FIELD_COINAGE0x3fe, PRIVATE own-only.
+	playerSkillsFirst  = 0x27c // UNIT_END0x94 + PLAYER_SKILL_INFO_1_1 0x1e8, 384 private words.
+	playerFreePrimary  = 0x3fd // UNIT_END0x94 + PLAYER_CHARACTER_POINTS2 0x369.
 )
 
 // Maps are shallow-cloned per packet. target copies each touched object once,
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
-	players        [2]observed
-	creatures      map[uint64]*observed
-	items          map[uint64]*observed
-	gameObjects    map[uint64]*observed
-	edited         map[uint64]bool
-	itemRevision   uint64
-	copperRevision uint64
+	players             [2]observed
+	creatures           map[uint64]*observed
+	items               map[uint64]*observed
+	gameObjects         map[uint64]*observed
+	edited              map[uint64]bool
+	itemRevision        uint64
+	copperRevision      uint64
+	skillsRevision      uint64
+	freePrimaryRevision uint64
 }
 
 func (s observations) clone() observations {
@@ -266,6 +270,13 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	}
 	p := s.players[0]
 	r.SelfCopperKnown, r.SelfCopper, r.SelfCopperRevision = p.copperKnown, p.copper, s.copperRevision
+	r.SelfSkillsKnown, r.SelfSkillsRevision = p.skillsKnown, s.skillsRevision
+	r.SelfFreePrimarySlotsKnown, r.SelfFreePrimarySlots, r.SelfFreePrimarySlotsRevision = p.freePrimaryKnown, p.freePrimary, s.freePrimaryRevision
+	if p.skillsKnown {
+		for slot, fields := range p.skills {
+			r.SelfSkills = append(r.SelfSkills, &worldv1.SkillState{Slot: uint32(slot), SkillId: fields[0] & 0xffff, Step: fields[0] >> 16, Value: fields[1] & 0xffff, MaxValue: fields[1] >> 16, TemporaryBonus: int32(int16(fields[2] & 0xffff)), PermanentBonus: int32(int16(fields[2] >> 16))})
+		}
+	}
 	r.SelfQuestLogKnown = p.questLogKnown
 	r.SelfQuestLogRevision = p.questRevision
 	if p.questLogKnown {

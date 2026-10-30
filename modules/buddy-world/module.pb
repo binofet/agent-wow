@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-†3
+Á7
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
@@ -209,8 +209,16 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"¿
+metadata_known (RmetadataKnown"Ô
 
+SkillState
+slot (Rslot
+skill_id (RskillId
+step (Rstep
+value (Rvalue
+	max_value (RmaxValue'
+temporary_bonus (RtemporaryBonus'
+permanent_bonus (RpermanentBonus"£
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -237,7 +245,14 @@ selfCopper0
 self_copper_revision (RselfCopperRevisionE
 	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxesL
 quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjectsT
-requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature2°
+requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature*
+self_skills_known (RselfSkillsKnown0
+self_skills_revision (RselfSkillsRevisionC
+self_skills (2".warcraftbuddy.world.v1.SkillStateR
+selfSkills@
+self_free_primary_slots_known (RselfFreePrimarySlotsKnown5
+self_free_primary_slots (RselfFreePrimarySlotsF
+ self_free_primary_slots_revision (RselfFreePrimarySlotsRevision2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

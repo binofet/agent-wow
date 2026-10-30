@@ -43,6 +43,10 @@ type observed struct {
 	mainhand          uint64
 	copperKnown       bool
 	copper            uint32
+	skillsKnown       bool
+	skills            [128][3]uint32
+	freePrimaryKnown  bool
+	freePrimary       uint32
 }
 
 type Service struct {
@@ -151,6 +155,12 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		old, current := s.state.players[0], next.players[0]
 		if old.copperKnown != current.copperKnown || old.copper != current.copper {
 			next.copperRevision++
+		}
+		if old.skillsKnown != current.skillsKnown || old.skills != current.skills {
+			next.skillsRevision++
+		}
+		if old.freePrimaryKnown != current.freePrimaryKnown || old.freePrimary != current.freePrimary {
+			next.freePrimaryRevision++
 		}
 		next.edited = nil
 		s.state = next

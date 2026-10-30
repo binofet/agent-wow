@@ -37,6 +37,9 @@ type Service struct {
 	queryNPC               uint64
 	wait                   chan struct{}
 	waitKind               string
+	professionLevel        uint32
+	professionLevelKnown   bool
+	freeSlotsRevision      uint64
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -93,6 +96,7 @@ func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*trainingv1.S
 	if e := s.wallet(call); e != nil {
 		return nil, e
 	}
+	_ = s.refreshProfessions(call)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snapshotLocked(), nil
@@ -105,6 +109,7 @@ func (s *Service) observations(ctx context.Context) (*worldv1.SnapshotResponse, 
 	if w.Self == nil || w.Self.Guid != s.selfGUID {
 		return nil, nil, status.Error(codes.FailedPrecondition, "world belongs to another character")
 	}
+	s.applyProfessions(w)
 	if e := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a); e != nil {
 		return nil, nil, e
 	}
@@ -140,6 +145,9 @@ func trainers(w *worldv1.SnapshotResponse) ([]*worldv1.CreatureState, error) {
 	return rows, nil
 }
 func trainerGate(w *worldv1.SnapshotResponse, a *actionsv1.State, c *worldv1.CreatureState) string {
+	return typedTrainerGate(w, a, c, 0)
+}
+func typedTrainerGate(w *worldv1.SnapshotResponse, a *actionsv1.State, c *worldv1.CreatureState, kind uint32) string {
 	p := w.Self
 	if p == nil || !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&0x80000 != 0 || !p.ClassKnown || !p.LevelKnown {
 		return "own_alive_out_of_combat_class_and_level_required"
@@ -150,7 +158,14 @@ func trainerGate(w *worldv1.SnapshotResponse, a *actionsv1.State, c *worldv1.Cre
 	if !positionValid(a.Position) || a.Position.MapId != p.MapId || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending || a.Moving {
 		return "confirmed_stopped_position_required"
 	}
-	if c == nil || !creatureGUID(c.Guid) || uint32(c.Guid>>24&0xffffff) != c.Entry || !c.Present || !c.MapKnown || c.MapId != p.MapId || !c.PositionKnown || !finite(c.X) || !finite(c.Y) || !finite(c.Z) || !c.HealthKnown || c.Health == 0 || !c.AliveKnown || !c.Alive || c.NpcFlags&0x30 != 0x30 || c.UnitFlags&0x80000 != 0 {
+	flags := uint32(0x30)
+	if kind == 2 {
+		flags = 0x50
+	}
+	if c == nil || !creatureGUID(c.Guid) || uint32(c.Guid>>24&0xffffff) != c.Entry || !c.Present || !c.MapKnown || c.MapId != p.MapId || !c.PositionKnown || !finite(c.X) || !finite(c.Y) || !finite(c.Z) || !c.HealthKnown || c.Health == 0 || !c.AliveKnown || !c.Alive || c.NpcFlags&flags != flags || c.UnitFlags&0x80000 != 0 {
+		if kind == 2 {
+			return "observed_living_profession_trainer_required"
+		}
 		return "observed_living_class_trainer_required"
 	}
 	if c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) {
@@ -163,6 +178,9 @@ func trainerGate(w *worldv1.SnapshotResponse, a *actionsv1.State, c *worldv1.Cre
 	return ""
 }
 func (s *Service) Discover(ctx context.Context, _ *emptypb.Empty) (*trainingv1.Discovery, error) {
+	return s.discover(ctx, 0)
+}
+func (s *Service) discover(ctx context.Context, kind uint32) (*trainingv1.Discovery, error) {
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	w, a, e := s.observations(call)
@@ -180,7 +198,14 @@ func (s *Service) Discover(ctx context.Context, _ *emptypb.Empty) (*trainingv1.D
 	out := &trainingv1.Discovery{State: s.snapshotLocked()}
 	s.mu.Unlock()
 	for _, c := range rows {
-		r := &trainingv1.Trainer{Creature: proto.Clone(c).(*worldv1.CreatureState), BlockedReason: trainerGate(w, a, c)}
+		expected := uint32(0x20)
+		if kind == 2 {
+			expected = 0x40
+		}
+		if c.NpcFlags&expected == 0 {
+			continue
+		}
+		r := &trainingv1.Trainer{Creature: proto.Clone(c).(*worldv1.CreatureState), BlockedReason: typedTrainerGate(w, a, c, kind)}
 		r.Interactable = r.BlockedReason == ""
 		if positionValid(a.Position) && c.PositionKnown && c.MapKnown && c.MapId == a.Position.MapId && finite(c.X) && finite(c.Y) && finite(c.Z) {
 			r.DistanceKnown = true
@@ -229,6 +254,9 @@ func (s *Service) release(token string) {
 	_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "training", Token: token}, &actionsv1.State{})
 }
 func (s *Service) gate(ctx context.Context, guid uint64) error {
+	return s.typedGate(ctx, guid, 0)
+}
+func (s *Service) typedGate(ctx context.Context, guid uint64, kind uint32) error {
 	w, a, e := s.observations(ctx)
 	if e != nil {
 		return e
@@ -244,7 +272,7 @@ func (s *Service) gate(ctx context.Context, guid uint64) error {
 			break
 		}
 	}
-	if reason := trainerGate(w, a, npc); reason != "" {
+	if reason := typedTrainerGate(w, a, npc, kind); reason != "" {
 		return status.Error(codes.FailedPrecondition, reason)
 	}
 	return nil
@@ -281,7 +309,7 @@ func (s *Service) query(ctx context.Context, guid uint64) error {
 	}
 }
 func (s *Service) List(ctx context.Context, r *trainingv1.ListRequest) (out *trainingv1.State, err error) {
-	if r == nil || !creatureGUID(r.NpcGuid) {
+	if r == nil || !creatureGUID(r.NpcGuid) || r.TrainerType != 0 && r.TrainerType != 2 {
 		return nil, status.Error(codes.InvalidArgument, "observed trainer GUID required")
 	}
 	if e := s.begin(r.SessionId); e != nil {
@@ -300,7 +328,7 @@ func (s *Service) List(ctx context.Context, r *trainingv1.ListRequest) (out *tra
 		return nil, e
 	}
 	defer s.release(token)
-	if e = s.gate(call, r.NpcGuid); e != nil {
+	if e = s.typedGate(call, r.NpcGuid, r.TrainerType); e != nil {
 		return nil, e
 	}
 	if e = s.query(call, r.NpcGuid); e != nil {
@@ -311,11 +339,27 @@ func (s *Service) List(ctx context.Context, r *trainingv1.ListRequest) (out *tra
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Offer == nil || s.state.Offer.TrainerType != r.TrainerType {
+		return nil, status.Error(codes.FailedPrecondition, "server trainer type differs from requested training kind")
+	}
 	return s.snapshotLocked(), nil
 }
 func (s *Service) boundBuyLocked(r *trainingv1.BuyRequest) error {
+	return s.boundPurchaseLocked(r, nil)
+}
+func (s *Service) boundPurchaseLocked(r *trainingv1.BuyRequest, profession *trainingv1.ProfessionBuyRequest) error {
 	o := s.state.Offer
-	if r.SessionId != s.state.SessionId || o == nil || o.NpcGuid != r.NpcGuid || o.Revision != r.OfferRevision || !s.now().Before(s.offerUntil) || o.TrainerType != 0 {
+	kind, points := uint32(0), uint32(0)
+	if profession != nil {
+		kind = 2
+		if primarySkill(profession.SkillId) {
+			points = 1
+		}
+		if e := s.boundProfessionLocked(profession); e != nil {
+			return e
+		}
+	}
+	if r.SessionId != s.state.SessionId || o == nil || o.NpcGuid != r.NpcGuid || o.Revision != r.OfferRevision || !s.now().Before(s.offerUntil) || o.TrainerType != kind {
 		return status.Error(codes.FailedPrecondition, "trainer offer changed or expired")
 	}
 	if p := s.state.LastPurchase; p != nil && (p.Status == trainingv1.PurchaseStatus_REQUESTED || p.Status == trainingv1.PurchaseStatus_UNCONFIRMED_TIMEOUT || p.Status == trainingv1.PurchaseStatus_TRAINER_SUCCEEDED) {
@@ -323,7 +367,7 @@ func (s *Service) boundBuyLocked(r *trainingv1.BuyRequest) error {
 	}
 	for _, spell := range o.Spells {
 		if spell.SpellId == r.SpellId {
-			if spell.Usable != 0 || spell.CostCopper != r.ExpectedCostCopper || spell.CostCopper > r.MaxSpendCopper || len(spell.PointCost) != 2 || spell.PointCost[0] != 0 || spell.PointCost[1] != 0 {
+			if spell.Usable != 0 || spell.CostCopper != r.ExpectedCostCopper || spell.CostCopper > r.MaxSpendCopper || len(spell.PointCost) != 2 || spell.PointCost[0] != 0 || spell.PointCost[1] != points {
 				return status.Error(codes.FailedPrecondition, "listed training availability, price or points changed")
 			}
 			if !s.state.CopperKnown || s.state.Copper < spell.CostCopper {
@@ -335,6 +379,9 @@ func (s *Service) boundBuyLocked(r *trainingv1.BuyRequest) error {
 	return status.Error(codes.FailedPrecondition, "spell is absent from actual trainer offer")
 }
 func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *trainingv1.State, err error) {
+	return s.buy(ctx, r, nil)
+}
+func (s *Service) buy(ctx context.Context, r *trainingv1.BuyRequest, profession *trainingv1.ProfessionBuyRequest) (out *trainingv1.State, err error) {
 	if r == nil || !creatureGUID(r.NpcGuid) || r.SpellId == 0 || r.MaxSpendCopper == 0 || r.MaxSpendCopper > 10000 {
 		return nil, status.Error(codes.InvalidArgument, "bound trainer spell and explicit1..10000copper budget required")
 	}
@@ -352,8 +399,13 @@ func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *train
 	if e := s.wallet(call); e != nil {
 		return nil, e
 	}
+	if profession != nil {
+		if e := s.refreshProfessions(call); e != nil {
+			return nil, e
+		}
+	}
 	s.mu.Lock()
-	e := s.boundBuyLocked(r)
+	e := s.boundPurchaseLocked(r, profession)
 	s.mu.Unlock()
 	if e != nil {
 		return nil, e
@@ -363,14 +415,26 @@ func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *train
 		return nil, e
 	}
 	defer s.release(token)
-	if e = s.gate(call, r.NpcGuid); e != nil {
+	kind := uint32(0)
+	if profession != nil {
+		kind = 2
+	}
+	if e = s.typedGate(call, r.NpcGuid, kind); e != nil {
 		return nil, e
 	}
 	if e = s.wallet(call); e != nil {
 		return nil, e
 	}
+	if profession != nil {
+		if e = s.refreshProfessions(call); e != nil {
+			return nil, e
+		}
+	}
+	if e = call.Err(); e != nil {
+		return nil, status.FromContextError(e).Err()
+	}
 	s.mu.Lock()
-	if e = s.boundBuyLocked(r); e != nil {
+	if e = s.boundPurchaseLocked(r, profession); e != nil {
 		s.mu.Unlock()
 		return nil, e
 	}
@@ -379,6 +443,10 @@ func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *train
 		id = s.state.LastPurchase.Id + 1
 	}
 	s.state.LastPurchase = &trainingv1.Purchase{Id: id, NpcGuid: r.NpcGuid, SpellId: r.SpellId, CostCopper: r.ExpectedCostCopper, Status: trainingv1.PurchaseStatus_REQUESTED, BaselineCopper: s.state.Copper, BaselineCopperRevision: s.state.CopperRevision}
+	if profession != nil {
+		s.state.LastPurchase.ProfessionSkillId = profession.SkillId
+		s.state.LastPurchase.BaselineSkillsRevision = s.state.ProfessionsRevision
+	}
 	s.state.Revision++
 	wait := make(chan struct{})
 	s.wait = wait
@@ -421,6 +489,9 @@ func (s *Service) Buy(ctx context.Context, r *trainingv1.BuyRequest) (out *train
 		_ = s.query(call, r.NpcGuid)
 	}
 	_ = s.wallet(call)
+	if profession != nil {
+		_ = s.refreshProfessions(call)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.snapshotLocked(), nil
@@ -434,7 +505,7 @@ func (s *Service) wakeLocked(kind string) {
 }
 func (s *Service) confirmLocked() {
 	p := s.state.LastPurchase
-	if p != nil && p.ServerSuccessObserved && (p.LearnedSpellObserved || p.RefreshedTrainerKnows) {
+	if p != nil && p.ServerSuccessObserved && (p.ProfessionSkillId == 0 && (p.LearnedSpellObserved || p.RefreshedTrainerKnows) || p.ProfessionSkillId != 0 && p.ProfessionSkillObserved && (p.LearnedSpellObserved || p.RefreshedTrainerKnows)) {
 		p.Status = trainingv1.PurchaseStatus_TRAINING_CONFIRMED
 		p.Failure = ""
 		s.state.Reason = "training_confirmed_by_server"
@@ -458,6 +529,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.IgnoredPackets++
 			break
 		}
+		annotateProfessions(o)
 		s.state.Revision++
 		o.Revision = s.state.Revision
 		s.state.Offer = o
@@ -516,6 +588,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			p.LearnedSpellIds = append(p.LearnedSpellIds, id)
 		}
 		if p.SpellId == id {
+			p.LearnedSpellObserved = true
+		}
+		if spec, ok := professionForSkill(p.ProfessionSkillId); ok && spec.learned == id {
 			p.LearnedSpellObserved = true
 		}
 		s.confirmLocked()

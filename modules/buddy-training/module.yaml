@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit bound class trainer lists and purchases with observed prices, wallet budgets and server learning confirmation
+description: Bound class and opt-in initial primary or secondary training with observed prices, wallet budgets and server learning confirmation
 requires: [buddy-world, buddy-actions, buddy-trade]
 compose:
   file: compose.yaml
@@ -12,6 +12,8 @@ rpc:
   state: /warcraftbuddy.training.v1.BuddyTraining/GetState
   list: /warcraftbuddy.training.v1.BuddyTraining/List
   buy: /warcraftbuddy.training.v1.BuddyTraining/Buy
+  discover_professions: /warcraftbuddy.training.v1.BuddyTraining/DiscoverProfessions
+  buy_profession: /warcraftbuddy.training.v1.BuddyTraining/BuyProfession
 packets:
   SMSG_TRAINER_LIST: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
   SMSG_TRAINER_BUY_SUCCEEDED: /warcraftbuddy.training.v1.BuddyTraining/OnPacket

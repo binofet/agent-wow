@@ -21,11 +21,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyTraining_Discover_FullMethodName = "/warcraftbuddy.training.v1.BuddyTraining/Discover"
-	BuddyTraining_GetState_FullMethodName = "/warcraftbuddy.training.v1.BuddyTraining/GetState"
-	BuddyTraining_List_FullMethodName     = "/warcraftbuddy.training.v1.BuddyTraining/List"
-	BuddyTraining_Buy_FullMethodName      = "/warcraftbuddy.training.v1.BuddyTraining/Buy"
-	BuddyTraining_OnPacket_FullMethodName = "/warcraftbuddy.training.v1.BuddyTraining/OnPacket"
+	BuddyTraining_Discover_FullMethodName            = "/warcraftbuddy.training.v1.BuddyTraining/Discover"
+	BuddyTraining_GetState_FullMethodName            = "/warcraftbuddy.training.v1.BuddyTraining/GetState"
+	BuddyTraining_List_FullMethodName                = "/warcraftbuddy.training.v1.BuddyTraining/List"
+	BuddyTraining_Buy_FullMethodName                 = "/warcraftbuddy.training.v1.BuddyTraining/Buy"
+	BuddyTraining_DiscoverProfessions_FullMethodName = "/warcraftbuddy.training.v1.BuddyTraining/DiscoverProfessions"
+	BuddyTraining_BuyProfession_FullMethodName       = "/warcraftbuddy.training.v1.BuddyTraining/BuyProfession"
+	BuddyTraining_OnPacket_FullMethodName            = "/warcraftbuddy.training.v1.BuddyTraining/OnPacket"
 )
 
 // BuddyTrainingClient is the client API for BuddyTraining service.
@@ -36,6 +38,8 @@ type BuddyTrainingClient interface {
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*State, error)
 	Buy(ctx context.Context, in *BuyRequest, opts ...grpc.CallOption) (*State, error)
+	DiscoverProfessions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Discovery, error)
+	BuyProfession(ctx context.Context, in *ProfessionBuyRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -87,6 +91,26 @@ func (c *buddyTrainingClient) Buy(ctx context.Context, in *BuyRequest, opts ...g
 	return out, nil
 }
 
+func (c *buddyTrainingClient) DiscoverProfessions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Discovery, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Discovery)
+	err := c.cc.Invoke(ctx, BuddyTraining_DiscoverProfessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyTrainingClient) BuyProfession(ctx context.Context, in *ProfessionBuyRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyTraining_BuyProfession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyTrainingClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -105,6 +129,8 @@ type BuddyTrainingServer interface {
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	List(context.Context, *ListRequest) (*State, error)
 	Buy(context.Context, *BuyRequest) (*State, error)
+	DiscoverProfessions(context.Context, *emptypb.Empty) (*Discovery, error)
+	BuyProfession(context.Context, *ProfessionBuyRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyTrainingServer()
 }
@@ -127,6 +153,12 @@ func (UnimplementedBuddyTrainingServer) List(context.Context, *ListRequest) (*St
 }
 func (UnimplementedBuddyTrainingServer) Buy(context.Context, *BuyRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Buy not implemented")
+}
+func (UnimplementedBuddyTrainingServer) DiscoverProfessions(context.Context, *emptypb.Empty) (*Discovery, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DiscoverProfessions not implemented")
+}
+func (UnimplementedBuddyTrainingServer) BuyProfession(context.Context, *ProfessionBuyRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BuyProfession not implemented")
 }
 func (UnimplementedBuddyTrainingServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -224,6 +256,42 @@ func _BuddyTraining_Buy_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyTraining_DiscoverProfessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTrainingServer).DiscoverProfessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTraining_DiscoverProfessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTrainingServer).DiscoverProfessions(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyTraining_BuyProfession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProfessionBuyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTrainingServer).BuyProfession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTraining_BuyProfession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTrainingServer).BuyProfession(ctx, req.(*ProfessionBuyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyTraining_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -264,6 +332,14 @@ var BuddyTraining_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Buy",
 			Handler:    _BuddyTraining_Buy_Handler,
+		},
+		{
+			MethodName: "DiscoverProfessions",
+			Handler:    _BuddyTraining_DiscoverProfessions_Handler,
+		},
+		{
+			MethodName: "BuyProfession",
+			Handler:    _BuddyTraining_BuyProfession_Handler,
 		},
 		{
 			MethodName: "OnPacket",

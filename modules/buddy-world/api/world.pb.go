@@ -1440,6 +1440,99 @@ func (x *BackpackSlot) GetMetadataKnown() bool {
 	return false
 }
 
+// Actual private own-player skill fields; no inferred profession membership.
+type SkillState struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Slot           uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	SkillId        uint32                 `protobuf:"varint,2,opt,name=skill_id,json=skillId,proto3" json:"skill_id,omitempty"`
+	Step           uint32                 `protobuf:"varint,3,opt,name=step,proto3" json:"step,omitempty"`
+	Value          uint32                 `protobuf:"varint,4,opt,name=value,proto3" json:"value,omitempty"`
+	MaxValue       uint32                 `protobuf:"varint,5,opt,name=max_value,json=maxValue,proto3" json:"max_value,omitempty"`
+	TemporaryBonus int32                  `protobuf:"varint,6,opt,name=temporary_bonus,json=temporaryBonus,proto3" json:"temporary_bonus,omitempty"`
+	PermanentBonus int32                  `protobuf:"varint,7,opt,name=permanent_bonus,json=permanentBonus,proto3" json:"permanent_bonus,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SkillState) Reset() {
+	*x = SkillState{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkillState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkillState) ProtoMessage() {}
+
+func (x *SkillState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkillState.ProtoReflect.Descriptor instead.
+func (*SkillState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SkillState) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *SkillState) GetSkillId() uint32 {
+	if x != nil {
+		return x.SkillId
+	}
+	return 0
+}
+
+func (x *SkillState) GetStep() uint32 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+func (x *SkillState) GetValue() uint32 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *SkillState) GetMaxValue() uint32 {
+	if x != nil {
+		return x.MaxValue
+	}
+	return 0
+}
+
+func (x *SkillState) GetTemporaryBonus() int32 {
+	if x != nil {
+		return x.TemporaryBonus
+	}
+	return 0
+}
+
+func (x *SkillState) GetPermanentBonus() int32 {
+	if x != nil {
+		return x.PermanentBonus
+	}
+	return 0
+}
+
 type SnapshotResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Self             *PlayerState           `protobuf:"bytes,1,opt,name=self,proto3" json:"self,omitempty"`
@@ -1476,14 +1569,21 @@ type SnapshotResponse struct {
 	QuestObjects []*GameObjectState `protobuf:"bytes,22,rep,name=quest_objects,json=questObjects,proto3" json:"quest_objects,omitempty"`
 	// The requested creature, if still present in the bounded observation cache.
 	// Independent of nearby_creatures truncation; retains actual observation ages.
-	RequestedCreature *CreatureState `protobuf:"bytes,23,opt,name=requested_creature,json=requestedCreature,proto3" json:"requested_creature,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	RequestedCreature  *CreatureState `protobuf:"bytes,23,opt,name=requested_creature,json=requestedCreature,proto3" json:"requested_creature,omitempty"`
+	SelfSkillsKnown    bool           `protobuf:"varint,24,opt,name=self_skills_known,json=selfSkillsKnown,proto3" json:"self_skills_known,omitempty"`
+	SelfSkillsRevision uint64         `protobuf:"varint,25,opt,name=self_skills_revision,json=selfSkillsRevision,proto3" json:"self_skills_revision,omitempty"`
+	// Exactly128 wire slots when known; skill_id0 means empty.
+	SelfSkills                   []*SkillState `protobuf:"bytes,26,rep,name=self_skills,json=selfSkills,proto3" json:"self_skills,omitempty"`
+	SelfFreePrimarySlotsKnown    bool          `protobuf:"varint,27,opt,name=self_free_primary_slots_known,json=selfFreePrimarySlotsKnown,proto3" json:"self_free_primary_slots_known,omitempty"`
+	SelfFreePrimarySlots         uint32        `protobuf:"varint,28,opt,name=self_free_primary_slots,json=selfFreePrimarySlots,proto3" json:"self_free_primary_slots,omitempty"`
+	SelfFreePrimarySlotsRevision uint64        `protobuf:"varint,29,opt,name=self_free_primary_slots_revision,json=selfFreePrimarySlotsRevision,proto3" json:"self_free_primary_slots_revision,omitempty"`
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1495,7 +1595,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[8]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1508,7 +1608,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SnapshotResponse) GetSelf() *PlayerState {
@@ -1670,6 +1770,48 @@ func (x *SnapshotResponse) GetRequestedCreature() *CreatureState {
 		return x.RequestedCreature
 	}
 	return nil
+}
+
+func (x *SnapshotResponse) GetSelfSkillsKnown() bool {
+	if x != nil {
+		return x.SelfSkillsKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfSkillsRevision() uint64 {
+	if x != nil {
+		return x.SelfSkillsRevision
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfSkills() []*SkillState {
+	if x != nil {
+		return x.SelfSkills
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetSelfFreePrimarySlotsKnown() bool {
+	if x != nil {
+		return x.SelfFreePrimarySlotsKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfFreePrimarySlots() uint32 {
+	if x != nil {
+		return x.SelfFreePrimarySlots
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfFreePrimarySlotsRevision() uint64 {
+	if x != nil {
+		return x.SelfFreePrimarySlotsRevision
+	}
+	return 0
 }
 
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
@@ -1853,8 +1995,16 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
 	"stackCount\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xbf\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xd4\x01\n" +
 	"\n" +
+	"SkillState\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x19\n" +
+	"\bskill_id\x18\x02 \x01(\rR\askillId\x12\x12\n" +
+	"\x04step\x18\x03 \x01(\rR\x04step\x12\x14\n" +
+	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
+	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
+	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xa3\r\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -1881,7 +2031,14 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x14self_copper_revision\x18\x14 \x01(\x04R\x12selfCopperRevision\x12E\n" +
 	"\tmailboxes\x18\x15 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\tmailboxes\x12L\n" +
 	"\rquest_objects\x18\x16 \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fquestObjects\x12T\n" +
-	"\x12requested_creature\x18\x17 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\x11requestedCreature2\xb0\x01\n" +
+	"\x12requested_creature\x18\x17 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\x11requestedCreature\x12*\n" +
+	"\x11self_skills_known\x18\x18 \x01(\bR\x0fselfSkillsKnown\x120\n" +
+	"\x14self_skills_revision\x18\x19 \x01(\x04R\x12selfSkillsRevision\x12C\n" +
+	"\vself_skills\x18\x1a \x03(\v2\".warcraftbuddy.world.v1.SkillStateR\n" +
+	"selfSkills\x12@\n" +
+	"\x1dself_free_primary_slots_known\x18\x1b \x01(\bR\x19selfFreePrimarySlotsKnown\x125\n" +
+	"\x17self_free_primary_slots\x18\x1c \x01(\rR\x14selfFreePrimarySlots\x12F\n" +
+	" self_free_primary_slots_revision\x18\x1d \x01(\x04R\x1cselfFreePrimarySlotsRevision2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -1899,7 +2056,7 @@ func file_modules_buddy_world_world_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_world_world_proto_rawDescData
 }
 
-var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*PlayerState)(nil),        // 0: warcraftbuddy.world.v1.PlayerState
 	(*EquippedWeapon)(nil),     // 1: warcraftbuddy.world.v1.EquippedWeapon
@@ -1909,9 +2066,10 @@ var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*CreatureTrajectory)(nil), // 5: warcraftbuddy.world.v1.CreatureTrajectory
 	(*QuestLogEntry)(nil),      // 6: warcraftbuddy.world.v1.QuestLogEntry
 	(*BackpackSlot)(nil),       // 7: warcraftbuddy.world.v1.BackpackSlot
-	(*SnapshotResponse)(nil),   // 8: warcraftbuddy.world.v1.SnapshotResponse
-	(*v1.WorldPacket)(nil),     // 9: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),      // 10: google.protobuf.Empty
+	(*SkillState)(nil),         // 8: warcraftbuddy.world.v1.SkillState
+	(*SnapshotResponse)(nil),   // 9: warcraftbuddy.world.v1.SnapshotResponse
+	(*v1.WorldPacket)(nil),     // 10: agentwow.module.v1.WorldPacket
+	(*emptypb.Empty)(nil),      // 11: google.protobuf.Empty
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	1,  // 0: warcraftbuddy.world.v1.PlayerState.mainhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
@@ -1927,15 +2085,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	3,  // 10: warcraftbuddy.world.v1.SnapshotResponse.mailboxes:type_name -> warcraftbuddy.world.v1.GameObjectState
 	3,  // 11: warcraftbuddy.world.v1.SnapshotResponse.quest_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
 	4,  // 12: warcraftbuddy.world.v1.SnapshotResponse.requested_creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	2,  // 13: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	9,  // 14: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	8,  // 15: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	10, // 16: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	15, // [15:17] is the sub-list for method output_type
-	13, // [13:15] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	8,  // 13: warcraftbuddy.world.v1.SnapshotResponse.self_skills:type_name -> warcraftbuddy.world.v1.SkillState
+	2,  // 14: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	10, // 15: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 16: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	11, // 17: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	16, // [16:18] is the sub-list for method output_type
+	14, // [14:16] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -1949,7 +2108,7 @@ func file_modules_buddy_world_world_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_world_world_proto_rawDesc), len(file_modules_buddy_world_world_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ü,
+¡7
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"Ô
 PlayerState
 guid (Rguid
@@ -103,8 +103,32 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"
-SnapshotRequest"É
+max_durability (RmaxDurability"6
+SnapshotRequest#
+creature_guid (RcreatureGuid"‘
+GameObjectState
+guid (Rguid
+entry (Rentry
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
+
+type_known (R	typeKnown(
+game_object_type (RgameObjectType
+flags_known (R
+flagsKnown
+flags (Rflags.
+dynamic_flags_known (RdynamicFlagsKnown#
+dynamic_flags (RdynamicFlags"É
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -185,7 +209,16 @@ expireTime"Ø
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"‘
+metadata_known (RmetadataKnown"‘
+
+SkillState
+slot (Rslot
+skill_id (RskillId
+step (Rstep
+value (Rvalue
+	max_value (RmaxValue'
+temporary_bonus (RtemporaryBonus'
+permanent_bonus (RpermanentBonus"£
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -209,13 +242,23 @@ lastOpcode(
 self_copper_known (RselfCopperKnown
 self_copper (R
 selfCopper0
-self_copper_revision (RselfCopperRevision2∞
+self_copper_revision (RselfCopperRevisionE
+	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxesL
+quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjectsT
+requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature*
+self_skills_known (RselfSkillsKnown0
+self_skills_revision (RselfSkillsRevisionC
+self_skills (2".warcraftbuddy.world.v1.SkillStateR
+selfSkills@
+self_free_primary_slots_known (RselfFreePrimarySlotsKnown5
+self_free_primary_slots (RselfFreePrimarySlotsF
+ self_free_primary_slots_revision (RselfFreePrimarySlotsRevision2∞
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-ö
-%modules/buddy-training/training.protowarcraftbuddy.training.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"ß
+≠"
+%modules/buddy-training/training.protowarcraftbuddy.training.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"Ÿ
 Spell
 spell_id (RspellId
 usable (Rusable
@@ -226,14 +269,19 @@ point_cost (R	pointCost%
 required_level (RrequiredLevel%
 required_skill (RrequiredSkill.
 required_skill_rank (RrequiredSkillRank-
-required_abilities (RrequiredAbilities"€
+required_abilities (RrequiredAbilities.
+profession_skill_id	 (RprofessionSkillId(
+learned_spell_id
+ (RlearnedSpellId'
+profession_name (	RprofessionName-
+primary_profession (RprimaryProfession"€
 Offer
 revision (Rrevision
 npc_guid (RnpcGuid!
 trainer_type (RtrainerType8
 spells (2 .warcraftbuddy.training.v1.SpellRspells
 greeting (	Rgreeting"
-expires_in_ms (RexpiresInMs"ã
+expires_in_ms (RexpiresInMs"Ì
 Purchase
 id (Rid
 npc_guid (RnpcGuid
@@ -251,7 +299,16 @@ costCopperA
 failure (	Rfailure'
 baseline_copper (RbaselineCopper8
 baseline_copper_revision (RbaselineCopperRevision2
-copper_debit_observed (RcopperDebitObserved"Î
+copper_debit_observed (RcopperDebitObserved.
+profession_skill_id (RprofessionSkillId8
+baseline_skills_revision (RbaselineSkillsRevision:
+profession_skill_observed (RprofessionSkillObserved:
+confirmed_skills_revision (RconfirmedSkillsRevision"o
+ProfessionSkill
+skill_id (RskillId
+rank (Rrank
+max_rank (RmaxRank
+step (Rstep"
 State
 
 session_id (	R	sessionId
@@ -266,7 +323,13 @@ session_id (	R	sessionId
 ignored_packets
  (RignoredPackets)
 transport_writes (RtransportWrites
-reason (	Rreason"⁄
+reason (	Rreason+
+professions_known (RprofessionsKnown1
+professions_revision (RprofessionsRevision[
+primary_professions (2*.warcraftbuddy.training.v1.ProfessionSkillRprimaryProfessions7
+free_primary_slots_known (RfreePrimarySlotsKnown,
+free_primary_slots (RfreePrimarySlots_
+secondary_professions (2*.warcraftbuddy.training.v1.ProfessionSkillRsecondaryProfessions"⁄
 TrainerA
 creature (2%.warcraftbuddy.world.v1.CreatureStateRcreature%
 distance_known (RdistanceKnown
@@ -275,11 +338,12 @@ session_id (	R	sessionId
 blocked_reason (	RblockedReason"
 	Discovery6
 state (2 .warcraftbuddy.training.v1.StateRstate:
-nearby (2".warcraftbuddy.training.v1.TrainerRnearby"G
+nearby (2".warcraftbuddy.training.v1.TrainerRnearby"j
 ListRequest
 
 session_id (	R	sessionId
-npc_guid (RnpcGuid"‰
+npc_guid (RnpcGuid!
+trainer_type (RtrainerType"‰
 
 BuyRequest
 
@@ -288,17 +352,23 @@ session_id (	R	sessionId
 offer_revision (RofferRevision
 spell_id (RspellId0
 expected_cost_copper (RexpectedCostCopper(
-max_spend_copper (RmaxSpendCopper*è
+max_spend_copper (RmaxSpendCopper"™
+ProfessionBuyRequestA
+purchase (2%.warcraftbuddy.training.v1.BuyRequestRpurchase
+skill_id (RskillId4
+allowed_primary_skills (RallowedPrimarySkills*è
 PurchaseStatus
 PURCHASE_NONE 
 	REQUESTED
 TRAINER_SUCCEEDED
 TRAINING_CONFIRMED
 SERVER_REJECTED
-UNCONFIRMED_TIMEOUT2Ü
+UNCONFIRMED_TIMEOUT2ø
 BuddyTrainingH
 Discover.google.protobuf.Empty$.warcraftbuddy.training.v1.DiscoveryD
 GetState.google.protobuf.Empty .warcraftbuddy.training.v1.StateP
 List&.warcraftbuddy.training.v1.ListRequest .warcraftbuddy.training.v1.StateN
-Buy%.warcraftbuddy.training.v1.BuyRequest .warcraftbuddy.training.v1.StateC
+Buy%.warcraftbuddy.training.v1.BuyRequest .warcraftbuddy.training.v1.StateS
+DiscoverProfessions.google.protobuf.Empty$.warcraftbuddy.training.v1.Discoveryb
+BuyProfession/.warcraftbuddy.training.v1.ProfessionBuyRequest .warcraftbuddy.training.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyBFZDgithub.com/agent-wow/agent-wow/modules/buddy-training/api;trainingv1bproto3

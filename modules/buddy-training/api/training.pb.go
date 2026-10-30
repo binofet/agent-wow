@@ -92,6 +92,10 @@ type Spell struct {
 	RequiredSkill     uint32                 `protobuf:"varint,6,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
 	RequiredSkillRank uint32                 `protobuf:"varint,7,opt,name=required_skill_rank,json=requiredSkillRank,proto3" json:"required_skill_rank,omitempty"`
 	RequiredAbilities []uint32               `protobuf:"varint,8,rep,packed,name=required_abilities,json=requiredAbilities,proto3" json:"required_abilities,omitempty"`
+	ProfessionSkillId uint32                 `protobuf:"varint,9,opt,name=profession_skill_id,json=professionSkillId,proto3" json:"profession_skill_id,omitempty"`
+	LearnedSpellId    uint32                 `protobuf:"varint,10,opt,name=learned_spell_id,json=learnedSpellId,proto3" json:"learned_spell_id,omitempty"`
+	ProfessionName    string                 `protobuf:"bytes,11,opt,name=profession_name,json=professionName,proto3" json:"profession_name,omitempty"`
+	PrimaryProfession bool                   `protobuf:"varint,12,opt,name=primary_profession,json=primaryProfession,proto3" json:"primary_profession,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -182,6 +186,34 @@ func (x *Spell) GetRequiredAbilities() []uint32 {
 	return nil
 }
 
+func (x *Spell) GetProfessionSkillId() uint32 {
+	if x != nil {
+		return x.ProfessionSkillId
+	}
+	return 0
+}
+
+func (x *Spell) GetLearnedSpellId() uint32 {
+	if x != nil {
+		return x.LearnedSpellId
+	}
+	return 0
+}
+
+func (x *Spell) GetProfessionName() string {
+	if x != nil {
+		return x.ProfessionName
+	}
+	return ""
+}
+
+func (x *Spell) GetPrimaryProfession() bool {
+	if x != nil {
+		return x.PrimaryProfession
+	}
+	return false
+}
+
 type Offer struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Revision      uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
@@ -267,24 +299,28 @@ func (x *Offer) GetExpiresInMs() uint64 {
 }
 
 type Purchase struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	Id                     uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	NpcGuid                uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
-	SpellId                uint32                 `protobuf:"varint,3,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
-	CostCopper             uint32                 `protobuf:"varint,4,opt,name=cost_copper,json=costCopper,proto3" json:"cost_copper,omitempty"`
-	Status                 PurchaseStatus         `protobuf:"varint,5,opt,name=status,proto3,enum=warcraftbuddy.training.v1.PurchaseStatus" json:"status,omitempty"`
-	TransportWritten       bool                   `protobuf:"varint,6,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
-	ServerSuccessObserved  bool                   `protobuf:"varint,7,opt,name=server_success_observed,json=serverSuccessObserved,proto3" json:"server_success_observed,omitempty"`
-	LearnedSpellObserved   bool                   `protobuf:"varint,8,opt,name=learned_spell_observed,json=learnedSpellObserved,proto3" json:"learned_spell_observed,omitempty"`
-	RefreshedTrainerKnows  bool                   `protobuf:"varint,9,opt,name=refreshed_trainer_knows,json=refreshedTrainerKnows,proto3" json:"refreshed_trainer_knows,omitempty"`
-	LearnedSpellIds        []uint32               `protobuf:"varint,10,rep,packed,name=learned_spell_ids,json=learnedSpellIds,proto3" json:"learned_spell_ids,omitempty"`
-	ServerFailure          uint32                 `protobuf:"varint,11,opt,name=server_failure,json=serverFailure,proto3" json:"server_failure,omitempty"`
-	Failure                string                 `protobuf:"bytes,12,opt,name=failure,proto3" json:"failure,omitempty"`
-	BaselineCopper         uint32                 `protobuf:"varint,13,opt,name=baseline_copper,json=baselineCopper,proto3" json:"baseline_copper,omitempty"`
-	BaselineCopperRevision uint64                 `protobuf:"varint,14,opt,name=baseline_copper_revision,json=baselineCopperRevision,proto3" json:"baseline_copper_revision,omitempty"`
-	CopperDebitObserved    bool                   `protobuf:"varint,15,opt,name=copper_debit_observed,json=copperDebitObserved,proto3" json:"copper_debit_observed,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	Id                      uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	NpcGuid                 uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	SpellId                 uint32                 `protobuf:"varint,3,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	CostCopper              uint32                 `protobuf:"varint,4,opt,name=cost_copper,json=costCopper,proto3" json:"cost_copper,omitempty"`
+	Status                  PurchaseStatus         `protobuf:"varint,5,opt,name=status,proto3,enum=warcraftbuddy.training.v1.PurchaseStatus" json:"status,omitempty"`
+	TransportWritten        bool                   `protobuf:"varint,6,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	ServerSuccessObserved   bool                   `protobuf:"varint,7,opt,name=server_success_observed,json=serverSuccessObserved,proto3" json:"server_success_observed,omitempty"`
+	LearnedSpellObserved    bool                   `protobuf:"varint,8,opt,name=learned_spell_observed,json=learnedSpellObserved,proto3" json:"learned_spell_observed,omitempty"`
+	RefreshedTrainerKnows   bool                   `protobuf:"varint,9,opt,name=refreshed_trainer_knows,json=refreshedTrainerKnows,proto3" json:"refreshed_trainer_knows,omitempty"`
+	LearnedSpellIds         []uint32               `protobuf:"varint,10,rep,packed,name=learned_spell_ids,json=learnedSpellIds,proto3" json:"learned_spell_ids,omitempty"`
+	ServerFailure           uint32                 `protobuf:"varint,11,opt,name=server_failure,json=serverFailure,proto3" json:"server_failure,omitempty"`
+	Failure                 string                 `protobuf:"bytes,12,opt,name=failure,proto3" json:"failure,omitempty"`
+	BaselineCopper          uint32                 `protobuf:"varint,13,opt,name=baseline_copper,json=baselineCopper,proto3" json:"baseline_copper,omitempty"`
+	BaselineCopperRevision  uint64                 `protobuf:"varint,14,opt,name=baseline_copper_revision,json=baselineCopperRevision,proto3" json:"baseline_copper_revision,omitempty"`
+	CopperDebitObserved     bool                   `protobuf:"varint,15,opt,name=copper_debit_observed,json=copperDebitObserved,proto3" json:"copper_debit_observed,omitempty"`
+	ProfessionSkillId       uint32                 `protobuf:"varint,16,opt,name=profession_skill_id,json=professionSkillId,proto3" json:"profession_skill_id,omitempty"`
+	BaselineSkillsRevision  uint64                 `protobuf:"varint,17,opt,name=baseline_skills_revision,json=baselineSkillsRevision,proto3" json:"baseline_skills_revision,omitempty"`
+	ProfessionSkillObserved bool                   `protobuf:"varint,18,opt,name=profession_skill_observed,json=professionSkillObserved,proto3" json:"profession_skill_observed,omitempty"`
+	ConfirmedSkillsRevision uint64                 `protobuf:"varint,19,opt,name=confirmed_skills_revision,json=confirmedSkillsRevision,proto3" json:"confirmed_skills_revision,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *Purchase) Reset() {
@@ -422,27 +458,129 @@ func (x *Purchase) GetCopperDebitObserved() bool {
 	return false
 }
 
+func (x *Purchase) GetProfessionSkillId() uint32 {
+	if x != nil {
+		return x.ProfessionSkillId
+	}
+	return 0
+}
+
+func (x *Purchase) GetBaselineSkillsRevision() uint64 {
+	if x != nil {
+		return x.BaselineSkillsRevision
+	}
+	return 0
+}
+
+func (x *Purchase) GetProfessionSkillObserved() bool {
+	if x != nil {
+		return x.ProfessionSkillObserved
+	}
+	return false
+}
+
+func (x *Purchase) GetConfirmedSkillsRevision() uint64 {
+	if x != nil {
+		return x.ConfirmedSkillsRevision
+	}
+	return 0
+}
+
+type ProfessionSkill struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SkillId       uint32                 `protobuf:"varint,1,opt,name=skill_id,json=skillId,proto3" json:"skill_id,omitempty"`
+	Rank          uint32                 `protobuf:"varint,2,opt,name=rank,proto3" json:"rank,omitempty"`
+	MaxRank       uint32                 `protobuf:"varint,3,opt,name=max_rank,json=maxRank,proto3" json:"max_rank,omitempty"`
+	Step          uint32                 `protobuf:"varint,4,opt,name=step,proto3" json:"step,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProfessionSkill) Reset() {
+	*x = ProfessionSkill{}
+	mi := &file_modules_buddy_training_training_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProfessionSkill) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProfessionSkill) ProtoMessage() {}
+
+func (x *ProfessionSkill) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_training_training_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProfessionSkill.ProtoReflect.Descriptor instead.
+func (*ProfessionSkill) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ProfessionSkill) GetSkillId() uint32 {
+	if x != nil {
+		return x.SkillId
+	}
+	return 0
+}
+
+func (x *ProfessionSkill) GetRank() uint32 {
+	if x != nil {
+		return x.Rank
+	}
+	return 0
+}
+
+func (x *ProfessionSkill) GetMaxRank() uint32 {
+	if x != nil {
+		return x.MaxRank
+	}
+	return 0
+}
+
+func (x *ProfessionSkill) GetStep() uint32 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
 type State struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Revision         uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	ActionInFlight   bool                   `protobuf:"varint,3,opt,name=action_in_flight,json=actionInFlight,proto3" json:"action_in_flight,omitempty"`
-	Offer            *Offer                 `protobuf:"bytes,4,opt,name=offer,proto3" json:"offer,omitempty"`
-	LastPurchase     *Purchase              `protobuf:"bytes,5,opt,name=last_purchase,json=lastPurchase,proto3" json:"last_purchase,omitempty"`
-	CopperKnown      bool                   `protobuf:"varint,6,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
-	Copper           uint32                 `protobuf:"varint,7,opt,name=copper,proto3" json:"copper,omitempty"`
-	CopperRevision   uint64                 `protobuf:"varint,8,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
-	MalformedPackets uint64                 `protobuf:"varint,9,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	IgnoredPackets   uint64                 `protobuf:"varint,10,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
-	TransportWrites  uint64                 `protobuf:"varint,11,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	Reason           string                 `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	SessionId             string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision              uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	ActionInFlight        bool                   `protobuf:"varint,3,opt,name=action_in_flight,json=actionInFlight,proto3" json:"action_in_flight,omitempty"`
+	Offer                 *Offer                 `protobuf:"bytes,4,opt,name=offer,proto3" json:"offer,omitempty"`
+	LastPurchase          *Purchase              `protobuf:"bytes,5,opt,name=last_purchase,json=lastPurchase,proto3" json:"last_purchase,omitempty"`
+	CopperKnown           bool                   `protobuf:"varint,6,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
+	Copper                uint32                 `protobuf:"varint,7,opt,name=copper,proto3" json:"copper,omitempty"`
+	CopperRevision        uint64                 `protobuf:"varint,8,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
+	MalformedPackets      uint64                 `protobuf:"varint,9,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	IgnoredPackets        uint64                 `protobuf:"varint,10,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
+	TransportWrites       uint64                 `protobuf:"varint,11,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	Reason                string                 `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	ProfessionsKnown      bool                   `protobuf:"varint,13,opt,name=professions_known,json=professionsKnown,proto3" json:"professions_known,omitempty"`
+	ProfessionsRevision   uint64                 `protobuf:"varint,14,opt,name=professions_revision,json=professionsRevision,proto3" json:"professions_revision,omitempty"`
+	PrimaryProfessions    []*ProfessionSkill     `protobuf:"bytes,15,rep,name=primary_professions,json=primaryProfessions,proto3" json:"primary_professions,omitempty"`
+	FreePrimarySlotsKnown bool                   `protobuf:"varint,16,opt,name=free_primary_slots_known,json=freePrimarySlotsKnown,proto3" json:"free_primary_slots_known,omitempty"`
+	FreePrimarySlots      uint32                 `protobuf:"varint,17,opt,name=free_primary_slots,json=freePrimarySlots,proto3" json:"free_primary_slots,omitempty"`
+	SecondaryProfessions  []*ProfessionSkill     `protobuf:"bytes,18,rep,name=secondary_professions,json=secondaryProfessions,proto3" json:"secondary_professions,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_training_training_proto_msgTypes[3]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -454,7 +592,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_training_training_proto_msgTypes[3]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -467,7 +605,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *State) GetSessionId() string {
@@ -554,6 +692,48 @@ func (x *State) GetReason() string {
 	return ""
 }
 
+func (x *State) GetProfessionsKnown() bool {
+	if x != nil {
+		return x.ProfessionsKnown
+	}
+	return false
+}
+
+func (x *State) GetProfessionsRevision() uint64 {
+	if x != nil {
+		return x.ProfessionsRevision
+	}
+	return 0
+}
+
+func (x *State) GetPrimaryProfessions() []*ProfessionSkill {
+	if x != nil {
+		return x.PrimaryProfessions
+	}
+	return nil
+}
+
+func (x *State) GetFreePrimarySlotsKnown() bool {
+	if x != nil {
+		return x.FreePrimarySlotsKnown
+	}
+	return false
+}
+
+func (x *State) GetFreePrimarySlots() uint32 {
+	if x != nil {
+		return x.FreePrimarySlots
+	}
+	return 0
+}
+
+func (x *State) GetSecondaryProfessions() []*ProfessionSkill {
+	if x != nil {
+		return x.SecondaryProfessions
+	}
+	return nil
+}
+
 type Trainer struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Creature      *api.CreatureState     `protobuf:"bytes,1,opt,name=creature,proto3" json:"creature,omitempty"`
@@ -567,7 +747,7 @@ type Trainer struct {
 
 func (x *Trainer) Reset() {
 	*x = Trainer{}
-	mi := &file_modules_buddy_training_training_proto_msgTypes[4]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +759,7 @@ func (x *Trainer) String() string {
 func (*Trainer) ProtoMessage() {}
 
 func (x *Trainer) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_training_training_proto_msgTypes[4]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +772,7 @@ func (x *Trainer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Trainer.ProtoReflect.Descriptor instead.
 func (*Trainer) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Trainer) GetCreature() *api.CreatureState {
@@ -640,7 +820,7 @@ type Discovery struct {
 
 func (x *Discovery) Reset() {
 	*x = Discovery{}
-	mi := &file_modules_buddy_training_training_proto_msgTypes[5]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -652,7 +832,7 @@ func (x *Discovery) String() string {
 func (*Discovery) ProtoMessage() {}
 
 func (x *Discovery) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_training_training_proto_msgTypes[5]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -665,7 +845,7 @@ func (x *Discovery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Discovery.ProtoReflect.Descriptor instead.
 func (*Discovery) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Discovery) GetState() *State {
@@ -686,13 +866,14 @@ type ListRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	NpcGuid       uint64                 `protobuf:"varint,2,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	TrainerType   uint32                 `protobuf:"varint,3,opt,name=trainer_type,json=trainerType,proto3" json:"trainer_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListRequest) Reset() {
 	*x = ListRequest{}
-	mi := &file_modules_buddy_training_training_proto_msgTypes[6]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -704,7 +885,7 @@ func (x *ListRequest) String() string {
 func (*ListRequest) ProtoMessage() {}
 
 func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_training_training_proto_msgTypes[6]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -717,7 +898,7 @@ func (x *ListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
 func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListRequest) GetSessionId() string {
@@ -730,6 +911,13 @@ func (x *ListRequest) GetSessionId() string {
 func (x *ListRequest) GetNpcGuid() uint64 {
 	if x != nil {
 		return x.NpcGuid
+	}
+	return 0
+}
+
+func (x *ListRequest) GetTrainerType() uint32 {
+	if x != nil {
+		return x.TrainerType
 	}
 	return 0
 }
@@ -748,7 +936,7 @@ type BuyRequest struct {
 
 func (x *BuyRequest) Reset() {
 	*x = BuyRequest{}
-	mi := &file_modules_buddy_training_training_proto_msgTypes[7]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -760,7 +948,7 @@ func (x *BuyRequest) String() string {
 func (*BuyRequest) ProtoMessage() {}
 
 func (x *BuyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_training_training_proto_msgTypes[7]
+	mi := &file_modules_buddy_training_training_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -773,7 +961,7 @@ func (x *BuyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuyRequest.ProtoReflect.Descriptor instead.
 func (*BuyRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *BuyRequest) GetSessionId() string {
@@ -818,11 +1006,71 @@ func (x *BuyRequest) GetMaxSpendCopper() uint32 {
 	return 0
 }
 
+type ProfessionBuyRequest struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Purchase             *BuyRequest            `protobuf:"bytes,1,opt,name=purchase,proto3" json:"purchase,omitempty"`
+	SkillId              uint32                 `protobuf:"varint,2,opt,name=skill_id,json=skillId,proto3" json:"skill_id,omitempty"`
+	AllowedPrimarySkills []uint32               `protobuf:"varint,3,rep,packed,name=allowed_primary_skills,json=allowedPrimarySkills,proto3" json:"allowed_primary_skills,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ProfessionBuyRequest) Reset() {
+	*x = ProfessionBuyRequest{}
+	mi := &file_modules_buddy_training_training_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProfessionBuyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProfessionBuyRequest) ProtoMessage() {}
+
+func (x *ProfessionBuyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_training_training_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProfessionBuyRequest.ProtoReflect.Descriptor instead.
+func (*ProfessionBuyRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_training_training_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ProfessionBuyRequest) GetPurchase() *BuyRequest {
+	if x != nil {
+		return x.Purchase
+	}
+	return nil
+}
+
+func (x *ProfessionBuyRequest) GetSkillId() uint32 {
+	if x != nil {
+		return x.SkillId
+	}
+	return 0
+}
+
+func (x *ProfessionBuyRequest) GetAllowedPrimarySkills() []uint32 {
+	if x != nil {
+		return x.AllowedPrimarySkills
+	}
+	return nil
+}
+
 var File_modules_buddy_training_training_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\n" +
-	"%modules/buddy-training/training.proto\x12\x19warcraftbuddy.training.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fmodules/buddy-world/world.proto\"\xa7\x02\n" +
+	"%modules/buddy-training/training.proto\x12\x19warcraftbuddy.training.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fmodules/buddy-world/world.proto\"\xd9\x03\n" +
 	"\x05Spell\x12\x19\n" +
 	"\bspell_id\x18\x01 \x01(\rR\aspellId\x12\x16\n" +
 	"\x06usable\x18\x02 \x01(\rR\x06usable\x12\x1f\n" +
@@ -833,14 +1081,19 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\x0erequired_level\x18\x05 \x01(\rR\rrequiredLevel\x12%\n" +
 	"\x0erequired_skill\x18\x06 \x01(\rR\rrequiredSkill\x12.\n" +
 	"\x13required_skill_rank\x18\a \x01(\rR\x11requiredSkillRank\x12-\n" +
-	"\x12required_abilities\x18\b \x03(\rR\x11requiredAbilities\"\xdb\x01\n" +
+	"\x12required_abilities\x18\b \x03(\rR\x11requiredAbilities\x12.\n" +
+	"\x13profession_skill_id\x18\t \x01(\rR\x11professionSkillId\x12(\n" +
+	"\x10learned_spell_id\x18\n" +
+	" \x01(\rR\x0elearnedSpellId\x12'\n" +
+	"\x0fprofession_name\x18\v \x01(\tR\x0eprofessionName\x12-\n" +
+	"\x12primary_profession\x18\f \x01(\bR\x11primaryProfession\"\xdb\x01\n" +
 	"\x05Offer\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x19\n" +
 	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12!\n" +
 	"\ftrainer_type\x18\x03 \x01(\rR\vtrainerType\x128\n" +
 	"\x06spells\x18\x04 \x03(\v2 .warcraftbuddy.training.v1.SpellR\x06spells\x12\x1a\n" +
 	"\bgreeting\x18\x05 \x01(\tR\bgreeting\x12\"\n" +
-	"\rexpires_in_ms\x18\x06 \x01(\x04R\vexpiresInMs\"\x8b\x05\n" +
+	"\rexpires_in_ms\x18\x06 \x01(\x04R\vexpiresInMs\"\xed\x06\n" +
 	"\bPurchase\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12\x19\n" +
@@ -858,7 +1111,16 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\afailure\x18\f \x01(\tR\afailure\x12'\n" +
 	"\x0fbaseline_copper\x18\r \x01(\rR\x0ebaselineCopper\x128\n" +
 	"\x18baseline_copper_revision\x18\x0e \x01(\x04R\x16baselineCopperRevision\x122\n" +
-	"\x15copper_debit_observed\x18\x0f \x01(\bR\x13copperDebitObserved\"\xeb\x03\n" +
+	"\x15copper_debit_observed\x18\x0f \x01(\bR\x13copperDebitObserved\x12.\n" +
+	"\x13profession_skill_id\x18\x10 \x01(\rR\x11professionSkillId\x128\n" +
+	"\x18baseline_skills_revision\x18\x11 \x01(\x04R\x16baselineSkillsRevision\x12:\n" +
+	"\x19profession_skill_observed\x18\x12 \x01(\bR\x17professionSkillObserved\x12:\n" +
+	"\x19confirmed_skills_revision\x18\x13 \x01(\x04R\x17confirmedSkillsRevision\"o\n" +
+	"\x0fProfessionSkill\x12\x19\n" +
+	"\bskill_id\x18\x01 \x01(\rR\askillId\x12\x12\n" +
+	"\x04rank\x18\x02 \x01(\rR\x04rank\x12\x19\n" +
+	"\bmax_rank\x18\x03 \x01(\rR\amaxRank\x12\x12\n" +
+	"\x04step\x18\x04 \x01(\rR\x04step\"\xf0\x06\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -873,7 +1135,13 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\x0fignored_packets\x18\n" +
 	" \x01(\x04R\x0eignoredPackets\x12)\n" +
 	"\x10transport_writes\x18\v \x01(\x04R\x0ftransportWrites\x12\x16\n" +
-	"\x06reason\x18\f \x01(\tR\x06reason\"\xda\x01\n" +
+	"\x06reason\x18\f \x01(\tR\x06reason\x12+\n" +
+	"\x11professions_known\x18\r \x01(\bR\x10professionsKnown\x121\n" +
+	"\x14professions_revision\x18\x0e \x01(\x04R\x13professionsRevision\x12[\n" +
+	"\x13primary_professions\x18\x0f \x03(\v2*.warcraftbuddy.training.v1.ProfessionSkillR\x12primaryProfessions\x127\n" +
+	"\x18free_primary_slots_known\x18\x10 \x01(\bR\x15freePrimarySlotsKnown\x12,\n" +
+	"\x12free_primary_slots\x18\x11 \x01(\rR\x10freePrimarySlots\x12_\n" +
+	"\x15secondary_professions\x18\x12 \x03(\v2*.warcraftbuddy.training.v1.ProfessionSkillR\x14secondaryProfessions\"\xda\x01\n" +
 	"\aTrainer\x12A\n" +
 	"\bcreature\x18\x01 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\bcreature\x12%\n" +
 	"\x0edistance_known\x18\x02 \x01(\bR\rdistanceKnown\x12\x1a\n" +
@@ -882,11 +1150,12 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\x0eblocked_reason\x18\x05 \x01(\tR\rblockedReason\"\x7f\n" +
 	"\tDiscovery\x126\n" +
 	"\x05state\x18\x01 \x01(\v2 .warcraftbuddy.training.v1.StateR\x05state\x12:\n" +
-	"\x06nearby\x18\x02 \x03(\v2\".warcraftbuddy.training.v1.TrainerR\x06nearby\"G\n" +
+	"\x06nearby\x18\x02 \x03(\v2\".warcraftbuddy.training.v1.TrainerR\x06nearby\"j\n" +
 	"\vListRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
-	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\"\xe4\x01\n" +
+	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12!\n" +
+	"\ftrainer_type\x18\x03 \x01(\rR\vtrainerType\"\xe4\x01\n" +
 	"\n" +
 	"BuyRequest\x12\x1d\n" +
 	"\n" +
@@ -895,19 +1164,25 @@ const file_modules_buddy_training_training_proto_rawDesc = "" +
 	"\x0eoffer_revision\x18\x03 \x01(\x04R\rofferRevision\x12\x19\n" +
 	"\bspell_id\x18\x04 \x01(\rR\aspellId\x120\n" +
 	"\x14expected_cost_copper\x18\x05 \x01(\rR\x12expectedCostCopper\x12(\n" +
-	"\x10max_spend_copper\x18\x06 \x01(\rR\x0emaxSpendCopper*\x8f\x01\n" +
+	"\x10max_spend_copper\x18\x06 \x01(\rR\x0emaxSpendCopper\"\xaa\x01\n" +
+	"\x14ProfessionBuyRequest\x12A\n" +
+	"\bpurchase\x18\x01 \x01(\v2%.warcraftbuddy.training.v1.BuyRequestR\bpurchase\x12\x19\n" +
+	"\bskill_id\x18\x02 \x01(\rR\askillId\x124\n" +
+	"\x16allowed_primary_skills\x18\x03 \x03(\rR\x14allowedPrimarySkills*\x8f\x01\n" +
 	"\x0ePurchaseStatus\x12\x11\n" +
 	"\rPURCHASE_NONE\x10\x00\x12\r\n" +
 	"\tREQUESTED\x10\x01\x12\x15\n" +
 	"\x11TRAINER_SUCCEEDED\x10\x02\x12\x16\n" +
 	"\x12TRAINING_CONFIRMED\x10\x03\x12\x13\n" +
 	"\x0fSERVER_REJECTED\x10\x04\x12\x17\n" +
-	"\x13UNCONFIRMED_TIMEOUT\x10\x052\x86\x03\n" +
+	"\x13UNCONFIRMED_TIMEOUT\x10\x052\xbf\x04\n" +
 	"\rBuddyTraining\x12H\n" +
 	"\bDiscover\x12\x16.google.protobuf.Empty\x1a$.warcraftbuddy.training.v1.Discovery\x12D\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a .warcraftbuddy.training.v1.State\x12P\n" +
 	"\x04List\x12&.warcraftbuddy.training.v1.ListRequest\x1a .warcraftbuddy.training.v1.State\x12N\n" +
-	"\x03Buy\x12%.warcraftbuddy.training.v1.BuyRequest\x1a .warcraftbuddy.training.v1.State\x12C\n" +
+	"\x03Buy\x12%.warcraftbuddy.training.v1.BuyRequest\x1a .warcraftbuddy.training.v1.State\x12S\n" +
+	"\x13DiscoverProfessions\x12\x16.google.protobuf.Empty\x1a$.warcraftbuddy.training.v1.Discovery\x12b\n" +
+	"\rBuyProfession\x12/.warcraftbuddy.training.v1.ProfessionBuyRequest\x1a .warcraftbuddy.training.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyBFZDgithub.com/agent-wow/agent-wow/modules/buddy-training/api;trainingv1b\x06proto3"
 
 var (
@@ -923,44 +1198,53 @@ func file_modules_buddy_training_training_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_training_training_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_training_training_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_modules_buddy_training_training_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_modules_buddy_training_training_proto_goTypes = []any{
-	(PurchaseStatus)(0),       // 0: warcraftbuddy.training.v1.PurchaseStatus
-	(*Spell)(nil),             // 1: warcraftbuddy.training.v1.Spell
-	(*Offer)(nil),             // 2: warcraftbuddy.training.v1.Offer
-	(*Purchase)(nil),          // 3: warcraftbuddy.training.v1.Purchase
-	(*State)(nil),             // 4: warcraftbuddy.training.v1.State
-	(*Trainer)(nil),           // 5: warcraftbuddy.training.v1.Trainer
-	(*Discovery)(nil),         // 6: warcraftbuddy.training.v1.Discovery
-	(*ListRequest)(nil),       // 7: warcraftbuddy.training.v1.ListRequest
-	(*BuyRequest)(nil),        // 8: warcraftbuddy.training.v1.BuyRequest
-	(*api.CreatureState)(nil), // 9: warcraftbuddy.world.v1.CreatureState
-	(*emptypb.Empty)(nil),     // 10: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),    // 11: agentwow.module.v1.WorldPacket
+	(PurchaseStatus)(0),          // 0: warcraftbuddy.training.v1.PurchaseStatus
+	(*Spell)(nil),                // 1: warcraftbuddy.training.v1.Spell
+	(*Offer)(nil),                // 2: warcraftbuddy.training.v1.Offer
+	(*Purchase)(nil),             // 3: warcraftbuddy.training.v1.Purchase
+	(*ProfessionSkill)(nil),      // 4: warcraftbuddy.training.v1.ProfessionSkill
+	(*State)(nil),                // 5: warcraftbuddy.training.v1.State
+	(*Trainer)(nil),              // 6: warcraftbuddy.training.v1.Trainer
+	(*Discovery)(nil),            // 7: warcraftbuddy.training.v1.Discovery
+	(*ListRequest)(nil),          // 8: warcraftbuddy.training.v1.ListRequest
+	(*BuyRequest)(nil),           // 9: warcraftbuddy.training.v1.BuyRequest
+	(*ProfessionBuyRequest)(nil), // 10: warcraftbuddy.training.v1.ProfessionBuyRequest
+	(*api.CreatureState)(nil),    // 11: warcraftbuddy.world.v1.CreatureState
+	(*emptypb.Empty)(nil),        // 12: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),       // 13: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_training_training_proto_depIdxs = []int32{
 	1,  // 0: warcraftbuddy.training.v1.Offer.spells:type_name -> warcraftbuddy.training.v1.Spell
 	0,  // 1: warcraftbuddy.training.v1.Purchase.status:type_name -> warcraftbuddy.training.v1.PurchaseStatus
 	2,  // 2: warcraftbuddy.training.v1.State.offer:type_name -> warcraftbuddy.training.v1.Offer
 	3,  // 3: warcraftbuddy.training.v1.State.last_purchase:type_name -> warcraftbuddy.training.v1.Purchase
-	9,  // 4: warcraftbuddy.training.v1.Trainer.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	4,  // 5: warcraftbuddy.training.v1.Discovery.state:type_name -> warcraftbuddy.training.v1.State
-	5,  // 6: warcraftbuddy.training.v1.Discovery.nearby:type_name -> warcraftbuddy.training.v1.Trainer
-	10, // 7: warcraftbuddy.training.v1.BuddyTraining.Discover:input_type -> google.protobuf.Empty
-	10, // 8: warcraftbuddy.training.v1.BuddyTraining.GetState:input_type -> google.protobuf.Empty
-	7,  // 9: warcraftbuddy.training.v1.BuddyTraining.List:input_type -> warcraftbuddy.training.v1.ListRequest
-	8,  // 10: warcraftbuddy.training.v1.BuddyTraining.Buy:input_type -> warcraftbuddy.training.v1.BuyRequest
-	11, // 11: warcraftbuddy.training.v1.BuddyTraining.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	6,  // 12: warcraftbuddy.training.v1.BuddyTraining.Discover:output_type -> warcraftbuddy.training.v1.Discovery
-	4,  // 13: warcraftbuddy.training.v1.BuddyTraining.GetState:output_type -> warcraftbuddy.training.v1.State
-	4,  // 14: warcraftbuddy.training.v1.BuddyTraining.List:output_type -> warcraftbuddy.training.v1.State
-	4,  // 15: warcraftbuddy.training.v1.BuddyTraining.Buy:output_type -> warcraftbuddy.training.v1.State
-	10, // 16: warcraftbuddy.training.v1.BuddyTraining.OnPacket:output_type -> google.protobuf.Empty
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	4,  // 4: warcraftbuddy.training.v1.State.primary_professions:type_name -> warcraftbuddy.training.v1.ProfessionSkill
+	4,  // 5: warcraftbuddy.training.v1.State.secondary_professions:type_name -> warcraftbuddy.training.v1.ProfessionSkill
+	11, // 6: warcraftbuddy.training.v1.Trainer.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	5,  // 7: warcraftbuddy.training.v1.Discovery.state:type_name -> warcraftbuddy.training.v1.State
+	6,  // 8: warcraftbuddy.training.v1.Discovery.nearby:type_name -> warcraftbuddy.training.v1.Trainer
+	9,  // 9: warcraftbuddy.training.v1.ProfessionBuyRequest.purchase:type_name -> warcraftbuddy.training.v1.BuyRequest
+	12, // 10: warcraftbuddy.training.v1.BuddyTraining.Discover:input_type -> google.protobuf.Empty
+	12, // 11: warcraftbuddy.training.v1.BuddyTraining.GetState:input_type -> google.protobuf.Empty
+	8,  // 12: warcraftbuddy.training.v1.BuddyTraining.List:input_type -> warcraftbuddy.training.v1.ListRequest
+	9,  // 13: warcraftbuddy.training.v1.BuddyTraining.Buy:input_type -> warcraftbuddy.training.v1.BuyRequest
+	12, // 14: warcraftbuddy.training.v1.BuddyTraining.DiscoverProfessions:input_type -> google.protobuf.Empty
+	10, // 15: warcraftbuddy.training.v1.BuddyTraining.BuyProfession:input_type -> warcraftbuddy.training.v1.ProfessionBuyRequest
+	13, // 16: warcraftbuddy.training.v1.BuddyTraining.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	7,  // 17: warcraftbuddy.training.v1.BuddyTraining.Discover:output_type -> warcraftbuddy.training.v1.Discovery
+	5,  // 18: warcraftbuddy.training.v1.BuddyTraining.GetState:output_type -> warcraftbuddy.training.v1.State
+	5,  // 19: warcraftbuddy.training.v1.BuddyTraining.List:output_type -> warcraftbuddy.training.v1.State
+	5,  // 20: warcraftbuddy.training.v1.BuddyTraining.Buy:output_type -> warcraftbuddy.training.v1.State
+	7,  // 21: warcraftbuddy.training.v1.BuddyTraining.DiscoverProfessions:output_type -> warcraftbuddy.training.v1.Discovery
+	5,  // 22: warcraftbuddy.training.v1.BuddyTraining.BuyProfession:output_type -> warcraftbuddy.training.v1.State
+	12, // 23: warcraftbuddy.training.v1.BuddyTraining.OnPacket:output_type -> google.protobuf.Empty
+	17, // [17:24] is the sub-list for method output_type
+	10, // [10:17] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_training_training_proto_init() }
@@ -974,7 +1258,7 @@ func file_modules_buddy_training_training_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_training_training_proto_rawDesc), len(file_modules_buddy_training_training_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

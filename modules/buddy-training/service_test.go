@@ -361,7 +361,7 @@ func TestManifestDescriptorAndDependencies(t *testing.T) {
 	if !ok || !m.Requires("buddy-world") || !m.Requires("buddy-actions") || !m.Requires("buddy-trade") {
 		t.Fatal("missing dependencies")
 	}
-	for _, alias := range []string{"discover", "state", "list", "buy"} {
+	for _, alias := range []string{"discover", "state", "list", "buy", "discover_professions", "buy_profession"} {
 		if _, ok := m.RPC(alias); !ok {
 			t.Fatal("missing alias", alias)
 		}

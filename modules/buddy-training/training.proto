@@ -14,6 +14,10 @@ message Spell {
   uint32 required_skill = 6;
   uint32 required_skill_rank = 7;
   repeated uint32 required_abilities = 8;
+  uint32 profession_skill_id = 9;
+  uint32 learned_spell_id = 10;
+  string profession_name = 11;
+  bool primary_profession = 12;
 }
 message Offer {
   uint64 revision = 1;
@@ -47,6 +51,16 @@ message Purchase {
   uint32 baseline_copper = 13;
   uint64 baseline_copper_revision = 14;
   bool copper_debit_observed = 15;
+  uint32 profession_skill_id = 16;
+  uint64 baseline_skills_revision = 17;
+  bool profession_skill_observed = 18;
+  uint64 confirmed_skills_revision = 19;
+}
+message ProfessionSkill {
+  uint32 skill_id = 1;
+  uint32 rank = 2;
+  uint32 max_rank = 3;
+  uint32 step = 4;
 }
 message State {
   string session_id = 1;
@@ -61,6 +75,12 @@ message State {
   uint64 ignored_packets = 10;
   uint64 transport_writes = 11;
   string reason = 12;
+  bool professions_known = 13;
+  uint64 professions_revision = 14;
+  repeated ProfessionSkill primary_professions = 15;
+  bool free_primary_slots_known = 16;
+  uint32 free_primary_slots = 17;
+  repeated ProfessionSkill secondary_professions = 18;
 }
 message Trainer {
   warcraftbuddy.world.v1.CreatureState creature = 1;
@@ -70,7 +90,7 @@ message Trainer {
   string blocked_reason = 5;
 }
 message Discovery { State state = 1; repeated Trainer nearby = 2; }
-message ListRequest { string session_id = 1; uint64 npc_guid = 2; }
+message ListRequest { string session_id = 1; uint64 npc_guid = 2; uint32 trainer_type = 3; }
 message BuyRequest {
   string session_id = 1;
   uint64 npc_guid = 2;
@@ -79,10 +99,17 @@ message BuyRequest {
   uint32 expected_cost_copper = 5;
   uint32 max_spend_copper = 6;
 }
+message ProfessionBuyRequest {
+  BuyRequest purchase = 1;
+  uint32 skill_id = 2;
+  repeated uint32 allowed_primary_skills = 3;
+}
 service BuddyTraining {
   rpc Discover(google.protobuf.Empty) returns (Discovery);
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc List(ListRequest) returns (State);
   rpc Buy(BuyRequest) returns (State);
+  rpc DiscoverProfessions(google.protobuf.Empty) returns (Discovery);
+  rpc BuyProfession(ProfessionBuyRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

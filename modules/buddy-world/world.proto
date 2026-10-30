@@ -186,6 +186,17 @@ message BackpackSlot {
   bool metadata_known = 6;
 }
 
+// Actual private own-player skill fields; no inferred profession membership.
+message SkillState {
+  uint32 slot = 1;
+  uint32 skill_id = 2;
+  uint32 step = 3;
+  uint32 value = 4;
+  uint32 max_value = 5;
+  int32 temporary_bonus = 6;
+  int32 permanent_bonus = 7;
+}
+
 message SnapshotResponse {
   PlayerState self = 1;
   PlayerState owner = 2;
@@ -222,6 +233,13 @@ message SnapshotResponse {
   // The requested creature, if still present in the bounded observation cache.
   // Independent of nearby_creatures truncation; retains actual observation ages.
   CreatureState requested_creature = 23;
+  bool self_skills_known = 24;
+  uint64 self_skills_revision = 25;
+  // Exactly128 wire slots when known; skill_id0 means empty.
+  repeated SkillState self_skills = 26;
+  bool self_free_primary_slots_known = 27;
+  uint32 self_free_primary_slots = 28;
+  uint64 self_free_primary_slots_revision = 29;
 }
 
 service BuddyWorld {
