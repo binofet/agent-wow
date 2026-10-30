@@ -26,7 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const limitation = "One bounded known starter recipe or fishing attempt. Transport, server cast, inventory output and pure skill-rank increase are separate evidence. Focus distance may use the stopped client's position estimate, which is not a server movement acknowledgement. Missing supplies, equipment, focus or observations block practice. No movement, buying, equipping, unlearning or level progression."
+const limitation = "One bounded own-known starter recipe, fishing attempt or explicitly selected already-in-range skinning corpse. Transport, server cast, inventory output and pure skill-rank increase are separate evidence. Focus distance may use the stopped client's position estimate, which is not a server movement acknowledgement. Missing supplies, equipment, focus or observations block practice. No movement, buying, equipping, unlearning or level progression."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -70,6 +70,11 @@ type Service struct {
 	tools          map[uint32]*tradev1.ItemDetails
 	focuses        map[uint32]focusTemplate
 	focusRequested map[uint32]bool
+	skinLoot       *normalLootProof
+	fullLoot       map[uint64]time.Time
+	skinAttempted  map[uint64]bool
+	skinTemplates  map[uint32]skinTemplate
+	skinRequested  map[uint32]bool
 	nextQuery      time.Time
 	requests       map[string]*operation
 	active, last   *operation
@@ -82,7 +87,7 @@ func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service 
 		observeGate: make(chan struct{}, 1),
 		state:       &professionsv1.State{SessionId: sessionID, SelfGuid: selfGUID, Revision: 1, Limitation: limitation},
 		tools:       make(map[uint32]*tradev1.ItemDetails), focuses: make(map[uint32]focusTemplate),
-		focusRequested: make(map[uint32]bool), requests: make(map[string]*operation)}
+		focusRequested: make(map[uint32]bool), fullLoot: make(map[uint64]time.Time), skinAttempted: make(map[uint64]bool), skinTemplates: make(map[uint32]skinTemplate), skinRequested: make(map[uint32]bool), requests: make(map[string]*operation)}
 }
 
 func (s *Service) invoke(ctx context.Context, module, method string, input, output proto.Message) error {
@@ -118,7 +123,7 @@ func worldObjects(w *worldv1.SnapshotResponse, name string) []*worldv1.GameObjec
 
 // Read normal public template facts only for currently observed focus/tool IDs.
 // Queries are bounded and reserved before transport; they are not craft receipts.
-func (s *Service) observe(ctx context.Context) error {
+func (s *Service) observe(ctx context.Context, target ...uint64) error {
 	select {
 	case s.observeGate <- struct{}{}:
 		defer func() { <-s.observeGate }()
@@ -126,8 +131,17 @@ func (s *Service) observe(ctx context.Context) error {
 		s.invalidateObservations(ctx.Err())
 		return ctx.Err()
 	}
+	s.mu.Lock()
+	var targetGUID uint64
+	if s.active != nil && s.active.spec.skill == 393 && s.active.request != nil {
+		targetGUID = s.active.request.TargetGuid
+	}
+	if len(target) == 1 {
+		targetGUID = target[0]
+	}
+	s.mu.Unlock()
 	w := &worldv1.SnapshotResponse{}
-	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); err != nil {
+	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{CreatureGuid: targetGUID}, w); err != nil {
 		s.invalidateObservations(err)
 		return err
 	}
@@ -140,19 +154,20 @@ func (s *Service) observe(ctx context.Context) error {
 		err = s.invoke(ctx, "buddy-loot", "state", &emptypb.Empty{}, l)
 	}
 	s.mu.Lock()
-	if err == nil && (view.skillsRevision < s.state.SkillsRevision || view.backpackRevision < s.state.BackpackRevision) {
+	if err == nil && (view.skillsRevision < s.state.SkillsRevision || view.inventoryRevision < s.state.InventoryRevision) {
 		err = fail("actual_world_revision_regressed")
 	}
-	oldSkills, oldBag, oldReason := s.state.SkillsRevision, s.state.BackpackRevision, s.viewReason
+	oldSkills, oldBag, oldReason := s.state.SkillsRevision, s.state.InventoryRevision, s.viewReason
 	s.viewKnown, s.viewReason = err == nil, ""
 	if err != nil {
 		s.viewReason = err.Error()
 	} else {
 		s.view, s.actions, s.loot = view, a, l
 		s.state.SkillsKnown, s.state.SkillsRevision = true, view.skillsRevision
-		s.state.BackpackKnown, s.state.BackpackRevision = true, view.backpackRevision
+		s.state.BackpackKnown, s.state.BackpackRevision = w.BackpackKnown, view.backpackRevision
+		s.state.InventoryKnown, s.state.InventoryRevision = true, view.inventoryRevision
 		s.state.Skills = nil
-		for _, id := range []uint32{129, 185, 356} {
+		for _, id := range []uint32{129, 185, 356, 393} {
 			if rank, ok := view.skills[id]; ok {
 				s.state.Skills = append(s.state.Skills, &professionsv1.Skill{SkillId: id, Rank: rank.value, Maximum: rank.max})
 			}
@@ -162,8 +177,9 @@ func (s *Service) observe(ctx context.Context) error {
 	if err != nil {
 		s.state.SkillsKnown = false
 		s.state.BackpackKnown = false
+		s.state.InventoryKnown = false
 	}
-	if oldSkills != s.state.SkillsRevision || oldBag != s.state.BackpackRevision || oldReason != s.viewReason {
+	if oldSkills != s.state.SkillsRevision || oldBag != s.state.InventoryRevision || oldReason != s.viewReason {
 		s.state.Revision++
 	}
 	query := []*worldv1.GameObjectState{}
@@ -214,6 +230,7 @@ func (s *Service) observe(ctx context.Context) error {
 			}
 		}
 	}
+	s.querySkinTemplates(ctx, w)
 	return nil
 }
 
@@ -223,6 +240,7 @@ func (s *Service) invalidateObservations(err error) {
 	s.viewKnown = false
 	s.state.SkillsKnown = false
 	s.state.BackpackKnown = false
+	s.state.InventoryKnown = false
 	if err != nil {
 		s.viewReason = err.Error()
 	} else {
@@ -255,7 +273,7 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 		return "profession_skill_not_learned_or_rank_too_low"
 	}
 	if s.view.freeSlots == 0 {
-		return "no_verified_free_backpack_slot"
+		return "no_verified_general_carried_inventory_slot"
 	}
 	if s.active != nil && s.active != own {
 		return "another_profession_attempt_active"
@@ -273,7 +291,15 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 		return "observed_owner_combat_takes_priority"
 	}
 	if recipe.reagentEntry != 0 && s.view.counts[recipe.reagentEntry] < recipe.reagentCount {
-		return "required_materials_not_observed_in_own_backpack"
+		return "required_materials_not_observed_in_own_carried_inventory"
+	}
+	if recipe.skill == 393 {
+		if s.view.counts[7005] == 0 {
+			return "actual_owned_skinning_knife7005_required"
+		}
+		if !s.view.self.ChannelSpellKnown || !s.view.self.ChannelObjectKnown || s.view.self.ChannelSpellId != 0 || s.view.self.ChannelObjectGuid != 0 {
+			return "own_channel_not_observed_idle"
+		}
 	}
 	if recipe.skill == 356 {
 		form := s.view.self.ShapeshiftForm
@@ -371,8 +397,12 @@ func (s *Service) snapshotLocked() *professionsv1.State {
 	s.state.Recipes = nil
 	for _, spec := range starterRecipes {
 		reason := s.reasonLocked(spec)
+		if spec.skill == 393 && reason == "" {
+			reason = "explicit_observed_fully_looted_corpse_selection_required"
+		}
 		s.state.Recipes = append(s.state.Recipes, &professionsv1.Recipe{SkillId: spec.skill, SpellId: spec.spell, Name: spec.name, Known: s.book.has(spec.spell), RequirementsVerified: spec.requirementsVerified, ReagentEntry: spec.reagentEntry, ReagentCount: spec.reagentCount, OutputEntry: spec.itemEntry, OutputCount: spec.itemCount, FocusId: spec.focusID, CastTimeMs: spec.castTimeMs, ChannelDurationMs: spec.channelDurationMs, Ready: reason == "", Reason: reason, MetadataProvenance: metadataProvenance})
 	}
+	s.state.SkinningTargets = s.skinningTargetsLocked()
 	if s.last != nil {
 		s.state.Operation = s.operationSnapshotLocked(s.last)
 	}
@@ -420,7 +450,7 @@ func (s *Service) Attempt(ctx context.Context, r *professionsv1.AttemptRequest) 
 	s.mu.Unlock()
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if err := s.observe(call); err != nil {
+	if err := s.observe(call, r.TargetGuid); err != nil {
 		return nil, status.Error(codes.FailedPrecondition, "actual own observations unavailable")
 	}
 	s.mu.Lock()
@@ -433,9 +463,18 @@ func (s *Service) Attempt(ctx context.Context, r *professionsv1.AttemptRequest) 
 		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "only a supported own-known starter recipe is allowed")
 	}
-	if r.ExpectedRevision != s.state.Revision || r.ExpectedSkillsRevision != s.state.SkillsRevision || r.ExpectedBackpackRevision != s.state.BackpackRevision {
+	if r.ExpectedRevision != s.state.Revision || r.ExpectedSkillsRevision != s.state.SkillsRevision || r.ExpectedInventoryRevision == 0 || r.ExpectedInventoryRevision != s.state.InventoryRevision || r.ExpectedBackpackRevision != 0 && r.ExpectedBackpackRevision != s.state.BackpackRevision {
 		s.mu.Unlock()
-		return nil, status.Error(codes.FailedPrecondition, "state, skills or backpack changed; no cast reserved")
+		return nil, status.Error(codes.FailedPrecondition, "state, skills or carried inventory changed; no cast reserved")
+	}
+	if spec.skill == 393 {
+		if _, reason := s.skinningTargetLocked(r.TargetGuid, r.TargetPositionRevision, nil); reason != "" {
+			s.mu.Unlock()
+			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
+	} else if r.TargetGuid != 0 || r.TargetPositionRevision != 0 {
+		s.mu.Unlock()
+		return nil, status.Error(codes.InvalidArgument, "target_only_supported_for_fixed_skinning_spell")
 	}
 	if reason := s.reasonLocked(spec); reason != "" {
 		s.mu.Unlock()
@@ -456,7 +495,7 @@ func (s *Service) Attempt(ctx context.Context, r *professionsv1.AttemptRequest) 
 		duration = 25 * time.Second
 	}
 	opCtx, stop := context.WithTimeout(context.Background(), duration)
-	op := &operation{request: proto.Clone(r).(*professionsv1.AttemptRequest), spec: spec, baseline: s.view, started: s.now(), ctx: opCtx, cancel: stop, done: make(chan struct{}), stored: make(map[byte]bool), removed: make(map[byte]bool), pushed: make(map[byte]bool), pushCounts: make(map[uint32]uint32), receipt: &professionsv1.Operation{OperationId: hex.EncodeToString(id[:]), RequestId: r.RequestId, SkillId: r.SkillId, SpellId: r.SpellId, CastCount: uint32(s.castCount), Status: professionsv1.AttemptStatus_RESERVED, Reason: "reserved_before_cast", BaselineSkillsRevision: s.view.skillsRevision, BaselineBackpackRevision: s.view.backpackRevision, BeforeRank: s.view.skills[spec.skill].value, AfterRank: s.view.skills[spec.skill].value, Limitation: limitation}}
+	op := &operation{request: proto.Clone(r).(*professionsv1.AttemptRequest), spec: spec, baseline: s.view, started: s.now(), ctx: opCtx, cancel: stop, done: make(chan struct{}), stored: make(map[byte]bool), removed: make(map[byte]bool), pushed: make(map[byte]bool), pushCounts: make(map[uint32]uint32), receipt: &professionsv1.Operation{OperationId: hex.EncodeToString(id[:]), RequestId: r.RequestId, SkillId: r.SkillId, SpellId: r.SpellId, CastCount: uint32(s.castCount), Status: professionsv1.AttemptStatus_RESERVED, Reason: "reserved_before_cast", BaselineSkillsRevision: s.view.skillsRevision, BaselineBackpackRevision: s.view.backpackRevision, BaselineInventoryRevision: s.view.inventoryRevision, TargetGuid: r.TargetGuid, TargetPositionRevision: r.TargetPositionRevision, BeforeRank: s.view.skills[spec.skill].value, AfterRank: s.view.skills[spec.skill].value, Limitation: limitation}}
 	s.requests[r.RequestId] = op
 	s.active = op
 	s.last = op
@@ -494,7 +533,8 @@ func (s *Service) updateEvidenceLocked(view worldView) {
 			r.SkillIncreased = rank.value > r.BeforeRank
 		}
 	}
-	if view.backpackRevision > r.BaselineBackpackRevision {
+	if view.inventoryRevision > r.BaselineInventoryRevision {
+		r.ObservedInventoryRevision = view.inventoryRevision
 		r.ObservedBackpackRevision = view.backpackRevision
 		if op.spec.reagentEntry != 0 {
 			before := op.baseline.counts[op.spec.reagentEntry]

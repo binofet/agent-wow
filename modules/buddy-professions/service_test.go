@@ -39,6 +39,8 @@ type professionSessionFixture struct {
 	sendErr         map[uint32]error
 	packets         []*modv1.SendPacketRequest
 	events          []string
+	rpcEvents       []string
+	worldHook       func(*worldv1.SnapshotRequest)
 	writes          chan *modv1.SendPacketRequest
 	releases        []string
 	beforeSend      func(*modv1.SendPacketRequest)
@@ -54,6 +56,7 @@ func (f *professionSessionFixture) SendPacket(ctx context.Context, p *modv1.Send
 	copy := proto.Clone(p).(*modv1.SendPacketRequest)
 	f.mu.Lock()
 	f.packets = append(f.packets, copy)
+	f.rpcEvents = append(f.rpcEvents, fmt.Sprintf("send:%x", p.Opcode))
 	f.events = append(f.events, fmt.Sprintf("send:%x", p.Opcode))
 	err, hook := f.sendErr[p.Opcode], f.beforeSend
 	f.mu.Unlock()
@@ -74,8 +77,16 @@ func (f *professionSessionFixture) InvokeModule(ctx context.Context, r *modv1.In
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var result proto.Message
+	f.rpcEvents = append(f.rpcEvents, r.Module+"/"+r.Method)
 	switch r.Module + "/" + r.Method {
 	case "buddy-world/snapshot":
+		if f.worldHook != nil {
+			request := &worldv1.SnapshotRequest{}
+			if err := r.Request.UnmarshalTo(request); err != nil {
+				return nil, err
+			}
+			f.worldHook(request)
+		}
 		if f.worldErr != nil {
 			return nil, f.worldErr
 		}
@@ -99,6 +110,7 @@ func (f *professionSessionFixture) InvokeModule(ctx context.Context, r *modv1.In
 			}
 			f.token = "MOCK-professions-token-1"
 			f.actions.InteractionOwner = "professions"
+			f.actions.InteractionLeaseRemainingMs = 30000
 		} else {
 			f.events = append(f.events, "renew:"+input.Token)
 			if input.Token != f.token {
@@ -198,7 +210,7 @@ func professionRequest(s *Service, id string, spell uint32) *professionsv1.Attem
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	spec, _ := recipeForSpell(spell)
-	return &professionsv1.AttemptRequest{SessionId: "body", RequestId: id, ExpectedRevision: s.state.Revision, SkillId: spec.skill, SpellId: spell, ExpectedSkillsRevision: s.state.SkillsRevision, ExpectedBackpackRevision: s.state.BackpackRevision}
+	return &professionsv1.AttemptRequest{SessionId: "body", RequestId: id, ExpectedRevision: s.state.Revision, SkillId: spec.skill, SpellId: spell, ExpectedSkillsRevision: s.state.SkillsRevision, ExpectedBackpackRevision: s.state.BackpackRevision, ExpectedInventoryRevision: s.state.InventoryRevision}
 }
 
 func professionWaitPacket(t *testing.T, f *professionSessionFixture, code uint32) *modv1.SendPacketRequest {
@@ -302,8 +314,9 @@ func TestServiceFirstAidActualCraftAndIndependentRankEvidence(t *testing.T) {
 			}
 			f.world.SelfSkills[0].TemporaryBonus += 20
 			f.world.BackpackRevision++
-			f.world.Backpack[0].StackCount--
-			f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000003, Entry: 1251, StackCount: 1, MetadataKnown: true}
+			f.world.InventoryRevision++
+			f.world.InventoryBags[0].Slots[0].StackCount--
+			f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000003, Entry: 1251, StackCount: 1, MetadataKnown: true}
 			f.mu.Unlock()
 			professionObserve(t, s)
 			professionWaitDone(t, op)
@@ -361,12 +374,12 @@ func TestServiceAttemptBindingAndReadinessBlocksBeforeTransport(t *testing.T) {
 			f.world.SelfSkillsKnown = false
 		}, codes.FailedPrecondition},
 		{"missing materials", func(_ *Service, f *professionSessionFixture, _ *professionsv1.AttemptRequest) {
-			f.world.Backpack[0] = &worldv1.BackpackSlot{Slot: 0}
-			f.world.Backpack[15] = &worldv1.BackpackSlot{Slot: 15}
+			f.world.InventoryBags[0].Slots[0] = &worldv1.BackpackSlot{Slot: 0}
+			f.world.InventoryBags[0].Slots[15] = &worldv1.BackpackSlot{Slot: 15}
 		}, codes.FailedPrecondition},
 		{"no free slot", func(_ *Service, f *professionSessionFixture, _ *professionsv1.AttemptRequest) {
-			for i := range f.world.Backpack {
-				f.world.Backpack[i] = &worldv1.BackpackSlot{Slot: uint32(i), ItemGuid: 0x4000000000000000 + uint64(i+1), Entry: 2589, StackCount: 1, MetadataKnown: true}
+			for i := range f.world.InventoryBags[0].Slots {
+				f.world.InventoryBags[0].Slots[i] = &worldv1.BackpackSlot{Slot: uint32(i), ItemGuid: 0x4000000000000000 + uint64(i+1), Entry: 2589, StackCount: 1, MetadataKnown: true}
 			}
 		}, codes.FailedPrecondition},
 		{"moving", func(_ *Service, f *professionSessionFixture, _ *professionsv1.AttemptRequest) {
@@ -445,6 +458,7 @@ func TestServiceObservationsCannotRegressAfterTemporaryFailure(t *testing.T) {
 			f.world = proto.Clone(f.world).(*worldv1.SnapshotResponse)
 			f.world.SelfSkillsRevision += 2
 			f.world.BackpackRevision += 2
+			f.world.InventoryRevision += 2
 			f.world.SelfSkills[0].Value = 13
 			professionObserve(t, s)
 			if temporaryFailure {
@@ -513,7 +527,7 @@ func TestServiceFocusQueriesBoundedReservedAndOnlyObserved(t *testing.T) {
 
 func TestServiceCookingRequiresCurrentActualFocus(t *testing.T) {
 	s, f := newProfessionServiceFixture(t)
-	f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
+	f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
 	professionObserve(t, s)
 	if _, err := s.Attempt(context.Background(), professionRequest(s, "no-focus", 2538)); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "focus") {
 		t.Fatal("cooking without observed focus admitted", err)
@@ -562,8 +576,9 @@ func TestServiceTerminalSuccessWaitsForOwnedCleanupAcrossBothAPIs(t *testing.T) 
 			f.mu.Lock()
 			f.world = proto.Clone(f.world).(*worldv1.SnapshotResponse)
 			f.world.BackpackRevision++
-			f.world.Backpack[0].StackCount--
-			f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000066, Entry: 1251, StackCount: 1, MetadataKnown: true}
+			f.world.InventoryRevision++
+			f.world.InventoryBags[0].Slots[0].StackCount--
+			f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000066, Entry: 1251, StackCount: 1, MetadataKnown: true}
 			f.mu.Unlock()
 			select {
 			case <-started:
@@ -610,7 +625,7 @@ func TestServiceCookingFocusUsesKnownSameMapStoppedActionEstimate(t *testing.T) 
 			s, f := newProfessionServiceFixture(t)
 			f.world.Self.MapId = 1
 			f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -100, 0, 1
-			f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
+			f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
 			f.world.SpellFocuses = []*worldv1.GameObjectState{{Guid: 0xf110000000000077, Entry: 100, Present: true, TypeKnown: true, GameObjectType: 8, MapKnown: true, MapId: 1, PositionKnown: true, X: 10, Y: 20, Z: 30, StateKnown: true, State: 1}}
 			s.focusRequested[100] = true
 			s.focuses[100] = focusTemplate{entry: 100, focusID: 4, radius: 3}

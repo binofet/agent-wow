@@ -176,6 +176,8 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	healthKnown := p.known[unitHealth] && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 && p.fields[unitHealth] <= p.fields[unitMaxHealth]
 	r := &worldv1.CreatureState{Guid: p.guid, Entry: p.fields[objectEntry], NpcFlags: p.fields[unitNPCFlags], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision, ObservationAgeMs: age(now, p.observedAt), HealthKnown: healthKnown, Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth], AliveKnown: healthKnown, Alive: healthKnown && p.fields[unitHealth] > 0 && p.fields[unitDynamicFlags]&0x20 == 0, UnitFlags: p.fields[unitFlags], DynamicFlags: p.fields[unitDynamicFlags], MovementFlags: p.movementFlags}
 	r.FactionTemplate = p.fields[0x37]
+	r.UnitFlagsKnown = p.known[unitFlags]
+	r.DynamicFlagsKnown = p.known[unitDynamicFlags]
 	r.UnitFlags_2 = p.fields[0x3c]
 	r.TargetKnown = p.known[0x12] && p.known[0x13]
 	r.TargetGuid = uint64(p.fields[0x12]) | uint64(p.fields[0x13])<<32
@@ -242,9 +244,13 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 		if p.known[unitDynamicFlags] && p.fields[unitDynamicFlags]&1 != 0 && p.known[unitHealth] && p.fields[unitHealth] == 0 && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 {
 			r.LootableCorpses = append(r.LootableCorpses, creatureSnapshot(p, s, now))
 		}
+		if p.known[unitFlags] && p.fields[unitFlags]&0x04000000 != 0 && p.known[unitDynamicFlags] && p.fields[unitDynamicFlags]&1 == 0 && p.known[unitHealth] && p.fields[unitHealth] == 0 && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 {
+			r.SkinnableCorpses = append(r.SkinnableCorpses, creatureSnapshot(p, s, now))
+		}
 	}
 	sortCreatures(r.QuestGivers)
 	sortCreatures(r.LootableCorpses)
+	sortCreatures(r.SkinnableCorpses)
 	sort.Slice(r.NearbyCreatures, func(i, j int) bool {
 		a, b := r.NearbyCreatures[i], r.NearbyCreatures[j]
 		if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
@@ -263,6 +269,9 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 	}
 	if len(r.LootableCorpses) > maxCreatureResults {
 		r.LootableCorpses = r.LootableCorpses[:maxCreatureResults]
+	}
+	if len(r.SkinnableCorpses) > 32 {
+		r.SkinnableCorpses = r.SkinnableCorpses[:32]
 	}
 	s.appendInventory(r)
 	p := s.players[0]

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ÏB
+ýC
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"õ
 PlayerState
 guid (Rguid
@@ -143,7 +143,7 @@ flagsKnown
 created_by_guid (RcreatedByGuid
 state_known (R
 stateKnown
-state (Rstate"ƒ
+state (Rstate"Ý
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -191,7 +191,9 @@ trajectory,
 combat_reach$ (RcombatReach
 level_known% (R
 levelKnown
-level& (Rlevel"Ã
+level& (Rlevel(
+unit_flags_known' (RunitFlagsKnown.
+dynamic_flags_known( (RdynamicFlagsKnown"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -244,7 +246,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"¦
+permanent_bonus (RpermanentBonus"ú
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -285,7 +287,8 @@ selfSkills@
 requested_game_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRrequestedGameObjects'
 inventory_known" (RinventoryKnown-
 inventory_revision# (RinventoryRevisionK
-inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBags2°
+inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
+skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpses2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

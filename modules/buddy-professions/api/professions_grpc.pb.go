@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v7.36.2
-// source: professions.proto
+// source: modules/buddy-professions/professions.proto
 
 package professionsv1
 
@@ -271,5 +271,5 @@ var BuddyProfessions_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "professions.proto",
+	Metadata: "modules/buddy-professions/professions.proto",
 }

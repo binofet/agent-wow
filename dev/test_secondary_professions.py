@@ -19,8 +19,9 @@ URL = "http://127.0.0.1:8192/rpc"
 
 def initial_state():
     return {"sessionId": "body1", "selfGuid": "7", "revision": "5", "skillsKnown": True,
-            "skillsRevision": "8", "skills": [{"skillId": skill, "rank": 1, "maximum": 75} for skill in (129, 185, 356)],
-            "spellsKnown": True, "backpackKnown": True, "backpackRevision": "11", "recipes": [
+            "skillsRevision": "8", "skills": [{"skillId": skill, "rank": 1, "maximum": 75} for skill in (129, 185, 356, 393)],
+            "spellsKnown": True, "backpackKnown": True, "backpackRevision": "11",
+            "inventoryKnown": True, "inventoryRevision": "23", "recipes": [
                 {"skillId": skill, "spellId": spell, "known": True, "ready": True, "requirementsVerified": True}
                 for spell, skill in m.CATALOG.items()]}
 
@@ -43,10 +44,15 @@ class MockHTTP:
         self.on_state, self.on_attempt, self.on_cancel, self.raw_reply = None, None, None, None
 
     def operation(self, request, status="COMPLETED"):
+        baseline = m.number(request.get("expectedInventoryRevision", self.state["inventoryRevision"]))
         return {"operationId": "op-" + request["requestId"], "requestId": request["requestId"],
                 "skillId": request["skillId"], "spellId": request["spellId"], "status": status,
                 "ownGoObserved": True, "outputInventoryObserved": True, "reagentsConsumedObserved": True,
-                "beforeRank": 1, "afterRank": 1, "skillIncreased": False, "leaseReleased": status in m.TERMINAL}
+                "beforeRank": 1, "afterRank": 1, "skillIncreased": False, "leaseReleased": status in m.TERMINAL,
+                "baselineInventoryRevision": str(baseline),
+                "observedInventoryRevision": str(baseline + 1 if status == "COMPLETED" else 0),
+                "baselineBackpackRevision": self.state["backpackRevision"],
+                "observedBackpackRevision": self.state["backpackRevision"]}
 
     def open(self, request, timeout):
         payload = json.loads(request.data)
@@ -60,6 +66,8 @@ class MockHTTP:
                     self.on_state(self)
             elif method == "buddy-professions.attempt":
                 self.state["operation"] = self.operation(params)
+                self.state["inventoryRevision"] = self.state["operation"]["observedInventoryRevision"]
+                self.state["revision"] = str(m.number(self.state["revision"]) + 1)
                 self.state["active"] = False
                 if self.on_attempt:
                     self.on_attempt(self)
@@ -166,7 +174,8 @@ class SecondaryProfessionTests(unittest.TestCase):
         self.assertEqual(self.http.methods(), ["buddy-professions.state", "buddy-professions.state", "buddy-professions.attempt"])
         request = self.http.calls[-1]["params"]
         self.assertEqual(request, {"sessionId": "body1", "requestId": request["requestId"], "expectedRevision": "5",
-                                  "skillId": 129, "spellId": 3275, "expectedSkillsRevision": "8", "expectedBackpackRevision": "11"})
+                                  "skillId": 129, "spellId": 3275, "expectedSkillsRevision": "8", "expectedBackpackRevision": "11",
+                                  "expectedInventoryRevision": "23"})
         self.assertEqual(str(m.uuid.UUID(request["requestId"])), request["requestId"])
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         receipt = json.loads(self.path.read_text())["attempts"][0]
@@ -181,6 +190,103 @@ class SecondaryProfessionTests(unittest.TestCase):
         self.assertEqual(len(attempts), 3)
         self.assertEqual(len({row["requestId"] for row in attempts}), 3)
         self.assertTrue(all(row["skillId"] == 185 for row in attempts))
+
+    def test_carried_bag_only_revisions_authorize_fresh_requests_and_receipts(self):
+        def bag_only_change(http):
+            if len(http.calls) == 2:
+                http.state["inventoryRevision"] = "24"
+        self.http.on_state = bag_only_change
+        result = self.practice(maximum=2)
+        self.assertEqual(result["phase"], "bounded_practice_finished")
+        attempts = [row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt"]
+        self.assertEqual([r["expectedInventoryRevision"] for r in attempts], ["24", "25"])
+        self.assertEqual([r["expectedBackpackRevision"] for r in attempts], ["11", "11"])
+        receipts = json.loads(self.path.read_text())["attempts"]
+        self.assertEqual([r["operation"]["baselineInventoryRevision"] for r in receipts], [24, 25])
+        self.assertEqual([r["operation"]["observedInventoryRevision"] for r in receipts], [25, 26])
+
+    def test_inventory_regression_or_unknown_frame_blocks_despite_legacy_backpack(self):
+        for change in (lambda state: state.update(inventoryRevision="22"),
+                       lambda state: state.update(inventoryKnown=False)):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http = Path(directory) / "receipt.json", MockHTTP()
+                reads = [0]
+                def mutate(http):
+                    reads[0] += 1
+                    if reads[0] == 2:
+                        change(http.state)
+                self.http.on_state = mutate
+                result = self.practice()
+                self.assertIn(result["phase"], ("outcome_unconfirmed", "blocked"))
+                self.assertNotIn("buddy-professions.attempt", self.http.methods())
+                self.assertEqual(self.http.state["backpackRevision"], "11")
+                self.assertTrue(self.http.state["backpackKnown"])
+
+    def test_authoritative_inventory_does_not_depend_on_legacy_backpack_knownness(self):
+        self.http.state.update(backpackKnown=False, backpackRevision="0")
+        result = self.practice()
+        self.assertEqual(result["phase"], "bounded_practice_finished")
+        request = next(row["params"] for row in self.http.calls if row["method"] == "buddy-professions.attempt")
+        self.assertEqual((request["expectedInventoryRevision"], request["expectedBackpackRevision"]), ("23", "0"))
+
+    def test_carried_inventory_state_fields_are_explicit_and_strict(self):
+        for change in (lambda state: state.pop("inventoryKnown"), lambda state: state.pop("inventoryRevision"),
+                       lambda state: state.update(inventoryKnown=1), lambda state: state.update(inventoryRevision=True),
+                       lambda state: state.update(inventoryRevision="0")):
+            with self.subTest(change=change):
+                state = initial_state(); change(state)
+                with self.assertRaises(m.Error):
+                    m.checked_state(state, 7)
+
+    def test_wrong_or_stale_inventory_receipt_never_completes_or_repeats(self):
+        for change in ({"baselineInventoryRevision": "11"}, {"observedInventoryRevision": "23"},
+                       {"observedInventoryRevision": "25"}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http = Path(directory) / "receipt.json", MockHTTP()
+                self.http.on_attempt = lambda http, change=change: http.state["operation"].update(change)
+                result = self.practice(maximum=3)
+                self.assertEqual(result["phase"], "stopped_after_attempt")
+                self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
+                self.practice(maximum=3)
+                self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
+
+    def test_fifth_skinning_recipe_is_readable_but_never_selected_for_practice(self):
+        state = m.checked_state(initial_state(), 7)
+        self.assertEqual(len(state["recipes"]), 5)
+        self.assertEqual(next(r for r in state["recipes"] if r["spellId"] == 8613)["skillId"], 393)
+        for recipe in self.http.state["recipes"]:
+            recipe["ready"] = recipe["spellId"] == 8613
+        self.assertEqual(self.practice(maximum=3, skills=(129, 185, 356, 393))["phase"], "blocked")
+        self.assertEqual(self.practice(maximum=3, skills=(393,))["phase"], "blocked")
+        self.assertNotIn("buddy-professions.attempt", self.http.methods())
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            m.main(["practice", "--rpc-url", URL, "--character-guid", "7", "--skill", "393"])
+
+    def test_empty_fishing_completes_without_inventory_delta_only_with_exact_actual_proof(self):
+        def empty_window(http):
+            http.state["inventoryRevision"] = "23"
+            http.state["operation"].update(reason="own_fishing_window_empty_no_catch_items",
+                observedInventoryRevision="0", outputInventoryObserved=False, ownBobberObserved=True,
+                splashObserved=True, channelStartObserved=True, channelStopObserved=True,
+                lootWindowObserved=True, lootReleaseObserved=True, bobberGuid=str(0xf110008b07000001))
+        self.http.on_attempt = empty_window
+        self.assertEqual(self.practice(skills=(356,))["phase"], "bounded_practice_finished")
+        row = json.loads(self.path.read_text())["attempts"][0]
+        self.assertEqual((row["operation"]["baselineInventoryRevision"], row["operation"]["observedInventoryRevision"]), (23, 0))
+        changes = [{field: False} for field in ("ownGoObserved", "ownBobberObserved", "splashObserved",
+            "channelStartObserved", "channelStopObserved", "lootWindowObserved", "lootReleaseObserved")]
+        changes += [{"reason": "completed"}, {"bobberGuid": "0"}, {"ownLootedItemsObserved": 1},
+                    {"lootSlotsRemoved": 1}, {"outputInventoryObserved": True}, {"observedInventoryRevision": "22"}]
+        for change in changes:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                self.path, self.http = Path(directory) / "receipt.json", MockHTTP()
+                def incomplete(http, change=change):
+                    empty_window(http)
+                    http.state["operation"].update(change)
+                self.http.on_attempt = incomplete
+                self.assertEqual(self.practice(maximum=3, skills=(356,))["phase"], "stopped_after_attempt")
+                self.practice(maximum=3, skills=(356,))
+                self.assertEqual(self.http.methods().count("buddy-professions.attempt"), 1)
 
     def test_actual_material_focus_and_learning_blockers_are_retained(self):
         for recipe in self.http.state["recipes"]:

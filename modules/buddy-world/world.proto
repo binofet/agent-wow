@@ -158,6 +158,8 @@ message CreatureState {
   float combat_reach = 36;
   bool level_known = 37;
   uint32 level = 38;
+  bool unit_flags_known = 39;
+  bool dynamic_flags_known = 40;
 }
 
 // Advertised server trajectory, separate from actual position observations.
@@ -283,6 +285,10 @@ message SnapshotResponse {
   uint64 inventory_revision = 35;
   // Exactly5 logical bags0..4 after own CREATE; total at most160 content slots.
   repeated InventoryBag inventory_bags = 36;
+  // At most32 present cached creatures with observed zero health, SKINNABLE
+  // unit flag and known cleared LOOTABLE dynamic flag. This is recipient-visible
+  // eligibility evidence, not a claim about unobserved loot contents or range.
+  repeated CreatureState skinnable_corpses = 37;
 }
 
 service BuddyWorld {

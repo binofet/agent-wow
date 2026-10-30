@@ -931,6 +931,8 @@ type CreatureState struct {
 	CombatReach       float32             `protobuf:"fixed32,36,opt,name=combat_reach,json=combatReach,proto3" json:"combat_reach,omitempty"`
 	LevelKnown        bool                `protobuf:"varint,37,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
 	Level             uint32              `protobuf:"varint,38,opt,name=level,proto3" json:"level,omitempty"`
+	UnitFlagsKnown    bool                `protobuf:"varint,39,opt,name=unit_flags_known,json=unitFlagsKnown,proto3" json:"unit_flags_known,omitempty"`
+	DynamicFlagsKnown bool                `protobuf:"varint,40,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1229,6 +1231,20 @@ func (x *CreatureState) GetLevel() uint32 {
 		return x.Level
 	}
 	return 0
+}
+
+func (x *CreatureState) GetUnitFlagsKnown() bool {
+	if x != nil {
+		return x.UnitFlagsKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetDynamicFlagsKnown() bool {
+	if x != nil {
+		return x.DynamicFlagsKnown
+	}
+	return false
 }
 
 // Advertised server trajectory, separate from actual position observations.
@@ -1807,8 +1823,12 @@ type SnapshotResponse struct {
 	InventoryRevision uint64 `protobuf:"varint,35,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
 	// Exactly5 logical bags0..4 after own CREATE; total at most160 content slots.
 	InventoryBags []*InventoryBag `protobuf:"bytes,36,rep,name=inventory_bags,json=inventoryBags,proto3" json:"inventory_bags,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// At most32 present cached creatures with observed zero health, SKINNABLE
+	// unit flag and known cleared LOOTABLE dynamic flag. This is recipient-visible
+	// eligibility evidence, not a claim about unobserved loot contents or range.
+	SkinnableCorpses []*CreatureState `protobuf:"bytes,37,rep,name=skinnable_corpses,json=skinnableCorpses,proto3" json:"skinnable_corpses,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -2093,6 +2113,13 @@ func (x *SnapshotResponse) GetInventoryBags() []*InventoryBag {
 	return nil
 }
 
+func (x *SnapshotResponse) GetSkinnableCorpses() []*CreatureState {
+	if x != nil {
+		return x.SkinnableCorpses
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -2208,7 +2235,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0fcreated_by_guid\x18\x15 \x01(\x04R\rcreatedByGuid\x12\x1f\n" +
 	"\vstate_known\x18\x16 \x01(\bR\n" +
 	"stateKnown\x12\x14\n" +
-	"\x05state\x18\x17 \x01(\rR\x05state\"\x83\v\n" +
+	"\x05state\x18\x17 \x01(\rR\x05state\"\xdd\v\n" +
 	"\rCreatureState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
@@ -2256,7 +2283,9 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\fcombat_reach\x18$ \x01(\x02R\vcombatReach\x12\x1f\n" +
 	"\vlevel_known\x18% \x01(\bR\n" +
 	"levelKnown\x12\x14\n" +
-	"\x05level\x18& \x01(\rR\x05level\"\xc3\x03\n" +
+	"\x05level\x18& \x01(\rR\x05level\x12(\n" +
+	"\x10unit_flags_known\x18' \x01(\bR\x0eunitFlagsKnown\x12.\n" +
+	"\x13dynamic_flags_known\x18( \x01(\bR\x11dynamicFlagsKnown\"\xc3\x03\n" +
 	"\x12CreatureTrajectory\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\rR\n" +
@@ -2309,7 +2338,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xa6\x11\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xfa\x11\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -2350,7 +2379,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x16requested_game_objects\x18! \x03(\v2'.warcraftbuddy.world.v1.GameObjectStateR\x14requestedGameObjects\x12'\n" +
 	"\x0finventory_known\x18\" \x01(\bR\x0einventoryKnown\x12-\n" +
 	"\x12inventory_revision\x18# \x01(\x04R\x11inventoryRevision\x12K\n" +
-	"\x0einventory_bags\x18$ \x03(\v2$.warcraftbuddy.world.v1.InventoryBagR\rinventoryBags2\xb0\x01\n" +
+	"\x0einventory_bags\x18$ \x03(\v2$.warcraftbuddy.world.v1.InventoryBagR\rinventoryBags\x12R\n" +
+	"\x11skinnable_corpses\x18% \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x10skinnableCorpses2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -2406,15 +2436,16 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	4,  // 18: warcraftbuddy.world.v1.SnapshotResponse.requested_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
 	3,  // 19: warcraftbuddy.world.v1.SnapshotResponse.requested_game_objects:type_name -> warcraftbuddy.world.v1.GameObjectState
 	8,  // 20: warcraftbuddy.world.v1.SnapshotResponse.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
-	2,  // 21: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	11, // 22: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	10, // 23: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	12, // 24: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	23, // [23:25] is the sub-list for method output_type
-	21, // [21:23] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	4,  // 21: warcraftbuddy.world.v1.SnapshotResponse.skinnable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	2,  // 22: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	11, // 23: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	10, // 24: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	12, // 25: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	24, // [24:26] is the sub-list for method output_type
+	22, // [22:24] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

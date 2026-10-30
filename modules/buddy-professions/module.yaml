@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Finite own-character starter first aid, cooking and fishing with known recipes, observed requirements and separate server, inventory and skill receipts
+description: Finite own-character starter first aid, cooking, fishing and explicitly selected in-range skinning with known recipes, observed requirements and separate server, inventory and skill receipts
 requires: [buddy-world, buddy-actions, buddy-loot, buddy-trade]
 compose:
   file: compose.yaml
@@ -16,6 +16,8 @@ packets:
   SMSG_LEARNED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
   SMSG_REMOVED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
   SMSG_SUPERCEDED_SPELL: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_CREATURE_QUERY_RESPONSE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
+  SMSG_LOOT_CLEAR_MONEY: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
   SMSG_GAMEOBJECT_QUERY_RESPONSE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket

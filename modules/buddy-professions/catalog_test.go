@@ -41,7 +41,7 @@ func TestCatalogDoesNotTreatTrainingWrappersOrOtherRanksAsStarterRecipes(t *test
 		}
 		seen[recipe.spell] = true
 	}
-	if len(seen) != 4 {
+	if len(seen) != 5 {
 		t.Fatal("starter scope expanded without validation", seen)
 	}
 	for _, id := range []uint32{0, 3273, 3279, 2550, 2551, 7733, 7731, 3276, 585, 0xffffffff} {
@@ -53,5 +53,12 @@ func TestCatalogDoesNotTreatTrainingWrappersOrOtherRanksAsStarterRecipes(t *test
 		if !strings.Contains(metadataProvenance, hash) {
 			t.Fatal("client metadata lost its reproducible provenance", metadataProvenance)
 		}
+	}
+}
+
+func TestSkinningCatalogIsFixedExplicitTargetSpell(t *testing.T) {
+	got, ok := recipeForSpell(8613)
+	if !ok || got.skill != 393 || got.minimumSkill != 1 || got.castTimeMs != 1500 || got.itemEntry != 0 || got.reagentEntry != 0 || !got.requirementsVerified {
+		t.Fatal(got)
 	}
 }

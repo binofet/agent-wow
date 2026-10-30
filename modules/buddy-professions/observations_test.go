@@ -19,6 +19,7 @@ func professionObservationFixture() *worldv1.SnapshotResponse {
 		},
 		SelfSkillsKnown: true, SelfSkillsRevision: 4,
 		BackpackKnown: true, BackpackRevision: 9,
+		InventoryKnown: true, InventoryRevision: 9,
 	}
 	for slot := range 128 {
 		w.SelfSkills = append(w.SelfSkills, &worldv1.SkillState{Slot: uint32(slot)})
@@ -32,6 +33,13 @@ func professionObservationFixture() *worldv1.SnapshotResponse {
 	w.SelfSkills[127] = &worldv1.SkillState{Slot: 127, SkillId: 197, Step: 1, Value: 10, MaxValue: 75}
 	w.Backpack[0] = &worldv1.BackpackSlot{Slot: 0, ItemGuid: 0x4000000000000001, Entry: 2589, StackCount: 5, MetadataKnown: true}
 	w.Backpack[15] = &worldv1.BackpackSlot{Slot: 15, ItemGuid: 0x4000000000000002, Entry: 2589, StackCount: 2, MetadataKnown: true}
+	for bag := uint32(0); bag < 5; bag++ {
+		row := &worldv1.InventoryBag{Bag: bag, SlotKnown: true, ContentsKnown: true}
+		if bag == 0 {
+			row.SlotCount, row.Slots = 16, w.Backpack
+		}
+		w.InventoryBags = append(w.InventoryBags, row)
+	}
 	return w
 }
 
@@ -42,7 +50,7 @@ func TestValidateWorldUsesCompleteOwnRawRanksAndBackpackCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.skillsRevision != 4 || view.backpackRevision != 9 || view.level != 1 || view.self != w.Self || view.raw != w || len(view.skills) != 4 || view.skills[129] != (skillRank{12, 75}) || view.skills[197] != (skillRank{10, 75}) || view.counts[2589] != 7 || view.freeSlots != 14 {
+	if view.skillsRevision != 4 || view.backpackRevision != 9 || view.inventoryRevision != 9 || view.level != 1 || view.self != w.Self || view.raw != w || len(view.skills) != 4 || view.skills[129] != (skillRank{12, 75}) || view.skills[197] != (skillRank{10, 75}) || view.counts[2589] != 7 || view.freeSlots != 14 {
 		t.Fatalf("incorrect validated observation: %+v", view)
 	}
 	if !proto.Equal(w, before) {
@@ -50,7 +58,7 @@ func TestValidateWorldUsesCompleteOwnRawRanksAndBackpackCounts(t *testing.T) {
 	}
 	// Slot order is irrelevant; the complete wire slot identities are required.
 	w.SelfSkills[0], w.SelfSkills[127] = w.SelfSkills[127], w.SelfSkills[0]
-	w.Backpack[0], w.Backpack[15] = w.Backpack[15], w.Backpack[0]
+	w.InventoryBags[0].Slots[0], w.InventoryBags[0].Slots[15] = w.InventoryBags[0].Slots[15], w.InventoryBags[0].Slots[0]
 	if reordered, err := validateWorld(w, 7); err != nil || reordered.counts[2589] != 7 || reordered.skills[129].value != 12 {
 		t.Fatal("valid reordered slots rejected", reordered, err)
 	}
@@ -144,24 +152,28 @@ func TestValidateWorldRejectsPartialOrInconsistentSkillSlots(t *testing.T) {
 	}
 }
 
-func TestValidateWorldRejectsPartialOrInconsistentBackpackSlots(t *testing.T) {
+func TestValidateWorldRejectsPartialOrInconsistentCarriedBackpackSlots(t *testing.T) {
 	cases := map[string]func(*worldv1.SnapshotResponse){
-		"unknown":               func(w *worldv1.SnapshotResponse) { w.BackpackKnown = false },
-		"zero_revision":         func(w *worldv1.SnapshotResponse) { w.BackpackRevision = 0 },
-		"missing_slot":          func(w *worldv1.SnapshotResponse) { w.Backpack = w.Backpack[:15] },
-		"extra_slot":            func(w *worldv1.SnapshotResponse) { w.Backpack = append(w.Backpack, &worldv1.BackpackSlot{Slot: 16}) },
-		"nil_slot":              func(w *worldv1.SnapshotResponse) { w.Backpack[1] = nil },
-		"bag_not_zero":          func(w *worldv1.SnapshotResponse) { w.Backpack[1].Bag = 1 },
-		"duplicate_empty_slot":  func(w *worldv1.SnapshotResponse) { w.Backpack[2].Slot = 1 },
-		"out_of_range_slot":     func(w *worldv1.SnapshotResponse) { w.Backpack[15].Slot = 16 },
-		"empty_entry":           func(w *worldv1.SnapshotResponse) { w.Backpack[1].Entry = 2589 },
-		"empty_count":           func(w *worldv1.SnapshotResponse) { w.Backpack[1].StackCount = 1 },
-		"empty_known_metadata":  func(w *worldv1.SnapshotResponse) { w.Backpack[1].MetadataKnown = true },
-		"unknown_item_metadata": func(w *worldv1.SnapshotResponse) { w.Backpack[0].MetadataKnown = false },
-		"zero_item_entry":       func(w *worldv1.SnapshotResponse) { w.Backpack[0].Entry = 0 },
-		"zero_item_count":       func(w *worldv1.SnapshotResponse) { w.Backpack[0].StackCount = 0 },
-		"duplicate_item_guid":   func(w *worldv1.SnapshotResponse) { w.Backpack[15].ItemGuid = w.Backpack[0].ItemGuid },
-		"aggregate_overflow":    func(w *worldv1.SnapshotResponse) { w.Backpack[0].StackCount = math.MaxUint32 },
+		"unknown":       func(w *worldv1.SnapshotResponse) { w.InventoryKnown = false },
+		"zero_revision": func(w *worldv1.SnapshotResponse) { w.InventoryRevision = 0 },
+		"missing_slot":  func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots = w.InventoryBags[0].Slots[:15] },
+		"extra_slot": func(w *worldv1.SnapshotResponse) {
+			w.InventoryBags[0].Slots = append(w.InventoryBags[0].Slots, &worldv1.BackpackSlot{Slot: 16})
+		},
+		"nil_slot":              func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[1] = nil },
+		"bag_not_zero":          func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[1].Bag = 1 },
+		"duplicate_empty_slot":  func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[2].Slot = 1 },
+		"out_of_range_slot":     func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[15].Slot = 16 },
+		"empty_entry":           func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[1].Entry = 2589 },
+		"empty_count":           func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[1].StackCount = 1 },
+		"empty_known_metadata":  func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[1].MetadataKnown = true },
+		"unknown_item_metadata": func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[0].MetadataKnown = false },
+		"zero_item_entry":       func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[0].Entry = 0 },
+		"zero_item_count":       func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[0].StackCount = 0 },
+		"duplicate_item_guid": func(w *worldv1.SnapshotResponse) {
+			w.InventoryBags[0].Slots[15].ItemGuid = w.InventoryBags[0].Slots[0].ItemGuid
+		},
+		"aggregate_overflow": func(w *worldv1.SnapshotResponse) { w.InventoryBags[0].Slots[0].StackCount = math.MaxUint32 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -171,7 +183,7 @@ func TestValidateWorldRejectsPartialOrInconsistentBackpackSlots(t *testing.T) {
 		})
 	}
 	w := professionObservationFixture()
-	w.Backpack[0].StackCount = math.MaxUint32 - 2
+	w.InventoryBags[0].Slots[0].StackCount = math.MaxUint32 - 2
 	if view, err := validateWorld(w, 7); err != nil || view.counts[2589] != math.MaxUint32 {
 		t.Fatal("bounded uint32 total rejected", view, err)
 	}
@@ -183,7 +195,7 @@ func assertProfessionObservationRejected(t *testing.T, w *worldv1.SnapshotRespon
 	if err == nil {
 		t.Fatal("incomplete or inconsistent observations accepted")
 	}
-	if view.self != nil || view.raw != nil || view.skills != nil || view.counts != nil || view.skillsRevision != 0 || view.backpackRevision != 0 || view.freeSlots != 0 || view.level != 0 {
+	if view.self != nil || view.raw != nil || view.skills != nil || view.counts != nil || view.skillsRevision != 0 || view.backpackRevision != 0 || view.inventoryRevision != 0 || view.freeSlots != 0 || view.level != 0 {
 		t.Fatal("rejection exposed partial optimistic facts", view)
 	}
 }

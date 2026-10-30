@@ -31,11 +31,12 @@ func professionDirectOperation(t *testing.T, s *Service, f *professionSessionFix
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
-	op := &operation{spec: spec, baseline: s.view, token: "MOCK-owned-token", started: s.now(), ctx: ctx, cancel: cancel, castReserved: true, stored: map[byte]bool{}, removed: map[byte]bool{}, pushed: map[byte]bool{}, pushCounts: map[uint32]uint32{}, receipt: &professionsv1.Operation{OperationId: "MOCK-operation", RequestId: "MOCK-request", SkillId: spec.skill, SpellId: spell, CastCount: 9, Status: professionsv1.AttemptStatus_WAITING_CAST, BaselineSkillsRevision: s.view.skillsRevision, BaselineBackpackRevision: s.view.backpackRevision, BeforeRank: s.view.skills[spec.skill].value, AfterRank: s.view.skills[spec.skill].value}}
+	op := &operation{spec: spec, baseline: s.view, token: "MOCK-owned-token", started: s.now(), ctx: ctx, cancel: cancel, castReserved: true, stored: map[byte]bool{}, removed: map[byte]bool{}, pushed: map[byte]bool{}, pushCounts: map[uint32]uint32{}, receipt: &professionsv1.Operation{OperationId: "MOCK-operation", RequestId: "MOCK-request", SkillId: spec.skill, SpellId: spell, CastCount: 9, Status: professionsv1.AttemptStatus_WAITING_CAST, BaselineSkillsRevision: s.view.skillsRevision, BaselineBackpackRevision: s.view.backpackRevision, BaselineInventoryRevision: s.view.inventoryRevision, BeforeRank: s.view.skills[spec.skill].value, AfterRank: s.view.skills[spec.skill].value}}
 	s.active, s.last = op, op
 	s.mu.Unlock()
 	f.mu.Lock()
 	f.token, f.actions.InteractionOwner = op.token, "professions"
+	f.actions.InteractionLeaseRemainingMs = 30000
 	f.mu.Unlock()
 	t.Cleanup(func() {
 		cancel()
@@ -86,11 +87,12 @@ func TestControllerCraftRequiresCastPushOutputAndReagentReceipts(t *testing.T) {
 			f.world.SelfSkillsRevision++
 			f.world.SelfSkills[0].Value++
 			f.world.BackpackRevision++
+			f.world.InventoryRevision++
 			if missing != "reagent" {
-				f.world.Backpack[0].StackCount--
+				f.world.InventoryBags[0].Slots[0].StackCount--
 			}
 			if missing != "output" {
-				f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000003, Entry: 1251, StackCount: 1, MetadataKnown: true}
+				f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000003, Entry: 1251, StackCount: 1, MetadataKnown: true}
 			}
 			professionObserve(t, s)
 			if s.step(op) || op.receipt.Status == professionsv1.AttemptStatus_COMPLETED || !op.receipt.SkillIncreased {
@@ -165,7 +167,7 @@ func TestControllerFinalRenewalRechecksActualCookingFocusRange(t *testing.T) {
 	s, f := newProfessionServiceFixture(t)
 	f.world.Self.MapId = 1
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = 100, 0, 0
-	f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
+	f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
 	f.world.SpellFocuses = []*worldv1.GameObjectState{{Guid: 0xf110000000000077, Entry: 100, Present: true, TypeKnown: true, GameObjectType: 8, MapKnown: true, MapId: 1, PositionKnown: true, X: 10, Y: 20, Z: 30, StateKnown: true, State: 1}}
 	s.focusRequested[100] = true
 	s.focuses[100] = focusTemplate{entry: 100, focusID: 4, radius: 3}
@@ -310,7 +312,7 @@ func TestControllerActualPositionCorrectionCannotBeOverriddenByCachedEstimate(t 
 			f.actions.Position = &actionsv1.ClientPosition{Known: true, MapKnown: true, MapId: 0, X: f.world.Self.X, Y: f.world.Self.Y, Z: f.world.Self.Z, Estimated: true}
 			spell := uint32(2538)
 			if code == opcode.CMSGCastSpell {
-				f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
+				f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 2672, StackCount: 1, MetadataKnown: true}
 				f.world.SpellFocuses = []*worldv1.GameObjectState{{Guid: 0xf110000000000077, Entry: 100, Present: true, TypeKnown: true, GameObjectType: 8, MapKnown: true, MapId: 0, PositionKnown: true, X: f.world.Self.X + 1, Y: f.world.Self.Y, Z: f.world.Self.Z, StateKnown: true, State: 1}}
 				s.focusRequested[100] = true
 				s.focuses[100] = focusTemplate{entry: 100, focusID: 4, radius: 3}
@@ -562,7 +564,8 @@ func TestControllerFishingLootPushAndRemovalEitherOrder(t *testing.T) {
 			}
 			f.world = proto.Clone(f.world).(*worldv1.SnapshotResponse)
 			f.world.BackpackRevision++
-			f.world.Backpack[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 6291, StackCount: 1, MetadataKnown: true}
+			f.world.InventoryRevision++
+			f.world.InventoryBags[0].Slots[1] = &worldv1.BackpackSlot{Slot: 1, ItemGuid: 0x4000000000000077, Entry: 6291, StackCount: 1, MetadataKnown: true}
 			professionObserve(t, s)
 			if !s.step(op) || op.receipt.Status != professionsv1.AttemptStatus_COMPLETED || !op.receipt.OutputInventoryObserved || op.receipt.SkillIncreased {
 				t.Fatal("actual fishing evidence did not complete gray catch", op.receipt)

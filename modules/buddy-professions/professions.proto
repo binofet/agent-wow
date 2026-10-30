@@ -3,6 +3,7 @@ package warcraftbuddy.professions.v1;
 option go_package = "github.com/agent-wow/agent-wow/modules/buddy-professions/api;professionsv1";
 import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
+import "modules/buddy-world/world.proto";
 
 message Skill { uint32 skill_id = 1; uint32 rank = 2; uint32 maximum = 3; }
 message Recipe {
@@ -74,6 +75,20 @@ message Operation {
   uint64 age_ms = 36;
   // Cast, inventory and skill evidence are independent; gray crafts can complete without a skill increase.
   string limitation = 37;
+  uint64 target_guid = 38;
+  uint64 target_position_revision = 39;
+  uint64 baseline_inventory_revision = 40;
+  uint64 observed_inventory_revision = 41;
+  bool fully_looted_observed = 42;
+  uint32 target_entry = 43;
+}
+message SkinningTarget {
+  // Public actual cached corpse; never a static spawn or navigation target.
+  warcraftbuddy.world.v1.CreatureState creature = 1;
+  bool fully_looted_observed = 2;
+  bool ready = 3;
+  string reason = 4;
+  uint32 required_skill = 5;
 }
 message State {
   string session_id = 1;
@@ -92,6 +107,9 @@ message State {
   uint64 malformed_packets = 14;
   bool closing = 15;
   string limitation = 16;
+  bool inventory_known = 17;
+  uint64 inventory_revision = 18;
+  repeated SkinningTarget skinning_targets = 19;
 }
 message AttemptRequest {
   string session_id = 1;
@@ -102,6 +120,10 @@ message AttemptRequest {
   uint32 spell_id = 5;
   uint64 expected_skills_revision = 6;
   uint64 expected_backpack_revision = 7;
+  uint64 expected_inventory_revision = 8;
+  // Required only for the fixed Skinning8613 path. Other spells reject these.
+  uint64 target_guid = 9;
+  uint64 target_position_revision = 10;
 }
 message CancelRequest { string session_id = 1; string operation_id = 2; }
 service BuddyProfessions {

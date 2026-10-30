@@ -18,7 +18,8 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-CATALOG = {3275: 129, 2538: 185, 2540: 185, 7620: 356}
+CATALOG = {3275: 129, 2538: 185, 2540: 185, 7620: 356, 8613: 393}
+PRACTICE_SPELLS = frozenset((3275, 2538, 2540, 7620))
 STATUSES = ("STATUS_UNSPECIFIED", "RESERVED", "WAITING_CAST", "WAITING_BOBBER", "WAITING_LOOT",
             "WAITING_OBSERVATIONS", "COMPLETED", "BLOCKED", "SERVER_REJECTED", "CANCELLED", "OUTCOME_UNCONFIRMED")
 TERMINAL = frozenset(STATUSES[6:])
@@ -124,13 +125,17 @@ def checked_state(raw, guid):
     token(result.get("sessionId"))
     if number(result.get("selfGuid", 0)) != guid:
         raise Error("profession_character_identity_mismatch")
-    for field in ("revision", "skillsRevision", "backpackRevision"):
+    if "inventoryKnown" not in result or "inventoryRevision" not in result:
+        raise Error("carried_inventory_evidence_required")
+    for field in ("revision", "skillsRevision", "backpackRevision", "inventoryRevision"):
         result[field] = number(result.get(field, 0))
-    for field in ("skillsKnown", "spellsKnown", "backpackKnown", "active", "closing"):
+    for field in ("skillsKnown", "spellsKnown", "backpackKnown", "inventoryKnown", "active", "closing"):
         if type(result.get(field, False)) is not bool:
             raise Error("invalid_profession_boolean")
+    if result["inventoryKnown"] and result["inventoryRevision"] == 0:
+        raise Error("known_carried_inventory_revision_required")
     skills, recipes = result.get("skills", []), result.get("recipes", [])
-    if not isinstance(skills, list) or len(skills) > 128 or not isinstance(recipes, list) or len(recipes) > 4:
+    if not isinstance(skills, list) or len(skills) > 128 or not isinstance(recipes, list) or len(recipes) > len(CATALOG):
         raise Error("profession_evidence_exceeds_bound")
     seen = set()
     for row in skills:
@@ -167,6 +172,8 @@ def checked_state(raw, guid):
         operation["status"] = status
         if CATALOG.get(number(operation.get("spellId", 0), 2**31 - 1)) != number(operation.get("skillId", 0), 65535):
             raise Error("operation_outside_starter_catalog")
+        for field in ("baselineInventoryRevision", "observedInventoryRevision"):
+            operation[field] = number(operation.get(field, 0))
         for field in ("cleanupUnconfirmed", "skillIncreased", "cancelRequested", "leaseReleased"):
             if type(operation.get(field, False)) is not bool:
                 raise Error("invalid_operation_boolean")
@@ -175,6 +182,17 @@ def checked_state(raw, guid):
         if not isinstance(operation.get("reason", ""), str) or len(operation.get("reason", "")) > 1024:
             raise Error("invalid_operation_reason")
     return result
+
+
+def empty_fishing_completion(operation):
+    return (number(operation.get("spellId", 0)) == 7620 and number(operation.get("skillId", 0)) == 356
+            and operation.get("reason") == "own_fishing_window_empty_no_catch_items"
+            and all(operation.get(field) is True for field in ("ownGoObserved", "ownBobberObserved", "splashObserved",
+                "channelStartObserved", "channelStopObserved", "lootWindowObserved", "lootReleaseObserved"))
+            and number(operation.get("bobberGuid", 0)) > 0
+            and number(operation.get("ownLootedItemsObserved", 0)) == 0
+            and number(operation.get("lootSlotsRemoved", 0)) == 0
+            and operation.get("outputInventoryObserved", False) is False)
 
 
 class Journal:
@@ -283,7 +301,7 @@ class Worker:
         state = checked_state(raw, self.guid)
         if self.session is not None and state["sessionId"] != self.session:
             raise Error("profession_module_session_changed")
-        revisions = tuple(state[key] for key in ("revision", "skillsRevision", "backpackRevision"))
+        revisions = tuple(state[key] for key in ("revision", "skillsRevision", "inventoryRevision"))
         if self.revisions is not None and any(new < old for new, old in zip(revisions, self.revisions)):
             raise Error("profession_observation_revision_regressed")
         self.session, self.revisions, self.current = state["sessionId"], revisions, state
@@ -314,6 +332,16 @@ class Worker:
                 or row.get("operationId") and operation["operationId"] != row["operationId"]
                 or number(operation["skillId"]) != row["skillId"] or number(operation["spellId"]) != row["spellId"]):
             raise Error("owned_operation_identity_unconfirmed")
+        request = row.get("request")
+        if request is not None:
+            baseline = number(request.get("expectedInventoryRevision", 0))
+            if baseline == 0 or operation["baselineInventoryRevision"] != baseline:
+                raise Error("owned_inventory_baseline_unconfirmed")
+            observed = operation["observedInventoryRevision"]
+            empty_fishing = observed in (0, baseline) and empty_fishing_completion(operation)
+            if observed > state["inventoryRevision"] or (operation["status"] == "COMPLETED"
+                    and (not state["inventoryKnown"] or observed <= baseline and not empty_fishing)):
+                raise Error("owned_inventory_revision_unconfirmed")
         row["operationId"], row["operation"] = operation["operationId"], copy.deepcopy(operation)
         return operation
 
@@ -359,10 +387,12 @@ class Worker:
                 return False
 
     def candidates(self, state):
-        if not all(state.get(key) is True for key in ("skillsKnown", "spellsKnown", "backpackKnown")):
+        if (not all(state.get(key) is True for key in ("skillsKnown", "spellsKnown", "inventoryKnown"))
+                or state["inventoryRevision"] == 0):
             return []
         own_skills = {number(row["skillId"]) for row in state.get("skills", [])}
         return [recipe for recipe in state.get("recipes", []) if number(recipe["skillId"]) in self.skills
+                and number(recipe["spellId"]) in PRACTICE_SPELLS
                 and number(recipe["skillId"]) in own_skills
                 and recipe.get("known") is True and recipe.get("ready") is True and recipe.get("requirementsVerified") is True]
 
@@ -405,7 +435,8 @@ class Worker:
                     return self.result("blocked", row["reason"])
                 params = {"sessionId": self.session, "requestId": request_id, "expectedRevision": str(state["revision"]),
                           "skillId": row["skillId"], "spellId": row["spellId"], "expectedSkillsRevision": str(state["skillsRevision"]),
-                          "expectedBackpackRevision": str(state["backpackRevision"])}
+                          "expectedBackpackRevision": str(state["backpackRevision"]),
+                          "expectedInventoryRevision": str(state["inventoryRevision"])}
                 row["request"] = params
                 self.journal.save()
                 state = self.accept(self.rpc.call("buddy-professions.attempt", params))

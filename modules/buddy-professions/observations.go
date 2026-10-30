@@ -10,13 +10,13 @@ import (
 type skillRank struct{ value, max uint32 }
 
 type worldView struct {
-	skillsRevision, backpackRevision uint64
-	skills                           map[uint32]skillRank
-	counts                           map[uint32]uint32
-	freeSlots                        uint32
-	level                            uint32
-	self                             *worldv1.PlayerState
-	raw                              *worldv1.SnapshotResponse
+	skillsRevision, backpackRevision, inventoryRevision uint64
+	skills                                              map[uint32]skillRank
+	counts                                              map[uint32]uint32
+	freeSlots                                           uint32
+	level                                               uint32
+	self                                                *worldv1.PlayerState
+	raw                                                 *worldv1.SnapshotResponse
 }
 
 // validateWorld consumes only the public snapshot of this session's character.
@@ -48,13 +48,14 @@ func validateWorld(w *worldv1.SnapshotResponse, selfGUID uint64) (worldView, err
 		return worldView{}, fmt.Errorf("complete actual own skill slots and revision are required")
 	}
 	view := worldView{
-		skillsRevision:   w.SelfSkillsRevision,
-		backpackRevision: w.BackpackRevision,
-		skills:           make(map[uint32]skillRank),
-		counts:           make(map[uint32]uint32),
-		level:            p.Level,
-		self:             p,
-		raw:              w,
+		skillsRevision:    w.SelfSkillsRevision,
+		backpackRevision:  w.BackpackRevision,
+		inventoryRevision: w.InventoryRevision,
+		skills:            make(map[uint32]skillRank),
+		counts:            make(map[uint32]uint32),
+		level:             p.Level,
+		self:              p,
+		raw:               w,
 	}
 	var skillSlots [128]bool
 	for _, row := range w.SelfSkills {
@@ -76,31 +77,10 @@ func validateWorld(w *worldv1.SnapshotResponse, selfGUID uint64) (worldView, err
 		}
 		view.skills[row.SkillId] = skillRank{value: row.Value, max: row.MaxValue}
 	}
-	if !w.BackpackKnown || w.BackpackRevision == 0 || len(w.Backpack) != 16 {
-		return worldView{}, fmt.Errorf("complete actual own backpack slots and revision are required")
+	counts, freeSlots, err := carriedInventory(w)
+	if err != nil {
+		return worldView{}, err
 	}
-	var backpackSlots [16]bool
-	itemGUIDs := make(map[uint64]bool)
-	for _, row := range w.Backpack {
-		if row == nil || row.Bag != 0 || row.Slot >= 16 || backpackSlots[row.Slot] {
-			return worldView{}, fmt.Errorf("actual own backpack slot is missing, duplicate or out of range")
-		}
-		backpackSlots[row.Slot] = true
-		if row.ItemGuid == 0 {
-			if row.Entry != 0 || row.StackCount != 0 || row.MetadataKnown {
-				return worldView{}, fmt.Errorf("empty actual own backpack slot has item metadata")
-			}
-			view.freeSlots++
-			continue
-		}
-		if !row.MetadataKnown || row.Entry == 0 || row.StackCount == 0 || itemGUIDs[row.ItemGuid] {
-			return worldView{}, fmt.Errorf("actual own backpack item metadata is incomplete or duplicated")
-		}
-		itemGUIDs[row.ItemGuid] = true
-		if row.StackCount > math.MaxUint32-view.counts[row.Entry] {
-			return worldView{}, fmt.Errorf("actual own backpack item count overflows")
-		}
-		view.counts[row.Entry] += row.StackCount
-	}
+	view.counts, view.freeSlots = counts, freeSlots
 	return view, nil
 }

@@ -2,11 +2,12 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v7.36.2
-// source: professions.proto
+// source: modules/buddy-professions/professions.proto
 
 package professionsv1
 
 import (
+	api "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	v1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -80,11 +81,11 @@ func (x AttemptStatus) String() string {
 }
 
 func (AttemptStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_professions_proto_enumTypes[0].Descriptor()
+	return file_modules_buddy_professions_professions_proto_enumTypes[0].Descriptor()
 }
 
 func (AttemptStatus) Type() protoreflect.EnumType {
-	return &file_professions_proto_enumTypes[0]
+	return &file_modules_buddy_professions_professions_proto_enumTypes[0]
 }
 
 func (x AttemptStatus) Number() protoreflect.EnumNumber {
@@ -93,7 +94,7 @@ func (x AttemptStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AttemptStatus.Descriptor instead.
 func (AttemptStatus) EnumDescriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{0}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{0}
 }
 
 type Skill struct {
@@ -107,7 +108,7 @@ type Skill struct {
 
 func (x *Skill) Reset() {
 	*x = Skill{}
-	mi := &file_professions_proto_msgTypes[0]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -119,7 +120,7 @@ func (x *Skill) String() string {
 func (*Skill) ProtoMessage() {}
 
 func (x *Skill) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[0]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -132,7 +133,7 @@ func (x *Skill) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Skill.ProtoReflect.Descriptor instead.
 func (*Skill) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{0}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Skill) GetSkillId() uint32 {
@@ -179,7 +180,7 @@ type Recipe struct {
 
 func (x *Recipe) Reset() {
 	*x = Recipe{}
-	mi := &file_professions_proto_msgTypes[1]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -191,7 +192,7 @@ func (x *Recipe) String() string {
 func (*Recipe) ProtoMessage() {}
 
 func (x *Recipe) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[1]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -204,7 +205,7 @@ func (x *Recipe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Recipe.ProtoReflect.Descriptor instead.
 func (*Recipe) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{1}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Recipe) GetSkillId() uint32 {
@@ -351,14 +352,20 @@ type Operation struct {
 	LeaseReleased            bool                   `protobuf:"varint,35,opt,name=lease_released,json=leaseReleased,proto3" json:"lease_released,omitempty"`
 	AgeMs                    uint64                 `protobuf:"varint,36,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
 	// Cast, inventory and skill evidence are independent; gray crafts can complete without a skill increase.
-	Limitation    string `protobuf:"bytes,37,opt,name=limitation,proto3" json:"limitation,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Limitation                string `protobuf:"bytes,37,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	TargetGuid                uint64 `protobuf:"varint,38,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	TargetPositionRevision    uint64 `protobuf:"varint,39,opt,name=target_position_revision,json=targetPositionRevision,proto3" json:"target_position_revision,omitempty"`
+	BaselineInventoryRevision uint64 `protobuf:"varint,40,opt,name=baseline_inventory_revision,json=baselineInventoryRevision,proto3" json:"baseline_inventory_revision,omitempty"`
+	ObservedInventoryRevision uint64 `protobuf:"varint,41,opt,name=observed_inventory_revision,json=observedInventoryRevision,proto3" json:"observed_inventory_revision,omitempty"`
+	FullyLootedObserved       bool   `protobuf:"varint,42,opt,name=fully_looted_observed,json=fullyLootedObserved,proto3" json:"fully_looted_observed,omitempty"`
+	TargetEntry               uint32 `protobuf:"varint,43,opt,name=target_entry,json=targetEntry,proto3" json:"target_entry,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *Operation) Reset() {
 	*x = Operation{}
-	mi := &file_professions_proto_msgTypes[2]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -370,7 +377,7 @@ func (x *Operation) String() string {
 func (*Operation) ProtoMessage() {}
 
 func (x *Operation) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[2]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -383,7 +390,7 @@ func (x *Operation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Operation.ProtoReflect.Descriptor instead.
 func (*Operation) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Operation) GetOperationId() string {
@@ -645,31 +652,153 @@ func (x *Operation) GetLimitation() string {
 	return ""
 }
 
+func (x *Operation) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *Operation) GetTargetPositionRevision() uint64 {
+	if x != nil {
+		return x.TargetPositionRevision
+	}
+	return 0
+}
+
+func (x *Operation) GetBaselineInventoryRevision() uint64 {
+	if x != nil {
+		return x.BaselineInventoryRevision
+	}
+	return 0
+}
+
+func (x *Operation) GetObservedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ObservedInventoryRevision
+	}
+	return 0
+}
+
+func (x *Operation) GetFullyLootedObserved() bool {
+	if x != nil {
+		return x.FullyLootedObserved
+	}
+	return false
+}
+
+func (x *Operation) GetTargetEntry() uint32 {
+	if x != nil {
+		return x.TargetEntry
+	}
+	return 0
+}
+
+type SkinningTarget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Public actual cached corpse; never a static spawn or navigation target.
+	Creature            *api.CreatureState `protobuf:"bytes,1,opt,name=creature,proto3" json:"creature,omitempty"`
+	FullyLootedObserved bool               `protobuf:"varint,2,opt,name=fully_looted_observed,json=fullyLootedObserved,proto3" json:"fully_looted_observed,omitempty"`
+	Ready               bool               `protobuf:"varint,3,opt,name=ready,proto3" json:"ready,omitempty"`
+	Reason              string             `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	RequiredSkill       uint32             `protobuf:"varint,5,opt,name=required_skill,json=requiredSkill,proto3" json:"required_skill,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *SkinningTarget) Reset() {
+	*x = SkinningTarget{}
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkinningTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkinningTarget) ProtoMessage() {}
+
+func (x *SkinningTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkinningTarget.ProtoReflect.Descriptor instead.
+func (*SkinningTarget) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SkinningTarget) GetCreature() *api.CreatureState {
+	if x != nil {
+		return x.Creature
+	}
+	return nil
+}
+
+func (x *SkinningTarget) GetFullyLootedObserved() bool {
+	if x != nil {
+		return x.FullyLootedObserved
+	}
+	return false
+}
+
+func (x *SkinningTarget) GetReady() bool {
+	if x != nil {
+		return x.Ready
+	}
+	return false
+}
+
+func (x *SkinningTarget) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *SkinningTarget) GetRequiredSkill() uint32 {
+	if x != nil {
+		return x.RequiredSkill
+	}
+	return 0
+}
+
 type State struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Revision         uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	SelfGuid         uint64                 `protobuf:"varint,3,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	SkillsKnown      bool                   `protobuf:"varint,4,opt,name=skills_known,json=skillsKnown,proto3" json:"skills_known,omitempty"`
-	SkillsRevision   uint64                 `protobuf:"varint,5,opt,name=skills_revision,json=skillsRevision,proto3" json:"skills_revision,omitempty"`
-	Skills           []*Skill               `protobuf:"bytes,6,rep,name=skills,proto3" json:"skills,omitempty"`
-	SpellsKnown      bool                   `protobuf:"varint,7,opt,name=spells_known,json=spellsKnown,proto3" json:"spells_known,omitempty"`
-	Recipes          []*Recipe              `protobuf:"bytes,8,rep,name=recipes,proto3" json:"recipes,omitempty"`
-	BackpackKnown    bool                   `protobuf:"varint,9,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
-	BackpackRevision uint64                 `protobuf:"varint,10,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	Active           bool                   `protobuf:"varint,11,opt,name=active,proto3" json:"active,omitempty"`
-	Operation        *Operation             `protobuf:"bytes,12,opt,name=operation,proto3" json:"operation,omitempty"`
-	TransportWrites  uint64                 `protobuf:"varint,13,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	MalformedPackets uint64                 `protobuf:"varint,14,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	Closing          bool                   `protobuf:"varint,15,opt,name=closing,proto3" json:"closing,omitempty"`
-	Limitation       string                 `protobuf:"bytes,16,opt,name=limitation,proto3" json:"limitation,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision          uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	SelfGuid          uint64                 `protobuf:"varint,3,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	SkillsKnown       bool                   `protobuf:"varint,4,opt,name=skills_known,json=skillsKnown,proto3" json:"skills_known,omitempty"`
+	SkillsRevision    uint64                 `protobuf:"varint,5,opt,name=skills_revision,json=skillsRevision,proto3" json:"skills_revision,omitempty"`
+	Skills            []*Skill               `protobuf:"bytes,6,rep,name=skills,proto3" json:"skills,omitempty"`
+	SpellsKnown       bool                   `protobuf:"varint,7,opt,name=spells_known,json=spellsKnown,proto3" json:"spells_known,omitempty"`
+	Recipes           []*Recipe              `protobuf:"bytes,8,rep,name=recipes,proto3" json:"recipes,omitempty"`
+	BackpackKnown     bool                   `protobuf:"varint,9,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,10,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	Active            bool                   `protobuf:"varint,11,opt,name=active,proto3" json:"active,omitempty"`
+	Operation         *Operation             `protobuf:"bytes,12,opt,name=operation,proto3" json:"operation,omitempty"`
+	TransportWrites   uint64                 `protobuf:"varint,13,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	MalformedPackets  uint64                 `protobuf:"varint,14,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	Closing           bool                   `protobuf:"varint,15,opt,name=closing,proto3" json:"closing,omitempty"`
+	Limitation        string                 `protobuf:"bytes,16,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	InventoryKnown    bool                   `protobuf:"varint,17,opt,name=inventory_known,json=inventoryKnown,proto3" json:"inventory_known,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,18,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	SkinningTargets   []*SkinningTarget      `protobuf:"bytes,19,rep,name=skinning_targets,json=skinningTargets,proto3" json:"skinning_targets,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_professions_proto_msgTypes[3]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -681,7 +810,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[3]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -694,7 +823,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *State) GetSessionId() string {
@@ -809,6 +938,27 @@ func (x *State) GetLimitation() string {
 	return ""
 }
 
+func (x *State) GetInventoryKnown() bool {
+	if x != nil {
+		return x.InventoryKnown
+	}
+	return false
+}
+
+func (x *State) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *State) GetSkinningTargets() []*SkinningTarget {
+	if x != nil {
+		return x.SkinningTargets
+	}
+	return nil
+}
+
 type AttemptRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -816,16 +966,20 @@ type AttemptRequest struct {
 	ExpectedRevision uint64                 `protobuf:"varint,3,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
 	SkillId          uint32                 `protobuf:"varint,4,opt,name=skill_id,json=skillId,proto3" json:"skill_id,omitempty"`
 	// Only an actual known spell from the small verified starter catalog.
-	SpellId                  uint32 `protobuf:"varint,5,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
-	ExpectedSkillsRevision   uint64 `protobuf:"varint,6,opt,name=expected_skills_revision,json=expectedSkillsRevision,proto3" json:"expected_skills_revision,omitempty"`
-	ExpectedBackpackRevision uint64 `protobuf:"varint,7,opt,name=expected_backpack_revision,json=expectedBackpackRevision,proto3" json:"expected_backpack_revision,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	SpellId                   uint32 `protobuf:"varint,5,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	ExpectedSkillsRevision    uint64 `protobuf:"varint,6,opt,name=expected_skills_revision,json=expectedSkillsRevision,proto3" json:"expected_skills_revision,omitempty"`
+	ExpectedBackpackRevision  uint64 `protobuf:"varint,7,opt,name=expected_backpack_revision,json=expectedBackpackRevision,proto3" json:"expected_backpack_revision,omitempty"`
+	ExpectedInventoryRevision uint64 `protobuf:"varint,8,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	// Required only for the fixed Skinning8613 path. Other spells reject these.
+	TargetGuid             uint64 `protobuf:"varint,9,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	TargetPositionRevision uint64 `protobuf:"varint,10,opt,name=target_position_revision,json=targetPositionRevision,proto3" json:"target_position_revision,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AttemptRequest) Reset() {
 	*x = AttemptRequest{}
-	mi := &file_professions_proto_msgTypes[4]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -837,7 +991,7 @@ func (x *AttemptRequest) String() string {
 func (*AttemptRequest) ProtoMessage() {}
 
 func (x *AttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[4]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -850,7 +1004,7 @@ func (x *AttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptRequest.ProtoReflect.Descriptor instead.
 func (*AttemptRequest) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AttemptRequest) GetSessionId() string {
@@ -902,6 +1056,27 @@ func (x *AttemptRequest) GetExpectedBackpackRevision() uint64 {
 	return 0
 }
 
+func (x *AttemptRequest) GetExpectedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ExpectedInventoryRevision
+	}
+	return 0
+}
+
+func (x *AttemptRequest) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *AttemptRequest) GetTargetPositionRevision() uint64 {
+	if x != nil {
+		return x.TargetPositionRevision
+	}
+	return 0
+}
+
 type CancelRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -912,7 +1087,7 @@ type CancelRequest struct {
 
 func (x *CancelRequest) Reset() {
 	*x = CancelRequest{}
-	mi := &file_professions_proto_msgTypes[5]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -924,7 +1099,7 @@ func (x *CancelRequest) String() string {
 func (*CancelRequest) ProtoMessage() {}
 
 func (x *CancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_professions_proto_msgTypes[5]
+	mi := &file_modules_buddy_professions_professions_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -937,7 +1112,7 @@ func (x *CancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
 func (*CancelRequest) Descriptor() ([]byte, []int) {
-	return file_professions_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_professions_professions_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CancelRequest) GetSessionId() string {
@@ -954,11 +1129,11 @@ func (x *CancelRequest) GetOperationId() string {
 	return ""
 }
 
-var File_professions_proto protoreflect.FileDescriptor
+var File_modules_buddy_professions_professions_proto protoreflect.FileDescriptor
 
-const file_professions_proto_rawDesc = "" +
+const file_modules_buddy_professions_professions_proto_rawDesc = "" +
 	"\n" +
-	"\x11professions.proto\x12\x1cwarcraftbuddy.professions.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"P\n" +
+	"+modules/buddy-professions/professions.proto\x12\x1cwarcraftbuddy.professions.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fmodules/buddy-world/world.proto\"P\n" +
 	"\x05Skill\x12\x19\n" +
 	"\bskill_id\x18\x01 \x01(\rR\askillId\x12\x12\n" +
 	"\x04rank\x18\x02 \x01(\rR\x04rank\x12\x18\n" +
@@ -980,7 +1155,7 @@ const file_professions_proto_rawDesc = "" +
 	"\x13channel_duration_ms\x18\f \x01(\rR\x11channelDurationMs\x12\x14\n" +
 	"\x05ready\x18\r \x01(\bR\x05ready\x12\x16\n" +
 	"\x06reason\x18\x0e \x01(\tR\x06reason\x12/\n" +
-	"\x13metadata_provenance\x18\x0f \x01(\tR\x12metadataProvenance\"\x8e\r\n" +
+	"\x13metadata_provenance\x18\x0f \x01(\tR\x12metadataProvenance\"\xc0\x0f\n" +
 	"\tOperation\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12\x1d\n" +
 	"\n" +
@@ -1026,7 +1201,20 @@ const file_professions_proto_rawDesc = "" +
 	"\x06age_ms\x18$ \x01(\x04R\x05ageMs\x12\x1e\n" +
 	"\n" +
 	"limitation\x18% \x01(\tR\n" +
-	"limitation\"\x90\x05\n" +
+	"limitation\x12\x1f\n" +
+	"\vtarget_guid\x18& \x01(\x04R\n" +
+	"targetGuid\x128\n" +
+	"\x18target_position_revision\x18' \x01(\x04R\x16targetPositionRevision\x12>\n" +
+	"\x1bbaseline_inventory_revision\x18( \x01(\x04R\x19baselineInventoryRevision\x12>\n" +
+	"\x1bobserved_inventory_revision\x18) \x01(\x04R\x19observedInventoryRevision\x122\n" +
+	"\x15fully_looted_observed\x18* \x01(\bR\x13fullyLootedObserved\x12!\n" +
+	"\ftarget_entry\x18+ \x01(\rR\vtargetEntry\"\xdc\x01\n" +
+	"\x0eSkinningTarget\x12A\n" +
+	"\bcreature\x18\x01 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\bcreature\x122\n" +
+	"\x15fully_looted_observed\x18\x02 \x01(\bR\x13fullyLootedObserved\x12\x14\n" +
+	"\x05ready\x18\x03 \x01(\bR\x05ready\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12%\n" +
+	"\x0erequired_skill\x18\x05 \x01(\rR\rrequiredSkill\"\xc1\x06\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -1047,7 +1235,10 @@ const file_professions_proto_rawDesc = "" +
 	"\aclosing\x18\x0f \x01(\bR\aclosing\x12\x1e\n" +
 	"\n" +
 	"limitation\x18\x10 \x01(\tR\n" +
-	"limitation\"\xa9\x02\n" +
+	"limitation\x12'\n" +
+	"\x0finventory_known\x18\x11 \x01(\bR\x0einventoryKnown\x12-\n" +
+	"\x12inventory_revision\x18\x12 \x01(\x04R\x11inventoryRevision\x12W\n" +
+	"\x10skinning_targets\x18\x13 \x03(\v2,.warcraftbuddy.professions.v1.SkinningTargetR\x0fskinningTargets\"\xc4\x03\n" +
 	"\x0eAttemptRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -1057,7 +1248,12 @@ const file_professions_proto_rawDesc = "" +
 	"\bskill_id\x18\x04 \x01(\rR\askillId\x12\x19\n" +
 	"\bspell_id\x18\x05 \x01(\rR\aspellId\x128\n" +
 	"\x18expected_skills_revision\x18\x06 \x01(\x04R\x16expectedSkillsRevision\x12<\n" +
-	"\x1aexpected_backpack_revision\x18\a \x01(\x04R\x18expectedBackpackRevision\"Q\n" +
+	"\x1aexpected_backpack_revision\x18\a \x01(\x04R\x18expectedBackpackRevision\x12>\n" +
+	"\x1bexpected_inventory_revision\x18\b \x01(\x04R\x19expectedInventoryRevision\x12\x1f\n" +
+	"\vtarget_guid\x18\t \x01(\x04R\n" +
+	"targetGuid\x128\n" +
+	"\x18target_position_revision\x18\n" +
+	" \x01(\x04R\x16targetPositionRevision\"Q\n" +
 	"\rCancelRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
@@ -1083,73 +1279,77 @@ const file_professions_proto_rawDesc = "" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyBLZJgithub.com/agent-wow/agent-wow/modules/buddy-professions/api;professionsv1b\x06proto3"
 
 var (
-	file_professions_proto_rawDescOnce sync.Once
-	file_professions_proto_rawDescData []byte
+	file_modules_buddy_professions_professions_proto_rawDescOnce sync.Once
+	file_modules_buddy_professions_professions_proto_rawDescData []byte
 )
 
-func file_professions_proto_rawDescGZIP() []byte {
-	file_professions_proto_rawDescOnce.Do(func() {
-		file_professions_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_professions_proto_rawDesc), len(file_professions_proto_rawDesc)))
+func file_modules_buddy_professions_professions_proto_rawDescGZIP() []byte {
+	file_modules_buddy_professions_professions_proto_rawDescOnce.Do(func() {
+		file_modules_buddy_professions_professions_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_modules_buddy_professions_professions_proto_rawDesc), len(file_modules_buddy_professions_professions_proto_rawDesc)))
 	})
-	return file_professions_proto_rawDescData
+	return file_modules_buddy_professions_professions_proto_rawDescData
 }
 
-var file_professions_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_professions_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
-var file_professions_proto_goTypes = []any{
-	(AttemptStatus)(0),     // 0: warcraftbuddy.professions.v1.AttemptStatus
-	(*Skill)(nil),          // 1: warcraftbuddy.professions.v1.Skill
-	(*Recipe)(nil),         // 2: warcraftbuddy.professions.v1.Recipe
-	(*Operation)(nil),      // 3: warcraftbuddy.professions.v1.Operation
-	(*State)(nil),          // 4: warcraftbuddy.professions.v1.State
-	(*AttemptRequest)(nil), // 5: warcraftbuddy.professions.v1.AttemptRequest
-	(*CancelRequest)(nil),  // 6: warcraftbuddy.professions.v1.CancelRequest
-	(*emptypb.Empty)(nil),  // 7: google.protobuf.Empty
-	(*v1.WorldPacket)(nil), // 8: agentwow.module.v1.WorldPacket
+var file_modules_buddy_professions_professions_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_modules_buddy_professions_professions_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_modules_buddy_professions_professions_proto_goTypes = []any{
+	(AttemptStatus)(0),        // 0: warcraftbuddy.professions.v1.AttemptStatus
+	(*Skill)(nil),             // 1: warcraftbuddy.professions.v1.Skill
+	(*Recipe)(nil),            // 2: warcraftbuddy.professions.v1.Recipe
+	(*Operation)(nil),         // 3: warcraftbuddy.professions.v1.Operation
+	(*SkinningTarget)(nil),    // 4: warcraftbuddy.professions.v1.SkinningTarget
+	(*State)(nil),             // 5: warcraftbuddy.professions.v1.State
+	(*AttemptRequest)(nil),    // 6: warcraftbuddy.professions.v1.AttemptRequest
+	(*CancelRequest)(nil),     // 7: warcraftbuddy.professions.v1.CancelRequest
+	(*api.CreatureState)(nil), // 8: warcraftbuddy.world.v1.CreatureState
+	(*emptypb.Empty)(nil),     // 9: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),    // 10: agentwow.module.v1.WorldPacket
 }
-var file_professions_proto_depIdxs = []int32{
-	0, // 0: warcraftbuddy.professions.v1.Operation.status:type_name -> warcraftbuddy.professions.v1.AttemptStatus
-	1, // 1: warcraftbuddy.professions.v1.State.skills:type_name -> warcraftbuddy.professions.v1.Skill
-	2, // 2: warcraftbuddy.professions.v1.State.recipes:type_name -> warcraftbuddy.professions.v1.Recipe
-	3, // 3: warcraftbuddy.professions.v1.State.operation:type_name -> warcraftbuddy.professions.v1.Operation
-	7, // 4: warcraftbuddy.professions.v1.BuddyProfessions.GetState:input_type -> google.protobuf.Empty
-	5, // 5: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:input_type -> warcraftbuddy.professions.v1.AttemptRequest
-	6, // 6: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:input_type -> warcraftbuddy.professions.v1.CancelRequest
-	8, // 7: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	7, // 8: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:input_type -> google.protobuf.Empty
-	4, // 9: warcraftbuddy.professions.v1.BuddyProfessions.GetState:output_type -> warcraftbuddy.professions.v1.State
-	4, // 10: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:output_type -> warcraftbuddy.professions.v1.State
-	4, // 11: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:output_type -> warcraftbuddy.professions.v1.State
-	7, // 12: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:output_type -> google.protobuf.Empty
-	7, // 13: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:output_type -> google.protobuf.Empty
-	9, // [9:14] is the sub-list for method output_type
-	4, // [4:9] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+var file_modules_buddy_professions_professions_proto_depIdxs = []int32{
+	0,  // 0: warcraftbuddy.professions.v1.Operation.status:type_name -> warcraftbuddy.professions.v1.AttemptStatus
+	8,  // 1: warcraftbuddy.professions.v1.SkinningTarget.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	1,  // 2: warcraftbuddy.professions.v1.State.skills:type_name -> warcraftbuddy.professions.v1.Skill
+	2,  // 3: warcraftbuddy.professions.v1.State.recipes:type_name -> warcraftbuddy.professions.v1.Recipe
+	3,  // 4: warcraftbuddy.professions.v1.State.operation:type_name -> warcraftbuddy.professions.v1.Operation
+	4,  // 5: warcraftbuddy.professions.v1.State.skinning_targets:type_name -> warcraftbuddy.professions.v1.SkinningTarget
+	9,  // 6: warcraftbuddy.professions.v1.BuddyProfessions.GetState:input_type -> google.protobuf.Empty
+	6,  // 7: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:input_type -> warcraftbuddy.professions.v1.AttemptRequest
+	7,  // 8: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:input_type -> warcraftbuddy.professions.v1.CancelRequest
+	10, // 9: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 10: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:input_type -> google.protobuf.Empty
+	5,  // 11: warcraftbuddy.professions.v1.BuddyProfessions.GetState:output_type -> warcraftbuddy.professions.v1.State
+	5,  // 12: warcraftbuddy.professions.v1.BuddyProfessions.Attempt:output_type -> warcraftbuddy.professions.v1.State
+	5,  // 13: warcraftbuddy.professions.v1.BuddyProfessions.Cancel:output_type -> warcraftbuddy.professions.v1.State
+	9,  // 14: warcraftbuddy.professions.v1.BuddyProfessions.OnPacket:output_type -> google.protobuf.Empty
+	9,  // 15: warcraftbuddy.professions.v1.BuddyProfessions.BeforeLogout:output_type -> google.protobuf.Empty
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
-func init() { file_professions_proto_init() }
-func file_professions_proto_init() {
-	if File_professions_proto != nil {
+func init() { file_modules_buddy_professions_professions_proto_init() }
+func file_modules_buddy_professions_professions_proto_init() {
+	if File_modules_buddy_professions_professions_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_professions_proto_rawDesc), len(file_professions_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_professions_professions_proto_rawDesc), len(file_modules_buddy_professions_professions_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_professions_proto_goTypes,
-		DependencyIndexes: file_professions_proto_depIdxs,
-		EnumInfos:         file_professions_proto_enumTypes,
-		MessageInfos:      file_professions_proto_msgTypes,
+		GoTypes:           file_modules_buddy_professions_professions_proto_goTypes,
+		DependencyIndexes: file_modules_buddy_professions_professions_proto_depIdxs,
+		EnumInfos:         file_modules_buddy_professions_professions_proto_enumTypes,
+		MessageInfos:      file_modules_buddy_professions_professions_proto_msgTypes,
 	}.Build()
-	File_professions_proto = out.File
-	file_professions_proto_goTypes = nil
-	file_professions_proto_depIdxs = nil
+	File_modules_buddy_professions_professions_proto = out.File
+	file_modules_buddy_professions_professions_proto_goTypes = nil
+	file_modules_buddy_professions_professions_proto_depIdxs = nil
 }

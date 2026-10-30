@@ -30,7 +30,7 @@ func (s *Service) renew(ctx context.Context, op *operation) error {
 	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "professions", Token: token, LeaseMs: 30000}, out); err != nil {
 		return err
 	}
-	if out.Token != token || out.State == nil || out.State.InteractionOwner != "professions" || out.State.Moving || out.State.MotionUnconfirmed {
+	if out.Token != token || out.State == nil || out.State.InteractionOwner != "professions" || out.State.InteractionLeaseRemainingMs < 2000 || out.State.Moving || out.State.MotionUnconfirmed {
 		return fail("exact interaction lease or stopped position changed")
 	}
 	s.mu.Lock()
@@ -41,8 +41,49 @@ func (s *Service) renew(ctx context.Context, op *operation) error {
 func (s *Service) writeOwned(ctx context.Context, op *operation, code uint32, payload []byte) error {
 	call, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	// Observation queries and dependency refreshes must precede the final
+	// world proof. Cleanup packets retain their separate exact-token path.
+	needsWorld := code == opcode.CMSGCastSpell || code == opcode.CMSGGameobjUse || code == opcode.CMSGAutostoreLootItem
+	if needsWorld {
+		select {
+		case s.observeGate <- struct{}{}:
+			defer func() { <-s.observeGate }()
+		case <-call.Done():
+			return call.Err()
+		}
+	}
 	if err := s.renew(call, op); err != nil {
 		return err
+	}
+	if needsWorld {
+		w := &worldv1.SnapshotResponse{}
+		if err := s.invoke(call, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); err != nil {
+			return err
+		}
+		v, err := validateWorld(w, s.selfGUID)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if v.inventoryRevision < s.state.InventoryRevision || v.skillsRevision < s.state.SkillsRevision {
+			s.mu.Unlock()
+			return fail("final carried inventory or skill observation regressed")
+		}
+		s.view, s.viewKnown = v, true
+		s.state.InventoryKnown, s.state.InventoryRevision = true, v.inventoryRevision
+		s.state.BackpackKnown, s.state.BackpackRevision = w.BackpackKnown, v.backpackRevision
+		s.state.SkillsKnown, s.state.SkillsRevision = true, v.skillsRevision
+		valid := s.active == op && s.activeSafetyLocked(op) == ""
+		if code == opcode.CMSGCastSpell {
+			valid = valid && v.inventoryRevision == op.baseline.inventoryRevision && v.skillsRevision == op.baseline.skillsRevision && s.readinessLocked(op.spec, op) == ""
+		}
+		if code == opcode.CMSGAutostoreLootItem {
+			valid = valid && v.freeSlots > 0
+		}
+		s.mu.Unlock()
+		if !valid {
+			return fail("final actual body, inventory, skills or source changed before write")
+		}
 	}
 	s.mu.Lock()
 	valid := s.active == op
@@ -80,6 +121,10 @@ func (s *Service) setReason(op *operation, reason string, status professionsv1.A
 }
 
 func (s *Service) run(op *operation) {
+	if op.spec.skill == 393 {
+		s.runSkin(op)
+		return
+	}
 	defer close(op.done)
 	defer op.cancel()
 	defer s.finish(op)
@@ -98,7 +143,7 @@ func (s *Service) run(op *operation) {
 	err = s.observe(check)
 	cancel()
 	s.mu.Lock()
-	if err == nil && (s.view.skillsRevision != op.baseline.skillsRevision || s.view.backpackRevision != op.baseline.backpackRevision || !s.book.known || !s.book.has(op.spec.spell)) {
+	if err == nil && (s.view.skillsRevision != op.baseline.skillsRevision || s.view.inventoryRevision != op.baseline.inventoryRevision || !s.book.known || !s.book.has(op.spec.spell)) {
 		err = fail("own skills, backpack or recipe knowledge changed before cast")
 	}
 	if err == nil {
@@ -255,9 +300,10 @@ func (s *Service) step(op *operation) bool {
 		}
 	}
 	if len(counts) > 0 {
-		inventory = inventory && s.view.backpackRevision > op.baseline.backpackRevision
+		inventory = inventory && s.view.inventoryRevision > op.baseline.inventoryRevision
 		r.OutputInventoryObserved = inventory
 		r.ObservedBackpackRevision = s.view.backpackRevision
+		r.ObservedInventoryRevision = s.view.inventoryRevision
 	}
 	if r.LootReleaseObserved && r.ChannelStopObserved && inventory {
 		r.Status = professionsv1.AttemptStatus_COMPLETED
@@ -493,7 +539,15 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.state.Revision++
 		return &emptypb.Empty{}, nil
 	}
+	if s.onSkinTemplatePacketLocked(packet) {
+		return &emptypb.Empty{}, nil
+	}
+	s.observeCorpseLootLocked(packet)
 	op := s.active
+	if op != nil && op.spec.skill == 393 {
+		s.onSkinPacketLocked(op, packet)
+		return &emptypb.Empty{}, nil
+	}
 	if op == nil || !op.castReserved {
 		return &emptypb.Empty{}, nil
 	}
@@ -524,7 +578,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			}
 			break
 		}
-		if e.spell != op.spec.spell || uint32(e.count) != r.CastCount || e.caster != 0 && e.caster != s.selfGUID {
+		if e.spell != op.spec.spell || uint32(e.count) != r.CastCount || packet.Opcode != opcode.SMSGCastFailed && e.caster != s.selfGUID {
 			return &emptypb.Empty{}, nil
 		}
 		switch e.kind {
@@ -550,7 +604,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		// Item-push uses raw equipment slots, unlike the normalized world bag.
 		// The base backpack is bag255 and absolute slots23..38; existing-stack
 		// pushes can omit the slot with UINT32_MAX.
-		if e.player != s.selfGUID || e.bag != 255 || e.slot != 0xffffffff && (e.slot < 23 || e.slot >= 39) {
+		if e.player != s.selfGUID || !carriedPushLocation(s.view, e.bag, e.slot) {
 			break
 		}
 		if op.spec.skill != 356 && e.received && e.created && e.entry == op.spec.itemEntry && e.added == op.spec.itemCount {
