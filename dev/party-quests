@@ -87,6 +87,7 @@ class PartyQuestSync:
                     or not isinstance(value.get("session"), str) or not 1 <= len(value["session"]) <= 128):
                 raise Error("Saved automatic quest reward evidence is invalid")
         self.status = {"name": name, "guid": guid, "phase": "starting", "observationsCurrent": False}
+        self.reward_lookup = None
 
     call = sync.CharacterSync.call
 
@@ -180,7 +181,7 @@ class PartyQuestSync:
                 or integer(offer.get("expiresInMs", 0)) == 0):
             return False
         if method == "buddy-quests.claim_reward":
-            return self.reward_offer(offer, qid, giver["guid"]) and self.choice(offer, context["world"]["self"]) is not False
+            return self.reward_offer(offer, qid, giver["guid"]) and self.choice(offer, context["world"]["self"], session=context["session"]) is not False
         quests = offer.get("quests", [])
         return (isinstance(quests, list) and len(quests) <= 32
                 and any(isinstance(q, dict) and integer(q.get("questId", 0)) == qid and q.get("available") is True
@@ -238,7 +239,7 @@ class PartyQuestSync:
                 offer = state.get("turnInOffer", {})
                 if not self.allowed(fresh, qid, "reward") or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding):
                     return {}
-                choice = self.choice(offer, fresh["world"]["self"])
+                choice = self.choice(offer, fresh["world"]["self"], session=fresh["session"])
                 if choice is False:
                     return {}
                 params.update(questId=qid, offerRevision=offer_binding[2], noChoice=choice is None,
@@ -253,7 +254,7 @@ class PartyQuestSync:
                 and offer.get("rewardRequested") is not True and integer(offer.get("expiresInMs", 0)) > 0
                 and integer(offer.get("revision", 0)) > 0)
 
-    def choice(self, offer, player):
+    def choice(self, offer, player, lookup=False, session=""):
         choices = offer.get("choices", [])
         if not isinstance(choices, list) or len(choices) > 6:
             raise Error("Automatic quest reward choices are invalid")
@@ -265,7 +266,7 @@ class PartyQuestSync:
             if idx >= 6 or idx in indices or not 0 < item_id <= 2**32 - 1 or not 0 < count <= 2**32 - 1:
                 raise Error("Automatic quest reward choice is invalid")
             indices.add(idx)
-            valid.append({"index": idx, "itemId": item_id})
+            valid.append({"index": idx, "itemId": item_id, "count": count})
         if len(valid) <= 1:
             return valid[0] if valid else None
         class_id = integer(player.get("classId", 0)) if player.get("classKnown") is True else 0
@@ -273,9 +274,31 @@ class PartyQuestSync:
         matches = [item for item in valid if item["itemId"] == preferred]
         if len(matches) == 1:
             return matches[0]
-        self.status.update(phase="waiting_for_reward_choice", rewardQuestId=integer(offer.get("questId", 0)),
-                           rewardChoiceItemIds=[item["itemId"] for item in valid])
-        return False
+        key = (session, integer(offer.get("questId", 0)), integer(offer.get("npcGuid", 0)),
+               integer(offer.get("revision", 0)), tuple((row["index"], row["itemId"], row["count"]) for row in valid))
+        if lookup:
+            try:
+                response = self.call("buddy-trade.lookup_items", {"itemIds": [row["itemId"] for row in valid]})
+                converse.BuddyControls.bound(response)
+                converse.reward_metadata_snapshot(response)
+                self.reward_lookup = {"key": key, "response": response}
+            except (Error, ValueError, TypeError):
+                self.reward_lookup = None
+        if self.reward_lookup is None or self.reward_lookup["key"] != key:
+            decision = {"status": "pending"}
+        else:
+            decision = converse.quest_rewards.select_reward(choices, self.reward_lookup["response"], class_id,
+                level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None)
+        self.status.update(rewardQuestId=integer(offer.get("questId", 0)),
+                           rewardChoiceItemIds=[row["itemId"] for row in valid])
+        if decision["status"] != "selected":
+            self.status["phase"] = "waiting_for_reward_item_details"
+            return False
+        selected = decision["choice"]
+        rows = converse.quest_rewards._metadata_rows(self.reward_lookup["response"])
+        self.status.update(rewardChoiceName=converse.BuddyControls.label(rows[selected["itemId"]].get("name"), "reward", 100),
+                           rewardSelectionReason=decision["reason"])
+        return selected
 
     def query_ready(self, key, signature, delay=30):
         return not any(row["npc"] == key and row["signature"] == signature and self.now() - row["at"] < delay
@@ -329,7 +352,7 @@ class PartyQuestSync:
                 continue
             giver = eligible[0]
             if self.reward_offer(current_offer, qid, giver["guid"]):
-                choice = self.choice(current_offer, context["world"]["self"])
+                choice = self.choice(current_offer, context["world"]["self"], lookup=True, session=session)
                 if choice is False:
                     return
                 bound = sync.binding(session, giver["guid"], integer(current_offer["revision"]))

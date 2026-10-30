@@ -35,6 +35,8 @@ class FakeRPC:
         self.error_on,self.after_travel=None,None
         self.feed_reads=0
         self.feed_change=None
+        self.item_details={}
+        self.after_lookup=None
 
     def feed(self):
         self.feed_reads+=1
@@ -67,6 +69,10 @@ class FakeRPC:
         if method=="buddy-party.state":return {"group":{"known":True,"inGroup":True,"members":[
             {"guid":str(self.guid),"name":{1:"Arlen",4:"Mira",5:"Rook"}.get(self.guid,"Other"),"self":True,"online":True},
             {"guid":"3","name":"Joel" if self.good_party else "Someone","online":True}]}}
+        if method=="buddy-trade.lookup_items":
+            result={"sessionId":"trade-session","items":[copy.deepcopy(self.item_details.get(item_id,{"itemId":item_id,"pending":True})) for item_id in params["itemIds"]]}
+            if self.after_lookup:self.after_lookup(self)
+            return result
         if method=="buddy-actions.acquire_interaction":return {"token":"owned-lease","state":{"interactionOwner":"quests"}}
         if method=="buddy-actions.release_interaction":return {}
         if method=="buddy-actions.travel_quest":
@@ -109,7 +115,7 @@ class PartyQuestTests(unittest.TestCase):
         return profile,rpc,clock,saved
 
     def mutations(self,rpc):return [(m,p) for m,p in rpc.calls if m not in (
-        "buddy-world.snapshot","buddy-quests.discover","buddy-actions.status","buddy-party.state","buddy-chat.owner_feed")]
+        "buddy-world.snapshot","buddy-quests.discover","buddy-actions.status","buddy-party.state","buddy-chat.owner_feed","buddy-trade.lookup_items")]
 
     def test_owner_completed_own_complete_handoff_then_actual_owner_followup_accepts(self):
         profile,rpc,clock,_=self.rig()
@@ -220,9 +226,70 @@ class PartyQuestTests(unittest.TestCase):
         profile,rpc,clock,_=self.rig()
         rpc.choices=[{"index":0,"itemId":123,"count":1},{"index":1,"itemId":456,"count":1}]
         profile.tick();clock[0]+=10;profile.tick()
-        self.assertEqual(profile.status["phase"],"waiting_for_reward_choice")
+        self.assertEqual(profile.status["phase"],"waiting_for_reward_item_details")
         self.assertEqual(profile.status["rewardChoiceItemIds"],[123,456])
         self.assertFalse(any(m in ("buddy-quests.claim_reward","buddy-quests.offer") for m,_ in rpc.calls))
+
+    def queried_rewards(self):
+        profile,rpc,clock,saved=self.rig()
+        rpc.choices=[{"index":4,"itemId":6076,"count":1},{"index":2,"itemId":3070,"count":1}]
+        rows={6076:{"itemId":6076,"available":True,"name":"Tapered Pants","itemClass":4,"subclass":2,
+                    "inventoryType":7,"armor":25,"allowableClass":0xffffffff,"allowableRace":0xffffffff},
+              3070:{"itemId":3070,"available":True,"name":"Ensign Cloak","itemClass":4,"subclass":1,
+                    "inventoryType":16,"armor":6,"allowableClass":0xffffffff,"allowableRace":0xffffffff}}
+        profile.tick();clock[0]+=10
+        return profile,rpc,clock,saved,rows
+
+    def test_metadata_pending_has_no_claim_reservation_or_cooldown_then_ready_claims_exact_choice(self):
+        profile,rpc,clock,saved,rows=self.queried_rewards()
+        before=(profile.data["nextMutationAt"],copy.deepcopy(profile.data["reservations"]),len(saved))
+        profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_reward_item_details")
+        self.assertEqual((profile.data["nextMutationAt"],profile.data["reservations"],len(saved)),before)
+        self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
+        rpc.item_details=rows
+        clock[0]+=2;profile.tick()
+        claims=[params for method,params in rpc.calls if method=="buddy-quests.claim_reward"]
+        self.assertEqual(len(claims),1)
+        self.assertEqual((claims[0]["sessionId"],claims[0]["offerRevision"],claims[0]["choiceIndex"],claims[0]["expectedItemId"]),
+                         (rpc.session,rpc.reward["revision"],2,3070))
+        self.assertEqual(profile.status["rewardChoiceName"],"Ensign Cloak")
+        clock[0]+=10;profile.tick()
+        self.assertIn("7",profile.data["confirmedRewards"])
+        self.assertEqual(sum(method=="buddy-quests.claim_reward" for method,_ in rpc.calls),1)
+
+    def test_invalid_lookup_metadata_or_identity_never_reserves_claim(self):
+        for change in ("metadata","identity","unavailable"):
+            with self.subTest(change=change):
+                profile,rpc,clock,saved,rows=self.queried_rewards()
+                rpc.item_details=rows
+                if change=="metadata":rows[3070]["stats"]=[{"type":5,"value":True}]
+                if change=="unavailable":rows[3070]["available"]=False
+                original=rpc.call
+                def call(method,params):
+                    result=original(method,params)
+                    if method=="buddy-trade.lookup_items" and change=="identity":result["sessionId"]=""
+                    return result
+                rpc.call=call
+                before=(profile.data["nextMutationAt"],copy.deepcopy(profile.data["reservations"]),len(saved))
+                profile.tick()
+                self.assertEqual((profile.data["nextMutationAt"],profile.data["reservations"],len(saved)),before)
+                self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
+
+    def test_new_item_lookup_then_changed_body_offer_or_owner_never_claims(self):
+        for change in ("body","offer","expired","combat","feed"):
+            with self.subTest(change=change):
+                profile,rpc,clock,_,rows=self.queried_rewards()
+                rpc.item_details=rows
+                def after_lookup(mock):
+                    if change=="body":mock.session="replacement"
+                    elif change=="offer":mock.reward["revision"]="99"
+                    elif change=="expired":mock.reward.pop("expiresInMs")
+                    elif change=="combat":mock.own_combat=True
+                    elif change=="feed":mock.age=16000
+                rpc.after_lookup=after_lookup
+                profile.tick()
+                self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
 
     def test_only_owner_active_quests_from_actual_offer_and_fresh_menu_each_accept(self):
         profile,rpc,clock,_=self.rig()

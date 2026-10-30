@@ -723,10 +723,11 @@ class QuestJournalRewardTests(unittest.TestCase):
             self.assertEqual(reward["choiceIndex"],2 if choices else 0)
             self.assertEqual(reward["expectedItemId"],1001 if choices else 0)
 
-    def test_multiple_rewards_require_actual_unique_item_choice(self):
+    def test_explicit_reward_choice_remains_available_while_automatic_details_unknown(self):
         controls,rpc,_,_=self.reward_controls([{"index":0,"itemId":1001},{"index":1,"itemId":1002}])
         text=controls.execute("TURN_IN_QUEST",quest_id=783)
-        self.assertIn("1001",text);self.assertIn("1002",text)
+        self.assertIn("waiting",text)
+        self.assertNotIn("reward item ID",text)
         self.assertFalse(any(m=="buddy-quests.claim_reward" for m,_ in rpc.calls))
         self.assertIn("isn't",controls.execute("CLAIM_QUEST_REWARD",quest_id=783,item_entry=9999))
         self.assertFalse(any(m=="buddy-quests.claim_reward" for m,_ in rpc.calls))
@@ -804,6 +805,100 @@ class QuestJournalRewardTests(unittest.TestCase):
             claim=next(params for method,params in rpc.calls if method=="buddy-quests.claim_reward")
             self.assertEqual(claim["expectedItemId"],wanted)
             self.assertEqual(claim["choiceIndex"],5 if wanted==11192 else 1)
+
+    def lookup_controls(self):
+        controls,rpc,discovery,offer=self.reward_controls([
+            {"index":4,"itemId":6076,"count":1},{"index":1,"itemId":60,"count":1},{"index":3,"itemId":3070,"count":1}])
+        discovery["questLog"]=[{"questId":6,"complete":True}]
+        offer.update(questId=6,title="Bounty on Garrick Padfoot")
+        controls.character_class="mage"
+        rows=[{"itemId":6076,"name":"Tapered Pants","available":True,"itemClass":4,"subclass":2,"inventoryType":7,"armor":25,"allowableClass":0xffffffff,"allowableRace":0xffffffff},
+              {"itemId":60,"name":"Layered Tunic","available":True,"itemClass":4,"inventoryType":4,"allowableClass":0xffffffff,"allowableRace":0xffffffff},
+              {"itemId":3070,"name":"Ensign Cloak","available":True,"itemClass":4,"subclass":1,"inventoryType":16,"armor":6,"allowableClass":0xffffffff,"allowableRace":0xffffffff}]
+        original=rpc.call
+        def call(method,params):
+            if method=="buddy-world.snapshot":
+                rpc.calls.append((method,params))
+                return {"self":{"guid":"1","classKnown":True,"classId":8,"levelKnown":True,"level":8}}
+            if method=="buddy-trade.lookup_items":
+                rpc.calls.append((method,params))
+                return {"sessionId":"trade-body","items":rows}
+            result=original(method,params)
+            if method=="buddy-quests.claim_reward":result["state"]["lastReward"]["questId"]=6
+            return result
+        rpc.call=call
+        return controls,rpc,discovery,offer,rows
+
+    def test_automatic_reward_pending_then_actual_metadata_claims_exact_offer_and_exposes_names(self):
+        controls,rpc,_,_,_=self.lookup_controls()
+        original=rpc.call
+        reads=[]
+        def call(method,params):
+            result=original(method,params)
+            if method=="buddy-trade.lookup_items":
+                reads.append(params)
+                if len(reads)==1:return {"sessionId":"trade-body","items":[{"itemId":row["itemId"],"pending":True} for row in result["items"]]}
+            return result
+        rpc.call=call
+        with patch.object(converse.time,"sleep"):
+            text=controls.execute("CLAIM_QUEST_REWARD",quest_id=6)
+        self.assertIn("Turn-in confirmed",text)
+        self.assertEqual(len(reads),2)
+        claim=next(params for method,params in rpc.calls if method=="buddy-quests.claim_reward")
+        self.assertEqual((claim["sessionId"],claim["offerRevision"],claim["questId"],claim["choiceIndex"],claim["expectedItemId"]),
+                         ("quest-session","9",6,3,3070))
+        self.assertEqual(controls.reward_items["selectedItemId"],3070)
+        self.assertIn("Ensign Cloak",str(controls.reward_items))
+        self.assertNotIn("ask Joel",converse.PERSONA)
+        self.assertNotIn("ask Joel for an actual item ID",converse.PERSONA)
+
+    def test_automatic_reward_unavailable_metadata_has_bounded_reads_and_no_claim(self):
+        controls,rpc,_,_,rows=self.lookup_controls()
+        rows[2].update(available=False,pending=True)
+        with patch.object(converse.time,"sleep"):
+            text=controls.execute("CLAIM_QUEST_REWARD",quest_id=6)
+        self.assertIn("waiting",text)
+        self.assertEqual(sum(method=="buddy-trade.lookup_items" for method,_ in rpc.calls),3)
+        self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
+
+    def test_automatic_reward_lookup_rejects_invalid_metadata_and_changed_body_offer_or_receipt(self):
+        for change in ("metadata","lookup_session","quest_session","revision","choices","expired","requested","receipt","foreign_character"):
+            with self.subTest(change=change):
+                controls,rpc,_,offer,rows=self.lookup_controls()
+                original=rpc.call
+                def call(method,params):
+                    result=original(method,params)
+                    if method=="buddy-world.snapshot" and change=="foreign_character":result["self"]["guid"]="4"
+                    if method=="buddy-trade.lookup_items":
+                        if change=="metadata":rows[2]["armor"]=-1
+                        elif change=="lookup_session":result["sessionId"]=""
+                        elif change=="revision":offer["revision"]="10"
+                        elif change=="choices":offer["choices"]=list(reversed(offer["choices"]))
+                        elif change=="expired":offer.pop("expiresInMs")
+                        elif change=="requested":offer["rewardRequested"]=True
+                    if method=="buddy-quests.state" and any(m=="buddy-trade.lookup_items" for m,_ in rpc.calls):
+                        if change=="quest_session":result=dict(result,sessionId="replacement")
+                        elif change=="receipt":result=dict(result,lastReward={"questId":6,"status":"REWARD_REQUESTED"})
+                    return result
+                rpc.call=call
+                with patch.object(converse.time,"sleep"):
+                    controls.execute("CLAIM_QUEST_REWARD",quest_id=6)
+                self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
+
+    def test_reward_context_sanitizes_actual_item_details_and_honors_explicit_chosen_item(self):
+        controls,rpc,_,_,rows=self.lookup_controls()
+        rows[2]["secretToken"]="must-not-forward"
+        controls.execute("CLAIM_QUEST_REWARD",quest_id=6)
+        controls.quests_available=True
+        with patch.object(converse,"quest_sync_snapshot",return_value={}),patch.object(converse,"party_quest_sync_snapshot",return_value={}),patch.object(converse,"party_maintenance_snapshot",return_value={}):
+            context=controls.context()
+        self.assertIn("Ensign Cloak",str(context["reward_items"]))
+        self.assertNotIn("secretToken",str(context))
+        controls,rpc,_,_,_=self.lookup_controls()
+        self.assertIn("Turn-in confirmed",controls.execute("CLAIM_QUEST_REWARD",quest_id=6,item_entry=6076))
+        self.assertFalse(any(method=="buddy-trade.lookup_items" for method,_ in rpc.calls))
+        claim=next(params for method,params in rpc.calls if method=="buddy-quests.claim_reward")
+        self.assertEqual((claim["choiceIndex"],claim["expectedItemId"]),(4,6076))
 
     def test_zero_quest_id_requires_unique_completed_own_quest(self):
         controls,rpc,discovery,_=self.reward_controls()

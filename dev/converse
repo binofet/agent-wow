@@ -11,6 +11,7 @@ Uses existing Codex CLI authentication. Account credentials are not needed here.
 import argparse
 import datetime
 import fcntl
+import importlib.util
 import json
 import math
 import os
@@ -30,6 +31,9 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
+_reward_spec = importlib.util.spec_from_file_location("quest_rewards", Path(__file__).with_name("quest-rewards.py"))
+quest_rewards = importlib.util.module_from_spec(_reward_spec)
+_reward_spec.loader.exec_module(quest_rewards)
 DEFAULT_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 DISABLED_FEATURES = (
     "shell_tool", "unified_exec", "apps", "plugins", "remote_plugin",
@@ -80,7 +84,7 @@ navigation. Other abilities exist only when supplied abilities say available.
 DISCOVER_QUESTS reads the nearest interactable NPC's actual offers. ACCEPT_QUEST
 requests one offered quest: quest_id is the exact observed ID, or0 only for a
 unique available offer. ENABLE_LOOTING/DISABLE_LOOTING toggles nearby ordinary
-corpse loot. TURN_IN_QUEST requests completion of an own active quest: use its exact quest_id, or0 only for a unique completed own quest. Zero/one actual reward choice may be claimed; for multiple choices ask Joel for an actual item ID. CLAIM_QUEST_REWARD uses quest_id and item_entry from that observed reward offer. PLAN_QUEST uses quest_id from the own journal to discuss a next objective; it does not move or start combat. OPEN_TRADE/CANCEL_TRADE controls a trade with Joel. OFFER_TRADE_ITEM
+corpse loot. TURN_IN_QUEST requests completion of an own active quest: use its exact quest_id, or0 only for a unique completed own quest. Reward choices are selected automatically from actual item facts for useful class-compatible equipment/stats, or sell value when none is known usable. Missing item facts cause a short wait, never a request for item IDs. CLAIM_QUEST_REWARD uses quest_id and an optional actual item_entry only when Joel explicitly chose it; otherwise leave item_entry0 for automatic selection. reward_items contains actual observed item names and facts; use those names when discussing rewards. Never call a reward an upgrade without an equipped comparison or claim an unknown weapon proficiency. PLAN_QUEST uses quest_id from the own journal to discuss a next objective; it does not move or start combat. OPEN_TRADE/CANCEL_TRADE controls a trade with Joel. OFFER_TRADE_ITEM
 uses item_entry from an observed backpack item explicitly requested by Joel;
 it offers one whole stack, never equipment or bag contents. OFFER_TRADE_GOLD
 uses an exact gold_copper amount explicitly stated by Joel (1gold=10000copper,
@@ -147,6 +151,26 @@ progress. The routine has no additional model action.
 
 CLASS_IDS = {"warrior": 1, "paladin": 2, "hunter": 3, "rogue": 4, "priest": 5,
              "deathknight": 6, "shaman": 7, "mage": 8, "warlock": 9, "druid": 11}
+
+
+def reward_metadata_snapshot(response):
+    """Keep only bounded item-template facts, never arbitrary RPC response keys."""
+    rows = quest_rewards._metadata_rows(response)
+    if len(rows) > 6:
+        raise ConversationError("Too many reward item details")
+    clean = []
+    for item_id, row in sorted(rows.items()):
+        item = {"itemId": item_id, "available": row.get("available") is True,
+                "pending": row.get("pending") is True}
+        if item["available"]:
+            if not quest_rewards._validate_item(row):
+                raise ConversationError("Invalid reward item details")
+            item.update({key: row.get(key, 0) for key in quest_rewards._UINT_FIELDS})
+            item["name"] = BuddyControls.label(row.get("name"), f"item {item_id}", 160)
+            item["stats"] = [{"type": stat.get("type", 0), "value": stat.get("value", 0)} for stat in row.get("stats", [])]
+            item["damages"] = [{key: damage.get(key, 0) for key in ("minimum", "maximum", "school")} for damage in row.get("damages", [])]
+        clean.append(item)
+    return {"available": all(row["available"] and not row["pending"] for row in clean) and bool(clean), "items": clean}
 
 
 def character_name(value):
@@ -313,6 +337,14 @@ def _quest_routine_snapshot(character_guid, stop=False, standing=False):
             value = raw_own.get(key)
             if isinstance(value, str) and re.fullmatch(r"[a-z0-9_]{1,96}", value):
                 own[key] = value
+        if standing:
+            for key in ("rewardChoiceName", "rewardSelectionReason"):
+                value = raw_own.get(key)
+                if isinstance(value, str):
+                    try:
+                        own[key] = plain_text(value, 240)
+                    except ConversationError:
+                        pass
         for key in ("activeQuestIds", "missingQuestIds", "extraQuestIds", "confirmedPrerequisiteQuestIds",
                     "ownerActiveQuestIds", "confirmedRewardQuestIds"):
             values = raw_own.get(key, [])
@@ -585,7 +617,7 @@ class RPC:
                           "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward",
                           "buddy-loot.state", "buddy-loot.enable",
                           "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
-                          "buddy-trade.offer_gold", "buddy-trade.cancel",
+                          "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist"):
             raise ConversationError("Unsupported chat method")
@@ -595,7 +627,7 @@ class RPC:
         request = urllib.request.Request(self.url, data=body,
                                          headers={"Content-Type": "application/json"})
         try:
-            with self.opener.open(request, timeout=self.timeout) as response:
+            with self.opener.open(request, timeout=min(self.timeout, .45) if method == "buddy-trade.lookup_items" else self.timeout) as response:
                 raw = response.read(256 * 1024 + 1)
             if len(raw) > 256 * 1024:
                 raise ConversationError("Chat RPC response exceeds the limit")
@@ -756,6 +788,7 @@ class BuddyControls:
         self.quests_available = self.loot_available = self.trade_available = self.journal_available = False
         self.previous_quest_confirmation = None
         self.previous_loot_items = self.previous_completed_trades = None
+        self.reward_items = {"available": False, "items": []}
 
     def refresh(self):
         try:
@@ -842,6 +875,7 @@ class BuddyControls:
                  "owner_reported_quests": owner_quest_snapshot(self.owner_quest_context),
                  "loot": self.loot if self.loot_available else {},
                  "trade": self.trade if self.trade_available else {},
+                 "reward_items": self.reward_items,
                  "recent_events": self.events[-8:]}
         state["owner_shared_quests"] = {"available": False}
         if self.party_available and owner_party_known(self.party.get("group", {}), self.character_guid):
@@ -853,6 +887,21 @@ class BuddyControls:
             state["observations"] = self.rpc.call("buddy-world.snapshot", {})
         except ConversationError:
             state["observations"] = {}
+        offer = self.quests.get("turnInOffer", {}) if self.quests_available else {}
+        if (isinstance(offer, dict) and isinstance(offer.get("choices"), list)
+                and 1 < len(offer["choices"]) <= 6 and offer.get("rewardRequested") is not True
+                and integer(offer.get("expiresInMs", 0)) > 0
+                and (self.reward_items.get("questId") != integer(offer.get("questId", 0))
+                     or self.reward_items.get("offerRevision") != str(integer(offer.get("revision", 0)))
+                     or self.reward_items.get("available") is not True)):
+            try:
+                response = self.rpc.call("buddy-trade.lookup_items", {"itemIds": [integer(row.get("itemId", 0)) for row in offer["choices"] if isinstance(row, dict)]})
+                self.bound(response)
+                self.reward_items = dict(reward_metadata_snapshot(response), questId=integer(offer.get("questId", 0)),
+                                         offerRevision=str(integer(offer.get("revision", 0))))
+                state["reward_items"] = self.reward_items
+            except (ConversationError, ValueError, TypeError):
+                pass
         return state
 
     @staticmethod
@@ -1019,7 +1068,12 @@ class BuddyControls:
                 if sum(integer(item["itemId"]) == preferred for item in choices) == 1:
                     item_entry = preferred
         if len(choices) > 1 and not item_entry:
-            return "Choose a reward item ID: " + "; ".join(str(integer(item["itemId"])) for item in choices) + "."
+            selected, message = self.automatic_reward_choice(offer)
+            if selected is None:
+                return message
+            item_entry = selected["itemId"]
+            offer = self.quests["turnInOffer"]
+            choices = offer["choices"]
         selected = [item for item in choices if integer(item["itemId"]) == item_entry] if item_entry else choices
         if item_entry and len(selected) != 1:
             return "That item isn't an unambiguous choice in the current reward offer."
@@ -1040,6 +1094,50 @@ class BuddyControls:
         if isinstance(receipt, dict) and receipt.get("status") in ("REWARD_REJECTED", 4):
             return "The server rejected that quest reward."
         return "I requested the quest reward, but haven't confirmed the turn-in in my quest log."
+
+    @staticmethod
+    def reward_binding(state):
+        offer = state.get("turnInOffer", {})
+        if not isinstance(offer, dict) or not isinstance(offer.get("choices", []), list):
+            raise ConversationError("Invalid quest reward offer")
+        choices = tuple((integer(row.get("index", 0)), integer(row.get("itemId", 0)),
+                         integer(row.get("count", 0))) for row in offer.get("choices", []) if isinstance(row, dict))
+        return (BuddyControls.bound(state)["sessionId"], integer(offer.get("questId", 0)),
+                integer(offer.get("npcGuid", 0)), integer(offer.get("revision", 0)), choices)
+
+    def automatic_reward_choice(self, offer):
+        binding = self.reward_binding(self.quests)
+        player = self.rpc.call("buddy-world.snapshot", {}).get("self", {})
+        if (not isinstance(player, dict) or integer(player.get("guid", 0)) != self.character_guid
+                or player.get("classKnown") is not True
+                or integer(player.get("classId", 0)) != CLASS_IDS[self.character_class]):
+            return None, "I'm waiting for my character details before choosing a reward."
+        decision = {"status": "pending"}
+        deadline = time.monotonic() + 1.8
+        for attempt in range(3):
+            try:
+                response = self.rpc.call("buddy-trade.lookup_items", {"itemIds": [integer(row["itemId"]) for row in offer["choices"]]})
+                self.bound(response)  # Require an actual lookup-module identity.
+                decision = quest_rewards.select_reward(offer["choices"], response, integer(player["classId"]),
+                    level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None)
+                self.reward_items = dict(reward_metadata_snapshot(response), questId=integer(offer["questId"]),
+                                         offerRevision=str(integer(offer.get("revision", 0))))
+            except (ConversationError, ValueError, TypeError):
+                return None, "I'm waiting for the reward's item details."
+            if decision["status"] != "pending" or attempt == 2 or time.monotonic() + .15 >= deadline:
+                break
+            time.sleep(.15)
+        if decision["status"] != "selected":
+            return None, "I'm waiting for complete reward item details before choosing."
+        fresh = self.rpc.call("buddy-quests.state", {})
+        current = fresh.get("turnInOffer", {})
+        if (self.reward_binding(fresh) != binding or self.ambiguous_quest_reward(fresh, binding[1])
+                or current.get("source") != "reward_offer" or current.get("canComplete") is not True
+                or current.get("rewardRequested") is True or integer(current.get("expiresInMs", 0)) == 0):
+            return None, "The reward offer changed while I checked it; I'll need its current offer."
+        self.quests = fresh
+        self.reward_items.update(selectionReason=decision["reason"], selectedItemId=decision["choice"]["itemId"])
+        return decision["choice"], ""
 
     @staticmethod
     def ambiguous_quest_reward(state, quest_id):
