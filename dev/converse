@@ -486,8 +486,10 @@ class BuddyControls:
         if not self.quests_available:
             return "Quest pickup isn't ready yet."
         result = self.quest_offer()
-        if not result or not result[1]:
-            return "I couldn't confirm an available quest nearby. Let's stand closer to the questgiver."
+        if not result:
+            return "I couldn't read a quest offer from a nearby questgiver yet."
+        if not result[1]:
+            return "This NPC isn't offering me a quest I can accept right now."
         offer, available = result
         if action == "DISCOVER_QUESTS" or (quest_id == 0 and len(available) != 1):
             choices = [f"{self.label(q.get('title'), 'Quest', 45)} ({integer(q['questId'])})" for q in available[:3]]

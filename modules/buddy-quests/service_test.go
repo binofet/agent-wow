@@ -199,6 +199,33 @@ func TestAcceptedOnlyAfterAuthoritativeQuestLogInsertion(t *testing.T) {
 	}
 }
 
+func TestFlaggedStarterOfferNeedsExplicitAcceptAndNewOwnLogProof(t *testing.T) {
+	f := fixture()
+	s := NewService(f, "body-one", 1)
+	f.onSend = func(_ context.Context, p *modv1.SendPacketRequest) error {
+		if p.Opcode == opcode.CMSGQuestgiverHello {
+			packet(t, s, opcode.SMSGGossipMessage, starterGossip(t))
+		} else if p.Opcode == opcode.CMSGQuestgiverAcceptQuest {
+			if len(p.Payload) != 16 || binary.LittleEndian.Uint64(p.Payload) != npcGUID || binary.LittleEndian.Uint32(p.Payload[8:]) != 783 || binary.LittleEndian.Uint32(p.Payload[12:]) != 0 {
+				t.Error("wrong explicit starter acceptance", p)
+			}
+			f.confirm(783)
+		}
+		return nil
+	}
+	offered, err := s.Offer(context.Background(), &questsv1.OfferRequest{SessionId: "body-one", NpcGuid: npcGUID})
+	if err != nil || offered.State.Offer == nil || !offered.State.Offer.Quests[0].Available {
+		t.Fatal(offered, err)
+	}
+	if n, _, _, _ := f.counters(); n != 2 || offered.State.LastAcceptance != nil || offered.State.QuestLog[0].QuestId != 0 {
+		t.Fatal("auto-accept hint caused an unsolicited acceptance", offered)
+	}
+	result, err := s.Accept(context.Background(), &questsv1.QuestRequest{SessionId: "body-one", OfferRevision: offered.State.Offer.Revision, NpcGuid: npcGUID, QuestId: 783})
+	if err != nil || result.State.LastAcceptance.Status != questsv1.AcceptanceStatus_CONFIRMED_IN_LOG || result.State.LastAcceptance.ConfirmedLogRevision <= result.State.LastAcceptance.BaselineLogRevision || result.State.QuestLog[0].QuestId != 783 {
+		t.Fatal("explicit starter acceptance lacked new own-log confirmation", result, err)
+	}
+}
+
 func TestStaleOrWrongSelectionCannotAcquireLeaseOrSendAccept(t *testing.T) {
 	s, f, r := offered(t)
 	for _, change := range []func(*questsv1.QuestRequest){

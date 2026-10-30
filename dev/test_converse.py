@@ -334,6 +334,11 @@ class ControlsTests(unittest.TestCase):
         controls, _ = self.quest_controls(status="SERVER_REJECTED")
         self.assertIn("server rejected", controls.execute("ACCEPT_QUEST"))
 
+    def test_unavailable_quest_offer_does_not_invent_a_distance_problem(self):
+        controls, rpc = self.quest_controls([{"questId": 783, "title": "A Threat Within", "available": False}])
+        self.assertEqual(controls.execute("ACCEPT_QUEST"), "This NPC isn't offering me a quest I can accept right now.")
+        self.assertFalse(any(method == "buddy-quests.accept" for method, _ in rpc.calls))
+
     def test_quest_ambiguity_wrong_id_and_ambiguous_write_never_retry(self):
         entries = [{"questId": 783, "title": "First", "available": True},
                    {"questId": 784, "title": "Second", "available": True}]

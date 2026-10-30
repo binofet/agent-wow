@@ -94,18 +94,42 @@ func TestQuestDetailsAndMenuMalformedBounds(t *testing.T) {
 	}
 }
 
-func TestCompletionAndAutoAcceptOffersAreNotActionable(t *testing.T) {
-	for _, flags := range []uint32{autoAcceptFlag, 0} {
+func TestCompletionOffersRemainNonActionable(t *testing.T) {
+	for _, flags := range []uint32{0x80008, 0} {
 		p := unhex(t, listHex)
-		if flags == 0 {
-			binary.LittleEndian.PutUint32(p[31:], 4)
-		} else {
-			binary.LittleEndian.PutUint32(p[39:], flags)
-		}
+		binary.LittleEndian.PutUint32(p[31:], 4)
+		binary.LittleEndian.PutUint32(p[39:], flags)
 		o, err := decodeList(p, false)
 		if err != nil || o.Quests[0].Available {
 			t.Fatalf("nonordinary offer actionable: %v %v", o, err)
 		}
+	}
+}
+
+func starterGossip(t testing.TB) []byte {
+	t.Helper()
+	p := unhex(t, gossipHex)[:41]
+	binary.LittleEndian.PutUint32(p[24:], 783)
+	binary.LittleEndian.PutUint32(p[36:], 0x80008)
+	return append(p, []byte("A Threat Within\x00")...)
+}
+
+func TestAutoAcceptFlagDoesNotBlockExplicitStarterQuestPickup(t *testing.T) {
+	o, err := decodeList(starterGossip(t), true)
+	if err != nil || len(o.Quests) != 1 || o.Quests[0].QuestId != 783 || o.Quests[0].Flags != 0x80008 || o.Quests[0].Title != "A Threat Within" || !o.Quests[0].Available {
+		t.Fatal("explicit available starter offer was filtered", o, err)
+	}
+	p := unhex(t, detailsHex)
+	binary.LittleEndian.PutUint32(p[16:], 783)
+	binary.LittleEndian.PutUint32(p[66:], 0x80008)
+	o, err = decodeDetails(p)
+	if err != nil || !o.Quests[0].Available || o.Quests[0].Flags != 0x80008 {
+		t.Fatal("active details offer was filtered by client auto-accept hint", o, err)
+	}
+	p[65] = 0
+	o, err = decodeDetails(p)
+	if err != nil || o.Quests[0].Available {
+		t.Fatal("inactive details became actionable", o, err)
 	}
 }
 

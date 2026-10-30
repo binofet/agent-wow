@@ -15,8 +15,6 @@ import (
 // src/server/game/Entities/Creature/GossipDef.cpp
 // src/server/game/Entities/Player/PlayerQuest.cpp
 // https://github.com/azerothcore/azerothcore-wotlk
-const autoAcceptFlag = uint32(0x80000)
-
 var malformed = errors.New("malformed quest packet")
 
 type reader struct {
@@ -99,9 +97,10 @@ func menuQuest(r *reader) *questsv1.Quest {
 	if q.QuestId == 0 || q.Title == "" || repeat > 1 {
 		r.err = malformed
 	}
-	// Icon2 is an ordinary available quest. Other icons include completion,
-	// repeatable/autocomplete dialogs, which this pickup-only slice cannot take.
-	q.Available = q.Icon == 2 && q.Flags&autoAcceptFlag == 0
+	// Icon2 is a server-offered available quest. AUTO_ACCEPT is a client UI
+	// hint, not a prohibition on an explicit normal acceptance request.
+	// Completion/reward icons remain outside this pickup-only slice.
+	q.Available = q.Icon == 2
 	return q
 }
 func menuQuests(r *reader, count uint32) []*questsv1.Quest {
@@ -191,7 +190,7 @@ func decodeDetails(payload []byte) (*questsv1.Offer, error) {
 	if !creatureGUID(offer.NpcGuid) || divider != 0 || q.QuestId == 0 || q.Title == "" || active > 1 || finished != 0 {
 		r.err = malformed
 	}
-	q.Available = active == 1 && q.Flags&autoAcceptFlag == 0
+	q.Available = active == 1
 	offer.Quests = []*questsv1.Quest{q}
 	return offer, r.done()
 }
