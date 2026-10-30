@@ -169,6 +169,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		p.offhandKnown, p.offhand = false, 0
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
+			state.nearbyPlayers = make(map[uint64]*observed)
 			state.creatures = make(map[uint64]*observed)
 			state.gameObjects = make(map[uint64]*observed)
 		}
@@ -182,6 +183,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		}
 		markAbsent(&players[0], now)
 		markAbsent(&players[1], now)
+		state.nearbyPlayers = make(map[uint64]*observed)
 		state.creatures = make(map[uint64]*observed)
 		state.gameObjects = make(map[uint64]*observed)
 		return true, nil
@@ -423,10 +425,10 @@ func updates(c *cursor, state *observations, now time.Time) error {
 		case 0, 1, 2, 3:
 			guid := c.guid()
 			p := state.target(guid)
-			newCreature, newItem, newGameObject := false, false, false
+			newCreature, newItem, newGameObject, newPlayer := false, false, false, false
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
-				if objectType > 7 {
+				if objectType > 7 || p != nil && p.publicPlayer && objectType != 4 {
 					return errLayout
 				}
 				if player(players, guid) != nil {
@@ -454,6 +456,23 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					}
 					p.vitalsAt = now
 					p.observedAt = now
+				} else if objectType == 4 && publicPlayerGUID(guid) {
+					revision := uint64(0)
+					if p != nil {
+						revision = p.positionRevision
+					}
+					p = &observed{guid: guid, present: true, publicPlayer: true, positionRevision: revision, observedAt: now, vitalsAt: now}
+					setMap(p, players[0])
+					// Public player CREATE omits zero-valued fields. Establish
+					// only the same public baselines used for the fixed owner.
+					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x3c, 0x36} {
+						p.known[f] = true
+					}
+					for f := 0; f < 7; f++ {
+						p.known[unitPower1+f] = true
+						p.known[unitMaxPower1+f] = true
+					}
+					newPlayer = true
 				} else if objectType == 3 && creatureGUID(guid) {
 					revision := uint64(0)
 					if p != nil {
@@ -504,6 +523,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 				if err := values(c, p, now); err != nil {
 					return err
 				}
+			}
+			if newPlayer {
+				state.putNearbyPlayer(p)
 			}
 			if newCreature {
 				state.putCreature(p)
@@ -723,7 +745,7 @@ func values(c *cursor, p *observed, now time.Time) error {
 					}
 				}
 			}
-			if p != nil && field < len(p.fields) {
+			if p != nil && field < len(p.fields) && (!p.publicPlayer || publicPlayerField(field)) {
 				p.fields[field] = v
 				p.known[field] = true
 				p.observedAt = now

@@ -98,6 +98,10 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		return &worldv1.PlayerState{Guid: guid, ClassKnown: true, ClassId: 5, Present: true, MapKnown: true, PositionKnown: true, X: x, PositionRevision: 1, MovementFlagsKnown: true, HealthKnown: true, Health: 50, MaxHealth: 100, PowerKnown: true, Power: 128, MaxPower: 128, PowerType: 0, UnitFlagsKnown: true, AliveKnown: true, Alive: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7}
 	}
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: player(1, 0), Owner: player(3, 10)}}
+	f.world.Self.Health = 100
+	f.party = &partyv1.StateResponse{SessionId: "actions-test-body", Group: &partyv1.Group{Known: true, InGroup: true, Members: []*partyv1.Member{
+		{Guid: 1, Self: true, Online: true, Name: "Arlen"}, {Guid: 3, Online: true, Name: "Joel"},
+	}}}
 	s := NewService(f, 1)
 	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 		return []position{from, to}, nil

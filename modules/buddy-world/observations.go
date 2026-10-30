@@ -29,6 +29,7 @@ const (
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
 	players             [2]observed
+	nearbyPlayers       map[uint64]*observed
 	creatures           map[uint64]*observed
 	items               map[uint64]*observed
 	gameObjects         map[uint64]*observed
@@ -43,6 +44,7 @@ type observations struct {
 
 func (s observations) clone() observations {
 	s.creatures = maps.Clone(s.creatures)
+	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)
 	s.items = maps.Clone(s.items)
 	s.gameObjects = maps.Clone(s.gameObjects)
 	s.edited = make(map[uint64]bool)
@@ -52,7 +54,10 @@ func (s *observations) target(guid uint64) *observed {
 	if p := player(&s.players, guid); p != nil {
 		return p
 	}
-	objects := s.creatures
+	objects := s.nearbyPlayers
+	if objects[guid] == nil {
+		objects = s.creatures
+	}
 	if objects[guid] == nil {
 		objects = s.items
 	}
@@ -75,6 +80,7 @@ func (s *observations) remove(guid uint64, now time.Time) {
 	if p := player(&s.players, guid); p != nil {
 		markAbsent(p, now)
 	}
+	delete(s.nearbyPlayers, guid)
 	delete(s.creatures, guid)
 	delete(s.gameObjects, guid)
 	if s.items[guid] != nil {
@@ -226,6 +232,7 @@ func sortCreatures(items []*worldv1.CreatureState) {
 }
 func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time) {
 	s.appendGameObjects(r, now)
+	s.appendNearbyPlayers(r, now)
 	owner := s.players[1]
 	target := uint64(owner.fields[0x12]) | uint64(owner.fields[0x13])<<32
 	if owner.present && owner.known[0x12] && owner.known[0x13] {

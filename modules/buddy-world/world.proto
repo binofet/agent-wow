@@ -289,6 +289,10 @@ message SnapshotResponse {
   // unit flag and known cleared LOOTABLE dynamic flag. This is recipient-visible
   // eligibility evidence, not a claim about unobserved loot contents or range.
   repeated CreatureState skinnable_corpses = 37;
+  // At most64 other actual present PLAYER CREATE observations, excluding self
+  // and the fixed owner. Public pose/vitals/flags/class/level only: no private
+  // equipment, inventory, skills or quest state. No party membership is inferred.
+  repeated PlayerState nearby_players = 38;
 }
 
 service BuddyWorld {

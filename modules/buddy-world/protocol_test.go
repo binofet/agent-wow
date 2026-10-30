@@ -328,6 +328,8 @@ func FuzzObservationPackets(f *testing.F) {
 	golden, _ := hex.DecodeString(heartbeatGolden)
 	f.Add(uint32(opcode.MSGMoveHeartbeat), golden)
 	f.Add(uint32(opcode.SMSGUpdateObject), createFixture(3, vitalFields()))
+	nearby, _ := hex.DecodeString(nearbyPlayerGolden)
+	f.Add(uint32(opcode.SMSGUpdateObject), nearby)
 	f.Add(uint32(opcode.SMSGCompressedUpdateObject), []byte{4, 0, 0, 0})
 	spline, _ := hex.DecodeString(monsterLinearGolden)
 	f.Add(uint32(opcode.SMSGMonsterMove), spline)
@@ -351,6 +353,9 @@ func FuzzObservationPackets(f *testing.F) {
 		r, _ := s.Snapshot(context.Background(), nil)
 		if r.Self.Guid != 1 || r.Owner.Guid != 3 {
 			t.Fatal("tracked identity changed")
+		}
+		if len(r.NearbyPlayers) > maxNearbyPlayers || len(s.state.nearbyPlayers) > maxNearbyPlayers {
+			t.Fatal("nearby player observation bounds exceeded")
 		}
 		if len(r.Mailboxes) > 32 || len(r.QuestObjects) > 32 || len(r.SpellFocuses) > 32 || len(r.OwnFishingBobbers) > 4 || len(s.state.gameObjects) > maxGameObjects {
 			t.Fatal("mailbox observation bounds exceeded")

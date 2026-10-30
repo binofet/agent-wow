@@ -771,6 +771,21 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.AssistReason = s.state.Reason
 		return
 	}
+	// A missing owner cannot block this body's already-authorized healing or
+	// defense. In-flight casts and exclusive interactions retain priority.
+	if s.state.CastPending {
+		s.stopLocked(ctx)
+		s.lastStep = now
+		return
+	}
+	if s.state.Healing && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
+		s.lastStep = now
+		return
+	}
+	if s.selfDefenseLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
 	if reason := safePlayers(snapshot, s.selfGUID); reason != "" {
 		// Unknown or temporarily unsafe observations pause enabled intent. A
 		// normal jump, AFK or visibility loss must not silently revoke it.
@@ -815,16 +830,6 @@ func (s *Service) Tick(ctx context.Context) {
 			classID = snapshot.Self.ClassId
 		}
 		s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0)
-	}
-	if s.state.CastPending {
-		s.stopLocked(ctx)
-		s.lastStep = now
-		return
-	}
-	if s.state.Healing && snapshot.Owner.HealthKnown && snapshot.Owner.MaxHealth > 0 && uint64(snapshot.Owner.Health)*100 < uint64(snapshot.Owner.MaxHealth)*85 {
-		if s.healLocked(ctx, snapshot) {
-			return
-		}
 	}
 	if s.state.Assisting && s.assistLocked(ctx, snapshot) {
 		s.lastStep = now
@@ -917,80 +922,7 @@ func (s *Service) Tick(ctx context.Context) {
 }
 
 func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResponse) bool {
-	if reason := safePlayers(snapshot, s.selfGUID); reason != "" {
-		s.state.Reason = reason
-		return false
-	}
-	if !snapshot.Self.ClassKnown || snapshot.Self.ClassId != 5 {
-		s.state.Reason = "healing_unavailable_for_class"
-		return false
-	}
-	if !s.stopAutoAttackLocked(ctx) {
-		s.state.Reason = "auto_attack_stop_waiting_for_server"
-		return false
-	}
-	if !s.refreshPositionLocked(snapshot) {
-		s.stopLocked(ctx)
-		return false
-	}
-	if s.state.MotionUnconfirmed {
-		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
-		return false
-	}
-	now := s.now()
-	if s.state.CastPending || now.Before(s.nextHeal) {
-		s.state.Reason = "heal_throttled_or_pending"
-		return false
-	}
-	if !s.state.KnownLesserHeal {
-		s.state.Reason = "lesser_heal_not_in_known_spells"
-		return false
-	}
-	a, b := snapshot.Self, snapshot.Owner
-	if a.UnitFlags&0x2000 != 0 {
-		s.state.Reason = "caster_silenced"
-		return false
-	}
-	if !b.HealthKnown || b.MaxHealth == 0 || b.Health == 0 || b.Health >= b.MaxHealth {
-		s.state.Reason = "target_not_injured_or_health_unknown"
-		return false
-	}
-	// Use the selected known rank's verified base-mana percentage.
-	// Max mana is the conservative fallback when base mana is unknown.
-	heal := s.selectedSpellLocked(lesserHeal)
-	budget := manaBudget(a, uint64(heal.manaPercent))
-	if !a.PowerKnown || a.PowerType != 0 || budget == 0 || uint64(a.Power) < budget {
-		s.state.Reason = "mana_unknown_or_insufficient"
-		return false
-	}
-	if distance(s.pos, playerPosition(b)) > 35 {
-		s.state.Reason = "heal_outside_conservative_range"
-		return false
-	}
-	if !s.stopLocked(ctx) {
-		s.state.Healing = false
-		s.state.Reason = "movement_stop_unconfirmed_heal_aborted"
-		return false
-	}
-	s.castCount++
-	s.nextHeal = now.Add(3 * time.Second)
-	s.castUntil = now.Add(max(5*time.Second, heal.castTime+1500*time.Millisecond))
-	s.state.CastPending = true
-	s.state.HealAttempts++
-	s.pendingSpell = heal.id
-	s.pendingTarget = ownerGUID
-	s.nextAssist = now.Add(3 * time.Second)
-	s.state.LastCastSpellId = heal.id
-	s.state.LastCastTargetGuid = ownerGUID
-	s.state.LastCastFailure = 0
-	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.id, ownerGUID)) {
-		s.state.CastPending = false
-		s.pendingSpell = 0
-		s.pendingTarget = 0
-		return false
-	}
-	s.state.Reason = "heal_transport_written_waiting_for_server"
-	return true
+	return s.triageHealLocked(ctx, snapshot, false)
 }
 
 func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
