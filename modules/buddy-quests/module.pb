@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-—*
+†3
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
 PlayerState
 guid (Rguid
@@ -103,9 +103,32 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"
-SnapshotRequest"Ì
+max_durability (RmaxDurability"6
+SnapshotRequest#
+creature_guid (RcreatureGuid"Ô
+GameObjectState
+guid (Rguid
+entry (Rentry
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
 
+type_known (R	typeKnown(
+game_object_type (RgameObjectType
+flags_known (R
+flagsKnown
+flags (Rflags.
+dynamic_flags_known (RdynamicFlagsKnown#
+dynamic_flags (RdynamicFlags"ƒ
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -150,7 +173,10 @@ unitFlags2.
 trajectory" (2*.warcraftbuddy.world.v1.CreatureTrajectoryR
 trajectory,
 combat_reach_known# (RcombatReachKnown!
-combat_reach$ (RcombatReach"Ã
+combat_reach$ (RcombatReach
+level_known% (R
+levelKnown
+level& (Rlevel"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -183,7 +209,8 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"ƒ
+metadata_known (RmetadataKnown"¿
+
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -202,12 +229,20 @@ lastOpcode(
 backpack_known (RbackpackKnown+
 backpack_revision (RbackpackRevision@
 backpack (2$.warcraftbuddy.world.v1.BackpackSlotRbackpackH
-owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTarget2°
+owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTargetP
+nearby_creatures (2%.warcraftbuddy.world.v1.CreatureStateRnearbyCreatures*
+self_copper_known (RselfCopperKnown
+self_copper (R
+selfCopper0
+self_copper_revision (RselfCopperRevisionE
+	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxesL
+quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjectsT
+requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-ž5
+™@
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"›
 Quest
 quest_id (RquestId
@@ -251,7 +286,7 @@ Acceptance
 server_reason	 (RserverReason"@
 GiverStatus
 npc_guid (RnpcGuid
-status (Rstatus"‚
+status (Rstatus"ì
 StateResponse
 
 session_id (	R	sessionId
@@ -269,7 +304,38 @@ session_id (	R	sessionId
 ignored_packets (RignoredPacketsH
 turn_in_offer (2$.warcraftbuddy.quests.v1.TurnInOfferRturnInOfferG
 last_reward (2&.warcraftbuddy.quests.v1.RewardReceiptR
-lastReward"Ü
+lastRewardN
+pending_share (2).warcraftbuddy.quests.v1.SharedQuestOfferRpendingShared
+last_shared_acceptance (2..warcraftbuddy.quests.v1.SharedQuestAcceptanceRlastSharedAcceptance2
+shared_quests_enabled (RsharedQuestsEnabled"’
+SharedQuestOffer
+sequence (Rsequence
+sharer_guid (R
+sharerGuid4
+quest (2.warcraftbuddy.quests.v1.QuestRquest<
+kind (2(.warcraftbuddy.quests.v1.SharedQuestKindRkind"
+expires_in_ms (RexpiresInMs)
+accept_requested (RacceptRequested"Ñ
+SharedQuestAcceptance%
+share_sequence (RshareSequence
+sharer_guid (R
+sharerGuid
+quest_id (RquestId<
+kind (2(.warcraftbuddy.quests.v1.SharedQuestKindRkind+
+transport_written (RtransportWrittenA
+status (2).warcraftbuddy.quests.v1.AcceptanceStatusRstatus2
+baseline_log_revision (RbaselineLogRevision4
+confirmed_log_revision (RconfirmedLogRevision
+failure	 (	Rfailure#
+server_reason
+ (RserverReason"–
+SharedQuestRequest
+
+session_id (	R	sessionId%
+share_sequence (RshareSequence
+sharer_guid (R
+sharerGuid
+quest_id (RquestId"Ü
 QuestObjective
 kind (	Rkind
 index (Rindex
@@ -383,27 +449,36 @@ session_id (	R	sessionId%
 OperationResult+
 transport_written (RtransportWritten8
 server_response_received (RserverResponseReceived<
-state (2&.warcraftbuddy.quests.v1.StateResponseRstate*†
+state (2&.warcraftbuddy.quests.v1.StateResponseRstate*Þ
 AcceptanceStatus
 NONE 
 	REQUESTED
 CONFIRMED_IN_LOG
 UNCONFIRMED_TIMEOUT
 SERVER_REJECTED
-WRITE_UNCONFIRMED*–
+WRITE_UNCONFIRMED
+ALREADY_IN_LOG
+SHARE_EXPIRED
+SHARE_LOG_FULL
+SHARE_ALREADY_REQUESTED	*N
+SharedQuestKind
+SHARED_KIND_NONE 
+SHARED_DETAILS
+PARTY_CONFIRM*–
 RewardStatus
 REWARD_NONE 
 REWARD_REQUESTED
 REWARD_CONFIRMED
 REWARD_UNCONFIRMED
 REWARD_REJECTED
-REWARD_WRITE_UNCONFIRMED2“
+REWARD_WRITE_UNCONFIRMED2ú
 BuddyQuestsJ
 Discover.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseG
 State.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseX
 Offer%.warcraftbuddy.quests.v1.OfferRequest(.warcraftbuddy.quests.v1.OperationResultZ
 Details%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResultY
-Accept%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResult\
+Accept%.warcraftbuddy.quests.v1.QuestRequest(.warcraftbuddy.quests.v1.OperationResulte
+AcceptShared+.warcraftbuddy.quests.v1.SharedQuestRequest(.warcraftbuddy.quests.v1.OperationResult\
 Journal'.warcraftbuddy.quests.v1.JournalRequest(.warcraftbuddy.quests.v1.JournalResponseZ
 TurnIn&.warcraftbuddy.quests.v1.TurnInRequest(.warcraftbuddy.quests.v1.OperationResult_
 ClaimReward&.warcraftbuddy.quests.v1.RewardRequest(.warcraftbuddy.quests.v1.OperationResultC

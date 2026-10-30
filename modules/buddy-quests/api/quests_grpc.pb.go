@@ -21,15 +21,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyQuests_Discover_FullMethodName    = "/warcraftbuddy.quests.v1.BuddyQuests/Discover"
-	BuddyQuests_State_FullMethodName       = "/warcraftbuddy.quests.v1.BuddyQuests/State"
-	BuddyQuests_Offer_FullMethodName       = "/warcraftbuddy.quests.v1.BuddyQuests/Offer"
-	BuddyQuests_Details_FullMethodName     = "/warcraftbuddy.quests.v1.BuddyQuests/Details"
-	BuddyQuests_Accept_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/Accept"
-	BuddyQuests_Journal_FullMethodName     = "/warcraftbuddy.quests.v1.BuddyQuests/Journal"
-	BuddyQuests_TurnIn_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/TurnIn"
-	BuddyQuests_ClaimReward_FullMethodName = "/warcraftbuddy.quests.v1.BuddyQuests/ClaimReward"
-	BuddyQuests_OnPacket_FullMethodName    = "/warcraftbuddy.quests.v1.BuddyQuests/OnPacket"
+	BuddyQuests_Discover_FullMethodName     = "/warcraftbuddy.quests.v1.BuddyQuests/Discover"
+	BuddyQuests_State_FullMethodName        = "/warcraftbuddy.quests.v1.BuddyQuests/State"
+	BuddyQuests_Offer_FullMethodName        = "/warcraftbuddy.quests.v1.BuddyQuests/Offer"
+	BuddyQuests_Details_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/Details"
+	BuddyQuests_Accept_FullMethodName       = "/warcraftbuddy.quests.v1.BuddyQuests/Accept"
+	BuddyQuests_AcceptShared_FullMethodName = "/warcraftbuddy.quests.v1.BuddyQuests/AcceptShared"
+	BuddyQuests_Journal_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/Journal"
+	BuddyQuests_TurnIn_FullMethodName       = "/warcraftbuddy.quests.v1.BuddyQuests/TurnIn"
+	BuddyQuests_ClaimReward_FullMethodName  = "/warcraftbuddy.quests.v1.BuddyQuests/ClaimReward"
+	BuddyQuests_OnPacket_FullMethodName     = "/warcraftbuddy.quests.v1.BuddyQuests/OnPacket"
 )
 
 // BuddyQuestsClient is the client API for BuddyQuests service.
@@ -41,6 +42,7 @@ type BuddyQuestsClient interface {
 	Offer(ctx context.Context, in *OfferRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	Details(ctx context.Context, in *QuestRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	Accept(ctx context.Context, in *QuestRequest, opts ...grpc.CallOption) (*OperationResult, error)
+	AcceptShared(ctx context.Context, in *SharedQuestRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	Journal(ctx context.Context, in *JournalRequest, opts ...grpc.CallOption) (*JournalResponse, error)
 	TurnIn(ctx context.Context, in *TurnInRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	ClaimReward(ctx context.Context, in *RewardRequest, opts ...grpc.CallOption) (*OperationResult, error)
@@ -105,6 +107,16 @@ func (c *buddyQuestsClient) Accept(ctx context.Context, in *QuestRequest, opts .
 	return out, nil
 }
 
+func (c *buddyQuestsClient) AcceptShared(ctx context.Context, in *SharedQuestRequest, opts ...grpc.CallOption) (*OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OperationResult)
+	err := c.cc.Invoke(ctx, BuddyQuests_AcceptShared_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyQuestsClient) Journal(ctx context.Context, in *JournalRequest, opts ...grpc.CallOption) (*JournalResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JournalResponse)
@@ -154,6 +166,7 @@ type BuddyQuestsServer interface {
 	Offer(context.Context, *OfferRequest) (*OperationResult, error)
 	Details(context.Context, *QuestRequest) (*OperationResult, error)
 	Accept(context.Context, *QuestRequest) (*OperationResult, error)
+	AcceptShared(context.Context, *SharedQuestRequest) (*OperationResult, error)
 	Journal(context.Context, *JournalRequest) (*JournalResponse, error)
 	TurnIn(context.Context, *TurnInRequest) (*OperationResult, error)
 	ClaimReward(context.Context, *RewardRequest) (*OperationResult, error)
@@ -182,6 +195,9 @@ func (UnimplementedBuddyQuestsServer) Details(context.Context, *QuestRequest) (*
 }
 func (UnimplementedBuddyQuestsServer) Accept(context.Context, *QuestRequest) (*OperationResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Accept not implemented")
+}
+func (UnimplementedBuddyQuestsServer) AcceptShared(context.Context, *SharedQuestRequest) (*OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcceptShared not implemented")
 }
 func (UnimplementedBuddyQuestsServer) Journal(context.Context, *JournalRequest) (*JournalResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Journal not implemented")
@@ -306,6 +322,24 @@ func _BuddyQuests_Accept_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyQuests_AcceptShared_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SharedQuestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyQuestsServer).AcceptShared(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyQuests_AcceptShared_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyQuestsServer).AcceptShared(ctx, req.(*SharedQuestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyQuests_Journal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(JournalRequest)
 	if err := dec(in); err != nil {
@@ -404,6 +438,10 @@ var BuddyQuests_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Accept",
 			Handler:    _BuddyQuests_Accept_Handler,
+		},
+		{
+			MethodName: "AcceptShared",
+			Handler:    _BuddyQuests_AcceptShared_Handler,
 		},
 		{
 			MethodName: "Journal",

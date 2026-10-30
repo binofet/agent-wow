@@ -7,11 +7,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	buddyquests "github.com/agent-wow/agent-wow/modules/buddy-quests"
 	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
+	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,8 +28,8 @@ func main() {
 func run() error {
 	moduleSocket, sessionSocket := os.Getenv("AGENT_WOW_MODULE_SOCKET"), os.Getenv("AGENT_WOW_SESSION_SOCKET")
 	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
-	selfGUID, err := strconv.ParseUint(os.Getenv("AGENT_WOW_CHARACTER_GUID"), 10, 64)
-	if moduleSocket == "" || sessionSocket == "" || sessionID == "" || err != nil || selfGUID == 0 || selfGUID>>48 != 0 || uint32(selfGUID) == 0 {
+	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
+	if moduleSocket == "" || sessionSocket == "" || sessionID == "" || err != nil || uint32(identity.SelfGUID) == 0 {
 		return errors.New("session-owned sockets, session ID and player identity are required")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -48,7 +48,11 @@ func run() error {
 	}
 	defer connection.Close()
 	server := grpc.NewServer()
-	questsv1.RegisterBuddyQuestsServer(server, buddyquests.NewService(modv1.NewSessionClient(connection), sessionID, selfGUID))
+	service := buddyquests.NewService(modv1.NewSessionClient(connection), sessionID, identity.SelfGUID)
+	if identity.Independent() {
+		service = buddyquests.NewIndependentService(modv1.NewSessionClient(connection), sessionID, identity.SelfGUID)
+	}
+	questsv1.RegisterBuddyQuestsServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)

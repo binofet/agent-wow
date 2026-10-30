@@ -39,6 +39,10 @@ enum AcceptanceStatus {
   UNCONFIRMED_TIMEOUT = 3;
   SERVER_REJECTED = 4;
   WRITE_UNCONFIRMED = 5;
+  ALREADY_IN_LOG = 6;
+  SHARE_EXPIRED = 7;
+  SHARE_LOG_FULL = 8;
+  SHARE_ALREADY_REQUESTED = 9;
 }
 message Acceptance {
   uint64 npc_guid = 1;
@@ -67,6 +71,37 @@ message StateResponse {
   uint64 ignored_packets = 12;
   TurnInOffer turn_in_offer = 13;
   RewardReceipt last_reward = 14;
+  SharedQuestOffer pending_share = 15;
+  SharedQuestAcceptance last_shared_acceptance = 16;
+  bool shared_quests_enabled = 17;
+}
+enum SharedQuestKind { SHARED_KIND_NONE = 0; SHARED_DETAILS = 1; PARTY_CONFIRM = 2; }
+message SharedQuestOffer {
+  uint64 sequence = 1;
+  uint64 sharer_guid = 2;
+  Quest quest = 3;
+  SharedQuestKind kind = 4;
+  // Local conservative window, not a claimed server-provided expiry.
+  uint64 expires_in_ms = 5;
+  bool accept_requested = 6;
+}
+message SharedQuestAcceptance {
+  uint64 share_sequence = 1;
+  uint64 sharer_guid = 2;
+  uint32 quest_id = 3;
+  SharedQuestKind kind = 4;
+  bool transport_written = 5;
+  AcceptanceStatus status = 6;
+  uint64 baseline_log_revision = 7;
+  uint64 confirmed_log_revision = 8;
+  string failure = 9;
+  uint32 server_reason = 10;
+}
+message SharedQuestRequest {
+  string session_id = 1;
+  uint64 share_sequence = 2;
+  uint64 sharer_guid = 3;
+  uint32 quest_id = 4;
 }
 message QuestObjective {
   string kind = 1;
@@ -191,6 +226,7 @@ service BuddyQuests {
   rpc Offer(OfferRequest) returns (OperationResult);
   rpc Details(QuestRequest) returns (OperationResult);
   rpc Accept(QuestRequest) returns (OperationResult);
+  rpc AcceptShared(SharedQuestRequest) returns (OperationResult);
   rpc Journal(JournalRequest) returns (JournalResponse);
   rpc TurnIn(TurnInRequest) returns (OperationResult);
   rpc ClaimReward(RewardRequest) returns (OperationResult);

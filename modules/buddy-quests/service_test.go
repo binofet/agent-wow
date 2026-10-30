@@ -529,8 +529,8 @@ func TestBusyQueryDoesNotBlockPacketOrStateCallbacks(t *testing.T) {
 		}()
 	}
 	workers.Wait()
-	if snapshot(t, s).IgnoredPackets != 400 {
-		t.Fatal("party share callback incorrectly processed")
+	if snapshot(t, s).MalformedPackets != 400 {
+		t.Fatal("malformed party confirmation was not contained")
 	}
 }
 

@@ -160,8 +160,18 @@ func decodeList(payload []byte, gossip bool) (*questsv1.Offer, error) {
 }
 
 func decodeDetails(payload []byte) (*questsv1.Offer, error) {
-	if len(payload) > 65536 {
+	offer, divider, err := decodeDetailsFields(payload)
+	if err != nil || !creatureGUID(offer.GetNpcGuid()) || divider != 0 {
 		return nil, malformed
+	}
+	return offer, nil
+}
+
+// NPC and manual party shares use the same full details frame, but different
+// first GUID/divider identities. Keep the NPC wrapper strictly creature-only.
+func decodeDetailsFields(payload []byte) (*questsv1.Offer, uint64, error) {
+	if len(payload) > 65536 {
+		return nil, 0, malformed
 	}
 	r := reader{data: payload}
 	offer := &questsv1.Offer{NpcGuid: r.u64(), Source: "quest_details"}
@@ -173,24 +183,24 @@ func decodeDetails(payload []byte) (*questsv1.Offer, error) {
 	finished := r.u8()
 	choices := r.u32()
 	if choices > 6 {
-		return nil, malformed
+		return nil, 0, malformed
 	}
 	r.take(int(choices) * 12)
 	items := r.u32()
 	if items > 4 {
-		return nil, malformed
+		return nil, 0, malformed
 	}
 	r.take(int(items) * 12)
 	r.take(8 + 32 + 60) // money, XP; honor/spells/title/talents/arena; reputation arrays.
 	emotes := r.u32()
 	if emotes > 4 {
-		return nil, malformed
+		return nil, 0, malformed
 	}
 	r.take(int(emotes) * 8)
-	if !creatureGUID(offer.NpcGuid) || divider != 0 || q.QuestId == 0 || q.Title == "" || active > 1 || finished != 0 {
+	if q.QuestId == 0 || q.Title == "" || active > 1 || finished != 0 {
 		r.err = malformed
 	}
 	q.Available = active == 1
 	offer.Quests = []*questsv1.Quest{q}
-	return offer, r.done()
+	return offer, divider, r.done()
 }

@@ -41,10 +41,17 @@ type Service struct {
 	responseReceived                    bool
 	turnIn                              turnInRuntime
 	journal                             journalRuntime
+	shares                              sharedQuestRuntime
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: &questsv1.StateResponse{SessionId: sessionID}}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: &questsv1.StateResponse{SessionId: sessionID, SharedQuestsEnabled: sessionID != "" && selfGUID != 0 && selfGUID != 3 && selfGUID>>48 == 0}}
+}
+
+func NewIndependentService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
+	s := NewService(session, sessionID, selfGUID)
+	s.state.SharedQuestsEnabled = false
+	return s
 }
 
 func (s *Service) invoke(ctx context.Context, module, method string, input, output proto.Message) error {
@@ -74,6 +81,7 @@ func (s *Service) world(ctx context.Context) (*worldv1.SnapshotResponse, error) 
 	}
 	s.mu.Lock()
 	s.applyLogLocked(result)
+	s.applySharedLogLocked()
 	s.applyRewardWorldLocked(result)
 	s.mu.Unlock()
 	return result, nil
@@ -142,6 +150,12 @@ func (s *Service) snapshotLocked() *questsv1.StateResponse {
 		result.TurnInOffer.ExpiresInMs = 0
 		if s.now().Before(s.turnIn.offerUntil) {
 			result.TurnInOffer.ExpiresInMs = uint64(s.turnIn.offerUntil.Sub(s.now()).Milliseconds())
+		}
+	}
+	if result.PendingShare != nil {
+		result.PendingShare.ExpiresInMs = 0
+		if s.now().Before(s.shares.until) {
+			result.PendingShare.ExpiresInMs = uint64(s.shares.until.Sub(s.now()).Milliseconds())
 		}
 	}
 	return result
@@ -239,7 +253,7 @@ func (s *Service) gate(ctx context.Context, npcGUID uint64) (*worldv1.SnapshotRe
 	}
 	return nil, status.Error(codes.FailedPrecondition, "questgiver is absent from bounded server observations")
 }
-func (s *Service) reserve(ctx context.Context, sessionID string) error {
+func (s *Service) reserve(ctx context.Context, sessionID string, shared ...bool) error {
 	if err := ctx.Err(); err != nil {
 		return status.FromContextError(err).Err()
 	}
@@ -251,8 +265,14 @@ func (s *Service) reserve(ctx context.Context, sessionID string) error {
 	if s.state.ActionInFlight {
 		return status.Error(codes.FailedPrecondition, "another quest operation is in flight")
 	}
+	if (len(shared) == 0 || !shared[0]) && s.state.SharedQuestsEnabled && s.state.PendingShare != nil && !s.state.PendingShare.AcceptRequested && s.now().Before(s.shares.until) {
+		return status.Error(codes.FailedPrecondition, "Joel's shared quest requires a decision before NPC interaction")
+	}
 	if a := s.state.LastAcceptance; a != nil && a.Status == questsv1.AcceptanceStatus_REQUESTED && s.now().Before(s.acceptUntil) {
 		return status.Error(codes.FailedPrecondition, "quest acceptance awaits server confirmation")
+	}
+	if a := s.state.LastSharedAcceptance; a != nil && a.Status == questsv1.AcceptanceStatus_REQUESTED && s.now().Before(s.shares.acceptUntil) {
+		return status.Error(codes.FailedPrecondition, "shared quest acceptance awaits server confirmation")
 	}
 	s.state.ActionInFlight = true
 	s.state.Revision++
@@ -471,6 +491,9 @@ wait:
 }
 
 func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+	if packet != nil && s.handleSharedPacket(packet) {
+		return &emptypb.Empty{}, nil
+	}
 	if packet != nil && (s.handleJournalPacket(packet) || s.handleTurnInPacket(packet)) {
 		return &emptypb.Empty{}, nil
 	}
@@ -552,6 +575,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			s.state.IgnoredPackets++
 		}
 	} else if failure != "" {
+		s.rejectSharedLocked(failure, reason, failedQuest)
 		s.rejectRewardLocked(failure, reason, failedQuest)
 		if a := s.state.LastAcceptance; a != nil && a.Status == questsv1.AcceptanceStatus_REQUESTED && s.now().Before(s.acceptUntil) && (failedQuest == 0 || failedQuest == a.QuestId) {
 			a.Status = questsv1.AcceptanceStatus_SERVER_REJECTED

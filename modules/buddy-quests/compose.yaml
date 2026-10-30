@@ -1,5 +1,7 @@
 services:
   module:
+    environment:
+      BUDDY_INDEPENDENT: "${BUDDY_INDEPENDENT:-false}"
     build:
       context: ../..
       dockerfile: modules/buddy-quests/Dockerfile
