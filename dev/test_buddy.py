@@ -116,6 +116,47 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.assertEqual(buddy.status(), 0)
         self.assertNotIn("PRIVATE_NEVER_PRINT", self.output.getvalue())
 
+    def test_exec_proc_race_waits_without_tracking_transient_argv_or_exe(self):
+        exact = self.process_info(12345)
+        transient = dict(exact, argv=["python3", "dev/buddy", "start"])
+        mixed = dict(exact, exe_inode=999)
+        samples = iter([None, transient, mixed, exact, exact])
+        recorded = []
+        original_save = buddy.save_record
+        def save(record):
+            recorded.append(dict(record))
+            original_save(record)
+        with mock.patch.object(buddy, "process_info", side_effect=lambda pid: next(samples, exact)), \
+                mock.patch.object(buddy, "save_record", side_effect=save):
+            record = self.launch()
+        self.assertEqual(record["exe_inode"], exact["exe_inode"])
+        self.assertTrue(recorded)
+        self.assertTrue(all(row["argv"] == buddy.command_line() and row["exe_inode"] == exact["exe_inode"] for row in recorded))
+        self.assertEqual(self.spawn.call_count, 1)
+        self.send_signal.assert_not_called()
+
+    def test_unsettled_child_is_preserved_without_pid_record_or_signal(self):
+        self.process_overrides = {"argv": ["/usr/bin/unknown"]}
+        with mock.patch.object(buddy, "EXEC_SETTLE_TIMEOUT", 0.02):
+            with self.assertRaisesRegex(buddy.BuddyError, "preserved and left untouched"):
+                buddy.start()
+        self.assertFalse(buddy.PID_FILE.exists())
+        self.assertEqual(self.spawn.call_count, 1)
+        self.send_signal.assert_not_called()
+
+    def test_child_exit_and_pid_identity_change_cannot_be_adopted(self):
+        exact = self.process_info(12345)
+        child = types.SimpleNamespace(pid=12345, poll=mock.Mock(side_effect=[None, 0]))
+        with mock.patch.object(buddy, "process_info", return_value=dict(exact, argv=[])):
+            with self.assertRaisesRegex(buddy.BuddyError, "exited before"):
+                buddy.child_identity(child, buddy.time.monotonic() + 1)
+        child = types.SimpleNamespace(pid=12345, poll=lambda: None)
+        with mock.patch.object(buddy, "process_info", side_effect=[dict(exact, argv=[]), dict(exact, start_ticks=124)]):
+            with self.assertRaisesRegex(buddy.BuddyError, "changed process identity"):
+                buddy.child_identity(child, buddy.time.monotonic() + 1)
+        self.assertFalse(buddy.PID_FILE.exists())
+        self.send_signal.assert_not_called()
+
     def test_wrong_pid_never_proves_readiness_or_gets_killed(self):
         self.ready_pid = 99999
         with mock.patch.object(buddy, "START_TIMEOUT", 0.01):

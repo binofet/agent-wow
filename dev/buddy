@@ -30,6 +30,7 @@ RPC_HOST, RPC_PORT = "127.0.0.1", 8086
 PROFILE = "default"
 CONFIG_DIR = DATA_DIR = MODULE_DIR = CHARACTER_GUID = None
 START_TIMEOUT, STOP_TIMEOUT = 330, 45
+EXEC_SETTLE_TIMEOUT = 2
 MAX_LINE = 64 << 10
 
 
@@ -227,6 +228,40 @@ def docker_access(deadline):
             raise BuddyError("Docker is unavailable to this SSH session; verify docker info and docker compose version with the current user's groups.")
 
 
+def child_identity(child, deadline):
+    """Wait for this Popen child to expose a stable post-exec /proc identity.
+
+    cmdline/exe/stat are separate reads and can straddle exec. No sample is
+    recorded until the exact command and executable identity agree twice; a
+    changed start tick or child exit can never become an adopted process.
+    """
+    settle_until = min(deadline, time.monotonic() + EXEC_SETTLE_TIMEOUT)
+    start_ticks = None
+    previous = None
+    while True:
+        if child.poll() is not None:
+            raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
+        try:
+            info = process_info(child.pid)
+        except OSError as error:
+            raise BuddyError(f"PID {child.pid} was preserved, but ownership tracking failed: {error}. "
+                             f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
+        if info is not None:
+            if start_ticks is None:
+                start_ticks = info["start_ticks"]
+            elif info["start_ticks"] != start_ticks:
+                raise BuddyError(f"PID {child.pid} changed process identity before tracking; it was left untouched. Log: {LOG_FILE}")
+            if info["argv"] == command_line() and previous == info:
+                if child.poll() is not None:
+                    raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
+                return info
+        previous = info if info is not None and info["argv"] == command_line() else None
+        if time.monotonic() >= settle_until:
+            raise BuddyError(f"PID {child.pid} did not expose the exact project command within {EXEC_SETTLE_TIMEOUT}s; "
+                             f"it was preserved and left untouched. Log: {LOG_FILE}")
+        time.sleep(0.01)
+
+
 def start():
     deadline = time.monotonic() + START_TIMEOUT
     record = load_record()
@@ -263,15 +298,7 @@ def start():
         log.truncate()
         child = subprocess.Popen(command_line(), cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
-        try:
-            info = process_info(child.pid)
-        except OSError as error:
-            raise BuddyError(f"PID {child.pid} was preserved, but ownership tracking failed: {error}. "
-                             f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
-        if info is None:
-            raise BuddyError(f"Buddy exited before it could be tracked. Log: {LOG_FILE}")
-        if info["argv"] != command_line():
-            raise BuddyError(f"PID {child.pid} did not execute the exact project command; it was left untouched. Log: {LOG_FILE}")
+        info = child_identity(child, deadline)
         log_info = os.fstat(log.fileno())
         record = dict(info, pid=child.pid, log_device=log_info.st_dev, log_inode=log_info.st_ino,
                       ready_offset=None, profile_identity=profile_identity())
