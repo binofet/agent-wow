@@ -8,6 +8,9 @@ usage() {
     cat <<'EOF'
 Usage: ./run build [go build flags]
        ./run dev [commands and flags]
+       ./run doctor [flags]
+       ./run test [go test flags]
+       ./run check
        ./run db:dump
        ./run db:rm
        ./run client-data:fetch
@@ -17,6 +20,8 @@ Usage: ./run build [go build flags]
 
 Examples:
   ./run build
+  ./run doctor --json
+  ./run check
   ./run dev auth init
   ./run dev auth login --timeout 5s
   ./run db:dump
@@ -36,6 +41,29 @@ case "${1:-}" in
     dev)
         shift
         exec go run . --config dev.config.yaml "$@"
+        ;;
+    doctor)
+        shift
+        exec go run . --config dev.config.yaml doctor "$@"
+        ;;
+    test)
+        shift
+        exec go test -race -count=1 -timeout=5m "$@" ./...
+        ;;
+    check)
+        shift
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on these files:\n%s\n' "$unformatted" >&2
+            exit 1
+        fi
+        go vet ./...
+        go test -race -count=1 -timeout=5m ./...
+        exec go build -o ./bin/agent-wow .
         ;;
     db:dump)
         shift

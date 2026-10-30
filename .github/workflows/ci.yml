@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'buddy/**']
   pull_request:
   workflow_dispatch:
 
@@ -36,6 +36,12 @@ jobs:
             printf 'Run gofmt on these files:\n%s\n' "$unformatted"
             exit 1
           fi
+
+      - name: Check development launchers
+        run: |
+          bash -n run
+          python3 -c 'from pathlib import Path; p = Path("dev/realm"); compile(p.read_text(), str(p), "exec")'
+          REALM_DB_ROOT_PASSWORD=ci-validation-only docker compose --file dev/realm.compose.yaml config --quiet
 
       - name: Vet
         run: go vet ./...
