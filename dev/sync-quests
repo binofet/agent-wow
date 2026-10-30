@@ -125,6 +125,12 @@ class CharacterSync:
                        for key, value in rewards.items())):
             raise Error("Saved prerequisite reward evidence is invalid")
         self.data["confirmedRewards"] = rewards
+        waypoints = self.data.get("waypoints", {})
+        if (not isinstance(waypoints, dict) or set(waypoints) - {"session", "scopes"}
+                or not isinstance(waypoints.get("session", ""), str) or len(waypoints.get("session", "")) > 128
+                or not isinstance(waypoints.get("scopes", []), list) or len(waypoints.get("scopes", [])) > 32
+                or any(not isinstance(scope, str) or len(scope) > 2048 for scope in waypoints.get("scopes", []))):
+            raise Error("Saved observed-waypoint attempts are invalid")
         self.status = {"name": name, "guid": guid, "phase": "starting", "observationsCurrent": False,
                        "activeQuestIds": [], "missingQuestIds": sorted(DESIRED), "levelKnown": False}
 
@@ -240,13 +246,20 @@ class CharacterSync:
         nearby = state.get("nearby", [])
         if not isinstance(nearby, list) or len(nearby) > 64:
             raise Error("Questgiver observations are invalid")
-        choices = []
+        all_choices, visible = [], set()
+        target_observed = False
+        self.status.pop("waypointQuestgiverEntry", None)
         for row in nearby:
-            if not isinstance(row, dict) or row.get("distanceKnown") is not True:
+            if not isinstance(row, dict):
                 continue
             c, d = row.get("creature", {}), row.get("distance")
+            if isinstance(c, dict) and c.get("present") is True and integer(c.get("entry", 0)) in (196, 197, 823):
+                visible.add(str(integer(c.get("guid", 0))))
+                target_observed |= integer(c.get("entry", 0)) == entry
+            if row.get("distanceKnown") is not True:
+                continue
             if (not isinstance(c, dict) or type(d) not in (int, float) or not math.isfinite(d)
-                    or not 4 < d <= 180 or integer(c.get("entry", 0)) not in ((entry,) if entry else (196, 197, 823))
+                    or not 4 < d <= 180 or integer(c.get("entry", 0)) not in (196, 197, 823)
                     or integer(c.get("guid", 0)) >> 48 not in (0xf130, 0xf150)
                     or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
                     or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
@@ -254,12 +267,31 @@ class CharacterSync:
                 continue
             if any(type(c.get(key, 0)) not in (int, float) or not math.isfinite(c.get(key, 0)) for key in ("x", "y", "z")):
                 continue
-            choices.append((d, integer(c["guid"])))
+            all_choices.append((d, integer(c["guid"]), integer(c["entry"])))
+        choices = [choice for choice in all_choices if entry is None or choice[2] == entry]
+        waypoint_scope = None
+        session = session_id(state)
+        if not choices and not target_observed and entry in (196, 197, 823) and all_choices:
+            # Coordinates only identify a repeated observation scope. The
+            # actuator still receives only an actually observed NPC GUID and
+            # validates the complete mesh route; no caller waypoint is sent.
+            p = self.actions.get("position", {})
+            if (not isinstance(p, dict) or p.get("known") is not True or p.get("mapKnown") is not True
+                    or integer(p.get("mapId", 0)) != 0
+                    or any(type(p.get(key)) not in (int, float) or not math.isfinite(p[key]) for key in ("x", "y", "z"))):
+                self.status["phase"] = "waiting_for_known_position_before_observed_waypoint"
+                return False
+            waypoint_scope = json.dumps([entry, math.floor(p["x"] / 8), math.floor(p["y"] / 8), sorted(visible)], separators=(",", ":"))
+            attempts = self.data.get("waypoints", {})
+            scopes = attempts.get("scopes", []) if attempts.get("session") == session else []
+            if waypoint_scope in scopes or len(scopes) >= 32:
+                self.status["phase"] = "waiting_for_new_position_or_questgiver_observation"
+                return False
+            choices = all_choices
         if not choices:
             self.status["phase"] = "waiting_for_observed_northshire_questgiver_route"
             return False
-        _, npc = min(choices)
-        session = session_id(state)
+        _, npc, waypoint_entry = min(choices)
         def operation():
             lease = self.call("buddy-actions.acquire_interaction", {"owner": "quests", "leaseMs": 30000})
             token, control = lease.get("token"), lease.get("state", {})
@@ -269,9 +301,16 @@ class CharacterSync:
             try:
                 if control.get("moving") is True or control.get("motionUnconfirmed") is True:
                     raise Error("Quest travel lease movement is unconfirmed")
+                if waypoint_scope is not None:
+                    attempts = self.data.get("waypoints", {})
+                    scopes = attempts.get("scopes", []) if attempts.get("session") == session else []
+                    self.data["waypoints"] = {"session": session, "scopes": scopes + [waypoint_scope]}
+                    self.save(self.data) # Persist before the potentially ambiguous route write.
+                    self.status["waypointQuestgiverEntry"] = waypoint_entry
                 self.data["routine"]["travelToken"] = token
                 self.save(self.data)
-                self.status["phase"] = "traveling_to_observed_starter_questgiver"
+                self.status["phase"] = ("traveling_via_observed_starter_questgiver" if waypoint_scope is not None
+                                        else "traveling_to_observed_starter_questgiver")
                 self.notify()
                 return self.call("buddy-actions.travel_quest", {"token": token, "npcGuid": str(npc)})
             finally:

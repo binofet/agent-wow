@@ -638,6 +638,91 @@ class SyncTests(unittest.TestCase):
             profile.tick()
             self.assertFalse(any(m.startswith("buddy-loot.") for m,_ in rpc.calls))
 
+    def test_observed_waypoint_reveals_required_giver_and_same_scope_never_retries(self):
+        profile,rpc,clock,saved=self.rig(4)
+        rpc.entries,rpc.far=((EAGAN,196),),True
+        profile.data["routine"]={"session":rpc.session}
+        profile.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+        unseen_target_state=rpc.state()
+        rpc.error_on="buddy-actions.travel_quest"
+        self.assertTrue(profile.travel(unseen_target_state,entry=823))
+        sent=[p for m,p in rpc.calls if m == "buddy-actions.travel_quest"]
+        self.assertEqual(sent,[{"token":"owned-token","npcGuid":str(EAGAN)}])
+        self.assertEqual(profile.status["waypointQuestgiverEntry"],196)
+        # A restart and an own-log revision change do not authorize retrying an
+        # ambiguous waypoint from unchanged position and visibility.
+        restarted,_,_,_=self.rig(4,stored=saved[-1])
+        restarted.rpc,restarted.now,restarted.actions=rpc,lambda:clock[0],copy.deepcopy(profile.actions)
+        clock[0]+=20
+        before=len(rpc.calls)
+        unseen_target_state["questLogRevision"]="99"
+        self.assertFalse(restarted.travel(unseen_target_state,entry=823))
+        self.assertEqual(len(rpc.calls),before)
+        self.assertEqual(restarted.status["phase"],"waiting_for_new_position_or_questgiver_observation")
+        # A real client position change permits one new bounded attempt.
+        restarted.actions["position"]["x"]+=9
+        rpc.error_on=None
+        self.assertTrue(restarted.travel(unseen_target_state,entry=823))
+        # Once Willem is actually observed, route directly to his GUID.
+        clock[0]+=10
+        rpc.entries,rpc.far=((EAGAN,196),(WILLEM,823)),True
+        self.assertTrue(restarted.travel(rpc.state(),entry=823))
+        self.assertEqual([p["npcGuid"] for m,p in rpc.calls if m == "buddy-actions.travel_quest"],
+                         [str(EAGAN),str(EAGAN),str(WILLEM)])
+        self.assertFalse(any(m.startswith("buddy-quests.") for m,_ in rpc.calls))
+
+    def test_waypoint_requires_safe_observation_position_and_absent_required_target(self):
+        for mode in ("unknown_position","wrong_map","moving_giver","foreign_giver","unsafe_required_target"):
+            profile,rpc,_,_=self.rig(4)
+            profile.data["routine"]={"session":rpc.session}
+            profile.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+            rpc.entries,rpc.far=((EAGAN,196),),True
+            state=rpc.state()
+            if mode == "unknown_position":profile.actions["position"]["known"]=False
+            elif mode == "wrong_map":state["nearby"][0]["creature"]["mapId"]=1
+            elif mode == "moving_giver":state["nearby"][0]["creature"]["movementFlags"]=1
+            elif mode == "foreign_giver":state["nearby"][0]["creature"]["entry"]=999
+            else:
+                unsafe=copy.deepcopy(state["nearby"][0])
+                unsafe["creature"].update(entry=823,guid=str(WILLEM),alive=False)
+                state["nearby"].append(unsafe)
+            self.assertFalse(profile.travel(state,entry=823),mode)
+            self.assertFalse(rpc.calls,mode)
+
+    def test_waypoint_scope_memory_is_finite_and_body_session_changes_reset_it(self):
+        profile,rpc,clock,_=self.rig(4)
+        profile.data["routine"]={"session":rpc.session}
+        profile.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+        profile.data["waypoints"]={"session":rpc.session,"scopes":[str(i) for i in range(32)]}
+        rpc.entries,rpc.far=((EAGAN,196),),True
+        self.assertFalse(profile.travel(rpc.state(),entry=823))
+        self.assertFalse(rpc.calls)
+        rpc.session="new-body"
+        profile.data["routine"]={"session":rpc.session}
+        self.assertTrue(profile.travel(rpc.state(),entry=823))
+        self.assertEqual(len(profile.data["waypoints"]["scopes"]),1)
+
+    def test_busy_waypoint_lease_does_not_consume_route_scope_and_save_failure_releases_token(self):
+        profile,rpc,clock,_=self.rig(4)
+        profile.data["routine"]={"session":rpc.session}
+        profile.actions={"position":{"known":True,"mapKnown":True,"x":-8846.0,"y":-70.0,"z":82.0}}
+        rpc.entries,rpc.far=((EAGAN,196),),True
+        original=rpc.call
+        def busy(method,params):
+            if method == "buddy-actions.acquire_interaction":raise sync.Error("lease busy")
+            return original(method,params)
+        rpc.call=busy
+        self.assertTrue(profile.travel(rpc.state(),entry=823))
+        self.assertNotIn("waypoints",profile.data)
+        clock[0]+=10
+        rpc.call=original
+        def save(value):
+            if value.get("waypoints"):raise OSError("disk full")
+        profile.save=save
+        with self.assertRaises(OSError):profile.travel(rpc.state(),entry=823)
+        self.assertEqual(rpc.calls[-1],("buddy-actions.release_interaction",{"owner":"quests","token":"owned-token"}))
+        self.assertFalse(any(m == "buddy-actions.travel_quest" for m,_ in rpc.calls))
+
     def test_legacy_active_goal_remains_stoppable_after_chain_identity_expands(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder=sync.converse.ensure_state(Path(temporary))
