@@ -47,6 +47,41 @@ func TestTrainerTravelUsesObservedProfessionTrainerWithoutQuestFlagOrOwner(t *te
 	}
 }
 
+func TestTrainerTravelAcceptsActualClassOrProfessionTeacherFlags(t *testing.T) {
+	for _, flags := range []uint32{0x30, 0x33, 0x50, 0x53, 0x70} {
+		t.Run(fmt.Sprintf("flags_%x", flags), func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			f.world.NearbyCreatures[0].NpcFlags = flags
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || !got.NavAvailable || got.InteractionOwner != "training" || distance(s.pos, position{x: -9435, y: 70, z: 58}) > 3 {
+				t.Fatal(flags, got, err)
+			}
+			for _, packet := range f.packets {
+				if packet.Opcode != opcode.MSGMoveStartForward && packet.Opcode != opcode.MSGMoveHeartbeat && packet.Opcode != opcode.MSGMoveStop {
+					t.Fatal("travel emitted an interaction or purchase", packet)
+				}
+			}
+		})
+	}
+}
+
+func TestTrainerTravelRejectsMissingTrainerOrSubtypeFlagsBeforePlanning(t *testing.T) {
+	for _, flags := range []uint32{0, 0x3, 0x10, 0x20, 0x40, 0x60, 0x80, 0x83} {
+		t.Run(fmt.Sprintf("flags_%x", flags), func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			f.world.NearbyCreatures[0].NpcFlags = flags
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("invalid trainer role reached planner")
+				return nil, nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_observed_stationary_class_or_profession_trainer_required" || got.Moving || got.Traveling || len(f.packets) != 0 {
+				t.Fatal(flags, got, err, f.packets)
+			}
+		})
+	}
+}
+
 func TestTrainerTravelUsesVerifiedNearbyStandoffWithoutMovingObservedTeacher(t *testing.T) {
 	s, f, _, r := trainerTravelRig(t)
 	npc := playerPosition(f.world.Self)
@@ -142,7 +177,7 @@ func TestTrainerTravelNeverFallsBackWithoutActualNAVOrTrainer(t *testing.T) {
 }
 
 func TestTrainerTravelRequiresSafeStationaryConsistentActualTeacher(t *testing.T) {
-	for _, mode := range []string{"entry", "dead", "map", "position", "health", "class_only", "moving", "spline", "combat", "invalid_position", "speed", "views"} {
+	for _, mode := range []string{"entry", "dead", "map", "position", "health", "missing_role", "moving", "spline", "combat", "invalid_position", "speed", "views"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, r := trainerTravelRig(t)
 			c := f.world.NearbyCreatures[0]
@@ -157,8 +192,8 @@ func TestTrainerTravelRequiresSafeStationaryConsistentActualTeacher(t *testing.T
 				c.PositionKnown = false
 			case "health":
 				c.HealthKnown = false
-			case "class_only":
-				c.NpcFlags = 0x30
+			case "missing_role":
+				c.NpcFlags = 0x10
 			case "moving":
 				c.MovementFlags = 1
 			case "spline":

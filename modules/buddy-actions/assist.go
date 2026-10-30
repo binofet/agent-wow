@@ -44,6 +44,9 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 	if target.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || target.UnitFlags_2&1 != 0 || target.DynamicFlags&0x20 != 0 {
 		return fail("assist_target_not_attackable")
 	}
+	if self.LevelKnown && target.LevelKnown && uint64(target.Level) > uint64(self.Level)+3 {
+		return fail("assist_target_level_exceeds_self_plus_three")
+	}
 	if s.failedAssistTarget == target.Guid {
 		return fail("assist_target_failed_no_retry")
 	}

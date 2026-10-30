@@ -53,8 +53,9 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 				continue
 			}
 			p := position{c.X, c.Y, c.Z, c.Orientation}
-			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&0x50 != 0x50 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !finite(p) {
-				return nil, "trainer_travel_observed_stationary_profession_trainer_required"
+			// UnitDefines.h: TRAINER0x10 plus CLASS0x20 or PROFESSION0x40.
+			if c.Entry != entry || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.PositionKnown || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.NpcFlags&0x10 == 0 || c.NpcFlags&0x60 == 0 || c.UnitFlags&0x80000 != 0 || c.MovementFlags&0x080000ff != 0 || c.Trajectory != nil && c.Trajectory.Known && (!c.Trajectory.Stopped || c.Trajectory.TransportRelative) || !finite(p) {
+				return nil, "trainer_travel_observed_stationary_class_or_profession_trainer_required"
 			}
 			if target != nil && (target.position != p || target.revision != c.PositionRevision) {
 				return nil, "trainer_travel_observed_trainer_views_disagree"
@@ -70,7 +71,7 @@ func (s *Service) trainerTravelContextLocked(ctx context.Context, r *actionsv1.A
 
 // TravelTrainer pauses other controls only under an exclusive training lease.
 // Every step uses a verified route on the observed map and normal run physics;
-// completion reports proximity, never a trainer purchase or learned profession.
+// completion reports proximity, never a trainer purchase or learned spell/skill.
 func (s *Service) TravelTrainer(ctx context.Context, r *actionsv1.ApproachQuestRequest) (result *actionsv1.State, err error) {
 	if r == nil || r.Token == "" || r.NpcGuid>>48 != 0xf130 || r.NpcGuid&0xffffff == 0 {
 		return nil, status.Error(codes.InvalidArgument, "training token and observed creature trainer GUID required")
