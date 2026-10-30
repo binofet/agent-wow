@@ -2,6 +2,7 @@ package buddyinventory
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func addonInbound(body string) []byte {
 	text := addonPrefix + body
 	p := make([]byte, 30+len(text)+1)
-	p[0] = 1
+	p[0] = 2
 	binary.LittleEndian.PutUint32(p[1:], 0xffffffff)
 	binary.LittleEndian.PutUint64(p[5:], 3)
 	binary.LittleEndian.PutUint32(p[25:], uint32(len(text)+1))
@@ -35,6 +36,35 @@ func addonFixture() *inventoryv1.State {
 	}
 	return s
 }
+
+// The literal headers are independent of the production channel constant and
+// addonInbound helper: actual 3.3.5a PARTY is2 in both server and client framing.
+func TestInventoryAddonActualPartyWireGoldens(t *testing.T) {
+	text := addonPrefix + "1|R|0123456789ab"
+	inbound, err := hex.DecodeString("02ffffffff030000000000000000000000000000000000000000000000")
+	if err != nil || len(inbound) != 29 {
+		t.Fatal(inbound, err)
+	}
+	binary.LittleEndian.PutUint32(inbound[25:], uint32(len(text)+1))
+	inbound = append(inbound, []byte(text)...)
+	inbound = append(inbound, 0, 0) // Terminated text, then ordinary chat tag.
+	command, recognized, err := decodeInventoryAddon(inbound)
+	if err != nil || !recognized || command == nil || command.kind != "R" || command.nonce != "0123456789ab" {
+		t.Fatal("actual PARTY request was not accepted", command, recognized, err)
+	}
+	inbound[0] = 1 // SAY must not authorize an inventory request.
+	if command, recognized, err = decodeInventoryAddon(inbound); command != nil || recognized || err != nil {
+		t.Fatal("SAY request was treated as PARTY", command, recognized, err)
+	}
+	outbound, err := encodeInventoryAddon("1|R|0123456789ab")
+	want, _ := hex.DecodeString("02000000ffffffff")
+	want = append(want, []byte(text)...)
+	want = append(want, 0)
+	if err != nil || string(outbound) != string(want) {
+		t.Fatalf("actual PARTY response framing differs: got%x want%x error%v", outbound, want, err)
+	}
+}
+
 func TestInventoryAddonOnlyActualOwnerPartyAddonCommands(t *testing.T) {
 	valid := []string{"1|R|0123456789ab", "1|M|0123456789ab|abcdef012345|7|0|0|4000000000000001|1|19", "1|E|0123456789ab|abcdef012345|7|0|0|4000000000000001|4", "1|G|0123456789ab|abcdef012345|7|0|0|4000000000000001", "1|J|0123456789ab|abcdef012345|7"}
 	for _, body := range valid {
@@ -43,7 +73,7 @@ func TestInventoryAddonOnlyActualOwnerPartyAddonCommands(t *testing.T) {
 			t.Fatal(body, c, yes, e)
 		}
 	}
-	for _, mode := range []string{"sender", "language", "ordinary", "flags", "receiver", "length", "nul", "trailing"} {
+	for _, mode := range []string{"sender", "language", "ordinary", "say", "flags", "receiver", "length", "nul", "trailing"} {
 		p := addonInbound(valid[0])
 		switch mode {
 		case "sender":
@@ -52,6 +82,8 @@ func TestInventoryAddonOnlyActualOwnerPartyAddonCommands(t *testing.T) {
 			binary.LittleEndian.PutUint32(p[1:], 0)
 		case "ordinary":
 			p[0] = 0
+		case "say":
+			p[0] = 1
 		case "flags":
 			p[13] = 1
 		case "receiver":
@@ -99,7 +131,7 @@ func TestInventoryAddonFullBoundedSnapshotUsesActualSlots(t *testing.T) {
 	}
 	for i, p := range parts {
 		raw, e := encodeInventoryAddon(p)
-		if e != nil || len(raw)-9 > 255 || binary.LittleEndian.Uint32(raw) != 1 || binary.LittleEndian.Uint32(raw[4:]) != 0xffffffff || !strings.HasPrefix(p, fmt.Sprintf("1|S|0123456789ab|abcdef012345|7|%d|%d|", i+1, len(parts))) {
+		if e != nil || len(raw)-9 > 255 || binary.LittleEndian.Uint32(raw) != 2 || binary.LittleEndian.Uint32(raw[4:]) != 0xffffffff || !strings.HasPrefix(p, fmt.Sprintf("1|S|0123456789ab|abcdef012345|7|%d|%d|", i+1, len(parts))) {
 			t.Fatal(p, e)
 		}
 	}

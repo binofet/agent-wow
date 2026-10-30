@@ -12,6 +12,9 @@ import (
 )
 
 const addonPrefix = "WBINV1\t"
+
+// AzerothCore SharedDefines.h: CHAT_MSG_PARTY=0x02, CHAT_MSG_SAY=0x01.
+const addonPartyChannel = 2
 const addonMaxParts = 64
 
 type addonCommand struct {
@@ -44,7 +47,7 @@ func addonNumber(s string, max uint64) (uint64, error) {
 // Same framing as buddy-chat owner_feed.go; neither character names nor text
 // supplied GUIDs grant authority. This parser never handles ordinary chat.
 func decodeInventoryAddon(p []byte) (*addonCommand, bool, error) {
-	if len(p) < 29+len(addonPrefix) || p[0] != 1 || int32(binary.LittleEndian.Uint32(p[1:5])) != -1 || binary.LittleEndian.Uint64(p[5:13]) != 3 || !bytes.HasPrefix(p[29:], []byte(addonPrefix)) {
+	if len(p) < 29+len(addonPrefix) || p[0] != addonPartyChannel || int32(binary.LittleEndian.Uint32(p[1:5])) != -1 || binary.LittleEndian.Uint64(p[5:13]) != 3 || !bytes.HasPrefix(p[29:], []byte(addonPrefix)) {
 		return nil, false, nil
 	}
 	bad := errors.New("invalid inventory addon command")
@@ -119,7 +122,7 @@ func encodeInventoryAddon(body string) ([]byte, error) {
 		}
 	}
 	out := make([]byte, 8+len(text)+1)
-	binary.LittleEndian.PutUint32(out, 1)
+	binary.LittleEndian.PutUint32(out, addonPartyChannel)
 	binary.LittleEndian.PutUint32(out[4:], 0xffffffff)
 	copy(out[8:], text)
 	return out, nil
