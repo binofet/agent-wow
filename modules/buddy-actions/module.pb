@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-‹+
+·+
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"÷
@@ -61,13 +61,14 @@ corpseGuid(
 game_object_guid (RgameObjectGuid"G
 ApproachQuestRequest
 token (	Rtoken
-npc_guid (RnpcGuid"h
+npc_guid (RnpcGuid"“
 TravelToRequest
 token (	Rtoken
 map_id (RmapId
 x (Rx
 y (Ry
-z (Rz"(
+z (Rz)
+arrival_distance (RarrivalDistance"(
 ExitCryptRequest
 token (	Rtoken"_
 InteractionLease

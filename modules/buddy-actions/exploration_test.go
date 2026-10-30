@@ -78,6 +78,101 @@ func TestExplorationTravelUsesOnlyVerifiedGroundRouteWithoutNPCProof(t *testing.
 	}
 }
 
+func TestExplorationOptionalArrivalDistancePreservesDefaultAndSupportsPrecision(t *testing.T) {
+	for _, radius := range []float32{0, 3, .75, .5} {
+		t.Run(fmt.Sprint(radius), func(t *testing.T) {
+			s, f, _, r := explorationRig(t)
+			r.ArrivalDistance = radius
+			got, err := s.TravelTo(context.Background(), r)
+			allowed := float64(radius)
+			if allowed == 0 {
+				allowed = 3
+			}
+			actual := distance(s.pos, position{x: r.X, y: r.Y, z: r.Z})
+			if err != nil || got.Reason != "exploration_within_distance" || got.Moving || got.Traveling || actual > allowed || countPackets(f, opcode.MSGMoveStop) != 1 {
+				t.Fatal(radius, got, err, s.pos, actual)
+			}
+			if allowed == 3 && actual <= .75 {
+				t.Fatal("default unexpectedly changed its3yd stop", actual)
+			}
+		})
+	}
+}
+
+func TestExplorationPreciseArrivalDoesNotTakeDefaultThreeYardShortcut(t *testing.T) {
+	for _, radius := range []float32{0, .75} {
+		s, f, _, r := explorationRig(t)
+		r.X, r.ArrivalDistance = 1502, radius
+		plans := 0
+		s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+			plans++
+			// A caller changing its request cannot enlarge the captured stop.
+			r.ArrivalDistance = 3
+			return []position{from, {x: from.x, y: from.y + 6, z: from.z}, {x: to.x, y: from.y + 6, z: to.z}, to}, nil
+		}
+		got, err := s.TravelTo(context.Background(), r)
+		if err != nil || got.Reason != "exploration_within_distance" {
+			t.Fatal(got, err)
+		}
+		if radius == 0 {
+			if plans != 0 || len(f.packets) != 0 {
+				t.Fatal("default already-near behavior changed", plans, f.packets)
+			}
+		} else if plans != 1 || countPackets(f, opcode.MSGMoveStartForward) != 1 || distance(s.pos, position{x: 1502, y: 1500, z: 80}) > .75 {
+			t.Fatal("precise arrival skipped complete route or used mutated radius", plans, s.pos, f.packets)
+		}
+	}
+}
+
+func TestExplorationRejectsInvalidArrivalRadiusBeforePlanningOrMovement(t *testing.T) {
+	for _, radius := range []float32{-.1, .499, 3.001, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		s, f, _, r := explorationRig(t)
+		r.ArrivalDistance = radius
+		s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+			t.Fatal("invalid radius reached planner")
+			return nil, nil
+		}
+		if got, err := s.TravelTo(context.Background(), r); status.Code(err) != codes.InvalidArgument || got != nil || len(f.packets) != 0 {
+			t.Fatal(radius, got, err, f.packets)
+		}
+	}
+}
+
+func TestExplorationPreciseArrivalRejectsNormalizedEndpointOutsideRadiusBeforeWrite(t *testing.T) {
+	for _, offset := range []position{{x: 1}, {z: 1}, {x: .75}, {z: .5}} {
+		s, f, _, r := explorationRig(t)
+		r.ArrivalDistance = .75
+		s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+			to.x += offset.x
+			to.z += offset.z
+			return []position{from, to}, nil
+		}
+		got, err := s.TravelTo(context.Background(), r)
+		if err != nil || got.Moving || got.Traveling {
+			t.Fatal(offset, got, err)
+		}
+		if distance(position{}, offset) > .75 {
+			if got.NavAvailable || got.Reason != "exploration_navigation_endpoint_outside_arrival_distance" || len(f.packets) != 0 {
+				t.Fatal("normalized endpoint bypassed precision", offset, got, f.packets)
+			}
+		} else if !got.NavAvailable || got.Reason != "exploration_within_distance" || distance(s.pos, position{x: r.X, y: r.Y, z: r.Z}) > .75 {
+			t.Fatal("valid normalized ground endpoint rejected", offset, got, s.pos)
+		}
+	}
+}
+
+func TestExplorationPreciseArrivalRetainsCancelAndOwnedStopCleanup(t *testing.T) {
+	s, f, advance, r := explorationRig(t)
+	r.ArrivalDistance = .75
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.approachDelay = func(call context.Context, d time.Duration) error { advance(d); cancel(); return call.Err() }
+	got, err := s.TravelTo(ctx, r)
+	if status.Code(err) != codes.Canceled || got.Moving || got.Traveling || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
 func TestExplorationRejectsInvalidDestinationLeaseAndMapBeforePlanning(t *testing.T) {
 	for _, mode := range []string{"nil", "empty_token", "foreign_token", "wrong_owner", "different_map", "unknown_map", "nonfinite", "infinite", "world_bounds", "too_far", "unknown_position", "dead", "combat", "falling", "speed", "casting", "unconfirmed_motion"} {
 		t.Run(mode, func(t *testing.T) {
@@ -297,10 +392,10 @@ func TestExplorationRegistryAliasAndGeneratedMovementOnlyRequest(t *testing.T) {
 		t.Fatal(method, ok)
 	}
 	request := method.Descriptor().Input()
-	if request.FullName() != "warcraftbuddy.actions.v1.TravelToRequest" || request.Fields().Len() != 5 || request.Fields().ByName("npc_guid") != nil {
+	if request.FullName() != "warcraftbuddy.actions.v1.TravelToRequest" || request.Fields().Len() != 6 || request.Fields().ByName("npc_guid") != nil {
 		t.Fatal("wrong movement contract", request)
 	}
-	for _, name := range []string{"token", "map_id", "x", "y", "z"} {
+	for _, name := range []string{"token", "map_id", "x", "y", "z", "arrival_distance"} {
 		if request.Fields().ByName(protoreflect.Name(name)) == nil {
 			t.Fatal("missing field", name)
 		}

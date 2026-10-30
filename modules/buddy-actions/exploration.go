@@ -51,6 +51,13 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 	if r == nil || r.Token == "" || len(r.Token) > 128 || !finite(position{x: r.X, y: r.Y, z: r.Z}) {
 		return nil, status.Error(codes.InvalidArgument, "exploration token and finite destination are required")
 	}
+	arrival := float64(r.ArrivalDistance)
+	if math.IsNaN(arrival) || math.IsInf(arrival, 0) || arrival != 0 && (arrival < .5 || arrival > 3) {
+		return nil, status.Error(codes.InvalidArgument, "arrival distance must be0(default3) or0.5..3yards")
+	}
+	if arrival == 0 {
+		arrival = 3
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
@@ -106,7 +113,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "exploration destination must be within200yards")
 	}
-	if distance(from, to) <= 3 {
+	if distance(from, to) <= arrival {
 		s.state.Reason = "exploration_within_distance"
 		s.mu.Unlock()
 		return nil, nil
@@ -138,6 +145,16 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		}
 		return nil, nil
 	}
+	// The planner can normalize the destination onto validated ground. A
+	// precise request must fit that actual endpoint; never append caller Z or
+	// bypass the physical route to manufacture a closer arrival.
+	if distance(path[len(path)-1], to) > arrival {
+		s.state.NavAvailable = false
+		s.state.NavReason = "verified_route_endpoint_outside_requested_arrival_distance"
+		s.state.Reason = "exploration_navigation_endpoint_outside_arrival_distance"
+		s.mu.Unlock()
+		return nil, nil
+	}
 	s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
 	s.mu.Unlock()
 	expected, index := from, 0
@@ -154,7 +171,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 		if why == "" && (s.posMap != mapID || s.positionRevision != revision || distance(s.pos, expected) > .05) {
 			why = "exploration_position_changed_after_planning"
 		}
-		if why == "" && distance(s.pos, to) <= 3 && routeRemaining(s.pos, path, index) <= 3 {
+		if why == "" && distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			why = "exploration_within_distance"
 		}
 		if why == "" && index >= len(path) {
@@ -174,7 +191,7 @@ func (s *Service) TravelTo(ctx context.Context, r *actionsv1.TravelToRequest) (r
 			return nil, nil
 		}
 		expected = s.pos
-		if distance(s.pos, to) <= 3 && routeRemaining(s.pos, path, index) <= 3 {
+		if distance(s.pos, to) <= arrival && routeRemaining(s.pos, path, index) <= arrival {
 			s.state.Reason = "exploration_within_distance"
 			s.mu.Unlock()
 			return nil, nil

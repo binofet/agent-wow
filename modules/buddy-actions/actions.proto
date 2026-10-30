@@ -42,6 +42,9 @@ message TravelToRequest {
   float x = 3;
   float y = 4;
   float z = 5;
+  // 0 preserves the default3yd stop. Explicit0.5..3yd requires the verified
+  // route endpoint to fit this radius; it grants no floor/layer tolerance.
+  float arrival_distance = 6;
 }
 // An owned quests lease permits only the fixed, measured crypt exit route.
 message ExitCryptRequest { string token = 1; }

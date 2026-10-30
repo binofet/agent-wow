@@ -415,14 +415,17 @@ func (x *ApproachQuestRequest) GetNpcGuid() uint64 {
 
 // Movement only: a caller destination grants no NPC presence or interaction proof.
 type TravelToRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
-	MapId         uint32                 `protobuf:"varint,2,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
-	X             float32                `protobuf:"fixed32,3,opt,name=x,proto3" json:"x,omitempty"`
-	Y             float32                `protobuf:"fixed32,4,opt,name=y,proto3" json:"y,omitempty"`
-	Z             float32                `protobuf:"fixed32,5,opt,name=z,proto3" json:"z,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Token string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	MapId uint32                 `protobuf:"varint,2,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
+	X     float32                `protobuf:"fixed32,3,opt,name=x,proto3" json:"x,omitempty"`
+	Y     float32                `protobuf:"fixed32,4,opt,name=y,proto3" json:"y,omitempty"`
+	Z     float32                `protobuf:"fixed32,5,opt,name=z,proto3" json:"z,omitempty"`
+	// 0 preserves the default3yd stop. Explicit0.5..3yd requires the verified
+	// route endpoint to fit this radius; it grants no floor/layer tolerance.
+	ArrivalDistance float32 `protobuf:"fixed32,6,opt,name=arrival_distance,json=arrivalDistance,proto3" json:"arrival_distance,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *TravelToRequest) Reset() {
@@ -486,6 +489,13 @@ func (x *TravelToRequest) GetY() float32 {
 func (x *TravelToRequest) GetZ() float32 {
 	if x != nil {
 		return x.Z
+	}
+	return 0
+}
+
+func (x *TravelToRequest) GetArrivalDistance() float32 {
+	if x != nil {
+		return x.ArrivalDistance
 	}
 	return 0
 }
@@ -1181,13 +1191,14 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x10game_object_guid\x18\x03 \x01(\x04R\x0egameObjectGuid\"G\n" +
 	"\x14ApproachQuestRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x19\n" +
-	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\"h\n" +
+	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\"\x93\x01\n" +
 	"\x0fTravelToRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x15\n" +
 	"\x06map_id\x18\x02 \x01(\rR\x05mapId\x12\f\n" +
 	"\x01x\x18\x03 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\x04 \x01(\x02R\x01y\x12\f\n" +
-	"\x01z\x18\x05 \x01(\x02R\x01z\"(\n" +
+	"\x01z\x18\x05 \x01(\x02R\x01z\x12)\n" +
+	"\x10arrival_distance\x18\x06 \x01(\x02R\x0farrivalDistance\"(\n" +
 	"\x10ExitCryptRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"_\n" +
 	"\x10InteractionLease\x12\x14\n" +
