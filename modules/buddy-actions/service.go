@@ -4,7 +4,10 @@ package buddyactions
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"math"
 	"sync"
@@ -23,8 +26,8 @@ import (
 )
 
 const (
-	lease      = 15 * time.Minute
-	limitation = "Direct outdoor flat-ground follow only: no collision, navigation, terrain or local LOS query; cast writes are not healing confirmation."
+	lease      = 4 * time.Hour
+	limitation = "Direct outdoor flat-ground follow only: no collision, navigation, terrain or local LOS query; spell transport and server spell-go are not health/damage confirmation."
 )
 
 type sessionAPI interface {
@@ -46,6 +49,16 @@ type Service struct {
 	posKnown                                                 bool
 	positionRevision                                         uint64
 	castCount                                                byte
+	lastWorld                                                *worldv1.SnapshotResponse
+	posMap                                                   uint32
+	posEstimated                                             bool
+	posAt                                                    time.Time
+	posRevision                                              uint64
+	interactionToken                                         string
+	interactionUntil                                         time.Time
+	assistUntil, nextAssist                                  time.Time
+	pendingSpell                                             uint32
+	pendingTarget, failedAssistTarget                        uint64
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -53,6 +66,7 @@ func NewService(session sessionAPI, selfGUID uint64) *Service {
 }
 
 func (s *Service) stateLocked() *actionsv1.State {
+	s.expireInteractionLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
@@ -61,7 +75,138 @@ func (s *Service) stateLocked() *actionsv1.State {
 	if s.state.Healing && now.Before(s.healingUntil) {
 		out.HealingLeaseRemainingMs = uint64(s.healingUntil.Sub(now).Milliseconds())
 	}
+	if s.state.Assisting && now.Before(s.assistUntil) {
+		out.AssistLeaseRemainingMs = uint64(s.assistUntil.Sub(now).Milliseconds())
+	}
+	out.Position = s.clientPositionLocked()
+	if s.state.InteractionOwner != "" {
+		out.InteractionLeaseRemainingMs = uint64(s.interactionUntil.Sub(now).Milliseconds())
+	}
 	return out
+}
+
+func validInteractionOwner(owner string) bool {
+	return owner == "loot" || owner == "quests" || owner == "trade"
+}
+func (s *Service) expireInteractionLocked() {
+	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
+		s.state.InteractionOwner = ""
+		s.interactionToken = ""
+		s.lastStep = s.now()
+	}
+}
+
+func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.InteractionRequest) (*actionsv1.InteractionLease, error) {
+	if r == nil || !validInteractionOwner(r.Owner) {
+		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, or trade")
+	}
+	duration := r.LeaseMs
+	if duration == 0 {
+		duration = 15000
+	}
+	if duration < 1000 || duration > 30000 {
+		return nil, status.Error(codes.InvalidArgument, "interaction lease must be1000..30000ms")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireInteractionLocked()
+	if s.closed {
+		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if s.state.InteractionOwner != "" {
+		if r.Owner != s.state.InteractionOwner || r.Token == "" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
+			return nil, status.Error(codes.FailedPrecondition, "another interaction is active")
+		}
+		s.interactionUntil = s.now().Add(time.Duration(duration) * time.Millisecond)
+		return &actionsv1.InteractionLease{Token: s.interactionToken, State: s.stateLocked()}, nil
+	}
+	if r.Token != "" {
+		return nil, status.Error(codes.FailedPrecondition, "interaction lease expired; acquire a new lease")
+	}
+	if s.state.CastPending || s.state.MotionUnconfirmed {
+		return nil, status.Error(codes.FailedPrecondition, "casting or movement state is unconfirmed")
+	}
+	w, err := s.snapshot(ctx)
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, "world observations unavailable")
+	}
+	if !s.clientPositionLocked().Known {
+		return nil, status.Error(codes.FailedPrecondition, "current client position is unknown")
+	}
+	// A server correction can arrive between controller ticks. Rebase before
+	// writing STOP so an interaction never writes the superseded estimate.
+	s.refreshPositionLocked(w)
+	if !s.stopLocked(ctx) {
+		return nil, status.Error(codes.FailedPrecondition, "movement stop could not be written")
+	}
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return nil, status.Error(codes.Internal, "interaction token generation failed")
+	}
+	s.interactionToken = hex.EncodeToString(token[:])
+	s.interactionUntil = s.now().Add(time.Duration(duration) * time.Millisecond)
+	s.state.InteractionOwner = r.Owner
+	s.lastStep = s.now()
+	return &actionsv1.InteractionLease{Token: s.interactionToken, State: s.stateLocked()}, nil
+}
+
+func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.InteractionRelease) (*actionsv1.State, error) {
+	if r == nil || !validInteractionOwner(r.Owner) || r.Token == "" {
+		return nil, status.Error(codes.InvalidArgument, "interaction owner and token are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireInteractionLocked()
+	if s.state.InteractionOwner != r.Owner || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
+		return nil, status.Error(codes.FailedPrecondition, "interaction lease does not match")
+	}
+	s.state.InteractionOwner = ""
+	s.interactionToken = ""
+	s.lastStep = s.now()
+	return s.stateLocked(), nil
+}
+
+func (s *Service) clientPositionLocked() *actionsv1.ClientPosition {
+	result := &actionsv1.ClientPosition{}
+	if s.lastWorld == nil || s.lastWorld.Self == nil {
+		return result
+	}
+	w := s.lastWorld.Self
+	if w.Guid != s.selfGUID || !w.Present || !w.MapKnown || !w.PositionKnown || !finite(playerPosition(w)) {
+		return result
+	}
+	result.Known = true
+	result.MapKnown = true
+	result.MapId = w.MapId
+	result.X = w.X
+	result.Y = w.Y
+	result.Z = w.Z
+	result.Orientation = w.Orientation
+	result.AgeMs = w.PositionAgeMs
+	result.Revision = w.PositionRevision
+	if s.posKnown && s.posMap == w.MapId && s.positionRevision == w.PositionRevision && !s.state.MotionUnconfirmed {
+		result.X = s.pos.x
+		result.Y = s.pos.y
+		result.Z = s.pos.z
+		result.Orientation = s.pos.o
+		result.Estimated = s.posEstimated
+		result.Revision = s.posRevision
+		if age := s.now().Sub(s.posAt); age > 0 {
+			result.AgeMs = uint64(age.Milliseconds())
+		} else {
+			result.AgeMs = 0
+		}
+	}
+	if s.state.MotionUnconfirmed {
+		result.Known = false
+	}
+	return result
 }
 
 func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*actionsv1.State, error) {
@@ -121,11 +266,43 @@ func (s *Service) Healing(ctx context.Context, r *actionsv1.ToggleRequest) (*act
 	return s.stateLocked(), nil
 }
 
+func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*actionsv1.State, error) {
+	if r == nil {
+		return nil, status.Error(codes.InvalidArgument, "toggle request is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if r.Enabled && s.state.MotionUnconfirmed {
+		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
+		return s.stateLocked(), nil
+	}
+	s.state.Assisting = r.Enabled
+	if r.Enabled {
+		s.assistUntil = s.now().Add(lease)
+		s.failedAssistTarget = 0
+		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
+	} else {
+		s.state.Reason = "assist_disabled"
+	}
+	return s.stateLocked(), nil
+}
+
 func (s *Service) HealOnce(ctx context.Context, _ *emptypb.Empty) (*actionsv1.State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	s.expireInteractionLocked()
+	if s.state.InteractionOwner != "" {
+		s.state.Reason = "interaction_active_heal_once_blocked"
+		return s.stateLocked(), nil
 	}
 	snapshot, err := s.snapshot(ctx)
 	if err != nil {
@@ -142,6 +319,11 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Read-only refresh: active movement is not echoed back to its sender, so
+	// report the client's estimate only while its authoritative base is valid.
+	if _, err := s.snapshot(ctx); err != nil {
+		s.lastWorld = nil
+	}
 	return s.stateLocked(), nil
 }
 
@@ -149,8 +331,11 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.state.InteractionOwner = ""
+	s.interactionToken = ""
 	s.state.Following = false
 	s.state.Healing = false
+	s.state.Assisting = false
 	s.explicitStopLocked(ctx)
 	s.state.Reason = "session_closing"
 	return &emptypb.Empty{}, nil
@@ -190,6 +375,7 @@ func (s *Service) snapshot(ctx context.Context) (*worldv1.SnapshotResponse, erro
 	if err := result.Result.UnmarshalTo(out); err != nil {
 		return nil, err
 	}
+	s.lastWorld = out
 	return out, nil
 }
 
@@ -203,8 +389,14 @@ func safePlayers(snapshot *worldv1.SnapshotResponse, selfGUID uint64) string {
 		return "players_unknown"
 	}
 	a, b := snapshot.Self, snapshot.Owner
-	if a.Guid != selfGUID || b.Guid != ownerGUID || !a.Present || !b.Present {
+	if a.Guid != selfGUID || b.Guid != ownerGUID {
+		return "player_identity_mismatch"
+	}
+	if !a.Present || !b.Present {
 		return "players_missing"
+	}
+	if b.PlayerFlags&2 != 0 {
+		return "owner_afk_actions_paused"
 	}
 	if !a.MapKnown || !b.MapKnown || a.MapId != b.MapId {
 		return "map_unknown_or_different"
@@ -242,21 +434,29 @@ func (s *Service) refreshPositionLocked(snapshot *worldv1.SnapshotResponse) bool
 		s.pos = playerPosition(p)
 		s.posKnown = true
 		s.positionRevision = p.PositionRevision
+		s.observePositionLocked(p)
 		return true
 	}
 	if p.PositionRevision != s.positionRevision {
 		s.pos = playerPosition(p)
 		s.positionRevision = p.PositionRevision
+		s.observePositionLocked(p)
 		if p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
 			s.state.MotionUnconfirmed = false
 		}
 		if s.state.Moving {
-			s.state.Following = false
 			s.state.Reason = "authoritative_position_changed"
 			return false
 		}
 	}
 	return true
+}
+
+func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
+	s.posMap = p.MapId
+	s.posEstimated = false
+	s.posAt = s.now().Add(-time.Duration(min(p.PositionAgeMs, uint64(24*time.Hour/time.Millisecond))) * time.Millisecond)
+	s.posRevision++
 }
 
 func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) bool {
@@ -267,6 +467,7 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
 		s.state.Healing = false
+		s.state.Assisting = false
 		s.state.Reason = "transport_error_no_retry"
 		return false
 	}
@@ -289,10 +490,24 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 	}
 	s.pos = p
 	s.state.Moving = moving
+	s.posEstimated = true
+	s.posAt = s.now()
+	s.posRevision++
 	return true
 }
 
 func (s *Service) stopLocked(ctx context.Context) bool {
+	// Corrections can coincide with an unsafe owner/self movement flag. Those
+	// paths stop before normal follow position refresh, so rebase here too.
+	if s.lastWorld != nil && s.lastWorld.Self != nil {
+		p := s.lastWorld.Self
+		if p.Guid == s.selfGUID && p.Present && p.MapKnown && p.PositionKnown && finite(playerPosition(p)) && (!s.posKnown || p.PositionRevision != s.positionRevision || p.MapId != s.posMap) {
+			s.pos = playerPosition(p)
+			s.posKnown = true
+			s.positionRevision = p.PositionRevision
+			s.observePositionLocked(p)
+		}
+	}
 	if s.state.MotionUnconfirmed {
 		return false
 	}
@@ -306,6 +521,7 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 	if !written {
 		s.state.Following = false
 		s.state.Healing = false
+		s.state.Assisting = false
 	}
 	return written
 }
@@ -322,12 +538,18 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || (!s.state.Following && !s.state.Healing && !s.state.CastPending) {
+	s.expireInteractionLocked()
+	if s.state.InteractionOwner != "" {
+		s.lastStep = s.now()
+		return
+	}
+	if s.closed || (!s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending) {
 		return
 	}
 	if s.state.MotionUnconfirmed {
 		s.state.Following = false
 		s.state.Healing = false
+		s.state.Assisting = false
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 		return
 	}
@@ -341,36 +563,51 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Healing = false
 		s.state.Reason = "healing_lease_expired"
 	}
+	if s.state.Assisting && !now.Before(s.assistUntil) {
+		s.state.Assisting = false
+		s.state.Reason = "assist_lease_expired"
+	}
 	if s.state.CastPending && !now.Before(s.castUntil) {
 		s.state.CastPending = false
 		s.state.Healing = false
 		s.state.Following = false
 		s.stopLocked(ctx)
+		s.state.Assisting = false
+		s.pendingSpell = 0
+		s.pendingTarget = 0
 		s.state.Reason = "cast_result_timeout_no_retry"
 	}
-	if !s.state.Following && !s.state.Healing && !s.state.CastPending {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
 	if err != nil {
 		s.stopLocked(ctx)
-		s.state.Following = false
-		s.state.Healing = false
+		s.lastStep = now
 		s.state.Reason = "observations_unavailable"
 		return
 	}
 	if reason := safePlayers(snapshot, s.selfGUID); reason != "" {
+		// Unknown or temporarily unsafe observations pause enabled intent. A
+		// normal jump, AFK or visibility loss must not silently revoke it.
+		// No local motion is attempted until fresh safe context is available.
 		s.stopLocked(ctx)
-		s.state.Following = false
-		s.state.Healing = false
+		if reason == "player_identity_mismatch" {
+			s.state.Following = false
+			s.state.Healing = false
+			s.state.Assisting = false
+		}
+		s.lastStep = now
 		s.state.Reason = reason
 		return
 	}
 	if !s.refreshPositionLocked(snapshot) {
 		s.stopLocked(ctx)
+		s.lastStep = now
 		return
 	}
 	if s.state.MotionUnconfirmed {
+		s.state.Assisting = false
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 		return
 	}
@@ -384,6 +621,10 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 	}
+	if s.state.Assisting && s.assistLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
 	if !s.state.Following {
 		return
 	}
@@ -391,7 +632,7 @@ func (s *Service) Tick(ctx context.Context) {
 	// nearby almost-level ground. It cannot determine walls or ground height.
 	if snapshot.Self.MapId != 0 {
 		s.stopLocked(ctx)
-		s.state.Following = false
+		s.lastStep = now
 		s.state.Reason = "follow_requires_outdoor_map_zero"
 		return
 	}
@@ -399,7 +640,7 @@ func (s *Service) Tick(ctx context.Context) {
 	d := distance(s.pos, target)
 	if d > 30 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
 		s.stopLocked(ctx)
-		s.state.Following = false
+		s.lastStep = now
 		s.state.Reason = "follow_target_too_far_or_vertical"
 		return
 	}
@@ -411,7 +652,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if !snapshot.Self.SpeedsKnown || math.Abs(float64(snapshot.Self.RunSpeed)-7) > 0.01 || math.IsNaN(float64(snapshot.Self.RunSpeed)) {
 		s.stopLocked(ctx)
-		s.state.Following = false
+		s.lastStep = now
 		s.state.Reason = "normal_run_speed_unknown"
 		return
 	}
@@ -419,7 +660,6 @@ func (s *Service) Tick(ctx context.Context) {
 	s.lastStep = now
 	if elapsed < 0 || elapsed > 0.6 {
 		s.stopLocked(ctx)
-		s.state.Following = false
 		s.state.Reason = "follow_tick_late"
 		return
 	}
@@ -499,9 +739,16 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 	s.castUntil = now.Add(5 * time.Second)
 	s.state.CastPending = true
 	s.state.HealAttempts++
+	s.pendingSpell = lesserHeal
+	s.pendingTarget = ownerGUID
+	s.nextAssist = now.Add(3 * time.Second)
+	s.state.LastCastSpellId = lesserHeal
+	s.state.LastCastTargetGuid = ownerGUID
 	s.state.LastCastFailure = 0
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, castPacket(s.castCount)) {
 		s.state.CastPending = false
+		s.pendingSpell = 0
+		s.pendingTarget = 0
 		return false
 	}
 	s.state.Reason = "heal_transport_written_waiting_for_server"
@@ -518,54 +765,65 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	malformed := false
 	switch packet.Opcode {
 	case opcode.SMSGInitialSpells:
-		known, err := initialKnown(p)
-		if err != nil {
+		heal, err := initialSpellKnown(p, lesserHeal)
+		attack, attackErr := initialSpellKnown(p, smite)
+		if err != nil || attackErr != nil {
 			malformed = true
 		} else {
-			s.state.KnownLesserHeal = known
+			s.state.KnownLesserHeal = heal
+			s.state.KnownSmite = attack
 		}
 	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell:
 		if len(p) < 4 {
 			malformed = true
-		} else if binary.LittleEndian.Uint32(p) == lesserHeal {
-			s.state.KnownLesserHeal = packet.Opcode == opcode.SMSGLearnedSpell
+		} else {
+			spell := binary.LittleEndian.Uint32(p)
+			if spell == lesserHeal {
+				s.state.KnownLesserHeal = packet.Opcode == opcode.SMSGLearnedSpell
+			}
+			if spell == smite {
+				s.state.KnownSmite = packet.Opcode == opcode.SMSGLearnedSpell
+			}
 		}
 	case opcode.SMSGCastFailed:
 		if len(p) < 6 {
 			malformed = true
-		} else if binary.LittleEndian.Uint32(p[1:]) == lesserHeal && p[0] == s.castCount && s.state.CastPending {
-			s.state.LastCastFailure = uint32(p[5])
-			s.state.CastPending = false
-			s.state.Healing = false
-			s.nextHeal = s.now().Add(5 * time.Second)
-			s.state.Reason = "server_cast_failed_healing_disabled"
+		} else if s.state.CastPending && s.pendingSpell != 0 && binary.LittleEndian.Uint32(p[1:]) == s.pendingSpell && p[0] == s.castCount {
+			s.castFailedLocked(uint32(p[5]), "server_cast_failed_healing_disabled")
 		}
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo:
 		guid, count, spell, offset, err := castEvent(p)
 		if err != nil {
 			malformed = true
-		} else if guid == s.selfGUID && spell == lesserHeal && count == s.castCount && s.state.CastPending {
-			if !validCastBody(p, offset, packet.Opcode == opcode.SMSGSpellGo) {
+		} else if s.state.CastPending && guid == s.selfGUID && spell == s.pendingSpell && count == s.castCount {
+			if !validCastTargetBody(p, offset, packet.Opcode == opcode.SMSGSpellGo, s.pendingTarget) {
 				malformed = true
 			} else if packet.Opcode == opcode.SMSGSpellStart {
-				s.state.ServerCastStarts++
+				if spell == lesserHeal {
+					s.state.ServerCastStarts++
+				} else {
+					s.state.ServerAssistStarts++
+				}
 				s.state.Reason = "server_cast_started"
 			} else {
-				s.state.ServerCastGo++
+				if spell == lesserHeal {
+					s.state.ServerCastGo++
+					s.state.Reason = "server_spell_go_health_effect_unverified"
+				} else {
+					s.state.ServerAssistGo++
+					s.state.Reason = "server_smite_go_damage_effect_unverified"
+				}
 				s.state.CastPending = false
-				s.state.Reason = "server_spell_go_health_effect_unverified"
+				s.pendingSpell = 0
+				s.pendingTarget = 0
 			}
 		}
 	case opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
 		guid, n, err := readGUID(p)
 		if err != nil || len(p) < n+6 {
 			malformed = true
-		} else if guid == s.selfGUID && p[n] == s.castCount && binary.LittleEndian.Uint32(p[n+1:]) == lesserHeal && s.state.CastPending {
-			s.state.LastCastFailure = uint32(p[n+5])
-			s.state.CastPending = false
-			s.state.Healing = false
-			s.nextHeal = s.now().Add(5 * time.Second)
-			s.state.Reason = "server_cast_interrupted_healing_disabled"
+		} else if s.state.CastPending && s.pendingSpell != 0 && guid == s.selfGUID && p[n] == s.castCount && binary.LittleEndian.Uint32(p[n+1:]) == s.pendingSpell {
+			s.castFailedLocked(uint32(p[n+5]), "server_cast_interrupted_healing_disabled")
 		}
 	}
 	if malformed {

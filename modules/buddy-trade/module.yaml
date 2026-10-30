@@ -1,0 +1,21 @@
+api_version: 1
+enabled: true
+description: Normal trades with Joel, bound backpack offers and server completion
+requires: [buddy-world, buddy-actions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  state: /warcraftbuddy.trade.v1.BuddyTrade/GetState
+  open: /warcraftbuddy.trade.v1.BuddyTrade/Open
+  offer_item: /warcraftbuddy.trade.v1.BuddyTrade/OfferItem
+  offer_gold: /warcraftbuddy.trade.v1.BuddyTrade/OfferGold
+  cancel: /warcraftbuddy.trade.v1.BuddyTrade/Cancel
+packets:
+  SMSG_TRADE_STATUS: /warcraftbuddy.trade.v1.BuddyTrade/OnPacket
+  SMSG_TRADE_STATUS_EXTENDED: /warcraftbuddy.trade.v1.BuddyTrade/OnPacket
+  SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.trade.v1.BuddyTrade/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.trade.v1.BuddyTrade/BeforeLogout

@@ -1,0 +1,89 @@
+syntax = "proto3";
+package warcraftbuddy.quests.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-quests/api;questsv1";
+import "api/module/v1/session.proto";
+import "modules/buddy-world/world.proto";
+import "google/protobuf/empty.proto";
+
+message Quest {
+  uint32 quest_id = 1;
+  string title = 2;
+  string details = 3;
+  string objectives = 4;
+  int32 level = 5;
+  uint32 flags = 6;
+  uint32 icon = 7;
+  bool available = 8;
+  bool repeatable = 9;
+  bool accept_requested = 10;
+}
+message Offer {
+  uint64 revision = 1;
+  uint64 npc_guid = 2;
+  repeated Quest quests = 3;
+  string greeting = 4;
+  string source = 5;
+  uint64 expires_in_ms = 6;
+}
+message NearbyGiver {
+  warcraftbuddy.world.v1.CreatureState creature = 1;
+  bool distance_known = 2;
+  double distance = 3;
+  bool can_interact = 4;
+  string blocked_reason = 5;
+}
+enum AcceptanceStatus {
+  NONE = 0;
+  REQUESTED = 1;
+  CONFIRMED_IN_LOG = 2;
+  UNCONFIRMED_TIMEOUT = 3;
+  SERVER_REJECTED = 4;
+  WRITE_UNCONFIRMED = 5;
+}
+message Acceptance {
+  uint64 npc_guid = 1;
+  uint32 quest_id = 2;
+  uint64 offer_revision = 3;
+  bool transport_written = 4;
+  AcceptanceStatus status = 5;
+  uint64 baseline_log_revision = 6;
+  uint64 confirmed_log_revision = 7;
+  string failure = 8;
+  uint32 server_reason = 9;
+}
+message GiverStatus { uint64 npc_guid = 1; uint32 status = 2; }
+message StateResponse {
+  string session_id = 1;
+  uint64 revision = 2;
+  Offer offer = 3;
+  repeated NearbyGiver nearby = 4;
+  Acceptance last_acceptance = 5;
+  GiverStatus giver_status = 6;
+  bool action_in_flight = 7;
+  bool quest_log_known = 8;
+  uint64 quest_log_revision = 9;
+  repeated warcraftbuddy.world.v1.QuestLogEntry quest_log = 10;
+  uint64 malformed_packets = 11;
+  uint64 ignored_packets = 12;
+}
+message OfferRequest { string session_id = 1; uint64 npc_guid = 2; }
+message QuestRequest {
+  string session_id = 1;
+  uint64 offer_revision = 2;
+  uint64 npc_guid = 3;
+  uint32 quest_id = 4;
+}
+message OperationResult {
+  // A transport write alone never confirms quest acceptance.
+  bool transport_written = 1;
+  bool server_response_received = 2;
+  StateResponse state = 3;
+}
+service BuddyQuests {
+  rpc Discover(google.protobuf.Empty) returns (StateResponse);
+  rpc State(google.protobuf.Empty) returns (StateResponse);
+  rpc Offer(OfferRequest) returns (OperationResult);
+  rpc Details(QuestRequest) returns (OperationResult);
+  rpc Accept(QuestRequest) returns (OperationResult);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+}

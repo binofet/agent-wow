@@ -21,12 +21,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyActions_Follow_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Healing_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
-	BuddyActions_HealOnce_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
-	BuddyActions_Status_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/Status"
-	BuddyActions_OnPacket_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
-	BuddyActions_BeforeLogout_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
+	BuddyActions_Healing_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
+	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
+	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
+	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
+	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -35,8 +38,11 @@ const (
 type BuddyActionsClient interface {
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Healing(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
+	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	HealOnce(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
+	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
+	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -69,6 +75,16 @@ func (c *buddyActionsClient) Healing(ctx context.Context, in *ToggleRequest, opt
 	return out, nil
 }
 
+func (c *buddyActionsClient) Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Assist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) HealOnce(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -83,6 +99,26 @@ func (c *buddyActionsClient) Status(ctx context.Context, in *emptypb.Empty, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InteractionLease)
+	err := c.cc.Invoke(ctx, BuddyActions_AcquireInteraction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ReleaseInteraction_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,8 +151,11 @@ func (c *buddyActionsClient) BeforeLogout(ctx context.Context, in *emptypb.Empty
 type BuddyActionsServer interface {
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Healing(context.Context, *ToggleRequest) (*State, error)
+	Assist(context.Context, *ToggleRequest) (*State, error)
 	HealOnce(context.Context, *emptypb.Empty) (*State, error)
 	Status(context.Context, *emptypb.Empty) (*State, error)
+	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
+	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyActionsServer()
@@ -135,11 +174,20 @@ func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (
 func (UnimplementedBuddyActionsServer) Healing(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Healing not implemented")
 }
+func (UnimplementedBuddyActionsServer) Assist(context.Context, *ToggleRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Assist not implemented")
+}
 func (UnimplementedBuddyActionsServer) HealOnce(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealOnce not implemented")
 }
 func (UnimplementedBuddyActionsServer) Status(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedBuddyActionsServer) AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcquireInteraction not implemented")
+}
+func (UnimplementedBuddyActionsServer) ReleaseInteraction(context.Context, *InteractionRelease) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleaseInteraction not implemented")
 }
 func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -204,6 +252,24 @@ func _BuddyActions_Healing_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_Assist_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ToggleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Assist(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Assist_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Assist(ctx, req.(*ToggleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_HealOnce_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -236,6 +302,42 @@ func _BuddyActions_Status_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).Status(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_AcquireInteraction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InteractionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AcquireInteraction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AcquireInteraction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AcquireInteraction(ctx, req.(*InteractionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_ReleaseInteraction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InteractionRelease)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ReleaseInteraction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ReleaseInteraction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ReleaseInteraction(ctx, req.(*InteractionRelease))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -292,12 +394,24 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BuddyActions_Healing_Handler,
 		},
 		{
+			MethodName: "Assist",
+			Handler:    _BuddyActions_Assist_Handler,
+		},
+		{
 			MethodName: "HealOnce",
 			Handler:    _BuddyActions_HealOnce_Handler,
 		},
 		{
 			MethodName: "Status",
 			Handler:    _BuddyActions_Status_Handler,
+		},
+		{
+			MethodName: "AcquireInteraction",
+			Handler:    _BuddyActions_AcquireInteraction_Handler,
+		},
+		{
+			MethodName: "ReleaseInteraction",
+			Handler:    _BuddyActions_ReleaseInteraction_Handler,
 		},
 		{
 			MethodName: "OnPacket",

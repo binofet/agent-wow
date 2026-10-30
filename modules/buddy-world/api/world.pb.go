@@ -62,6 +62,10 @@ type PlayerState struct {
 	ObservationAgeMs uint64  `protobuf:"varint,31,opt,name=observation_age_ms,json=observationAgeMs,proto3" json:"observation_age_ms,omitempty"`
 	PlayerFlags      uint32  `protobuf:"varint,32,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
 	DynamicFlags     uint32  `protobuf:"varint,33,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	TargetKnown      bool    `protobuf:"varint,34,opt,name=target_known,json=targetKnown,proto3" json:"target_known,omitempty"`
+	TargetGuid       uint64  `protobuf:"varint,35,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	FactionTemplate  uint32  `protobuf:"varint,36,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
+	UnitFlags_2      uint32  `protobuf:"varint,37,opt,name=unit_flags_2,json=unitFlags2,proto3" json:"unit_flags_2,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -327,6 +331,34 @@ func (x *PlayerState) GetDynamicFlags() uint32 {
 	return 0
 }
 
+func (x *PlayerState) GetTargetKnown() bool {
+	if x != nil {
+		return x.TargetKnown
+	}
+	return false
+}
+
+func (x *PlayerState) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *PlayerState) GetFactionTemplate() uint32 {
+	if x != nil {
+		return x.FactionTemplate
+	}
+	return 0
+}
+
+func (x *PlayerState) GetUnitFlags_2() uint32 {
+	if x != nil {
+		return x.UnitFlags_2
+	}
+	return 0
+}
+
 type SnapshotRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -363,6 +395,449 @@ func (*SnapshotRequest) Descriptor() ([]byte, []int) {
 	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{1}
 }
 
+// Public, server-observed creature state. No database lookup or invented name.
+type CreatureState struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Guid             uint64                 `protobuf:"varint,1,opt,name=guid,proto3" json:"guid,omitempty"`
+	Entry            uint32                 `protobuf:"varint,2,opt,name=entry,proto3" json:"entry,omitempty"`
+	NpcFlags         uint32                 `protobuf:"varint,3,opt,name=npc_flags,json=npcFlags,proto3" json:"npc_flags,omitempty"`
+	Present          bool                   `protobuf:"varint,4,opt,name=present,proto3" json:"present,omitempty"`
+	MapKnown         bool                   `protobuf:"varint,5,opt,name=map_known,json=mapKnown,proto3" json:"map_known,omitempty"`
+	MapId            uint32                 `protobuf:"varint,6,opt,name=map_id,json=mapId,proto3" json:"map_id,omitempty"`
+	PositionKnown    bool                   `protobuf:"varint,7,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
+	X                float32                `protobuf:"fixed32,8,opt,name=x,proto3" json:"x,omitempty"`
+	Y                float32                `protobuf:"fixed32,9,opt,name=y,proto3" json:"y,omitempty"`
+	Z                float32                `protobuf:"fixed32,10,opt,name=z,proto3" json:"z,omitempty"`
+	Orientation      float32                `protobuf:"fixed32,11,opt,name=orientation,proto3" json:"orientation,omitempty"`
+	PositionAgeMs    uint64                 `protobuf:"varint,12,opt,name=position_age_ms,json=positionAgeMs,proto3" json:"position_age_ms,omitempty"`
+	PositionRevision uint64                 `protobuf:"varint,13,opt,name=position_revision,json=positionRevision,proto3" json:"position_revision,omitempty"`
+	ObservationAgeMs uint64                 `protobuf:"varint,14,opt,name=observation_age_ms,json=observationAgeMs,proto3" json:"observation_age_ms,omitempty"`
+	HealthKnown      bool                   `protobuf:"varint,15,opt,name=health_known,json=healthKnown,proto3" json:"health_known,omitempty"`
+	Health           uint32                 `protobuf:"varint,16,opt,name=health,proto3" json:"health,omitempty"`
+	MaxHealth        uint32                 `protobuf:"varint,17,opt,name=max_health,json=maxHealth,proto3" json:"max_health,omitempty"`
+	AliveKnown       bool                   `protobuf:"varint,18,opt,name=alive_known,json=aliveKnown,proto3" json:"alive_known,omitempty"`
+	Alive            bool                   `protobuf:"varint,19,opt,name=alive,proto3" json:"alive,omitempty"`
+	UnitFlags        uint32                 `protobuf:"varint,20,opt,name=unit_flags,json=unitFlags,proto3" json:"unit_flags,omitempty"`
+	DynamicFlags     uint32                 `protobuf:"varint,21,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	// These distances use the last SERVER position, never predicted motion.
+	// Consumers must use the companion controller's estimate for current range.
+	DistanceToSelfObservedKnown  bool    `protobuf:"varint,22,opt,name=distance_to_self_observed_known,json=distanceToSelfObservedKnown,proto3" json:"distance_to_self_observed_known,omitempty"`
+	DistanceToSelfObserved       float32 `protobuf:"fixed32,23,opt,name=distance_to_self_observed,json=distanceToSelfObserved,proto3" json:"distance_to_self_observed,omitempty"`
+	DistanceToOwnerObservedKnown bool    `protobuf:"varint,24,opt,name=distance_to_owner_observed_known,json=distanceToOwnerObservedKnown,proto3" json:"distance_to_owner_observed_known,omitempty"`
+	DistanceToOwnerObserved      float32 `protobuf:"fixed32,25,opt,name=distance_to_owner_observed,json=distanceToOwnerObserved,proto3" json:"distance_to_owner_observed,omitempty"`
+	MovementFlags                uint32  `protobuf:"varint,26,opt,name=movement_flags,json=movementFlags,proto3" json:"movement_flags,omitempty"`
+	FactionTemplate              uint32  `protobuf:"varint,27,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
+	TargetKnown                  bool    `protobuf:"varint,28,opt,name=target_known,json=targetKnown,proto3" json:"target_known,omitempty"`
+	TargetGuid                   uint64  `protobuf:"varint,29,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	UnitFlags_2                  uint32  `protobuf:"varint,30,opt,name=unit_flags_2,json=unitFlags2,proto3" json:"unit_flags_2,omitempty"`
+	// Distinct from UNIT_FIELD_TARGET selection: actual ATTACKSTART evidence.
+	AttackVictimKnown bool   `protobuf:"varint,31,opt,name=attack_victim_known,json=attackVictimKnown,proto3" json:"attack_victim_known,omitempty"`
+	AttackVictimGuid  uint64 `protobuf:"varint,32,opt,name=attack_victim_guid,json=attackVictimGuid,proto3" json:"attack_victim_guid,omitempty"`
+	AttackAgeMs       uint64 `protobuf:"varint,33,opt,name=attack_age_ms,json=attackAgeMs,proto3" json:"attack_age_ms,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CreatureState) Reset() {
+	*x = CreatureState{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatureState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatureState) ProtoMessage() {}
+
+func (x *CreatureState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatureState.ProtoReflect.Descriptor instead.
+func (*CreatureState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CreatureState) GetGuid() uint64 {
+	if x != nil {
+		return x.Guid
+	}
+	return 0
+}
+
+func (x *CreatureState) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *CreatureState) GetNpcFlags() uint32 {
+	if x != nil {
+		return x.NpcFlags
+	}
+	return 0
+}
+
+func (x *CreatureState) GetPresent() bool {
+	if x != nil {
+		return x.Present
+	}
+	return false
+}
+
+func (x *CreatureState) GetMapKnown() bool {
+	if x != nil {
+		return x.MapKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetMapId() uint32 {
+	if x != nil {
+		return x.MapId
+	}
+	return 0
+}
+
+func (x *CreatureState) GetPositionKnown() bool {
+	if x != nil {
+		return x.PositionKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetX() float32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *CreatureState) GetY() float32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *CreatureState) GetZ() float32 {
+	if x != nil {
+		return x.Z
+	}
+	return 0
+}
+
+func (x *CreatureState) GetOrientation() float32 {
+	if x != nil {
+		return x.Orientation
+	}
+	return 0
+}
+
+func (x *CreatureState) GetPositionAgeMs() uint64 {
+	if x != nil {
+		return x.PositionAgeMs
+	}
+	return 0
+}
+
+func (x *CreatureState) GetPositionRevision() uint64 {
+	if x != nil {
+		return x.PositionRevision
+	}
+	return 0
+}
+
+func (x *CreatureState) GetObservationAgeMs() uint64 {
+	if x != nil {
+		return x.ObservationAgeMs
+	}
+	return 0
+}
+
+func (x *CreatureState) GetHealthKnown() bool {
+	if x != nil {
+		return x.HealthKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetHealth() uint32 {
+	if x != nil {
+		return x.Health
+	}
+	return 0
+}
+
+func (x *CreatureState) GetMaxHealth() uint32 {
+	if x != nil {
+		return x.MaxHealth
+	}
+	return 0
+}
+
+func (x *CreatureState) GetAliveKnown() bool {
+	if x != nil {
+		return x.AliveKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetAlive() bool {
+	if x != nil {
+		return x.Alive
+	}
+	return false
+}
+
+func (x *CreatureState) GetUnitFlags() uint32 {
+	if x != nil {
+		return x.UnitFlags
+	}
+	return 0
+}
+
+func (x *CreatureState) GetDynamicFlags() uint32 {
+	if x != nil {
+		return x.DynamicFlags
+	}
+	return 0
+}
+
+func (x *CreatureState) GetDistanceToSelfObservedKnown() bool {
+	if x != nil {
+		return x.DistanceToSelfObservedKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetDistanceToSelfObserved() float32 {
+	if x != nil {
+		return x.DistanceToSelfObserved
+	}
+	return 0
+}
+
+func (x *CreatureState) GetDistanceToOwnerObservedKnown() bool {
+	if x != nil {
+		return x.DistanceToOwnerObservedKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetDistanceToOwnerObserved() float32 {
+	if x != nil {
+		return x.DistanceToOwnerObserved
+	}
+	return 0
+}
+
+func (x *CreatureState) GetMovementFlags() uint32 {
+	if x != nil {
+		return x.MovementFlags
+	}
+	return 0
+}
+
+func (x *CreatureState) GetFactionTemplate() uint32 {
+	if x != nil {
+		return x.FactionTemplate
+	}
+	return 0
+}
+
+func (x *CreatureState) GetTargetKnown() bool {
+	if x != nil {
+		return x.TargetKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *CreatureState) GetUnitFlags_2() uint32 {
+	if x != nil {
+		return x.UnitFlags_2
+	}
+	return 0
+}
+
+func (x *CreatureState) GetAttackVictimKnown() bool {
+	if x != nil {
+		return x.AttackVictimKnown
+	}
+	return false
+}
+
+func (x *CreatureState) GetAttackVictimGuid() uint64 {
+	if x != nil {
+		return x.AttackVictimGuid
+	}
+	return 0
+}
+
+func (x *CreatureState) GetAttackAgeMs() uint64 {
+	if x != nil {
+		return x.AttackAgeMs
+	}
+	return 0
+}
+
+type QuestLogEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Zero-based server quest-log slot; 0 quest_id means empty.
+	Slot          uint32 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	QuestId       uint32 `protobuf:"varint,2,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuestLogEntry) Reset() {
+	*x = QuestLogEntry{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuestLogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuestLogEntry) ProtoMessage() {}
+
+func (x *QuestLogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuestLogEntry.ProtoReflect.Descriptor instead.
+func (*QuestLogEntry) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *QuestLogEntry) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *QuestLogEntry) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+type BackpackSlot struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Logical backpack bag0, slots0..15; equipment and equipped bags excluded.
+	Bag        uint32 `protobuf:"varint,1,opt,name=bag,proto3" json:"bag,omitempty"`
+	Slot       uint32 `protobuf:"varint,2,opt,name=slot,proto3" json:"slot,omitempty"`
+	ItemGuid   uint64 `protobuf:"varint,3,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry      uint32 `protobuf:"varint,4,opt,name=entry,proto3" json:"entry,omitempty"`
+	StackCount uint32 `protobuf:"varint,5,opt,name=stack_count,json=stackCount,proto3" json:"stack_count,omitempty"`
+	// Requires an owned ITEM/CONTAINER observation matching the current GUID.
+	MetadataKnown bool `protobuf:"varint,6,opt,name=metadata_known,json=metadataKnown,proto3" json:"metadata_known,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackpackSlot) Reset() {
+	*x = BackpackSlot{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackpackSlot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackpackSlot) ProtoMessage() {}
+
+func (x *BackpackSlot) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackpackSlot.ProtoReflect.Descriptor instead.
+func (*BackpackSlot) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *BackpackSlot) GetBag() uint32 {
+	if x != nil {
+		return x.Bag
+	}
+	return 0
+}
+
+func (x *BackpackSlot) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *BackpackSlot) GetItemGuid() uint64 {
+	if x != nil {
+		return x.ItemGuid
+	}
+	return 0
+}
+
+func (x *BackpackSlot) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *BackpackSlot) GetStackCount() uint32 {
+	if x != nil {
+		return x.StackCount
+	}
+	return 0
+}
+
+func (x *BackpackSlot) GetMetadataKnown() bool {
+	if x != nil {
+		return x.MetadataKnown
+	}
+	return false
+}
+
 type SnapshotResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Self             *PlayerState           `protobuf:"bytes,1,opt,name=self,proto3" json:"self,omitempty"`
@@ -373,13 +848,27 @@ type SnapshotResponse struct {
 	// Fixed diagnostic strings only; no packet payloads or player text.
 	LastParseError  string `protobuf:"bytes,6,opt,name=last_parse_error,json=lastParseError,proto3" json:"last_parse_error,omitempty"`
 	ObservedPackets uint64 `protobuf:"varint,7,opt,name=observed_packets,json=observedPackets,proto3" json:"observed_packets,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// At most64 present questgivers, nearest observed owner first (self fallback).
+	QuestGivers          []*CreatureState `protobuf:"bytes,8,rep,name=quest_givers,json=questGivers,proto3" json:"quest_givers,omitempty"`
+	SelfQuestLogKnown    bool             `protobuf:"varint,9,opt,name=self_quest_log_known,json=selfQuestLogKnown,proto3" json:"self_quest_log_known,omitempty"`
+	SelfQuestLogRevision uint64           `protobuf:"varint,10,opt,name=self_quest_log_revision,json=selfQuestLogRevision,proto3" json:"self_quest_log_revision,omitempty"`
+	// Exactly25 slots when known; only the current character's quest log.
+	SelfQuestLog []*QuestLogEntry `protobuf:"bytes,11,rep,name=self_quest_log,json=selfQuestLog,proto3" json:"self_quest_log,omitempty"`
+	// At most64 dead creatures flagged LOOTABLE for this receiving character.
+	LootableCorpses  []*CreatureState `protobuf:"bytes,12,rep,name=lootable_corpses,json=lootableCorpses,proto3" json:"lootable_corpses,omitempty"`
+	BackpackKnown    bool             `protobuf:"varint,13,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
+	BackpackRevision uint64           `protobuf:"varint,14,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	// Exactly16 slots when known; empty slots have item_guid0.
+	Backpack []*BackpackSlot `protobuf:"bytes,15,rep,name=backpack,proto3" json:"backpack,omitempty"`
+	// Only the currently observed owner's target, if present in the NPC cache.
+	OwnerTarget   *CreatureState `protobuf:"bytes,16,opt,name=owner_target,json=ownerTarget,proto3" json:"owner_target,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
 	*x = SnapshotResponse{}
-	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -391,7 +880,7 @@ func (x *SnapshotResponse) String() string {
 func (*SnapshotResponse) ProtoMessage() {}
 
 func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_world_world_proto_msgTypes[2]
+	mi := &file_modules_buddy_world_world_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -404,7 +893,7 @@ func (x *SnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotResponse.ProtoReflect.Descriptor instead.
 func (*SnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SnapshotResponse) GetSelf() *PlayerState {
@@ -456,11 +945,74 @@ func (x *SnapshotResponse) GetObservedPackets() uint64 {
 	return 0
 }
 
+func (x *SnapshotResponse) GetQuestGivers() []*CreatureState {
+	if x != nil {
+		return x.QuestGivers
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetSelfQuestLogKnown() bool {
+	if x != nil {
+		return x.SelfQuestLogKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetSelfQuestLogRevision() uint64 {
+	if x != nil {
+		return x.SelfQuestLogRevision
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetSelfQuestLog() []*QuestLogEntry {
+	if x != nil {
+		return x.SelfQuestLog
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetLootableCorpses() []*CreatureState {
+	if x != nil {
+		return x.LootableCorpses
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetBackpackKnown() bool {
+	if x != nil {
+		return x.BackpackKnown
+	}
+	return false
+}
+
+func (x *SnapshotResponse) GetBackpackRevision() uint64 {
+	if x != nil {
+		return x.BackpackRevision
+	}
+	return 0
+}
+
+func (x *SnapshotResponse) GetBackpack() []*BackpackSlot {
+	if x != nil {
+		return x.Backpack
+	}
+	return nil
+}
+
+func (x *SnapshotResponse) GetOwnerTarget() *CreatureState {
+	if x != nil {
+		return x.OwnerTarget
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
-	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xad\b\n" +
+	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xbe\t\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -501,8 +1053,65 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\trun_speed\x18\x1e \x01(\x02R\brunSpeed\x12,\n" +
 	"\x12observation_age_ms\x18\x1f \x01(\x04R\x10observationAgeMs\x12!\n" +
 	"\fplayer_flags\x18  \x01(\rR\vplayerFlags\x12#\n" +
-	"\rdynamic_flags\x18! \x01(\rR\fdynamicFlags\"\x11\n" +
-	"\x0fSnapshotRequest\"\xd2\x02\n" +
+	"\rdynamic_flags\x18! \x01(\rR\fdynamicFlags\x12!\n" +
+	"\ftarget_known\x18\" \x01(\bR\vtargetKnown\x12\x1f\n" +
+	"\vtarget_guid\x18# \x01(\x04R\n" +
+	"targetGuid\x12)\n" +
+	"\x10faction_template\x18$ \x01(\rR\x0ffactionTemplate\x12 \n" +
+	"\funit_flags_2\x18% \x01(\rR\n" +
+	"unitFlags2\"\x11\n" +
+	"\x0fSnapshotRequest\"\xaf\t\n" +
+	"\rCreatureState\x12\x12\n" +
+	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
+	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x1b\n" +
+	"\tnpc_flags\x18\x03 \x01(\rR\bnpcFlags\x12\x18\n" +
+	"\apresent\x18\x04 \x01(\bR\apresent\x12\x1b\n" +
+	"\tmap_known\x18\x05 \x01(\bR\bmapKnown\x12\x15\n" +
+	"\x06map_id\x18\x06 \x01(\rR\x05mapId\x12%\n" +
+	"\x0eposition_known\x18\a \x01(\bR\rpositionKnown\x12\f\n" +
+	"\x01x\x18\b \x01(\x02R\x01x\x12\f\n" +
+	"\x01y\x18\t \x01(\x02R\x01y\x12\f\n" +
+	"\x01z\x18\n" +
+	" \x01(\x02R\x01z\x12 \n" +
+	"\vorientation\x18\v \x01(\x02R\vorientation\x12&\n" +
+	"\x0fposition_age_ms\x18\f \x01(\x04R\rpositionAgeMs\x12+\n" +
+	"\x11position_revision\x18\r \x01(\x04R\x10positionRevision\x12,\n" +
+	"\x12observation_age_ms\x18\x0e \x01(\x04R\x10observationAgeMs\x12!\n" +
+	"\fhealth_known\x18\x0f \x01(\bR\vhealthKnown\x12\x16\n" +
+	"\x06health\x18\x10 \x01(\rR\x06health\x12\x1d\n" +
+	"\n" +
+	"max_health\x18\x11 \x01(\rR\tmaxHealth\x12\x1f\n" +
+	"\valive_known\x18\x12 \x01(\bR\n" +
+	"aliveKnown\x12\x14\n" +
+	"\x05alive\x18\x13 \x01(\bR\x05alive\x12\x1d\n" +
+	"\n" +
+	"unit_flags\x18\x14 \x01(\rR\tunitFlags\x12#\n" +
+	"\rdynamic_flags\x18\x15 \x01(\rR\fdynamicFlags\x12D\n" +
+	"\x1fdistance_to_self_observed_known\x18\x16 \x01(\bR\x1bdistanceToSelfObservedKnown\x129\n" +
+	"\x19distance_to_self_observed\x18\x17 \x01(\x02R\x16distanceToSelfObserved\x12F\n" +
+	" distance_to_owner_observed_known\x18\x18 \x01(\bR\x1cdistanceToOwnerObservedKnown\x12;\n" +
+	"\x1adistance_to_owner_observed\x18\x19 \x01(\x02R\x17distanceToOwnerObserved\x12%\n" +
+	"\x0emovement_flags\x18\x1a \x01(\rR\rmovementFlags\x12)\n" +
+	"\x10faction_template\x18\x1b \x01(\rR\x0ffactionTemplate\x12!\n" +
+	"\ftarget_known\x18\x1c \x01(\bR\vtargetKnown\x12\x1f\n" +
+	"\vtarget_guid\x18\x1d \x01(\x04R\n" +
+	"targetGuid\x12 \n" +
+	"\funit_flags_2\x18\x1e \x01(\rR\n" +
+	"unitFlags2\x12.\n" +
+	"\x13attack_victim_known\x18\x1f \x01(\bR\x11attackVictimKnown\x12,\n" +
+	"\x12attack_victim_guid\x18  \x01(\x04R\x10attackVictimGuid\x12\"\n" +
+	"\rattack_age_ms\x18! \x01(\x04R\vattackAgeMs\">\n" +
+	"\rQuestLogEntry\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x19\n" +
+	"\bquest_id\x18\x02 \x01(\rR\aquestId\"\xaf\x01\n" +
+	"\fBackpackSlot\x12\x10\n" +
+	"\x03bag\x18\x01 \x01(\rR\x03bag\x12\x12\n" +
+	"\x04slot\x18\x02 \x01(\rR\x04slot\x12\x1b\n" +
+	"\titem_guid\x18\x03 \x01(\x04R\bitemGuid\x12\x14\n" +
+	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
+	"\vstack_count\x18\x05 \x01(\rR\n" +
+	"stackCount\x12%\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x83\a\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -511,7 +1120,17 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\vlast_opcode\x18\x05 \x01(\rR\n" +
 	"lastOpcode\x12(\n" +
 	"\x10last_parse_error\x18\x06 \x01(\tR\x0elastParseError\x12)\n" +
-	"\x10observed_packets\x18\a \x01(\x04R\x0fobservedPackets2\xb0\x01\n" +
+	"\x10observed_packets\x18\a \x01(\x04R\x0fobservedPackets\x12H\n" +
+	"\fquest_givers\x18\b \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\vquestGivers\x12/\n" +
+	"\x14self_quest_log_known\x18\t \x01(\bR\x11selfQuestLogKnown\x125\n" +
+	"\x17self_quest_log_revision\x18\n" +
+	" \x01(\x04R\x14selfQuestLogRevision\x12K\n" +
+	"\x0eself_quest_log\x18\v \x03(\v2%.warcraftbuddy.world.v1.QuestLogEntryR\fselfQuestLog\x12P\n" +
+	"\x10lootable_corpses\x18\f \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x0flootableCorpses\x12%\n" +
+	"\x0ebackpack_known\x18\r \x01(\bR\rbackpackKnown\x12+\n" +
+	"\x11backpack_revision\x18\x0e \x01(\x04R\x10backpackRevision\x12@\n" +
+	"\bbackpack\x18\x0f \x03(\v2$.warcraftbuddy.world.v1.BackpackSlotR\bbackpack\x12H\n" +
+	"\fowner_target\x18\x10 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\vownerTarget2\xb0\x01\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12C\n" +
@@ -529,26 +1148,34 @@ func file_modules_buddy_world_world_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_world_world_proto_rawDescData
 }
 
-var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*PlayerState)(nil),      // 0: warcraftbuddy.world.v1.PlayerState
 	(*SnapshotRequest)(nil),  // 1: warcraftbuddy.world.v1.SnapshotRequest
-	(*SnapshotResponse)(nil), // 2: warcraftbuddy.world.v1.SnapshotResponse
-	(*v1.WorldPacket)(nil),   // 3: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),    // 4: google.protobuf.Empty
+	(*CreatureState)(nil),    // 2: warcraftbuddy.world.v1.CreatureState
+	(*QuestLogEntry)(nil),    // 3: warcraftbuddy.world.v1.QuestLogEntry
+	(*BackpackSlot)(nil),     // 4: warcraftbuddy.world.v1.BackpackSlot
+	(*SnapshotResponse)(nil), // 5: warcraftbuddy.world.v1.SnapshotResponse
+	(*v1.WorldPacket)(nil),   // 6: agentwow.module.v1.WorldPacket
+	(*emptypb.Empty)(nil),    // 7: google.protobuf.Empty
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	0, // 0: warcraftbuddy.world.v1.SnapshotResponse.self:type_name -> warcraftbuddy.world.v1.PlayerState
 	0, // 1: warcraftbuddy.world.v1.SnapshotResponse.owner:type_name -> warcraftbuddy.world.v1.PlayerState
-	1, // 2: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	3, // 3: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	2, // 4: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	4, // 5: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	2, // 2: warcraftbuddy.world.v1.SnapshotResponse.quest_givers:type_name -> warcraftbuddy.world.v1.CreatureState
+	3, // 3: warcraftbuddy.world.v1.SnapshotResponse.self_quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	2, // 4: warcraftbuddy.world.v1.SnapshotResponse.lootable_corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	4, // 5: warcraftbuddy.world.v1.SnapshotResponse.backpack:type_name -> warcraftbuddy.world.v1.BackpackSlot
+	2, // 6: warcraftbuddy.world.v1.SnapshotResponse.owner_target:type_name -> warcraftbuddy.world.v1.CreatureState
+	1, // 7: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	6, // 8: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	5, // 9: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	7, // 10: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	9, // [9:11] is the sub-list for method output_type
+	7, // [7:9] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -562,7 +1189,7 @@ func file_modules_buddy_world_world_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_world_world_proto_rawDesc), len(file_modules_buddy_world_world_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

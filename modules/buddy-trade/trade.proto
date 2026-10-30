@@ -1,0 +1,56 @@
+syntax = "proto3";
+package warcraftbuddy.trade.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-trade/api;tradev1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message Item {
+  uint32 slot = 1;
+  uint32 entry = 2;
+  uint32 count = 3;
+  uint64 item_guid = 4;
+  string name = 5;
+  bool metadata_known = 6;
+}
+message State {
+  string session_id = 1;
+  uint64 revision = 2;
+  string phase = 3;
+  uint64 partner_guid = 4;
+  bool partner_accepted = 5;
+  bool accept_transport_written = 6;
+  // Our requested offers are transport intentions; the server does not always
+  // echo them to their sender. Joel reviews them in his normal trade window.
+  repeated Item own_requested_items = 7;
+  uint32 own_requested_copper = 8;
+  repeated Item partner_items = 9;
+  uint32 partner_copper = 10;
+  uint32 last_server_status = 11;
+  string reason = 12;
+  uint64 completed_trades = 13;
+  uint64 transport_writes = 14;
+  uint64 malformed_packets = 15;
+  bool backpack_known = 16;
+  uint64 backpack_revision = 17;
+  repeated Item backpack = 18;
+  string limitation = 19;
+}
+message BoundRequest { string session_id = 1; uint64 revision = 2; }
+message ItemRequest {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 backpack_revision = 3;
+  uint32 backpack_slot = 4;
+  uint64 expected_item_guid = 5;
+  uint32 trade_slot = 6;
+}
+message GoldRequest { string session_id = 1; uint64 revision = 2; uint32 copper = 3; }
+service BuddyTrade {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Open(BoundRequest) returns (State);
+  rpc OfferItem(ItemRequest) returns (State);
+  rpc OfferGold(GoldRequest) returns (State);
+  rpc Cancel(BoundRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

@@ -146,7 +146,7 @@ func TestFollowRefusesUnknownStaleUnsafeRangeMapAndSpeed(t *testing.T) {
 		change(f.world)
 		toggle(t, s, true)
 		s.Tick(context.Background())
-		if state(t, s).Following || len(f.packets) != 0 {
+		if state(t, s).Moving || len(f.packets) != 0 {
 			t.Fatalf("unsafe state allowed: %+v", state(t, s))
 		}
 	}
@@ -162,7 +162,7 @@ func TestStationaryOldPositionIsKnownButLateControllerStops(t *testing.T) {
 	}
 	advance(time.Second)
 	s.Tick(context.Background())
-	if got := state(t, s); got.Following || got.Moving || got.Reason != "follow_tick_late" {
+	if got := state(t, s); !got.Following || got.Moving || got.Reason != "follow_tick_late" {
 		t.Fatalf("late %+v", got)
 	}
 }
@@ -181,14 +181,14 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 			case "lease":
-				advance(15 * time.Minute)
+				advance(4 * time.Hour)
 				s.Tick(context.Background())
 			case "lost":
 				f.failSnapshot = true
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 			}
-			if got := state(t, s); got.Moving || got.Following {
+			if got := state(t, s); got.Moving || (got.Following != (mode == "correction" || mode == "lost")) {
 				t.Fatalf("failed to stop %+v", got)
 			}
 			if len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
@@ -419,7 +419,7 @@ func TestGeneratedGRPCControlsAndState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	response, err := client.Follow(ctx, &actionsv1.ToggleRequest{Enabled: true})
-	if err != nil || !response.Following || response.Moving || response.FollowLeaseRemainingMs != 900000 {
+	if err != nil || !response.Following || response.Moving || response.FollowLeaseRemainingMs != 14400000 {
 		t.Fatalf("follow %+v err%v", response, err)
 	}
 	response, err = client.Healing(ctx, &actionsv1.ToggleRequest{Enabled: true})

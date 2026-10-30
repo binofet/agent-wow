@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ˆ
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"­
+î
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"¾	
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -73,8 +73,65 @@ walk_speed (R	walkSpeed
 	run_speed (RrunSpeed,
 observation_age_ms (RobservationAgeMs!
 player_flags  (RplayerFlags#
-dynamic_flags! (RdynamicFlags"
-SnapshotRequest"Ò
+dynamic_flags! (RdynamicFlags!
+target_known" (RtargetKnown
+target_guid# (R
+targetGuid)
+faction_template$ (RfactionTemplate 
+unit_flags_2% (R
+unitFlags2"
+SnapshotRequest"¯	
+CreatureState
+guid (Rguid
+entry (Rentry
+	npc_flags (RnpcFlags
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y	 (Ry
+z
+ (Rz 
+orientation (Rorientation&
+position_age_ms (RpositionAgeMs+
+position_revision (RpositionRevision,
+observation_age_ms (RobservationAgeMs!
+health_known (RhealthKnown
+health (Rhealth
+
+max_health (R	maxHealth
+alive_known (R
+aliveKnown
+alive (Ralive
+
+unit_flags (R	unitFlags#
+dynamic_flags (RdynamicFlagsD
+distance_to_self_observed_known (RdistanceToSelfObservedKnown9
+distance_to_self_observed (RdistanceToSelfObservedF
+ distance_to_owner_observed_known (RdistanceToOwnerObservedKnown;
+distance_to_owner_observed (RdistanceToOwnerObserved%
+movement_flags (RmovementFlags)
+faction_template (RfactionTemplate!
+target_known (RtargetKnown
+target_guid (R
+targetGuid 
+unit_flags_2 (R
+unitFlags2.
+attack_victim_known (RattackVictimKnown,
+attack_victim_guid  (RattackVictimGuid"
+attack_age_ms! (RattackAgeMs">
+QuestLogEntry
+slot (Rslot
+quest_id (RquestId"¯
+BackpackSlot
+bag (Rbag
+slot (Rslot
+	item_guid (RitemGuid
+entry (Rentry
+stack_count (R
+stackCount%
+metadata_known (RmetadataKnown"ƒ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -83,7 +140,17 @@ walk_speed (R	walkSpeed
 last_opcode (R
 lastOpcode(
 last_parse_error (	RlastParseError)
-observed_packets (RobservedPackets2°
+observed_packets (RobservedPacketsH
+quest_givers (2%.warcraftbuddy.world.v1.CreatureStateRquestGivers/
+self_quest_log_known	 (RselfQuestLogKnown5
+self_quest_log_revision
+ (RselfQuestLogRevisionK
+self_quest_log (2%.warcraftbuddy.world.v1.QuestLogEntryRselfQuestLogP
+lootable_corpses (2%.warcraftbuddy.world.v1.CreatureStateRlootableCorpses%
+backpack_known (RbackpackKnown+
+backpack_revision (RbackpackRevision@
+backpack (2$.warcraftbuddy.world.v1.BackpackSlotRbackpackH
+owner_target (2%.warcraftbuddy.world.v1.CreatureStateRownerTarget2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC

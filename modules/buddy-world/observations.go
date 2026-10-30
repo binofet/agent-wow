@@ -1,0 +1,258 @@
+package buddyworld
+
+import (
+	"maps"
+	"math"
+	"sort"
+	"time"
+
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+)
+
+const (
+	maxCreatures       = 128
+	maxItems           = 128
+	maxCreatureResults = 64
+	objectEntry        = 3
+	unitNPCFlags       = 0x52 // OBJECT_END6 + UNIT_NPC_FLAGS0x4c
+	questLogFirst      = 0x9e
+	backpackFirst      = 0x172
+	itemOwner          = 6
+	itemStack          = 0xe
+)
+
+// Maps are shallow-cloned per packet. target copies each touched object once,
+// so malformed packet rollback never mutates previously committed observations.
+type observations struct {
+	players      [2]observed
+	creatures    map[uint64]*observed
+	items        map[uint64]*observed
+	edited       map[uint64]bool
+	itemRevision uint64
+}
+
+func (s observations) clone() observations {
+	s.creatures = maps.Clone(s.creatures)
+	s.items = maps.Clone(s.items)
+	s.edited = make(map[uint64]bool)
+	return s
+}
+func (s *observations) target(guid uint64) *observed {
+	if p := player(&s.players, guid); p != nil {
+		return p
+	}
+	objects := s.creatures
+	if objects[guid] == nil {
+		objects = s.items
+	}
+	p := objects[guid]
+	if p == nil {
+		return nil
+	}
+	if !s.edited[guid] {
+		copy := *p
+		p = &copy
+		objects[guid] = p
+		s.edited[guid] = true
+	}
+	return p
+}
+func (s *observations) remove(guid uint64, now time.Time) {
+	if p := player(&s.players, guid); p != nil {
+		markAbsent(p, now)
+	}
+	delete(s.creatures, guid)
+	if s.items[guid] != nil {
+		delete(s.items, guid)
+		s.itemRevision++
+	}
+}
+func creatureGUID(guid uint64) bool { return guid>>48 == 0xf130 && guid&0xffffff != 0 }
+func itemGUID(guid uint64) bool     { return guid>>48 == 0x4000 && uint32(guid) != 0 }
+func (s *observations) reference() observed {
+	p := s.players[1]
+	if p.present && p.mapKnown && p.positionKnown {
+		return p
+	}
+	return s.players[0]
+}
+func observedDistance(a, b observed) (float64, bool) {
+	if !a.present || !b.present || !a.mapKnown || !b.mapKnown || a.mapID != b.mapID || !a.positionKnown || !b.positionKnown {
+		return 0, false
+	}
+	dx, dy, dz := float64(a.x-b.x), float64(a.y-b.y), float64(a.z-b.z)
+	return math.Sqrt(dx*dx + dy*dy + dz*dz), true
+}
+func interesting(p *observed) bool {
+	return p.fields[unitNPCFlags]&2 != 0 || p.fields[unitDynamicFlags]&1 != 0 || p.attackVictimKnown
+}
+func (s *observations) putCreature(p *observed) {
+	if s.creatures[p.guid] == nil && len(s.creatures) >= maxCreatures {
+		var worst *observed
+		ref := s.reference()
+		for _, candidate := range s.creatures {
+			if worst == nil {
+				worst = candidate
+				continue
+			}
+			if interesting(candidate) != interesting(worst) {
+				if !interesting(candidate) {
+					worst = candidate
+				}
+				continue
+			}
+			d, known := observedDistance(*candidate, ref)
+			old, oldKnown := observedDistance(*worst, ref)
+			if known && oldKnown && d != old {
+				if d > old {
+					worst = candidate
+				}
+				continue
+			}
+			if candidate.observedAt.Before(worst.observedAt) || candidate.observedAt.Equal(worst.observedAt) && candidate.guid < worst.guid {
+				worst = candidate
+			}
+		}
+		if !interesting(p) && interesting(worst) {
+			return
+		}
+		if interesting(p) == interesting(worst) {
+			d, k := observedDistance(*p, ref)
+			old, ok := observedDistance(*worst, ref)
+			if k && ok && d > old {
+				return
+			}
+		}
+		delete(s.creatures, worst.guid)
+	}
+	s.creatures[p.guid] = p
+	s.edited[p.guid] = true
+}
+func (s *observations) putItem(p *observed) {
+	if p.fields[itemOwner]|p.fields[itemOwner+1] == 0 {
+		return
+	}
+	owner := uint64(p.fields[itemOwner]) | uint64(p.fields[itemOwner+1])<<32
+	if owner != s.players[0].guid {
+		return
+	}
+	if s.items[p.guid] == nil && len(s.items) >= maxItems {
+		// Keep the currently referenced backpack objects when possible.
+		var oldest *observed
+		for _, candidate := range s.items {
+			inBackpack := false
+			for _, guid := range s.players[0].backpack {
+				if guid == candidate.guid {
+					inBackpack = true
+					break
+				}
+			}
+			if inBackpack {
+				continue
+			}
+			if oldest == nil || candidate.observedAt.Before(oldest.observedAt) || candidate.observedAt.Equal(oldest.observedAt) && candidate.guid < oldest.guid {
+				oldest = candidate
+			}
+		}
+		if oldest == nil {
+			return
+		}
+		delete(s.items, oldest.guid)
+	}
+	s.items[p.guid] = p
+	s.edited[p.guid] = true
+	s.itemRevision++
+}
+
+func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.CreatureState {
+	healthKnown := p.known[unitHealth] && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 && p.fields[unitHealth] <= p.fields[unitMaxHealth]
+	r := &worldv1.CreatureState{Guid: p.guid, Entry: p.fields[objectEntry], NpcFlags: p.fields[unitNPCFlags], Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision, ObservationAgeMs: age(now, p.observedAt), HealthKnown: healthKnown, Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth], AliveKnown: healthKnown, Alive: healthKnown && p.fields[unitHealth] > 0 && p.fields[unitDynamicFlags]&0x20 == 0, UnitFlags: p.fields[unitFlags], DynamicFlags: p.fields[unitDynamicFlags], MovementFlags: p.movementFlags}
+	r.FactionTemplate = p.fields[0x37]
+	r.UnitFlags_2 = p.fields[0x3c]
+	r.TargetKnown = p.known[0x12] && p.known[0x13]
+	r.TargetGuid = uint64(p.fields[0x12]) | uint64(p.fields[0x13])<<32
+	r.AttackVictimKnown = p.attackVictimKnown
+	r.AttackVictimGuid = p.attackVictim
+	r.AttackAgeMs = age(now, p.attackAt)
+	d, k := observedDistance(*p, s.players[0])
+	r.DistanceToSelfObservedKnown = k
+	r.DistanceToSelfObserved = float32(d)
+	d, k = observedDistance(*p, s.players[1])
+	r.DistanceToOwnerObservedKnown = k
+	r.DistanceToOwnerObserved = float32(d)
+	return r
+}
+func sortCreatures(items []*worldv1.CreatureState) {
+	rank := func(p *worldv1.CreatureState) int {
+		if p.DistanceToOwnerObservedKnown {
+			return 0
+		}
+		if p.DistanceToSelfObservedKnown {
+			return 1
+		}
+		return 2
+	}
+	sort.Slice(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		ra, rb := rank(a), rank(b)
+		if ra != rb {
+			return ra < rb
+		}
+		if ra == 0 && a.DistanceToOwnerObserved != b.DistanceToOwnerObserved {
+			return a.DistanceToOwnerObserved < b.DistanceToOwnerObserved
+		}
+		if ra == 1 && a.DistanceToSelfObserved != b.DistanceToSelfObserved {
+			return a.DistanceToSelfObserved < b.DistanceToSelfObserved
+		}
+		return a.Guid < b.Guid
+	})
+}
+func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time) {
+	owner := s.players[1]
+	target := uint64(owner.fields[0x12]) | uint64(owner.fields[0x13])<<32
+	if owner.present && owner.known[0x12] && owner.known[0x13] {
+		if p := s.creatures[target]; p != nil && p.present {
+			r.OwnerTarget = creatureSnapshot(p, s, now)
+		}
+	}
+	for _, p := range s.creatures {
+		if !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 {
+			continue
+		}
+		if p.known[unitNPCFlags] && p.fields[unitNPCFlags]&2 != 0 {
+			r.QuestGivers = append(r.QuestGivers, creatureSnapshot(p, s, now))
+		}
+		if p.known[unitDynamicFlags] && p.fields[unitDynamicFlags]&1 != 0 && p.known[unitHealth] && p.fields[unitHealth] == 0 && p.known[unitMaxHealth] && p.fields[unitMaxHealth] > 0 {
+			r.LootableCorpses = append(r.LootableCorpses, creatureSnapshot(p, s, now))
+		}
+	}
+	sortCreatures(r.QuestGivers)
+	sortCreatures(r.LootableCorpses)
+	if len(r.QuestGivers) > maxCreatureResults {
+		r.QuestGivers = r.QuestGivers[:maxCreatureResults]
+	}
+	if len(r.LootableCorpses) > maxCreatureResults {
+		r.LootableCorpses = r.LootableCorpses[:maxCreatureResults]
+	}
+	p := s.players[0]
+	r.SelfQuestLogKnown = p.questLogKnown
+	r.SelfQuestLogRevision = p.questRevision
+	if p.questLogKnown {
+		for slot, id := range p.questLog {
+			r.SelfQuestLog = append(r.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(slot), QuestId: id})
+		}
+	}
+	r.BackpackKnown = p.backpackKnown
+	r.BackpackRevision = p.backpackRevision + s.itemRevision
+	if p.backpackKnown {
+		for slot, guid := range p.backpack {
+			item := &worldv1.BackpackSlot{Bag: 0, Slot: uint32(slot), ItemGuid: guid}
+			if obj := s.items[guid]; obj != nil {
+				owner := uint64(obj.fields[itemOwner]) | uint64(obj.fields[itemOwner+1])<<32
+				item.Entry, item.StackCount = obj.fields[objectEntry], obj.fields[itemStack]
+				item.MetadataKnown = obj.known[objectEntry] && obj.known[itemStack] && obj.known[itemOwner] && obj.known[itemOwner+1] && owner == p.guid && item.Entry > 0 && item.StackCount > 0
+			}
+			r.Backpack = append(r.Backpack, item)
+		}
+	}
+}

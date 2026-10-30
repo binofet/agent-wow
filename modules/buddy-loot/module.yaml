@@ -1,0 +1,22 @@
+api_version: 1
+enabled: true
+description: Explicitly enabled automatic nearby ordinary corpse loot with bounded interaction leases and server item receipts
+requires: [buddy-world, buddy-actions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  enable: /warcraftbuddy.loot.v1.BuddyLoot/Enable
+  state: /warcraftbuddy.loot.v1.BuddyLoot/GetState
+packets:
+  SMSG_LOOT_RESPONSE: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_LOOT_RELEASE_RESPONSE: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_LOOT_REMOVED: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_LOOT_CLEAR_MONEY: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_LOOT_MONEY_NOTIFY: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_ITEM_PUSH_RESULT: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+  SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.loot.v1.BuddyLoot/BeforeLogout

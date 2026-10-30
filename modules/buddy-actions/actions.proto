@@ -5,6 +5,30 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+message ClientPosition {
+  bool known = 1;
+  bool map_known = 2;
+  uint32 map_id = 3;
+  float x = 4;
+  float y = 5;
+  float z = 6;
+  float orientation = 7;
+  // True when these coordinates come from this client's successful movement
+  // transport write. This is an estimate, not a server movement acknowledgement.
+  bool estimated = 8;
+  uint64 age_ms = 9;
+  uint64 revision = 10;
+}
+message InteractionRequest {
+  // Fixed coordination labels: loot, quests, trade.
+  string owner = 1;
+  // Required only to renew an existing lease; never returned by Status.
+  string token = 2;
+  // 0 means15000; allowed1000..30000ms.
+  uint32 lease_ms = 3;
+}
+message InteractionRelease { string owner = 1; string token = 2; }
+message InteractionLease { string token = 1; State state = 2; }
 message State {
   bool following = 1;
   bool healing = 2;
@@ -26,12 +50,26 @@ message State {
   // A failed movement-stop write blocks further movement/healing until an
   // explicit stop succeeds or a new authoritative stopped position is seen.
   bool motion_unconfirmed = 16;
+  ClientPosition position = 17;
+  string interaction_owner = 18;
+  uint64 interaction_lease_remaining_ms = 19;
+  bool assisting = 20;
+  bool known_smite = 21;
+  uint64 assist_attempts = 22;
+  uint64 assist_lease_remaining_ms = 23;
+  uint32 last_cast_spell_id = 24;
+  uint64 last_cast_target_guid = 25;
+  uint64 server_assist_starts = 26;
+  uint64 server_assist_go = 27;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
   rpc Healing(ToggleRequest) returns (State);
+  rpc Assist(ToggleRequest) returns (State);
   rpc HealOnce(google.protobuf.Empty) returns (State);
   rpc Status(google.protobuf.Empty) returns (State);
+  rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
+  rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

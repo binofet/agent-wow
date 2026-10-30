@@ -22,14 +22,24 @@ type observed struct {
 	positionRevision                                             uint64
 	positionAt, vitalsAt, observedAt                             time.Time
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
-	fields [playerFlags + 1]uint32
-	known  [playerFlags + 1]bool
+	fields            [playerFlags + 1]uint32
+	known             [playerFlags + 1]bool
+	isSelf            bool
+	questLogKnown     bool
+	questLog          [25]uint32
+	questRevision     uint64
+	backpackKnown     bool
+	backpack          [16]uint64
+	backpackRevision  uint64
+	attackVictimKnown bool
+	attackVictim      uint64
+	attackAt          time.Time
 }
 
 type Service struct {
 	worldv1.UnimplementedBuddyWorldServer
 	mu                           sync.Mutex
-	players                      [2]observed
+	state                        observations
 	now                          func() time.Time
 	ignored, malformed, observed uint64
 	lastOpcode                   uint32
@@ -37,7 +47,7 @@ type Service struct {
 }
 
 func NewService(selfGUID uint64) *Service {
-	return &Service{players: [2]observed{{guid: selfGUID}, {guid: OwnerGUID}}, now: time.Now}
+	return &Service{state: observations{players: [2]observed{{guid: selfGUID, isSelf: true}, {guid: OwnerGUID}}, creatures: make(map[uint64]*observed), items: make(map[uint64]*observed)}, now: time.Now}
 }
 
 func age(now, observed time.Time) uint64 {
@@ -57,6 +67,7 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 		Health: p.fields[unitHealth], MaxHealth: p.fields[unitMaxHealth],
 		UnitFlagsKnown: p.known[unitFlags], UnitFlags: p.fields[unitFlags],
 		PlayerFlags: p.fields[playerFlags], DynamicFlags: p.fields[unitDynamicFlags],
+		TargetKnown: p.known[0x12] && p.known[0x13], TargetGuid: uint64(p.fields[0x12]) | uint64(p.fields[0x13])<<32, FactionTemplate: p.fields[0x37], UnitFlags_2: p.fields[0x3c],
 		VitalsAgeMs: age(now, p.vitalsAt), ObservationAgeMs: age(now, p.observedAt),
 		SpeedsKnown: p.speedsKnown, WalkSpeed: p.walkSpeed, RunSpeed: p.runSpeed,
 	}
@@ -77,7 +88,9 @@ func (s *Service) Snapshot(context.Context, *worldv1.SnapshotRequest) (*worldv1.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	return &worldv1.SnapshotResponse{Self: snapshot(s.players[0], now), Owner: snapshot(s.players[1], now), IgnoredPackets: s.ignored, MalformedPackets: s.malformed, ObservedPackets: s.observed, LastOpcode: s.lastOpcode, LastParseError: s.lastError}, nil
+	r := &worldv1.SnapshotResponse{Self: snapshot(s.state.players[0], now), Owner: snapshot(s.state.players[1], now), IgnoredPackets: s.ignored, MalformedPackets: s.malformed, ObservedPackets: s.observed, LastOpcode: s.lastOpcode, LastParseError: s.lastError}
+	s.state.appendSnapshot(r, now)
+	return r, nil
 }
 
 // Callback failures are deliberately local: a malformed gameplay observation
@@ -91,13 +104,14 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	s.lastOpcode = packet.Opcode
-	next := s.players
+	next := s.state.clone()
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, s.now())
 	if err != nil {
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
-		s.players = next
+		next.edited = nil
+		s.state = next
 		s.observed++
 	} else {
 		s.ignored++

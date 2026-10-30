@@ -1,0 +1,32 @@
+syntax = "proto3";
+package warcraftbuddy.loot.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-loot/api;lootv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+message EnableRequest { bool enabled = 1; }
+message ItemReceipt { uint32 item_id = 1; uint32 count = 2; uint32 loot_slot = 3; }
+message State {
+  bool enabled = 1;
+  string phase = 2;
+  string reason = 3;
+  uint64 pending_corpse_guid = 4;
+  uint64 last_corpse_guid = 5;
+  uint64 transport_writes = 6;
+  uint64 loot_windows_observed = 7;
+  // Own SMSG_ITEM_PUSH_RESULT matched to our pending ordinary loot request.
+  uint64 items_stored_confirmed = 8;
+  uint64 loot_slots_removed = 9;
+  uint64 money_awarded_notified = 10;
+  uint64 releases_observed = 11;
+  uint32 last_loot_error = 12;
+  uint32 last_inventory_error = 13;
+  uint64 malformed_packets = 14;
+  repeated ItemReceipt recent_items = 15;
+  uint64 enabled_remaining_ms = 16;
+}
+service BuddyLoot {
+  rpc Enable(EnableRequest) returns (State);
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

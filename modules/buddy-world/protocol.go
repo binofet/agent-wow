@@ -134,10 +134,13 @@ func markAbsent(p *observed, now time.Time) {
 	p.movementKnown = false
 	p.mapKnown = false
 	p.observedAt = now
+	p.attackVictimKnown = false
+	p.attackVictim = 0
 }
 func setMap(p *observed, self observed) { p.mapID, p.mapKnown = self.mapID, self.mapKnown }
 
-func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time) (bool, error) {
+func parsePacket(op uint32, payload []byte, state *observations, now time.Time) (bool, error) {
+	players := &state.players
 	if len(payload) > maxPayload {
 		return true, errBounds
 	}
@@ -152,6 +155,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		p := &players[0]
 		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
 			markAbsent(&players[1], now)
+			state.creatures = make(map[uint64]*observed)
 		}
 		p.mapID, p.mapKnown, p.present = mapID, true, true
 		p.movementKnown = false
@@ -163,9 +167,10 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		}
 		markAbsent(&players[0], now)
 		markAbsent(&players[1], now)
+		state.creatures = make(map[uint64]*observed)
 		return true, nil
 	case opcode.SMSGUpdateObject:
-		return true, updates(c, players, now)
+		return true, updates(c, state, now)
 	case opcode.SMSGCompressedUpdateObject:
 		declared := c.u32()
 		if c.err != nil {
@@ -183,16 +188,14 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		if err != nil || closeErr != nil || len(data) != int(declared) {
 			return true, errCompressed
 		}
-		return true, updates(&cursor{b: data}, players, now)
+		return true, updates(&cursor{b: data}, state, now)
 	case opcode.SMSGDestroyObject:
 		guid := c.u64()
 		c.u8()
 		if err := c.done(); err != nil {
 			return true, err
 		}
-		if p := player(players, guid); p != nil {
-			markAbsent(p, now)
-		}
+		state.remove(guid, now)
 		return true, nil
 	case opcode.SMSGPowerUpdate:
 		guid := c.guid()
@@ -204,10 +207,39 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		if powerType >= 7 {
 			return true, errLayout
 		}
-		if p := player(players, guid); p != nil {
+		if p := state.target(guid); p != nil {
 			p.fields[unitPower1+powerType] = value
 			p.known[unitPower1+powerType] = true
 			p.vitalsAt = now
+			p.observedAt = now
+		}
+		return true, nil
+	case opcode.SMSGAttackstart:
+		attacker, victim := c.u64(), c.u64()
+		if err := c.done(); err != nil {
+			return true, err
+		}
+		if p := state.target(attacker); p != nil {
+			p.attackVictimKnown = true
+			p.attackVictim = victim
+			p.attackAt = now
+			p.observedAt = now
+		}
+		return true, nil
+	case opcode.SMSGAttackstop:
+		attacker := c.guid()
+		c.guid()
+		dead := c.u32()
+		if err := c.done(); err != nil {
+			return true, err
+		}
+		if dead > 1 {
+			return true, errLayout
+		}
+		if p := state.target(attacker); p != nil {
+			p.attackVictimKnown = false
+			p.attackVictim = 0
+			p.attackAt = now
 			p.observedAt = now
 		}
 		return true, nil
@@ -215,7 +247,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		// Server's near-teleport correction has an order counter before info.
 		guid := c.guid()
 		c.skip(4)
-		p := player(players, guid)
+		p := state.target(guid)
 		if err := movement(c, p, now); err != nil {
 			return true, err
 		}
@@ -226,7 +258,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		if err := c.done(); err != nil {
 			return true, err
 		}
-		if p := player(players, guid); p != nil {
+		if p := state.target(guid); p != nil {
 			if op == opcode.SMSGForceMoveRoot {
 				p.movementFlags |= 0x800
 			} else {
@@ -248,7 +280,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		if !validFloat(speed) || speed < 0 {
 			return true, errFloat
 		}
-		if p := player(players, guid); p != nil {
+		if p := state.target(guid); p != nil {
 			if op == opcode.SMSGForceRunSpeedChange {
 				p.runSpeed = speed
 			} else {
@@ -257,7 +289,57 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 			p.observedAt = now
 		}
 		return true, nil
-	case opcode.SMSGMoveKnockBack, opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport:
+	case opcode.SMSGMonsterMove:
+		guid := c.guid()
+		if creatureGUID(guid) {
+			c.u8()
+			x, y, z := c.f32(), c.f32(), c.f32()
+			c.u32()
+			kind := c.u8()
+			if c.err != nil {
+				return true, c.err
+			}
+			if kind > 4 {
+				return true, errLayout
+			}
+			if kind == 1 {
+				if err := c.done(); err != nil {
+					return true, err
+				}
+			}
+			if p := state.target(guid); p != nil {
+				if kind != 1 {
+					p.positionKnown = false
+					p.movementKnown = false
+					p.movementFlags |= 0x08000000
+					p.observedAt = now
+					return true, nil
+				}
+				if err := position(p, x, y, z, p.orientation, now); err != nil {
+					return true, err
+				}
+				// Only an exactly framed STOP proves a stationary server point.
+				// Active spline tails and trajectories are unsupported.
+				p.movementKnown = false
+				if kind == 1 {
+					p.movementFlags &^= 0x08000000
+				} else {
+					p.movementFlags |= 0x08000000
+				}
+			}
+			return true, nil
+		}
+		c.skip(1)
+		if c.err != nil {
+			return true, c.err
+		}
+		if p := state.target(guid); p != nil {
+			p.positionKnown = false
+			p.movementKnown = false
+			p.observedAt = now
+		}
+		return true, nil
+	case opcode.SMSGMoveKnockBack, opcode.SMSGMonsterMoveTransport:
 		// Spline and knockback trajectories are deliberately not predicted.
 		// Invalidate a tracked player's position until the next actual position.
 		guid := c.guid()
@@ -269,7 +351,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 		if c.err != nil {
 			return true, c.err
 		}
-		if p := player(players, guid); p != nil {
+		if p := state.target(guid); p != nil {
 			p.positionKnown = false
 			p.movementKnown = false
 			p.observedAt = now
@@ -278,7 +360,7 @@ func parsePacket(op uint32, payload []byte, players *[2]observed, now time.Time)
 	}
 	if movementOpcode(op) {
 		guid := c.guid()
-		p := player(players, guid)
+		p := state.target(guid)
 		if err := movement(c, p, now); err != nil {
 			return true, err
 		}
@@ -344,7 +426,8 @@ func movement(c *cursor, p *observed, now time.Time) error {
 	return nil
 }
 
-func updates(c *cursor, players *[2]observed, now time.Time) error {
+func updates(c *cursor, state *observations, now time.Time) error {
+	players := &state.players
 	count := c.u32()
 	if count > maxBlocks {
 		return errBounds
@@ -354,23 +437,27 @@ func updates(c *cursor, players *[2]observed, now time.Time) error {
 		switch typ {
 		case 0, 1, 2, 3:
 			guid := c.guid()
-			p := player(players, guid)
+			p := state.target(guid)
+			newCreature, newItem := false, false
 			if typ == 2 || typ == 3 {
 				objectType := c.u8()
 				if objectType > 7 {
 					return errLayout
 				}
-				if p != nil {
+				if player(players, guid) != nil {
 					if objectType != 4 {
 						return errLayout
 					}
-					revision := p.positionRevision
+					revision, questRevision, backpackRevision := p.positionRevision, p.questRevision, p.backpackRevision
 					selfMap := players[0]
-					*p = observed{guid: guid, positionRevision: revision, present: true}
+					self := guid == players[0].guid
+					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision}
+					if self {
+						p.questRevision++
+						p.backpackRevision++
+					}
 					setMap(p, selfMap)
-					// CREATE omits zero-valued public fields. Initialize only the
-					// public unit/player fields consumed by this module.
-					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags} {
+					for _, f := range []int{unitBytes0, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, playerFlags, 0x12, 0x13, 0x37, 0x3c} {
 						p.known[f] = true
 					}
 					for f := 0; f < 7; f++ {
@@ -379,6 +466,25 @@ func updates(c *cursor, players *[2]observed, now time.Time) error {
 					}
 					p.vitalsAt = now
 					p.observedAt = now
+				} else if objectType == 3 && creatureGUID(guid) {
+					revision := uint64(0)
+					if p != nil {
+						revision = p.positionRevision
+					}
+					p = &observed{guid: guid, present: true, positionRevision: revision, observedAt: now, vitalsAt: now}
+					setMap(p, players[0])
+					for _, f := range []int{objectEntry, unitNPCFlags, unitHealth, unitMaxHealth, unitFlags, unitDynamicFlags, 0x12, 0x13, 0x37, 0x3c} {
+						p.known[f] = true
+					}
+					newCreature = true
+				} else if (objectType == 1 || objectType == 2) && itemGUID(guid) {
+					p = &observed{guid: guid, present: true, observedAt: now}
+					for _, f := range []int{objectEntry, itemOwner, itemOwner + 1, itemStack} {
+						p.known[f] = true
+					}
+					newItem = true
+				} else {
+					p = nil
 				}
 			}
 			if typ != 0 {
@@ -391,6 +497,14 @@ func updates(c *cursor, players *[2]observed, now time.Time) error {
 					return err
 				}
 			}
+			if newCreature {
+				state.putCreature(p)
+			}
+			if newItem {
+				state.putItem(p)
+			} else if p != nil && itemGUID(guid) && typ != 1 {
+				state.itemRevision++
+			}
 		case 4, 5:
 			n := c.u32()
 			if n > maxBlocks {
@@ -399,9 +513,7 @@ func updates(c *cursor, players *[2]observed, now time.Time) error {
 			for j := uint32(0); j < n; j++ {
 				guid := c.guid()
 				if typ == 4 {
-					if p := player(players, guid); p != nil {
-						markAbsent(p, now)
-					}
+					state.remove(guid, now)
 				}
 			}
 		default:
@@ -514,12 +626,35 @@ func values(c *cursor, p *observed, now time.Time) error {
 			}
 			v := c.u32()
 			field := block*32 + bit
+			if p != nil && p.isSelf {
+				if field >= questLogFirst && field < questLogFirst+25*5 && (field-questLogFirst)%5 == 0 {
+					slot := (field - questLogFirst) / 5
+					if p.questLog[slot] != v {
+						p.questLog[slot] = v
+						p.questRevision++
+					}
+				}
+				if field >= backpackFirst && field < backpackFirst+32 {
+					slot, half := (field-backpackFirst)/2, (field-backpackFirst)%2
+					old := p.backpack[slot]
+					shift := uint(half * 32)
+					p.backpack[slot] = (old &^ (uint64(0xffffffff) << shift)) | uint64(v)<<shift
+					if p.backpack[slot] != old {
+						p.backpackRevision++
+					}
+				}
+			}
 			if p != nil && field < len(p.fields) {
 				p.fields[field] = v
 				p.known[field] = true
 				p.observedAt = now
 				if field >= unitBytes0 && field <= unitMaxPower1+6 || field == unitFlags || field == unitDynamicFlags || field == playerFlags {
 					p.vitalsAt = now
+				}
+				if (field == unitHealth && v == 0) || (field == unitDynamicFlags && v&0x20 != 0) {
+					p.attackVictimKnown = false
+					p.attackVictim = 0
+					p.attackAt = now
 				}
 			}
 		}

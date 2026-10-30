@@ -294,6 +294,127 @@ class ConversationTests(unittest.TestCase):
 
 
 class ControlsTests(unittest.TestCase):
+    def quest_controls(self, quests=None, status="CONFIRMED_IN_LOG"):
+        quests = quests or [{"questId": 783, "title": "A Threat Within", "available": True}]
+        class RPC:
+            def __init__(self):
+                self.calls = []
+            def call(self, method, params):
+                self.calls.append((method, params))
+                if method == "buddy-quests.discover":
+                    return {"sessionId": "quest-session", "revision": "3", "nearby": [
+                        {"canInteract": True, "distanceKnown": True, "distance": 3.5, "creature": {"guid": "17379390966904913963"}},
+                        {"canInteract": True, "distanceKnown": True, "distance": 2, "creature": {"guid": "17379390966904913962"}}]}
+                if method == "buddy-quests.offer":
+                    return {"transportWritten": True, "serverResponseReceived": True, "state": {
+                        "sessionId": "quest-session", "offer": {"revision": "7", "npcGuid": params["npcGuid"], "quests": quests}}}
+                if method == "buddy-quests.accept":
+                    return {"transportWritten": True, "state": {"lastAcceptance": {
+                        "status": status, "questId": params["questId"]}}}
+                raise AssertionError(method)
+        rpc = RPC()
+        controls = converse.BuddyControls(rpc)
+        controls.quests_available = True
+        return controls, rpc
+
+    def test_quest_discovery_selects_nearest_real_offer_without_accepting(self):
+        controls, rpc = self.quest_controls()
+        self.assertEqual(controls.execute("DISCOVER_QUESTS"), "Available here: A Threat Within (783).")
+        self.assertEqual(rpc.calls[1], ("buddy-quests.offer", {"sessionId": "quest-session", "npcGuid": "17379390966904913962"}))
+        self.assertFalse(any(method == "buddy-quests.accept" for method, _ in rpc.calls))
+
+    def test_quest_accept_binds_offer_and_requires_actual_log_confirmation(self):
+        controls, rpc = self.quest_controls()
+        self.assertEqual(controls.execute("ACCEPT_QUEST"), "It's in my quest log: A Threat Within.")
+        self.assertEqual(rpc.calls[-1], ("buddy-quests.accept", {"sessionId": "quest-session", "offerRevision": "7",
+            "npcGuid": "17379390966904913962", "questId": 783}))
+        for state in ("REQUESTED", "UNCONFIRMED_TIMEOUT", "WRITE_UNCONFIRMED"):
+            controls, _ = self.quest_controls(status=state)
+            self.assertIn("haven't confirmed", controls.execute("ACCEPT_QUEST", quest_id=783))
+        controls, _ = self.quest_controls(status="SERVER_REJECTED")
+        self.assertIn("server rejected", controls.execute("ACCEPT_QUEST"))
+
+    def test_quest_ambiguity_wrong_id_and_ambiguous_write_never_retry(self):
+        entries = [{"questId": 783, "title": "First", "available": True},
+                   {"questId": 784, "title": "Second", "available": True}]
+        controls, rpc = self.quest_controls(entries)
+        self.assertIn("Which", controls.execute("ACCEPT_QUEST"))
+        self.assertFalse(any(method == "buddy-quests.accept" for method, _ in rpc.calls))
+        self.assertIn("isn't in the current offer", controls.execute("ACCEPT_QUEST", quest_id=999))
+        controls, rpc = self.quest_controls()
+        original = rpc.call
+        def call(method, params):
+            if method == "buddy-quests.accept":
+                rpc.calls.append((method, params))
+                raise converse.ConversationError("ambiguous write")
+            return original(method, params)
+        rpc.call = call
+        self.assertIn("won't retry", controls.execute("ACCEPT_QUEST"))
+        self.assertEqual(sum(method == "buddy-quests.accept" for method, _ in rpc.calls), 1)
+
+    def test_loot_is_explicit_and_independent_of_missing_follow_module(self):
+        rpc = FakeRPC([])
+        controls = converse.BuddyControls(rpc)
+        self.assertIn("isn't ready", controls.execute("ENABLE_LOOTING"))
+        self.assertEqual(rpc.calls, [])
+        controls.loot_available = True
+        def call(method, params):
+            rpc.calls.append((method, params))
+            return {"enabled": params["enabled"]}
+        rpc.call = call
+        self.assertIn("loot nearby", controls.execute("ENABLE_LOOTING"))
+        self.assertEqual(controls.execute("DISABLE_LOOTING"), "Automatic looting is off.")
+        self.assertEqual(rpc.calls, [("buddy-loot.enable", {"enabled": True}), ("buddy-loot.enable", {"enabled": False})])
+
+    def trade_controls(self, backpack=None):
+        backpack = backpack if backpack is not None else [{"slot": 2, "entry": 159, "count": 3,
+            "itemGuid": "4611686018427387970", "name": "Refreshing Spring Water", "metadataKnown": True}]
+        class RPC:
+            def __init__(self):
+                self.calls = []
+            def call(self, method, params):
+                self.calls.append((method, params))
+                return {"sessionId": "trade-session", "revision": "8", "phase": "OPEN", "backpackKnown": True,
+                    "backpackRevision": "11", "backpack": backpack}
+        rpc = RPC()
+        controls = converse.BuddyControls(rpc)
+        controls.trade_available = True
+        return controls, rpc
+
+    def test_trade_whole_stack_binds_current_inventory_and_never_claims_completion(self):
+        controls, rpc = self.trade_controls()
+        result = controls.execute("OFFER_TRADE_ITEM", item_entry=159)
+        self.assertIn("whole stack of 3 Refreshing Spring Water", result)
+        self.assertIn("Check your trade window", result)
+        self.assertNotIn("completed", result)
+        self.assertEqual(rpc.calls[-1], ("buddy-trade.offer_item", {"sessionId": "trade-session", "revision": "8",
+            "backpackRevision": "11", "backpackSlot": 2, "expectedItemGuid": "4611686018427387970", "tradeSlot": 0}))
+
+    def test_trade_rejects_ambiguous_or_unknown_stacks_and_unspecified_gold(self):
+        row = {"slot": 2, "entry": 159, "count": 3, "itemGuid": "42", "metadataKnown": True}
+        for backpack in ([], [row, dict(row, slot=3, itemGuid="43")], [dict(row, metadataKnown=False)]):
+            controls, rpc = self.trade_controls(backpack)
+            controls.execute("OFFER_TRADE_ITEM", item_entry=159)
+            self.assertEqual([method for method, _ in rpc.calls], ["buddy-trade.state"])
+        controls, rpc = self.trade_controls()
+        self.assertIn("exact amount", controls.execute("OFFER_TRADE_GOLD"))
+        self.assertFalse(any(method == "buddy-trade.offer_gold" for method, _ in rpc.calls))
+        controls.execute("OFFER_TRADE_GOLD", gold_copper=12345)
+        self.assertEqual(rpc.calls[-1], ("buddy-trade.offer_gold", {"sessionId": "trade-session", "revision": "8", "copper": 12345}))
+
+    def test_missing_new_capabilities_never_enable_or_write_by_default(self):
+        class RPC:
+            def __init__(self):
+                self.calls = []
+            def call(self, method, params):
+                self.calls.append((method, params))
+                raise converse.CapabilityUnavailable("not installed")
+        rpc = RPC()
+        controls = converse.BuddyControls(rpc)
+        controls.refresh()
+        self.assertFalse(controls.quests_available or controls.loot_available or controls.trade_available)
+        self.assertFalse(any(method.endswith((".enable", ".assist", ".accept", ".open")) for method, _ in rpc.calls))
+
     def test_only_exact_owner_invitation_is_accepted_once_even_after_ambiguous_failure(self):
         class RPC:
             def __init__(self):
@@ -346,6 +467,19 @@ class ControlsTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_numeric_action_schema_is_required_bounded_and_legacy_compatible(self):
+        for key in converse.NUMERIC_ARGS:
+            self.assertIn(key, converse.REPLY_SCHEMA["required"])
+        legacy = converse.validate_reply({"text": "Hello", "emote": "NONE"})
+        self.assertEqual(legacy, {"text": "Hello", "emote": "NONE", "action": "NONE"})
+        value = {"text": "I'll check.", "emote": "NONE", "action": "ACCEPT_QUEST", "quest_id": 783, "item_entry": 0, "gold_copper": 0}
+        self.assertEqual(converse.validate_reply(value), value)
+        for bad in (True, "783", 1.5, -1, 2**32):
+            with self.subTest(bad=bad), self.assertRaises(converse.ConversationError):
+                converse.validate_reply(dict(value, quest_id=bad))
+        with self.assertRaises(converse.ConversationError):
+            converse.validate_reply(dict(value, npc_guid=123))
+
     def test_multibyte_limit_and_control_command_markup_rejection(self):
         self.assertEqual(converse.plain_text("é" * 127), "é" * 127)
         for text in ("é" * 128, "", "  ", " x", "x\n", "|Hitem", "/say hi", "!command", ".command", "a\u200bb", "\ud800"):

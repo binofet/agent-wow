@@ -44,9 +44,71 @@ message PlayerState {
   uint64 observation_age_ms = 31;
   uint32 player_flags = 32;
   uint32 dynamic_flags = 33;
+  bool target_known = 34;
+  uint64 target_guid = 35;
+  uint32 faction_template = 36;
+  uint32 unit_flags_2 = 37;
 }
 
 message SnapshotRequest {}
+
+// Public, server-observed creature state. No database lookup or invented name.
+message CreatureState {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  uint32 npc_flags = 3;
+  bool present = 4;
+  bool map_known = 5;
+  uint32 map_id = 6;
+  bool position_known = 7;
+  float x = 8;
+  float y = 9;
+  float z = 10;
+  float orientation = 11;
+  uint64 position_age_ms = 12;
+  uint64 position_revision = 13;
+  uint64 observation_age_ms = 14;
+  bool health_known = 15;
+  uint32 health = 16;
+  uint32 max_health = 17;
+  bool alive_known = 18;
+  bool alive = 19;
+  uint32 unit_flags = 20;
+  uint32 dynamic_flags = 21;
+  // These distances use the last SERVER position, never predicted motion.
+  // Consumers must use the companion controller's estimate for current range.
+  bool distance_to_self_observed_known = 22;
+  float distance_to_self_observed = 23;
+  bool distance_to_owner_observed_known = 24;
+  float distance_to_owner_observed = 25;
+  uint32 movement_flags = 26;
+  uint32 faction_template = 27;
+  bool target_known = 28;
+  uint64 target_guid = 29;
+  uint32 unit_flags_2 = 30;
+  // Distinct from UNIT_FIELD_TARGET selection: actual ATTACKSTART evidence.
+  bool attack_victim_known = 31;
+  uint64 attack_victim_guid = 32;
+  uint64 attack_age_ms = 33;
+}
+
+message QuestLogEntry {
+  // Zero-based server quest-log slot; 0 quest_id means empty.
+  uint32 slot = 1;
+  uint32 quest_id = 2;
+}
+
+message BackpackSlot {
+  // Logical backpack bag0, slots0..15; equipment and equipped bags excluded.
+  uint32 bag = 1;
+  uint32 slot = 2;
+  uint64 item_guid = 3;
+  uint32 entry = 4;
+  uint32 stack_count = 5;
+  // Requires an owned ITEM/CONTAINER observation matching the current GUID.
+  bool metadata_known = 6;
+}
+
 message SnapshotResponse {
   PlayerState self = 1;
   PlayerState owner = 2;
@@ -56,6 +118,20 @@ message SnapshotResponse {
   // Fixed diagnostic strings only; no packet payloads or player text.
   string last_parse_error = 6;
   uint64 observed_packets = 7;
+  // At most64 present questgivers, nearest observed owner first (self fallback).
+  repeated CreatureState quest_givers = 8;
+  bool self_quest_log_known = 9;
+  uint64 self_quest_log_revision = 10;
+  // Exactly25 slots when known; only the current character's quest log.
+  repeated QuestLogEntry self_quest_log = 11;
+  // At most64 dead creatures flagged LOOTABLE for this receiving character.
+  repeated CreatureState lootable_corpses = 12;
+  bool backpack_known = 13;
+  uint64 backpack_revision = 14;
+  // Exactly16 slots when known; empty slots have item_guid0.
+  repeated BackpackSlot backpack = 15;
+  // Only the currently observed owner's target, if present in the NPC cache.
+  CreatureState owner_target = 16;
 }
 
 service BuddyWorld {

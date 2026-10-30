@@ -10,8 +10,11 @@ grpc:
 rpc:
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   healing: /warcraftbuddy.actions.v1.BuddyActions/Healing
+  assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
+  acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
+  release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
 packets:
   SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LEARNED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

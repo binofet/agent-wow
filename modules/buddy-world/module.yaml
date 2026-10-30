@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Read-only bounded positions and vitals for the companion and fixed owner player 3
+description: Read-only bounded player, creature, quest-log and backpack observations
 compose:
   file: compose.yaml
   service: module
@@ -16,6 +16,8 @@ packets:
   SMSG_COMPRESSED_UPDATE_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_DESTROY_OBJECT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_POWER_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSTART: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSTOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_TELEPORT_ACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_ROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_UNROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

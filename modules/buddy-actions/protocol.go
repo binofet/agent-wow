@@ -7,6 +7,7 @@ import (
 )
 
 const lesserHeal = uint32(2050)
+const smite = uint32(585)
 const ownerGUID = uint64(3)
 
 // Wire formats: AzerothCore SpellHandler.cpp HandleCastSpellOpcode,
@@ -45,12 +46,16 @@ func readGUID(data []byte) (uint64, int, error) {
 }
 
 func castPacket(count byte) []byte {
+	return spellPacket(count, lesserHeal, ownerGUID)
+}
+
+func spellPacket(count byte, spell uint32, target uint64) []byte {
 	// castCount, spellId, castFlags0, TARGET_FLAG_UNIT2, packed JoelGUID3.
 	p := make([]byte, 10)
 	p[0] = count
-	binary.LittleEndian.PutUint32(p[1:], lesserHeal)
+	binary.LittleEndian.PutUint32(p[1:], spell)
 	binary.LittleEndian.PutUint32(p[6:], 2)
-	return append(p, packedGUID(ownerGUID)...)
+	return append(p, packedGUID(target)...)
 }
 
 type position struct{ x, y, z, o float32 }
@@ -78,6 +83,10 @@ func movementPacket(guid uint64, clock uint32, p position, moving bool) []byte {
 }
 
 func initialKnown(data []byte) (bool, error) {
+	return initialSpellKnown(data, lesserHeal)
+}
+
+func initialSpellKnown(data []byte, spell uint32) (bool, error) {
 	if len(data) < 5 {
 		return false, errors.New("truncated initial spells")
 	}
@@ -87,7 +96,7 @@ func initialKnown(data []byte) (bool, error) {
 	}
 	known := false
 	for i := 0; i < count; i++ {
-		if binary.LittleEndian.Uint32(data[3+i*6:]) == lesserHeal {
+		if binary.LittleEndian.Uint32(data[3+i*6:]) == spell {
 			known = true
 		}
 	}
@@ -119,6 +128,10 @@ func castEvent(data []byte) (guid uint64, count byte, spell uint32, offset int, 
 // Spell2050 uses one unit target. Check every mandatory target-list/body field
 // before accepting a start/go observation; optional flags may add trailing data.
 func validCastBody(data []byte, offset int, goEvent bool) bool {
+	return validCastTargetBody(data, offset, goEvent, ownerGUID)
+}
+
+func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget uint64) bool {
 	pos := offset + 8 // uint32 castFlags + uint32 castTime/timestamp
 	if pos > len(data) {
 		return false
@@ -162,7 +175,7 @@ func validCastBody(data []byte, offset int, goEvent bool) bool {
 		return false
 	}
 	target, n, err := readGUID(data[pos+4:])
-	if err != nil || target != ownerGUID {
+	if err != nil || target != expectedTarget {
 		return false
 	}
 	pos += 4 + n

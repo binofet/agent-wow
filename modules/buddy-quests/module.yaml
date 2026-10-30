@@ -1,0 +1,24 @@
+api_version: 1
+enabled: true
+description: Explicit nearby NPC quest offers and bound pickup with server quest-log confirmation
+requires: [buddy-world, buddy-actions]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  discover: /warcraftbuddy.quests.v1.BuddyQuests/Discover
+  state: /warcraftbuddy.quests.v1.BuddyQuests/State
+  offer: /warcraftbuddy.quests.v1.BuddyQuests/Offer
+  details: /warcraftbuddy.quests.v1.BuddyQuests/Details
+  accept: /warcraftbuddy.quests.v1.BuddyQuests/Accept
+packets:
+  SMSG_QUESTGIVER_STATUS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_LIST: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_GOSSIP_MESSAGE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_DETAILS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_INVALID: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTLOG_FULL: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_FAILED: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_GOSSIP_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
