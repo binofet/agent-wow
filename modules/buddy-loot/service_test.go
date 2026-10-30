@@ -27,18 +27,25 @@ type fakeSession struct {
 	actions       *actionsv1.State
 	packets       []*modv1.SendPacketRequest
 	leaseOwner    string
+	leaseToken    string
 	releases      int
 	failOpcode    uint32
 	approachCalls int
 	failApproach  bool
 	afterAcquire  func()
 	afterApproach func()
+	snapshotReads int
+	onSnapshot    func(int, *worldv1.SnapshotResponse)
+	beforeStatus  func()
+	afterRenew    func()
+	calls         []string
 }
 
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.packets = append(f.packets, proto.Clone(r).(*modv1.SendPacketRequest))
+	f.calls = append(f.calls, "packet")
 	if r.Opcode == f.failOpcode {
 		return nil, errors.New("ambiguous write")
 	}
@@ -48,10 +55,19 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var value proto.Message
+	f.calls = append(f.calls, r.Module+"."+r.Method)
 	switch r.Module + "." + r.Method {
 	case "buddy-world.snapshot":
-		value = f.world
+		f.snapshotReads++
+		w := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+		if f.onSnapshot != nil {
+			f.onSnapshot(f.snapshotReads, w)
+		}
+		value = w
 	case "buddy-actions.status":
+		if f.beforeStatus != nil {
+			f.beforeStatus()
+		}
 		a := proto.Clone(f.actions).(*actionsv1.State)
 		a.InteractionOwner = f.leaseOwner
 		a.InteractionLeaseRemainingMs = 15000
@@ -89,10 +105,23 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		if err := r.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
+		if request.Token != "" {
+			if request.Owner != "loot" || request.LeaseMs != 15000 || request.Token != f.leaseToken || f.leaseOwner != "loot" {
+				return nil, errors.New("wrong renewal token")
+			}
+			if f.afterRenew != nil {
+				f.afterRenew()
+			}
+			a := proto.Clone(f.actions).(*actionsv1.State)
+			a.InteractionOwner, a.InteractionLeaseRemainingMs = f.leaseOwner, 15000
+			value = &actionsv1.InteractionLease{Token: f.leaseToken, State: a}
+			break
+		}
 		if request.Owner != "loot" || request.LeaseMs != 15000 || f.leaseOwner != "" {
 			return nil, errors.New("lease unavailable")
 		}
 		f.leaseOwner = "loot"
+		f.leaseToken = "owned-loot-token"
 		a := proto.Clone(f.actions).(*actionsv1.State)
 		a.InteractionOwner = "loot"
 		a.InteractionLeaseRemainingMs = 15000
@@ -105,10 +134,11 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		if err := r.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		if request.Owner != "loot" || request.Token != "owned-loot-token" {
+		if request.Owner != "loot" || request.Token != f.leaseToken || f.leaseOwner != "loot" {
 			return nil, errors.New("wrong lease")
 		}
 		f.leaseOwner = ""
+		f.leaseToken = ""
 		f.releases++
 		value = &actionsv1.State{}
 	default:
@@ -170,10 +200,24 @@ func TestElapsedCorpseEndpointCanEstablishReachButActiveSplineCannot(t *testing.
 func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 1, Present: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, Owner: &worldv1.PlayerState{Guid: 3, Present: true, MapKnown: true, PositionKnown: true, AliveKnown: true, Alive: true, UnitFlagsKnown: true, UnitFlags: 8}, LootableCorpses: []*worldv1.CreatureState{{Guid: corpseGUID, Present: true, MapKnown: true, PositionKnown: true, X: 2, HealthKnown: true, MaxHealth: 100, AliveKnown: true, DynamicFlags: 1}}}, actions: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true}}}
+	for i := range 16 {
+		f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: uint32(i)})
+	}
+	f.world.Self.MapKnown, f.world.Self.PositionKnown, f.world.Self.PositionRevision = true, true, 1
+	fixtureCarriedInventory(f.world)
 	s := NewService(f, 1)
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	return s, f, func(d time.Duration) { now = now.Add(d) }
+}
+
+func fixtureCarriedInventory(w *worldv1.SnapshotResponse) {
+	w.BackpackKnown, w.InventoryKnown = true, true
+	w.BackpackRevision, w.InventoryRevision = 1, w.InventoryRevision+1
+	w.InventoryBags = []*worldv1.InventoryBag{{SlotKnown: true, ContentsKnown: true, SlotCount: 16, Slots: w.Backpack}}
+	for i := uint32(1); i <= 4; i++ {
+		w.InventoryBags = append(w.InventoryBags, &worldv1.InventoryBag{Bag: i, SlotKnown: true, ContentsKnown: true})
+	}
 }
 func current(t *testing.T, s *Service) *lootv1.State {
 	t.Helper()

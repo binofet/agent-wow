@@ -1,0 +1,87 @@
+syntax = "proto3";
+package warcraftbuddy.inventory.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-inventory/api;inventoryv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+import "modules/buddy-world/world.proto";
+
+message ItemRef { uint32 bag = 1; uint32 slot = 2; uint64 item_guid = 3; uint32 entry = 4; uint32 stack_count = 5; }
+message ItemEligibility {
+  ItemRef item = 1;
+  bool metadata_known = 2;
+  bool safe_junk_sale_eligible = 3;
+  uint32 unit_sell_price_copper = 4;
+  bool normal_bag = 5;
+  uint32 container_slots = 6;
+  string blocked_reason = 7;
+}
+message Operation {
+  string request_id = 1;
+  string kind = 2;
+  string status = 3;
+  string reason = 4;
+  ItemRef source = 5;
+  uint32 destination_bag = 6;
+  uint32 destination_slot = 7;
+  uint32 equipment_slot = 8;
+  uint64 vendor_guid = 9;
+  uint32 unit_sell_price_copper = 10;
+  uint32 expected_credit_copper = 11;
+  bool transport_attempted = 12;
+  bool transport_written = 13;
+  bool inventory_confirmed = 14;
+  bool equipment_confirmed = 15;
+  bool copper_confirmed = 16;
+  bool server_error_observed = 17;
+  uint32 server_error = 18;
+  bool lease_released = 19;
+  uint64 baseline_inventory_revision = 20;
+  uint64 observed_inventory_revision = 21;
+  uint64 baseline_copper_revision = 22;
+  uint64 observed_copper_revision = 23;
+  uint32 baseline_copper = 24;
+  uint32 observed_copper = 25;
+}
+message State {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 revision = 3;
+  bool inventory_known = 4;
+  uint64 inventory_revision = 5;
+  repeated warcraftbuddy.world.v1.InventoryBag inventory_bags = 6;
+  bool copper_known = 7;
+  uint32 copper = 8;
+  uint64 copper_revision = 9;
+  bool active = 10;
+  Operation operation = 11;
+  repeated ItemEligibility items = 12;
+  string blocked_reason = 13;
+  uint64 transport_writes = 14;
+  uint64 malformed_packets = 15;
+  string limitation = 16;
+  bool closing = 17;
+}
+message DiscoverRequest { uint32 vendor_entry = 1; uint64 vendor_guid = 2; }
+message Vendor { warcraftbuddy.world.v1.CreatureState creature = 1; bool interactable = 2; string blocked_reason = 3; double distance = 4; }
+message Discovery { State state = 1; repeated Vendor nearby = 2; }
+message MoveRequest {
+  string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
+  ItemRef source = 5; uint32 destination_bag = 6; uint32 destination_slot = 7; uint64 expected_destination_item_guid = 8;
+}
+message EquipRequest {
+  string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
+  ItemRef source = 5; uint32 equipment_slot = 6; uint64 expected_container_guid = 7;
+}
+message SellRequest {
+  string session_id = 1; string request_id = 2; uint64 expected_revision = 3; uint64 expected_inventory_revision = 4;
+  ItemRef source = 5; uint64 vendor_guid = 6; uint32 expected_unit_sell_price_copper = 7; uint64 expected_copper_revision = 8;
+}
+service BuddyInventory {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Discover(DiscoverRequest) returns (Discovery);
+  rpc Move(MoveRequest) returns (State);
+  rpc Equip(EquipRequest) returns (State);
+  rpc Sell(SellRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

@@ -1,0 +1,575 @@
+#!/usr/bin/env python3
+"""Perform finite, journaled carried-inventory maintenance at observed services."""
+import argparse
+import copy
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+import urllib.request
+import uuid
+
+_loader = importlib.machinery.SourceFileLoader("town_supplies_private", str(Path(__file__).with_name("supplies")))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+base = importlib.util.module_from_spec(_spec)
+_loader.exec_module(base)
+Error, number, positive, token, item_guid = base.Error, base.number, base.positive, base.token, base.item_guid
+ROOT = Path(__file__).resolve().parent.parent
+METHODS = {"buddy-inventory." + n for n in ("state", "discover", "move", "equip", "sell")} | {
+    "buddy-mail.state", "buddy-mail.list", "buddy-mail.claim_bag_attachment"}
+TERMINAL = {"confirmed", "blocked", "server_rejected"}
+PHASES = TERMINAL | {"reserved", "requested", "transport_unknown", "outcome_unconfirmed", "receipt_mismatch", "new_session_requires_review"}
+
+
+class RPC:
+    def __init__(self, url, opener=None):
+        self.url, self.calls = base.rpc_url(url), 0
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), base.NoRedirect())
+
+    def call(self, method, params):
+        if method not in METHODS or not isinstance(params, dict) or self.calls >= 4096:
+            raise Error("bounded_town_rpc_method_required")
+        self.calls += 1
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
+            "method": method, "params": params}, allow_nan=False).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=12) as response:
+                raw = response.read(262145)
+            if len(raw) > 262144:
+                raise Error("rpc_response_too_large")
+            reply = base.decode_json(raw)
+        except (OSError, ValueError):
+            raise Error("rpc_response_unconfirmed") from None
+        if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0" or type(reply.get("id")) is not int
+                or reply["id"] != self.calls or "error" in reply or not isinstance(reply.get("result"), dict)):
+            raise Error("rpc_matching_result_unconfirmed")
+        return reply["result"]
+
+
+def boolean(row, field):
+    if type(row.get(field, False)) is not bool:
+        raise Error("invalid_boolean_evidence")
+    return row.get(field, False)
+
+
+def ref(row):
+    if not isinstance(row, dict):
+        raise Error("actual_item_reference_required")
+    return {"bag": number(row.get("bag", 0), 4), "slot": number(row.get("slot", 0), 35),
+            "itemGuid": str(item_guid(row.get("itemGuid", 0))),
+            "entry": positive(row.get("entry", 0), 2**32-1),
+            "stackCount": positive(row.get("stackCount", 0), 2**32-1)}
+
+
+def claim_ref(row):
+    if not isinstance(row, dict):
+        raise Error("exact_bag_claim_request_required")
+    return {"sessionId": token(row.get("sessionId")), "requestId": token(row.get("requestId")),
+            "listRevision": str(positive(row.get("listRevision", 0))),
+            "mailboxGuid": str(positive(row.get("mailboxGuid", 0))),
+            "mailId": positive(row.get("mailId", 0), 2**32-1),
+            "attachmentIndex": number(row.get("attachmentIndex", 0), 3),
+            "itemGuidLow": positive(row.get("itemGuidLow", 0), 2**32-1),
+            "expectedCount": positive(row.get("expectedCount", 0), 1),
+            "expectedInventoryRevision": str(positive(row.get("expectedInventoryRevision", 0)))}
+
+
+def layout(state):
+    if not boolean(state, "inventoryKnown") or positive(state.get("inventoryRevision", 0)) == 0:
+        raise Error("complete_actual_carried_inventory_required")
+    rows = state.get("inventoryBags", [])
+    if not isinstance(rows, list) or len(rows) != 5:
+        raise Error("complete_five_bag_frame_required")
+    bags, slots, guids, total = {}, {}, set(), 0
+    for bag in rows:
+        if not isinstance(bag, dict):
+            raise Error("invalid_bag_frame")
+        index = number(bag.get("bag", 0), 4)
+        count = number(bag.get("slotCount", 0), 36)
+        guid = item_guid(bag.get("containerGuid", 0), allow_empty=True)
+        entry = number(bag.get("entry", 0), 2**32-1)
+        children = bag.get("slots", [])
+        if (index in bags or not boolean(bag, "slotKnown") or not boolean(bag, "contentsKnown")
+                or not isinstance(children, list) or len(children) != count):
+            raise Error("partial_duplicate_or_unknown_bag_frame")
+        if index == 0:
+            if guid or entry or boolean(bag, "metadataKnown") or count != 16:
+                raise Error("invalid_builtin_backpack")
+        elif guid:
+            if guid in guids or not boolean(bag, "metadataKnown") or entry == 0 or count == 0 or entry == 41599 and count != 20:
+                raise Error("unknown_or_duplicate_owned_container")
+            guids.add(guid)
+        elif entry or count or boolean(bag, "metadataKnown"):
+            raise Error("empty_bag_slot_is_inconsistent")
+        bags[index] = bag
+        total += count
+        if total > 160:
+            raise Error("carried_inventory_capacity_bound_exceeded")
+        for item in children:
+            if not isinstance(item, dict):
+                raise Error("invalid_carried_slot")
+            slot = number(item.get("slot", 0), 35)
+            item_id = item_guid(item.get("itemGuid", 0), allow_empty=True)
+            known = boolean(item, "metadataKnown")
+            entry_id, stack = number(item.get("entry", 0), 2**32-1), number(item.get("stackCount", 0), 2**32-1)
+            if number(item.get("bag", 0), 4) != index or slot >= count or (index, slot) in slots:
+                raise Error("partial_duplicate_or_misaddressed_carried_slot")
+            if not item_id:
+                if entry_id or stack or known:
+                    raise Error("empty_item_reference_is_inconsistent")
+            else:
+                if item_id in guids or known and (not entry_id or not stack) or not known and (entry_id or stack):
+                    raise Error("duplicate_or_inconsistent_owned_item")
+                guids.add(item_id)
+            slots[index, slot] = item
+    return bags, slots
+
+
+def checked_state(raw, guid):
+    if not isinstance(raw, dict) or positive(raw.get("selfGuid", 0), 2**48-1) != guid:
+        raise Error("inventory_character_identity_mismatch")
+    state = copy.deepcopy(raw)
+    token(state.get("sessionId")); positive(state.get("revision", 0))
+    for field in ("active", "closing", "inventoryKnown", "copperKnown"):
+        boolean(state, field)
+    number(state.get("copper", 0), 2**32-1); number(state.get("copperRevision", 0))
+    if (not isinstance(state.get("inventoryBags", []), list) or not isinstance(state.get("items", []), list)
+            or len(state.get("inventoryBags", [])) > 5 or len(state.get("items", [])) > 164):
+        raise Error("inventory_response_bound_exceeded")
+    operation = state.get("operation")
+    if operation is not None and (not isinstance(operation, dict) or operation.get("kind") not in ("move", "equip", "sell")
+                                  or operation.get("status") not in ("REQUESTED", "CONFIRMED", "SERVER_REJECTED", "BLOCKED", "OUTCOME_UNCONFIRMED")):
+        raise Error("invalid_inventory_operation")
+    if state.get("inventoryKnown"):
+        layout(state)
+    return state
+
+
+class Journal(base.Journal):
+    def __init__(self, path, url, guid, account_label=""):
+        super().__init__(path, url, guid)
+        if not isinstance(account_label, str) or len(account_label) > 128:
+            raise Error("bounded_optional_local_account_label_required")
+        self.account_label = account_label
+        self.data["localAccountLabel"] = account_label
+
+    def validate(self):
+        d = self.data
+        if (not isinstance(d, dict) or d.get("version") != 1 or type(d.get("version")) is not int
+                or d.get("rpcUrl") != self.url or d.get("characterGuid") != str(self.guid)
+                or d.get("localAccountLabel", "") != self.account_label
+                or not isinstance(d.get("attempts"), list) or len(d["attempts"]) > 192):
+            raise Error("journal_identity_or_bound_mismatch")
+        seen = set()
+        session = d.get("sessionId")
+        if session is not None:
+            token(session)
+        for row in d["attempts"]:
+            if not isinstance(row, dict) or row.get("kind") not in ("move", "equip", "sell", "claim") or row.get("phase") not in PHASES:
+                raise Error("invalid_town_attempt")
+            req = row.get("request")
+            if not isinstance(req, dict) or token(req.get("requestId")) in seen or req.get("requestId") != row.get("requestId") or token(req.get("sessionId")) != row.get("sessionId"):
+                raise Error("journal_request_identity_mismatch")
+            seen.add(req["requestId"])
+            if req["sessionId"] != session:
+                raise Error("journal_session_identity_mismatch")
+            positive(req.get("expectedInventoryRevision", 0))
+            if row["kind"] != "claim":
+                ref(req.get("source")); positive(req.get("expectedRevision", 0))
+                common = {"sessionId", "requestId", "expectedRevision", "expectedInventoryRevision", "source"}
+                fields = {"move": {"destinationBag", "destinationSlot", "expectedDestinationItemGuid"},
+                          "equip": {"equipmentSlot", "expectedContainerGuid"},
+                          "sell": {"vendorGuid", "expectedUnitSellPriceCopper", "expectedCopperRevision"}}[row["kind"]]
+                if set(req) != common | fields:
+                    raise Error("journal_request_fields_changed")
+                if row["kind"] == "move":
+                    number(req["destinationBag"], 4); number(req["destinationSlot"], 35)
+                    if number(req["expectedDestinationItemGuid"]) != 0:
+                        raise Error("journal_move_requires_empty_destination")
+                elif row["kind"] == "equip":
+                    if (not 19 <= number(req["equipmentSlot"], 22) <= 22 or number(req["expectedContainerGuid"]) != 0
+                            or req["source"]["entry"] != 41599 or req["source"]["stackCount"] != 1):
+                        raise Error("journal_equipment_scope_changed")
+                else:
+                    positive(req["vendorGuid"]); positive(req["expectedUnitSellPriceCopper"], 2**32-1)
+                    positive(req["expectedCopperRevision"]); number(row.get("baselineCopper"), 2**31-1)
+            else:
+                normalized = claim_ref(req)
+                if set(req) != set(normalized):
+                    raise Error("journal_bag_claim_fields_changed")
+            if row["phase"] in TERMINAL:
+                op = row.get("receipt")
+                if not isinstance(op, dict):
+                    raise Error("journal_terminal_receipt_required")
+                prefix = "BAG_CLAIM_" if row["kind"] == "claim" else ""
+                if op.get("status") != prefix+row["phase"].upper() or op.get("leaseReleased") is not True:
+                    raise Error("journal_terminal_status_or_cleanup_unproven")
+                if row["kind"] == "claim":
+                    matched = claim_ref(op.get("request")) == claim_ref(req)
+                else:
+                    matched = op.get("requestId") == req["requestId"] and op.get("kind") == row["kind"] and ref(op.get("source")) == ref(req["source"])
+                if not matched or number(op.get("baselineInventoryRevision", 0)) != number(req["expectedInventoryRevision"]):
+                    raise Error("journal_terminal_identity_changed")
+                if row["phase"] == "confirmed":
+                    if op.get("inventoryConfirmed") is not True or number(op.get("observedInventoryRevision", 0)) <= number(req["expectedInventoryRevision"]):
+                        raise Error("journal_inventory_confirmation_unproven")
+                    if row["kind"] == "equip" and op.get("equipmentConfirmed") is not True:
+                        raise Error("journal_equipment_confirmation_unproven")
+                    if row["kind"] == "sell" and op.get("copperConfirmed") is not True:
+                        raise Error("journal_sale_confirmation_unproven")
+                    if row["kind"] == "claim" and op.get("serverAcknowledged") is not True:
+                        raise Error("journal_mail_confirmation_unproven")
+                elif row["phase"] == "blocked" and op.get("transportAttempted", False):
+                    raise Error("journal_blocked_attempt_was_written")
+        if len(json.dumps(d, allow_nan=False).encode()) > 1048576:
+            raise Error("journal_size_bound_exceeded")
+
+
+class Worker:
+    def __init__(self, rpc, guid, journal=None, now=time.monotonic, sleep=time.sleep):
+        self.rpc, self.guid, self.journal, self.now, self.sleep = rpc, positive(guid, 2**48-1), journal, now, sleep
+
+    def state(self):
+        return checked_state(self.rpc.call("buddy-inventory.state", {}), self.guid)
+
+    def bind(self, state):
+        if self.journal.data.get("sessionId", state["sessionId"]) != state["sessionId"]:
+            raise Error("journal_session_changed_requires_review_no_new_mutation")
+
+    def ready(self, state):
+        self.bind(state)
+        bags, slots = layout(state)
+        if state.get("active") or state.get("closing") or state.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
+            raise Error("prior_inventory_operation_or_closing_no_new_mutation")
+        return bags, slots
+
+    def result(self, phase, reason="", **more):
+        return {"characterGuid": str(self.guid), "phase": phase, "reason": reason, **more}
+
+    def eligible(self, state, source):
+        rows = state.get("items", [])
+        found = [i for i in rows if isinstance(i, dict) and ref(i.get("item")) == source]
+        if len(found) != 1 or found[0].get("metadataKnown") is not True:
+            raise Error("complete_exact_item_eligibility_required")
+        return found[0]
+
+    def discovery(self, vendor_guid=None):
+        params = {} if vendor_guid is None else {"vendorGuid": str(positive(vendor_guid))}
+        data = self.rpc.call("buddy-inventory.discover", params)
+        state = checked_state(data.get("state"), self.guid)
+        rows = data.get("nearby", [])
+        if not isinstance(rows, list) or len(rows) > 96:
+            raise Error("bounded_actual_vendor_discovery_required")
+        vendors = []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("interactable") is not True:
+                continue
+            c = row.get("creature", {})
+            g = number(c.get("guid", 0))
+            d = row.get("distance", 0)
+            if (g >> 48 != 0xf130 or not g & 0xffffff or number(c.get("entry", 0)) != (g >> 24 & 0xffffff)
+                    or any(c.get(k) is not True for k in ("present", "mapKnown", "positionKnown", "aliveKnown", "alive", "healthKnown"))
+                    or not number(c.get("health", 0)) or not number(c.get("npcFlags", 0)) & 0x80
+                    or number(c.get("unitFlags", 0)) & 0x80000
+                    or type(d) not in (int, float) or not math.isfinite(d) or not 0 <= d <= 4.5):
+                continue
+            if vendor_guid is None or g == positive(vendor_guid):
+                vendors.append((d, g))
+        vendors.sort()
+        return state, vendors
+
+    def record(self, kind, request, **extra):
+        if not self.journal or self.journal.lock is None or len(self.journal.data["attempts"]) >= 192:
+            raise Error("locked_private_journal_capacity_required")
+        row = {"kind": kind, "requestId": request["requestId"], "sessionId": request["sessionId"],
+               "request": copy.deepcopy(request), "phase": "reserved", **extra}
+        self.journal.data["sessionId"] = request["sessionId"]
+        self.journal.data["attempts"].append(row)
+        self.journal.save()
+        return row
+
+    def receipt(self, row, state, mail=None):
+        req, kind = row["request"], row["kind"]
+        if state["sessionId"] != row["sessionId"] or mail is not None and mail.get("sessionId") != row["sessionId"]:
+            row.update(phase="new_session_requires_review", reason="session_changed_no_mutation_replay")
+        else:
+            if kind == "claim":
+                rows = mail.get("bagClaims", []) if isinstance(mail, dict) else []
+                if not isinstance(rows, list) or len(rows) > 128:
+                    raise Error("invalid_bag_claim_history")
+                matches = [r for r in rows if isinstance(r, dict) and r.get("request", {}).get("requestId") == row["requestId"]]
+                op = matches[0] if len(matches) == 1 else mail.get("lastBagClaim", {})
+                matched = isinstance(op, dict) and claim_ref(op.get("request")) == claim_ref(req)
+            else:
+                op = state.get("operation", {})
+                matched = isinstance(op, dict) and op.get("requestId") == row["requestId"] and op.get("kind") == kind
+                matched = matched and ref(op.get("source")) == req["source"] if matched else False
+                for field in {"move": ("destinationBag", "destinationSlot"), "equip": ("equipmentSlot",), "sell": ("vendorGuid",)}[kind]:
+                    matched = matched and number(op.get(field, 0)) == number(req[field])
+            matched = matched and number(op.get("baselineInventoryRevision", 0)) == number(req["expectedInventoryRevision"])
+            if not matched:
+                row.update(phase="receipt_mismatch", reason="exact_operation_receipt_missing_no_replay")
+            else:
+                row["receipt"] = copy.deepcopy(op)
+                status = op.get("status", "")
+                done = op.get("inventoryConfirmed") is True and op.get("leaseReleased") is True
+                done = done and number(op.get("observedInventoryRevision", 0)) > number(req["expectedInventoryRevision"])
+                done = done and state.get("inventoryKnown") is True and number(state.get("inventoryRevision", 0)) >= number(op.get("observedInventoryRevision", 0))
+                bags, slots = layout(state) if done else ({}, {})
+                if kind == "claim":
+                    g = item_guid(op.get("itemGuid", 0), allow_empty=True)
+                    dest = slots.get((number(op.get("observedBag", 0)), number(op.get("observedSlot", 0))), {})
+                    done = (done and op.get("serverAcknowledged") is True and g & 0xffffffff == number(req["itemGuidLow"])
+                            and number(op.get("entry", 0)) == 41599 and number(op.get("count", 0)) == 1
+                            and number(dest.get("itemGuid", 0)) == g and number(dest.get("entry", 0)) == 41599 and number(dest.get("stackCount", 0)) == 1 and dest.get("metadataKnown") is True)
+                elif kind == "equip":
+                    bag = bags.get(number(req["equipmentSlot"])-18, {})
+                    done = (done and op.get("equipmentConfirmed") is True and number(bag.get("containerGuid", 0)) == number(req["source"]["itemGuid"])
+                            and number(bag.get("entry", 0)) == 41599 and bag.get("metadataKnown") is True and bag.get("contentsKnown") is True)
+                elif kind == "move":
+                    target = slots.get((req["destinationBag"], req["destinationSlot"]), {})
+                    done = done and target.get("metadataKnown") is True and ref(target) == {**req["source"], "bag": req["destinationBag"], "slot": req["destinationSlot"]}
+                else:
+                    credit = number(req["expectedUnitSellPriceCopper"]) * number(req["source"]["stackCount"])
+                    done = (done and op.get("copperConfirmed") is True and state.get("copperKnown") is True
+                            and number(op.get("unitSellPriceCopper", 0)) == number(req["expectedUnitSellPriceCopper"])
+                            and number(op.get("expectedCreditCopper", 0)) == credit
+                            and number(op.get("baselineCopperRevision", 0)) == number(req["expectedCopperRevision"])
+                            and number(op.get("observedCopperRevision", 0)) > number(req["expectedCopperRevision"])
+                            and number(op.get("observedCopper", 0)) == row["baselineCopper"] + credit
+                            and number(op.get("baselineCopper", 0)) == row["baselineCopper"]
+                            and number(state.get("copper", 0)) == row["baselineCopper"] + credit
+                            and number(state.get("copperRevision", 0)) >= number(op.get("observedCopperRevision", 0))
+                            and all(number(i.get("itemGuid", 0)) != number(req["source"]["itemGuid"]) for i in slots.values()))
+                if status in ("CONFIRMED", "BAG_CLAIM_CONFIRMED"):
+                    row.update(phase="confirmed" if done else "outcome_unconfirmed", reason=op.get("reason", ""))
+                elif status in ("BLOCKED", "BAG_CLAIM_BLOCKED") and not op.get("transportAttempted", False) and op.get("leaseReleased") is True:
+                    row.update(phase="blocked", reason=op.get("reason", ""))
+                elif (status in ("SERVER_REJECTED", "BAG_CLAIM_SERVER_REJECTED") and op.get("leaseReleased") is True
+                      and (kind == "claim" or op.get("serverErrorObserved") is True)):
+                    row.update(phase="server_rejected", reason=op.get("reason", ""))
+                else:
+                    row.update(phase="requested" if status in ("REQUESTED", "BAG_CLAIM_REQUESTED") else "outcome_unconfirmed", reason=op.get("reason", ""))
+        self.journal.save()
+        return self.result(row["phase"], row.get("reason", ""), requestId=row["requestId"])
+
+    def reconcile(self, row=None):
+        state = self.state()
+        rows = self.journal.data["attempts"]
+        if not rows:
+            return self.result("no_prior_operation")
+        row = row or rows[-1]
+        mail = self.rpc.call("buddy-mail.state", {}) if row["kind"] == "claim" else None
+        return self.receipt(row, state, mail)
+
+    def pending(self):
+        return next((r for r in self.journal.data["attempts"] if r["phase"] not in TERMINAL), None)
+
+    def submit(self, kind, request, **extra):
+        row = self.record(kind, request, **extra)
+        method = "buddy-mail.claim_bag_attachment" if kind == "claim" else "buddy-inventory." + kind
+        try:
+            result = self.rpc.call(method, request)
+            state = self.state() if kind == "claim" else checked_state(result, self.guid)
+            return self.receipt(row, state, result if kind == "claim" else None)
+        except (Error, ValueError, TypeError, KeyError) as e:
+            row.update(phase="transport_unknown", reason=str(e))
+            self.journal.save()
+            return self.result(row["phase"], row["reason"], requestId=row["requestId"])
+
+    def mutation(self, kind, state=None, **options):
+        if not self.journal or self.journal.lock is None:
+            raise Error("locked_private_journal_required")
+        pending = self.pending()
+        if pending:
+            return self.reconcile(pending)
+        state = state or self.state()
+        bags, slots = self.ready(state)
+        if kind == "sell":
+            fresh, vendors = self.discovery(options.get("vendor_guid"))
+            if fresh["sessionId"] != state["sessionId"] or not vendors:
+                raise Error("same_session_actual_in_range_vendor_required")
+            state, vendor = fresh, vendors[0][1]
+            bags, slots = self.ready(state)
+        source = slots.get((number(options.get("source_bag", 0), 4), number(options.get("source_slot", 0), 35)), {})
+        if source.get("metadataKnown") is not True or number(source.get("itemGuid", 0)) != item_guid(options.get("item_guid", 0)):
+            raise Error("exact_observed_source_item_required")
+        source = ref(source)
+        req = {"sessionId": state["sessionId"], "requestId": str(uuid.uuid4()), "expectedRevision": str(positive(state["revision"])),
+               "expectedInventoryRevision": str(positive(state["inventoryRevision"])), "source": source}
+        extra = {}
+        if kind == "move":
+            b, slot = number(options.get("destination_bag"), 4), number(options.get("destination_slot"), 35)
+            dest = slots.get((b, slot))
+            if dest is None or number(dest.get("itemGuid", 0)) or b != 0 and number(bags[b].get("entry", 0)) != 41599:
+                raise Error("known_empty_general_destination_required")
+            req.update(destinationBag=b, destinationSlot=slot, expectedDestinationItemGuid="0")
+        elif kind == "equip":
+            equipment = number(options.get("equipment_slot"), 22)
+            eligibility = self.eligible(state, source)
+            if (equipment < 19 or source["entry"] != 41599 or source["stackCount"] != 1 or eligibility.get("normalBag") is not True
+                    or number(eligibility.get("containerSlots", 0)) != 20 or number(bags[equipment-18].get("containerGuid", 0)) != 0):
+                raise Error("owned_41599_and_exact_empty_bag_equipment_slot_required")
+            req.update(equipmentSlot=equipment, expectedContainerGuid="0")
+        elif kind == "sell":
+            eligibility = self.eligible(state, source)
+            unit = positive(eligibility.get("unitSellPriceCopper", 0), 2**32-1)
+            if eligibility.get("safeJunkSaleEligible") is not True or state.get("copperKnown") is not True or unit*source["stackCount"] > 2**31-1-number(state.get("copper", 0)):
+                raise Error("actual_safe_junk_predicate_positive_price_and_wallet_required")
+            req.update(vendorGuid=str(vendor), expectedUnitSellPriceCopper=unit, expectedCopperRevision=str(positive(state.get("copperRevision", 0))))
+            extra["baselineCopper"] = number(state.get("copper", 0))
+        else:
+            raise Error("known_inventory_operation_required")
+        return self.submit(kind, req, **extra)
+
+    def claim_one(self, mailbox_guid):
+        if self.pending():
+            return self.reconcile(self.pending())
+        state = self.state(); bags, slots = self.ready(state)
+        if not any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items()):
+            raise Error("known_general_slot_for_bag_attachment_required")
+        mailbox = positive(mailbox_guid)
+        mail = self.rpc.call("buddy-mail.list", {"mailboxGuid": str(mailbox)})
+        if (mail.get("sessionId") != state["sessionId"] or mail.get("listKnown") is not True or mail.get("listCurrent") is not True
+                or mail.get("operationInFlight") or number(mail.get("mailboxGuid", 0)) != mailbox or number(mail.get("bagsClaimReserved", 0)) >= 4):
+            raise Error("fresh_same_session_owned_bag_mail_list_required")
+        rows = mail.get("bagMails", [])
+        if not isinstance(rows, list) or len(rows) > 50:
+            raise Error("bounded_bag_mail_list_required")
+        done = {number(r["request"]["itemGuidLow"]) for r in self.journal.data["attempts"] if r["kind"] == "claim"}
+        candidates, seen, lows, indices = [], set(), set(), set()
+        for row in rows:
+            mid = positive(row.get("mailId", 0), 2**32-1)
+            attachments = row.get("attachments", [])
+            if not isinstance(attachments, list) or not 1 <= len(attachments) <= 4:
+                raise Error("exact_bounded_party_bag_attachments_required")
+            for a in attachments:
+                index, low = number(a.get("attachmentIndex", 0), 3), positive(a.get("itemGuidLow", 0), 2**32-1)
+                key = (mid, index, low)
+                if (key in seen or low in lows or (mid, index) in indices or number(a.get("entry", 0)) != 41599
+                        or number(a.get("count", 0)) != 1):
+                    raise Error("duplicate_or_nonstandard_bag_attachment")
+                seen.add(key); lows.add(low); indices.add((mid, index))
+                if low not in done:
+                    candidates.append(key)
+        if not candidates:
+            return self.result("complete", "no_unclaimed_exact_party_bag_attachment")
+        mid, index, low = min(candidates)
+        fresh = self.state()
+        self.ready(fresh)
+        if fresh["sessionId"] != state["sessionId"] or fresh["inventoryRevision"] != state["inventoryRevision"]:
+            raise Error("inventory_changed_during_mail_list")
+        req = {"sessionId": state["sessionId"], "requestId": str(uuid.uuid4()), "listRevision": str(positive(mail.get("listRevision", 0))),
+               "mailboxGuid": str(mailbox), "mailId": mid, "attachmentIndex": index, "itemGuidLow": low,
+               "expectedCount": 1, "expectedInventoryRevision": str(positive(state["inventoryRevision"]))}
+        return self.submit("claim", req)
+
+    def settle(self, result, deadline):
+        for _ in range(10):
+            if result["phase"] != "requested" or self.now() >= deadline:
+                break
+            self.sleep(.2)
+            result = self.reconcile()
+        return result
+
+    def run(self, mailbox_guid=None, vendor_guid=None, max_seconds=180, claims_only=False):
+        if not 0 < max_seconds <= 600 or not math.isfinite(max_seconds):
+            raise Error("finite_runtime_at_most_600_seconds_required")
+        deadline, counts = self.now()+max_seconds, {"claim": 0, "equip": 0, "sell": 0}
+        if self.pending():
+            result = self.reconcile(self.pending())
+            if result["phase"] != "confirmed":
+                return {**result, "operations": counts}
+        for _ in range(169):
+            if self.now() >= deadline:
+                return self.result("time_limit", operations=counts)
+            state = self.state(); bags, slots = self.ready(state)
+            empty = [b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
+            free = any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items())
+            candidates = [ref(i) for i in slots.values() if i.get("metadataKnown") is True and number(i.get("entry", 0)) == 41599 and number(i.get("stackCount", 0)) == 1]
+            kind = ""
+            if empty and candidates and counts["equip"] < 4:
+                source = min(candidates, key=lambda i: (i["bag"], i["slot"]))
+                result = self.mutation("equip", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], equipment_slot=18+min(empty)); kind = "equip"
+            elif mailbox_guid and empty and free and counts["claim"] < 4:
+                result = self.claim_one(mailbox_guid)
+                if result["phase"] != "complete":
+                    kind = "claim"
+                else:
+                    mailbox_guid = None
+                    continue
+            elif claims_only:
+                if mailbox_guid and empty and not free:
+                    return self.result("blocked", "known_general_slot_for_bag_attachment_required", operations=counts)
+                return self.result("complete", "finite_bag_maintenance_finished", operations=counts)
+            elif counts["sell"] < 160:
+                state, vendors = self.discovery(vendor_guid)
+                if not vendors:
+                    return self.result("blocked", "no_actual_in_range_vendor_no_travel_attempted", operations=counts)
+                safe = [i for i in state.get("items", []) if i.get("metadataKnown") is True and i.get("safeJunkSaleEligible") is True and number(i.get("unitSellPriceCopper", 0)) > 0]
+                if not safe:
+                    return self.result("complete", "no_observed_safe_junk_sale", operations=counts)
+                source = min((ref(i["item"]) for i in safe), key=lambda i: (i["bag"], i["slot"]))
+                result = self.mutation("sell", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], vendor_guid=vendors[0][1]); kind = "sell"
+            else:
+                return self.result("operation_limit", operations=counts)
+            counts[kind] += 1
+            result = self.settle(result, min(deadline, self.now()+12))
+            if result["phase"] != "confirmed":
+                return {**result, "operations": counts}
+        return self.result("operation_limit", operations=counts)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("state", "discover", "reconcile", "move", "equip-bag", "sell-junk", "claim-bags", "run"):
+        p = commands.add_parser(name)
+        p.add_argument("--rpc-url", required=True); p.add_argument("--character-guid", required=True)
+        p.add_argument("--journal", type=Path); p.add_argument("--account-label", default="", help="Local journal label only; not authenticated account evidence")
+        if name in ("move", "equip-bag", "sell-junk"):
+            for flag in ("source-bag", "source-slot", "item-guid"):
+                p.add_argument("--"+flag, required=True)
+        if name == "move":
+            p.add_argument("--destination-bag", required=True); p.add_argument("--destination-slot", required=True)
+        if name == "equip-bag":
+            p.add_argument("--equipment-slot", required=True)
+        if name in ("sell-junk", "discover", "run"):
+            p.add_argument("--vendor-guid", required=name == "sell-junk")
+        if name in ("claim-bags", "run"):
+            p.add_argument("--mailbox-guid", required=name == "claim-bags")
+            p.add_argument("--max-seconds", type=float, default=180)
+    args = parser.parse_args(argv)
+    url, guid = base.rpc_url(args.rpc_url), positive(args.character_guid, 2**48-1)
+    rpc = RPC(url); worker = Worker(rpc, guid)
+    if args.command == "state":
+        result = worker.state()
+    elif args.command == "discover":
+        state, vendors = worker.discovery(args.vendor_guid)
+        result = {"state": state, "inRangeVendorGuids": [str(g) for _, g in vendors]}
+    else:
+        path = args.journal or ROOT/"data/autonomy/town-maintenance"/f"{guid}-{url.split(':')[-1].split('/')[0]}"/"receipts.json"
+        with Journal(path, url, guid, args.account_label) as journal:
+            worker.journal = journal
+            if args.command == "reconcile":
+                result = worker.reconcile()
+            elif args.command in ("run", "claim-bags"):
+                result = worker.run(mailbox_guid=args.mailbox_guid, vendor_guid=getattr(args, "vendor_guid", None), max_seconds=args.max_seconds, claims_only=args.command == "claim-bags")
+            else:
+                kind = {"equip-bag": "equip", "sell-junk": "sell"}.get(args.command, args.command)
+                result = worker.mutation(kind, **vars(args))
+    print(json.dumps(result, allow_nan=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (Error, OSError, ValueError, TypeError, KeyError) as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1)

@@ -1,5 +1,5 @@
 // Package buddymail implements only normal mailbox listing and the explicitly
-// authorized Training stipend money claim. It never sends, deletes or takes items.
+// authorized Training stipend money and exact Party bags attachment claims.
 package buddymail
 
 import (
@@ -17,6 +17,27 @@ type mailEntry struct {
 	sender                     uint64
 	typeID, items              byte
 	subject                    string
+	attachments                []mailAttachment
+}
+
+type mailAttachment struct {
+	index                 byte
+	itemLow, entry, count uint32
+}
+
+func (m mailEntry) partyBags() bool {
+	if m.id == 0 || m.typeID != 0 || m.sender != 0 || m.stationery != 61 || m.money != 0 || m.cod != 0 || m.subject != "Party bags" || m.items == 0 || m.items > 4 || len(m.attachments) != int(m.items) {
+		return false
+	}
+	seen := make(map[uint32]bool)
+	indices := make(map[byte]bool)
+	for _, a := range m.attachments {
+		if a.index >= m.items || indices[a.index] || a.itemLow == 0 || seen[a.itemLow] || a.entry != 41599 || a.count != 1 {
+			return false
+		}
+		indices[a.index], seen[a.itemLow] = true, true
+	}
+	return true
 }
 
 func (m mailEntry) stipend() bool {
@@ -97,6 +118,10 @@ func decodeMailList(p []byte) ([]mailEntry, error) {
 		if m.items > 12 || len(row)-i != int(m.items)*118 {
 			return nil, bad
 		}
+		for n := 0; n < int(m.items); n++ {
+			a := row[i+n*118 : i+(n+1)*118]
+			m.attachments = append(m.attachments, mailAttachment{index: a[0], itemLow: binary.LittleEndian.Uint32(a[1:]), entry: binary.LittleEndian.Uint32(a[5:]), count: binary.LittleEndian.Uint32(a[101:])})
+		}
 		result = append(result, m)
 	}
 	if off != len(p) {
@@ -105,7 +130,7 @@ func decodeMailList(p []byte) ([]mailEntry, error) {
 	return result, nil
 }
 
-type mailResult struct{ id, action, result, equip uint32 }
+type mailResult struct{ id, action, result, equip, itemLow, count uint32 }
 
 // Player::SendMailResult writes three uint32 words, optional equipment error or
 // item GUID/count. MAIL_MONEY_TAKEN1/MAIL_OK0 alone is not wallet proof.
@@ -114,7 +139,7 @@ func decodeMailResult(p []byte) (mailResult, error) {
 	if len(p) < 12 {
 		return mailResult{}, bad
 	}
-	r := mailResult{binary.LittleEndian.Uint32(p), binary.LittleEndian.Uint32(p[4:]), binary.LittleEndian.Uint32(p[8:]), 0}
+	r := mailResult{id: binary.LittleEndian.Uint32(p), action: binary.LittleEndian.Uint32(p[4:]), result: binary.LittleEndian.Uint32(p[8:])}
 	want := 12
 	if r.result == 1 {
 		want = 16
@@ -126,6 +151,8 @@ func decodeMailResult(p []byte) (mailResult, error) {
 	}
 	if r.result == 1 {
 		r.equip = binary.LittleEndian.Uint32(p[12:])
+	} else if r.action == 2 {
+		r.itemLow, r.count = binary.LittleEndian.Uint32(p[12:]), binary.LittleEndian.Uint32(p[16:])
 	}
 	return r, nil
 }
@@ -139,5 +166,15 @@ func takeMoneyPacket(guid uint64, id uint32) []byte {
 	p := make([]byte, 12)
 	binary.LittleEndian.PutUint64(p, guid)
 	binary.LittleEndian.PutUint32(p[8:], id)
+	return p
+}
+func takeItemPacket(guid uint64, id, itemLow uint32) []byte {
+	if guid == 0 || id == 0 || itemLow == 0 {
+		return nil
+	}
+	p := make([]byte, 16)
+	binary.LittleEndian.PutUint64(p, guid)
+	binary.LittleEndian.PutUint32(p[8:], id)
+	binary.LittleEndian.PutUint32(p[12:], itemLow)
 	return p
 }

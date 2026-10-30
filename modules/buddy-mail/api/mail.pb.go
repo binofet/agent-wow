@@ -81,6 +81,67 @@ func (ClaimStatus) EnumDescriptor() ([]byte, []int) {
 	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{0}
 }
 
+type BagClaimStatus int32
+
+const (
+	BagClaimStatus_BAG_CLAIM_NONE              BagClaimStatus = 0
+	BagClaimStatus_BAG_CLAIM_REQUESTED         BagClaimStatus = 1
+	BagClaimStatus_BAG_CLAIM_CONFIRMED         BagClaimStatus = 2
+	BagClaimStatus_BAG_CLAIM_UNCONFIRMED       BagClaimStatus = 3
+	BagClaimStatus_BAG_CLAIM_SERVER_REJECTED   BagClaimStatus = 4
+	BagClaimStatus_BAG_CLAIM_WRITE_UNCONFIRMED BagClaimStatus = 5
+	BagClaimStatus_BAG_CLAIM_BLOCKED           BagClaimStatus = 6
+)
+
+// Enum value maps for BagClaimStatus.
+var (
+	BagClaimStatus_name = map[int32]string{
+		0: "BAG_CLAIM_NONE",
+		1: "BAG_CLAIM_REQUESTED",
+		2: "BAG_CLAIM_CONFIRMED",
+		3: "BAG_CLAIM_UNCONFIRMED",
+		4: "BAG_CLAIM_SERVER_REJECTED",
+		5: "BAG_CLAIM_WRITE_UNCONFIRMED",
+		6: "BAG_CLAIM_BLOCKED",
+	}
+	BagClaimStatus_value = map[string]int32{
+		"BAG_CLAIM_NONE":              0,
+		"BAG_CLAIM_REQUESTED":         1,
+		"BAG_CLAIM_CONFIRMED":         2,
+		"BAG_CLAIM_UNCONFIRMED":       3,
+		"BAG_CLAIM_SERVER_REJECTED":   4,
+		"BAG_CLAIM_WRITE_UNCONFIRMED": 5,
+		"BAG_CLAIM_BLOCKED":           6,
+	}
+)
+
+func (x BagClaimStatus) Enum() *BagClaimStatus {
+	p := new(BagClaimStatus)
+	*p = x
+	return p
+}
+
+func (x BagClaimStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (BagClaimStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_modules_buddy_mail_mail_proto_enumTypes[1].Descriptor()
+}
+
+func (BagClaimStatus) Type() protoreflect.EnumType {
+	return &file_modules_buddy_mail_mail_proto_enumTypes[1]
+}
+
+func (x BagClaimStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use BagClaimStatus.Descriptor instead.
+func (BagClaimStatus) EnumDescriptor() ([]byte, []int) {
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{1}
+}
+
 type ListRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MailboxGuid   uint64                 `protobuf:"varint,1,opt,name=mailbox_guid,json=mailboxGuid,proto3" json:"mailbox_guid,omitempty"`
@@ -377,6 +438,406 @@ func (x *ClaimReceipt) GetEquipmentError() uint32 {
 	return 0
 }
 
+type BagAttachment struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AttachmentIndex uint32                 `protobuf:"varint,1,opt,name=attachment_index,json=attachmentIndex,proto3" json:"attachment_index,omitempty"`
+	ItemGuidLow     uint32                 `protobuf:"varint,2,opt,name=item_guid_low,json=itemGuidLow,proto3" json:"item_guid_low,omitempty"`
+	Entry           uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count           uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *BagAttachment) Reset() {
+	*x = BagAttachment{}
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BagAttachment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BagAttachment) ProtoMessage() {}
+
+func (x *BagAttachment) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BagAttachment.ProtoReflect.Descriptor instead.
+func (*BagAttachment) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *BagAttachment) GetAttachmentIndex() uint32 {
+	if x != nil {
+		return x.AttachmentIndex
+	}
+	return 0
+}
+
+func (x *BagAttachment) GetItemGuidLow() uint32 {
+	if x != nil {
+		return x.ItemGuidLow
+	}
+	return 0
+}
+
+func (x *BagAttachment) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *BagAttachment) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type BagMail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MailId        uint32                 `protobuf:"varint,1,opt,name=mail_id,json=mailId,proto3" json:"mail_id,omitempty"`
+	Attachments   []*BagAttachment       `protobuf:"bytes,2,rep,name=attachments,proto3" json:"attachments,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BagMail) Reset() {
+	*x = BagMail{}
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BagMail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BagMail) ProtoMessage() {}
+
+func (x *BagMail) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BagMail.ProtoReflect.Descriptor instead.
+func (*BagMail) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *BagMail) GetMailId() uint32 {
+	if x != nil {
+		return x.MailId
+	}
+	return 0
+}
+
+func (x *BagMail) GetAttachments() []*BagAttachment {
+	if x != nil {
+		return x.Attachments
+	}
+	return nil
+}
+
+type ClaimBagAttachmentRequest struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId                 string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	ListRevision              uint64                 `protobuf:"varint,3,opt,name=list_revision,json=listRevision,proto3" json:"list_revision,omitempty"`
+	MailboxGuid               uint64                 `protobuf:"varint,4,opt,name=mailbox_guid,json=mailboxGuid,proto3" json:"mailbox_guid,omitempty"`
+	MailId                    uint32                 `protobuf:"varint,5,opt,name=mail_id,json=mailId,proto3" json:"mail_id,omitempty"`
+	AttachmentIndex           uint32                 `protobuf:"varint,6,opt,name=attachment_index,json=attachmentIndex,proto3" json:"attachment_index,omitempty"`
+	ItemGuidLow               uint32                 `protobuf:"varint,7,opt,name=item_guid_low,json=itemGuidLow,proto3" json:"item_guid_low,omitempty"`
+	ExpectedCount             uint32                 `protobuf:"varint,8,opt,name=expected_count,json=expectedCount,proto3" json:"expected_count,omitempty"`
+	ExpectedInventoryRevision uint64                 `protobuf:"varint,9,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *ClaimBagAttachmentRequest) Reset() {
+	*x = ClaimBagAttachmentRequest{}
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClaimBagAttachmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClaimBagAttachmentRequest) ProtoMessage() {}
+
+func (x *ClaimBagAttachmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClaimBagAttachmentRequest.ProtoReflect.Descriptor instead.
+func (*ClaimBagAttachmentRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ClaimBagAttachmentRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ClaimBagAttachmentRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ClaimBagAttachmentRequest) GetListRevision() uint64 {
+	if x != nil {
+		return x.ListRevision
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetMailboxGuid() uint64 {
+	if x != nil {
+		return x.MailboxGuid
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetMailId() uint32 {
+	if x != nil {
+		return x.MailId
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetAttachmentIndex() uint32 {
+	if x != nil {
+		return x.AttachmentIndex
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetItemGuidLow() uint32 {
+	if x != nil {
+		return x.ItemGuidLow
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetExpectedCount() uint32 {
+	if x != nil {
+		return x.ExpectedCount
+	}
+	return 0
+}
+
+func (x *ClaimBagAttachmentRequest) GetExpectedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ExpectedInventoryRevision
+	}
+	return 0
+}
+
+type BagClaimReceipt struct {
+	state                     protoimpl.MessageState     `protogen:"open.v1"`
+	Request                   *ClaimBagAttachmentRequest `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	Status                    BagClaimStatus             `protobuf:"varint,2,opt,name=status,proto3,enum=warcraftbuddy.mail.v1.BagClaimStatus" json:"status,omitempty"`
+	Reason                    string                     `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	TransportAttempted        bool                       `protobuf:"varint,4,opt,name=transport_attempted,json=transportAttempted,proto3" json:"transport_attempted,omitempty"`
+	TransportWritten          bool                       `protobuf:"varint,5,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	ServerAcknowledged        bool                       `protobuf:"varint,6,opt,name=server_acknowledged,json=serverAcknowledged,proto3" json:"server_acknowledged,omitempty"`
+	InventoryConfirmed        bool                       `protobuf:"varint,7,opt,name=inventory_confirmed,json=inventoryConfirmed,proto3" json:"inventory_confirmed,omitempty"`
+	BaselineInventoryRevision uint64                     `protobuf:"varint,8,opt,name=baseline_inventory_revision,json=baselineInventoryRevision,proto3" json:"baseline_inventory_revision,omitempty"`
+	ObservedInventoryRevision uint64                     `protobuf:"varint,9,opt,name=observed_inventory_revision,json=observedInventoryRevision,proto3" json:"observed_inventory_revision,omitempty"`
+	ItemGuid                  uint64                     `protobuf:"varint,10,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry                     uint32                     `protobuf:"varint,11,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count                     uint32                     `protobuf:"varint,12,opt,name=count,proto3" json:"count,omitempty"`
+	ObservedBag               uint32                     `protobuf:"varint,13,opt,name=observed_bag,json=observedBag,proto3" json:"observed_bag,omitempty"`
+	ObservedSlot              uint32                     `protobuf:"varint,14,opt,name=observed_slot,json=observedSlot,proto3" json:"observed_slot,omitempty"`
+	ServerError               uint32                     `protobuf:"varint,15,opt,name=server_error,json=serverError,proto3" json:"server_error,omitempty"`
+	EquipmentError            uint32                     `protobuf:"varint,16,opt,name=equipment_error,json=equipmentError,proto3" json:"equipment_error,omitempty"`
+	LeaseReleased             bool                       `protobuf:"varint,17,opt,name=lease_released,json=leaseReleased,proto3" json:"lease_released,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *BagClaimReceipt) Reset() {
+	*x = BagClaimReceipt{}
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BagClaimReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BagClaimReceipt) ProtoMessage() {}
+
+func (x *BagClaimReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BagClaimReceipt.ProtoReflect.Descriptor instead.
+func (*BagClaimReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *BagClaimReceipt) GetRequest() *ClaimBagAttachmentRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+func (x *BagClaimReceipt) GetStatus() BagClaimStatus {
+	if x != nil {
+		return x.Status
+	}
+	return BagClaimStatus_BAG_CLAIM_NONE
+}
+
+func (x *BagClaimReceipt) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *BagClaimReceipt) GetTransportAttempted() bool {
+	if x != nil {
+		return x.TransportAttempted
+	}
+	return false
+}
+
+func (x *BagClaimReceipt) GetTransportWritten() bool {
+	if x != nil {
+		return x.TransportWritten
+	}
+	return false
+}
+
+func (x *BagClaimReceipt) GetServerAcknowledged() bool {
+	if x != nil {
+		return x.ServerAcknowledged
+	}
+	return false
+}
+
+func (x *BagClaimReceipt) GetInventoryConfirmed() bool {
+	if x != nil {
+		return x.InventoryConfirmed
+	}
+	return false
+}
+
+func (x *BagClaimReceipt) GetBaselineInventoryRevision() uint64 {
+	if x != nil {
+		return x.BaselineInventoryRevision
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetObservedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ObservedInventoryRevision
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetItemGuid() uint64 {
+	if x != nil {
+		return x.ItemGuid
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetObservedBag() uint32 {
+	if x != nil {
+		return x.ObservedBag
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetObservedSlot() uint32 {
+	if x != nil {
+		return x.ObservedSlot
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetServerError() uint32 {
+	if x != nil {
+		return x.ServerError
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetEquipmentError() uint32 {
+	if x != nil {
+		return x.EquipmentError
+	}
+	return 0
+}
+
+func (x *BagClaimReceipt) GetLeaseReleased() bool {
+	if x != nil {
+		return x.LeaseReleased
+	}
+	return false
+}
+
 type State struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -395,14 +856,19 @@ type State struct {
 	TransportWrites  uint64         `protobuf:"varint,12,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
 	MalformedPackets uint64         `protobuf:"varint,13,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
 	// One stipend attempt per module instance, including ambiguous writes.
-	ClaimReserved bool `protobuf:"varint,14,opt,name=claim_reserved,json=claimReserved,proto3" json:"claim_reserved,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ClaimReserved     bool               `protobuf:"varint,14,opt,name=claim_reserved,json=claimReserved,proto3" json:"claim_reserved,omitempty"`
+	BagMails          []*BagMail         `protobuf:"bytes,15,rep,name=bag_mails,json=bagMails,proto3" json:"bag_mails,omitempty"`
+	LastBagClaim      *BagClaimReceipt   `protobuf:"bytes,16,opt,name=last_bag_claim,json=lastBagClaim,proto3" json:"last_bag_claim,omitempty"`
+	BagClaims         []*BagClaimReceipt `protobuf:"bytes,17,rep,name=bag_claims,json=bagClaims,proto3" json:"bag_claims,omitempty"`
+	BagsClaimReserved uint32             `protobuf:"varint,18,opt,name=bags_claim_reserved,json=bagsClaimReserved,proto3" json:"bags_claim_reserved,omitempty"`
+	BagsClaimed       uint32             `protobuf:"varint,19,opt,name=bags_claimed,json=bagsClaimed,proto3" json:"bags_claimed,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_mail_mail_proto_msgTypes[4]
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -414,7 +880,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_mail_mail_proto_msgTypes[4]
+	mi := &file_modules_buddy_mail_mail_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -427,7 +893,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_mail_mail_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *State) GetSessionId() string {
@@ -528,6 +994,41 @@ func (x *State) GetClaimReserved() bool {
 	return false
 }
 
+func (x *State) GetBagMails() []*BagMail {
+	if x != nil {
+		return x.BagMails
+	}
+	return nil
+}
+
+func (x *State) GetLastBagClaim() *BagClaimReceipt {
+	if x != nil {
+		return x.LastBagClaim
+	}
+	return nil
+}
+
+func (x *State) GetBagClaims() []*BagClaimReceipt {
+	if x != nil {
+		return x.BagClaims
+	}
+	return nil
+}
+
+func (x *State) GetBagsClaimReserved() uint32 {
+	if x != nil {
+		return x.BagsClaimReserved
+	}
+	return 0
+}
+
+func (x *State) GetBagsClaimed() uint32 {
+	if x != nil {
+		return x.BagsClaimed
+	}
+	return 0
+}
+
 var File_modules_buddy_mail_mail_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_mail_mail_proto_rawDesc = "" +
@@ -557,7 +1058,46 @@ const file_modules_buddy_mail_mail_proto_rawDesc = "" +
 	"\x10confirmed_copper\x18\n" +
 	" \x01(\rR\x0fconfirmedCopper\x12!\n" +
 	"\fserver_error\x18\v \x01(\rR\vserverError\x12'\n" +
-	"\x0fequipment_error\x18\f \x01(\rR\x0eequipmentError\"\xc5\x04\n" +
+	"\x0fequipment_error\x18\f \x01(\rR\x0eequipmentError\"\x8a\x01\n" +
+	"\rBagAttachment\x12)\n" +
+	"\x10attachment_index\x18\x01 \x01(\rR\x0fattachmentIndex\x12\"\n" +
+	"\ritem_guid_low\x18\x02 \x01(\rR\vitemGuidLow\x12\x14\n" +
+	"\x05entry\x18\x03 \x01(\rR\x05entry\x12\x14\n" +
+	"\x05count\x18\x04 \x01(\rR\x05count\"j\n" +
+	"\aBagMail\x12\x17\n" +
+	"\amail_id\x18\x01 \x01(\rR\x06mailId\x12F\n" +
+	"\vattachments\x18\x02 \x03(\v2$.warcraftbuddy.mail.v1.BagAttachmentR\vattachments\"\xf0\x02\n" +
+	"\x19ClaimBagAttachmentRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12#\n" +
+	"\rlist_revision\x18\x03 \x01(\x04R\flistRevision\x12!\n" +
+	"\fmailbox_guid\x18\x04 \x01(\x04R\vmailboxGuid\x12\x17\n" +
+	"\amail_id\x18\x05 \x01(\rR\x06mailId\x12)\n" +
+	"\x10attachment_index\x18\x06 \x01(\rR\x0fattachmentIndex\x12\"\n" +
+	"\ritem_guid_low\x18\a \x01(\rR\vitemGuidLow\x12%\n" +
+	"\x0eexpected_count\x18\b \x01(\rR\rexpectedCount\x12>\n" +
+	"\x1bexpected_inventory_revision\x18\t \x01(\x04R\x19expectedInventoryRevision\"\xf8\x05\n" +
+	"\x0fBagClaimReceipt\x12J\n" +
+	"\arequest\x18\x01 \x01(\v20.warcraftbuddy.mail.v1.ClaimBagAttachmentRequestR\arequest\x12=\n" +
+	"\x06status\x18\x02 \x01(\x0e2%.warcraftbuddy.mail.v1.BagClaimStatusR\x06status\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12/\n" +
+	"\x13transport_attempted\x18\x04 \x01(\bR\x12transportAttempted\x12+\n" +
+	"\x11transport_written\x18\x05 \x01(\bR\x10transportWritten\x12/\n" +
+	"\x13server_acknowledged\x18\x06 \x01(\bR\x12serverAcknowledged\x12/\n" +
+	"\x13inventory_confirmed\x18\a \x01(\bR\x12inventoryConfirmed\x12>\n" +
+	"\x1bbaseline_inventory_revision\x18\b \x01(\x04R\x19baselineInventoryRevision\x12>\n" +
+	"\x1bobserved_inventory_revision\x18\t \x01(\x04R\x19observedInventoryRevision\x12\x1b\n" +
+	"\titem_guid\x18\n" +
+	" \x01(\x04R\bitemGuid\x12\x14\n" +
+	"\x05entry\x18\v \x01(\rR\x05entry\x12\x14\n" +
+	"\x05count\x18\f \x01(\rR\x05count\x12!\n" +
+	"\fobserved_bag\x18\r \x01(\rR\vobservedBag\x12#\n" +
+	"\robserved_slot\x18\x0e \x01(\rR\fobservedSlot\x12!\n" +
+	"\fserver_error\x18\x0f \x01(\rR\vserverError\x12'\n" +
+	"\x0fequipment_error\x18\x10 \x01(\rR\x0eequipmentError\x12%\n" +
+	"\x0elease_released\x18\x11 \x01(\bR\rleaseReleased\"\xea\x06\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -576,7 +1116,13 @@ const file_modules_buddy_mail_mail_proto_rawDesc = "" +
 	"last_claim\x18\v \x01(\v2#.warcraftbuddy.mail.v1.ClaimReceiptR\tlastClaim\x12)\n" +
 	"\x10transport_writes\x18\f \x01(\x04R\x0ftransportWrites\x12+\n" +
 	"\x11malformed_packets\x18\r \x01(\x04R\x10malformedPackets\x12%\n" +
-	"\x0eclaim_reserved\x18\x0e \x01(\bR\rclaimReserved*\x96\x01\n" +
+	"\x0eclaim_reserved\x18\x0e \x01(\bR\rclaimReserved\x12;\n" +
+	"\tbag_mails\x18\x0f \x03(\v2\x1e.warcraftbuddy.mail.v1.BagMailR\bbagMails\x12L\n" +
+	"\x0elast_bag_claim\x18\x10 \x01(\v2&.warcraftbuddy.mail.v1.BagClaimReceiptR\flastBagClaim\x12E\n" +
+	"\n" +
+	"bag_claims\x18\x11 \x03(\v2&.warcraftbuddy.mail.v1.BagClaimReceiptR\tbagClaims\x12.\n" +
+	"\x13bags_claim_reserved\x18\x12 \x01(\rR\x11bagsClaimReserved\x12!\n" +
+	"\fbags_claimed\x18\x13 \x01(\rR\vbagsClaimed*\x96\x01\n" +
 	"\vClaimStatus\x12\x0e\n" +
 	"\n" +
 	"CLAIM_NONE\x10\x00\x12\x13\n" +
@@ -584,10 +1130,19 @@ const file_modules_buddy_mail_mail_proto_rawDesc = "" +
 	"\x0fCLAIM_CONFIRMED\x10\x02\x12\x15\n" +
 	"\x11CLAIM_UNCONFIRMED\x10\x03\x12\x19\n" +
 	"\x15CLAIM_SERVER_REJECTED\x10\x04\x12\x1b\n" +
-	"\x17CLAIM_WRITE_UNCONFIRMED\x10\x052\xef\x02\n" +
+	"\x17CLAIM_WRITE_UNCONFIRMED\x10\x05*\xc8\x01\n" +
+	"\x0eBagClaimStatus\x12\x12\n" +
+	"\x0eBAG_CLAIM_NONE\x10\x00\x12\x17\n" +
+	"\x13BAG_CLAIM_REQUESTED\x10\x01\x12\x17\n" +
+	"\x13BAG_CLAIM_CONFIRMED\x10\x02\x12\x19\n" +
+	"\x15BAG_CLAIM_UNCONFIRMED\x10\x03\x12\x1d\n" +
+	"\x19BAG_CLAIM_SERVER_REJECTED\x10\x04\x12\x1f\n" +
+	"\x1bBAG_CLAIM_WRITE_UNCONFIRMED\x10\x05\x12\x15\n" +
+	"\x11BAG_CLAIM_BLOCKED\x10\x062\xd5\x03\n" +
 	"\tBuddyMail\x12H\n" +
 	"\x04List\x12\".warcraftbuddy.mail.v1.ListRequest\x1a\x1c.warcraftbuddy.mail.v1.State\x12Q\n" +
-	"\fClaimStipend\x12#.warcraftbuddy.mail.v1.ClaimRequest\x1a\x1c.warcraftbuddy.mail.v1.State\x12@\n" +
+	"\fClaimStipend\x12#.warcraftbuddy.mail.v1.ClaimRequest\x1a\x1c.warcraftbuddy.mail.v1.State\x12d\n" +
+	"\x12ClaimBagAttachment\x120.warcraftbuddy.mail.v1.ClaimBagAttachmentRequest\x1a\x1c.warcraftbuddy.mail.v1.State\x12@\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1c.warcraftbuddy.mail.v1.State\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-mail/api;mailv1b\x06proto3"
@@ -604,37 +1159,50 @@ func file_modules_buddy_mail_mail_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_mail_mail_proto_rawDescData
 }
 
-var file_modules_buddy_mail_mail_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_mail_mail_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_modules_buddy_mail_mail_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_modules_buddy_mail_mail_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_modules_buddy_mail_mail_proto_goTypes = []any{
-	(ClaimStatus)(0),       // 0: warcraftbuddy.mail.v1.ClaimStatus
-	(*ListRequest)(nil),    // 1: warcraftbuddy.mail.v1.ListRequest
-	(*ClaimRequest)(nil),   // 2: warcraftbuddy.mail.v1.ClaimRequest
-	(*StipendMail)(nil),    // 3: warcraftbuddy.mail.v1.StipendMail
-	(*ClaimReceipt)(nil),   // 4: warcraftbuddy.mail.v1.ClaimReceipt
-	(*State)(nil),          // 5: warcraftbuddy.mail.v1.State
-	(*emptypb.Empty)(nil),  // 6: google.protobuf.Empty
-	(*v1.WorldPacket)(nil), // 7: agentwow.module.v1.WorldPacket
+	(ClaimStatus)(0),                  // 0: warcraftbuddy.mail.v1.ClaimStatus
+	(BagClaimStatus)(0),               // 1: warcraftbuddy.mail.v1.BagClaimStatus
+	(*ListRequest)(nil),               // 2: warcraftbuddy.mail.v1.ListRequest
+	(*ClaimRequest)(nil),              // 3: warcraftbuddy.mail.v1.ClaimRequest
+	(*StipendMail)(nil),               // 4: warcraftbuddy.mail.v1.StipendMail
+	(*ClaimReceipt)(nil),              // 5: warcraftbuddy.mail.v1.ClaimReceipt
+	(*BagAttachment)(nil),             // 6: warcraftbuddy.mail.v1.BagAttachment
+	(*BagMail)(nil),                   // 7: warcraftbuddy.mail.v1.BagMail
+	(*ClaimBagAttachmentRequest)(nil), // 8: warcraftbuddy.mail.v1.ClaimBagAttachmentRequest
+	(*BagClaimReceipt)(nil),           // 9: warcraftbuddy.mail.v1.BagClaimReceipt
+	(*State)(nil),                     // 10: warcraftbuddy.mail.v1.State
+	(*emptypb.Empty)(nil),             // 11: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),            // 12: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_mail_mail_proto_depIdxs = []int32{
-	0, // 0: warcraftbuddy.mail.v1.ClaimReceipt.status:type_name -> warcraftbuddy.mail.v1.ClaimStatus
-	3, // 1: warcraftbuddy.mail.v1.State.stipends:type_name -> warcraftbuddy.mail.v1.StipendMail
-	4, // 2: warcraftbuddy.mail.v1.State.last_claim:type_name -> warcraftbuddy.mail.v1.ClaimReceipt
-	1, // 3: warcraftbuddy.mail.v1.BuddyMail.List:input_type -> warcraftbuddy.mail.v1.ListRequest
-	2, // 4: warcraftbuddy.mail.v1.BuddyMail.ClaimStipend:input_type -> warcraftbuddy.mail.v1.ClaimRequest
-	6, // 5: warcraftbuddy.mail.v1.BuddyMail.GetState:input_type -> google.protobuf.Empty
-	7, // 6: warcraftbuddy.mail.v1.BuddyMail.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	6, // 7: warcraftbuddy.mail.v1.BuddyMail.BeforeLogout:input_type -> google.protobuf.Empty
-	5, // 8: warcraftbuddy.mail.v1.BuddyMail.List:output_type -> warcraftbuddy.mail.v1.State
-	5, // 9: warcraftbuddy.mail.v1.BuddyMail.ClaimStipend:output_type -> warcraftbuddy.mail.v1.State
-	5, // 10: warcraftbuddy.mail.v1.BuddyMail.GetState:output_type -> warcraftbuddy.mail.v1.State
-	6, // 11: warcraftbuddy.mail.v1.BuddyMail.OnPacket:output_type -> google.protobuf.Empty
-	6, // 12: warcraftbuddy.mail.v1.BuddyMail.BeforeLogout:output_type -> google.protobuf.Empty
-	8, // [8:13] is the sub-list for method output_type
-	3, // [3:8] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: warcraftbuddy.mail.v1.ClaimReceipt.status:type_name -> warcraftbuddy.mail.v1.ClaimStatus
+	6,  // 1: warcraftbuddy.mail.v1.BagMail.attachments:type_name -> warcraftbuddy.mail.v1.BagAttachment
+	8,  // 2: warcraftbuddy.mail.v1.BagClaimReceipt.request:type_name -> warcraftbuddy.mail.v1.ClaimBagAttachmentRequest
+	1,  // 3: warcraftbuddy.mail.v1.BagClaimReceipt.status:type_name -> warcraftbuddy.mail.v1.BagClaimStatus
+	4,  // 4: warcraftbuddy.mail.v1.State.stipends:type_name -> warcraftbuddy.mail.v1.StipendMail
+	5,  // 5: warcraftbuddy.mail.v1.State.last_claim:type_name -> warcraftbuddy.mail.v1.ClaimReceipt
+	7,  // 6: warcraftbuddy.mail.v1.State.bag_mails:type_name -> warcraftbuddy.mail.v1.BagMail
+	9,  // 7: warcraftbuddy.mail.v1.State.last_bag_claim:type_name -> warcraftbuddy.mail.v1.BagClaimReceipt
+	9,  // 8: warcraftbuddy.mail.v1.State.bag_claims:type_name -> warcraftbuddy.mail.v1.BagClaimReceipt
+	2,  // 9: warcraftbuddy.mail.v1.BuddyMail.List:input_type -> warcraftbuddy.mail.v1.ListRequest
+	3,  // 10: warcraftbuddy.mail.v1.BuddyMail.ClaimStipend:input_type -> warcraftbuddy.mail.v1.ClaimRequest
+	8,  // 11: warcraftbuddy.mail.v1.BuddyMail.ClaimBagAttachment:input_type -> warcraftbuddy.mail.v1.ClaimBagAttachmentRequest
+	11, // 12: warcraftbuddy.mail.v1.BuddyMail.GetState:input_type -> google.protobuf.Empty
+	12, // 13: warcraftbuddy.mail.v1.BuddyMail.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	11, // 14: warcraftbuddy.mail.v1.BuddyMail.BeforeLogout:input_type -> google.protobuf.Empty
+	10, // 15: warcraftbuddy.mail.v1.BuddyMail.List:output_type -> warcraftbuddy.mail.v1.State
+	10, // 16: warcraftbuddy.mail.v1.BuddyMail.ClaimStipend:output_type -> warcraftbuddy.mail.v1.State
+	10, // 17: warcraftbuddy.mail.v1.BuddyMail.ClaimBagAttachment:output_type -> warcraftbuddy.mail.v1.State
+	10, // 18: warcraftbuddy.mail.v1.BuddyMail.GetState:output_type -> warcraftbuddy.mail.v1.State
+	11, // 19: warcraftbuddy.mail.v1.BuddyMail.OnPacket:output_type -> google.protobuf.Empty
+	11, // 20: warcraftbuddy.mail.v1.BuddyMail.BeforeLogout:output_type -> google.protobuf.Empty
+	15, // [15:21] is the sub-list for method output_type
+	9,  // [9:15] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_mail_mail_proto_init() }
@@ -647,8 +1215,8 @@ func file_modules_buddy_mail_mail_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_mail_mail_proto_rawDesc), len(file_modules_buddy_mail_mail_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   5,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

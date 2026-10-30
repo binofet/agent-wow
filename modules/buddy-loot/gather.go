@@ -252,21 +252,3 @@ func gatherObjectCurrent(w *worldv1.SnapshotResponse, a *actionsv1.State, guid u
 	}
 	return harvestObject(a.Position, object)
 }
-
-// Item.h EQUIP_ERR_INVENTORY_FULL50 is a rejected store, not an ambiguous
-// write. Resume only after a complete own backpack snapshot proves free space.
-func ownKnownFreeSlot(w *worldv1.SnapshotResponse, self uint64) bool {
-	if w == nil || w.Self == nil || w.Self.Guid != self || !w.BackpackKnown || len(w.Backpack) != 16 {
-		return false
-	}
-	var seen [16]bool
-	free := false
-	for _, item := range w.Backpack {
-		if item == nil || item.Bag != 0 || item.Slot >= 16 || seen[item.Slot] {
-			return false
-		}
-		seen[item.Slot] = true
-		free = free || item.ItemGuid == 0
-	}
-	return free
-}

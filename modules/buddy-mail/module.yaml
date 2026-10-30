@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit nearby mailbox listing and one-shot collection of exact server Training stipend money only
+description: Explicit nearby mailbox listing and bounded exact GM stipend and Party bags claims
 requires: [buddy-world, buddy-actions]
 compose:
   file: compose.yaml
@@ -10,6 +10,7 @@ grpc:
 rpc:
   list: /warcraftbuddy.mail.v1.BuddyMail/List
   claim_stipend: /warcraftbuddy.mail.v1.BuddyMail/ClaimStipend
+  claim_bag_attachment: /warcraftbuddy.mail.v1.BuddyMail/ClaimBagAttachment
   state: /warcraftbuddy.mail.v1.BuddyMail/GetState
 packets:
   SMSG_MAIL_LIST_RESULT: /warcraftbuddy.mail.v1.BuddyMail/OnPacket

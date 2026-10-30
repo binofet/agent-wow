@@ -21,11 +21,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyMail_List_FullMethodName         = "/warcraftbuddy.mail.v1.BuddyMail/List"
-	BuddyMail_ClaimStipend_FullMethodName = "/warcraftbuddy.mail.v1.BuddyMail/ClaimStipend"
-	BuddyMail_GetState_FullMethodName     = "/warcraftbuddy.mail.v1.BuddyMail/GetState"
-	BuddyMail_OnPacket_FullMethodName     = "/warcraftbuddy.mail.v1.BuddyMail/OnPacket"
-	BuddyMail_BeforeLogout_FullMethodName = "/warcraftbuddy.mail.v1.BuddyMail/BeforeLogout"
+	BuddyMail_List_FullMethodName               = "/warcraftbuddy.mail.v1.BuddyMail/List"
+	BuddyMail_ClaimStipend_FullMethodName       = "/warcraftbuddy.mail.v1.BuddyMail/ClaimStipend"
+	BuddyMail_ClaimBagAttachment_FullMethodName = "/warcraftbuddy.mail.v1.BuddyMail/ClaimBagAttachment"
+	BuddyMail_GetState_FullMethodName           = "/warcraftbuddy.mail.v1.BuddyMail/GetState"
+	BuddyMail_OnPacket_FullMethodName           = "/warcraftbuddy.mail.v1.BuddyMail/OnPacket"
+	BuddyMail_BeforeLogout_FullMethodName       = "/warcraftbuddy.mail.v1.BuddyMail/BeforeLogout"
 )
 
 // BuddyMailClient is the client API for BuddyMail service.
@@ -34,6 +35,7 @@ const (
 type BuddyMailClient interface {
 	List(ctx context.Context, in *ListRequest, opts ...grpc.CallOption) (*State, error)
 	ClaimStipend(ctx context.Context, in *ClaimRequest, opts ...grpc.CallOption) (*State, error)
+	ClaimBagAttachment(ctx context.Context, in *ClaimBagAttachmentRequest, opts ...grpc.CallOption) (*State, error)
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -61,6 +63,16 @@ func (c *buddyMailClient) ClaimStipend(ctx context.Context, in *ClaimRequest, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyMail_ClaimStipend_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyMailClient) ClaimBagAttachment(ctx context.Context, in *ClaimBagAttachmentRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyMail_ClaimBagAttachment_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +115,7 @@ func (c *buddyMailClient) BeforeLogout(ctx context.Context, in *emptypb.Empty, o
 type BuddyMailServer interface {
 	List(context.Context, *ListRequest) (*State, error)
 	ClaimStipend(context.Context, *ClaimRequest) (*State, error)
+	ClaimBagAttachment(context.Context, *ClaimBagAttachmentRequest) (*State, error)
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
@@ -121,6 +134,9 @@ func (UnimplementedBuddyMailServer) List(context.Context, *ListRequest) (*State,
 }
 func (UnimplementedBuddyMailServer) ClaimStipend(context.Context, *ClaimRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimStipend not implemented")
+}
+func (UnimplementedBuddyMailServer) ClaimBagAttachment(context.Context, *ClaimBagAttachmentRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ClaimBagAttachment not implemented")
 }
 func (UnimplementedBuddyMailServer) GetState(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
@@ -184,6 +200,24 @@ func _BuddyMail_ClaimStipend_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyMailServer).ClaimStipend(ctx, req.(*ClaimRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyMail_ClaimBagAttachment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimBagAttachmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyMailServer).ClaimBagAttachment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyMail_ClaimBagAttachment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyMailServer).ClaimBagAttachment(ctx, req.(*ClaimBagAttachmentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -256,6 +290,10 @@ var BuddyMail_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimStipend",
 			Handler:    _BuddyMail_ClaimStipend_Handler,
+		},
+		{
+			MethodName: "ClaimBagAttachment",
+			Handler:    _BuddyMail_ClaimBagAttachment_Handler,
 		},
 		{
 			MethodName: "GetState",

@@ -51,6 +51,8 @@ type Service struct {
 	gatherObjectRevision                       uint64
 	pausedSource                               uint64
 	pausedGather                               bool
+	inventoryWriteRevision                     uint64
+	rejectedInventoryRevision                  uint64
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -349,6 +351,10 @@ func eligibleWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *w
 }
 
 func (s *Service) openLocked(ctx context.Context) {
+	world := s.openingCapacity(ctx)
+	if world == nil {
+		return
+	}
 	s.state.Phase = "waiting_open"
 	s.state.Reason = "loot_open_transport_pending"
 	s.deadline = s.now().Add(2 * time.Second)
@@ -356,6 +362,7 @@ func (s *Service) openLocked(ctx context.Context) {
 		s.deadline = s.now().Add(3 * time.Second)
 	}
 	s.opened = true // Reserve before an ambiguous transport write.
+	s.inventoryWriteRevision = world.InventoryRevision
 	if s.questGather {
 		s.gatherCastCount++
 		if s.write(ctx, opcode.CMSGCastSpell, gatherOpenPacket(s.gatherCastCount, s.pendingGUID())) {
@@ -498,10 +505,16 @@ func (s *Service) Tick(ctx context.Context) {
 				return
 			}
 			item := s.items[s.index]
+			if !ownKnownFreeSlot(observed, s.selfGUID) {
+				s.pauseForCapacity()
+				s.beginRelease(ctx)
+				return
+			}
 			s.removed = false
 			s.pushed = false
 			s.state.Phase = "waiting_item"
 			s.deadline = now.Add(2 * time.Second)
+			s.inventoryWriteRevision = observed.InventoryRevision
 			if !s.write(ctx, opcode.CMSGAutostoreLootItem, []byte{item.slot}) {
 				s.state.Phase = "abort"
 			}
@@ -532,11 +545,12 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.state.InventoryPaused {
-		if !ownKnownFreeSlot(world, s.selfGUID) {
+		if !ownKnownFreeSlot(world, s.selfGUID) || world.InventoryRevision <= s.rejectedInventoryRevision {
 			s.state.Reason = "inventory_full_paused_until_known_free_slot"
 			return
 		}
 		s.state.InventoryPaused = false
+		s.rejectedInventoryRevision = 0
 		if s.pausedGather {
 			delete(s.gatherSeen, s.pausedSource)
 		} else {
@@ -544,6 +558,10 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		s.pausedSource = 0
 		s.state.Reason = "inventory_space_observed_loot_resumed"
+	}
+	if !ownKnownFreeSlot(world, s.selfGUID) {
+		s.pauseForCapacity()
+		return
 	}
 	currentObjects := map[uint64]bool{}
 	for _, g := range world.QuestObjects {
@@ -827,6 +845,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.LastInventoryError = uint32(p[0])
 			if p[0] == 50 && s.state.Phase == "waiting_item" {
 				s.state.InventoryPaused = true
+				if s.inventoryWriteRevision > s.rejectedInventoryRevision {
+					s.rejectedInventoryRevision = s.inventoryWriteRevision
+				}
 				s.pausedSource, s.pausedGather = s.pendingGUID(), s.questGather
 				s.state.Reason = "inventory_full_paused_until_known_free_slot"
 			} else {

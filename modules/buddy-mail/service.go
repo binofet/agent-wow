@@ -37,6 +37,7 @@ type Service struct {
 	listAt, nextList time.Time
 	wait             chan struct{}
 	pendingList      bool
+	bagBaselines     map[string]*worldv1.SnapshotResponse
 }
 
 func NewService(session sessionAPI, sessionID string, self uint64) *Service {
@@ -229,6 +230,7 @@ func (s *Service) List(ctx context.Context, r *mailv1.ListRequest) (*mailv1.Stat
 	s.state.ListKnown = false
 	s.state.ListCurrent = false
 	s.state.Stipends = nil
+	s.state.BagMails = nil
 	s.state.MailboxGuid = guid
 	s.state.Phase = "waiting_for_server_mail_list"
 	s.pendingList = true
@@ -371,7 +373,20 @@ func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*mailv1.State
 	if w, err := s.world(call); err == nil {
 		s.mu.Lock()
 		s.applyWalletLocked(w)
+		s.applyBagInventoryLocked(w)
 		s.mu.Unlock()
+	}
+	s.mu.Lock()
+	needBagReleaseObservation := false
+	for _, r := range s.state.BagClaims {
+		if !r.LeaseReleased {
+			needBagReleaseObservation = true
+			break
+		}
+	}
+	s.mu.Unlock()
+	if needBagReleaseObservation {
+		s.observeBagLeaseRelease(call)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -401,9 +416,17 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		s.state.ListRevision++
 		s.state.ListedMailCount = uint32(len(entries))
 		s.state.Stipends = nil
+		s.state.BagMails = nil
 		for _, entry := range entries {
 			if entry.stipend() {
 				s.state.Stipends = append(s.state.Stipends, &mailv1.StipendMail{MailId: entry.id, Copper: entry.money})
+			}
+			if entry.partyBags() {
+				m := &mailv1.BagMail{MailId: entry.id}
+				for _, a := range entry.attachments {
+					m.Attachments = append(m.Attachments, &mailv1.BagAttachment{AttachmentIndex: uint32(a.index), ItemGuidLow: a.itemLow, Entry: a.entry, Count: a.count})
+				}
+				s.state.BagMails = append(s.state.BagMails, m)
 			}
 		}
 		s.listAt = s.now()
@@ -415,6 +438,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 			s.state.MalformedPackets++
 			break
 		}
+		s.applyBagResultLocked(r)
 		claim := s.state.LastClaim
 		if claim == nil || claim.MailId != r.id || r.action != 1 || claim.Status == mailv1.ClaimStatus_CLAIM_SERVER_REJECTED || claim.Status == mailv1.ClaimStatus_CLAIM_CONFIRMED {
 			break
@@ -430,6 +454,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	case opcode.SMSGNewWorld:
 		s.state.ListKnown = false
 		s.state.Stipends = nil
+		s.state.BagMails = nil
 		s.state.MailboxGuid = 0
 		s.pendingList = false
 		s.signalLocked()
@@ -441,6 +466,7 @@ func (s *Service) BeforeLogout(_ context.Context, _ *emptypb.Empty) (*emptypb.Em
 	defer s.mu.Unlock()
 	s.closed = true
 	s.state.ListKnown = false
+	s.state.BagMails = nil
 	s.pendingList = false
 	s.state.Phase = "session_closing"
 	s.signalLocked()

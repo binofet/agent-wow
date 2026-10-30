@@ -33,6 +33,50 @@ func TestMailBinaryGoldens(t *testing.T) {
 		t.Fatalf("ack=%+v %v", r, err)
 	}
 }
+
+func TestPartyBagsExactObservedAttachmentProtocol(t *testing.T) {
+	p := partyBagList(4, 77, 1000)
+	rows, err := decodeMailList(p)
+	if err != nil || len(rows) != 1 || !rows[0].partyBags() || rows[0].attachments[3].itemLow != 1003 || rows[0].attachments[3].index != 3 || rows[0].attachments[3].count != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for n := range len(p) {
+		if _, err := decodeMailList(p[:n]); err == nil {
+			t.Fatalf("accepted prefix%d", n)
+		}
+	}
+	for name, change := range map[string]func(*mailEntry){
+		"subject": func(m *mailEntry) { m.subject += " " }, "sender": func(m *mailEntry) { m.sender = 1 }, "stationery": func(m *mailEntry) { m.stationery = 41 }, "type": func(m *mailEntry) { m.typeID = 3 }, "cod": func(m *mailEntry) { m.cod = 1 }, "money": func(m *mailEntry) { m.money = 1 }, "entry": func(m *mailEntry) { m.attachments[0].entry = 1 }, "count": func(m *mailEntry) { m.attachments[0].count = 2 }, "zero_guid": func(m *mailEntry) { m.attachments[0].itemLow = 0 }, "duplicate_guid": func(m *mailEntry) { m.attachments[1].itemLow = m.attachments[0].itemLow }, "duplicate_index": func(m *mailEntry) { m.attachments[1].index = 0 }, "index": func(m *mailEntry) { m.attachments[0].index = 4 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := rows[0]
+			m.attachments = append([]mailAttachment{}, m.attachments...)
+			change(&m)
+			if m.partyBags() {
+				t.Fatal("inexact envelope eligible")
+			}
+		})
+	}
+	for _, n := range []int{0, 5, 12} {
+		r, err := decodeMailList(partyBagList(n, 77, 1000))
+		if err != nil || r[0].partyBags() {
+			t.Fatalf("count%d eligible %v", n, err)
+		}
+	}
+	if got := hex.EncodeToString(takeItemPacket(testMailbox, 77, 1000)); got != "0100000e2b0210f14d000000e8030000" {
+		t.Fatal(got)
+	}
+	r, err := decodeMailResult(bagAck(77, 1000, 1, 0))
+	if err != nil || r.action != 2 || r.itemLow != 1000 || r.count != 1 {
+		t.Fatal(r, err)
+	}
+	if _, err := decodeMailResult(bagAck(77, 1000, 1, 0)[:19]); err == nil {
+		t.Fatal("short item ACK")
+	}
+	if takeItemPacket(testMailbox, 77, 0) != nil {
+		t.Fatal("zero item guid")
+	}
+}
 func TestMailListEveryTruncationAndBounds(t *testing.T) {
 	p := goldenList(t)
 	for n := range len(p) {

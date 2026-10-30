@@ -412,9 +412,11 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 		s, f, advance := harvestRig(t)
 		openHarvest(t, s)
 		f.world.BackpackKnown = true
+		f.world.Backpack = nil
 		for i := range 16 {
-			f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: uint32(i), ItemGuid: uint64(i + 1)})
+			f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: uint32(i), ItemGuid: 0x4000000000000000 + uint64(i+1)})
 		}
+		fixtureCarriedInventory(f.world)
 		p := make([]byte, 18)
 		p[0] = 50
 		emit(s, opcode.SMSGInventoryChangeFailure, p)
@@ -431,12 +433,14 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 			t.Fatal("retried while full")
 		}
 		f.world.Backpack = f.world.Backpack[:15]
+		fixtureCarriedInventory(f.world)
 		advance(time.Second)
 		s.Tick(context.Background())
 		if len(f.packets) != before {
 			t.Fatal("partial backpack resumed")
 		}
 		f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: 15})
+		fixtureCarriedInventory(f.world)
 		if disabled {
 			s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
 		}
