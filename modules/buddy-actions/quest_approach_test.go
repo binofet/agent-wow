@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -211,6 +212,125 @@ func TestQuestApproachRequiresOwnTokenAndDoesNotMoveWhenAlreadyInRange(t *testin
 	f.world.QuestGivers[0].X, f.world.Owner.X = 2, 2
 	got, err := s.ApproachQuest(context.Background(), r)
 	if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
+func navQuestApproachRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachQuestRequest) {
+	t.Helper()
+	s, f, advance, r := questApproachRig(t)
+	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8900, -150, 82
+	f.world.Self.PositionRevision++
+	f.world.Owner = nil
+	c := f.world.QuestGivers[0]
+	c.X, c.Y, c.Z = -8894, -150, 82
+	s.SetNavigationDataDir("/fixture/nav")
+	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+		return []position{from, {x: from.x, y: from.y + 1, z: from.z}, {x: to.x, y: from.y + 1, z: from.z}, to}, nil
+	}
+	return s, f, advance, r
+}
+
+func TestQuestApproachNavigationRetainsWallCornersAndStopsWithinRange(t *testing.T) {
+	s, f, _, r := navQuestApproachRig(t)
+	calls := 0
+	original := s.planPath
+	s.planPath = func(ctx context.Context, root string, from, to position) ([]position, error) {
+		calls++
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > 251*time.Millisecond {
+			t.Fatal("unbounded planner")
+		}
+		return original(ctx, root, from, to)
+	}
+	got, err := s.ApproachQuest(context.Background(), r)
+	if err != nil || got.Reason != "quest_approach_within_distance" || got.Moving || got.MotionUnconfirmed || !got.NavAvailable || calls != 1 {
+		t.Fatal(got, err, calls)
+	}
+	previous := position{x: -8900, y: -150, z: 82}
+	for _, packet := range f.packets {
+		_, n, _ := readGUID(packet.Payload)
+		p := position{x: math.Float32frombits(binary.LittleEndian.Uint32(packet.Payload[n+10:])), y: math.Float32frombits(binary.LittleEndian.Uint32(packet.Payload[n+14:])), z: math.Float32frombits(binary.LittleEndian.Uint32(packet.Payload[n+18:]))}
+		if distance(previous, p) > 1.401 || p.x != previous.x && p.y != previous.y {
+			t.Fatal("cut unverified corner", previous, p)
+		}
+		previous = p
+	}
+	if countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal("missing normal start/stop")
+	}
+}
+
+func TestQuestApproachNavigationRejectsBlockedOffmeshAndExcessiveRoutes(t *testing.T) {
+	for _, mode := range []string{"blocked", "offmesh_start", "long", "point_limit", "partial"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := navQuestApproachRig(t)
+			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+				switch mode {
+				case "blocked":
+					return nil, errors.New("ground surface ray blocked")
+				case "offmesh_start":
+					return nil, errors.New("find navigation path: start: sample is outside ground polygon")
+				case "long":
+					return []position{from, {x: from.x, y: from.y + 2, z: from.z}, {x: to.x, y: from.y + 2, z: from.z}, to}, nil
+				case "point_limit":
+					p := make([]position, 257)
+					for i := range p {
+						p[i] = from
+					}
+					p[len(p)-1] = to
+					return p, nil
+				case "partial":
+					to.x -= 3
+					return []position{from, to}, nil
+				}
+				panic("unreachable")
+			}
+			got, err := s.ApproachQuest(context.Background(), r)
+			if err != nil || got.Moving || got.NavAvailable || got.Reason != "quest_approach_navigation_unavailable" || len(f.packets) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestQuestApproachNavigationRevalidatesBeforeFirstMovement(t *testing.T) {
+	for _, mode := range []string{"npc_moved", "self_corrected", "combat", "lease_expired"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := navQuestApproachRig(t)
+			original := s.planPath
+			s.planPath = func(ctx context.Context, root string, from, to position) ([]position, error) {
+				path, err := original(ctx, root, from, to)
+				switch mode {
+				case "npc_moved":
+					f.world.QuestGivers[0].PositionRevision++
+				case "self_corrected":
+					f.world.Self.X += .2
+					f.world.Self.PositionRevision++
+				case "combat":
+					f.world.Self.UnitFlags = 0x80000
+				case "lease_expired":
+					advance(16 * time.Second)
+				}
+				return path, err
+			}
+			got, _ := s.ApproachQuest(context.Background(), r)
+			if got.Moving || len(f.packets) != 0 || got.Reason == "quest_approach_within_distance" {
+				t.Fatal("acted before fresh postplan gates", got, f.packets)
+			}
+		})
+	}
+}
+
+func TestQuestApproachNavigationStopsOnMidRouteNPCChange(t *testing.T) {
+	s, f, advance, r := navQuestApproachRig(t)
+	s.approachDelay = func(ctx context.Context, d time.Duration) error {
+		advance(d)
+		f.world.QuestGivers[0].PositionRevision++
+		return ctx.Err()
+	}
+	got, err := s.ApproachQuest(context.Background(), r)
+	if err != nil || got.Moving || got.Reason != "quest_approach_npc_position_changed" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || countPackets(f, opcode.MSGMoveStop) != 1 {
 		t.Fatal(got, err, f.packets)
 	}
 }

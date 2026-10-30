@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""Quiet standing quest synchronization from Joel's server-delivered addon feed."""
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+loader = importlib.machinery.SourceFileLoader("party_quest_sync", str(Path(__file__).with_name("sync-quests")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+sync = importlib.util.module_from_spec(spec)
+loader.exec_module(sync)
+converse, Error, integer = sync.converse, sync.Error, sync.integer
+IDENTITY = converse.PARTY_QUEST_IDENTITY
+ROSTER = sync.ROSTER
+REWARD_GIVERS = {783: 197, 7: 197, 15: 197, 18: 823, 21: 197, 54: 240, 3903: 9296, 5261: 196, 33: 196}
+# Official Northshire item_template weapon/armor categories; selection only,
+# never equipment changes. Every preferred ID must be in the actual offer.
+REWARD_CHOICES = converse.QUEST_REWARD_PREFERENCES
+
+
+def load_private(path):
+    try:
+        with os.fdopen(converse.private_open(path, os.O_RDONLY), "r") as source:
+            raw = source.read(65537)
+        if len(raw) > 65536:
+            raise Error("Automatic quest state exceeds its size limit")
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError
+        return value
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        raise Error("Automatic quest state is invalid") from None
+
+
+def finite_position(value, known="positionKnown"):
+    return (isinstance(value, dict) and value.get(known) is True and value.get("mapKnown") is True
+            and all(type(value.get(key)) in (int, float) and math.isfinite(value[key])
+                    and abs(value[key]) < 40000 for key in ("x", "y", "z")))
+
+
+def distance(a, b):
+    return math.sqrt(sum((a[key] - b[key]) ** 2 for key in ("x", "y", "z")))
+
+
+class PartyQuestSync:
+    def __init__(self, name, guid, rpc, save=lambda value: None, stored=None, now=time.time,
+                 stopped=lambda: False, notify=lambda: None):
+        self.name, self.guid, self.rpc, self.save = name, guid, rpc, save
+        self.now, self.stopped, self.notify = now, stopped, notify
+        identity = {"name": name, "guid": guid, "ownerGuid": 3, "mode": "owner_addon_quests"}
+        if stored and stored.get("identity") != identity:
+            raise Error("Saved automatic quest character identity does not match")
+        self.data = stored or {"identity": identity, "nextMutationAt": 0, "reservations": {}, "queries": [], "confirmedRewards": {}}
+        if (type(self.data.get("nextMutationAt")) not in (int, float)
+                or not math.isfinite(self.data["nextMutationAt"]) or self.data["nextMutationAt"] < 0
+                or not isinstance(self.data.get("reservations"), dict) or len(self.data["reservations"]) > 96
+                or not isinstance(self.data.get("queries"), list) or len(self.data["queries"]) > 8
+                or not isinstance(self.data.get("confirmedRewards"), dict) or len(self.data["confirmedRewards"]) > 32):
+            raise Error("Saved automatic quest state is invalid")
+        for key, value in self.data["reservations"].items():
+            parts = key.split(":")
+            if (len(parts) != 2 or parts[0] not in ("accept", "claim") or not 0 < integer(parts[1]) <= 2147483647
+                    or not isinstance(value, list) or len(value) != 3
+                    or any(not isinstance(part, str) or not 1 <= len(part) <= 128 for part in value)):
+                raise Error("Saved automatic quest reservation is invalid")
+        for value in self.data["queries"]:
+            if (not isinstance(value, dict) or not isinstance(value.get("npc"), str) or len(value["npc"]) > 64
+                    or not isinstance(value.get("signature"), list) or len(value["signature"]) > 4
+                    or any(not isinstance(part, str) or len(part) > 512 for part in value["signature"])
+                    or type(value.get("at")) not in (int, float) or not math.isfinite(value["at"])):
+                raise Error("Saved automatic quest query is invalid")
+        for key, value in self.data["confirmedRewards"].items():
+            if (not 0 < integer(key) <= 2147483647 or not isinstance(value, dict)
+                    or integer(value.get("questId", 0)) != integer(key)
+                    or value.get("serverRewardObserved") is not True or value.get("logRemovalConfirmed") is not True
+                    or not isinstance(value.get("session"), str) or not 1 <= len(value["session"]) <= 128):
+                raise Error("Saved automatic quest reward evidence is invalid")
+        self.status = {"name": name, "guid": guid, "phase": "starting", "observationsCurrent": False}
+
+    call = sync.CharacterSync.call
+
+    def mutate(self, method, params, key=None, offer_binding=None, query=None, operation=None):
+        if key and key not in self.data["reservations"] and len(self.data["reservations"]) >= 96:
+            self.status["phase"] = "waiting_for_automatic_quest_reservation_capacity"
+            return False
+        return sync.CharacterSync.mutate(self, method, params, key, offer_binding, query, operation)
+
+    def read(self):
+        world = self.call("buddy-world.snapshot", {})
+        quests = self.call("buddy-quests.discover", {})
+        actions = self.call("buddy-actions.status", {})
+        party = self.call("buddy-party.state", {})
+        feed = converse.validated_owner_feed(self.call("buddy-chat.owner_feed", {}))
+        # Bind the whole observation bundle to one quest-module instance. A
+        # replacement between reads must not route an old offer into a new body.
+        final_quests = self.call("buddy-quests.discover", {})
+        if sync.session_id(final_quests) != sync.session_id(quests):
+            raise Error("Quest body changed while reading party observations")
+        quests = final_quests
+        player, owner = world.get("self", {}), world.get("owner", {})
+        if (not isinstance(player, dict) or integer(player.get("guid", 0)) != self.guid
+                or not isinstance(owner, dict) or integer(owner.get("guid", 0)) != 3):
+            raise Error("Automatic quest RPC character identity is wrong")
+        if not converse.owner_party_known(party.get("group", {}), self.guid):
+            raise Error("Joel's current party membership is unconfirmed")
+        active = sync.active_log(quests)
+        owner_active = {q["questId"] for q in feed["quests"]}
+        owner_done = set(feed["completedQuestIds"]) | {q["questId"] for q in feed["rewarded"]}
+        return {"world": world, "quests": quests, "actions": actions, "feed": feed,
+                "active": active, "ownerActive": owner_active, "ownerDone": owner_done,
+                "session": sync.session_id(quests)}
+
+    def safe(self, context):
+        world, actions = context["world"], context["actions"]
+        players = (world["self"], world["owner"])
+        if any(any(player.get(key) is not True for key in ("present", "aliveKnown", "alive", "unitFlagsKnown"))
+               for player in players):
+            self.status["phase"] = "waiting_for_alive_known_party_members"
+            return False
+        if any(integer(player.get("unitFlags", 0)) & 0x80000 for player in players):
+            self.status["phase"] = "waiting_out_of_combat_for_quest_sync"
+            return False
+        if integer(world["owner"].get("playerFlags", 0)) & 6:
+            self.status["phase"] = "waiting_for_joel_to_return"
+            return False
+        if (not finite_position(world["owner"]) or not finite_position(actions.get("position"), "known")
+                or integer(world["owner"].get("mapId", 0)) != integer(actions["position"].get("mapId", 0))):
+            self.status["phase"] = "waiting_for_known_party_positions"
+            return False
+        if (actions.get("practicing") is True or actions.get("traveling") is True or actions.get("castPending") is True
+                or context["quests"].get("actionInFlight") is True):
+            self.status["phase"] = "waiting_for_existing_game_operation"
+            return False
+        return True
+
+    def givers(self, context):
+        nearby = context["quests"].get("nearby", [])
+        if not isinstance(nearby, list) or len(nearby) > 64:
+            raise Error("Automatic questgiver observations are invalid")
+        owner, own = context["world"]["owner"], context["actions"]["position"]
+        candidates = []
+        for row in nearby:
+            c = row.get("creature", {}) if isinstance(row, dict) else {}
+            if (not finite_position(c) or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive"))
+                    or integer(c.get("mapId", 0)) != integer(own.get("mapId", 0))
+                    or integer(c.get("npcFlags", 0)) & 2 == 0 or integer(c.get("unitFlags", 0)) & 0x80000
+                    or integer(c.get("movementFlags", 0)) & 0x080000ff):
+                continue
+            guid, entry = integer(c.get("guid", 0)), integer(c.get("entry", 0))
+            if guid >> 48 != 0xf130 or not guid & 0xffffff or (guid >> 24 & 0xffffff) != entry:
+                continue
+            own_distance, owner_distance = distance(own, c), distance(owner, c)
+            if own_distance <= 24 and owner_distance <= 12:
+                candidates.append({"guid": guid, "entry": entry, "distance": own_distance, "ownerDistance": owner_distance})
+        return sorted(candidates, key=lambda c: (c["ownerDistance"], c["distance"], c["guid"]))
+
+    def allowed(self, context, qid, purpose):
+        if purpose == "accept":
+            return qid in context["ownerActive"] and qid not in context["active"] and len(context["active"]) < 25
+        return (qid in context["ownerDone"] and any(integer(q.get("questId", 0)) == qid and q.get("complete") is True
+                and q.get("failed") is not True for q in context["quests"].get("questLog", [])))
+
+    def bound_offer_valid(self, context, giver, method, qid, offer_binding):
+        if method not in ("buddy-quests.accept", "buddy-quests.claim_reward"):
+            return True
+        offer = context["quests"].get("offer" if method == "buddy-quests.accept" else "turnInOffer", {})
+        if (not isinstance(offer, dict) or integer(offer.get("npcGuid", 0)) != giver["guid"]
+                or sync.binding(context["session"], giver["guid"], integer(offer.get("revision", 0))) != offer_binding
+                or integer(offer.get("expiresInMs", 0)) == 0):
+            return False
+        if method == "buddy-quests.claim_reward":
+            return self.reward_offer(offer, qid, giver["guid"]) and self.choice(offer, context["world"]["self"]) is not False
+        quests = offer.get("quests", [])
+        return (isinstance(quests, list) and len(quests) <= 32
+                and any(isinstance(q, dict) and integer(q.get("questId", 0)) == qid and q.get("available") is True
+                        and q.get("acceptRequested") is not True and q.get("repeatable") is not True for q in quests))
+
+    def request(self, context, giver, method, qid=0, key=None, offer_binding=None, query=None):
+        def operation():
+            if giver["distance"] > 8:
+                lease = self.call("buddy-actions.acquire_interaction", {"owner": "quests", "leaseMs": 30000})
+                token, state = lease.get("token"), lease.get("state", {})
+                if not isinstance(token, str) or not 1 <= len(token) <= 128 or state.get("interactionOwner") != "quests":
+                    raise Error("Automatic quest approach lease is unconfirmed")
+                try:
+                    if state.get("moving") is True or state.get("motionUnconfirmed") is True:
+                        raise Error("Automatic quest approach stop is unconfirmed")
+                    before_travel = self.read()
+                    if not self.safe(before_travel) or before_travel["session"] != context["session"]:
+                        return {}
+                    current = next((npc for npc in self.givers(before_travel) if npc["guid"] == giver["guid"]), None)
+                    if current is None or (qid and not self.allowed(before_travel, qid,
+                            "accept" if method == "buddy-quests.accept" else "reward")):
+                        return {}
+                    if not self.bound_offer_valid(before_travel, giver, method, qid, offer_binding):
+                        return {}
+                    if method == "buddy-quests.offer" and not (before_travel["ownerActive"] - before_travel["active"]):
+                        return {}
+                    self.status["phase"] = "approaching_joels_observed_questgiver"
+                    self.notify()
+                    self.call("buddy-actions.travel_quest", {"token": token, "npcGuid": str(giver["guid"])})
+                finally:
+                    try:
+                        self.rpc.call("buddy-actions.release_interaction", {"owner": "quests", "token": token})
+                    except Error:
+                        pass
+            fresh = self.read()
+            if not self.safe(fresh):
+                return {}
+            current = next((npc for npc in self.givers(fresh) if npc["guid"] == giver["guid"] and npc["distance"] <= 8), None)
+            if current is None or fresh["session"] != context["session"]:
+                return {}
+            params = {"sessionId": fresh["session"], "npcGuid": str(giver["guid"])}
+            state = fresh["quests"]
+            if method == "buddy-quests.offer":
+                if not (fresh["ownerActive"] - fresh["active"]):
+                    return {}
+            elif method == "buddy-quests.turn_in":
+                if not self.allowed(fresh, qid, "reward"):
+                    return {}
+                params.update(questId=qid, questLogRevision=str(integer(state.get("questLogRevision", 0))))
+            elif method == "buddy-quests.accept":
+                if not self.allowed(fresh, qid, "accept") or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding):
+                    return {}
+                params.update(questId=qid, offerRevision=offer_binding[2])
+            else:
+                offer = state.get("turnInOffer", {})
+                if not self.allowed(fresh, qid, "reward") or not self.bound_offer_valid(fresh, giver, method, qid, offer_binding):
+                    return {}
+                choice = self.choice(offer, fresh["world"]["self"])
+                if choice is False:
+                    return {}
+                params.update(questId=qid, offerRevision=offer_binding[2], noChoice=choice is None,
+                              choiceIndex=choice["index"] if choice else 0, expectedItemId=choice["itemId"] if choice else 0)
+            return self.call(method, params)
+        return self.mutate(method, {"questId": qid, "npcGuid": str(giver["guid"])}, key, offer_binding, query, operation)
+
+    @staticmethod
+    def reward_offer(offer, qid, npc):
+        return (isinstance(offer, dict) and integer(offer.get("questId", 0)) == qid and integer(offer.get("npcGuid", 0)) == npc
+                and offer.get("source") == "reward_offer" and offer.get("canComplete") is True
+                and offer.get("rewardRequested") is not True and integer(offer.get("expiresInMs", 0)) > 0
+                and integer(offer.get("revision", 0)) > 0)
+
+    def choice(self, offer, player):
+        choices = offer.get("choices", [])
+        if not isinstance(choices, list) or len(choices) > 6:
+            raise Error("Automatic quest reward choices are invalid")
+        valid, indices = [], set()
+        for item in choices:
+            if not isinstance(item, dict):
+                raise Error("Automatic quest reward choice is invalid")
+            idx, item_id, count = integer(item.get("index", 0)), integer(item.get("itemId", 0)), integer(item.get("count", 0))
+            if idx >= 6 or idx in indices or not 0 < item_id <= 2**32 - 1 or not 0 < count <= 2**32 - 1:
+                raise Error("Automatic quest reward choice is invalid")
+            indices.add(idx)
+            valid.append({"index": idx, "itemId": item_id})
+        if len(valid) <= 1:
+            return valid[0] if valid else None
+        class_id = integer(player.get("classId", 0)) if player.get("classKnown") is True else 0
+        preferred = REWARD_CHOICES.get(integer(offer.get("questId", 0)), {}).get(class_id)
+        matches = [item for item in valid if item["itemId"] == preferred]
+        if len(matches) == 1:
+            return matches[0]
+        self.status.update(phase="waiting_for_reward_choice", rewardQuestId=integer(offer.get("questId", 0)),
+                           rewardChoiceItemIds=[item["itemId"] for item in valid])
+        return False
+
+    def query_ready(self, key, signature, delay=30):
+        return not any(row["npc"] == key and row["signature"] == signature and self.now() - row["at"] < delay
+                       for row in self.data["queries"])
+
+    def tick(self):
+        self.status["observationsCurrent"] = False
+        try:
+            context = self.read()
+        except Error:
+            self.status["phase"] = "waiting_for_fresh_owner_feed_and_party"
+            return
+        own, owner_active = context["active"], context["ownerActive"]
+        self.status.update(observationsCurrent=True, lastObservedAt=self.now(), activeQuestIds=sorted(own),
+            ownerActiveQuestIds=sorted(owner_active), missingQuestIds=sorted(owner_active-own),
+            extraQuestIds=sorted(own-owner_active), feedAgeMs=context["feed"]["ageMs"],
+            questSession=context["session"], rewardChoiceItemIds=[])
+        receipt = context["quests"].get("lastReward", {})
+        qid = integer(receipt.get("questId", 0))
+        if (qid and qid not in own and receipt.get("status") in ("REWARD_CONFIRMED", 2)
+                and receipt.get("serverRewardObserved") is True and receipt.get("logRemovalConfirmed") is True):
+            key = str(qid)
+            if key not in self.data["confirmedRewards"]:
+                rewards = dict(list(self.data["confirmedRewards"].items())[-31:])
+                rewards[key] = {"questId": qid, "session": context["session"], "serverRewardObserved": True, "logRemovalConfirmed": True}
+                self.data["confirmedRewards"] = rewards
+                self.save(self.data)
+        self.status["confirmedRewardQuestIds"] = sorted(integer(key) for key in self.data["confirmedRewards"])
+        if converse.quest_sync_snapshot(self.guid).get("active") is True:
+            self.status["phase"] = "waiting_for_initial_quest_sync"
+            return
+        if not self.safe(context):
+            return
+        if self.now() < self.data["nextMutationAt"]:
+            self.status["phase"] = "waiting_for_mutation_cooldown"
+            return
+        candidates = self.givers(context)
+        self.status["phase"] = "following_joels_quest_changes"
+        state, session, feed = context["quests"], context["session"], context["feed"]
+        for qid in sorted(own & context["ownerDone"]):
+            if not self.allowed(context, qid, "reward"):
+                continue
+            event = next((event for event in feed["rewarded"] if event["questId"] == qid), None)
+            expected = integer(event["npcGuid"]) if event else 0
+            current_offer = state.get("turnInOffer", {})
+            eligible = [npc for npc in candidates if npc["guid"] == expected] if expected else [npc for npc in candidates if npc["entry"] == REWARD_GIVERS.get(qid)]
+            if not eligible and not expected:
+                eligible = [npc for npc in candidates if integer(current_offer.get("npcGuid", 0)) == npc["guid"] and integer(current_offer.get("questId", 0)) == qid]
+            if not eligible:
+                self.status["phase"] = "waiting_for_joel_at_recorded_reward_giver"
+                continue
+            giver = eligible[0]
+            if self.reward_offer(current_offer, qid, giver["guid"]):
+                choice = self.choice(current_offer, context["world"]["self"])
+                if choice is False:
+                    return
+                bound = sync.binding(session, giver["guid"], integer(current_offer["revision"]))
+                if self.data["reservations"].get("claim:"+str(qid)) != bound:
+                    self.request(context, giver, "buddy-quests.claim_reward", qid, "claim:"+str(qid), bound)
+                    return
+            signature = [session, str(integer(state.get("questLogRevision", 0)))]
+            key = "reward:"+str(qid)+":"+str(giver["guid"])
+            if self.query_ready(key, signature, 60):
+                self.request(context, giver, "buddy-quests.turn_in", qid, query={"npc":key,"signature":signature,"at":self.now()})
+                return
+        missing = owner_active-own
+        if missing and len(own) < 25:
+            offer = state.get("offer", {})
+            giver = next((npc for npc in candidates if integer(offer.get("npcGuid", 0)) == npc["guid"]), None)
+            if giver and integer(offer.get("expiresInMs", 0)) > 0 and integer(offer.get("revision", 0)) > 0:
+                offered = offer.get("quests", [])
+                if not isinstance(offered, list) or len(offered) > 32:
+                    raise Error("Automatic quest offer is invalid")
+                bound = sync.binding(session, giver["guid"], integer(offer["revision"]))
+                used = any(key.startswith("accept:") and value == bound for key,value in self.data["reservations"].items())
+                if not used:
+                    for quest in offered:
+                        if (isinstance(quest, dict) and integer(quest.get("questId", 0)) in missing
+                                and quest.get("available") is True and quest.get("repeatable") is not True
+                                and quest.get("acceptRequested") is not True):
+                            qid = integer(quest["questId"])
+                            self.request(context,giver,"buddy-quests.accept",qid,"accept:"+str(qid),bound)
+                            return
+            signature = [session,str(integer(state.get("questLogRevision",0))),feed["addonSession"],",".join(str(q) for q in sorted(owner_active))]
+            event_guids = {integer(event["npcGuid"]) for event in feed["accepted"] if event["questId"] in missing}
+            for giver in sorted(candidates,key=lambda npc:(npc["guid"] not in event_guids,npc["ownerDistance"])):
+                key = str(giver["guid"])
+                if self.query_ready(key,signature):
+                    self.request(context,giver,"buddy-quests.offer",query={"npc":key,"signature":signature,"at":self.now()})
+                    return
+            self.status["phase"] = "waiting_for_joel_at_followup_giver_or_server_offer"
+        elif own & context["ownerDone"]:
+            self.status.setdefault("phase","waiting_for_own_quest_objectives")
+            if self.status["phase"] != "waiting_for_joel_at_recorded_reward_giver":
+                self.status["phase"] = "waiting_for_own_quest_objectives"
+        else:
+            self.status["phase"] = "following_joels_quest_changes"
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command",choices=("run","status","stop"))
+    parser.add_argument("--state-dir",type=Path,default=ROOT/"data/party-quests")
+    parser.add_argument("--max-hours",type=float,default=8)
+    args=parser.parse_args(argv)
+    if not math.isfinite(args.max_hours) or not 0<args.max_hours<=8:
+        parser.error("Maximum runtime must be greater than0 and at most8hours")
+    folder=converse.ensure_state(args.state_dir)
+    with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+        if args.command != "run":
+            record=converse.read_json(folder/"status.json")
+            if record and record.get("identity") != IDENTITY:
+                raise Error("Directory tracks a different automatic quest routine")
+            running=converse.is_locked(lock)
+            if args.command == "status":print(json.dumps(dict(record,running=running),indent=2))
+            elif running:
+                if (record.get("identity") != IDENTITY or not isinstance(record.get("instance"), str)
+                        or len(record["instance"]) != 32 or any(c not in "0123456789abcdef" for c in record["instance"])):
+                    raise Error("Automatic quest process instance is unconfirmed")
+                converse.write_json(folder/"stop.json",{"identity":IDENTITY,"instance":record["instance"]})
+                print("Automatic quest synchronization stop requested.")
+            else:print("Automatic quest synchronization is not running.")
+            return 0
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise Error("Automatic quest synchronization already runs") from None
+        record={"identity":IDENTITY,"instance":uuid.uuid4().hex,"pid":os.getpid(),"phase":"running","routineActive":True}
+        stop_requested=False
+        def stop(signum,frame):
+            nonlocal stop_requested
+            stop_requested=True
+        signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop)
+        deadline=time.monotonic()+args.max_hours*3600
+        def stopped():
+            request=converse.read_json(folder/"stop.json")
+            return stop_requested or time.monotonic()>=deadline or request == {"identity":IDENTITY,"instance":record["instance"]}
+        def save(path,value):
+            if len(json.dumps(value))>65536:raise Error("Automatic quest state exceeds its bound")
+            converse.write_json(path,value)
+        profiles=[]
+        for name,guid,port in ROSTER:
+            path=folder/("character-"+str(guid)+".json")
+            profiles.append(PartyQuestSync(name,guid,sync.SyncRPC("http://127.0.0.1:"+str(port)+"/rpc",timeout=6),
+                save=lambda value,path=path:save(path,value),stored=load_private(path),stopped=stopped))
+        def status():
+            record.update(updatedAt=time.time(),characters=[profile.status for profile in profiles])
+            converse.write_json(folder/"status.json",record)
+        for profile in profiles:profile.notify=status
+        status();print("Automatic party quest synchronization listening for Joel's addon.",flush=True)
+        try:
+            while not stopped():
+                end=time.monotonic()+2
+                for profile in profiles:
+                    if stopped():break
+                    try:profile.tick()
+                    except converse.Stopped:break
+                    except Error:profile.status.update(phase="quest_request_or_observation_unavailable",observationsCurrent=False)
+                    status()
+                while time.monotonic()<end and not stopped():time.sleep(0.1)
+        finally:
+            record.update(phase="stopped",routineActive=False)
+            status()
+        return 0
+
+
+if __name__ == "__main__":
+    try:sys.exit(main())
+    except (Error,OSError) as error:
+        print("Automatic quests: "+str(error),file=sys.stderr);sys.exit(1)

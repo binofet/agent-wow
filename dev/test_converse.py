@@ -741,6 +741,70 @@ class QuestJournalRewardTests(unittest.TestCase):
             controls,_,_,_=self.reward_controls(receipt=receipt)
             self.assertIn("haven't confirmed",controls.execute("TURN_IN_QUEST",quest_id=783))
 
+    def test_expired_explicit_reward_reopens_same_quest_and_rebinds_reordered_actual_item(self):
+        controls,rpc,discovery,offer=self.reward_controls([
+            {"index":0,"itemId":2186},{"index":1,"itemId":2691},{"index":2,"itemId":11192}])
+        discovery["questLog"]=[{"questId":21,"complete":True}]
+        offer.update(questId=21,title="Skirmish at Echo Ridge")
+        offer.pop("expiresInMs")
+        original=rpc.call
+        def call(method,params):
+            if method=="buddy-quests.turn_in":
+                offer.update(expiresInMs="60000",revision="12",choices=[
+                    {"index":0,"itemId":2691},{"index":4,"itemId":2186},{"index":2,"itemId":11192}])
+            result=original(method,params)
+            if method=="buddy-quests.claim_reward":
+                result["state"]["lastReward"]["questId"]=21
+            return result
+        rpc.call=call
+        self.assertIn("Turn-in confirmed",controls.execute("CLAIM_QUEST_REWARD",quest_id=21,item_entry=2186))
+        self.assertEqual([method for method,_ in rpc.calls],["buddy-quests.state","buddy-quests.discover","buddy-quests.turn_in","buddy-quests.claim_reward"])
+        claim=rpc.calls[-1][1]
+        self.assertEqual((claim["questId"],claim["choiceIndex"],claim["expectedItemId"],claim["offerRevision"]),(21,4,2186,"12"))
+        self.assertEqual(rpc.calls[2][1]["npcGuid"],offer["npcGuid"])
+
+    def test_expired_reward_never_refreshes_ambiguous_request_or_unproven_completion(self):
+        for mode in ("REWARD_REQUESTED","REWARD_UNCONFIRMED","REWARD_WRITE_UNCONFIRMED","REWARD_CONFIRMED",
+                     "requested_offer","incomplete","failed","giver_changed","body_changed"):
+            controls,rpc,discovery,offer=self.reward_controls([{ "index":0,"itemId":2186}])
+            offer.pop("expiresInMs")
+            original=rpc.call
+            if mode=="requested_offer":offer["rewardRequested"]=True
+            elif mode=="incomplete":discovery["questLog"][0]["complete"]=False
+            elif mode=="failed":discovery["questLog"][0]["failed"]=True
+            elif mode=="giver_changed":discovery["nearby"][0]["creature"]["guid"]="17379390962878382082"
+            elif mode=="body_changed":discovery["sessionId"]="replacement"
+            def call(method,params):
+                result=original(method,params)
+                if mode.startswith("REWARD_") and method in ("buddy-quests.state","buddy-quests.discover"):
+                    result=dict(result,lastReward={"questId":783,"status":mode})
+                return result
+            rpc.call=call
+            controls.execute("CLAIM_QUEST_REWARD",quest_id=783,item_entry=2186)
+            self.assertFalse(any(method in ("buddy-quests.turn_in","buddy-quests.claim_reward") for method,_ in rpc.calls),mode)
+
+    def test_expired_reward_never_substitutes_an_item_removed_from_new_offer(self):
+        controls,rpc,_,offer=self.reward_controls([{ "index":0,"itemId":2186}])
+        offer.pop("expiresInMs")
+        original=rpc.call
+        def call(method,params):
+            if method=="buddy-quests.turn_in":offer.update(expiresInMs="60000",revision="12",choices=[{"index":0,"itemId":11192}])
+            return original(method,params)
+        rpc.call=call
+        self.assertIn("isn't",controls.execute("CLAIM_QUEST_REWARD",quest_id=783,item_entry=2186))
+        self.assertFalse(any(method=="buddy-quests.claim_reward" for method,_ in rpc.calls))
+
+    def test_delegated_quest21_choice_uses_actual_confirmed_role_and_offered_id(self):
+        for role,cls,wanted in (("priest",5,11192),("mage",8,11192),("rogue",4,2186)):
+            controls,rpc,discovery,offer=self.reward_controls([
+                {"index":1,"itemId":2186},{"index":0,"itemId":2691},{"index":5,"itemId":11192}])
+            controls.character_class=role;controls.actions={"classKnown":True,"classId":cls}
+            discovery["questLog"]=[{"questId":21,"complete":True}];offer["questId"]=21
+            controls.execute("CLAIM_QUEST_REWARD",quest_id=21)
+            claim=next(params for method,params in rpc.calls if method=="buddy-quests.claim_reward")
+            self.assertEqual(claim["expectedItemId"],wanted)
+            self.assertEqual(claim["choiceIndex"],5 if wanted==11192 else 1)
+
     def test_zero_quest_id_requires_unique_completed_own_quest(self):
         controls,rpc,discovery,_=self.reward_controls()
         discovery["questLog"].append({"questId":7,"complete":True})
@@ -819,6 +883,83 @@ class QuestApproachCandidateTests(unittest.TestCase):
         discovery["nearby"]=[self.candidate(blockedReason="character_motion_or_cast_unconfirmed")]
         self.assertIn("observed questgiver",controls.execute("TURN_IN_QUEST",quest_id=783))
         self.assertFalse(any(method=="buddy-quests.turn_in" for method,_ in rpc.calls))
+
+
+class OwnerFeedTests(unittest.TestCase):
+    def feed(self):
+        return {"available":True,"bodySessionId":"chat-session","addonSession":"012345abcdef",
+                "revision":5,"ageMs":"1000","quests":[{"questId":15,"state":1}],
+                "completedQuestIds":[7],"rewarded":[{"questId":7,"npcGuid":str(0xf1300000c500022b),"ageMs":"2000"}]}
+
+    def test_fresh_feed_is_separate_positive_owner_report_and_ages_events(self):
+        feed=self.feed()
+        feed["accepted"]=[{"questId":15,"npcGuid":str(0xf130000337000210),"ageMs":"900001"}]
+        clean=converse.validated_owner_feed(feed)
+        self.assertEqual(clean["quests"],[{"questId":15,"state":1}])
+        self.assertEqual(clean["completedQuestIds"],[7])
+        self.assertEqual(clean["accepted"],[])
+        self.assertEqual(clean["rewarded"][0]["ageMs"],2000)
+        self.assertIn("client addon",clean["source"])
+        self.assertNotIn("path",clean)
+
+    def test_feed_fails_closed_on_stale_partial_duplicate_and_untrusted_shapes(self):
+        alterations=[{"available":False},{"ageMs":"15001"},{"assembling":True},
+            {"addonSession":"not-a-session"},{"revision":0},
+            {"quests":[{"questId":7,"state":0},{"questId":7,"state":1}]},
+            {"quests":[{"questId":7,"state":3}]},{"completedQuestIds":[7,7]},
+            {"completedQuestIds":list(range(1,66))},
+            {"rewarded":[{"questId":7,"npcGuid":"3","ageMs":0}]}]
+        for change in alterations:
+            with self.subTest(change=change),self.assertRaises(converse.ConversationError):
+                converse.validated_owner_feed(dict(self.feed(),**change))
+
+    def test_party_requires_current_exact_online_owner_and_self_without_duplicates(self):
+        group={"known":True,"inGroup":True,"members":[
+            {"guid":"4","self":True,"online":True,"name":"Mira"},
+            {"guid":"3","online":True,"name":"Joel"}]}
+        self.assertTrue(converse.owner_party_known(group,4))
+        for key,value in (("name","Someone"),("online",False)):
+            bad=json.loads(json.dumps(group));bad["members"][1][key]=value
+            self.assertFalse(converse.owner_party_known(bad,4))
+        self.assertFalse(converse.owner_party_known(dict(group,members=group["members"]*2),4))
+        self.assertFalse(converse.owner_party_known(group,1))
+
+    def test_brain_receives_live_feed_only_with_verified_party_membership(self):
+        feed=self.feed()
+        class RPC:
+            def __init__(self):self.calls=[]
+            def call(self,method,params):
+                self.calls.append(method)
+                return feed if method=="buddy-chat.owner_feed" else {}
+        rpc=RPC();controls=converse.BuddyControls(rpc)
+        self.assertFalse(controls.context()["owner_shared_quests"]["available"])
+        self.assertNotIn("buddy-chat.owner_feed",rpc.calls)
+        controls.party_available=True
+        controls.party={"group":{"known":True,"inGroup":True,"members":[
+            {"guid":"1","self":True,"online":True},{"guid":"3","name":"Joel","online":True}]}}
+        self.assertEqual(controls.context()["owner_shared_quests"]["quests"],[{"questId":15,"state":1}])
+        feed["ageMs"]="15001"
+        self.assertFalse(controls.context()["owner_shared_quests"]["available"])
+
+    def test_standing_sync_context_and_stop_use_owned_fixed_instance(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,"ROOT",Path(temporary)):
+            folder=converse.ensure_state(Path(temporary)/"data/party-quests")
+            record={"identity":converse.PARTY_QUEST_IDENTITY,"instance":"b"*32,"routineActive":True,
+                "phase":"running","characters":[{"name":name,"guid":guid,"phase":"waiting_for_reward_choice",
+                    "activeQuestIds":[18],"ownerActiveQuestIds":[15],"confirmedRewardQuestIds":list(range(1,33)),
+                    "privateToken":"never_forward"} for name,guid in (("Arlen",1),("Mira",4),("Rook",5))]}
+            converse.write_json(folder/"status.json",record)
+            with os.fdopen(converse.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                controls=converse.BuddyControls(FakeRPC([]))
+                context=controls.context()
+                self.assertTrue(context["party_quest_sync"]["active"])
+                self.assertTrue(context["abilities"]["quest_sync_stop"])
+                self.assertEqual(context["party_quest_sync"]["own"]["phase"],"waiting_for_reward_choice")
+                self.assertNotIn("never_forward",json.dumps(context))
+                self.assertIn("requested",controls.execute("STOP_QUEST_SYNC"))
+                self.assertEqual(converse.read_json(folder/"stop.json"),{"identity":converse.PARTY_QUEST_IDENTITY,"instance":"b"*32})
+            self.assertFalse(converse.party_quest_sync_snapshot(1)["active"])
 
 
 class BoundaryTests(unittest.TestCase):

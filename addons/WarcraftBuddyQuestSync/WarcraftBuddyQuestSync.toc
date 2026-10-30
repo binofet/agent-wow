@@ -1,0 +1,6 @@
+## Interface: 30300
+## Title: Warcraft Buddy Quest Sync
+## Notes: Shares Joel's quest state with his party companions.
+## Version: 0.1.0
+## SavedVariablesPerCharacter: WarcraftBuddyQuestSyncDB
+WarcraftBuddyQuestSync.lua

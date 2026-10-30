@@ -199,3 +199,72 @@ func TestFollowNavigationLateCheckpointStopsAndAmbiguousStopFails(t *testing.T) 
 		t.Fatal("ambiguous stop was reported successful")
 	}
 }
+
+func TestFollowNavigationUsesBoundedAlternatePocketAndHoldsWithoutOscillation(t *testing.T) {
+	s, f, advance, target := followNavRig(t)
+	calls := 0
+	s.planPath = func(ctx context.Context, _ string, from, to position) ([]position, error) {
+		calls++
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("missing shared deadline")
+		}
+		if to.y == target.y {
+			return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+		}
+		if followHorizontalDistance(to, target) > 1.5 {
+			t.Fatal("unbounded alternate", to, target)
+		}
+		return []position{from, to}, nil
+	}
+	for range 16 {
+		s.followFormationStepLocked(context.Background(), target, .8)
+		advance(200 * time.Millisecond)
+	}
+	if s.state.Moving || !s.state.NavAvailable || calls != 4 || !s.followNav.arrivalKnown || s.followNav.arrival == s.followNav.target || followHorizontalDistance(s.pos, target) > 1.65+.01 {
+		t.Fatal("alternate did not settle within restart band", &s.state, calls, s.pos, s.followNav)
+	}
+	count := len(f.packets)
+	for range 10 {
+		s.followFormationStepLocked(context.Background(), target, .8)
+		advance(200 * time.Millisecond)
+	}
+	if len(f.packets) != count || calls != 4 {
+		t.Fatal("alternate arrival oscillated or replanned", len(f.packets), count, calls)
+	}
+}
+
+func TestFollowNavigationNeverUsesAlternateForInvalidStartOrGenericFailure(t *testing.T) {
+	for _, failure := range []string{"find navigation path: start: sample is outside ground polygon", "ground surface ray blocked"} {
+		s, f, _, target := followNavRig(t)
+		calls := 0
+		s.planPath = func(context.Context, string, position, position) ([]position, error) {
+			calls++
+			return nil, errors.New(failure)
+		}
+		if s.followFormationStepLocked(context.Background(), target, .8) || calls != 1 || len(f.packets) != 0 {
+			t.Fatal("unverified alternate/recovery", failure, calls, f.packets)
+		}
+	}
+}
+
+func TestFollowNavigationAlternateSearchSharesDeadlineAndMaximumFiveQueries(t *testing.T) {
+	s, f, _, target := followNavRig(t)
+	calls := 0
+	var deadline time.Time
+	s.planPath = func(ctx context.Context, _ string, from, to position) ([]position, error) {
+		calls++
+		d, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("missing deadline")
+		}
+		if deadline.IsZero() {
+			deadline = d
+		} else if !deadline.Equal(d) {
+			t.Fatal("candidate renewed deadline")
+		}
+		return nil, errors.New("find navigation path: destination: no nearby ground polygon")
+	}
+	if s.followFormationStepLocked(context.Background(), target, .8) || calls != 5 || len(f.packets) != 0 {
+		t.Fatal("unbounded alternate search", calls, f.packets)
+	}
+}

@@ -3,14 +3,23 @@ package buddyactions
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"math"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+type questApproachNavigation struct {
+	path         []position
+	index        int
+	expected     position
+	selfRevision uint64
+}
 
 func waitApproach(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
@@ -86,9 +95,10 @@ func (s *Service) ApproachQuest(ctx context.Context, r *actionsv1.ApproachQuestR
 	defer cancel()
 	var targetRevision uint64
 	var initialTarget position
+	var navigation questApproachNavigation
 	for step := 0; step < 10; step++ {
 		s.mu.Lock()
-		state, moving, stepErr := s.questApproachStepLocked(call, r, &targetRevision, &initialTarget)
+		state, moving, stepErr := s.questApproachStepLocked(call, r, &targetRevision, &initialTarget, &navigation)
 		s.mu.Unlock()
 		if stepErr != nil || !moving {
 			return state, stepErr
@@ -110,7 +120,7 @@ func (s *Service) ApproachQuest(ctx context.Context, r *actionsv1.ApproachQuestR
 	return nil, nil
 }
 
-func (s *Service) questApproachStepLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest, revision *uint64, initial *position) (*actionsv1.State, bool, error) {
+func (s *Service) questApproachStepLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest, revision *uint64, initial *position, navigation *questApproachNavigation) (*actionsv1.State, bool, error) {
 	s.expireInteractionLocked()
 	if !s.ownsQuestApproach(r) {
 		return nil, false, status.Error(codes.FailedPrecondition, "quests interaction lease changed")
@@ -162,6 +172,81 @@ func (s *Service) questApproachStepLocked(ctx context.Context, r *actionsv1.Appr
 	} else if *revision != npc.PositionRevision+1 || initial.x != target.x || initial.y != target.y || initial.z != target.z {
 		return pause("npc_position_changed")
 	}
+	if s.navDataDir != "" && northshire(s.pos) && northshire(target) {
+		return s.questApproachNavigationStepLocked(ctx, r, target, revision, initial, navigation)
+	}
 	state := s.groundApproachStepLocked(ctx, target, "quest")
 	return state, state.Moving && !state.MotionUnconfirmed, nil
+}
+
+func (s *Service) questApproachNavigationStepLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest, target position, revision *uint64, initial *position, route *questApproachNavigation) (*actionsv1.State, bool, error) {
+	pause := func(reason string) (*actionsv1.State, bool, error) {
+		s.state.Reason = "quest_approach_" + reason
+		return s.stateLocked(), false, nil
+	}
+	if len(route.path) == 0 && distance(s.pos, target) <= 3 {
+		return pause("within_distance")
+	}
+	if len(route.path) == 0 {
+		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		path, err := s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+		if err == nil {
+			err = planCtx.Err()
+		}
+		cancel()
+		if err == nil && (len(path) > 256 || distance(s.pos, path[0])+routeRemaining(path[0], path, 1) > 8) {
+			err = errors.New("nearby quest route exceeds8yd or256points")
+		}
+		if err != nil {
+			s.state.NavAvailable, s.state.NavReason = false, navigationDiagnostic(err, s.navDataDir)
+			return pause("navigation_unavailable")
+		}
+		route.path, route.expected, route.selfRevision = append([]position(nil), path...), s.pos, s.positionRevision
+		s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
+		// Planning can consume time. Fetch and check the NPC, lease and self
+		// once more before the first write; the nonempty route bounds this
+		// recursion to a single revalidation.
+		return s.questApproachStepLocked(ctx, r, revision, initial, route)
+	}
+	if route.selfRevision != s.positionRevision || distance(route.expected, s.pos) > 0.05 {
+		return pause("position_changed_after_planning")
+	}
+	if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, route.index) <= 3.01 {
+		return pause("within_distance")
+	}
+	for route.index < len(route.path) && distance(s.pos, route.path[route.index]) <= 0.005 {
+		route.index++
+	}
+	if route.index == len(route.path) {
+		return pause("route_ended_outside_range")
+	}
+	p := s.pos
+	op := uint32(opcode.MSGMoveStartForward)
+	index := route.index
+	if s.state.Moving {
+		elapsed := s.now().Sub(s.posAt).Seconds()
+		if elapsed < 0 || elapsed > 0.6 {
+			return pause("tick_late")
+		}
+		if elapsed < 0.15 {
+			return s.stateLocked(), true, nil
+		}
+		var ok bool
+		p, index, ok = followPathStep(s.pos, route.path, route.index, 7*elapsed)
+		if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+0.01 {
+			return pause("invalid_navigation_step")
+		}
+		op = opcode.MSGMoveHeartbeat
+	} else {
+		p.o = followFacing(p, route.path[route.index])
+	}
+	if !s.movementLocked(ctx, op, p, true) {
+		return s.stateLocked(), false, nil
+	}
+	route.index, route.expected = index, s.pos
+	if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, route.index) <= 3.01 {
+		return pause("within_distance")
+	}
+	s.state.Reason = "quest_approaching_client_navmesh_estimate"
+	return s.stateLocked(), true, nil
 }

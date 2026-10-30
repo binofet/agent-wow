@@ -187,7 +187,7 @@ func (x *ClientPosition) GetRevision() uint64 {
 
 type InteractionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Fixed coordination labels: loot, quests, trade.
+	// Fixed coordination labels: loot, quests, trade, training, mail.
 	Owner string `protobuf:"bytes,1,opt,name=owner,proto3" json:"owner,omitempty"`
 	// Required only to renew an existing lease; never returned by Status.
 	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`

@@ -20,7 +20,7 @@ message ClientPosition {
   uint64 revision = 10;
 }
 message InteractionRequest {
-  // Fixed coordination labels: loot, quests, trade.
+  // Fixed coordination labels: loot, quests, trade, training, mail.
   string owner = 1;
   // Required only to renew an existing lease; never returned by Status.
   string token = 2;

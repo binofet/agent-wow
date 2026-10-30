@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -16,12 +17,80 @@ type followNavigation struct {
 	path         []position
 	index        int
 	target       position
+	arrival      position
+	arrivalStop  float64
+	arrivalKnown bool
 	expected     position
 	selfRevision uint64
 	nextPlanAt   time.Time
 }
 
 func (f *followNavigation) Reset() { *f = followNavigation{} }
+
+func formationDestinationUnavailable(err error) bool {
+	if err == nil || !strings.Contains(err.Error(), "find navigation path: destination:") {
+		return false
+	}
+	return strings.Contains(err.Error(), "sample is outside ground polygon") || strings.Contains(err.Error(), "no nearby ground polygon") || strings.Contains(err.Error(), "polygon is not ground-only")
+}
+
+// A blocked personal slot can use a nearby pocket only after that pocket's
+// complete ground route succeeds. All five queries share one caller deadline.
+// An invalid start never authorizes a candidate, snap or unverified recovery.
+func (s *Service) formationNavigationPath(ctx context.Context, target position, stop float64) ([]position, position, float64, error) {
+	path, err := s.navigationPath(ctx, s.navDataDir, s.pos, target)
+	validate := func(path []position, candidate position, alternate bool) (position, float64, bool) {
+		if len(path) > 256 || !followAtTarget(path[len(path)-1], candidate, stop) {
+			return position{}, 0, false
+		}
+		arrival := path[len(path)-1]
+		arrivalStop := stop
+		if alternate {
+			offset := followHorizontalDistance(arrival, target)
+			if offset > 1.5 || math.Abs(float64(arrival.z-target.z)) > 1.5 {
+				return position{}, 0, false
+			}
+			// Formation's smallest restart threshold is1.8yd. Settle inside
+			// that band even when the alternate itself is1.25yd off-centre.
+			arrivalStop = math.Min(stop, 1.65-offset)
+			if arrivalStop < 0.1 {
+				return position{}, 0, false
+			}
+			if s.lastWorld != nil && s.lastWorld.Owner != nil && s.lastWorld.Owner.Present && s.lastWorld.Owner.PositionKnown && followHorizontalDistance(arrival, playerPosition(s.lastWorld.Owner)) < 2 {
+				return position{}, 0, false
+			}
+		}
+		return arrival, arrivalStop, true
+	}
+	if err == nil {
+		if arrival, radius, ok := validate(path, target, false); ok {
+			return path, arrival, radius, nil
+		}
+		return nil, position{}, 0, errors.New("formation route exceeds point limit or ends outside the slot")
+	}
+	if !formationDestinationUnavailable(err) {
+		return nil, position{}, 0, err
+	}
+	for _, offset := range [][2]float32{{1.25, 0}, {-1.25, 0}, {0, 1.25}, {0, -1.25}} {
+		if ctx.Err() != nil {
+			return nil, position{}, 0, ctx.Err()
+		}
+		candidate := target
+		candidate.x += offset[0]
+		candidate.y += offset[1]
+		if !northshire(candidate) {
+			continue
+		}
+		path, candidateErr := s.navigationPath(ctx, s.navDataDir, s.pos, candidate)
+		if candidateErr != nil {
+			continue
+		}
+		if arrival, radius, ok := validate(path, candidate, true); ok {
+			return path, arrival, radius, nil
+		}
+	}
+	return nil, position{}, 0, err
+}
 
 func followHorizontalDistance(a, b position) float64 {
 	return math.Hypot(float64(a.x-b.x), float64(a.y-b.y))
@@ -120,6 +189,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	f := &s.followNav
 	fail := func(reason string, err error) bool {
 		f.path = nil
+		f.arrivalKnown = false
 		s.state.NavAvailable = false
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
 		s.stopLocked(ctx)
@@ -132,8 +202,16 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}
+	if f.arrivalKnown && f.selfRevision == s.positionRevision && distance(f.expected, s.pos) <= 0.05 && distance(f.target, target) <= 1.5 && followAtTarget(s.pos, f.arrival, f.arrivalStop) {
+		ok := s.stopLocked(ctx)
+		if ok {
+			s.state.Reason = "within_follow_formation"
+		}
+		return ok
+	}
 	if followAtTarget(s.pos, target, stopDistance) {
 		f.path = nil
+		f.arrivalKnown = false
 		ok := s.stopLocked(ctx)
 		if ok {
 			s.state.Reason = "within_follow_formation"
@@ -146,7 +224,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		f.path = nil
 		f.nextPlanAt = now.Add(750 * time.Millisecond)
 		planCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-		path, err := s.navigationPath(planCtx, s.navDataDir, s.pos, target)
+		path, arrival, arrivalStop, err := s.formationNavigationPath(planCtx, target, stopDistance)
 		if err == nil {
 			err = planCtx.Err()
 		}
@@ -154,11 +232,9 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		if err != nil {
 			return fail("follow_navigation_unavailable", err)
 		}
-		if len(path) > 256 || !followAtTarget(path[len(path)-1], target, stopDistance) {
-			return fail("follow_navigation_unavailable", errors.New("formation route exceeds point limit or ends outside the slot"))
-		}
 		f.path = append([]position(nil), path...)
 		f.index, f.target, f.expected, f.selfRevision = 0, target, s.pos, s.positionRevision
+		f.arrival, f.arrivalStop, f.arrivalKnown = arrival, arrivalStop, true
 		validCached = true
 		s.state.NavAvailable = true
 		s.state.NavReason = "client_ground_navmesh"
@@ -209,7 +285,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	}
 	f.index, f.expected = index, s.pos
 	s.state.Reason = "following_formation"
-	if followAtTarget(s.pos, target, stopDistance) {
+	if followAtTarget(s.pos, f.arrival, f.arrivalStop) {
 		if !s.stopLocked(ctx) {
 			return false
 		}

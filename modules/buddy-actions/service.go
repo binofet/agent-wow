@@ -27,7 +27,7 @@ import (
 
 const (
 	lease      = 4 * time.Hour
-	limitation = "Northshire follow uses verified ground navigation and personal formation positions; other areas retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
+	limitation = "Configured navigation follows only the supported Northshire area; unconfigured runtimes retain short flat-ground follow. Spell transport and server spell-go are not health/damage confirmation."
 )
 
 type sessionAPI interface {
@@ -113,7 +113,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 }
 
 func validInteractionOwner(owner string) bool {
-	return owner == "loot" || owner == "quests" || owner == "trade"
+	return owner == "loot" || owner == "quests" || owner == "trade" || owner == "training" || owner == "mail"
 }
 func (s *Service) expireInteractionLocked() {
 	if s.state.InteractionOwner != "" && !s.now().Before(s.interactionUntil) {
@@ -130,7 +130,7 @@ func (s *Service) expireInteractionLocked() {
 
 func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.InteractionRequest) (*actionsv1.InteractionLease, error) {
 	if r == nil || !validInteractionOwner(r.Owner) {
-		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, or trade")
+		return nil, status.Error(codes.InvalidArgument, "interaction owner must be loot, quests, trade, training, or mail")
 	}
 	duration := r.LeaseMs
 	if duration == 0 {
@@ -776,7 +776,13 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	target := playerPosition(snapshot.Owner)
-	if s.navDataDir != "" && northshire(s.pos) && northshire(target) {
+	if s.navDataDir != "" {
+		if !northshire(s.pos) || !northshire(target) {
+			s.stopLocked(ctx)
+			s.lastStep = now
+			s.state.Reason = "follow_outside_supported_navigation_area"
+			return
+		}
 		formationUsed = true
 		s.followFormationLocked(ctx, snapshot, now)
 		return

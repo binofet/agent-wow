@@ -24,6 +24,7 @@ type fakeBackend struct {
 	findErr   error
 	onFind    func()
 	groundFn  func(Point) (float32, error)
+	floorFn   func(Point, float32, float32) (float32, error)
 	terrainOK bool
 	walkErr   error
 	samples   []Point
@@ -51,7 +52,13 @@ func (f *fakeBackend) ground(p Point) (float32, error) {
 	return p.Z, nil
 }
 func (f *fakeBackend) terrain(p Point) (float32, bool) { return p.Z, f.terrainOK }
-func (f *fakeBackend) walkable(Point, Point) error     { f.walks++; return f.walkErr }
+func (f *fakeBackend) floor(_ context.Context, p Point, h, t float32) (float32, error) {
+	if f.floorFn != nil {
+		return f.floorFn(p, h, t)
+	}
+	return h, nil
+}
+func (f *fakeBackend) walkable(Point, Point) error { f.walks++; return f.walkErr }
 
 func TestPlanSamplesEntireCompleteRoute(t *testing.T) {
 	f := fakeRoute(testStart, testEnd)
@@ -91,7 +98,7 @@ func TestPlanRejectsIncompleteAndExcessiveGeometry(t *testing.T) {
 	tests := map[string][]Point{
 		"capped short endpoint":    {testStart, {-8898, -100, 90}},
 		"start displaced":          {{-8897, -100, 90}, testEnd},
-		"out of bounds midpoint":   {testStart, {-8600, -100, 90}, testEnd},
+		"out of bounds midpoint":   {testStart, {-8399, -100, 90}, testEnd},
 		"nonfinite midpoint":       {testStart, {-8898, float32(math.NaN()), 90}, testEnd},
 		"detour over route budget": {testStart, {-8900, 0, 90}, testEnd},
 		"one point":                {testStart},
@@ -123,7 +130,7 @@ func TestPlanRejectsUnsafeIntermediateSamples(t *testing.T) {
 		},
 		"blocked ground segment": func(f *fakeBackend) { f.walkErr = errors.New("surface wall") },
 		"missing terrain":        func(f *fakeBackend) { f.terrainOK = false },
-		"wrong height":           func(f *fakeBackend) { f.groundFn = func(p Point) (float32, error) { return p.Z + 2, nil } },
+		"wrong height":           func(f *fakeBackend) { f.groundFn = func(p Point) (float32, error) { return p.Z + 2.1, nil } },
 		"nonfinite height":       func(f *fakeBackend) { f.groundFn = func(Point) (float32, error) { return float32(math.NaN()), nil } },
 		"cliff": func(f *fakeBackend) {
 			f.groundFn = func(p Point) (float32, error) {

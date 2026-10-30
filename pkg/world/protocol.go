@@ -8,8 +8,8 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
-// The core handles connection lifecycle packets only. Gameplay payloads remain
-// opaque and are routed unchanged to registered modules by the owner loop.
+// The core handles connection lifecycle and server-commanded teleport ACKs.
+// Gameplay payloads are still routed unchanged to registered modules.
 func (e *engine) handle(op uint16, body []byte) (bool, error) {
 	switch op {
 	case opcode.SMSGLoginVerifyWorld:
@@ -29,6 +29,10 @@ func (e *engine) handle(op uint16, body []byte) (bool, error) {
 		}
 		e.synced = true
 		e.checkReady()
+	case opcode.MSGMoveTeleportAck, opcode.SMSGNewWorld:
+		if replyOp, reply, valid := teleportAcknowledgement(op, body, e.s.state.Character.GUID, e.timestamp()); valid {
+			return false, e.write(replyOp, reply)
+		}
 	case opcode.SMSGPong:
 		if len(body) != 4 {
 			return false, errors.New("invalid pong")

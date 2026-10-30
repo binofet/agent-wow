@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/azerothcore/AzerothGhost/pathfinding"
 	"github.com/o0olele/detour-go/detour"
@@ -33,7 +34,7 @@ type Point struct {
 	Z float32 `json:"z"`
 }
 
-// Plan requires dataDir/mmaps and dataDir/maps from independently extracted
+// Plan requires dataDir/{mmaps,maps,vmaps} from independently extracted
 // static client assets. Missing/partial meshes never produce a straight fallback.
 func Plan(dataDir string, mapID uint32, start, dest Point) ([]Point, error) {
 	return PlanContext(context.Background(), dataDir, mapID, start, dest)
@@ -42,6 +43,8 @@ func Plan(dataDir string, mapID uint32, start, dest Point) ([]Point, error) {
 // PlanContext checks cancellation while waiting for the planner and between
 // bounded upstream queries/samples. The upstream file/query call is synchronous.
 func PlanContext(ctx context.Context, dataDir string, mapID uint32, start, dest Point) (points []Point, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
 	defer func() {
 		if r := recover(); r != nil {
 			points = nil
@@ -64,13 +67,64 @@ func PlanContext(ctx context.Context, dataDir string, mapID uint32, start, dest 
 	case <-p.gate:
 	}
 	defer func() { p.gate <- struct{}{} }()
-	return plan(ctx, p, start, dest)
+	return planWithReroutes(ctx, p, start, dest)
+}
+
+type physicalDiscontinuity struct{ from, to Point }
+
+func (e *physicalDiscontinuity) Error() string {
+	return fmt.Sprintf("physical ground has an unsupported vertical ledge at %.4f,%.4f", e.from.X, e.from.Y)
+}
+
+// A smoothed polygon path can cross the edge of a collision prop. At most two
+// complete replans may avoid the exact polygon that proved discontinuous. All
+// temporary flags are restored under the same planner gate on every exit.
+func planWithReroutes(ctx context.Context, p *planner, start, dest Point) ([]Point, error) {
+	return rerouteBounded(ctx, p, func() ([]Point, error) { return plan(ctx, p, start, dest) })
+}
+func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point, error)) ([]Point, error) {
+	restore := make(map[detour.DtPolyRef]uint16, 2)
+	defer func() {
+		for ref, flags := range restore {
+			p.mesh.SetPolyFlags(ref, flags)
+		}
+	}()
+	for attempt := 0; attempt < 3; attempt++ {
+		points, err := attemptPath()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err == nil {
+			return points, nil
+		}
+		var edge *physicalDiscontinuity
+		if attempt == 2 || !errors.As(err, &edge) {
+			return nil, err
+		}
+		ref, _, e := p.groundRef(edge.from)
+		if e != nil {
+			return nil, err
+		}
+		if _, already := restore[ref]; already {
+			return nil, err
+		}
+		var flags uint16
+		if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || flags != 1 {
+			return nil, err
+		}
+		if st := p.mesh.SetPolyFlags(ref, 0); detour.DtStatusFailed(st) {
+			return nil, err
+		}
+		restore[ref] = flags
+	}
+	return nil, errors.New("navigation reroute budget exhausted")
 }
 
 type backend interface {
 	findPath(start, dest Point) (*pathfinding.PathResult, error)
 	ground(Point) (float32, error)
 	terrain(Point) (float32, bool)
+	floor(context.Context, Point, float32, float32) (float32, error)
 	walkable(Point, Point) error
 }
 
@@ -129,7 +183,9 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 	// can hide a water polygon, wall, or large vertical discontinuity between
 	// the polygon-crossing waypoints.
 	out := make([]Point, 0, MaxPoints)
-	add := func(q Point) error {
+	var previousMesh Point
+	var add func(Point, int) error
+	add = func(q Point, depth int) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -137,36 +193,56 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 		if err != nil {
 			return fmt.Errorf("navigation ground sample at %.4f,%.4f,%.4f: %w", q.X, q.Y, q.Z, err)
 		}
-		if !finite(h) || math.Abs(float64(h-q.Z)) > 1.5 {
-			return errors.New("navigation sample differs from mesh height by more than 1.5 yards")
+		if !finite(h) || math.Abs(float64(h-q.Z)) > 2 {
+			return errors.New("navigation sample differs from mesh height by more than 2 yards")
 		}
 		terrain, ok := b.terrain(q)
 		if !ok || !finite(terrain) || terrain <= -10000 {
 			return errors.New("navigation terrain height is unavailable")
 		}
-		q.Z = h
+		meshPoint := Point{q.X, q.Y, h}
+		floor, err := b.floor(ctx, q, h, terrain)
+		if err != nil {
+			return fmt.Errorf("navigation physical floor at %+v mesh=%g terrain=%g: %w", q, h, terrain, err)
+		}
+		if !finite(floor) || floor < h-2 || floor > h+.5 {
+			return errors.New("navigation physical floor differs from verified mesh layer")
+		}
+		q.Z = floor
 		if !inBounds(q) {
 			return errors.New("navigation mesh height leaves Northshire bounds")
 		}
 		if len(out) > 0 {
 			prev := out[len(out)-1]
-			if err := b.walkable(prev, q); err != nil {
+			if err := b.walkable(previousMesh, meshPoint); err != nil {
 				return fmt.Errorf("navigation segment %.4f,%.4f -> %.4f,%.4f is not ground-walkable: %w", prev.X, prev.Y, q.X, q.Y, err)
 			}
 			if distance(prev, q) < 0.001 {
 				return nil
 			}
 			if math.Abs(float64(q.Z-prev.Z)) > 1.0 {
-				return errors.New("navigation ground height changes by more than 1 yard per sample")
+				if depth >= 4 {
+					return &physicalDiscontinuity{from: previousMesh, to: meshPoint}
+				}
+				// Sample physical stair edges more finely without relaxing the cap.
+				mid := Point{(previousMesh.X + meshPoint.X) / 2, (previousMesh.Y + meshPoint.Y) / 2, (previousMesh.Z + meshPoint.Z) / 2}
+				if err := add(mid, depth+1); err != nil {
+					return err
+				}
+				return add(meshPoint, depth+1)
+			}
+			if distance(prev, q) > 2 {
+				return errors.New("navigation physical floor segment exceeds 2 yards")
 			}
 		}
 		if len(out) >= MaxPoints {
 			return errors.New("navigation sampled path exceeds 256 points")
 		}
 		out = append(out, q)
+		previousMesh = meshPoint
 		return nil
 	}
-	if err := add(points[0]); err != nil {
+	if err := add(points[0], 0); err != nil {
 		return nil, err
 	}
 	for i := 1; i < len(points); i++ {
@@ -174,12 +250,15 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 		n := int(math.Ceil(distance(a, z)))
 		for j := 1; j <= n; j++ {
 			t := float32(j) / float32(n)
-			if err := add(Point{a.X + (z.X-a.X)*t, a.Y + (z.Y-a.Y)*t, a.Z + (z.Z-a.Z)*t}); err != nil {
+			if err := add(Point{a.X + (z.X-a.X)*t, a.Y + (z.Y-a.Y)*t, a.Z + (z.Z-a.Z)*t}, 0); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if len(out) == 0 || distance(out[len(out)-1], dest) > EndpointTolerance {
+	if len(out) == 0 || distance(out[0], start) > EndpointTolerance {
+		return nil, errors.New("navigation normalized start is outside start tolerance")
+	}
+	if distance(out[len(out)-1], dest) > EndpointTolerance {
 		return nil, errors.New("navigation normalized endpoint is outside destination tolerance")
 	}
 	length = 0
@@ -194,7 +273,7 @@ func plan(ctx context.Context, b backend, start, dest Point) ([]Point, error) {
 
 func finite(v float32) bool { return !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) }
 func inBounds(p Point) bool {
-	return finite(p.X) && finite(p.Y) && finite(p.Z) && p.X >= -9050 && p.X <= -8650 && p.Y >= -500 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
+	return finite(p.X) && finite(p.Y) && finite(p.Z) && p.X >= -9050 && p.X <= -8400 && p.Y >= -500 && p.Y <= 200 && p.Z >= 40 && p.Z <= 180
 }
 func distance(a, b Point) float64 {
 	x, y, z := float64(a.X-b.X), float64(a.Y-b.Y), float64(a.Z-b.Z)
@@ -207,6 +286,7 @@ type planner struct {
 	query          *detour.DtNavMeshQuery
 	mesh           *detour.DtNavMesh
 	filter         *detour.DtQueryFilter
+	floors         *floorReader
 }
 
 var planners = struct {
@@ -226,7 +306,7 @@ func cachedPlanner(dataDir string) (*planner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("navigation data directory: %w", err)
 	}
-	for _, name := range []string{"mmaps", "maps"} {
+	for _, name := range []string{"mmaps", "maps", "vmaps"} {
 		info, e := os.Stat(filepath.Join(dir, name))
 		if e != nil || !info.IsDir() {
 			return nil, fmt.Errorf("navigation data requires %s directory", name)
@@ -252,7 +332,7 @@ func cachedPlanner(dataDir string) (*planner, error) {
 	f.SetIncludeFlags(0x01) // NAV_GROUND only; never liquid, off-mesh, or unknown flags.
 	f.SetExcludeFlags(^uint16(0x01))
 	p := &planner{gate: make(chan struct{}, 1), mesh: mesh, query: q, filter: f,
-		terrainManager: pathfinding.NewTerrainManager(filepath.Join(dir, "maps"))}
+		terrainManager: pathfinding.NewTerrainManager(filepath.Join(dir, "maps")), floors: newFloorReader(filepath.Join(dir, "vmaps"))}
 	p.gate <- struct{}{}
 	planners.items[dir] = p
 	return p, nil
@@ -297,7 +377,7 @@ func (p *planner) terrain(q Point) (float32, bool) {
 func recast(p Point) [3]float32 { return [3]float32{p.Y, p.Z, p.X} }
 func (p *planner) groundRef(q Point) (detour.DtPolyRef, float32, error) {
 	v := recast(q)
-	ext := [3]float32{0.5, 1.5, 0.5}
+	ext := [3]float32{0.5, 2, 0.5}
 	var ref detour.DtPolyRef
 	var nearest [3]float32
 	if st := p.query.FindNearestPoly(v[:], ext[:], p.filter, &ref, nearest[:]); detour.DtStatusFailed(st) || ref == 0 {
@@ -448,9 +528,10 @@ func loadMesh(dir string) (mesh *detour.DtNavMesh, err error) {
 		return nil, errors.New("initialize navigation mesh failed")
 	}
 	loaded := 0
-	// All accepted Northshire coordinates lie in grid X48, Y31/32. Loading
-	// this fixed region bounds both filesystem reads and mesh allocation.
-	for _, name := range []string{"0004831.mmtile", "0004832.mmtile"} {
+	// Northshire and Echo Ridge Mine use these three fixed grid tiles. Missing
+	// portions of the bounded rectangle still fail closed rather than loading
+	// arbitrary neighboring map data or producing a direct fallback.
+	for _, name := range []string{"0004831.mmtile", "0004832.mmtile", "0004732.mmtile"} {
 		data, err := readBounded(filepath.Join(dir, name), 32<<20)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
