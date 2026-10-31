@@ -95,6 +95,33 @@ class TownTests(unittest.TestCase):
                       patch.object(m,"profession_active",return_value=False)]
         for p in self.patches:p.start();self.addCleanup(p.stop)
 
+    def test_nix_ordinary_bag_job_uses_fixed_endpoint_and_pauses_then_restores_controls(self):
+        rpc, clock, calls = RPC(), [100.], []
+        rpc.url = "http://127.0.0.1:8402/rpc"
+        rpc.inv = finite.initial(); rpc.inv["selfGuid"] = "8"
+        rpc.inv["inventoryBags"][0]["slots"][2]["entry"] = 4498
+        rpc.inv["items"][0]["item"]["entry"] = 4498
+        rpc.inv["items"][0]["containerSlots"] = 8
+        rpc.assisting = rpc.looting = rpc.buffing = True
+        original = rpc.call
+        def call(method, params):
+            value = original(method, params)
+            if method == "buddy-world.snapshot": value["self"]["guid"] = "8"
+            return value
+        rpc.call = call
+        def work(kind, target):
+            self.assertEqual(kind, "bags")
+            self.assertFalse(any((rpc.following, rpc.assisting, rpc.looting, rpc.buffing)))
+            self.assertIsNone(rpc.lease)
+            calls.append(kind)
+            return {"phase":"complete","newConfirmedOperations":2}
+        actor = m.Supervisor(8, rpc, now=lambda:clock[0], worker=work)
+        self.run_tick(actor, clock); self.run_tick(actor, clock)
+        self.assertEqual(calls, ["bags"])
+        self.assertEqual(actor.identity["rpcUrl"], "http://127.0.0.1:8402/rpc")
+        self.assertEqual(m.gear.endpoint(8), "http://127.0.0.1:8402/rpc")
+        self.assertTrue(all((rpc.following, rpc.assisting, rpc.looting, rpc.buffing)))
+
     def test_actual_conservative_gear_upgrade_precedes_sale_in_field_without_town_or_vendor(self):
         gear_fakes=load('town_gear_fakes','test_party_gear.py')
         actor,rpc,clock,_,calls=self.rig()

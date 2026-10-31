@@ -22,6 +22,11 @@ func metadataFixture(entry, class, quality, inv, containers uint32) []byte {
 	binary.LittleEndian.PutUint32(prefix[24:], inv)
 	binary.LittleEndian.PutUint32(prefix[76:], 20)
 	binary.LittleEndian.PutUint32(prefix[80:], containers)
+	if class == 1 {
+		binary.LittleEndian.PutUint32(prefix[28:], ^uint32(0))
+		binary.LittleEndian.PutUint32(prefix[32:], ^uint32(0))
+		binary.LittleEndian.PutUint32(prefix[76:], 1)
+	}
 	p = append(p, prefix...)
 	p = append(p, make([]byte, 8+24+28+12+5*24+4)...)
 	p = append(p, 0)
@@ -53,7 +58,7 @@ func TestInventoryMetadataCompleteFrameAndJunkExclusions(t *testing.T) {
 	if e != nil || !normalBag(bag) || bag.disposable() {
 		t.Fatal(bag, e)
 	}
-	bag.containerSlots = 19
+	bag.containerSlots = 37
 	if normalBag(bag) {
 		t.Fatal("wrong capacity")
 	}

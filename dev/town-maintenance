@@ -101,7 +101,7 @@ def layout(state):
             if guid or entry or boolean(bag, "metadataKnown") or count != 16:
                 raise Error("invalid_builtin_backpack")
         elif guid:
-            if guid in guids or not boolean(bag, "metadataKnown") or entry == 0 or count == 0 or entry == 41599 and count != 20:
+            if guid in guids or not boolean(bag, "metadataKnown") or entry == 0 or count == 0:
                 raise Error("unknown_or_duplicate_owned_container")
             guids.add(guid)
         elif entry or count or boolean(bag, "metadataKnown"):
@@ -128,6 +128,30 @@ def layout(state):
                 guids.add(item_id)
             slots[index, slot] = item
     return bags, slots
+
+
+def bag_template(row):
+    source = row["request"]["source"]
+    template = row.get("bagTemplate")
+    # Preserve existing durable 41599 receipts; new entries always reserve their
+    # actual complete backend-qualified template before the equip request.
+    if template is None and number(source.get("entry", 0)) == 41599:
+        template = {"entry": 41599, "containerSlots": 20}
+    if (not isinstance(template, dict) or set(template) != {"entry", "containerSlots"}
+            or positive(template.get("entry", 0), 2**32-1) != number(source.get("entry", 0))
+            or not 1 <= number(template.get("containerSlots", 0), 36) <= 36):
+        raise Error("exact_reserved_bag_template_required")
+    return template
+
+
+def bag_candidates(state, slots):
+    eligible = {item_guid(row["item"].get("itemGuid", 0)): row for row in state.get("items", [])
+                if isinstance(row, dict) and isinstance(row.get("item"), dict)
+                and row.get("metadataKnown") is True and row.get("normalBag") is True
+                and 1 <= number(row.get("containerSlots", 0), 36) <= 36}
+    return [ref(item) for item in slots.values() if item.get("metadataKnown") is True
+            and number(item.get("stackCount", 0)) == 1 and number(item.get("itemGuid", 0)) in eligible
+            and ref(eligible[number(item["itemGuid"])]["item"]) == ref(item)]
 
 
 def checked_state(raw, guid):
@@ -193,8 +217,9 @@ class Journal(base.Journal):
                         raise Error("journal_move_requires_empty_destination")
                 elif row["kind"] == "equip":
                     if (not 19 <= number(req["equipmentSlot"], 22) <= 22 or number(req["expectedContainerGuid"]) != 0
-                            or req["source"]["entry"] != 41599 or req["source"]["stackCount"] != 1):
+                            or req["source"]["stackCount"] != 1):
                         raise Error("journal_equipment_scope_changed")
+                    bag_template(row)
                 else:
                     positive(req["vendorGuid"]); positive(req["expectedUnitSellPriceCopper"], 2**32-1)
                     positive(req["expectedCopperRevision"]); number(row.get("baselineCopper"), 2**31-1)
@@ -329,8 +354,10 @@ class Worker:
                             and number(dest.get("itemGuid", 0)) == g and number(dest.get("entry", 0)) == 41599 and number(dest.get("stackCount", 0)) == 1 and dest.get("metadataKnown") is True)
                 elif kind == "equip":
                     bag = bags.get(number(req["equipmentSlot"])-18, {})
+                    template = bag_template(row)
                     done = (done and op.get("equipmentConfirmed") is True and number(bag.get("containerGuid", 0)) == number(req["source"]["itemGuid"])
-                            and number(bag.get("entry", 0)) == 41599 and bag.get("metadataKnown") is True and bag.get("contentsKnown") is True)
+                            and number(bag.get("entry", 0)) == template["entry"] and number(bag.get("slotCount", 0)) == template["containerSlots"]
+                            and bag.get("metadataKnown") is True and bag.get("contentsKnown") is True)
                 elif kind == "move":
                     target = slots.get((req["destinationBag"], req["destinationSlot"]), {})
                     done = done and target.get("metadataKnown") is True and ref(target) == {**req["source"], "bag": req["destinationBag"], "slot": req["destinationSlot"]}
@@ -412,9 +439,10 @@ class Worker:
         elif kind == "equip":
             equipment = number(options.get("equipment_slot"), 22)
             eligibility = self.eligible(state, source)
-            if (equipment < 19 or source["entry"] != 41599 or source["stackCount"] != 1 or eligibility.get("normalBag") is not True
-                    or number(eligibility.get("containerSlots", 0)) != 20 or number(bags[equipment-18].get("containerGuid", 0)) != 0):
-                raise Error("owned_41599_and_exact_empty_bag_equipment_slot_required")
+            if (equipment < 19 or source["stackCount"] != 1 or eligibility.get("normalBag") is not True
+                    or not 1 <= number(eligibility.get("containerSlots", 0), 36) <= 36 or number(bags[equipment-18].get("containerGuid", 0)) != 0):
+                raise Error("owned_ordinary_bag_and_exact_empty_bag_equipment_slot_required")
+            extra["bagTemplate"] = {"entry": source["entry"], "containerSlots": number(eligibility["containerSlots"], 36)}
             req.update(equipmentSlot=equipment, expectedContainerGuid="0")
         elif kind == "sell":
             eligibility = self.eligible(state, source)
@@ -506,7 +534,7 @@ class Worker:
             state = self.state(); bags, slots = self.ready(state)
             empty = [b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
             free = any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items())
-            candidates = [ref(i) for i in slots.values() if i.get("metadataKnown") is True and number(i.get("entry", 0)) == 41599 and number(i.get("stackCount", 0)) == 1]
+            candidates = bag_candidates(state, slots)
             kind = ""
             if empty and candidates and counts["equip"] < 4:
                 source = min(candidates, key=lambda i: (i["bag"], i["slot"]))

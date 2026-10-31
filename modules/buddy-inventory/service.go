@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers/maces and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and bag41599 equipment; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
+const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers/maces and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and ordinary general bags of 1-36 slots into empty bag equipment slots; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -231,7 +231,7 @@ func (s *Service) eligibilityLocked() {
 	for _, k := range keys {
 		i := s.view.slots[k]
 		m := s.metadata[i.Entry]
-		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && normalBag(m), ContainerSlots: m.containerSlots, Name: m.name}
+		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && bagUsability(s.view.w, m) == "", ContainerSlots: m.containerSlots, Name: m.name}
 		r.GearEquipmentSlot, r.ExpectedEquippedItemGuid, r.ConservativeUpgrade, r.GearBlockedReason = s.gearEligibilityLocked(i)
 		r.GearEquipEligible = r.GearBlockedReason == "" && s.ordinaryBagLocked(i.Bag)
 		if !i.MetadataKnown || !m.known {
@@ -408,8 +408,11 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 			return "explicit_empty_normal_destination_required"
 		}
 	case "equip":
-		if r.EquipmentSlot < 19 || r.EquipmentSlot > 22 || !normalBag(m) || source.StackCount != 1 || s.view.bags[r.EquipmentSlot-18].ContainerGuid != 0 {
-			return "only_41599_single_bag_to_known_empty_equipment_slot"
+		if r.EquipmentSlot < 19 || r.EquipmentSlot > 22 || source.StackCount != 1 || s.view.bags[r.EquipmentSlot-18].ContainerGuid != 0 {
+			return "single_ordinary_bag_to_known_empty_equipment_slot_required"
+		}
+		if reason := bagUsability(s.view.w, m); reason != "" {
+			return reason
 		}
 	case "equip_gear":
 		if s.view.w.SelfEquipmentRevision != r.BaselineEquipmentRevision {
@@ -634,7 +637,7 @@ func (s *Service) run(op *operation) {
 		return
 	}
 	op.baseline = s.view
-	expected, e := expectedAfter(op.baseline, op.receipt)
+	expected, e := expectedAfter(op.baseline, op.receipt, s.metadata[op.receipt.Source.Entry])
 	if e != nil {
 		s.mu.Unlock()
 		unlockWrite()

@@ -79,7 +79,37 @@ func (v view) source(r *inventoryv1.ItemRef) (*worldv1.BackpackSlot, bool) {
 	return i, i != nil && i.MetadataKnown && proto.Equal(ref(i), r)
 }
 func normalBag(m itemMetadata) bool {
-	return m.known && m.entry == 41599 && m.class == 1 && m.subclass == 0 && m.inventoryType == 18 && m.containerSlots == 20 && m.bagFamily == 0
+	return m.known && m.entry != 0 && m.class == 1 && m.subclass == 0 && m.inventoryType == 18 &&
+		m.containerSlots > 0 && m.containerSlots <= 36 && m.bagFamily == 0 &&
+		m.flags == 0 && m.flags2 == 0 && !m.hasSpell && m.bonding <= 2 && m.startQuest == 0 &&
+		m.lockID == 0 && m.pageText == 0 && m.duration == 0 && m.maxDurability == 0 &&
+		m.maxCount == 0 && m.stackable == 1 && m.itemLimitCategory == 0 && m.itemSet == 0 &&
+		m.scalingDistribution == 0 && m.scalingValue == 0 && !m.specialArmor
+}
+
+func bagUsability(w *worldv1.SnapshotResponse, m itemMetadata) string {
+	if !normalBag(m) {
+		return "ordinary_general_container_required"
+	}
+	p := w.GetSelf()
+	if p == nil || m.allowableClass == 0 || m.allowableRace == 0 ||
+		m.allowableClass != ^uint32(0) && (!p.ClassKnown || p.ClassId == 0 || p.ClassId > 11 || m.allowableClass&(uint32(1)<<(p.ClassId-1)) == 0) ||
+		m.allowableRace != ^uint32(0) && (!p.RaceKnown || p.RaceId == 0 || p.RaceId > 11 || m.allowableRace&(uint32(1)<<(p.RaceId-1)) == 0) {
+		return "bag_class_or_race_requirement_unproven"
+	}
+	if m.requiredLevel != 0 && (!p.LevelKnown || p.Level < m.requiredLevel) {
+		return "bag_required_level_not_met"
+	}
+	if m.requiredSpell != 0 || m.requiredHonorRank != 0 || m.requiredCityRank != 0 || m.requiredReputationFaction != 0 || m.requiredReputationRank != 0 || m.requiredSkill == 0 && m.requiredSkillRank != 0 {
+		return "unverified_special_bag_requirement"
+	}
+	if m.requiredSkill != 0 {
+		skills, known := ownedSkills(w)
+		if !known || skills[m.requiredSkill] == 0 || skills[m.requiredSkill] < m.requiredSkillRank {
+			return "bag_required_skill_not_met"
+		}
+	}
+	return ""
 }
 func sameSlot(a, b *worldv1.BackpackSlot) bool {
 	return a != nil && b != nil && a.Bag == b.Bag && a.Slot == b.Slot && a.ItemGuid == b.ItemGuid && a.Entry == b.Entry && a.StackCount == b.StackCount && (a.ItemGuid == 0 || a.MetadataKnown == b.MetadataKnown)
@@ -101,7 +131,7 @@ func exactVector(expected, actual view) bool {
 	}
 	return true
 }
-func expectedAfter(before view, r *inventoryv1.Operation) (view, error) {
+func expectedAfter(before view, r *inventoryv1.Operation, bag itemMetadata) (view, error) {
 	if r.Kind == "equip_gear" {
 		return expectedGearAfter(before, r)
 	}
@@ -131,6 +161,9 @@ func expectedAfter(before view, r *inventoryv1.Operation) (view, error) {
 		d.StackCount = saved.StackCount
 		d.MetadataKnown = saved.MetadataKnown
 	} else if r.Kind == "equip" {
+		if !normalBag(bag) || bag.entry != saved.Entry || saved.StackCount != 1 {
+			return v, fail("exact_bag_template_required")
+		}
 		n := r.EquipmentSlot - 18
 		if n < 1 || n > 4 {
 			return v, fail("bag_equipment_slot_invalid")
@@ -140,11 +173,11 @@ func expectedAfter(before view, r *inventoryv1.Operation) (view, error) {
 			return v, fail("bag_equipment_not_empty")
 		}
 		b.ContainerGuid = saved.ItemGuid
-		b.Entry = 41599
+		b.Entry = saved.Entry
 		b.MetadataKnown = true
-		b.SlotCount = 20
+		b.SlotCount = bag.containerSlots
 		b.Slots = nil
-		for i := uint32(0); i < 20; i++ {
+		for i := uint32(0); i < bag.containerSlots; i++ {
 			b.Slots = append(b.Slots, &worldv1.BackpackSlot{Bag: n, Slot: i})
 		}
 	}

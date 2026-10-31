@@ -104,8 +104,10 @@ class FakeRPC:
                 self.current["items"] = [{**i, "item": {**i["item"], "bag": b, "slot": s}} if i["item"]["itemGuid"] == src["itemGuid"] else i for i in self.current["items"]]
             elif method == "buddy-inventory.equip":
                 b = params["equipmentSlot"]-18
-                bags[b].update(containerGuid=src["itemGuid"], entry=41599, metadataKnown=True, contentsKnown=True,
-                               slotCount=20, slots=[{"bag": b, "slot": i} for i in range(20)])
+                eligibility = next(i for i in self.current["items"] if i["item"] == src)
+                capacity = eligibility["containerSlots"]
+                bags[b].update(containerGuid=src["itemGuid"], entry=src["entry"], metadataKnown=True, contentsKnown=True,
+                               slotCount=capacity, slots=[{"bag": b, "slot": i} for i in range(capacity)])
                 op.update(equipmentSlot=params["equipmentSlot"], equipmentConfirmed=True)
                 self.current["items"] = [i for i in self.current["items"] if i["item"]["itemGuid"] != src["itemGuid"]]
             elif method == "buddy-inventory.sell":
@@ -332,8 +334,8 @@ class TownTests(unittest.TestCase):
         self.assertEqual(len(self.rpc.mutations()), 160)
         self.assertLess(self.path.stat().st_size, 1048576)
 
-    def test_bag_equipment_and_capacity_require_actual_twenty_slot_metadata(self):
-        for size in (1, 19, 21, 36):
+    def test_bag_equipment_requires_bounded_actual_capacity_and_complete_slots(self):
+        for size in (0, 37):
             with self.subTest(size=size):
                 self.setUp(); self.rpc.current["items"][0]["containerSlots"] = size
                 with self.assertRaises(m.Error):
@@ -341,10 +343,52 @@ class TownTests(unittest.TestCase):
                 self.assertEqual(self.rpc.mutations(), [])
         self.setUp()
         self.rpc.current["inventoryBags"][1].update(containerGuid=str(0x4000000000000999), metadataKnown=True,
-            entry=41599, slotCount=1, slots=[{"bag": 1}])
+            entry=41599, slotCount=8, slots=[{"bag": 1}])
         with self.assertRaises(m.Error):
             self.mutate()
         self.assertEqual(self.rpc.mutations(), [])
+
+
+    def test_two_eight_slot_satchel_equips_use_actual_template_and_persist_receipts(self):
+        self.rpc.current["selfGuid"] = "8"
+        self.rpc.current["inventoryBags"][0]["slots"][2]["entry"] = 4498
+        first = self.rpc.current["items"][0]
+        first.update(containerSlots=8); first["item"]["entry"] = 4498
+        second = {"slot": 4, "itemGuid": str(POLE_BAG+8), "entry": 4498, "stackCount": 1, "metadataKnown": True}
+        self.rpc.current["inventoryBags"][0]["slots"][4] = second
+        self.rpc.current["items"].append({"item": m.ref(second), "metadataKnown": True, "normalBag": True, "containerSlots": 8})
+        with m.Journal(self.path, URL, 8) as journal:
+            worker = m.Worker(self.rpc, 8, journal)
+            for slot, guid, destination in ((2, POLE_BAG, 19), (4, POLE_BAG+8, 20)):
+                result = worker.mutation("equip", source_bag=0, source_slot=slot, item_guid=str(guid), equipment_slot=destination)
+                self.assertEqual(result["phase"], "confirmed")
+            self.assertEqual([r["bagTemplate"] for r in journal.data["attempts"]], [{"entry":4498,"containerSlots":8}]*2)
+        with m.Journal(self.path, URL, 8) as journal:
+            self.assertEqual(len(journal.data["attempts"]), 2)
+        bags, slots = m.layout(self.rpc.current)
+        self.assertEqual(sum(b.get("slotCount", 0) for b in bags.values()), 32)
+        self.assertEqual([(bags[b]["entry"], bags[b]["slotCount"]) for b in (1,2)], [(4498,8),(4498,8)])
+        self.assertEqual(len(self.rpc.mutations()), 2)
+
+    def test_generic_bag_receipt_wrong_entry_or_capacity_stays_unconfirmed_without_replay(self):
+        for change in (lambda b: b.update(entry=41599), lambda b: b.update(slotCount=7, slots=[{"bag":1,"slot":i} for i in range(7)])):
+            with self.subTest(change=change):
+                self.setUp()
+                self.rpc.current["inventoryBags"][0]["slots"][2]["entry"] = 4498
+                self.rpc.current["items"][0]["item"]["entry"] = 4498
+                self.rpc.current["items"][0]["containerSlots"] = 8
+                self.rpc.after = lambda method, request: change(self.rpc.current["inventoryBags"][1])
+                self.assertEqual(self.mutate("equip")["phase"], "outcome_unconfirmed")
+                self.assertEqual(len(self.rpc.mutations()), 1)
+                self.worker("reconcile")
+                self.assertEqual(len(self.rpc.mutations()), 1)
+
+    def test_nonqualified_bag_or_occupied_slot_never_dispatches(self):
+        for change in (lambda s: s["items"][0].update(normalBag=False), lambda s: s["inventoryBags"][1].update(containerGuid=str(POLE_BAG+4),entry=4498,metadataKnown=True,slotCount=8,slots=[{"bag":1,"slot":i} for i in range(8)])):
+            with self.subTest(change=change):
+                self.setUp(); change(self.rpc.current)
+                with self.assertRaises(m.Error): self.mutate("equip")
+                self.assertEqual(self.rpc.mutations(), [])
 
     def test_pending_inventory_blocks_mail_and_discovery_cannot_replace_ready_guard(self):
         for field in ("active", "closing", "unknown"):

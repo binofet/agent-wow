@@ -305,8 +305,9 @@ class TeamTests(unittest.TestCase):
         self.assertEqual(m.activity(s),'BUFFING')
         s['actions']['lastBuff']['phase']='confirmed';self.assertEqual(m.activity(s),'BUSY')
 
-    def test_nix_only_owns_its_fixed_brain_and_no_main_shared_controllers(self):
-        self.assertEqual(m.Controllers.folders(8),[(m.ROOT/'data/converse/nixwick','converse',8)])
+    def test_nix_owns_its_fixed_brain_and_town_but_no_main_shared_controllers(self):
+        self.assertEqual(m.Controllers.folders(8),[(m.ROOT/'data/converse/nixwick','converse',8),
+                                                (m.ROOT/'data/party-town/8','party-town',8)])
         self.assertEqual(len(m.Controllers.folders(1)),4)
 
     def test_full_progress_vectors_and_item_conservation(self):
@@ -361,6 +362,30 @@ class TeamTests(unittest.TestCase):
                 if busy or bad:
                     with self.assertRaises(m.Error):ctl.capture(1)
                 else:self.assertEqual(len(ctl.capture(1)),4)
+
+    def test_nix_capture_includes_own_brain_and_town_without_shared_main_controllers(self):
+        folders=m.Controllers.folders(8)
+        self.assertEqual(folders,[(m.ROOT/'data/converse/nixwick','converse',8),(m.ROOT/'data/party-town/8','party-town',8)])
+        for failure in (None,'busy','activity','foreign_port','foreign_guid'):
+            statuses={};commands={}
+            for pid,(folder,script,_) in enumerate(folders,800):
+                identity=(dict(profile='nixwick',name='Nixwick',guid=8,owner_guid=3,rpc_url='http://127.0.0.1:8402/rpc',**{'class':'warlock'}) if script=='converse'
+                    else dict(version=1,mode='party_town',characterGuid=8,rpcUrl='http://127.0.0.1:8402/rpc'))
+                key='character_identity' if script=='converse' else 'identity'
+                statuses[folder/'status.json']=dict(pid=pid,instance=f'{pid:032x}',updatedAt=time.time(),**{key:identity},
+                    routineActive=True,own=dict(busy=failure=='busy' and script=='party-town'),activityId='a'*32 if failure=='activity' and script=='party-town' else '')
+                if script=='party-town':
+                    if failure=='foreign_port':identity['rpcUrl']='http://127.0.0.1:8088/rpc'
+                    if failure=='foreign_guid':identity['characterGuid']=5
+                commands[pid]=' '.join([m.sys.executable,'-B',str(m.ROOT/'dev'/script),'run','--state-dir',str(folder)])
+            ctl=m.Controllers()
+            with patch.object(m,'load_json',side_effect=lambda p:statuses[p]),patch.object(ctl,'held',return_value=True),patch.object(ctl,'alive',return_value=True),patch.object(ctl,'command',side_effect=lambda p:commands[p]):
+                if failure:
+                    with self.assertRaises(m.Error):ctl.capture(8)
+                else:
+                    rows=ctl.capture(8);self.assertEqual([r['script'] for r in rows],['converse','party-town'])
+                    self.assertEqual(rows[1]['identity']['characterGuid'],8)
+                    self.assertTrue(m.Controllers.ready(rows[1],dict(statuses[folders[1][0]/'status.json'],pid=900,instance='f'*32),900,time.time()-1))
 
     def test_cooperative_stop_marker_remains_bound_to_original_instance(self):
         with tempfile.TemporaryDirectory() as d:

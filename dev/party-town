@@ -27,7 +27,7 @@ c, town = load("party_town_converse", "converse"), load("party_town_finite", "to
 gear = load('party_town_gear', 'party-gear')
 disenchant = load('party_town_disenchant', 'party-disenchant')
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
-ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088)}
+ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088), 8: ("Nixwick", 8402)}
 MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.equip_gear", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
 CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
             ("assist", "buddy-actions.assist", "assisting", "actions"),
@@ -473,7 +473,7 @@ class Supervisor:
         self.status.update(observationsCurrent=True, freeSlots=summary["freeSlots"], totalSlots=summary["totalSlots"], bodySessionId=self.session)
         bags, slots = town.layout(inv)
         empty = any(not integer(bags[b].get("containerGuid", 0)) for b in range(1,5))
-        carried = any(i.get("metadataKnown") is True and integer(i.get("entry", 0)) == 41599 for i in slots.values())
+        carried = bool(town.bag_candidates(inv, slots))
         kind, target, mode = "", 0, "local"
         if pending_disenchant:
             kind='disenchant'

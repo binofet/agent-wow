@@ -327,7 +327,8 @@ class Controllers:
     def __init__(self): self.rows = []
     @staticmethod
     def folders(guid):
-        if guid == 8: return [(ROOT/'data/converse/nixwick', 'converse', guid)]
+        if guid == 8: return [(ROOT/'data/converse/nixwick', 'converse', guid),
+                              (ROOT/'data/party-town/8', 'party-town', guid)]
         profile = ROSTER[guid][2]
         return [(ROOT/'data/converse'/profile if guid != 1 else ROOT/'data/converse', 'converse', guid),
                 (ROOT/'data/party-town'/str(guid), 'party-town', guid),

@@ -156,7 +156,7 @@ func fixtureInventory() (*Service, *fakeInventory) {
 	f := &fakeInventory{w: w, a: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true, X: 100, Y: 100, Z: 10}}}
 	s := NewService(f, "body", 6)
 	s.metadata[4865] = itemMetadata{known: true, entry: 4865, class: 15, sellPrice: 5}
-	s.metadata[41599] = itemMetadata{known: true, entry: 41599, class: 1, inventoryType: 18, containerSlots: 20}
+	s.metadata[41599] = itemMetadata{known: true, entry: 41599, class: 1, inventoryType: 18, containerSlots: 20, stackable: 1, allowableClass: ^uint32(0), allowableRace: ^uint32(0)}
 	s.queried[4865] = true
 	s.queried[41599] = true
 	return s, f
@@ -622,7 +622,7 @@ func TestInventoryExactVectorRejectsLostOrChangedOtherItems(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	expected, e := expectedAfter(v, &inventoryv1.Operation{Kind: "move", Source: r.Source, DestinationSlot: 4})
+	expected, e := expectedAfter(v, &inventoryv1.Operation{Kind: "move", Source: r.Source, DestinationSlot: 4}, itemMetadata{})
 	if e != nil {
 		t.Fatal(e)
 	}

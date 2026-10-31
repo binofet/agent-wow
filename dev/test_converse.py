@@ -1521,6 +1521,31 @@ class TradeIdleProofTests(unittest.TestCase):
 
 
 class GearContextTests(unittest.TestCase):
+    def test_nix_town_snapshot_binds_8402_body_and_revokes_only_matching_held_controls(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
+            folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'8')
+            identity=dict(version=1,mode='party_town',characterGuid=8,rpcUrl='http://127.0.0.1:8402/rpc')
+            queue=['combat_or_recovery','existing_game_operation','usable_gear','bag_space_or_service','idle_gathering_quests_or_training']
+            record=dict(identity=copy.deepcopy(identity),instance='a'*32,activityId='b'*32,routineActive=True,
+                own=dict(busy=True,bodySessionId='aw-nix-current',observationsCurrent=True,taskQueue=queue,selectedTask='bags'))
+            with os.fdopen(converse.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX);converse.write_json(folder/'status.json',record)
+                self.assertTrue(converse.party_town_snapshot(8,body_session='aw-nix-current')['observationsCurrent'])
+                self.assertFalse(converse.party_town_snapshot(8,body_session='aw-old')['observationsCurrent'])
+                for control in ('follow','buffs'):
+                    result=converse.party_town_snapshot(8,revoke_control=control)
+                    self.assertTrue(result['busy']);self.assertTrue(result['followRevoked'])
+                marker=converse.read_json(folder/'follow-revoked.json')
+                self.assertEqual(marker,dict(identity=identity,instance='a'*32,activityId='b'*32,controls=['buffs','follow']))
+                record['activityId']='c'*32;converse.write_json(folder/'status.json',record)
+                converse.party_town_snapshot(8,revoke_control='assist')
+                self.assertEqual(converse.read_json(folder/'follow-revoked.json')['controls'],['assist'])
+                record['identity']['rpcUrl']='http://127.0.0.1:8088/rpc';converse.write_json(folder/'status.json',record)
+                self.assertEqual(converse.party_town_snapshot(8,revoke_control='loot'),dict(active=False,busy=False))
+                self.assertEqual(converse.read_json(folder/'follow-revoked.json')['controls'],['assist'])
+            record['identity']=identity;converse.write_json(folder/'status.json',record)
+            self.assertFalse(converse.party_town_snapshot(8)['active'])
+
     def test_inventory_comparison_context_requires_exact_actual_carried_item(self):
         item_guid=str(0x4000000000000001)
         slots=[dict(bag=0,slot=i) for i in range(16)]
@@ -1772,7 +1797,7 @@ class NixSharedQuestTests(unittest.TestCase):
         party = dict(sessionId="aw-current-nix", group=dict(known=True, inGroup=True, leaderGuid="3",
             members=[dict(guid=str(g), self=g == 8, online=True, name="Joel" if g == 3 else "Nixwick" if g == 8 else "Peer") for g in (1,3,4,5,8)]))
         class RPC:
-            def __init__(self): self.calls=[]; self.state=state; self.party=party; self.timeout=False; self.tail=None
+            def __init__(self): self.calls=[]; self.state=state; self.party=party; self.timeout=False; self.tail=None; self.result_change=None
             def call(self, method, params):
                 self.calls.append((method, copy.deepcopy(params)))
                 if method == "buddy-party.state":
@@ -1784,9 +1809,12 @@ class NixSharedQuestTests(unittest.TestCase):
                 if method == "buddy-quests.accept_shared":
                     if self.timeout: raise converse.ConversationError("Response unavailable")
                     self.state["pendingShare"]["acceptRequested"] = True
-                    self.state["lastSharedAcceptance"] = dict(shareSequence="1", sharerGuid="3", questId=9,
-                        status="REQUESTED", baselineLogRevision="7", transportWritten=True)
-                    return dict(transportWritten=True, state=copy.deepcopy(self.state))
+                    expired=not int(self.state['pendingShare'].get('expiresInMs',0))
+                    self.state["lastSharedAcceptance"] = dict(shareSequence=params['shareSequence'], sharerGuid="3", questId=params['questId'],
+                        status="SHARE_EXPIRED" if expired else "REQUESTED", baselineLogRevision="7", transportWritten=True)
+                    result=dict(transportWritten=True, state=copy.deepcopy(self.state))
+                    if self.result_change:self.result_change(result)
+                    return result
                 raise AssertionError(method)
         rpc=RPC(); events=[]; brain=FakeBrain()
         loop=converse.Conversation(rpc,brain,character_guid=8,character_name="Nixwick",character_class="warlock",
@@ -1817,11 +1845,11 @@ class NixSharedQuestTests(unittest.TestCase):
         replacement.tick()
         self.assertEqual(len([m for m,p in rpc.calls if m=="buddy-quests.accept_shared"]),1)
 
-    def test_foreign_disabled_busy_expired_unknown_log_and_body_changes_do_not_accept(self):
+    def test_foreign_disabled_busy_unknown_log_and_body_changes_do_not_accept(self):
         changes=[lambda r:r.state.update(sharedQuestsEnabled=False),lambda r:r.state.update(actionInFlight=True),
             lambda r:r.state.update(questLogKnown=False),lambda r:r.state.update(questLog=r.state['questLog'][:2]),
             lambda r:r.state['questLog'][2].update(slot=1),lambda r:r.state['pendingShare'].update(sharerGuid="5"),
-            lambda r:r.state['pendingShare'].update(sequence="0"),lambda r:r.state['pendingShare'].update(expiresInMs="0"),
+            lambda r:r.state['pendingShare'].update(sequence="0"),
             lambda r:r.state['pendingShare'].update(kind="SHARED_KIND_NONE"),lambda r:r.state['pendingShare']['quest'].update(available=False),
             lambda r:r.party.update(sessionId="aw-replacement"),lambda r:r.party['group']['members'][1].update(online=False),
             lambda r:setattr(r,'tail',lambda p:p.update(sessionId="aw-replaced-during-read"))]
@@ -1840,6 +1868,43 @@ class NixSharedQuestTests(unittest.TestCase):
             change(rpc.state)
             loop.tick()
             self.assertFalse(any(e.get('sharedQuestPhase')=='confirmed_in_own_quest_log' for e in events))
+
+    def test_expired_share_declines_once_without_acceptance_then_fresh_seq_can_be_accepted(self):
+        loop,rpc,events,_=self.rig();rpc.state['pendingShare'].pop('expiresInMs')  # protoJSON omitted zero
+        loop.tick();loop.tick()
+        self.assertEqual(len([m for m,p in rpc.calls if m=='buddy-quests.accept_shared']),1)
+        self.assertTrue(any(e.get('sharedQuestPhase')=='expired_share_decline_sent' for e in events))
+        self.assertFalse(any(e.get('sharedQuestPhase') in ('accepting_joels_shared_quest','confirmed_in_own_quest_log') for e in events))
+        self.assertNotIn(9,[q.get('questId') for q in rpc.state['questLog']])
+        rpc.state['pendingShare'].update(sequence='2',expiresInMs='30000',acceptRequested=False)
+        loop.tick()
+        self.assertEqual([p['shareSequence'] for m,p in rpc.calls if m=='buddy-quests.accept_shared'],['1','2'])
+        rpc.state['questLog'][2]['questId']=9;rpc.state['questLogRevision']='8'
+        rpc.state['lastSharedAcceptance'].update(status='CONFIRMED_IN_LOG',confirmedLogRevision='8')
+        loop.tick();self.assertTrue(any(e.get('sharedQuestPhase')=='confirmed_in_own_quest_log' for e in events))
+
+    def test_expired_cleanup_unknown_transport_and_mismatched_receipts_never_claim_decline_sent(self):
+        changes=[lambda v:v['state'].update(sessionId='aw-other'),
+            lambda v:v['state']['lastSharedAcceptance'].update(questId=10),
+            lambda v:v['state']['lastSharedAcceptance'].update(shareSequence='2'),
+            lambda v:v['state']['lastSharedAcceptance'].update(sharerGuid='5'),
+            lambda v:v['state']['lastSharedAcceptance'].update(transportWritten=False),
+            lambda v:v['state']['lastSharedAcceptance'].update(status='WRITE_UNCONFIRMED')]
+        for change in changes:
+            loop,rpc,events,_=self.rig();rpc.state['pendingShare']['expiresInMs']='0';rpc.result_change=change;loop.tick()
+            self.assertFalse(any(e.get('sharedQuestPhase')=='expired_share_decline_sent' for e in events))
+        loop,rpc,events,_=self.rig();rpc.state['pendingShare']['expiresInMs']='0';rpc.timeout=True;loop.tick();loop.tick()
+        self.assertEqual(len([m for m,p in rpc.calls if m=='buddy-quests.accept_shared']),1)
+        self.assertFalse(any(e.get('sharedQuestPhase') in ('expired_share_decline_sent','confirmed_in_own_quest_log') for e in events))
+
+    def test_expired_alternate_offer_local_retirement_does_not_claim_decline_transport(self):
+        loop,rpc,events,_=self.rig();rpc.state['pendingShare'].update(kind='SHARED_AUTOCOMPLETE',expiresInMs='0')
+        def local(result):
+            result['transportWritten']=False
+            result['state']['lastSharedAcceptance'].update(transportWritten=False,failure='shared_alternate_offer_retired_without_acceptance')
+        rpc.result_change=local;loop.tick()
+        self.assertTrue(any(e.get('sharedQuestPhase')=='expired_shared_offer_retired_without_acceptance' for e in events))
+        self.assertFalse(any(e.get('sharedQuestPhase') in ('expired_share_decline_sent','confirmed_in_own_quest_log') for e in events))
 
     def test_main_three_and_other_owner_profiles_keep_existing_chat_poll_only(self):
         for guid,owner,role in ((1,3,'priest'),(4,3,'mage'),(5,3,'rogue'),(8,7,'warlock'),(8,3,'mage')):

@@ -587,7 +587,7 @@ def quest_task_identity(character_guid, rpc_url, quest_id):
 def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None, body_session=None):
     unknown = {"active": False, "busy": False}
     try:
-        ports = {1: 8086, 4: 8087, 5: 8088}
+        ports = {1: 8086, 4: 8087, 5: 8088, 8: 8402}
         guid = integer(character_guid)
         if guid not in ports:
             return unknown
@@ -2144,6 +2144,22 @@ class Conversation:
                 return
             self.status(sharedQuestId=qid, sharedQuestSequence=str(seq), sharedQuestBodySessionId=session)
             own = own_log(state)
+            def expired_cleanup_phase(value):
+                if not isinstance(value, dict) or value.get("sessionId") != session: return None
+                receipt = value.get("lastSharedAcceptance", {})
+                if (not isinstance(receipt, dict) or receipt.get("status") not in ("SHARE_EXPIRED", 7)
+                        or integer(receipt.get("shareSequence", 0)) != seq
+                        or integer(receipt.get("sharerGuid", 0)) != 3 or integer(receipt.get("questId", 0)) != qid):
+                    return None
+                if receipt.get("transportWritten") is True: return "expired_share_decline_sent"
+                if (share.get("kind") in ("SHARED_AUTOCOMPLETE", 3)
+                        and receipt.get("failure") == "shared_alternate_offer_retired_without_acceptance"):
+                    return "expired_shared_offer_retired_without_acceptance"
+                return "reconciling_expired_share_cleanup"
+            cleanup = expired_cleanup_phase(state)
+            if cleanup:
+                self.status(sharedQuestPhase=cleanup)
+                return
             acceptance = state.get("lastSharedAcceptance", {})
             if (isinstance(acceptance, dict) and acceptance.get("status") in ("CONFIRMED_IN_LOG", 2)
                     and integer(acceptance.get("shareSequence", 0)) == seq
@@ -2158,10 +2174,9 @@ class Conversation:
                 return
             key = (session, seq)
             if share.get("acceptRequested") is True or key in self.shared_quest_attempts:
-                self.status(sharedQuestPhase="waiting_for_server_quest_log")
+                self.status(sharedQuestPhase="waiting_for_shared_quest_resolution")
                 return
-            if (state.get("actionInFlight") is True or quest.get("available") is not True
-                    or integer(share.get("expiresInMs", 0)) == 0):
+            if state.get("actionInFlight") is True or quest.get("available") is not True:
                 self.status(sharedQuestPhase="waiting_for_available_quest_operation")
                 return
             final = self.rpc.call("buddy-party.state", {})
@@ -2174,10 +2189,14 @@ class Conversation:
             # Reserve before transport. Backend also consumes the exact pending
             # sequence before its write, including across this brain's restart.
             self.shared_quest_attempts.add(key)
-            self.status(sharedQuestPhase="accepting_joels_shared_quest")
-            self.rpc.call("buddy-quests.accept_shared", {"sessionId": session,
+            expired = integer(share.get("expiresInMs", 0)) == 0
+            # The typed endpoint declines expired details/confirm offers to
+            # clear the server divider; it never accepts the expired quest.
+            self.status(sharedQuestPhase="expired_share_cleanup_requested" if expired else "accepting_joels_shared_quest")
+            result = self.rpc.call("buddy-quests.accept_shared", {"sessionId": session,
                 "shareSequence": str(seq), "sharerGuid": "3", "questId": qid})
-            self.status(sharedQuestPhase="waiting_for_server_quest_log")
+            self.status(sharedQuestPhase=(expired_cleanup_phase(result.get("state")) or "reconciling_expired_share_cleanup")
+                if expired else "waiting_for_server_quest_log")
         except Stopped:
             raise
         except ConversationError:
