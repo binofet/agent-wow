@@ -30,6 +30,7 @@ const (
 	BuddyQuests_Journal_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/Journal"
 	BuddyQuests_TurnIn_FullMethodName       = "/warcraftbuddy.quests.v1.BuddyQuests/TurnIn"
 	BuddyQuests_ClaimReward_FullMethodName  = "/warcraftbuddy.quests.v1.BuddyQuests/ClaimReward"
+	BuddyQuests_Explore_FullMethodName      = "/warcraftbuddy.quests.v1.BuddyQuests/Explore"
 	BuddyQuests_OnPacket_FullMethodName     = "/warcraftbuddy.quests.v1.BuddyQuests/OnPacket"
 )
 
@@ -46,6 +47,7 @@ type BuddyQuestsClient interface {
 	Journal(ctx context.Context, in *JournalRequest, opts ...grpc.CallOption) (*JournalResponse, error)
 	TurnIn(ctx context.Context, in *TurnInRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	ClaimReward(ctx context.Context, in *RewardRequest, opts ...grpc.CallOption) (*OperationResult, error)
+	Explore(ctx context.Context, in *ExploreRequest, opts ...grpc.CallOption) (*OperationResult, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -147,6 +149,16 @@ func (c *buddyQuestsClient) ClaimReward(ctx context.Context, in *RewardRequest, 
 	return out, nil
 }
 
+func (c *buddyQuestsClient) Explore(ctx context.Context, in *ExploreRequest, opts ...grpc.CallOption) (*OperationResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OperationResult)
+	err := c.cc.Invoke(ctx, BuddyQuests_Explore_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyQuestsClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -170,6 +182,7 @@ type BuddyQuestsServer interface {
 	Journal(context.Context, *JournalRequest) (*JournalResponse, error)
 	TurnIn(context.Context, *TurnInRequest) (*OperationResult, error)
 	ClaimReward(context.Context, *RewardRequest) (*OperationResult, error)
+	Explore(context.Context, *ExploreRequest) (*OperationResult, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyQuestsServer()
 }
@@ -207,6 +220,9 @@ func (UnimplementedBuddyQuestsServer) TurnIn(context.Context, *TurnInRequest) (*
 }
 func (UnimplementedBuddyQuestsServer) ClaimReward(context.Context, *RewardRequest) (*OperationResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimReward not implemented")
+}
+func (UnimplementedBuddyQuestsServer) Explore(context.Context, *ExploreRequest) (*OperationResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Explore not implemented")
 }
 func (UnimplementedBuddyQuestsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -394,6 +410,24 @@ func _BuddyQuests_ClaimReward_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyQuests_Explore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExploreRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyQuestsServer).Explore(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyQuests_Explore_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyQuestsServer).Explore(ctx, req.(*ExploreRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyQuests_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -454,6 +488,10 @@ var BuddyQuests_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimReward",
 			Handler:    _BuddyQuests_ClaimReward_Handler,
+		},
+		{
+			MethodName: "Explore",
+			Handler:    _BuddyQuests_Explore_Handler,
 		},
 		{
 			MethodName: "OnPacket",

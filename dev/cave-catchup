@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""Finite, fixed-party Fargodeep collection encounters through normal game RPCs."""
+import argparse
+import copy
+import fcntl
+import http.client
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import re
+import signal
+import tempfile
+import time
+import urllib.request
+import uuid
+
+loader = importlib.machinery.SourceFileLoader('cave_catchup_converse', str(Path(__file__).with_name('converse')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+c = importlib.util.module_from_spec(spec); loader.exec_module(c)
+Error = c.ConversationError
+ROSTER = {1: ('Arlen', 8086, 5), 4: ('Mira', 8087, 8), 5: ('Rook', 8088, 4)}
+GOALS = {47: (773, 10), 60: (772, 8)}
+ENTRIES = frozenset((40, 475))
+IDENTITY = {'version': 1, 'mode': 'fargodeep_collection', 'roster': [1, 4, 5], 'questIds': [47, 60, 62]}
+MAX_LEDGER = 131072
+
+
+def number(value):
+    if isinstance(value, str) and re.fullmatch(r'0|[1-9][0-9]{0,19}', value): value = int(value)
+    if type(value) is not int or not 0 <= value < 2**64: raise Error('Invalid bounded server integer')
+    return value
+
+
+def session(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', value):
+        raise Error('Actual body session is unknown')
+    return value
+
+
+def point(row, known='positionKnown'):
+    return (isinstance(row, dict) and row.get(known) is True and row.get('mapKnown') is True
+        and all(type(row.get(k)) in (int, float) and math.isfinite(row[k]) and abs(row[k]) < 40000 for k in ('x', 'y', 'z')))
+
+
+def distance(a, b): return math.dist(tuple(a[k] for k in ('x', 'y', 'z')), tuple(b[k] for k in ('x', 'y', 'z')))
+
+
+def decode(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result: raise ValueError('duplicate key')
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError('nonfinite JSON')))
+
+
+def read_private(path):
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY), 'rb') as source: raw = source.read(MAX_LEDGER + 1)
+        if len(raw) > MAX_LEDGER: raise Error('Cave state exceeds its bound')
+        value = decode(raw)
+        if not isinstance(value, dict): raise ValueError('object required')
+        return value
+    except FileNotFoundError: return None
+    except ValueError: raise Error('Cave state is invalid') from None
+
+
+def write_private(path, value):
+    body = (json.dumps(value, allow_nan=False, separators=(',', ':')) + '\n').encode()
+    if len(body) > MAX_LEDGER or path.is_symlink(): raise Error('Cave state exceeds its bound or is unsafe')
+    fd, temporary = tempfile.mkstemp(prefix='.cave-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as output:
+            os.fchmod(output.fileno(), 0o600); output.write(body); output.flush(); os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+
+
+class RPC(c.RPC):
+    READS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state', 'buddy-loot.state', 'buddy-trade.state', 'buddy-professions.state'))
+
+    def call(self, method, params, timeout=None):
+        if method not in self.READS | {'buddy-actions.fargodeep_encounter'} or not isinstance(params, dict) or self.request_id >= 8192:
+            raise Error('Cave RPC method or finite request bound is invalid')
+        self.request_id += 1
+        identity = self.request_id
+        request = urllib.request.Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': identity,
+            'method': method, 'params': params}, allow_nan=False).encode(), headers={'Content-Type': 'application/json'})
+        try:
+            with self.opener.open(request, timeout=min(self.timeout, timeout or self.timeout)) as response: raw = response.read(262145)
+            value = decode(raw) if len(raw) <= 262144 else None
+        except (OSError, ValueError, http.client.HTTPException): raise Error('Cave RPC outcome is unconfirmed') from None
+        if (not isinstance(value, dict) or value.get('jsonrpc') != '2.0' or type(value.get('id')) is not int
+                or value['id'] != identity or ('error' in value) == ('result' in value) or not isinstance(value.get('result'), dict)):
+            raise Error('Cave RPC outcome is unconfirmed')
+        return value['result']
+
+
+def own_log(world):
+    rows = world.get('selfQuestLog')
+    if world.get('selfQuestLogKnown') is not True or not isinstance(rows, list) or len(rows) != 25:
+        raise Error('Complete own quest log is required')
+    slots, quests = set(), {}
+    for row in rows:
+        slot, qid = number(row.get('slot', 0)), number(row.get('questId', 0))
+        if slot >= 25 or slot in slots or qid and qid in quests: raise Error('Own quest slots are invalid')
+        slots.add(slot)
+        if qid:
+            state = number(row.get('state', 0))
+            if row.get('failed') is True or state & 2: raise Error('An own quest has failed')
+            quests[qid] = row.get('complete') is True and bool(state & 1)
+    if any(qid not in quests for qid in GOALS): raise Error('Both collection quests must be in each own log')
+    return quests
+
+
+def carried_counts(world):
+    bags = world.get('inventoryBags')
+    if world.get('inventoryKnown') is not True or not isinstance(bags, list) or len(bags) != 5:
+        raise Error('All five carried bag observations are required')
+    seen, guids, counts, free = set(), set(), {772: 0, 773: 0}, 0
+    for bag in bags:
+        index = number(bag.get('bag', 0))
+        if index > 4 or index in seen or bag.get('slotKnown') is not True: raise Error('Bag references are unknown')
+        seen.add(index)
+        size, slots = number(bag.get('slotCount', 0)), bag.get('slots', [])
+        if index and number(bag.get('containerGuid', 0)) == 0:
+            if size or slots: raise Error('Empty bag has invented contents')
+            continue
+        if bag.get('contentsKnown') is not True or not 1 <= size <= 36 or index == 0 and size != 16 or not isinstance(slots, list) or len(slots) != size:
+            raise Error('Carried bag contents are incomplete')
+        positions = set()
+        for row in slots:
+            at, guid = number(row.get('slot', 0)), number(row.get('itemGuid', 0))
+            if number(row.get('bag', 0)) != index or at >= size or at in positions: raise Error('Carried slots are invalid')
+            positions.add(at)
+            if not guid:
+                free += 1; continue
+            if guid in guids or row.get('metadataKnown') is not True: raise Error('Carried item metadata is unknown')
+            guids.add(guid)
+            entry, count = number(row.get('entry', 0)), number(row.get('stackCount', 0))
+            if not entry or not count or count > 2**32-1: raise Error('Carried item stack is unknown')
+            if entry in counts: counts[entry] += count
+    return counts, free
+
+
+class Catchup:
+    def __init__(self, rpcs, sessions, save=lambda _: None, stored=None, now=time.monotonic, stopped=lambda: False, max_seconds=600):
+        if set(rpcs) != set(ROSTER) or set(sessions) != set(ROSTER) or not 1 <= max_seconds <= 600:
+            raise Error('Cave catchup requires the fixed three-body roster and a finite budget')
+        if any(hasattr(rpc, 'url') and rpc.url != f'http://127.0.0.1:{ROSTER[g][1]}/rpc' for g, rpc in rpcs.items()):
+            raise Error('Cave actor endpoint differs from the fixed roster')
+        self.rpcs, self.sessions, self.save, self.now, self.stopped = rpcs, {str(g): session(s) for g, s in sessions.items()}, save, now, stopped
+        self.deadline, self.done = now() + max_seconds, False
+        self.data = stored or {'identity': copy.deepcopy(IDENTITY), 'sessions': dict(self.sessions), 'encounters': []}
+        rows = self.data.get('encounters')
+        if self.data.get('identity') != IDENTITY or self.data.get('sessions') != self.sessions or not isinstance(rows, list) or len(rows) > 96:
+            raise Error('Cave journal identity, sessions or bounds differ')
+        for row in rows:
+            if (not isinstance(row, dict) or row.get('phase') not in ('arming', 'active', 'loot', 'settled', 'unconfirmed', 'stopped')
+                    or number(row.get('engager', 0)) not in ROSTER or number(row.get('entry', 0)) not in ENTRIES
+                    or not isinstance(row.get('requests'), dict) or set(row['requests']) - set(self.sessions)
+                    or type(row.get('deadObserved', False)) is not bool): raise Error('Cave encounter journal is invalid')
+            target = number(row.get('target', 0))
+            if target >> 48 != 0xf130 or target >> 24 & 0xffffff != row['entry'] or not target & 0xffffff: raise Error('Cave target binding is invalid')
+            if any(type(row.get(k)) not in (int, float) or not math.isfinite(row[k]) or row[k] < 0 for k in ('started',)):
+                raise Error('Cave encounter time is invalid')
+            if 'lootAt' in row and (type(row['lootAt']) not in (int, float) or not math.isfinite(row['lootAt']) or row['lootAt'] < 0):
+                raise Error('Cave loot time is invalid')
+            for request in row['requests'].values():
+                if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped') or not 0 < number(request.get('questRevision', 0)) < 2**64:
+                    raise Error('Cave request reservation is invalid')
+        self.status = {'identity': copy.deepcopy(IDENTITY), 'phase': 'starting', 'observationsCurrent': False, 'characters': []}
+        controls = self.data.get('controls')
+        if controls is not None and (not isinstance(controls, list) or len(controls) != 3 or any(not isinstance(row, list) or len(row) != 4 or any(type(v) is not bool for v in row) for row in controls)):
+            raise Error('Saved cave control intent is invalid')
+
+    def persist(self): self.save(copy.deepcopy(self.data))
+
+    def read(self, target=0):
+        result, groups = {}, []
+        for guid, rpc in self.rpcs.items():
+            first = rpc.call('buddy-party.state', {})
+            world = rpc.call('buddy-world.snapshot', {'creatureGuid': str(target)} if target else {})
+            actions = rpc.call('buddy-actions.status', {})
+            loot = rpc.call('buddy-loot.state', {})
+            quests = rpc.call('buddy-quests.state', {})
+            trade = rpc.call('buddy-trade.state', {})
+            professions = rpc.call('buddy-professions.state', {})
+            final = rpc.call('buddy-party.state', {})
+            expected = self.sessions[str(guid)]
+            if any(session(value.get('sessionId')) != expected for value in (first, final, loot, quests, trade, professions)):
+                self.done = True; raise Error('A cave actor body session changed')
+            own, pos = world.get('self', {}), actions.get('position', {})
+            if number(own.get('guid', 0)) != guid: self.done = True; raise Error('Cave actor identity changed')
+            group = final.get('group', {})
+            members = group.get('members', [])
+            if group.get('known') is not True or group.get('inGroup') is not True or not isinstance(members, list) or not 3 <= len(members) <= 40:
+                raise Error('Actual current party membership is required')
+            online = [number(m.get('guid', 0)) for m in members if m.get('online') is True]
+            if len(online) != len(set(online)) or not set(ROSTER) <= set(online): raise Error('All three companions must be online in the same party')
+            groups.append(number(group.get('groupGuid', 0)))
+            if not groups[-1] or number(first.get('group', {}).get('groupGuid', 0)) != groups[-1]: raise Error('Party changed while reading')
+            log, (counts, free) = own_log(world), carried_counts(world)
+            if not point(pos, 'known') or number(pos.get('mapId', 0)) != 0 or not point(own) or number(own.get('mapId', 0)) != 0:
+                raise Error('Actual same-map own position is required')
+            result[guid] = {'world': world, 'actions': actions, 'loot': loot, 'self': own, 'position': pos, 'log': log,
+                'counts': counts, 'free': free, 'questRevision': number(world.get('selfQuestLogRevision', 0)), 'quests': quests, 'trade': trade, 'professions': professions}
+        if len(set(groups)) != 1: raise Error('Companions are not in one server-confirmed party')
+        self.status.update(observationsCurrent=True, characters=[{'guid': g, 'sessionId': self.sessions[str(g)],
+            'goldDust': result[g]['counts'][773], 'largeCandles': result[g]['counts'][772],
+            'quest47Complete': result[g]['log'][47], 'quest60Complete': result[g]['log'][60],
+            'quest62Complete': result[g]['log'].get(62, False), 'freeSlots': result[g]['free'],
+            'encounterPhase': self.phase(result[g]['actions'].get('fargodeep', {}).get('phase')),
+            'assistReason': self.phase(result[g]['actions'].get('assistReason')),
+            'navReason': self.phase(result[g]['actions'].get('navReason'))} for g in ROSTER])
+        return result
+
+    @staticmethod
+    def phase(value):
+        return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{0,128}', value) else ''
+
+    @staticmethod
+    def combat(scene): return bool(number(scene['self'].get('unitFlags', 0)) & 0x80000)
+
+    @staticmethod
+    def controls(scenes):
+        return [[scenes[g]['actions'].get(k) is True for k in ('following', 'healing', 'assisting')]
+            + [scenes[g]['loot'].get('enabled') is True] for g in ROSTER]
+
+    @staticmethod
+    def scope(actions, row):
+        f = actions.get('fargodeep', {})
+        return isinstance(f, dict) and number(f.get('targetGuid', 0)) == row['target'] and number(f.get('engagerGuid', 0)) == row['engager']
+
+    def safe_pull(self, scenes, owned=None):
+        for guid, scene in scenes.items():
+            p, a, loot = scene['self'], scene['actions'], scene['loot']
+            if (any(p.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown', 'classKnown', 'powerKnown'))
+                    or number(p.get('classId', 0)) != ROSTER[guid][2] or self.combat(scene)
+                    or not number(p.get('maxHealth', 0)) or number(p.get('health', 0))*100 < number(p['maxHealth'])*95
+                    or number(p.get('health', 0)) > number(p['maxHealth'])
+                    or not scene['free'] or not scene['questRevision'] or a.get('assisting') is not True): return False
+            if number(p.get('powerType', 0)) != (3 if guid == 5 else 0): return False
+            if guid != 5 and (not number(p.get('maxPower', 0)) or number(p.get('power', 0))*100 < number(p['maxPower'])*60): return False
+            if guid == 5 and number(p.get('power', 0)) < 90: return False
+            if (any(a.get(k) is True for k in ('following', 'practicing', 'moving', 'traveling', 'motionUnconfirmed', 'autoAttackUnconfirmed', 'castPending'))
+                    or a.get('interactionOwner') or loot.get('enabled') is not True or loot.get('phase') != 'idle'
+                    or number(loot.get('pendingCorpseGuid', 0)) or number(loot.get('pendingGameObjectGuid', 0))): return False
+            if a.get('fargodeep', {}).get('active') is True and (owned is None or not self.scope(a, owned)): return False
+            prof, operation = scene['professions'], scene['professions'].get('operation') or {}
+            if (scene['quests'].get('actionInFlight') is True or not c.trade_idle(scene['trade']) or prof.get('active') is True
+                    or prof.get('closing') is True or operation.get('cleanupUnconfirmed') is True
+                    or operation and (operation.get('status') not in ('COMPLETED', 'SERVER_REJECTED', 'BLOCKED', 'CANCELLED') or operation.get('leaseReleased') is not True)):
+                return False
+        return scenes[1]['actions'].get('healing') is True
+
+    def candidate(self, scenes):
+        attempted = {row['target'] for row in self.data['encounters']}
+        candidates, all_observed = {}, {}
+        for scene in scenes.values():
+            rows = scene['world'].get('nearbyCreatures', [])
+            if not isinstance(rows, list) or len(rows) > 32: raise Error('Cave creature observation bound exceeded')
+            for row in rows:
+                guid, entry = number(row.get('guid', 0)), number(row.get('entry', 0))
+                all_observed[guid] = row
+                if (guid in attempted or guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry or entry not in ENTRIES
+                        or row.get('present') is not True or row.get('aliveKnown') is not True or row.get('alive') is not True
+                        or row.get('healthKnown') is not True or not number(row.get('health', 0))
+                        or number(row.get('health', 0)) != number(row.get('maxHealth', 0)) or row.get('levelKnown') is not True
+                        or not 5 <= number(row.get('level', 0)) <= 7 or not point(row) or number(row.get('mapId', 0)) != 0
+                        or any(s['self'].get('levelKnown') is not True or number(row['level']) > number(s['self'].get('level', 0))+1 for s in scenes.values())
+                        or row.get('unitFlagsKnown') is not True or row.get('dynamicFlagsKnown') is not True
+                        or number(row.get('unitFlags', 0)) & (0x80000|0x2|0x80|0x100|0x10000|0x2000000|0x80000000)
+                        or number(row.get('unitFlags2', 0)) & 1 or number(row.get('dynamicFlags', 0)) or number(row.get('npcFlags', 0))
+                        or row.get('targetKnown') is not True or number(row.get('targetGuid', 0))
+                        or row.get('attackVictimKnown') is True and number(row.get('attackVictimGuid', 0))
+                        or number(row.get('movementFlags', 0)) & 0x080000ff
+                        or row.get('trajectory', {}).get('known') is True and row['trajectory'].get('stopped') is not True
+                        or any(distance(row, other['position']) > 28 for other in scenes.values())): continue
+                candidates[guid] = row
+        candidates = {guid: row for guid, row in candidates.items() if not any(
+            other_guid != guid and other.get('present') is True and other.get('aliveKnown') is True and other.get('alive') is True
+            and not number(other.get('npcFlags', 0)) and point(other) and number(other.get('mapId', 0)) == 0 and distance(row, other) < 8
+            for other_guid, other in all_observed.items())}
+        return min(candidates.values(), key=lambda row: (max(distance(row, s['position']) for s in scenes.values()), number(row['guid']))) if candidates else None
+
+    def cleanup(self, row):
+        clean = True
+        for guid, rpc in self.rpcs.items():
+            if str(guid) not in row['requests']: continue
+            try:
+                p = rpc.call('buddy-party.state', {})
+                if session(p.get('sessionId')) != self.sessions[str(guid)]: clean = False; continue
+                a = rpc.call('buddy-actions.status', {})
+                if a.get('fargodeep', {}).get('active') is True:
+                    if not self.scope(a, row): clean = False; continue
+                    # Disable is bound to this exact body/target/engager too.
+                    a = rpc.call('buddy-actions.fargodeep_encounter', {'enabled': False, 'sessionId': self.sessions[str(guid)],
+                        'targetGuid': str(row['target']), 'engagerGuid': str(row['engager'])})
+                if a.get('fargodeep', {}).get('active') is True or any(a.get(k) is True for k in ('moving', 'motionUnconfirmed', 'autoAttackUnconfirmed', 'autoAttacking', 'autoAttackRequested', 'castPending')):
+                    clean = False
+                else: row['requests'][str(guid)]['phase'] = 'stopped'
+            except Error: clean = False
+        self.persist()
+        return clean
+
+    def arm(self, scenes, target):
+        if len(self.data['encounters']) >= 96: raise Error('Finite encounter journal is full')
+        engager = next(g for g in (5, 4, 1) if not all(scenes[g]['log'][q] for q in GOALS))
+        row = {'target': number(target['guid']), 'entry': number(target['entry']), 'engager': engager, 'phase': 'arming',
+            'deadObserved': False, 'requests': {}, 'started': self.now()}
+        self.data['encounters'].append(row); self.persist()
+        try:
+            for guid in [g for g in ROSTER if g != engager] + [engager]:
+                # A new read before each arming keeps support-before-pull order
+                # bound to current bodies, actual logs and safe party state.
+                fresh = self.read(row['target'])
+                if not self.safe_pull(fresh, row) or self.controls(fresh) != self.data.get('controls'):
+                    raise Error('Party safety or human control intent changed before encounter arming')
+                if guid == engager and any(not self.scope(fresh[g]['actions'], row) or fresh[g]['actions'].get('fargodeep', {}).get('active') is not True for g in ROSTER if g != engager):
+                    raise Error('Supports were not actually armed before the pull')
+                if self.stopped() or self.now() >= self.deadline: raise Error('Finite catchup stopped before arming')
+                row['requests'][str(guid)] = {'phase': 'reserved', 'questRevision': fresh[guid]['questRevision']}; self.persist()
+                answer = self.rpcs[guid].call('buddy-actions.fargodeep_encounter', {'enabled': True, 'sessionId': self.sessions[str(guid)],
+                    'targetGuid': str(row['target']), 'engagerGuid': str(engager), 'expectedQuestLogRevision': str(fresh[guid]['questRevision'])})
+                row['requests'][str(guid)]['phase'] = 'sent'; self.persist()
+                if not self.scope(answer, row) or answer.get('fargodeep', {}).get('active') is not True: raise Error('Encounter activation is unconfirmed')
+                row['requests'][str(guid)]['phase'] = 'observed'; self.persist()
+            row['phase'] = 'active'; self.persist()
+        except Error:
+            row['phase'] = 'unconfirmed'; self.persist(); self.cleanup(row)
+            self.done = True; self.status['phase'] = 'encounter_arming_unconfirmed_no_replay'; return
+        self.status.update(phase='waiting_for_actual_combat_and_loot', targetGuid=str(row['target']), engagerGuid=row['engager'])
+
+    def tick(self):
+        if self.done: return
+        row = next((r for r in reversed(self.data['encounters']) if r['phase'] not in ('settled', 'stopped')), None)
+        if self.stopped() or self.now() >= self.deadline:
+            self.status.update(phase='stopped' if self.stopped() else 'finite_deadline', observationsCurrent=False)
+            if row and not self.cleanup(row): self.status['phase'] = 'cleanup_unconfirmed'
+            self.done = True; return
+        self.status['observationsCurrent'] = False
+        scenes = self.read(row['target'] if row else 0)
+        if self.data.get('controls') is not None and self.controls(scenes) != self.data['controls']:
+            if row: self.cleanup(row)
+            self.done = True; self.status['phase'] = 'stopped_after_control_intent_changed'; return
+        if any(s['self'].get('aliveKnown') is not True or s['self'].get('alive') is not True for s in scenes.values()):
+            if row: self.cleanup(row)
+            self.done = True; self.status['phase'] = 'yielded_to_normal_death_recovery'; return
+        if row:
+            for scene in scenes.values():
+                target = scene['world'].get('requestedCreature')
+                if (isinstance(target, dict) and number(target.get('guid', 0)) == row['target'] and target.get('present') is True
+                        and target.get('aliveKnown') is True and target.get('alive') is False and target.get('healthKnown') is True and number(target.get('health', 0)) == 0):
+                    row['deadObserved'] = True; self.persist()
+            if row['phase'] == 'unconfirmed':
+                self.cleanup(row); self.done = True; self.status['phase'] = 'encounter_outcome_unconfirmed_no_replay'; return
+            if row['phase'] in ('arming', 'active'):
+                if row['phase'] == 'arming':
+                    # A process restart cannot resend any reserved activation.
+                    row['phase'] = 'unconfirmed'; self.persist(); self.cleanup(row)
+                    self.done = True; self.status['phase'] = 'reserved_encounter_requires_reconciliation_no_replay'; return
+                if any(self.combat(s) for s in scenes.values()):
+                    self.status['phase'] = 'actual_party_combat_in_progress'; return
+                if row['deadObserved']:
+                    if not self.cleanup(row): self.status['phase'] = 'waiting_for_exact_encounter_cleanup'; return
+                    row['phase'], row['lootAt'] = 'loot', self.now(); self.persist()
+                elif not any(s['actions'].get('fargodeep', {}).get('active') is True for s in scenes.values()):
+                    row['phase'] = 'unconfirmed'; self.persist(); self.done = True
+                    self.status['phase'] = 'encounter_ended_without_observed_dead_target'; return
+                else:
+                    self.status['phase'] = 'waiting_for_actual_engagement'; return
+            if row['phase'] == 'loot':
+                pending = any(number(s['loot'].get('pendingCorpseGuid', 0)) or s['loot'].get('phase') != 'idle' for s in scenes.values())
+                eligible = any(any(number(t.get('guid', 0)) == row['target'] for t in s['world'].get('lootableCorpses', [])) for s in scenes.values())
+                if pending or eligible or self.now()-row.get('lootAt', self.now()) < 2:
+                    self.status['phase'] = 'waiting_for_each_own_server_permitted_loot'
+                    if self.now()-row.get('lootAt', self.now()) > 35:
+                        self.done = True; self.status['phase'] = 'loot_uncollected_or_cleanup_unconfirmed_no_new_pull'
+                    return
+                row['phase'] = 'settled'; self.persist()
+        if all(all(s['log'][qid] for qid in GOALS) for s in scenes.values()):
+            self.done = True; self.status['phase'] = 'own_collection_quests_complete_for_all_three'; return
+        if not self.safe_pull(scenes): self.status['phase'] = 'waiting_for_safe_healthy_idle_party'; return
+        if self.data.get('controls') is None:
+            self.data['controls'] = self.controls(scenes); self.persist()
+        target = self.candidate(scenes)
+        if target is None: self.status['phase'] = 'waiting_for_actual_nearby_isolated_kobold'; return
+        self.arm(scenes, target)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('run', 'status', 'stop'))
+    parser.add_argument('--session', action='append', default=[], metavar='GUID=BODY_SESSION')
+    parser.add_argument('--max-seconds', type=int, default=600)
+    parser.add_argument('--state-dir', type=Path, default=c.ROOT/'data/cave-catchup')
+    args = parser.parse_args(argv)
+    folder = c.ensure_state(args.state_dir)
+    if args.command == 'status': print(json.dumps(read_private(folder/'status.json') or {})); return 0
+    if args.command == 'stop':
+        status = read_private(folder/'status.json') or {}
+        if status.get('identity') != IDENTITY or not isinstance(status.get('instance'), str): raise Error('No matching owned cave job')
+        write_private(folder/'stop.json', {'identity': IDENTITY, 'instance': status['instance']}); return 0
+    sessions = {}
+    for value in args.session:
+        parts = value.split('=', 1)
+        if len(parts) != 2 or not parts[0].isdigit() or int(parts[0]) in sessions: raise Error('Use three unique GUID=BODY_SESSION bindings')
+        sessions[int(parts[0])] = session(parts[1])
+    with os.fdopen(c.private_open(folder/'lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise Error('Another cave catchup job already owns the party') from None
+        instance, stopped = uuid.uuid4().hex, [False]
+        def stopping():
+            marker = read_private(folder/'stop.json') or {}
+            return stopped[0] or marker.get('identity') == IDENTITY and marker.get('instance') == instance
+        for name in (signal.SIGINT, signal.SIGTERM): signal.signal(name, lambda *_: stopped.__setitem__(0, True))
+        rpcs = {g: RPC(f'http://127.0.0.1:{port}/rpc', timeout=3) for g, (_, port, _) in ROSTER.items()}
+        worker = Catchup(rpcs, sessions, save=lambda v: write_private(folder/'ledger.json', v), stored=read_private(folder/'ledger.json'), stopped=stopping, max_seconds=args.max_seconds)
+        try:
+            while not worker.done:
+                try: worker.tick()
+                except Error as error:
+                    worker.status.update(phase='observation_or_binding_unavailable', reason=str(error), observationsCurrent=False)
+                    if worker.done: break
+                worker.status.update(instance=instance, active=not worker.done, updatedAt=time.time())
+                write_private(folder/'status.json', worker.status)
+                if not worker.done: time.sleep(1)
+        finally:
+            row = next((r for r in reversed(worker.data['encounters']) if r['phase'] not in ('settled', 'stopped')), None)
+            if row and not worker.cleanup(row): worker.status['phase'] = 'cleanup_unconfirmed'
+            worker.status.update(instance=instance, active=False, updatedAt=time.time())
+            write_private(folder/'status.json', worker.status)
+    return 0
+
+
+if __name__ == '__main__':
+    try: raise SystemExit(main())
+    except (Error, OSError, ValueError) as error: print(str(error), file=__import__('sys').stderr); raise SystemExit(1)

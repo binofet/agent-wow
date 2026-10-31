@@ -23,6 +23,7 @@ rpc:
   travel_to: /warcraftbuddy.actions.v1.BuddyActions/TravelTo
   exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
+  fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
   MSG_CORPSE_QUERY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

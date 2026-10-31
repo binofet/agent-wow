@@ -5,6 +5,21 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+// One explicitly coordinated observed Fargodeep encounter; never chooses a target.
+message FargodeepEncounterRequest {
+  bool enabled = 1;
+  uint64 target_guid = 2;
+  uint64 engager_guid = 3;
+  uint64 expected_quest_log_revision = 4;
+  string session_id = 5;
+}
+message FargodeepEncounterState {
+  bool active = 1;
+  uint64 target_guid = 2;
+  uint64 engager_guid = 3;
+  string phase = 4;
+  uint64 remaining_ms = 5;
+}
 message ClientPosition {
   bool known = 1;
   bool map_known = 2;
@@ -152,6 +167,7 @@ message State {
   // Only present while interaction_harvest is true; at most42 unique GUIDs.
   repeated uint64 harvest_guard_guids = 67;
   RecoveryState recovery = 68;
+  FargodeepEncounterState fargodeep = 69;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -170,6 +186,7 @@ service BuddyActions {
   rpc TravelTo(TravelToRequest) returns (State);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
+  rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);
   // Normal release, validated same-map ghost route, and corpse reclamation.
   rpc Recovery(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);

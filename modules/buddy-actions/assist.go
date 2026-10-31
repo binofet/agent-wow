@@ -205,6 +205,9 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 		s.state.Reason = "offensive_rank_not_in_known_spells"
 		return false
 	}
+	if s.fargodeep.active && !s.fargodeepWriteAllowedLocked(ctx, target, spell) {
+		return false
+	}
 	now := s.now()
 	s.castCount++
 	s.nextAssist = now.Add(throttle)

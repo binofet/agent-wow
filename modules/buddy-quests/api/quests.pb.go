@@ -94,6 +94,64 @@ func (AcceptanceStatus) EnumDescriptor() ([]byte, []int) {
 	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{0}
 }
 
+type ExplorationStatus int32
+
+const (
+	ExplorationStatus_EXPLORATION_NONE              ExplorationStatus = 0
+	ExplorationStatus_EXPLORATION_REQUESTED         ExplorationStatus = 1
+	ExplorationStatus_EXPLORATION_CONFIRMED         ExplorationStatus = 2
+	ExplorationStatus_EXPLORATION_UNCONFIRMED       ExplorationStatus = 3
+	ExplorationStatus_EXPLORATION_WRITE_UNCONFIRMED ExplorationStatus = 4
+	ExplorationStatus_EXPLORATION_ALREADY_COMPLETE  ExplorationStatus = 5
+)
+
+// Enum value maps for ExplorationStatus.
+var (
+	ExplorationStatus_name = map[int32]string{
+		0: "EXPLORATION_NONE",
+		1: "EXPLORATION_REQUESTED",
+		2: "EXPLORATION_CONFIRMED",
+		3: "EXPLORATION_UNCONFIRMED",
+		4: "EXPLORATION_WRITE_UNCONFIRMED",
+		5: "EXPLORATION_ALREADY_COMPLETE",
+	}
+	ExplorationStatus_value = map[string]int32{
+		"EXPLORATION_NONE":              0,
+		"EXPLORATION_REQUESTED":         1,
+		"EXPLORATION_CONFIRMED":         2,
+		"EXPLORATION_UNCONFIRMED":       3,
+		"EXPLORATION_WRITE_UNCONFIRMED": 4,
+		"EXPLORATION_ALREADY_COMPLETE":  5,
+	}
+)
+
+func (x ExplorationStatus) Enum() *ExplorationStatus {
+	p := new(ExplorationStatus)
+	*p = x
+	return p
+}
+
+func (x ExplorationStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ExplorationStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_modules_buddy_quests_quests_proto_enumTypes[1].Descriptor()
+}
+
+func (ExplorationStatus) Type() protoreflect.EnumType {
+	return &file_modules_buddy_quests_quests_proto_enumTypes[1]
+}
+
+func (x ExplorationStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ExplorationStatus.Descriptor instead.
+func (ExplorationStatus) EnumDescriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{1}
+}
+
 type SharedQuestKind int32
 
 const (
@@ -130,11 +188,11 @@ func (x SharedQuestKind) String() string {
 }
 
 func (SharedQuestKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_modules_buddy_quests_quests_proto_enumTypes[1].Descriptor()
+	return file_modules_buddy_quests_quests_proto_enumTypes[2].Descriptor()
 }
 
 func (SharedQuestKind) Type() protoreflect.EnumType {
-	return &file_modules_buddy_quests_quests_proto_enumTypes[1]
+	return &file_modules_buddy_quests_quests_proto_enumTypes[2]
 }
 
 func (x SharedQuestKind) Number() protoreflect.EnumNumber {
@@ -143,7 +201,7 @@ func (x SharedQuestKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SharedQuestKind.Descriptor instead.
 func (SharedQuestKind) EnumDescriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{1}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{2}
 }
 
 type RewardStatus int32
@@ -188,11 +246,11 @@ func (x RewardStatus) String() string {
 }
 
 func (RewardStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_modules_buddy_quests_quests_proto_enumTypes[2].Descriptor()
+	return file_modules_buddy_quests_quests_proto_enumTypes[3].Descriptor()
 }
 
 func (RewardStatus) Type() protoreflect.EnumType {
-	return &file_modules_buddy_quests_quests_proto_enumTypes[2]
+	return &file_modules_buddy_quests_quests_proto_enumTypes[3]
 }
 
 func (x RewardStatus) Number() protoreflect.EnumNumber {
@@ -201,7 +259,7 @@ func (x RewardStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RewardStatus.Descriptor instead.
 func (RewardStatus) EnumDescriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{3}
 }
 
 type Quest struct {
@@ -659,6 +717,7 @@ type StateResponse struct {
 	PendingShare         *SharedQuestOffer      `protobuf:"bytes,15,opt,name=pending_share,json=pendingShare,proto3" json:"pending_share,omitempty"`
 	LastSharedAcceptance *SharedQuestAcceptance `protobuf:"bytes,16,opt,name=last_shared_acceptance,json=lastSharedAcceptance,proto3" json:"last_shared_acceptance,omitempty"`
 	SharedQuestsEnabled  bool                   `protobuf:"varint,17,opt,name=shared_quests_enabled,json=sharedQuestsEnabled,proto3" json:"shared_quests_enabled,omitempty"`
+	LastExploration      *ExplorationReceipt    `protobuf:"bytes,18,opt,name=last_exploration,json=lastExploration,proto3" json:"last_exploration,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -812,6 +871,191 @@ func (x *StateResponse) GetSharedQuestsEnabled() bool {
 	return false
 }
 
+func (x *StateResponse) GetLastExploration() *ExplorationReceipt {
+	if x != nil {
+		return x.LastExploration
+	}
+	return nil
+}
+
+// The first supported normal client area trigger is Fargodeep quest62/trigger88.
+// Callers select neither a raw trigger nor coordinates.
+type ExploreRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RequestId        string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	QuestId          uint32                 `protobuf:"varint,3,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	QuestLogRevision uint64                 `protobuf:"varint,4,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ExploreRequest) Reset() {
+	*x = ExploreRequest{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExploreRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExploreRequest) ProtoMessage() {}
+
+func (x *ExploreRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExploreRequest.ProtoReflect.Descriptor instead.
+func (*ExploreRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ExploreRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ExploreRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ExploreRequest) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *ExploreRequest) GetQuestLogRevision() uint64 {
+	if x != nil {
+		return x.QuestLogRevision
+	}
+	return 0
+}
+
+type ExplorationReceipt struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	RequestId            string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	QuestId              uint32                 `protobuf:"varint,2,opt,name=quest_id,json=questId,proto3" json:"quest_id,omitempty"`
+	TriggerId            uint32                 `protobuf:"varint,3,opt,name=trigger_id,json=triggerId,proto3" json:"trigger_id,omitempty"`
+	Status               ExplorationStatus      `protobuf:"varint,4,opt,name=status,proto3,enum=warcraftbuddy.quests.v1.ExplorationStatus" json:"status,omitempty"`
+	TransportWritten     bool                   `protobuf:"varint,5,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	BaselineLogRevision  uint64                 `protobuf:"varint,6,opt,name=baseline_log_revision,json=baselineLogRevision,proto3" json:"baseline_log_revision,omitempty"`
+	ConfirmedLogRevision uint64                 `protobuf:"varint,7,opt,name=confirmed_log_revision,json=confirmedLogRevision,proto3" json:"confirmed_log_revision,omitempty"`
+	LeaseReleased        bool                   `protobuf:"varint,8,opt,name=lease_released,json=leaseReleased,proto3" json:"lease_released,omitempty"`
+	Failure              string                 `protobuf:"bytes,9,opt,name=failure,proto3" json:"failure,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ExplorationReceipt) Reset() {
+	*x = ExplorationReceipt{}
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExplorationReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExplorationReceipt) ProtoMessage() {}
+
+func (x *ExplorationReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExplorationReceipt.ProtoReflect.Descriptor instead.
+func (*ExplorationReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ExplorationReceipt) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *ExplorationReceipt) GetQuestId() uint32 {
+	if x != nil {
+		return x.QuestId
+	}
+	return 0
+}
+
+func (x *ExplorationReceipt) GetTriggerId() uint32 {
+	if x != nil {
+		return x.TriggerId
+	}
+	return 0
+}
+
+func (x *ExplorationReceipt) GetStatus() ExplorationStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ExplorationStatus_EXPLORATION_NONE
+}
+
+func (x *ExplorationReceipt) GetTransportWritten() bool {
+	if x != nil {
+		return x.TransportWritten
+	}
+	return false
+}
+
+func (x *ExplorationReceipt) GetBaselineLogRevision() uint64 {
+	if x != nil {
+		return x.BaselineLogRevision
+	}
+	return 0
+}
+
+func (x *ExplorationReceipt) GetConfirmedLogRevision() uint64 {
+	if x != nil {
+		return x.ConfirmedLogRevision
+	}
+	return 0
+}
+
+func (x *ExplorationReceipt) GetLeaseReleased() bool {
+	if x != nil {
+		return x.LeaseReleased
+	}
+	return false
+}
+
+func (x *ExplorationReceipt) GetFailure() string {
+	if x != nil {
+		return x.Failure
+	}
+	return ""
+}
+
 type SharedQuestOffer struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Sequence   uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
@@ -827,7 +1071,7 @@ type SharedQuestOffer struct {
 
 func (x *SharedQuestOffer) Reset() {
 	*x = SharedQuestOffer{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -839,7 +1083,7 @@ func (x *SharedQuestOffer) String() string {
 func (*SharedQuestOffer) ProtoMessage() {}
 
 func (x *SharedQuestOffer) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[6]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +1096,7 @@ func (x *SharedQuestOffer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedQuestOffer.ProtoReflect.Descriptor instead.
 func (*SharedQuestOffer) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SharedQuestOffer) GetSequence() uint64 {
@@ -915,7 +1159,7 @@ type SharedQuestAcceptance struct {
 
 func (x *SharedQuestAcceptance) Reset() {
 	*x = SharedQuestAcceptance{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -927,7 +1171,7 @@ func (x *SharedQuestAcceptance) String() string {
 func (*SharedQuestAcceptance) ProtoMessage() {}
 
 func (x *SharedQuestAcceptance) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[7]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -940,7 +1184,7 @@ func (x *SharedQuestAcceptance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedQuestAcceptance.ProtoReflect.Descriptor instead.
 func (*SharedQuestAcceptance) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SharedQuestAcceptance) GetShareSequence() uint64 {
@@ -1025,7 +1269,7 @@ type SharedQuestRequest struct {
 
 func (x *SharedQuestRequest) Reset() {
 	*x = SharedQuestRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1037,7 +1281,7 @@ func (x *SharedQuestRequest) String() string {
 func (*SharedQuestRequest) ProtoMessage() {}
 
 func (x *SharedQuestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[8]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1050,7 +1294,7 @@ func (x *SharedQuestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SharedQuestRequest.ProtoReflect.Descriptor instead.
 func (*SharedQuestRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SharedQuestRequest) GetSessionId() string {
@@ -1096,7 +1340,7 @@ type QuestObjective struct {
 
 func (x *QuestObjective) Reset() {
 	*x = QuestObjective{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1108,7 +1352,7 @@ func (x *QuestObjective) String() string {
 func (*QuestObjective) ProtoMessage() {}
 
 func (x *QuestObjective) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[9]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1121,7 +1365,7 @@ func (x *QuestObjective) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestObjective.ProtoReflect.Descriptor instead.
 func (*QuestObjective) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *QuestObjective) GetKind() string {
@@ -1198,7 +1442,7 @@ type QuestJournalEntry struct {
 
 func (x *QuestJournalEntry) Reset() {
 	*x = QuestJournalEntry{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1210,7 +1454,7 @@ func (x *QuestJournalEntry) String() string {
 func (*QuestJournalEntry) ProtoMessage() {}
 
 func (x *QuestJournalEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[10]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1223,7 +1467,7 @@ func (x *QuestJournalEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestJournalEntry.ProtoReflect.Descriptor instead.
 func (*QuestJournalEntry) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *QuestJournalEntry) GetQuestId() uint32 {
@@ -1354,7 +1598,7 @@ type JournalRequest struct {
 
 func (x *JournalRequest) Reset() {
 	*x = JournalRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1366,7 +1610,7 @@ func (x *JournalRequest) String() string {
 func (*JournalRequest) ProtoMessage() {}
 
 func (x *JournalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[11]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1379,7 +1623,7 @@ func (x *JournalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JournalRequest.ProtoReflect.Descriptor instead.
 func (*JournalRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *JournalRequest) GetRefresh() bool {
@@ -1400,7 +1644,7 @@ type JournalResponse struct {
 
 func (x *JournalResponse) Reset() {
 	*x = JournalResponse{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1412,7 +1656,7 @@ func (x *JournalResponse) String() string {
 func (*JournalResponse) ProtoMessage() {}
 
 func (x *JournalResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[12]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1425,7 +1669,7 @@ func (x *JournalResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JournalResponse.ProtoReflect.Descriptor instead.
 func (*JournalResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *JournalResponse) GetSessionId() string {
@@ -1461,7 +1705,7 @@ type RewardItem struct {
 
 func (x *RewardItem) Reset() {
 	*x = RewardItem{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1473,7 +1717,7 @@ func (x *RewardItem) String() string {
 func (*RewardItem) ProtoMessage() {}
 
 func (x *RewardItem) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[13]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1486,7 +1730,7 @@ func (x *RewardItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RewardItem.ProtoReflect.Descriptor instead.
 func (*RewardItem) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{13}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RewardItem) GetIndex() uint32 {
@@ -1541,7 +1785,7 @@ type TurnInOffer struct {
 
 func (x *TurnInOffer) Reset() {
 	*x = TurnInOffer{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1553,7 +1797,7 @@ func (x *TurnInOffer) String() string {
 func (*TurnInOffer) ProtoMessage() {}
 
 func (x *TurnInOffer) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[14]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1566,7 +1810,7 @@ func (x *TurnInOffer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnInOffer.ProtoReflect.Descriptor instead.
 func (*TurnInOffer) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{14}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TurnInOffer) GetRevision() uint64 {
@@ -1710,7 +1954,7 @@ type RewardReceipt struct {
 
 func (x *RewardReceipt) Reset() {
 	*x = RewardReceipt{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1722,7 +1966,7 @@ func (x *RewardReceipt) String() string {
 func (*RewardReceipt) ProtoMessage() {}
 
 func (x *RewardReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[15]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1735,7 +1979,7 @@ func (x *RewardReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RewardReceipt.ProtoReflect.Descriptor instead.
 func (*RewardReceipt) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{15}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RewardReceipt) GetNpcGuid() uint64 {
@@ -1897,7 +2141,7 @@ type TurnInRequest struct {
 
 func (x *TurnInRequest) Reset() {
 	*x = TurnInRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1909,7 +2153,7 @@ func (x *TurnInRequest) String() string {
 func (*TurnInRequest) ProtoMessage() {}
 
 func (x *TurnInRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[16]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1922,7 +2166,7 @@ func (x *TurnInRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnInRequest.ProtoReflect.Descriptor instead.
 func (*TurnInRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{16}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TurnInRequest) GetSessionId() string {
@@ -1968,7 +2212,7 @@ type RewardRequest struct {
 
 func (x *RewardRequest) Reset() {
 	*x = RewardRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1980,7 +2224,7 @@ func (x *RewardRequest) String() string {
 func (*RewardRequest) ProtoMessage() {}
 
 func (x *RewardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[17]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1993,7 +2237,7 @@ func (x *RewardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RewardRequest.ProtoReflect.Descriptor instead.
 func (*RewardRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{17}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RewardRequest) GetSessionId() string {
@@ -2055,7 +2299,7 @@ type OfferRequest struct {
 
 func (x *OfferRequest) Reset() {
 	*x = OfferRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[18]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2067,7 +2311,7 @@ func (x *OfferRequest) String() string {
 func (*OfferRequest) ProtoMessage() {}
 
 func (x *OfferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[18]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2080,7 +2324,7 @@ func (x *OfferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OfferRequest.ProtoReflect.Descriptor instead.
 func (*OfferRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{18}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *OfferRequest) GetSessionId() string {
@@ -2109,7 +2353,7 @@ type QuestRequest struct {
 
 func (x *QuestRequest) Reset() {
 	*x = QuestRequest{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[19]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2121,7 +2365,7 @@ func (x *QuestRequest) String() string {
 func (*QuestRequest) ProtoMessage() {}
 
 func (x *QuestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[19]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2134,7 +2378,7 @@ func (x *QuestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestRequest.ProtoReflect.Descriptor instead.
 func (*QuestRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{19}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *QuestRequest) GetSessionId() string {
@@ -2177,7 +2421,7 @@ type OperationResult struct {
 
 func (x *OperationResult) Reset() {
 	*x = OperationResult{}
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[20]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2189,7 +2433,7 @@ func (x *OperationResult) String() string {
 func (*OperationResult) ProtoMessage() {}
 
 func (x *OperationResult) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_quests_quests_proto_msgTypes[20]
+	mi := &file_modules_buddy_quests_quests_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2202,7 +2446,7 @@ func (x *OperationResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
 func (*OperationResult) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{20}
+	return file_modules_buddy_quests_quests_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *OperationResult) GetTransportWritten() bool {
@@ -2273,7 +2517,7 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\rserver_reason\x18\t \x01(\rR\fserverReason\"@\n" +
 	"\vGiverStatus\x12\x19\n" +
 	"\bnpc_guid\x18\x01 \x01(\x04R\anpcGuid\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\rR\x06status\"\xec\a\n" +
+	"\x06status\x18\x02 \x01(\rR\x06status\"\xc4\b\n" +
 	"\rStateResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -2294,7 +2538,27 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"lastReward\x12N\n" +
 	"\rpending_share\x18\x0f \x01(\v2).warcraftbuddy.quests.v1.SharedQuestOfferR\fpendingShare\x12d\n" +
 	"\x16last_shared_acceptance\x18\x10 \x01(\v2..warcraftbuddy.quests.v1.SharedQuestAcceptanceR\x14lastSharedAcceptance\x122\n" +
-	"\x15shared_quests_enabled\x18\x11 \x01(\bR\x13sharedQuestsEnabled\"\x92\x02\n" +
+	"\x15shared_quests_enabled\x18\x11 \x01(\bR\x13sharedQuestsEnabled\x12V\n" +
+	"\x10last_exploration\x18\x12 \x01(\v2+.warcraftbuddy.quests.v1.ExplorationReceiptR\x0flastExploration\"\x97\x01\n" +
+	"\x0eExploreRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x19\n" +
+	"\bquest_id\x18\x03 \x01(\rR\aquestId\x12,\n" +
+	"\x12quest_log_revision\x18\x04 \x01(\x04R\x10questLogRevision\"\x89\x03\n" +
+	"\x12ExplorationReceipt\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
+	"\bquest_id\x18\x02 \x01(\rR\aquestId\x12\x1d\n" +
+	"\n" +
+	"trigger_id\x18\x03 \x01(\rR\ttriggerId\x12B\n" +
+	"\x06status\x18\x04 \x01(\x0e2*.warcraftbuddy.quests.v1.ExplorationStatusR\x06status\x12+\n" +
+	"\x11transport_written\x18\x05 \x01(\bR\x10transportWritten\x122\n" +
+	"\x15baseline_log_revision\x18\x06 \x01(\x04R\x13baselineLogRevision\x124\n" +
+	"\x16confirmed_log_revision\x18\a \x01(\x04R\x14confirmedLogRevision\x12%\n" +
+	"\x0elease_released\x18\b \x01(\bR\rleaseReleased\x12\x18\n" +
+	"\afailure\x18\t \x01(\tR\afailure\"\x92\x02\n" +
 	"\x10SharedQuestOffer\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x1f\n" +
 	"\vsharer_guid\x18\x02 \x01(\x04R\n" +
@@ -2447,7 +2711,14 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x0eALREADY_IN_LOG\x10\x06\x12\x11\n" +
 	"\rSHARE_EXPIRED\x10\a\x12\x12\n" +
 	"\x0eSHARE_LOG_FULL\x10\b\x12\x1b\n" +
-	"\x17SHARE_ALREADY_REQUESTED\x10\t*g\n" +
+	"\x17SHARE_ALREADY_REQUESTED\x10\t*\xc1\x01\n" +
+	"\x11ExplorationStatus\x12\x14\n" +
+	"\x10EXPLORATION_NONE\x10\x00\x12\x19\n" +
+	"\x15EXPLORATION_REQUESTED\x10\x01\x12\x19\n" +
+	"\x15EXPLORATION_CONFIRMED\x10\x02\x12\x1b\n" +
+	"\x17EXPLORATION_UNCONFIRMED\x10\x03\x12!\n" +
+	"\x1dEXPLORATION_WRITE_UNCONFIRMED\x10\x04\x12 \n" +
+	"\x1cEXPLORATION_ALREADY_COMPLETE\x10\x05*g\n" +
 	"\x0fSharedQuestKind\x12\x14\n" +
 	"\x10SHARED_KIND_NONE\x10\x00\x12\x12\n" +
 	"\x0eSHARED_DETAILS\x10\x01\x12\x11\n" +
@@ -2459,7 +2730,7 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x10REWARD_CONFIRMED\x10\x02\x12\x16\n" +
 	"\x12REWARD_UNCONFIRMED\x10\x03\x12\x13\n" +
 	"\x0fREWARD_REJECTED\x10\x04\x12\x1c\n" +
-	"\x18REWARD_WRITE_UNCONFIRMED\x10\x052\xfa\x06\n" +
+	"\x18REWARD_WRITE_UNCONFIRMED\x10\x052\xd8\a\n" +
 	"\vBuddyQuests\x12J\n" +
 	"\bDiscover\x12\x16.google.protobuf.Empty\x1a&.warcraftbuddy.quests.v1.StateResponse\x12G\n" +
 	"\x05State\x12\x16.google.protobuf.Empty\x1a&.warcraftbuddy.quests.v1.StateResponse\x12X\n" +
@@ -2469,7 +2740,8 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\fAcceptShared\x12+.warcraftbuddy.quests.v1.SharedQuestRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12\\\n" +
 	"\aJournal\x12'.warcraftbuddy.quests.v1.JournalRequest\x1a(.warcraftbuddy.quests.v1.JournalResponse\x12Z\n" +
 	"\x06TurnIn\x12&.warcraftbuddy.quests.v1.TurnInRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12_\n" +
-	"\vClaimReward\x12&.warcraftbuddy.quests.v1.RewardRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12C\n" +
+	"\vClaimReward\x12&.warcraftbuddy.quests.v1.RewardRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12\\\n" +
+	"\aExplore\x12'.warcraftbuddy.quests.v1.ExploreRequest\x1a(.warcraftbuddy.quests.v1.OperationResult\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyBBZ@github.com/agent-wow/agent-wow/modules/buddy-quests/api;questsv1b\x06proto3"
 
 var (
@@ -2484,87 +2756,94 @@ func file_modules_buddy_quests_quests_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_quests_quests_proto_rawDescData
 }
 
-var file_modules_buddy_quests_quests_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_modules_buddy_quests_quests_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_modules_buddy_quests_quests_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_modules_buddy_quests_quests_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_modules_buddy_quests_quests_proto_goTypes = []any{
 	(AcceptanceStatus)(0),         // 0: warcraftbuddy.quests.v1.AcceptanceStatus
-	(SharedQuestKind)(0),          // 1: warcraftbuddy.quests.v1.SharedQuestKind
-	(RewardStatus)(0),             // 2: warcraftbuddy.quests.v1.RewardStatus
-	(*Quest)(nil),                 // 3: warcraftbuddy.quests.v1.Quest
-	(*Offer)(nil),                 // 4: warcraftbuddy.quests.v1.Offer
-	(*NearbyGiver)(nil),           // 5: warcraftbuddy.quests.v1.NearbyGiver
-	(*Acceptance)(nil),            // 6: warcraftbuddy.quests.v1.Acceptance
-	(*GiverStatus)(nil),           // 7: warcraftbuddy.quests.v1.GiverStatus
-	(*StateResponse)(nil),         // 8: warcraftbuddy.quests.v1.StateResponse
-	(*SharedQuestOffer)(nil),      // 9: warcraftbuddy.quests.v1.SharedQuestOffer
-	(*SharedQuestAcceptance)(nil), // 10: warcraftbuddy.quests.v1.SharedQuestAcceptance
-	(*SharedQuestRequest)(nil),    // 11: warcraftbuddy.quests.v1.SharedQuestRequest
-	(*QuestObjective)(nil),        // 12: warcraftbuddy.quests.v1.QuestObjective
-	(*QuestJournalEntry)(nil),     // 13: warcraftbuddy.quests.v1.QuestJournalEntry
-	(*JournalRequest)(nil),        // 14: warcraftbuddy.quests.v1.JournalRequest
-	(*JournalResponse)(nil),       // 15: warcraftbuddy.quests.v1.JournalResponse
-	(*RewardItem)(nil),            // 16: warcraftbuddy.quests.v1.RewardItem
-	(*TurnInOffer)(nil),           // 17: warcraftbuddy.quests.v1.TurnInOffer
-	(*RewardReceipt)(nil),         // 18: warcraftbuddy.quests.v1.RewardReceipt
-	(*TurnInRequest)(nil),         // 19: warcraftbuddy.quests.v1.TurnInRequest
-	(*RewardRequest)(nil),         // 20: warcraftbuddy.quests.v1.RewardRequest
-	(*OfferRequest)(nil),          // 21: warcraftbuddy.quests.v1.OfferRequest
-	(*QuestRequest)(nil),          // 22: warcraftbuddy.quests.v1.QuestRequest
-	(*OperationResult)(nil),       // 23: warcraftbuddy.quests.v1.OperationResult
-	(*api.CreatureState)(nil),     // 24: warcraftbuddy.world.v1.CreatureState
-	(*api.QuestLogEntry)(nil),     // 25: warcraftbuddy.world.v1.QuestLogEntry
-	(*emptypb.Empty)(nil),         // 26: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),        // 27: agentwow.module.v1.WorldPacket
+	(ExplorationStatus)(0),        // 1: warcraftbuddy.quests.v1.ExplorationStatus
+	(SharedQuestKind)(0),          // 2: warcraftbuddy.quests.v1.SharedQuestKind
+	(RewardStatus)(0),             // 3: warcraftbuddy.quests.v1.RewardStatus
+	(*Quest)(nil),                 // 4: warcraftbuddy.quests.v1.Quest
+	(*Offer)(nil),                 // 5: warcraftbuddy.quests.v1.Offer
+	(*NearbyGiver)(nil),           // 6: warcraftbuddy.quests.v1.NearbyGiver
+	(*Acceptance)(nil),            // 7: warcraftbuddy.quests.v1.Acceptance
+	(*GiverStatus)(nil),           // 8: warcraftbuddy.quests.v1.GiverStatus
+	(*StateResponse)(nil),         // 9: warcraftbuddy.quests.v1.StateResponse
+	(*ExploreRequest)(nil),        // 10: warcraftbuddy.quests.v1.ExploreRequest
+	(*ExplorationReceipt)(nil),    // 11: warcraftbuddy.quests.v1.ExplorationReceipt
+	(*SharedQuestOffer)(nil),      // 12: warcraftbuddy.quests.v1.SharedQuestOffer
+	(*SharedQuestAcceptance)(nil), // 13: warcraftbuddy.quests.v1.SharedQuestAcceptance
+	(*SharedQuestRequest)(nil),    // 14: warcraftbuddy.quests.v1.SharedQuestRequest
+	(*QuestObjective)(nil),        // 15: warcraftbuddy.quests.v1.QuestObjective
+	(*QuestJournalEntry)(nil),     // 16: warcraftbuddy.quests.v1.QuestJournalEntry
+	(*JournalRequest)(nil),        // 17: warcraftbuddy.quests.v1.JournalRequest
+	(*JournalResponse)(nil),       // 18: warcraftbuddy.quests.v1.JournalResponse
+	(*RewardItem)(nil),            // 19: warcraftbuddy.quests.v1.RewardItem
+	(*TurnInOffer)(nil),           // 20: warcraftbuddy.quests.v1.TurnInOffer
+	(*RewardReceipt)(nil),         // 21: warcraftbuddy.quests.v1.RewardReceipt
+	(*TurnInRequest)(nil),         // 22: warcraftbuddy.quests.v1.TurnInRequest
+	(*RewardRequest)(nil),         // 23: warcraftbuddy.quests.v1.RewardRequest
+	(*OfferRequest)(nil),          // 24: warcraftbuddy.quests.v1.OfferRequest
+	(*QuestRequest)(nil),          // 25: warcraftbuddy.quests.v1.QuestRequest
+	(*OperationResult)(nil),       // 26: warcraftbuddy.quests.v1.OperationResult
+	(*api.CreatureState)(nil),     // 27: warcraftbuddy.world.v1.CreatureState
+	(*api.QuestLogEntry)(nil),     // 28: warcraftbuddy.world.v1.QuestLogEntry
+	(*emptypb.Empty)(nil),         // 29: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),        // 30: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_quests_quests_proto_depIdxs = []int32{
-	3,  // 0: warcraftbuddy.quests.v1.Offer.quests:type_name -> warcraftbuddy.quests.v1.Quest
-	24, // 1: warcraftbuddy.quests.v1.NearbyGiver.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	4,  // 0: warcraftbuddy.quests.v1.Offer.quests:type_name -> warcraftbuddy.quests.v1.Quest
+	27, // 1: warcraftbuddy.quests.v1.NearbyGiver.creature:type_name -> warcraftbuddy.world.v1.CreatureState
 	0,  // 2: warcraftbuddy.quests.v1.Acceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
-	4,  // 3: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
-	5,  // 4: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
-	6,  // 5: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
-	7,  // 6: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
-	25, // 7: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	17, // 8: warcraftbuddy.quests.v1.StateResponse.turn_in_offer:type_name -> warcraftbuddy.quests.v1.TurnInOffer
-	18, // 9: warcraftbuddy.quests.v1.StateResponse.last_reward:type_name -> warcraftbuddy.quests.v1.RewardReceipt
-	9,  // 10: warcraftbuddy.quests.v1.StateResponse.pending_share:type_name -> warcraftbuddy.quests.v1.SharedQuestOffer
-	10, // 11: warcraftbuddy.quests.v1.StateResponse.last_shared_acceptance:type_name -> warcraftbuddy.quests.v1.SharedQuestAcceptance
-	3,  // 12: warcraftbuddy.quests.v1.SharedQuestOffer.quest:type_name -> warcraftbuddy.quests.v1.Quest
-	1,  // 13: warcraftbuddy.quests.v1.SharedQuestOffer.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
-	1,  // 14: warcraftbuddy.quests.v1.SharedQuestAcceptance.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
-	0,  // 15: warcraftbuddy.quests.v1.SharedQuestAcceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
-	12, // 16: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
-	13, // 17: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
-	16, // 18: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
-	16, // 19: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
-	16, // 20: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
-	2,  // 21: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
-	8,  // 22: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
-	26, // 23: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
-	26, // 24: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
-	21, // 25: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
-	22, // 26: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	22, // 27: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	11, // 28: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
-	14, // 29: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
-	19, // 30: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
-	20, // 31: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
-	27, // 32: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	8,  // 33: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
-	8,  // 34: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
-	23, // 35: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
-	23, // 36: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
-	23, // 37: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
-	23, // 38: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
-	15, // 39: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
-	23, // 40: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
-	23, // 41: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 42: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
-	33, // [33:43] is the sub-list for method output_type
-	23, // [23:33] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	5,  // 3: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
+	6,  // 4: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
+	7,  // 5: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
+	8,  // 6: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
+	28, // 7: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	20, // 8: warcraftbuddy.quests.v1.StateResponse.turn_in_offer:type_name -> warcraftbuddy.quests.v1.TurnInOffer
+	21, // 9: warcraftbuddy.quests.v1.StateResponse.last_reward:type_name -> warcraftbuddy.quests.v1.RewardReceipt
+	12, // 10: warcraftbuddy.quests.v1.StateResponse.pending_share:type_name -> warcraftbuddy.quests.v1.SharedQuestOffer
+	13, // 11: warcraftbuddy.quests.v1.StateResponse.last_shared_acceptance:type_name -> warcraftbuddy.quests.v1.SharedQuestAcceptance
+	11, // 12: warcraftbuddy.quests.v1.StateResponse.last_exploration:type_name -> warcraftbuddy.quests.v1.ExplorationReceipt
+	1,  // 13: warcraftbuddy.quests.v1.ExplorationReceipt.status:type_name -> warcraftbuddy.quests.v1.ExplorationStatus
+	4,  // 14: warcraftbuddy.quests.v1.SharedQuestOffer.quest:type_name -> warcraftbuddy.quests.v1.Quest
+	2,  // 15: warcraftbuddy.quests.v1.SharedQuestOffer.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
+	2,  // 16: warcraftbuddy.quests.v1.SharedQuestAcceptance.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
+	0,  // 17: warcraftbuddy.quests.v1.SharedQuestAcceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
+	15, // 18: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
+	16, // 19: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
+	19, // 20: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 21: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 22: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
+	3,  // 23: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
+	9,  // 24: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
+	29, // 25: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
+	29, // 26: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
+	24, // 27: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
+	25, // 28: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	25, // 29: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	14, // 30: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
+	17, // 31: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
+	22, // 32: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
+	23, // 33: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
+	10, // 34: warcraftbuddy.quests.v1.BuddyQuests.Explore:input_type -> warcraftbuddy.quests.v1.ExploreRequest
+	30, // 35: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 36: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
+	9,  // 37: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
+	26, // 38: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 39: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 40: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 41: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
+	18, // 42: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
+	26, // 43: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 44: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 45: warcraftbuddy.quests.v1.BuddyQuests.Explore:output_type -> warcraftbuddy.quests.v1.OperationResult
+	29, // 46: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
+	36, // [36:47] is the sub-list for method output_type
+	25, // [25:36] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_quests_quests_proto_init() }
@@ -2577,8 +2856,8 @@ func file_modules_buddy_quests_quests_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_quests_quests_proto_rawDesc), len(file_modules_buddy_quests_quests_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   21,
+			NumEnums:      4,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

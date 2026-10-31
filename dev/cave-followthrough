@@ -1,0 +1,474 @@
+#!/usr/bin/env python3
+"""Finite fixed-party Fargodeep scouting and47/60/62 turn-ins; never accepts quests."""
+import sys
+sys.dont_write_bytecode = True
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import time
+import threading
+import uuid
+import urllib.request
+import urllib.error
+
+ROOT = Path(__file__).resolve().parent.parent
+loader = importlib.machinery.SourceFileLoader("cave_follow_sync", str(ROOT / "dev/sync-quests"))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+sync = importlib.util.module_from_spec(spec)
+loader.exec_module(sync)
+c, Error, integer = sync.converse, sync.Error, sync.integer
+ROSTER = (("Arlen", 1, 8086, "priest"), ("Mira", 4, 8087, "mage"), ("Rook", 5, 8088, "rogue"))
+GIVERS = {47: 241, 60: 253, 62: 240}
+GOAL = frozenset(GIVERS)
+IDENTITY = {"version": 1, "mode": "fixed_fargodeep_followthrough", "guids": [1, 4, 5], "questIds": [47, 60, 62]}
+SCOUT = {"x": -9843.5400390625, "y": 127.5250015258789, "z": 5.369800090789795}
+# Static client-data movement references, NOT assertions of NPC presence.
+# Each leg was fully checked by the unchanged physical map planner. Every live
+# call replans from its actual current pose; there is no coordinate teleport.
+RETURN = ({"x": -9821.469, "y": 215.5862, "z": 16.341442},
+          {"x": -9703.038, "y": 154.96477, "z": 50.29899},
+          {"x": -9578.477, "y": 80.99095, "z": 58.882023},
+          {"x": -9465.93, "y": 24.9355, "z": 56.52882})
+
+
+def xyz(value):
+    if not isinstance(value, dict):
+        raise Error("Actual position is unavailable")
+    result = tuple(value.get(k, 0) for k in ("x", "y", "z"))
+    if any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) >= 40000 for v in result):
+        raise Error("Actual finite coordinates are unavailable")
+    return result
+
+
+def distance(a, b):
+    return math.dist(xyz(a), xyz(b))
+
+
+class RPC(c.RPC):
+    EXTRA = {"buddy-quests.explore", "buddy-actions.acquire_interaction",
+             "buddy-actions.release_interaction", "buddy-actions.travel_quest", "buddy-actions.travel_to"}
+
+    def fork(self):
+        return RPC(self.url, self.timeout)
+
+    def call(self, method, params, timeout=None):
+        if method not in self.EXTRA:
+            return super().call(method, params, timeout=timeout)
+        self.request_id += 1
+        request_id = self.request_id
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": request_id,
+            "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+        try:
+            limit = 35 if method in ("buddy-actions.travel_to", "buddy-actions.travel_quest") else 6
+            with self.opener.open(request, timeout=limit) as response:
+                raw = response.read(256 * 1024 + 1)
+            if len(raw) > 256 * 1024:
+                raise Error("Cave RPC response exceeds its bound")
+            result = json.loads(raw)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("Cave RPC result is unconfirmed") from None
+        if (not isinstance(result, dict) or result.get("jsonrpc") != "2.0" or type(result.get("id")) is not int
+                or result["id"] != request_id or "error" in result or not isinstance(result.get("result"), dict)):
+            raise Error("Cave RPC response is not a matching result")
+        return result["result"]
+
+
+class Actor:
+    def __init__(self, row, rpc, save=lambda value: None, stored=None, stopped=lambda: False, notify=lambda: None):
+        self.name, self.guid, self.port, self.role = row
+        self.rpc, self.save, self.stopped = rpc, save, stopped
+        self.notify = notify
+        identity = {"name": self.name, "guid": self.guid, "port": self.port, "questIds": sorted(GOAL)}
+        self.data = stored or {"identity": identity, "session": None, "claims": {}, "confirmed": {}, "explore": None}
+        if (self.data.get("identity") != identity or not isinstance(self.data.get("claims"), dict)
+                or not set(self.data["claims"]) <= {str(q) for q in GOAL}
+                or not isinstance(self.data.get("confirmed"), dict)
+                or not set(self.data["confirmed"]) <= {str(q) for q in GOAL}):
+            raise Error("Saved cave follow-through identity or receipt bounds changed")
+        if self.data.get("session") is not None:
+            sync.session_id({"sessionId": self.data["session"]})
+        for key, claim in self.data["claims"].items():
+            if (not isinstance(claim, dict) or claim.get("sessionId") != self.data.get("session")
+                    or integer(claim.get("questId", 0)) != integer(key)
+                    or integer(claim.get("npcGuid", 0)) >> 24 & 0xffffff != GIVERS[integer(key)]
+                    or integer(claim.get("offerRevision", 0)) == 0):
+                raise Error("Saved reward reservation is invalid")
+        for key, receipt in self.data["confirmed"].items():
+            if (not isinstance(receipt, dict) or receipt.get("status") not in ("REWARD_CONFIRMED", 2)
+                    or receipt.get("serverRewardObserved") is not True or receipt.get("logRemovalConfirmed") is not True
+                    or integer(receipt.get("questId", 0)) != integer(key)
+                    or integer(receipt.get("confirmedLogRevision", 0)) <= integer(receipt.get("baselineLogRevision", 0))):
+                raise Error("Saved reward proof is invalid")
+        self.session, self.token, self.owner = self.data.get("session"), None, None
+        self.release_uncertain = False
+        self.status = {"name": self.name, "guid": self.guid, "phase": "starting", "newlyConfirmed": []}
+
+    def persist(self):
+        if len(json.dumps(self.data)) > 65536:
+            raise Error("Cave reservations exceed their bound")
+        self.save(self.data)
+        self.notify()
+
+    def read(self, entry=0, safe=True):
+        if safe and self.stopped():
+            raise c.Stopped("Cave follow-through stop requested")
+        state = self.rpc.call("buddy-quests.state", {})
+        world = self.rpc.call("buddy-world.snapshot", {"creatureEntry": entry} if entry else {})
+        actions = self.rpc.call("buddy-actions.status", {})
+        final = self.rpc.call("buddy-quests.state", {})
+        body = sync.session_id(final)
+        if body != sync.session_id(state) or self.session and body != self.session:
+            raise Error("Cave body changed; old movement and reward requests are retired")
+        sync.active_log(final)
+        own = world.get("self", {})
+        if integer(own.get("guid", 0)) != self.guid:
+            raise Error("Cave actor identity changed")
+        if safe:
+            if (not c.BuddyControls.quest_scene_safe(actions, world, self.guid)
+                    or integer(own.get("mapId", 0)) != 0 or actions.get("traveling") is True
+                    or actions.get("practicing") is True or final.get("actionInFlight") is True):
+                raise Error("Cave actor is in combat, unsafe, or busy")
+            owner = world.get("owner", {})
+            if (isinstance(owner, dict) and owner.get("present") is True and integer(owner.get("guid", 0)) == 3
+                    and (integer(owner.get("unitFlags", 0)) & 0x80000
+                         or integer(owner.get("movementFlags", 0)) & 0xff)):
+                raise Error("Joel resumed moving or combat; cave follow-through pauses")
+            xyz(actions.get("position"))
+        self.status.update(bodySessionId=body, ownQuestIds=sorted(sync.active_log(final)),
+                           completeQuestIds=sorted(q for q, row in self.log(final).items() if row.get("complete") is True),
+                           confirmedQuestIds=sorted(integer(q) for q in self.data["confirmed"]))
+        self.notify()
+        return final, world, actions
+
+    @staticmethod
+    def log(state):
+        sync.active_log(state)
+        return {integer(q.get("questId", 0)): q for q in state.get("questLog", []) if integer(q.get("questId", 0)) in GOAL}
+
+    def acquire(self, owner):
+        if self.release_uncertain:
+            raise Error("An earlier interaction release remains unconfirmed")
+        result = self.rpc.call("buddy-actions.acquire_interaction", {"owner": owner, "leaseMs": 30000})
+        token, state = result.get("token"), result.get("state", {})
+        if not isinstance(token, str) or not 1 <= len(token) <= 128:
+            raise Error("Cave interaction lease is unconfirmed")
+        self.token, self.owner = token, owner
+        if state.get("interactionOwner") != owner or state.get("moving") is True or state.get("motionUnconfirmed") is True:
+            self.release()
+            raise Error("Cave interaction stop is unconfirmed")
+        self.read()
+
+    def release(self):
+        if self.token is None:
+            return
+        token, owner, self.token, self.owner = self.token, self.owner, None, None
+        try:
+            state = self.rpc.call("buddy-quests.state", {})
+            if sync.session_id(state) != self.session:
+                raise Error("Body changed before lease cleanup")
+            result = self.rpc.call("buddy-actions.release_interaction", {"owner": owner, "token": token})
+            if result.get("interactionOwner", "") == owner or result.get("moving") is True or result.get("motionUnconfirmed") is True:
+                raise Error("Cave interaction cleanup not stopped")
+        except Error:
+            self.release_uncertain = True
+            self.status["cleanup"] = "interaction_release_unconfirmed"
+
+    def travel_point(self, goal):
+        for attempt in range(3):
+            state, world, actions = self.read()
+            if distance(actions["position"], goal) <= .8:
+                return
+            if distance(actions["position"], goal) > 200:
+                raise Error("Static route checkpoint is beyond the bounded200yd normal movement API")
+            try:
+                self.acquire("exploration")
+                _, _, actions = self.read()
+                if distance(actions["position"], goal) > 200:
+                    raise Error("Route checkpoint changed range before travel")
+                self.status["phase"] = "following_verified_client_map_route"
+                self.notify()
+                self.guarded_travel("buddy-actions.travel_to", dict(token=self.token, mapId=0, arrivalDistance=.75, **goal))
+            finally:
+                self.release()
+            if self.release_uncertain:
+                raise Error("Cave route cleanup remains unconfirmed")
+        _, _, actions = self.read()
+        if distance(actions["position"], goal) > .8:
+            raise Error("Three bounded normal route attempts did not confirm checkpoint arrival")
+
+    def guarded_travel(self, method, params):
+        # A separate RPC connection keeps a synchronous30s route cancelable by
+        # the controller's exact-token release, without sharing JSON request IDs.
+        rpc = self.rpc.fork() if hasattr(self.rpc, "fork") else self.rpc
+        finished, result = threading.Event(), {}
+        def run():
+            try:
+                result["value"] = rpc.call(method, params)
+            except (Error, OSError) as error:
+                result["error"] = error
+            finally:
+                finished.set()
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            while not finished.wait(.25):
+                if self.stopped():
+                    raise c.Stopped("Cave stop requested while traveling")
+                state = self.rpc.call("buddy-quests.state", {}, timeout=.5)
+                world = self.rpc.call("buddy-world.snapshot", {}, timeout=.5)
+                actions = self.rpc.call("buddy-actions.status", {}, timeout=.5)
+                if (sync.session_id(state) != self.session
+                        or not c.BuddyControls.quest_scene_safe(actions, world, self.guid)
+                        or integer(world.get("self", {}).get("mapId", 0)) != 0
+                        or actions.get("interactionOwner") != self.owner):
+                    raise Error("Cave route body, safety or owned custody changed")
+                owner = world.get("owner", {})
+                if (isinstance(owner, dict) and owner.get("present") is True and integer(owner.get("guid", 0)) == 3
+                        and (integer(owner.get("unitFlags", 0)) & 0x80000 or integer(owner.get("movementFlags", 0)) & 0xff)):
+                    raise Error("Joel resumed moving or combat while cave route was active")
+            if self.stopped():
+                raise c.Stopped("Cave stop requested after travel")
+            if "error" in result:
+                raise Error("Cave route response is unconfirmed")
+            return result.get("value")
+        except (Error, c.Stopped):
+            self.release()
+            finished.wait(2)
+            raise
+
+    def scout(self):
+        state, _, actions = self.read()
+        row = self.log(state).get(62)
+        if row is None or row.get("complete") is True:
+            return
+        if row.get("failed") is True:
+            raise Error("Own scouting quest failed")
+        if self.data.get("explore"):
+            raise Error("Prior scout request remains reserved; no blind trigger resend")
+        if distance(actions["position"], SCOUT) > 8:
+            self.travel_point(SCOUT)
+        state, _, _ = self.read()
+        request = {"sessionId": self.session, "requestId": "cave_" + uuid.uuid4().hex,
+                   "questId": 62, "questLogRevision": str(integer(state.get("questLogRevision", 0)))}
+        self.data["explore"] = request
+        self.persist()  # Durable before the potentially ambiguous trigger write.
+        self.status["phase"] = "requesting_normal_fargodeep_scout_trigger"
+        self.notify()
+        try:
+            self.rpc.call("buddy-quests.explore", request)
+        except Error:
+            pass
+        state, _, _ = self.read()
+        receipt = state.get("lastExploration", {})
+        if (self.log(state).get(62, {}).get("complete") is not True or receipt.get("requestId") != request["requestId"]
+                or receipt.get("status") not in ("EXPLORATION_CONFIRMED", 2)
+                or integer(receipt.get("confirmedLogRevision", 0)) <= integer(request["questLogRevision"])
+                or receipt.get("leaseReleased") is not True):
+            raise Error("Scouting trigger reserved; no newer actual own completion and cleanup proof yet")
+        self.data["explorationConfirmed"] = receipt
+        self.persist()
+
+    def return_to_town(self):
+        _, _, actions = self.read()
+        position = actions["position"]
+        if distance(position, RETURN[-1]) <= 120:
+            self.travel_point(RETURN[-1])
+            return
+        nearest = min(range(len(RETURN)), key=lambda i: distance(position, RETURN[i]))
+        for point in RETURN[nearest:]:
+            self.travel_point(point)
+
+    def giver(self, world, actions, entry):
+        rows = world.get("requestedCreatures", [])
+        if not isinstance(rows, list) or len(rows) > 32:
+            raise Error("Actual questgiver cache is invalid")
+        choices = []
+        for row in rows:
+            guid = integer(row.get("guid", 0)) if isinstance(row, dict) else 0
+            if (not isinstance(row, dict) or integer(row.get("entry", 0)) != entry
+                    or guid >> 48 != 0xf130 or guid >> 24 & 0xffffff != entry or not guid & 0xffffff
+                    or any(row.get(k) is not True for k in ("present", "mapKnown", "positionKnown", "aliveKnown", "alive"))
+                    or integer(row.get("mapId", 0)) != 0 or integer(row.get("npcFlags", 0)) & 2 == 0
+                    or integer(row.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000)
+                    or integer(row.get("movementFlags", 0)) != 0):
+                continue
+            trajectory = row.get("trajectory", {})
+            if trajectory.get("known") is True and (trajectory.get("stopped") is not True or trajectory.get("transportRelative") is True):
+                continue
+            choices.append((distance(actions["position"], row), guid, row))
+        if not choices:
+            raise Error("Required real questgiver is not currently observed")
+        return min(choices, key=lambda row: (row[0], row[1]))
+
+    def turn_in(self, qid):
+        if qid not in GOAL:
+            raise Error("Quest is outside this explicit catch-up goal")
+        state, world, actions = self.read(GIVERS[qid])
+        row = self.log(state).get(qid)
+        if row is None:
+            self.status.setdefault("alreadyAbsentQuestIds", []).append(qid)
+            return
+        if row.get("complete") is not True or row.get("failed") is True:
+            raise Error("Own catch-up quest is not complete")
+        if str(qid) in self.data["claims"] or c.BuddyControls.ambiguous_quest_reward(state, qid):
+            raise Error("Prior reward request remains reserved; inspect actual receipt instead of resending")
+        for _ in range(3):
+            dist, npc, creature = self.giver(world, actions, GIVERS[qid])
+            if dist <= 8:
+                break
+            try:
+                self.acquire("quests")
+                state, world, actions = self.read(GIVERS[qid])
+                fresh = self.giver(world, actions, GIVERS[qid])
+                if fresh[1] != npc or integer(fresh[2].get("positionRevision", 0)) != integer(creature.get("positionRevision", 0)):
+                    raise Error("Actual turn-in NPC changed before travel")
+                self.guarded_travel("buddy-actions.travel_quest", {"token": self.token, "npcGuid": str(npc)})
+            finally:
+                self.release()
+            if self.release_uncertain:
+                raise Error("NPC travel release remains unconfirmed")
+            state, world, actions = self.read(GIVERS[qid])
+        dist, npc, _ = self.giver(world, actions, GIVERS[qid])
+        if dist > 8 or actions.get("interactionOwner", ""):
+            raise Error("Observed turn-in giver is not in normal quest approach range")
+        current = self.log(state).get(qid, {})
+        if current.get("complete") is not True or current.get("failed") is True:
+            raise Error("Completed own quest changed before turn-in")
+        self.status.update(phase="opening_actual_completed_quest_reward", questId=qid)
+        self.notify()
+        self.rpc.call("buddy-quests.turn_in", {"sessionId": self.session, "npcGuid": str(npc), "questId": qid,
+                                               "questLogRevision": str(integer(state.get("questLogRevision", 0)))})
+        state, world, actions = self.read(GIVERS[qid])
+        offer = state.get("turnInOffer", {})
+        if (integer(offer.get("questId", 0)) != qid or integer(offer.get("npcGuid", 0)) != npc
+                or offer.get("source") != "reward_offer" or offer.get("canComplete") is not True
+                or integer(offer.get("expiresInMs", 0)) == 0 or offer.get("rewardRequested") is True
+                or c.BuddyControls.ambiguous_quest_reward(state, qid)):
+            raise Error("No matching fresh actual completable reward offer")
+        bound = c.BuddyControls.reward_binding(state)
+        actor = self
+        class ClaimRPC:
+            def call(self, method, params):
+                if method == "buddy-quests.claim_reward":
+                    fresh, world, actions = actor.read(GIVERS[qid])
+                    if (c.BuddyControls.reward_binding(fresh) != bound or actor.giver(world, actions, GIVERS[qid])[1] != npc
+                            or actor.giver(world, actions, GIVERS[qid])[0] > 8
+                            or actor.log(fresh).get(qid, {}).get("complete") is not True
+                            or c.BuddyControls.ambiguous_quest_reward(fresh, qid)):
+                        raise Error("Actual bound reward changed before claim")
+                    actor.data["claims"][str(qid)] = dict(params)
+                    actor.persist()
+                return actor.rpc.call(method, params)
+        controls = c.BuddyControls(ClaimRPC(), character_class=self.role, character_guid=self.guid)
+        controls.actions, controls.quests, controls.quests_available = actions, state, True
+        controls.world = world
+        try:
+            controls.claim_quest_offer(qid)
+        except Error:
+            pass
+        state, _, _ = self.read(GIVERS[qid])
+        receipt = state.get("lastReward", {})
+        reservation = self.data["claims"].get(str(qid), {})
+        if (receipt.get("status") not in ("REWARD_CONFIRMED", 2) or receipt.get("serverRewardObserved") is not True
+                or receipt.get("logRemovalConfirmed") is not True or qid in self.log(state)
+                or integer(receipt.get("questId", 0)) != qid or integer(receipt.get("npcGuid", 0)) != npc
+                or integer(receipt.get("offerRevision", 0)) != integer(reservation.get("offerRevision", 0))
+                or integer(receipt.get("confirmedLogRevision", 0)) <= integer(receipt.get("baselineLogRevision", 0))):
+            raise Error("Reward request lacks exact server receipt and newer own-log removal")
+        self.data["confirmed"][str(qid)] = receipt
+        self.status["newlyConfirmed"].append(qid)
+        self.persist()
+
+    def run(self):
+        state, _, _ = self.read(safe=False)
+        body = sync.session_id(state)
+        if self.session is None:
+            self.session = self.data["session"] = body
+            self.persist()
+        state, _, _ = self.read()
+        for qid in (47, 60):
+            row = self.log(state).get(qid)
+            if row is not None and (row.get("complete") is not True or row.get("failed") is True):
+                self.status["phase"] = "waiting_for_actual_kobold_objective_completion"
+                return
+        try:
+            self.scout()
+            if self.log(self.read()[0]):
+                self.return_to_town()
+            for qid in (47, 60, 62):
+                self.turn_in(qid)
+            self.status["phase"] = "finished_fixed_cave_catchup_no_followups"
+        finally:
+            self.release()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("run", "status", "stop"))
+    parser.add_argument("--character-guid", type=int, choices=(1, 4, 5), action="append")
+    parser.add_argument("--state-dir", type=Path, default=ROOT / "data/autonomy/cave-followthrough")
+    parser.add_argument("--max-seconds", type=float, default=1200)
+    args = parser.parse_args(argv)
+    if not math.isfinite(args.max_seconds) or not 0 < args.max_seconds <= 1200:
+        parser.error("Duration must be finite and at most1200seconds")
+    folder = c.ensure_state(args.state_dir)
+    if args.command != "run":
+        value = c.read_json(folder / "status.json")
+        if value and value.get("identity") != IDENTITY:
+            raise Error("Cave status identity differs")
+        if args.command == "stop" and value and c.is_locked(folder / "lock"):
+            c.write_json(folder / "stop.json", {"identity": IDENTITY, "instance": value.get("instance")})
+        print(json.dumps(value or {"identity": IDENTITY, "running": False}, indent=2))
+        return 0
+    with os.fdopen(c.private_open(folder / "lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Error("Another finite cave follow-through is active")
+        record = {"identity": IDENTITY, "instance": uuid.uuid4().hex, "running": True, "actors": [], "pid": os.getpid()}
+        end, requested = time.monotonic() + args.max_seconds, False
+        def stop(signum, frame):
+            nonlocal requested
+            requested = True
+        signal.signal(signal.SIGINT, stop)
+        signal.signal(signal.SIGTERM, stop)
+        def stopped():
+            return requested or time.monotonic() >= end or c.read_json(folder / "stop.json") == {"identity": IDENTITY, "instance": record["instance"]}
+        def publish():
+            record["updatedAt"] = time.time()
+            c.write_json(folder / "status.json", record)
+        publish()
+        try:
+            for row in ROSTER:
+                if args.character_guid and row[1] not in args.character_guid or stopped():
+                    continue
+                path = folder / (str(row[1]) + ".json")
+                actor = Actor(row, RPC(f"http://127.0.0.1:{row[2]}/rpc", timeout=6),
+                              save=lambda value, p=path: c.write_json(p, value), stored=c.read_json(path), stopped=stopped)
+                record["actors"].append(actor.status)
+                actor.notify = publish
+                publish()
+                try:
+                    actor.run()
+                except (Error, c.Stopped) as error:
+                    actor.status.update(phase="blocked_without_speculative_progress", reason=str(error)[:240])
+                publish()
+        finally:
+            record["running"] = False
+            publish()
+        print(json.dumps(record, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError) as error:
+        print("Cave follow-through: " + str(error), file=sys.stderr)
+        sys.exit(1)

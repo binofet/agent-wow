@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-†3
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ï
+åQ
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"­
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -92,7 +92,56 @@ levelKnown
 combat_reach- (RcombatReach3
 base_attack_time_known. (RbaseAttackTimeKnown-
 base_attack_time_ms/ (RbaseAttackTimeMsB
-mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand"û
+mainhand0 (2&.warcraftbuddy.world.v1.EquippedWeaponRmainhand0
+channel_object_known1 (RchannelObjectKnown.
+channel_object_guid2 (RchannelObjectGuid.
+channel_spell_known3 (RchannelSpellKnown(
+channel_spell_id4 (RchannelSpellId2
+shapeshift_form_known5 (RshapeshiftFormKnown'
+shapeshift_form6 (RshapeshiftForm@
+offhand7 (2&.warcraftbuddy.world.v1.EquippedWeaponRoffhand)
+offhand_revision8 (RoffhandRevision
+
+race_known9 (R	raceKnown
+race_id: (RraceId"Ž
+EquipmentSlotState
+slot (Rslot
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry
+stack_count (R
+stackCount)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"
+CorpseState
+guid (Rguid
+
+owner_guid (R	ownerGuid
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
+flags_known (R
+flagsKnown
+flags (Rflags.
+dynamic_flags_known (RdynamicFlagsKnown#
+dynamic_flags (RdynamicFlags"û
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -103,9 +152,12 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"6
+max_durability (RmaxDurability"Å
 SnapshotRequest#
-creature_guid (RcreatureGuid"Ô
+creature_guid (RcreatureGuid%
+creature_entry (RcreatureEntry*
+game_object_entry (RgameObjectEntry:
+include_gathering_objects (RincludeGatheringObjects"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -128,7 +180,12 @@ type_known (R	typeKnown(
 flagsKnown
 flags (Rflags.
 dynamic_flags_known (RdynamicFlagsKnown#
-dynamic_flags (RdynamicFlags"ƒ
+dynamic_flags (RdynamicFlags(
+created_by_known (RcreatedByKnown&
+created_by_guid (RcreatedByGuid
+state_known (R
+stateKnown
+state (Rstate"Ý
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -176,7 +233,9 @@ trajectory,
 combat_reach$ (RcombatReach
 level_known% (R
 levelKnown
-level& (Rlevel"Ã
+level& (Rlevel(
+unit_flags_known' (RunitFlagsKnown.
+dynamic_flags_known( (RdynamicFlagsKnown"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -201,7 +260,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"¯
+expireTime"û
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -209,8 +268,35 @@ expireTime"¯
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"¿
+metadata_known (RmetadataKnown)
+durability_known (RdurabilityKnown
 
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"¥
+InventoryBag
+bag (Rbag
+
+slot_known (R	slotKnown%
+container_guid (RcontainerGuid%
+metadata_known (RmetadataKnown
+entry (Rentry%
+contents_known (RcontentsKnown
+
+slot_count (R	slotCount:
+slots (2$.warcraftbuddy.world.v1.BackpackSlotRslots"Ô
+
+SkillState
+slot (Rslot
+skill_id (RskillId
+step (Rstep
+value (Rvalue
+	max_value (RmaxValue'
+temporary_bonus (RtemporaryBonus'
+permanent_bonus (RpermanentBonus"þ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -237,12 +323,35 @@ selfCopper0
 self_copper_revision (RselfCopperRevisionE
 	mailboxes (2'.warcraftbuddy.world.v1.GameObjectStateR	mailboxesL
 quest_objects (2'.warcraftbuddy.world.v1.GameObjectStateRquestObjectsT
-requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature2°
+requested_creature (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreature*
+self_skills_known (RselfSkillsKnown0
+self_skills_revision (RselfSkillsRevisionC
+self_skills (2".warcraftbuddy.world.v1.SkillStateR
+selfSkills@
+self_free_primary_slots_known (RselfFreePrimarySlotsKnown5
+self_free_primary_slots (RselfFreePrimarySlotsF
+ self_free_primary_slots_revision (RselfFreePrimarySlotsRevisionL
+spell_focuses (2'.warcraftbuddy.world.v1.GameObjectStateRspellFocusesW
+own_fishing_bobbers (2'.warcraftbuddy.world.v1.GameObjectStateRownFishingBobbersV
+requested_creatures  (2%.warcraftbuddy.world.v1.CreatureStateRrequestedCreatures]
+requested_game_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRrequestedGameObjects'
+inventory_known" (RinventoryKnown-
+inventory_revision# (RinventoryRevisionK
+inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
+skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
+nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
+nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
+trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures0
+self_equipment_known) (RselfEquipmentKnown6
+self_equipment_revision* (RselfEquipmentRevisionQ
+self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipmentB
+
+own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpse2°
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-²@
+ÒG
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"›
 Quest
 quest_id (RquestId
@@ -286,7 +395,7 @@ Acceptance
 server_reason	 (RserverReason"@
 GiverStatus
 npc_guid (RnpcGuid
-status (Rstatus"ì
+status (Rstatus"Ä
 StateResponse
 
 session_id (	R	sessionId
@@ -307,7 +416,27 @@ session_id (	R	sessionId
 lastRewardN
 pending_share (2).warcraftbuddy.quests.v1.SharedQuestOfferRpendingShared
 last_shared_acceptance (2..warcraftbuddy.quests.v1.SharedQuestAcceptanceRlastSharedAcceptance2
-shared_quests_enabled (RsharedQuestsEnabled"’
+shared_quests_enabled (RsharedQuestsEnabledV
+last_exploration (2+.warcraftbuddy.quests.v1.ExplorationReceiptRlastExploration"—
+ExploreRequest
+
+session_id (	R	sessionId
+
+request_id (	R	requestId
+quest_id (RquestId,
+quest_log_revision (RquestLogRevision"‰
+ExplorationReceipt
+
+request_id (	R	requestId
+quest_id (RquestId
+
+trigger_id (R	triggerIdB
+status (2*.warcraftbuddy.quests.v1.ExplorationStatusRstatus+
+transport_written (RtransportWritten2
+baseline_log_revision (RbaselineLogRevision4
+confirmed_log_revision (RconfirmedLogRevision%
+lease_released (RleaseReleased
+failure	 (	Rfailure"’
 SharedQuestOffer
 sequence (Rsequence
 sharer_guid (R
@@ -460,7 +589,14 @@ session_id (	R	sessionId%
 ALREADY_IN_LOG
 SHARE_EXPIRED
 SHARE_LOG_FULL
-SHARE_ALREADY_REQUESTED	*g
+SHARE_ALREADY_REQUESTED	*Á
+ExplorationStatus
+EXPLORATION_NONE 
+EXPLORATION_REQUESTED
+EXPLORATION_CONFIRMED
+EXPLORATION_UNCONFIRMED!
+EXPLORATION_WRITE_UNCONFIRMED 
+EXPLORATION_ALREADY_COMPLETE*g
 SharedQuestKind
 SHARED_KIND_NONE 
 SHARED_DETAILS
@@ -472,7 +608,7 @@ session_id (	R	sessionId%
 REWARD_CONFIRMED
 REWARD_UNCONFIRMED
 REWARD_REJECTED
-REWARD_WRITE_UNCONFIRMED2ú
+REWARD_WRITE_UNCONFIRMED2Ø
 BuddyQuestsJ
 Discover.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseG
 State.google.protobuf.Empty&.warcraftbuddy.quests.v1.StateResponseX
@@ -482,5 +618,6 @@ session_id (	R	sessionId%
 AcceptShared+.warcraftbuddy.quests.v1.SharedQuestRequest(.warcraftbuddy.quests.v1.OperationResult\
 Journal'.warcraftbuddy.quests.v1.JournalRequest(.warcraftbuddy.quests.v1.JournalResponseZ
 TurnIn&.warcraftbuddy.quests.v1.TurnInRequest(.warcraftbuddy.quests.v1.OperationResult_
-ClaimReward&.warcraftbuddy.quests.v1.RewardRequest(.warcraftbuddy.quests.v1.OperationResultC
+ClaimReward&.warcraftbuddy.quests.v1.RewardRequest(.warcraftbuddy.quests.v1.OperationResult\
+Explore'.warcraftbuddy.quests.v1.ExploreRequest(.warcraftbuddy.quests.v1.OperationResultC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyBBZ@github.com/agent-wow/agent-wow/modules/buddy-quests/api;questsv1bproto3

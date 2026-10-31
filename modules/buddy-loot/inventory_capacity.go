@@ -80,7 +80,7 @@ func stoppedLootLease(a *actionsv1.State) bool {
 
 func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse {
 	baseline := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, baseline) != nil || !ownKnownFreeSlot(baseline, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), baseline) != nil || !ownKnownFreeSlot(baseline, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -101,8 +101,18 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 		s.finish(ctx)
 		return nil
 	}
+	if s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(baseline, preliminary, s.selfGUID, s.pendingGUID())) {
+		s.state.Reason = "fargodeep_loot_scope_changed_before_final_observation"
+		s.finish(ctx)
+		return nil
+	}
 	if s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease) != nil || lease.Token != s.token || !stoppedLootLease(lease.State) {
 		s.state.Reason = "loot_exact_owned_stopped_lease_required_before_open"
+		s.finish(ctx)
+		return nil
+	}
+	if s.questFargodeep && !s.fargodeepPartyCurrent(ctx) {
+		s.state.Reason = "fargodeep_party_changed_before_final_observation"
 		s.finish(ctx)
 		return nil
 	}
@@ -110,7 +120,7 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 	// from this response, against the renewed stopped position. A newer actual
 	// self position invalidates that position, even if the target remains near it.
 	w := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w) != nil || !ownKnownFreeSlot(w, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w) != nil || !ownKnownFreeSlot(w, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -143,7 +153,10 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
-	if !s.questWolf && !s.questColdridge {
+	if s.questFargodeep && !fargodeepLootContext(w, a, s.selfGUID, s.pendingGUID()) {
+		return false
+	}
+	if !s.questWolf && !s.questColdridge && !s.questFargodeep {
 		p, owner := a.Position, w.Owner
 		if !activeOwnerReady(w) || p == nil || !p.Known || !p.MapKnown || !owner.MapKnown || owner.MapId != p.MapId || !owner.PositionKnown {
 			return false

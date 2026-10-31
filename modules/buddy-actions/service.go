@@ -91,6 +91,8 @@ type Service struct {
 	followNav                                                followNavigation
 	meleeNav                                                 followNavigation
 	recovery                                                 deathRecovery
+	fargodeep                                                fargodeepEncounter
+	fargodeepSeen                                            map[uint64]bool
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -111,6 +113,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	s.updateClassLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	out.Recovery = s.recovery.snapshot(s.now())
+	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -197,6 +200,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	if r.Token != "" {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease expired; acquire a new lease")
+	}
+	if s.fargodeep.active {
+		return nil, status.Error(codes.FailedPrecondition, "coordinated encounter is active")
 	}
 	if s.state.CastPending || s.state.MotionUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "casting or movement state is unconfirmed")
@@ -360,6 +366,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.state.Reason = "follow_enabled_waiting_for_safe_observations"
 	} else {
 		s.state.Following = false
+		if s.fargodeep.active {
+			s.stopFargodeepLocked(ctx, "explicit_follow_stop")
+		}
 		s.formation.Reset()
 		s.followNav.Reset()
 		if s.explicitStopLocked(ctx) {
@@ -425,6 +434,9 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.failedAssistTarget = 0
 		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
 	} else {
+		if s.fargodeep.active {
+			s.stopFargodeepLocked(ctx, "explicit_assist_stop")
+		}
 		s.state.Reason = "assist_disabled"
 		// An explicit user disable authorizes one fresh stop attempt after an
 		// ambiguous write; ordinary controller ticks never retry that write.
@@ -493,6 +505,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.Healing = false
 	s.state.Assisting = false
 	s.state.Practicing = false
+	s.fargodeep.active = false
+	s.fargodeep.phase = "session_closing"
 	s.explicitStopLocked(ctx)
 	s.state.Reason = "session_closing"
 	return &emptypb.Empty{}, nil
@@ -628,6 +642,9 @@ func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
 func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) bool {
 	if s.session == nil {
 		s.state.Reason = "session_unavailable"
+		return false
+	}
+	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
 		return false
 	}
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
@@ -784,6 +801,9 @@ func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.closed && s.recoveryTickLocked(ctx) {
+		if s.fargodeep.active {
+			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
+		}
 		s.lastStep = s.now()
 		return
 	}
@@ -823,6 +843,9 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.closed {
 		return
+	}
+	if s.fargodeep.active && (!s.state.Assisting || !s.now().Before(s.assistUntil) || !s.now().Before(s.fargodeep.until)) {
+		s.stopFargodeepLocked(ctx, "authorization_expired")
 	}
 	if s.state.Practicing {
 		s.practiceTickLocked(ctx)
@@ -871,6 +894,9 @@ func (s *Service) Tick(ctx context.Context) {
 		s.stopLocked(ctx)
 		s.state.Assisting = false
 		s.stopAutoAttackLocked(ctx)
+		if s.fargodeep.active {
+			s.stopFargodeepLocked(ctx, "cast_result_timeout_no_retry")
+		}
 		s.pendingSpell = 0
 		s.pendingTarget = 0
 		s.state.Reason = "cast_result_timeout_no_retry"
@@ -895,6 +921,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.state.Healing && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
+		s.lastStep = now
+		return
+	}
+	if s.fargodeepTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

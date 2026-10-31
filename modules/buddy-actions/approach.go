@@ -77,6 +77,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	var targetRevision uint64
 	var targetKnown bool
 	coldridgeCorpse := false
+	fargodeepCorpse := false
 	coldridgeNavigationGoal := coldridgePracticeGoal{questID: 179}
 	if r.GameObjectGuid != 0 {
 		if s.navDataDir == "" {
@@ -128,7 +129,8 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		if s.coldridgeGoal.questID == 182 && !coldridgeCorpse {
 			return pause("loot_approach_bound_quest_182_scope_invalid")
 		}
-		if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse {
+		fargodeepCorpse = s.ownFargodeepCorpseLocked(ctx, w, corpse)
+		if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse && !fargodeepCorpse {
 			if reason := safePlayers(w, s.selfGUID); reason != "" {
 				return pause("loot_approach_" + reason)
 			}
@@ -147,6 +149,8 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		inside := finite
 		if coldridgeCorpse {
 			inside = coldridgeNavigationGoal.contains
+		} else if fargodeepCorpse {
+			inside = fargodeepArea
 		}
 		if !inside(s.pos) || !inside(target) {
 			return pause("loot_approach_outside_supported_navigation_area")
@@ -166,6 +170,14 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 			cancel()
 			if err == nil && (len(path) > 256 || distance(s.pos, path[0])+routeRemaining(path[0], path, 1) > 12) {
 				err = errors.New("nearby loot route exceeds12yd or256points")
+			}
+			if err == nil && fargodeepCorpse {
+				for _, p := range path {
+					if !fargodeepArea(p) {
+						err = errors.New("Fargodeep corpse route leaves its bound mission scene")
+						break
+					}
+				}
 			}
 			if err != nil {
 				s.state.NavAvailable = false
@@ -232,6 +244,30 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		s.state.Reason = "loot_approaching_client_navmesh_estimate"
 		return s.stateLocked(), nil
 	}
+}
+
+// Only the actual corpse of this body's retained, completed encounter waives
+// Joel's ordinary proximity gate. Completion of the two own collection quests
+// does not prevent clearing normal group loot needed by the other companions.
+func (s *Service) ownFargodeepCorpseLocked(ctx context.Context, w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
+	mission := &s.fargodeep
+	active, _ := ownFargodeepQuests(w)
+	if mission.active || mission.phase != "target_death_observed" || mission.target == 0 || mission.session == "" || !active || !fargodeepCharacter(w, s.selfGUID) || !fargodeepArea(s.pos) || corpse == nil || corpse.Guid != mission.target {
+		return false
+	}
+	p, known, _ := creaturePosition(corpse)
+	if !known || !fargodeepArea(p) || corpse.Guid>>48 != 0xf130 || corpse.Guid&0xffffff == 0 || uint32(corpse.Guid>>24&0xffffff) != corpse.Entry || (corpse.Entry != 40 && corpse.Entry != 475) || !corpse.Present || !corpse.MapKnown || corpse.MapId != 0 || !corpse.HealthKnown || corpse.Health != 0 || corpse.MaxHealth == 0 || !corpse.AliveKnown || corpse.Alive || !corpse.LevelKnown || corpse.Level < 5 || corpse.Level > 7 || !corpse.UnitFlagsKnown || !corpse.DynamicFlagsKnown || corpse.DynamicFlags&9 != 9 {
+		return false
+	}
+	if _, reason := s.fargodeepPartyLocked(ctx, w, mission.session, false, p); reason != "" {
+		return false
+	}
+	for _, guid := range []uint64{1, 4, 5} {
+		if player := observedHealingPlayer(w, guid); player == nil || player.UnitFlags&0x80000 != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Only corpses matching the explicitly bound170/183/182 combat goal enter this

@@ -50,6 +50,7 @@ type Service struct {
 	opened                                     bool
 	questWolf                                  bool
 	questColdridge                             bool
+	questFargodeep                             bool
 	coldridgeGoal                              coldridgeLootGoal
 	questGather                                bool
 	gatherCastCount                            byte
@@ -164,6 +165,7 @@ func (s *Service) releaseLease(ctx context.Context) {
 		s.token = ""
 		s.questWolf = false
 		s.questColdridge = false
+		s.questFargodeep = false
 		s.coldridgeGoal = coldridgeLootGoal{}
 	}
 }
@@ -194,6 +196,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.opened = false
 	s.questWolf = false
 	s.questColdridge = false
+	s.questFargodeep = false
 	s.coldridgeGoal = coldridgeLootGoal{}
 	if s.state.Enabled {
 		s.state.Phase = "idle"
@@ -450,7 +453,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		if s.state.Phase != "waiting_release" {
 			world := &worldv1.SnapshotResponse{}
-			if s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || world.Self.UnitFlags&0x80000 != 0 {
+			if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || world.Self.UnitFlags&0x80000 != 0 {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -464,6 +467,11 @@ func (s *Service) Tick(ctx context.Context) {
 				return
 			}
 			currentActions = active
+			if s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) {
+				s.state.Reason = "fargodeep_loot_scope_became_unsafe"
+				s.beginRelease(ctx)
+				return
+			}
 			if s.questColdridge {
 				if active.MotionUnconfirmed || !s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid) {
 					s.state.Reason = "coldridge_loot_scope_became_unsafe"
@@ -493,7 +501,7 @@ func (s *Service) Tick(ctx context.Context) {
 					return
 				}
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questFargodeep && fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -659,11 +667,11 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "loot_retired_source_bound_waiting_for_actual_new_life"
 		return
 	}
-	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) {
+	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
 	}
-	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) {
+	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
@@ -693,7 +701,8 @@ func (s *Service) Tick(ctx context.Context) {
 	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
 	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
 	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID)
-	if !ownerNearby && !wolfScope && !coldridgeScope {
+	fargodeepScope := ownFargodeepQuest(world, s.selfGUID) && actions.Fargodeep != nil && fargodeepLootContext(world, actions, s.selfGUID, actions.Fargodeep.TargetGuid) && s.fargodeepPartyCurrent(ctx)
+	if !ownerNearby && !wolfScope && !coldridgeScope && !fargodeepScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
 		return
 	}
@@ -705,7 +714,7 @@ func (s *Service) Tick(ctx context.Context) {
 			continue
 		}
 		goal, matchesColdridge := selectColdridgeLootGoal(world, s.selfGUID, c)
-		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) {
+		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !(fargodeepScope && c.Guid == actions.Fargodeep.TargetGuid) {
 			continue
 		}
 		if s.seen[c.Guid] || s.retired[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -738,13 +747,14 @@ func (s *Service) Tick(ctx context.Context) {
 	s.questWolf = selected.Entry == 299 && wolfScope
 	s.coldridgeGoal = selectedColdridgeGoal
 	s.questColdridge = selectedColdridgeGoal.questID != 0
-	if s.questWolf || s.questColdridge {
+	s.questFargodeep = fargodeepScope && selected.Guid == actions.Fargodeep.TargetGuid
+	if s.questWolf || s.questColdridge || s.questFargodeep {
 		selectedGUID := selected.Guid
 		fresh := &worldv1.SnapshotResponse{}
-		freshErr := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh)
+		freshErr := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{CreatureGuid: selectedGUID}, fresh)
 		// Independent Coldridge looting cannot rely on the position returned
 		// before the subsequent world observation completed.
-		if freshErr == nil && s.questColdridge {
+		if freshErr == nil && (s.questColdridge || s.questFargodeep) {
 			freshActions := &actionsv1.State{}
 			freshErr = s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, freshActions)
 			if freshErr == nil && (freshActions.InteractionOwner != "loot" || freshActions.InteractionLeaseRemainingMs < 1000) {
@@ -752,7 +762,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 			lease.State = freshActions
 		}
-		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) {
+		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) || s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(fresh, lease.State, s.selfGUID, selectedGUID)) {
 			s.releaseLease(ctx)
 			s.questWolf = false
 			s.questColdridge = false
@@ -763,7 +773,7 @@ func (s *Service) Tick(ctx context.Context) {
 		selected = nil
 		if len(fresh.LootableCorpses) <= 64 {
 			for _, c := range fresh.LootableCorpses {
-				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c)) {
+				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c) || s.questFargodeep && fargodeepLootContext(fresh, lease.State, s.selfGUID, selectedGUID)) {
 					selected = c
 					break
 				}

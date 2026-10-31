@@ -74,6 +74,34 @@ message StateResponse {
   SharedQuestOffer pending_share = 15;
   SharedQuestAcceptance last_shared_acceptance = 16;
   bool shared_quests_enabled = 17;
+  ExplorationReceipt last_exploration = 18;
+}
+// The first supported normal client area trigger is Fargodeep quest62/trigger88.
+// Callers select neither a raw trigger nor coordinates.
+message ExploreRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint32 quest_id = 3;
+  uint64 quest_log_revision = 4;
+}
+enum ExplorationStatus {
+  EXPLORATION_NONE = 0;
+  EXPLORATION_REQUESTED = 1;
+  EXPLORATION_CONFIRMED = 2;
+  EXPLORATION_UNCONFIRMED = 3;
+  EXPLORATION_WRITE_UNCONFIRMED = 4;
+  EXPLORATION_ALREADY_COMPLETE = 5;
+}
+message ExplorationReceipt {
+  string request_id = 1;
+  uint32 quest_id = 2;
+  uint32 trigger_id = 3;
+  ExplorationStatus status = 4;
+  bool transport_written = 5;
+  uint64 baseline_log_revision = 6;
+  uint64 confirmed_log_revision = 7;
+  bool lease_released = 8;
+  string failure = 9;
 }
 enum SharedQuestKind { SHARED_KIND_NONE = 0; SHARED_DETAILS = 1; PARTY_CONFIRM = 2; SHARED_AUTOCOMPLETE = 3; }
 message SharedQuestOffer {
@@ -230,5 +258,6 @@ service BuddyQuests {
   rpc Journal(JournalRequest) returns (JournalResponse);
   rpc TurnIn(TurnInRequest) returns (OperationResult);
   rpc ClaimReward(RewardRequest) returns (OperationResult);
+  rpc Explore(ExploreRequest) returns (OperationResult);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

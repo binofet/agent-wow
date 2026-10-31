@@ -80,7 +80,7 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		s.stopPracticeLocked(ctx, "disabled")
 		return s.stateLocked(), nil
 	}
-	if s.state.InteractionOwner != "" || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
+	if s.fargodeep.active || s.state.InteractionOwner != "" || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "practice requires confirmed idle action ownership")
 	}
 	w, err := s.snapshot(ctx)

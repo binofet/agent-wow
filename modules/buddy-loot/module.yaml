@@ -1,7 +1,7 @@
 api_version: 1
 enabled: true
 description: Explicitly enabled automatic nearby ordinary corpse loot and own Milly harvest quest crates with bounded leases and server item receipts
-requires: [buddy-world, buddy-actions]
+requires: [buddy-world, buddy-actions, buddy-party]
 compose:
   file: compose.yaml
   service: module

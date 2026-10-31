@@ -31,10 +31,25 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ù4
+Á9
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
-enabled (Renabled"÷
+enabled (Renabled"×
+FargodeepEncounterRequest
+enabled (Renabled
+target_guid (R
+targetGuid!
+engager_guid (RengagerGuid=
+expected_quest_log_revision (RexpectedQuestLogRevision
+
+session_id (	R	sessionId"®
+FargodeepEncounterState
+active (Ractive
+target_guid (R
+targetGuid!
+engager_guid (RengagerGuid
+phase (	Rphase!
+remaining_ms (RremainingMs"÷
 ClientPosition
 known (Rknown
 	map_known (RmapKnown
@@ -100,7 +115,7 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"
+verified_legs (RverifiedLegs"á
 State
 	following (R	following
 healing (Rhealing
@@ -178,7 +193,8 @@ practicing%
 shadow_bolt_damage_totalA (RshadowBoltDamageTotal/
 interaction_harvestB (RinteractionHarvest.
 harvest_guard_guidsC (RharvestGuardGuidsC
-recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecovery2°
+recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryO
+	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeep2œ
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -194,7 +210,8 @@ practicing%
 TravelVendor..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateV
 TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.StateX
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
-Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateT
+Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.Statej
+FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

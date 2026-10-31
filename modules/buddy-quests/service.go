@@ -42,6 +42,7 @@ type Service struct {
 	turnIn                              turnInRuntime
 	journal                             journalRuntime
 	shares                              sharedQuestRuntime
+	explorationRequest                  *questsv1.ExploreRequest
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -83,6 +84,7 @@ func (s *Service) world(ctx context.Context) (*worldv1.SnapshotResponse, error) 
 	s.applyLogLocked(result)
 	s.applySharedLogLocked()
 	s.applyRewardWorldLocked(result)
+	s.applyExplorationLocked()
 	s.mu.Unlock()
 	return result, nil
 }

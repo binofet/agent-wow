@@ -17,6 +17,7 @@ rpc:
   journal: /warcraftbuddy.quests.v1.BuddyQuests/Journal
   turn_in: /warcraftbuddy.quests.v1.BuddyQuests/TurnIn
   claim_reward: /warcraftbuddy.quests.v1.BuddyQuests/ClaimReward
+  explore: /warcraftbuddy.quests.v1.BuddyQuests/Explore
 packets:
   SMSG_QUESTGIVER_STATUS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_QUESTGIVER_QUEST_LIST: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
