@@ -729,20 +729,22 @@ func (s *Service) Tick(ctx context.Context) {
 	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
 	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
 	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID)
-	fargodeepScope := ownFargodeepQuest(world, s.selfGUID) && actions.Fargodeep != nil && fargodeepLootContext(world, actions, s.selfGUID, actions.Fargodeep.TargetGuid) && s.fargodeepPartyCurrent(ctx)
+	fargodeepScope := ownFargodeepQuest(world, s.selfGUID) && s.fargodeepPartyCurrent(ctx)
 	if !ownerNearby && !wolfScope && !coldridgeScope && !fargodeepScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
 		return
 	}
 	var selected *worldv1.CreatureState
 	var selectedColdridgeGoal coldridgeLootGoal
+	selectedFargodeep := false
 	best := math.Inf(1)
 	for _, c := range world.LootableCorpses {
 		if c == nil {
 			continue
 		}
 		goal, matchesColdridge := selectColdridgeLootGoal(world, s.selfGUID, c)
-		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !(fargodeepScope && c.Guid == actions.Fargodeep.TargetGuid) {
+		matchesFargodeep := fargodeepScope && fargodeepLootSelection(world, actions, s.selfGUID, c.Guid)
+		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !matchesFargodeep {
 			continue
 		}
 		if s.seen[c.Guid] || s.retired[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -753,6 +755,7 @@ func (s *Service) Tick(ctx context.Context) {
 		if d < best {
 			best = d
 			selected = c
+			selectedFargodeep = matchesFargodeep
 			selectedColdridgeGoal = coldridgeLootGoal{}
 			if coldridgeScope && matchesColdridge {
 				selectedColdridgeGoal = goal
@@ -775,7 +778,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.questWolf = selected.Entry == 299 && wolfScope
 	s.coldridgeGoal = selectedColdridgeGoal
 	s.questColdridge = selectedColdridgeGoal.questID != 0
-	s.questFargodeep = fargodeepScope && selected.Guid == actions.Fargodeep.TargetGuid
+	s.questFargodeep = selectedFargodeep
 	if s.questWolf || s.questColdridge || s.questFargodeep {
 		selectedGUID := selected.Guid
 		fresh := &worldv1.SnapshotResponse{}
@@ -790,7 +793,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 			lease.State = freshActions
 		}
-		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) || s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootContext(fresh, lease.State, s.selfGUID, selectedGUID)) {
+		if freshErr != nil || lease.State.MotionUnconfirmed || s.questWolf && !wolfQuestContext(fresh, lease.State.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(fresh, lease.State.Position, s.selfGUID, selectedGUID) || s.questFargodeep && (!s.fargodeepPartyCurrent(ctx) || !fargodeepLootSelection(fresh, lease.State, s.selfGUID, selectedGUID)) {
 			s.releaseLease(ctx)
 			s.questWolf = false
 			s.questColdridge = false
@@ -801,7 +804,7 @@ func (s *Service) Tick(ctx context.Context) {
 		selected = nil
 		if len(fresh.LootableCorpses) <= 64 {
 			for _, c := range fresh.LootableCorpses {
-				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c) || s.questFargodeep && fargodeepLootContext(fresh, lease.State, s.selfGUID, selectedGUID)) {
+				if c != nil && c.Guid == selectedGUID && (s.questWolf && c.Entry == 299 || s.questColdridge && s.coldridgeGoal.matchesCorpse(c) || s.questFargodeep && fargodeepLootSelection(fresh, lease.State, s.selfGUID, selectedGUID)) {
 					selected = c
 					break
 				}

@@ -72,6 +72,7 @@ type Service struct {
 	autoTarget                                               uint64
 	autoStopping                                             bool
 	questApproaching                                         bool
+	lootApproachGuard                                        func(context.Context, *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool)
 	approachDelay                                            func(context.Context, time.Duration) error
 	navDataDir                                               string
 	planPath                                                 func(context.Context, string, position, position) ([]position, error)
@@ -679,6 +680,16 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 	// revision. A STOP is rebased to the fresh observation instead of replaying
 	// an old map's coordinates.
 	w, snapshotErr := s.snapshot(ctx)
+	// An owned corpse approach rechecks party and corpse authority after the
+	// clock callback. STOP remains available after that authority is revoked.
+	if moving && s.lootApproachGuard != nil {
+		var allowed bool
+		w, allowed = s.lootApproachGuard(ctx, w)
+		if !allowed {
+			s.state.Reason = "loot_approach_authority_changed_before_movement"
+			return false
+		}
+	}
 	if snapshotErr != nil {
 		// Visibility/RPC loss must still permit one bounded STOP of movement
 		// already written at the last known position. It never permits travel.

@@ -138,6 +138,9 @@ func TestFargodeepLootRejectsUnboundForeignUnsafeAndUnknownCorpses(t *testing.T)
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := fargodeepLootRig(t)
+			if name == "wrong_target" || name == "wrong_phase" || name == "wrong_engager" {
+				f.world.SelfQuestLog[0].Complete, f.world.SelfQuestLog[0].State = true, 1
+			}
 			change(s, f)
 			enable(t, s)
 			s.Tick(context.Background())
@@ -229,7 +232,7 @@ func TestFargodeepApproachRechecksBeforeTheLootOpen(t *testing.T) {
 		s, f, advance := fargodeepLootRig(t)
 		f.world.LootableCorpses[0].X = -9790
 		if fail {
-			f.afterApproach = func() { f.actions.Fargodeep.Phase = "owner_returned" }
+			f.afterApproach = func() { f.world.SelfQuestLog[0].QuestId = 7 }
 		}
 		enable(t, s)
 		s.Tick(context.Background())

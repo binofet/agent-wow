@@ -153,7 +153,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
-	if s.questFargodeep && !fargodeepLootContext(w, a, s.selfGUID, s.pendingGUID()) {
+	if s.questFargodeep && !fargodeepLootSelection(w, a, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
 	if !s.questWolf && !s.questColdridge && !s.questFargodeep {

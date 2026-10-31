@@ -138,6 +138,13 @@ func TestFargodeepCorpseApproachRejectsEveryUnboundOrUnsafeException(t *testing.
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f, c, r, _ := fargodeepApproachRig(t, 5)
+			if name == "wrong target" || name == "wrong phase" || name == "old session" {
+				// COMPLETE needs the legacy exact retained encounter. Incomplete
+				// own quests separately authorize actual incidental party corpses.
+				for _, q := range f.world.SelfQuestLog[:2] {
+					q.Complete, q.State = true, 1
+				}
+			}
 			change(s, f, c, r)
 			out, err := s.ApproachLoot(context.Background(), r)
 			if (err == nil && out.Moving) || len(f.packets) != 0 {

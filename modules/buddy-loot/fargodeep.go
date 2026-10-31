@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"math"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
@@ -10,13 +11,18 @@ import (
 )
 
 func ownFargodeepQuest(w *worldv1.SnapshotResponse, self uint64) bool {
+	active, _ := ownFargodeepQuestProgress(w, self)
+	return active
+}
+
+func ownFargodeepQuestProgress(w *worldv1.SnapshotResponse, self uint64) (active, incomplete bool) {
 	if self != 1 && self != 4 && self != 5 || w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.MapKnown || w.Self.MapId != 0 || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
-		return false
+		return false, false
 	}
 	slots, ids, found := [25]bool{}, map[uint32]bool{}, false
 	for _, q := range w.SelfQuestLog {
 		if q == nil || q.Slot >= 25 || slots[q.Slot] || q.QuestId != 0 && ids[q.QuestId] {
-			return false
+			return false, false
 		}
 		slots[q.Slot] = true
 		if q.QuestId != 0 {
@@ -24,21 +30,33 @@ func ownFargodeepQuest(w *worldv1.SnapshotResponse, self uint64) bool {
 		}
 		if (q.QuestId == 47 || q.QuestId == 60) && !q.Failed && q.State&2 == 0 {
 			found = true // COMPLETE remains eligible while peers collect their items.
+			incomplete = incomplete || !q.Complete && q.State&1 == 0
 		}
 	}
-	return found
+	return found, incomplete
 }
 
 func fargodeepLootPoint(x, y, z float32) bool {
 	return x >= -10000 && x <= -9700 && y >= 50 && y <= 320 && z >= -10 && z <= 65
 }
 
-// This is the observed corpse from this body's completed finite encounter, not
-// a general exception for arbitrary dead kobolds or another character's quest.
+func fargodeepRetainedLoot(a *actionsv1.State, target uint64) bool {
+	return a != nil && a.Fargodeep != nil && !a.Fargodeep.Active && a.Fargodeep.TargetGuid == target && target != 0 && a.Fargodeep.Phase == "target_death_observed" && (a.Fargodeep.EngagerGuid == 1 || a.Fargodeep.EngagerGuid == 4 || a.Fargodeep.EngagerGuid == 5)
+}
+
+// New incidental sources require an incomplete own collection quest. An exact
+// retained encounter keeps its previous COMPLETE-quest round-robin behavior.
+func fargodeepLootSelection(w *worldv1.SnapshotResponse, a *actionsv1.State, self, target uint64) bool {
+	_, incomplete := ownFargodeepQuestProgress(w, self)
+	return (incomplete || fargodeepRetainedLoot(a, target)) && fargodeepLootContext(w, a, self, target)
+}
+
+// Actual public corpse and recipient-rights observations authorize ordinary
+// looting, without inventing a prior kill receipt. The operation binds one GUID.
 // LOOTABLE is checked separately by eligibleWithin before opening. It may clear
 // after the last item while the actual item/release receipts are still pending.
 func fargodeepLootContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self, target uint64) bool {
-	if !ownFargodeepQuest(w, self) || a == nil || a.MotionUnconfirmed || !safeOwnQuestLootContext(w, a.Position) || a.Fargodeep == nil || a.Fargodeep.Active || a.Fargodeep.TargetGuid != target || a.Fargodeep.Phase != "target_death_observed" || a.Fargodeep.EngagerGuid != 1 && a.Fargodeep.EngagerGuid != 4 && a.Fargodeep.EngagerGuid != 5 || !fargodeepLootPoint(a.Position.X, a.Position.Y, a.Position.Z) {
+	if !ownFargodeepQuest(w, self) || a == nil || target == 0 || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Practicing || a.GetRecovery().GetActive() || a.GetFargodeep().GetActive() || a.InteractionOwner != "" && a.InteractionOwner != "loot" || (a.Moving || a.Traveling) && a.InteractionOwner != "loot" || !safeOwnQuestLootContext(w, a.Position) || !fargodeepLootPoint(a.Position.X, a.Position.Y, a.Position.Z) {
 		return false
 	}
 	if o := w.Owner; o != nil && o.Present && (o.Guid != 3 || !o.UnitFlagsKnown || o.UnitFlags&0x80000 != 0) {
@@ -58,7 +76,17 @@ func fargodeepLootContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self,
 	}
 	for _, guid := range []uint64{1, 4, 5} {
 		p := players[guid]
-		if p == nil || !p.Present || !p.MapKnown || p.MapId != 0 || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&0x80000 != 0 {
+		const unsafe = uint32(0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
+		if p == nil || !p.Present || !p.MapKnown || p.MapId != 0 || !p.PositionKnown || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || p.MaxHealth == 0 || p.Health > p.MaxHealth || uint64(p.Health)*100 < uint64(p.MaxHealth)*85 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || p.PlayerFlags&2 != 0 || !p.MovementFlagsKnown || p.ExtraMovementFlags != 0 || p.MovementFlags&^uint32(0x1ff) != 0 || guid != self && p.MovementFlags&0x1ff != 0 {
+			return false
+		}
+		x, y, z := p.X, p.Y, p.Z
+		if guid == self {
+			x, y, z = a.Position.X, a.Position.Y, a.Position.Z
+		}
+		dx, dy, dz := float64(x-a.Position.X), float64(y-a.Position.Y), float64(z-a.Position.Z)
+		d := dx*dx + dy*dy + dz*dz
+		if math.IsNaN(d) || math.IsInf(d, 0) || d > 35*35 {
 			return false
 		}
 	}
@@ -91,8 +119,8 @@ func fargodeepLootContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self,
 	return known && fargodeepLootPoint(x, y, z)
 }
 
-// The retained encounter receipt is necessary but cannot authorize acting after
-// a party or body change. This read always precedes the final world response.
+// Neither a quest nor a retained encounter authorizes acting after a party or
+// body change. This read always precedes the final world response.
 func (s *Service) fargodeepPartyCurrent(ctx context.Context) bool {
 	p := &partyv1.StateResponse{}
 	if s.state.SessionId == "" || s.invoke(ctx, "buddy-party", "state", &emptypb.Empty{}, p) != nil || p.SessionId != s.state.SessionId || p.Group == nil || !p.Group.Known || !p.Group.InGroup || p.Group.GroupGuid == 0 || len(p.Group.Members) < 3 || len(p.Group.Members) > 40 {

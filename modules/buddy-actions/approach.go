@@ -235,7 +235,17 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		} else {
 			p.o = followFacing(p, route.path[index])
 		}
+		if fargodeepCorpse {
+			previous := s.lootApproachGuard
+			s.lootApproachGuard = func(call context.Context, current *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
+				return s.fargodeepApproachCurrentLocked(call, r, route, current)
+			}
+			defer func() { s.lootApproachGuard = previous }()
+		}
 		if !s.movementLocked(ctx, op, p, true) {
+			if fargodeepCorpse && s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) == 1 {
+				return pause(s.state.Reason)
+			}
 			return s.stateLocked(), nil
 		}
 		if distance(s.pos, target) <= 3.01 && routeRemaining(s.pos, route.path, index) <= 3.01 {
@@ -246,28 +256,99 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 	}
 }
 
-// Only the actual corpse of this body's retained, completed encounter waives
-// Joel's ordinary proximity gate. Completion of the two own collection quests
-// does not prevent clearing normal group loot needed by the other companions.
+// An incomplete own collection goal may approach an actually lootable party
+// corpse. COMPLETE goals retain only the exact completed encounter exception.
 func (s *Service) ownFargodeepCorpseLocked(ctx context.Context, w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
+	if !s.fargodeepCorpseScopeLocked(w, corpse) {
+		return false
+	}
+	return s.fargodeepCorpsePartySafeLocked(w, s.fargodeepCorpsePartyLocked(ctx, w, corpse))
+}
+
+func (s *Service) fargodeepCorpseScopeLocked(w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
 	mission := &s.fargodeep
-	active, _ := ownFargodeepQuests(w)
-	if mission.active || mission.phase != "target_death_observed" || mission.target == 0 || mission.session == "" || !active || !fargodeepCharacter(w, s.selfGUID) || !fargodeepArea(s.pos) || corpse == nil || corpse.Guid != mission.target {
+	active, incomplete := ownFargodeepQuests(w)
+	retained := corpse != nil && !mission.active && mission.phase == "target_death_observed" && mission.target == corpse.Guid && mission.session != ""
+	if s.independent || mission.active || !active || !incomplete && !retained || !fargodeepCharacter(w, s.selfGUID) || !fargodeepArea(s.pos) || corpse == nil || s.state.Practicing || s.state.GetRecovery().GetActive() {
 		return false
 	}
 	p, known, _ := creaturePosition(corpse)
 	if !known || !fargodeepArea(p) || corpse.Guid>>48 != 0xf130 || corpse.Guid&0xffffff == 0 || uint32(corpse.Guid>>24&0xffffff) != corpse.Entry || (corpse.Entry != 40 && corpse.Entry != 475) || !corpse.Present || !corpse.MapKnown || corpse.MapId != 0 || !corpse.HealthKnown || corpse.Health != 0 || corpse.MaxHealth == 0 || !corpse.AliveKnown || corpse.Alive || !corpse.LevelKnown || corpse.Level < 5 || corpse.Level > 7 || !corpse.UnitFlagsKnown || !corpse.DynamicFlagsKnown || corpse.DynamicFlags&9 != 9 {
 		return false
 	}
-	if _, reason := s.fargodeepPartyLocked(ctx, w, mission.session, false, p); reason != "" {
-		return false
+	return true
+}
+
+func (s *Service) fargodeepCorpsePartyLocked(ctx context.Context, w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) map[uint64]bool {
+	_, incomplete := ownFargodeepQuests(w)
+	mission := &s.fargodeep
+	retained := corpse != nil && !mission.active && mission.phase == "target_death_observed" && mission.target == corpse.Guid && mission.session != ""
+	if retained && !incomplete {
+		p, _, _ := creaturePosition(corpse)
+		online, reason := s.fargodeepPartyLocked(ctx, w, mission.session, false, p)
+		if reason != "" {
+			return nil
+		}
+		return online
 	}
+	return s.healingPartyLocked(ctx)
+}
+
+func (s *Service) fargodeepCorpsePartySafeLocked(w *worldv1.SnapshotResponse, online map[uint64]bool) bool {
 	for _, guid := range []uint64{1, 4, 5} {
-		if player := observedHealingPlayer(w, guid); player == nil || player.UnitFlags&0x80000 != 0 {
+		player := observedHealingPlayer(w, guid)
+		if !online[guid] || !safeHealingPlayer(player, 0) || !player.HealthKnown || player.MaxHealth == 0 || player.Health > player.MaxHealth || uint64(player.Health)*100 < uint64(player.MaxHealth)*85 || player.UnitFlags&0x80000 != 0 || player.PlayerFlags&2 != 0 || !player.ClassKnown || player.ClassId != map[uint64]uint32{1: 5, 4: 8, 5: 4}[guid] || !player.LevelKnown || player.Level < 4 || player.Level > 10 || guid != s.selfGUID && player.MovementFlags&0x1ff != 0 {
+			return false
+		}
+		pos := playerPosition(player)
+		if guid == s.selfGUID {
+			pos = s.pos
+		}
+		if distance(s.pos, pos) > 35 {
 			return false
 		}
 	}
 	return true
+}
+
+// Membership is read before the last world snapshot, so a party callback cannot
+// hide a newly observed combat/health/target change behind an older world read.
+func (s *Service) fargodeepApproachCurrentLocked(ctx context.Context, r *actionsv1.ApproachLootRequest, route *lootApproachNavigation, current *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
+	if current == nil || !s.fargodeepCorpseScopeLocked(current, approachCorpse(current, r.CorpseGuid)) {
+		return nil, false
+	}
+	_, wasIncomplete := ownFargodeepQuests(current)
+	online := s.fargodeepCorpsePartyLocked(ctx, current, approachCorpse(current, r.CorpseGuid))
+	w, err := s.snapshot(ctx, r.CorpseGuid)
+	if err != nil || w == nil || safeQuestCharacter(w, s.selfGUID) != "" || ctx.Err() != nil || s.closed || s.state.InteractionOwner != "loot" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 || !s.now().Before(s.interactionUntil) || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 {
+		return nil, false
+	}
+	_, incomplete := ownFargodeepQuests(w)
+	corpse := approachCorpse(w, r.CorpseGuid)
+	if wasIncomplete && !incomplete || !s.fargodeepCorpseScopeLocked(w, corpse) || !s.fargodeepCorpsePartySafeLocked(w, online) || w.Self.MapId != route.mapID || w.Self.PositionRevision != route.selfRevision || s.posMap != route.mapID || s.positionRevision != route.selfRevision || distance(s.pos, route.start) > .05 || corpse.PositionRevision != route.targetRevision {
+		return nil, false
+	}
+	target, known, _ := creaturePosition(corpse)
+	if !known || distance(target, route.target) > .01 || distance(s.pos, target) > 12 || math.Abs(float64(target.z-s.pos.z)) > 1.5 {
+		return nil, false
+	}
+	return w, true
+}
+
+func approachCorpse(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureState {
+	if w == nil || len(w.LootableCorpses) > 64 {
+		return nil
+	}
+	var found *worldv1.CreatureState
+	for _, c := range w.LootableCorpses {
+		if c != nil && c.Guid == guid {
+			if found != nil {
+				return nil
+			}
+			found = c
+		}
+	}
+	return found
 }
 
 // Only corpses matching the explicitly bound170/183/182 combat goal enter this
