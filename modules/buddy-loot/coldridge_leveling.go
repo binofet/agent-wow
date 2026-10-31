@@ -137,7 +137,13 @@ func coldridgeLevelingContext(w *worldv1.SnapshotResponse, a *actionsv1.State, s
 	return g.baselineContainsPoint(w.Self.X, w.Self.Y, w.Self.Z) && g.containsPoint(a.Position.X, a.Position.Y, a.Position.Z)
 }
 
-func selectColdridgeLootGoalWithActions(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, c *worldv1.CreatureState) (coldridgeLootGoal, bool) {
+func selectColdridgeLootGoalWithActions(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, c *worldv1.CreatureState, session ...string) (coldridgeLootGoal, bool) {
+	if a != nil && a.RoadClear != nil {
+		if len(session) != 1 || a.ColdridgeLeveling != nil {
+			return coldridgeLootGoal{}, false
+		}
+		return selectRoadClearLootGoal(w, a, self, session[0], c)
+	}
 	if a != nil && a.ColdridgeLeveling != nil {
 		if coldridgeLevelingContext(w, a, self) && c != nil && c.Guid == a.ColdridgeLeveling.SourceGuid && w.Self.Level >= c.Level {
 			g := coldridgeLootGoal{corpseGUID: c.Guid, positionRevision: w.Self.PositionRevision, levelingRequest: a.ColdridgeLeveling.RequestId, levelingLevel: c.Level, levelingMaxHP: c.MaxHealth}
@@ -154,6 +160,12 @@ func selectColdridgeLootGoalWithActions(w *worldv1.SnapshotResponse, a *actionsv
 // validation stays unchanged; leveling never falls through to a quest or owner.
 func (g *coldridgeLootGoal) contextWithActions(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, pendingGUID uint64) bool {
 	if g == nil || a == nil {
+		return false
+	}
+	if g.roadRequest != "" {
+		return a.ColdridgeLeveling == nil && g.roadContext(w, a, self, pendingGUID)
+	}
+	if a.RoadClear != nil {
 		return false
 	}
 	if g.levelingRequest == "" {

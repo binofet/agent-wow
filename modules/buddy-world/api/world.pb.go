@@ -924,13 +924,20 @@ type SnapshotRequest struct {
 	// Optional exact lookup in the existing creature cache; zero requests none.
 	// This never changes the cache, discovery ranking or observed positions.
 	CreatureGuid uint64 `protobuf:"varint,1,opt,name=creature_guid,json=creatureGuid,proto3" json:"creature_guid,omitempty"`
-	// Optional exact-entry filters in existing bounded caches; zero requests none.
+	// Optional exact-entry filters in existing bounded caches; zero disables each.
 	CreatureEntry   uint32 `protobuf:"varint,2,opt,name=creature_entry,json=creatureEntry,proto3" json:"creature_entry,omitempty"`
 	GameObjectEntry uint32 `protobuf:"varint,3,opt,name=game_object_entry,json=gameObjectEntry,proto3" json:"game_object_entry,omitempty"`
 	// Optional bounded discovery from actual cached same-map type3 objects.
 	// Raw server distance only orders candidates; the current client position
 	// and public template proof remain required before approach or gathering.
 	IncludeGatheringObjects bool `protobuf:"varint,4,opt,name=include_gathering_objects,json=includeGatheringObjects,proto3" json:"include_gathering_objects,omitempty"`
+	// Optional observed faction-template filter for present creatures. Requires
+	// the own current map; excludes known foreign maps, retaining unknown maps
+	// as uncertainty that callers must qualify.
+	// Nonzero creature_entry and faction filters are conjunctive. Both zero
+	// requests no requested_creatures; this never queries the realm or reranks
+	// nearby_creatures. A full32 result may be truncated and is not exhaustive.
+	CreatureFactionTemplate uint32 `protobuf:"varint,5,opt,name=creature_faction_template,json=creatureFactionTemplate,proto3" json:"creature_faction_template,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -991,6 +998,13 @@ func (x *SnapshotRequest) GetIncludeGatheringObjects() bool {
 		return x.IncludeGatheringObjects
 	}
 	return false
+}
+
+func (x *SnapshotRequest) GetCreatureFactionTemplate() uint32 {
+	if x != nil {
+		return x.CreatureFactionTemplate
+	}
+	return 0
 }
 
 type GameObjectState struct {
@@ -2180,7 +2194,9 @@ type SnapshotResponse struct {
 	SpellFocuses []*GameObjectState `protobuf:"bytes,30,rep,name=spell_focuses,json=spellFocuses,proto3" json:"spell_focuses,omitempty"`
 	// At most4 present type17/entry35591 bobbers with actual createdBy=self.
 	OwnFishingBobbers []*GameObjectState `protobuf:"bytes,31,rep,name=own_fishing_bobbers,json=ownFishingBobbers,proto3" json:"own_fishing_bobbers,omitempty"`
-	// At most32 present exact-entry matches, retaining actual positions and ages.
+	// At most32 present requested entry/faction matches with actual positions/ages.
+	// Faction-filtered matches require an observed faction and own known map;
+	// creatures on unknown maps remain visible, known foreign maps are excluded.
 	RequestedCreatures   []*CreatureState   `protobuf:"bytes,32,rep,name=requested_creatures,json=requestedCreatures,proto3" json:"requested_creatures,omitempty"`
 	RequestedGameObjects []*GameObjectState `protobuf:"bytes,33,rep,name=requested_game_objects,json=requestedGameObjects,proto3" json:"requested_game_objects,omitempty"`
 	// True only with coherent private own slot references and all equipped bag
@@ -2676,12 +2692,13 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
-	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\xc5\x01\n" +
+	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x81\x02\n" +
 	"\x0fSnapshotRequest\x12#\n" +
 	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\x12%\n" +
 	"\x0ecreature_entry\x18\x02 \x01(\rR\rcreatureEntry\x12*\n" +
 	"\x11game_object_entry\x18\x03 \x01(\rR\x0fgameObjectEntry\x12:\n" +
-	"\x19include_gathering_objects\x18\x04 \x01(\bR\x17includeGatheringObjects\"\xdd\x05\n" +
+	"\x19include_gathering_objects\x18\x04 \x01(\bR\x17includeGatheringObjects\x12:\n" +
+	"\x19creature_faction_template\x18\x05 \x01(\rR\x17creatureFactionTemplate\"\xdd\x05\n" +
 	"\x0fGameObjectState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +

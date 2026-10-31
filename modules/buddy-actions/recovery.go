@@ -72,6 +72,9 @@ func (s *Service) Recovery(ctx context.Context, request *actionsv1.ToggleRequest
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
 	r := &s.recovery
+	if request.Enabled && s.road.active {
+		return nil, status.Error(codes.FailedPrecondition, "road-clear operation is active")
+	}
 	if request.Enabled {
 		wasEnabled := r.state.Enabled
 		r.state.Enabled = true

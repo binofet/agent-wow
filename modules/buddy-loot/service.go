@@ -60,6 +60,7 @@ type Service struct {
 	inventoryWriteRevision                     uint64
 	rejectedInventoryRevision                  uint64
 	levelingRequests                           map[string]coldridgeLevelingLootRequest
+	roadRequests                               map[string]*roadLootRequest
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -149,12 +150,24 @@ func (s *Service) invoke(ctx context.Context, module, method string, in, out pro
 	if err := result.Result.UnmarshalTo(out); err != nil {
 		return err
 	}
+	if module == "buddy-world" {
+		if w, ok := out.(*worldv1.SnapshotResponse); ok {
+			// Observe the epoch before capacity or safety checks can finish early.
+			// These bounded records survive finish and all share this own session;
+			// no polling timestamp or observed gameplay fact is refreshed here.
+			for _, record := range s.roadRequests {
+				roadRequestEpoch(record, w)
+			}
+		}
+	}
 	if module == "buddy-actions" {
 		switch a := out.(type) {
 		case *actionsv1.State:
 			s.noteLevelingLootTTL(before, a)
+			s.noteRoadLootTTL(before, a)
 		case *actionsv1.InteractionLease:
 			s.noteLevelingLootTTL(before, a.State)
+			s.noteRoadLootTTL(before, a.State)
 		}
 	}
 	return nil
@@ -163,7 +176,7 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	if s.session == nil {
 		return false
 	}
-	if !s.levelingPacketAllowed(op) {
+	if !s.levelingPacketAllowed(op) || !s.roadPacketAllowed(op) {
 		return false
 	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
@@ -676,18 +689,35 @@ func (s *Service) Tick(ctx context.Context) {
 			delete(s.seen, guid)
 		}
 	}
-	if s.tryGatherLocked(ctx, world) {
+	// A published road operation cannot borrow a quest-object or nearby-owner
+	// path. Read its intent before either path; an unavailable proof fails closed
+	// for this own profile. Reuse this response for corpse selection below.
+	var actions *actionsv1.State
+	actionsBefore := s.now()
+	if self := world.Self; self != nil && self.ClassKnown && self.ClassId == 9 && self.LevelKnown && self.Level == 5 {
+		actions = &actionsv1.State{}
+		if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, actions) != nil {
+			s.state.Reason = "road_clear_intent_unavailable_no_ambient_fallback"
+			return
+		}
+		if actions.RoadClear != nil && (!s.roadPreflightEpoch(world, actions.RoadClear, actionsBefore) || !roadClearLootReceipt(world, actions, s.selfGUID, s.state.SessionId)) {
+			s.state.Reason = "road_clear_handoff_unavailable_no_owner_or_quest_fallback"
+			return
+		}
+	}
+	if (actions == nil || actions.RoadClear == nil) && s.tryGatherLocked(ctx, world) {
 		return
 	}
 	if len(s.retired) >= maxRetiredLootSources {
 		s.state.Reason = "loot_retired_source_bound_waiting_for_actual_new_life"
 		return
 	}
-	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) {
+	roadScope := actions != nil && actions.RoadClear != nil && roadClearLootReceipt(world, actions, s.selfGUID, s.state.SessionId)
+	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
 	}
-	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) {
+	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
@@ -709,21 +739,29 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "invalid_corpse_observation_count"
 		return
 	}
-	actions := &actionsv1.State{}
-	actionsBefore := s.now()
-	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, actions); err != nil {
-		s.state.Reason = "client_position_unavailable"
-		return
+	if actions == nil {
+		actions = &actionsv1.State{}
+		actionsBefore = s.now()
+		if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, actions); err != nil {
+			s.state.Reason = "client_position_unavailable"
+			return
+		}
 	}
 	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
 	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
 	levelingMode := actions.ColdridgeLeveling != nil
+	roadMode := actions.RoadClear != nil
+	roadScope = roadMode && roadClearLootReceipt(world, actions, s.selfGUID, s.state.SessionId)
+	if roadMode && (!s.roadPreflightEpoch(world, actions.RoadClear, actionsBefore) || !roadScope || levelingMode) {
+		s.state.Reason = "road_clear_handoff_unavailable_no_owner_or_quest_fallback"
+		return
+	}
 	levelingScope := !actions.MotionUnconfirmed && coldridgeLevelingContext(world, actions, s.selfGUID)
 	if levelingMode && !levelingScope {
 		s.state.Reason = "coldridge_leveling_handoff_unavailable_no_owner_fallback"
 		return
 	}
-	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID) || levelingScope
+	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID) || levelingScope || roadScope
 	fargodeepScope := ownFargodeepQuest(world, s.selfGUID) && actions.Fargodeep != nil && fargodeepLootContext(world, actions, s.selfGUID, actions.Fargodeep.TargetGuid) && s.fargodeepPartyCurrent(ctx)
 	if !ownerNearby && !wolfScope && !coldridgeScope && !fargodeepScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
@@ -736,7 +774,10 @@ func (s *Service) Tick(ctx context.Context) {
 		if c == nil {
 			continue
 		}
-		goal, matchesColdridge := selectColdridgeLootGoalWithActions(world, actions, s.selfGUID, c)
+		goal, matchesColdridge := selectColdridgeLootGoalWithActions(world, actions, s.selfGUID, c, s.state.SessionId)
+		if roadMode && (!matchesColdridge || goal.roadRequest == "" || !eligible(world.Self, actions.Position, c) || !s.bindRoadLootDeadline(&goal, actionsBefore, actions.RoadClear.RemainingMs)) {
+			continue
+		}
 		if matchesColdridge && goal.levelingRequest != "" && !s.bindLevelingLootDeadline(&goal, actionsBefore, actions.ColdridgeLeveling.RemainingMs) {
 			continue
 		}
@@ -775,7 +816,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.token = lease.Token
 	s.questWolf = selected.Entry == 299 && wolfScope
 	s.coldridgeGoal = selectedColdridgeGoal
-	s.questColdridge = selectedColdridgeGoal.questID != 0 || selectedColdridgeGoal.levelingRequest != ""
+	s.questColdridge = selectedColdridgeGoal.questID != 0 || selectedColdridgeGoal.levelingRequest != "" || selectedColdridgeGoal.roadRequest != ""
 	s.questFargodeep = fargodeepScope && selected.Guid == actions.Fargodeep.TargetGuid
 	if s.questWolf || s.questColdridge || s.questFargodeep {
 		selectedGUID := selected.Guid
@@ -812,6 +853,11 @@ func (s *Service) Tick(ctx context.Context) {
 	if !eligibleWithin(world.Self, lease.State.Position, selected, 12, 1.5) {
 		s.releaseLease(ctx)
 		s.state.Reason = "corpse_out_of_range_after_stop"
+		return
+	}
+	if s.coldridgeGoal.roadRequest != "" && !eligible(world.Self, lease.State.Position, selected) {
+		s.releaseLease(ctx)
+		s.state.Reason = "road_clear_corpse_outside_stationary_loot_range"
 		return
 	}
 	s.seen[selected.Guid] = true

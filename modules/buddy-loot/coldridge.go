@@ -23,14 +23,24 @@ func ownColdridgeQuest(w *worldv1.SnapshotResponse, self uint64) bool {
 // occupy or to another newly observed quest. An authoritative position correction
 // invalidates the operation; ordinary client estimates keep the selected base.
 type coldridgeLootGoal struct {
-	questID          uint32
-	corpseGUID       uint64
-	positionRevision uint64
-	counts           [2]uint32
-	levelingRequest  string
-	levelingLevel    uint32
-	levelingMaxHP    uint32
-	levelingUntil    time.Time
+	questID                               uint32
+	corpseGUID                            uint64
+	positionRevision                      uint64
+	counts                                [2]uint32
+	levelingRequest                       string
+	levelingLevel                         uint32
+	levelingMaxHP                         uint32
+	levelingUntil                         time.Time
+	roadRequest                           string
+	roadSession                           string
+	roadLevel                             uint32
+	roadMaxHP                             uint32
+	roadDeathRevision                     uint64
+	roadOriginX, roadOriginY, roadOriginZ float32
+	roadOriginRevision                    uint64
+	roadObservedPackets                   uint64
+	roadRecord                            *roadLootRequest
+	roadUntil                             time.Time
 }
 
 func coldridgeLootQuest(w *worldv1.SnapshotResponse, self uint64, questID uint32) (*worldv1.QuestLogEntry, bool) {
@@ -171,6 +181,16 @@ func (g *coldridgeLootGoal) context(w *worldv1.SnapshotResponse, p *actionsv1.Cl
 func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 	if c == nil || g.corpseGUID == 0 || c.Guid != g.corpseGUID || !c.MapKnown || c.MapId != 0 {
 		return false
+	}
+	if g.roadRequest != "" {
+		if g.questID != 0 || g.levelingRequest != "" || !roadClearProfile(c) || c.Level != g.roadLevel || c.MaxHealth != g.roadMaxHP || c.PositionRevision != g.roadDeathRevision || !c.PositionKnown || !roadClearPoint(c.X, c.Y, c.Z) {
+			return false
+		}
+		if t := c.Trajectory; t != nil && t.Known && t.DestinationKnown && !roadClearPoint(t.DestinationX, t.DestinationY, t.DestinationZ) {
+			return false
+		}
+		x, y, z, known := corpsePosition(c)
+		return known && roadClearPoint(x, y, z)
 	}
 	if g.questID == 179 {
 		return coldridgeCorpse(c)

@@ -95,6 +95,14 @@ type Service struct {
 	recovery                                                 deathRecovery
 	fargodeep                                                fargodeepEncounter
 	fargodeepSeen                                            map[uint64]bool
+	road                                                     roadClearRun
+	roadRequests                                             map[string]uint64
+	roadBodies                                               map[uint64]bool
+	roadCast                                                 roadCastObservation
+	roadSpellbookKnown, roadInitialSeen                      bool
+	roadEpochKnown                                           bool
+	roadEpochSession                                         string
+	roadWorldPackets                                         uint64
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -117,6 +125,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.ColdridgeLeveling = s.coldridgeLevelingSnapshotLocked()
+	out.RoadClear = s.roadSnapshotLocked()
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -204,7 +213,7 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	if r.Token != "" {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease expired; acquire a new lease")
 	}
-	if s.fargodeep.active {
+	if s.fargodeep.active || s.road.active {
 		return nil, status.Error(codes.FailedPrecondition, "coordinated encounter is active")
 	}
 	if s.state.CastPending || s.state.MotionUnconfirmed {
@@ -369,6 +378,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.state.Reason = "follow_enabled_waiting_for_safe_observations"
 	} else {
 		s.state.Following = false
+		if s.road.active {
+			s.roadStopLocked(ctx, "explicit_follow_stop")
+		}
 		if s.fargodeep.active {
 			s.stopFargodeepLocked(ctx, "explicit_follow_stop")
 		}
@@ -407,6 +419,9 @@ func (s *Service) Healing(ctx context.Context, r *actionsv1.ToggleRequest) (*act
 		s.state.Reason = "healing_enabled_waiting_for_safe_observations"
 	} else {
 		s.state.Reason = "healing_disabled"
+		if s.road.active {
+			s.roadStopLocked(ctx, "explicit_healing_stop")
+		}
 	}
 	return s.stateLocked(), nil
 }
@@ -437,6 +452,9 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.failedAssistTarget = 0
 		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
 	} else {
+		if s.road.active {
+			s.roadStopLocked(ctx, "explicit_assist_stop")
+		}
 		if s.fargodeep.active {
 			s.stopFargodeepLocked(ctx, "explicit_assist_stop")
 		}
@@ -485,6 +503,9 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.road.selected && !s.roadSessionLocked(ctx, s.road.session) {
+		s.road.active, s.road.invalid, s.road.phase = false, true, "current_session_unavailable"
+	}
 	// Read-only refresh: active movement is not echoed back to its sender, so
 	// report the client's estimate only while its authoritative base is valid.
 	if _, err := s.snapshot(ctx); err != nil {
@@ -497,6 +518,9 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	if s.road.selected {
+		s.road.active, s.road.invalid, s.road.phase = false, true, "session_closing"
+	}
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
 	s.stopAutoAttackLocked(ctx)
@@ -647,12 +671,27 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 		s.state.Reason = "session_unavailable"
 		return false
 	}
+	if !s.roadSendAllowedLocked(ctx, op, payload) {
+		s.state.Reason = "road_clear_last_packet_guard_refused"
+		return false
+	}
 	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
 		return false
 	}
 	if op == opcode.CMSGCastSpell && s.coldridgeGoal.leveling && !s.coldridgeLevelingCastAllowedLocked() {
 		s.state.Reason = "coldridge_leveling_cast_boundary_expired_or_unavailable"
 		return false
+	}
+	if op == opcode.CMSGCastSpell {
+		if s.road.active && (!s.road.reserved || s.road.source != s.pendingTarget || s.pendingSpell != shadowBolt || ctx.Err() != nil || !s.now().Before(s.road.until)) {
+			s.state.Reason = "road_clear_final_cast_deadline_or_binding_changed"
+			return false
+		}
+		// Bookkeeping for every outgoing own cast, including older ordinary
+		// controllers. Transport ambiguity cannot restore observed idle.
+		s.roadCast.busy, s.roadCast.known = true, false
+		s.roadCast.spell, s.roadCast.count, s.roadCast.target = s.pendingSpell, s.castCount, s.pendingTarget
+		s.roadCast.started = false
 	}
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
@@ -811,6 +850,15 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.road.active {
+		s.roadTickLocked(ctx)
+		return
+	}
+	if s.road.selected && s.state.CastPending {
+		// A stopped/failed road operation still owns this uncertain ordinary
+		// cast. Only the existing matching server packet resolves it.
+		return
+	}
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
@@ -1089,6 +1137,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	p := packet.Payload
+	s.roadPacketLocked(packet.Opcode, p)
 	malformed := false
 	if handled, err := s.recoveryPacketLocked(packet.Opcode, p); handled {
 		if err != nil {

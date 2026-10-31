@@ -191,7 +191,7 @@ func (s *Service) StartColdridgeLeveling(ctx context.Context, r *actionsv1.Coldr
 		}
 		return s.stateLocked(), nil
 	}
-	if len(s.coldridgeLevelingRequests) >= 64 || s.state.Practicing || s.state.Following || s.state.Healing || s.state.Assisting || s.state.Traveling || s.questApproaching || s.state.InteractionOwner != "" || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 || s.recovery.snapshot(s.now()).Active {
+	if len(s.coldridgeLevelingRequests) >= 64 || s.road.active || s.state.Practicing || s.state.Following || s.state.Healing || s.state.Assisting || s.state.Traveling || s.questApproaching || s.state.InteractionOwner != "" || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 || s.recovery.snapshot(s.now()).Active {
 		return nil, status.Error(codes.FailedPrecondition, "leveling requires unused request and confirmed idle actions")
 	}
 	w, err := s.snapshot(ctx)
@@ -204,6 +204,7 @@ func (s *Service) StartColdridgeLeveling(ctx context.Context, r *actionsv1.Coldr
 	}
 	s.coldridgeLevelingRequests[r.RequestId] = struct{}{}
 	s.coldridgeLeveling = coldridgeLevelingRun{requestID: r.RequestId, until: s.now().Add(coldridgeLevelingWindow), positionRevision: w.Self.PositionRevision, observedLevel: 4}
+	s.roadHideLocked()
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "leveling start stop is unconfirmed; request consumed")
 	}

@@ -38,6 +38,7 @@ const (
 	BuddyActions_Practice_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
 	BuddyActions_FargodeepEncounter_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
 	BuddyActions_StartColdridgeLeveling_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/StartColdridgeLeveling"
+	BuddyActions_StartRoadClear_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/StartRoadClear"
 	BuddyActions_Recovery_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
 	BuddyActions_OnPacket_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
@@ -65,6 +66,7 @@ type BuddyActionsClient interface {
 	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	FargodeepEncounter(ctx context.Context, in *FargodeepEncounterRequest, opts ...grpc.CallOption) (*State, error)
 	StartColdridgeLeveling(ctx context.Context, in *ColdridgeLevelingRequest, opts ...grpc.CallOption) (*State, error)
+	StartRoadClear(ctx context.Context, in *RoadClearRequest, opts ...grpc.CallOption) (*State, error)
 	// Normal release, validated same-map ghost route, and corpse reclamation.
 	Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -249,6 +251,16 @@ func (c *buddyActionsClient) StartColdridgeLeveling(ctx context.Context, in *Col
 	return out, nil
 }
 
+func (c *buddyActionsClient) StartRoadClear(ctx context.Context, in *RoadClearRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_StartRoadClear_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -301,6 +313,7 @@ type BuddyActionsServer interface {
 	Practice(context.Context, *ToggleRequest) (*State, error)
 	FargodeepEncounter(context.Context, *FargodeepEncounterRequest) (*State, error)
 	StartColdridgeLeveling(context.Context, *ColdridgeLevelingRequest) (*State, error)
+	StartRoadClear(context.Context, *RoadClearRequest) (*State, error)
 	// Normal release, validated same-map ghost route, and corpse reclamation.
 	Recovery(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
@@ -365,6 +378,9 @@ func (UnimplementedBuddyActionsServer) FargodeepEncounter(context.Context, *Farg
 }
 func (UnimplementedBuddyActionsServer) StartColdridgeLeveling(context.Context, *ColdridgeLevelingRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StartColdridgeLeveling not implemented")
+}
+func (UnimplementedBuddyActionsServer) StartRoadClear(context.Context, *RoadClearRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartRoadClear not implemented")
 }
 func (UnimplementedBuddyActionsServer) Recovery(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Recovery not implemented")
@@ -702,6 +718,24 @@ func _BuddyActions_StartColdridgeLeveling_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_StartRoadClear_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RoadClearRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).StartRoadClear(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_StartRoadClear_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).StartRoadClear(ctx, req.(*RoadClearRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_Recovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ToggleRequest)
 	if err := dec(in); err != nil {
@@ -830,6 +864,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StartColdridgeLeveling",
 			Handler:    _BuddyActions_StartColdridgeLeveling_Handler,
+		},
+		{
+			MethodName: "StartRoadClear",
+			Handler:    _BuddyActions_StartRoadClear_Handler,
 		},
 		{
 			MethodName: "Recovery",

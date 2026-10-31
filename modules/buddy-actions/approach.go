@@ -47,6 +47,9 @@ type lootApproachNavigation struct {
 }
 
 func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.ApproachLootRequest, route *lootApproachNavigation) (*actionsv1.State, error) {
+	if s.road.selected {
+		return nil, status.Error(codes.FailedPrecondition, "road-clear grants no corpse approach authority")
+	}
 	s.expireInteractionLocked()
 	if s.closed || s.state.InteractionOwner != "loot" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "owned loot interaction is required")

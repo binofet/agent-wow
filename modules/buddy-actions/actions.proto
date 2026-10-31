@@ -36,6 +36,38 @@ message ColdridgeLevelingState {
   bool level_five_observed = 10;
   uint64 self_guid = 11;
 }
+// One explicitly selected observed road hostile; no quest credit or travel.
+message RoadClearRequest {
+  string request_id = 1;
+  uint64 target_guid = 2;
+  string session_id = 3;
+  ClientPosition expected_position = 4;
+  uint64 position_revision = 5;
+}
+message RoadClearState {
+  string request_id = 1;
+  string goal = 2;
+  uint64 target_guid = 3;
+  // Populated only immediately before the first potentially sent offense.
+  uint64 source_guid = 4;
+  uint64 self_guid = 5;
+  string session_id = 6;
+  uint64 position_revision = 7;
+  ClientPosition origin = 8;
+  uint64 remaining_ms = 9;
+  uint32 max_pulls = 10;
+  bool pull_reserved = 11;
+  bool active = 12;
+  string phase = 13;
+  uint32 observed_level = 14;
+  uint32 selected_entry = 15;
+  uint32 selected_level = 16;
+  uint32 selected_max_health = 17;
+  uint32 selected_faction_template = 18;
+  // Actual bound death after own matched cast/damage, not own-killer credit.
+  bool source_death_observed = 19;
+  uint64 source_death_position_revision = 20;
+}
 message ClientPosition {
   bool known = 1;
   bool map_known = 2;
@@ -185,6 +217,7 @@ message State {
   RecoveryState recovery = 68;
   FargodeepEncounterState fargodeep = 69;
   ColdridgeLevelingState coldridge_leveling = 70;
+  RoadClearState road_clear = 73;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -205,6 +238,7 @@ service BuddyActions {
   rpc Practice(ToggleRequest) returns (State);
   rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);
   rpc StartColdridgeLeveling(ColdridgeLevelingRequest) returns (State);
+  rpc StartRoadClear(RoadClearRequest) returns (State);
   // Normal release, validated same-map ghost route, and corpse reclamation.
   rpc Recovery(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);

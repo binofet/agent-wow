@@ -123,13 +123,20 @@ message SnapshotRequest {
   // Optional exact lookup in the existing creature cache; zero requests none.
   // This never changes the cache, discovery ranking or observed positions.
   uint64 creature_guid = 1;
-  // Optional exact-entry filters in existing bounded caches; zero requests none.
+  // Optional exact-entry filters in existing bounded caches; zero disables each.
   uint32 creature_entry = 2;
   uint32 game_object_entry = 3;
   // Optional bounded discovery from actual cached same-map type3 objects.
   // Raw server distance only orders candidates; the current client position
   // and public template proof remain required before approach or gathering.
   bool include_gathering_objects = 4;
+  // Optional observed faction-template filter for present creatures. Requires
+  // the own current map; excludes known foreign maps, retaining unknown maps
+  // as uncertainty that callers must qualify.
+  // Nonzero creature_entry and faction filters are conjunctive. Both zero
+  // requests no requested_creatures; this never queries the realm or reranks
+  // nearby_creatures. A full32 result may be truncated and is not exhaustive.
+  uint32 creature_faction_template = 5;
 }
 
 message GameObjectState {
@@ -324,7 +331,9 @@ message SnapshotResponse {
   repeated GameObjectState spell_focuses = 30;
   // At most4 present type17/entry35591 bobbers with actual createdBy=self.
   repeated GameObjectState own_fishing_bobbers = 31;
-  // At most32 present exact-entry matches, retaining actual positions and ages.
+  // At most32 present requested entry/faction matches with actual positions/ages.
+  // Faction-filtered matches require an observed faction and own known map;
+  // creatures on unknown maps remain visible, known foreign maps are excluded.
   repeated CreatureState requested_creatures = 32;
   repeated GameObjectState requested_game_objects = 33;
   // True only with coherent private own slot references and all equipped bag

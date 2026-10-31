@@ -76,6 +76,9 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
 	if !r.Enabled {
+		if s.road.selected {
+			s.roadStopLocked(ctx, "explicit_stop")
+		}
 		s.autoStopping, s.state.AutoAttackUnconfirmed = false, false
 		s.stopPracticeLocked(ctx, "disabled")
 		return s.stateLocked(), nil
@@ -83,12 +86,20 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	if s.coldridgeLevelingActiveLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "ordinary practice cannot replace an active Coldridge leveling run")
 	}
+	if s.road.active {
+		return nil, status.Error(codes.FailedPrecondition, "road-clear operation is active")
+	}
 	if s.fargodeep.active || s.state.InteractionOwner != "" || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "practice requires confirmed idle action ownership")
 	}
 	w, err := s.snapshot(ctx)
 	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
-		return s.startColdridgePracticeLocked(ctx, w)
+		got, e := s.startColdridgePracticeLocked(ctx, w)
+		if e == nil {
+			s.roadHideLocked()
+			got = s.stateLocked()
+		}
+		return got, e
 	}
 	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
 		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1..5 supported class safely in Northshire")

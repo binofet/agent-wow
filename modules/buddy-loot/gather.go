@@ -41,7 +41,7 @@ func harvestQuest(world *worldv1.SnapshotResponse, self uint64, incomplete bool)
 	return found
 }
 func harvestContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, incomplete bool) bool {
-	if !harvestQuest(w, self, incomplete) || a == nil || a.Position == nil || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending {
+	if !harvestQuest(w, self, incomplete) || a == nil || a.RoadClear != nil || a.Position == nil || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending {
 		return false
 	}
 	p, pos := w.Self, a.Position

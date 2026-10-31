@@ -224,6 +224,10 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	s.state.LastCastSpellId = spell
 	s.state.LastCastTargetGuid = target
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, spell, target)) {
+		if s.road.selected && s.road.reserved && s.road.source == target {
+			// The server may have received it; STOP cannot cancel this proof.
+			return false
+		}
 		s.state.CastPending = false
 		s.pendingSpell = 0
 		s.pendingTarget = 0
