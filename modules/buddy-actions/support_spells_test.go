@@ -28,7 +28,7 @@ func TestResurrectionUsesLearnedEffectCurrentDeadPartyAndNoReceiptAsLife(t *test
 	s, f, advance := resRig(t)
 	s.Tick(context.Background())
 	if lastCast(f) != 2006 || s.supportOp == nil || s.supportOp.owner != 3 || s.supportOp.view.EffectObserved {
-		t.Fatal("missing genuine resurrection", s.state, s.supportOp)
+		t.Fatal("missing genuine resurrection", &s.state, s.supportOp)
 	}
 	p := smiteEvent(true, s.castCount, 3)
 	_, _, _, off, _ := castEvent(p)
@@ -67,7 +67,7 @@ func TestResurrectionRefusesCombatNonmembersUnlearnedAndOutOfRange(t *testing.T)
 			}
 			s.Tick(context.Background())
 			if countPackets(f, opcode.CMSGCastSpell) != 0 {
-				t.Fatal("unsafe res", s.state)
+				t.Fatal("unsafe res", &s.state)
 			}
 		})
 	}
@@ -107,7 +107,7 @@ func TestLearnedUnfamiliarHealAdaptsWithoutIDOrClassBranch(t *testing.T) {
 	f.world.Owner.Health = 30
 	s.Tick(context.Background())
 	if lastCast(f) != 987654 {
-		t.Fatal("new learned heal did not adapt", s.state)
+		t.Fatal("new learned heal did not adapt", &s.state)
 	}
 	s.setKnownSpell(987654, false)
 	if len(s.candidatesLocked(spellcatalog.Heal)) != 0 {
