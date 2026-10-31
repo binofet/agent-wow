@@ -384,7 +384,7 @@ class ProfilePartyTests(unittest.TestCase):
         for name,role,class_id,known in (("Mira","mage",8,"knownFireball"),("Rook","rogue",4,"knownAutoAttack")):
             persona=converse.character_persona(name,role)
             self.assertIn("You are "+name,persona)
-            self.assertIn("human\n"+role,persona)
+            self.assertIn("embodied as a\n"+role,persona)
             self.assertNotIn("You are Arlen",persona)
             rpc=FakeRPC([])
             controls=converse.BuddyControls(rpc,character_class=role)
@@ -397,6 +397,25 @@ class ProfilePartyTests(unittest.TestCase):
             self.assertFalse(rpc.calls)
             controls.actions["classKnown"]=False
             self.assertFalse(controls.context()["abilities"]["assisting"])
+
+    def test_warlock_assistance_requires_actual_class_and_known_shadow_bolt(self):
+        persona=converse.character_persona("Nixwick","warlock")
+        self.assertIn("You are Nixwick",persona)
+        self.assertIn("embodied as a\nwarlock",persona)
+        self.assertNotIn("embodied as a human",persona)
+        rpc=FakeRPC([])
+        controls=converse.BuddyControls(rpc,character_class="warlock",character_guid=8)
+        controls.actions_available=True
+        controls.actions={"classKnown":True,"classId":9,"knownShadowBolt":True}
+        self.assertTrue(controls.context()["abilities"]["assisting"])
+        self.assertFalse(controls.context()["abilities"]["healing"])
+        for change in ({"knownShadowBolt":False},{"knownShadowBolt":None},{"classKnown":False},{"classId":8}):
+            with self.subTest(change=change):
+                controls.actions={"classKnown":True,"classId":9,"knownShadowBolt":True,**change}
+                self.assertFalse(controls.context()["abilities"]["assisting"])
+        controls.actions={"classKnown":True,"classId":9,"knownFireball":True}
+        self.assertFalse(controls.context()["abilities"]["assisting"])
+        self.assertTrue(all(method=="buddy-world.snapshot" for method,_ in rpc.calls))
 
     def test_profiles_isolate_state_and_validate_roster(self):
         def args(**extra):

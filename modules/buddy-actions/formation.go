@@ -44,7 +44,7 @@ func formationAngleDifference(a, b float64) float64 {
 
 func formationIdentity(guid uint64, classID uint32) (rear, side, start, stop float64, reaction time.Duration) {
 	// In the owner's heading frame, rear is behind and side is to the left.
-	// The three supported roles remain more than three yards apart even with
+	// The four supported roles remain more than three yards apart even with
 	// their small stable identity variation. No actor aims at the owner's feet.
 	switch classID {
 	case 5: // Priest: trailing right.
@@ -53,6 +53,8 @@ func formationIdentity(guid uint64, classID uint32) (rear, side, start, stop flo
 		rear, side = 5.1, 0.2
 	case 4: // Rogue: closer, to the left.
 		rear, side = 2.4, 3.5
+	case 9: // Warlock: wider to the right, clear of the priest.
+		rear, side = 1.0, -5.2
 	default:
 		switch guid % 3 {
 		case 0:

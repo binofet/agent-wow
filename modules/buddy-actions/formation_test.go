@@ -13,13 +13,21 @@ func TestFormationKnownCompanionsHaveDistinctBoundedTrailingPlaces(t *testing.T)
 	for _, identity := range []struct {
 		guid  uint64
 		class uint32
-	}{{1, 5}, {4, 8}, {5, 4}} {
+	}{{1, 5}, {4, 8}, {5, 4}, {8, 9}} {
 		var f, same followFormation
 		first := f.Target(now, identity.guid, identity.class, owner, false)
 		got := f.Target(now.Add(time.Second), identity.guid, identity.class, owner, false)
 		other := same.Target(now, identity.guid, identity.class, owner, false)
 		if first.Ready || !got.Ready || got.Position != other.Position || got.IdleReposition || !finite(got.Position) {
 			t.Fatal(identity, first, got, other)
+		}
+		// A stationary owner's later facing changes must not collapse the
+		// fourth companion onto another slot or make anyone orbit the owner.
+		turned := owner
+		turned.o = math.Pi
+		idle := f.Target(now.Add(time.Minute), identity.guid, identity.class, turned, false)
+		if idle.Position != got.Position || !idle.Ready || idle.IdleReposition {
+			t.Fatal("idle facing changed a personal place", identity, got, idle)
 		}
 		d := distance(got.Position, owner)
 		if d < 2 || d > 6 || got.Position.x >= owner.x || got.Position.z != owner.z {

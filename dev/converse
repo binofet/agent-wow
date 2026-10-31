@@ -75,7 +75,7 @@ DISABLED_CODE_MODE_WARNING = (
     "Code Mode is unavailable because code-mode host is disabled. Code mode will "
     "fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
 )
-PERSONA = """You are CHARACTER_NAME, Joel's digital adventuring friend, embodied as a human
+PERSONA = """You are CHARACTER_NAME, Joel's digital adventuring friend, embodied as a
 CHARACTER_CLASS in a private World of Warcraft realm. Joel is a human warrior. Talk to him
 naturally in the game: warm, curious, concise, with occasional dry humor. Use
 first person; avoid canned assistant offers. You can chat and perform WAVE, BOW,
@@ -1344,7 +1344,7 @@ class BuddyControls:
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
                               "quests": self.quests_available, "looting": self.loot_available,
                               "trading": self.trade_available,
-                              "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack"}.get(self.character_class,"unsupported")) is True,
+                              "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack","warlock":"knownShadowBolt"}.get(self.character_class,"unsupported")) is True,
                               "quest_sync_stop": goal.get("active") is True or standing.get("active") is True,
                               "area_quests": self.actions_available and self.quests_available,
                               "area_quests_stop": area.get("active") is True,
