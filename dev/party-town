@@ -332,7 +332,10 @@ class Supervisor:
                 raise Error("Existing finite town worker has an unresolved receipt")
             with gear.Journal(folder/'gear.json',self.rpc.url,self.guid) as gear_journal:
                 if kind=='gear':
-                    return gear.Worker(GuardedWorkerRPC(self,gear.RPC(self.rpc.url)),self.guid,gear_journal,
+                    # Gear completes this guard before reserving its request;
+                    # another read callback inside dispatch would obscure a
+                    # definite local abort as an ambiguous mutation.
+                    return gear.Worker(gear.RPC(self.rpc.url),self.guid,gear_journal,
                         guard=self.guard,stopped=self.stopped).run()
                 if any(row['phase'] not in gear.TERMINAL for row in gear_journal.data['attempts']):
                     raise Error('Existing gear swap has an unresolved receipt')

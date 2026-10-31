@@ -20,7 +20,7 @@ c=load('party_gear_converse','converse')
 Error,number,positive,token=town.Error,town.number,town.positive,town.token
 ROOT=Path(__file__).resolve().parent.parent
 ROSTER={1:8086,4:8087,5:8088}
-TERMINAL={'confirmed','blocked','server_rejected'}
+TERMINAL={'confirmed','blocked','server_rejected','not_dispatched'}
 PHASES=TERMINAL|{'reserved','requested','unconfirmed','new_session_requires_review'}
 GEAR_SLOTS={0,2,4,5,6,7,8,9,14,15}
 PENDING_METADATA={'complete_owned_item_metadata_pending','actual_class_race_level_required',
@@ -100,6 +100,12 @@ class Journal(town.base.Journal):
             if req['equipmentSlot'] not in GEAR_SLOTS or req['source']['stackCount']!=1:raise Error('unsupported_automatic_gear_slot')
             for field in ('expectedRevision','expectedInventoryRevision','expectedEquipmentRevision'):positive(req[field])
             town.item_guid(req['expectedEquippedItemGuid'],allow_empty=True)
+            if row['phase']=='not_dispatched':
+                local=row.get('localAbort')
+                if (not isinstance(local,dict) or set(local)!={'reason','rpcInvoked'} or local.get('rpcInvoked') is not False
+                        or local.get('reason') not in ('stop_before_dispatch','deadline_before_dispatch') or 'receipt' in row):
+                    raise Error('invalid_local_gear_abort')
+                continue
             if row['phase'] in TERMINAL:
                 op=row.get('receipt',{})
                 if not matches(req,op) or op.get('leaseReleased') is not True or op.get('status')!=row['phase'].upper():raise Error('invalid_gear_terminal_receipt')
@@ -156,6 +162,8 @@ class Worker:
     def ready(self,state):
         if self.stopped():raise Error('gear_stop_requested')
         self.guard()
+        self.ready_observation(state)
+    def ready_observation(self,state):
         if state.get('active') is True or state.get('closing') is True:raise Error('gear_waits_for_inventory_operation')
         op=state.get('operation') or {}
         if op and (op.get('status') not in ('CONFIRMED','BLOCKED','SERVER_REJECTED') or op.get('leaseReleased') is not True):raise Error('gear_waits_for_inventory_receipt')
@@ -190,6 +198,31 @@ class Worker:
             self.confirmed.append(clean)
         return row['phase']
     def result(self,phase):return dict(phase=phase,newConfirmedOperations=len(self.confirmed),equippedItems=self.confirmed[:4])
+    def prepare(self,end):
+        # All callbacks here are reads. Metadata query replies can advance the
+        # module revision without changing either owned item vector.
+        state=self.state();self.ready(state);choices=candidates(state)
+        attempted={(r['request']['sessionId'],number(r['request']['source']['itemGuid']))
+            for r in self.journal.data['attempts'] if r['phase']!='not_dispatched'}
+        choices=[r for r in choices if (state['sessionId'],number(r['item']['itemGuid'])) not in attempted]
+        if not choices:return state,None
+        choice=choices[0];source=town.ref(choice['item'])
+        fresh=self.state();self.ready(fresh)
+        latest=self.state()
+        fields=('revision','inventoryRevision','equipmentRevision')
+        if (latest['sessionId']!=fresh['sessionId'] or fresh['sessionId']!=state['sessionId']
+                or any(number(latest[k])!=number(fresh[k]) or number(fresh[k])!=number(state[k]) for k in fields)):
+            raise Error('gear_read_only_revision_changed')
+        self.guard()
+        current=self.state()
+        self.ready_observation(current)
+        if current['sessionId']!=fresh['sessionId'] or any(number(current[k])!=number(fresh[k]) for k in fields):
+            raise Error('gear_read_only_revision_changed')
+        if not any(town.ref(r['item'])==source and r.get('gearEquipmentSlot',0)==choice.get('gearEquipmentSlot',0)
+                and number(r.get('expectedEquippedItemGuid',0))==number(choice.get('expectedEquippedItemGuid',0)) for r in candidates(current)):
+            raise Error('gear_read_only_candidate_changed')
+        if self.stopped() or self.now()>=end:raise Error('gear_read_only_stop_or_deadline')
+        return current,choice
     def run(self,max_seconds=25):
         if not 0<max_seconds<=30 or self.journal.lock is None:raise Error('finite_locked_gear_worker_required')
         self.confirmed=[]
@@ -200,36 +233,25 @@ class Worker:
             if phase not in TERMINAL:return self.result('unconfirmed')
         for _ in range(4):
             if self.stopped() or self.now()>=end:return self.result('blocked')
-            state=self.state();self.ready(state);choices=candidates(state)
-            attempted={(r['request']['sessionId'],number(r['request']['source']['itemGuid'])) for r in self.journal.data['attempts']}
-            choices=[r for r in choices if (state['sessionId'],number(r['item']['itemGuid'])) not in attempted]
-            if not choices:return self.result('complete')
+            try:fresh,choice=self.prepare(end)
+            except (Error,OSError,ValueError,KeyError,TypeError):return self.result('blocked')
+            if choice is None:return self.result('complete')
             if len(self.journal.data['attempts'])>=128:return self.result('blocked')
-            choice=choices[0];source=town.ref(choice['item'])
-            fresh=self.state();self.ready(fresh)
-            latest=self.state()
-            if latest['sessionId']!=fresh['sessionId'] or any(number(latest[k])!=number(fresh[k]) for k in ('revision','inventoryRevision','equipmentRevision')):
-                return self.result('blocked')
-            if (fresh['sessionId']!=state['sessionId'] or any(number(fresh[k])!=number(state[k]) for k in ('revision','inventoryRevision','equipmentRevision'))):
-                return self.result('blocked')
-            if not any(town.ref(r['item'])==source and r.get('gearEquipmentSlot',0)==choice.get('gearEquipmentSlot',0) for r in candidates(fresh)):
-                return self.result('blocked')
-            if self.stopped() or self.now()>=end:return self.result('blocked')
+            source=town.ref(choice['item'])
             req=dict(sessionId=fresh['sessionId'],requestId='gear_'+uuid.uuid4().hex,expectedRevision=str(number(fresh['revision'])),
                 expectedInventoryRevision=str(number(fresh['inventoryRevision'])),source=source,equipmentSlot=number(choice.get('gearEquipmentSlot',0)),
                 expectedEquipmentRevision=str(number(fresh['equipmentRevision'])),expectedEquippedItemGuid=str(number(choice.get('expectedEquippedItemGuid',0))),
                 requireConservativeUpgrade=True)
             row=dict(request=req,phase='reserved',name=choice.get('name',''))
             self.journal.data['attempts'].append(row);self.journal.save()
-            if self.stopped():return self.result('unconfirmed')
+            stopped=self.stopped()
+            if stopped or self.now()>=end:
+                row.update(phase='not_dispatched',localAbort=dict(rpcInvoked=False,
+                    reason='stop_before_dispatch' if stopped else 'deadline_before_dispatch'))
+                self.journal.save();return self.result('blocked')
             try:
-                self.guard()
-                current=self.state()
-                if (current['sessionId']!=req['sessionId'] or any(number(current[field])!=number(req[bound]) for field,bound in
-                        (('revision','expectedRevision'),('inventoryRevision','expectedInventoryRevision'),('equipmentRevision','expectedEquipmentRevision')))):
-                    row['phase']='unconfirmed';self.journal.save();return self.result('unconfirmed')
-                if self.stopped() or self.now()>=end:
-                    row['phase']='unconfirmed';self.journal.save();return self.result('unconfirmed')
+                # Reservation is durable before the first possible mutation.
+                # No dependency/observation callback follows that reservation.
                 response=self.rpc.call('buddy-inventory.equip_gear',req)
                 phase=self.receipt(row,town.checked_state(response,self.guid))
                 while phase=='requested' and self.now()<end and not self.stopped():

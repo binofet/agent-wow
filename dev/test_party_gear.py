@@ -194,4 +194,89 @@ class GearTests(unittest.TestCase):
                     except m.Error:pass
                 self.assertFalse(self.writes())
 
+    def test_startup_metadata_revision_change_before_dispatch_does_not_reserve_or_consume_item(self):
+        original=self.rpc.call;reads=[0]
+        def call(method,req):
+            if method=='buddy-inventory.state':
+                reads[0]+=1
+                if reads[0]==4:self.rpc.current['revision']='19'  # Only template metadata arrived.
+            return original(method,req)
+        self.rpc.call=call
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            result=self.worker(j).run()
+            self.assertEqual(result['phase'],'blocked')
+            self.assertFalse(j.data['attempts']);self.assertFalse(self.writes())
+            self.assertNotIn('operation',self.rpc.current)
+        # A fresh pass may quote the same still-owned candidate; there is no
+        # fictitious ambiguous mutation to reconcile or old request to replay.
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            result=self.worker(j).run()
+            self.assertEqual(result['newConfirmedOperations'],1)
+            self.assertEqual(len(self.writes()),1)
+            self.assertEqual(self.writes()[0]['expectedRevision'],'19')
+
+    def test_final_read_only_safety_or_candidate_failure_is_definite_blocked_not_pending(self):
+        for mode in ('guard','candidate','body','read_error','active'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                self.rpc=RPC();original=self.rpc.call;reads=[0];guards=[0]
+                def call(method,req):
+                    if method=='buddy-inventory.state':
+                        reads[0]+=1
+                        if reads[0]==4:
+                            if mode=='candidate':self.rpc.current['items'][0]['conservativeUpgrade']=False
+                            elif mode=='body':self.rpc.current['sessionId']='replacement'
+                            elif mode=='read_error':raise m.Error('read-only response unavailable')
+                            elif mode=='active':self.rpc.current['active']=True
+                    return original(method,req)
+                def guard():
+                    guards[0]+=1
+                    if mode=='guard' and guards[0]==3:raise m.Error('human intent revoked during final guard')
+                self.rpc.call=call
+                with m.Journal(Path(temp).resolve()/'gear.json',self.rpc.url,5) as j:
+                    self.rpc.journal=j
+                    result=m.Worker(self.rpc,5,j,guard=guard).run()
+                    self.assertEqual(result['phase'],'blocked')  # Town's existing certain cleanup/restore path.
+                    self.assertFalse(j.data['attempts']);self.assertFalse(self.writes())
+
+    def test_stop_or_deadline_after_durable_reservation_records_no_dispatch_and_can_reselect(self):
+        for mode in ('stop','deadline'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                self.rpc=RPC();clock=[0.];stop=[False];triggered=[False];path=Path(temp).resolve()/'gear.json'
+                with m.Journal(path,self.rpc.url,5) as j:
+                    save=j.save
+                    def save_then_interrupt():
+                        save()
+                        if j.data['attempts'] and j.data['attempts'][-1]['phase']=='reserved' and not triggered[0]:
+                            triggered[0]=True
+                            if mode=='stop':stop[0]=True
+                            else:clock[0]=31
+                    j.save=save_then_interrupt
+                    result=self.worker(j,stopped=lambda:stop[0],now=lambda:clock[0]).run()
+                    self.assertEqual(result['phase'],'blocked');self.assertFalse(self.writes())
+                    old=copy.deepcopy(j.data['attempts'][0])
+                    self.assertEqual(old['phase'],'not_dispatched')
+                    self.assertIs(old['localAbort']['rpcInvoked'],False)
+                    self.assertNotIn('receipt',old)
+                clock[0]=0.;stop[0]=False
+                with m.Journal(path,self.rpc.url,5) as j:
+                    result=self.worker(j,stopped=lambda:stop[0],now=lambda:clock[0]).run()
+                    self.assertEqual(result['newConfirmedOperations'],1)
+                    self.assertEqual(j.data['attempts'][0],old)
+                    self.assertNotEqual(self.writes()[0]['requestId'],old['request']['requestId'])
+                    self.assertEqual(self.writes()[0]['source'],old['request']['source'])
+                    self.assertEqual(len(self.writes()),1)
+
+    def test_local_no_dispatch_label_cannot_hide_an_invoked_or_receipted_request(self):
+        for mode in ('missing_proof','invoked','receipt','unknown_reason'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                self.rpc=RPC();self.rpc.mode='unknown';path=Path(temp).resolve()/'gear.json'
+                with m.Journal(path,self.rpc.url,5) as j:
+                    self.worker(j).run();row=j.data['attempts'][0]
+                    row.update(phase='not_dispatched',localAbort=dict(reason='stop_before_dispatch',rpcInvoked=False))
+                    if mode=='missing_proof':del row['localAbort']
+                    elif mode=='invoked':row['localAbort']['rpcInvoked']=True
+                    elif mode=='unknown_reason':row['localAbort']['reason']='later_idle_so_assumed_safe'
+                    else:row['receipt']['status']='OUTCOME_UNCONFIRMED'
+                    with self.assertRaises(m.Error):j.validate()
+
 if __name__=='__main__':unittest.main()

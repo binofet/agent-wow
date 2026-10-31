@@ -114,6 +114,50 @@ class TownTests(unittest.TestCase):
             self.run_tick(actor,clock);self.run_tick(actor,clock)
         self.assertEqual(calls,[('gear',0)])
 
+    def test_real_gear_worker_metadata_abort_restores_controls_but_dispatched_unknown_does_not(self):
+        gear_fakes=load('town_gear_abort_fakes','test_party_gear.py')
+        for mode in ('metadata_changed','dispatch_unknown'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                actor,rpc,clock,saved,_=self.rig()
+                rpc.inv=gear_fakes.initial();rpc.inv['selfGuid']='1'
+                rpc.assisting=rpc.healing=rpc.looting=True
+                actor.worker=actor.run_worker
+                root=Path(temp).resolve();path=root/'data/autonomy/town-maintenance/1-8086/gear.json'
+                reads=[0];writes=[];late_guards=[];guard=actor.guard
+                def guarded(*args,**kwargs):
+                    if path.exists():
+                        rows=m.gear.json.loads(path.read_text())['attempts']
+                        if rows and rows[-1]['phase']=='reserved':late_guards.append(True)
+                    return guard(*args,**kwargs)
+                actor.guard=guarded
+                class Client:
+                    url=rpc.url
+                    def call(self,method,params):
+                        if method=='buddy-inventory.state':
+                            reads[0]+=1
+                            if mode=='metadata_changed' and reads[0]==4:rpc.inv['revision']='19'
+                            return rpc.call(method,params)
+                        self_test.assertEqual(method,'buddy-inventory.equip_gear')
+                        writes.append(copy.deepcopy(params))
+                        rpc.inv['operation']=dict(requestId=params['requestId'],kind='equip_gear',status='OUTCOME_UNCONFIRMED',
+                            source=copy.deepcopy(params['source']),equipmentSlot=params['equipmentSlot'],
+                            displacedItemGuid=params['expectedEquippedItemGuid'],leaseReleased=False,
+                            baselineInventoryRevision=params['expectedInventoryRevision'],
+                            baselineEquipmentRevision=params['expectedEquipmentRevision'])
+                        return copy.deepcopy(rpc.inv)
+                self_test=self
+                with patch.object(m,'ROOT',root),patch.object(m.gear,'ROOT',root),patch.object(m.gear,'RPC',return_value=Client()):
+                    self.run_tick(actor,clock);self.run_tick(actor,clock)
+                self.assertFalse(late_guards)
+                rows=m.gear.json.loads(path.read_text())['attempts'] if path.exists() else []
+                if mode=='metadata_changed':
+                    self.assertFalse(writes);self.assertFalse(rows)
+                    self.assertEqual(saved[-1]['attempts'][0]['phase'],'blocked')
+                    self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+                else:
+                    self.assertEqual(len(writes),1);self.assertEqual(rows[0]['phase'],'unconfirmed')
+                    self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+
     def test_actual_complete_trade_with_historical_pants_allows_safe_upkeep(self):
         actor,rpc,clock,_,calls=self.rig()
         original=rpc.call
