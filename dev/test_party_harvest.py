@@ -177,6 +177,13 @@ class HarvestTests(unittest.TestCase):
                           stored=stored, now=clock.now, sleep=clock.sleep, priority=priority or (lambda: False))
         return worker, rpc, clock
 
+    def pre_attempt(self,guid=5):
+        worker,rpc,clock=self.rig(guid)
+        row=dict(session='prior-body',guid=int(rpc.target['guid']),target=copy.deepcopy(rpc.target),
+            request='harvest_prior_unattempted',phase='unconfirmed',attempted=False)
+        worker.data['attempts'].append(row);rpc.session='new-body'
+        return worker,rpc,clock,row
+
     def test_roles_endpoint_and_malformed_ledger_fail_closed(self):
         rpc = FakeRPC()
         for guid in (3, 4, 6):
@@ -357,6 +364,103 @@ class HarvestTests(unittest.TestCase):
         worker.tick()
         self.assertEqual(worker.data["attempts"][0]["phase"], "completed")
         self.assertEqual(sum(method == "buddy-professions.attempt" for method, _ in rpc.calls), 1)
+
+    def test_old_pre_attempt_retires_only_as_unknown_and_next_tick_can_harvest_new_target(self):
+        for guid in (1,5):
+            with self.subTest(guid=guid):
+                worker,rpc,clock,row=self.pre_attempt(guid);prior=copy.deepcopy(row)
+                if guid==1:rpc.operation=dict(status='COMPLETED',leaseReleased=True)
+                status=worker.tick()
+                self.assertEqual(status['phase'],'harvest_blocked')
+                self.assertEqual(status['reason'],'attempt_blocked')
+                self.assertEqual(row['retirement'],dict(reason='prior_body_pre_attempt_retired',priorRow=prior,
+                    newSession='new-body',outcome='UNKNOWN'))
+                self.assertEqual({method for method,_ in rpc.calls},
+                    {'buddy-professions.state','buddy-actions.status','buddy-world.snapshot'})
+                self.assertEqual(len(rpc.saved),1)
+                stored=copy.deepcopy(worker.data)
+                restarted=m.Worker(guid,rpc,stored=stored,save=lambda value:rpc.saved.append(copy.deepcopy(value)),
+                    now=clock.now,sleep=clock.sleep,priority=lambda:False)
+                rpc.target['guid']=str(int(rpc.target['guid'])+1);rpc.target['positionRevision']='10'
+                restarted.tick()
+                attempts=[req for method,req in rpc.calls if method=='buddy-professions.attempt']
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(attempts[0]['sessionId'],'new-body')
+                self.assertEqual(attempts[0]['targetGuid'],rpc.target['guid'])
+                self.assertNotEqual(attempts[0]['requestId'],prior['request'])
+                self.assertEqual(restarted.data['attempts'][0]['retirement']['priorRow'],prior)
+                self.assertEqual(restarted.data['attempts'][-1]['phase'],'completed')
+
+    def test_pre_attempt_retirement_keeps_same_body_issued_or_unsettled_cases_waiting(self):
+        modes=('same_body','attempted','attempted_missing','active','closing','operation_unknown','operation_empty','operation_malformed','cleanup_unknown',
+            'lease_release_unknown','operation_id','old_receipt','lease','moving','traveling','motion_unknown','cast',
+            'autoattack','recovery','local_token','foreign_self','body_changes','stop','priority')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                worker,rpc,_,row=self.pre_attempt();prior=copy.deepcopy(row)
+                if mode=='same_body':rpc.session=row['session']
+                elif mode=='attempted':row['attempted']=True
+                elif mode=='attempted_missing':del row['attempted']
+                elif mode=='active':rpc.active=True
+                elif mode=='closing':rpc.closing=True
+                elif mode=='operation_unknown':rpc.operation=dict(status='OUTCOME_UNCONFIRMED',leaseReleased=True)
+                elif mode=='operation_empty':rpc.operation={}
+                elif mode=='operation_malformed':rpc.operation=[]
+                elif mode=='cleanup_unknown':rpc.operation=dict(status='COMPLETED',cleanupUnconfirmed=True,leaseReleased=True)
+                elif mode=='lease_release_unknown':rpc.operation=dict(status='COMPLETED')
+                elif mode=='operation_id':row['operationId']='old-operation'
+                elif mode=='old_receipt':row['receipt']=dict(cleanupUnconfirmed=True)
+                elif mode=='lease':rpc.actions['interactionOwner']='exploration'
+                elif mode=='moving':rpc.actions['moving']=True
+                elif mode=='traveling':rpc.actions['traveling']=True
+                elif mode=='motion_unknown':rpc.actions['motionUnconfirmed']=True
+                elif mode=='cast':rpc.actions['castPending']=True
+                elif mode=='autoattack':rpc.actions['autoAttackRequested']=True
+                elif mode=='recovery':rpc.actions['recovery']=dict(active=True)
+                elif mode=='local_token':worker.token='old-owned-token'
+                elif mode=='foreign_self':rpc.own['guid']='4'
+                elif mode=='body_changes':
+                    reads=[0]
+                    def change(method,params):
+                        if method=='buddy-professions.state':
+                            reads[0]+=1
+                            if reads[0]==2:rpc.session='third-body'
+                    rpc.before_call=change
+                elif mode=='stop':worker.stopped=lambda:True
+                elif mode=='priority':worker.priority=lambda:True
+                prior=copy.deepcopy(row);worker.tick()
+                self.assertEqual(row,prior)
+                self.assertEqual(worker.status['phase'],'harvest_unconfirmed')
+                self.assertFalse(rpc.saved)
+                self.assertFalse(any(method in ('buddy-professions.attempt','buddy-professions.cancel',
+                    'buddy-actions.acquire_interaction','buddy-actions.release_interaction','buddy-actions.travel_to') for method,_ in rpc.calls))
+
+    def test_retired_pre_attempt_does_not_bypass_fresh_next_tick_danger_checks(self):
+        worker,rpc,_,row=self.pre_attempt();worker.tick()
+        self.assertEqual(row['phase'],'blocked')
+        rpc.own['unitFlags']=0x80000
+        with self.assertRaises(m.Error):worker.tick()
+        self.assertEqual(len(worker.data['attempts']),1)
+        self.assertFalse(any(method=='buddy-professions.attempt' for method,_ in rpc.calls))
+
+    def test_prior_body_retirement_validation_and_failed_save_preserve_uncertainty(self):
+        worker,rpc,clock,row=self.pre_attempt();prior=copy.deepcopy(row)
+        def failure(_):raise OSError('local journal save failed')
+        worker.save=failure
+        with self.assertRaises(OSError):worker.tick()
+        self.assertEqual(row,prior)
+        worker.save=lambda value:rpc.saved.append(copy.deepcopy(value));worker.tick()
+        valid=copy.deepcopy(worker.data)
+        for mode in ('attempted','same_body','prior_changed','success_claim','original_phase','malformed'):
+            with self.subTest(mode=mode):
+                bad=copy.deepcopy(valid);entry=bad['attempts'][0];retirement=entry['retirement']
+                if mode=='attempted':entry['attempted']=True
+                elif mode=='same_body':retirement['newSession']=entry['session']
+                elif mode=='prior_changed':retirement['priorRow']['request']='changed-prior-request'
+                elif mode=='success_claim':retirement['outcome']='COMPLETED'
+                elif mode=='original_phase':retirement['priorRow']['phase']='completed'
+                else:entry['retirement']=[]
+                with self.assertRaises(m.Error):m.Worker(5,rpc,stored=bad,now=clock.now,priority=lambda:False)
 
     def test_new_priority_stop_or_deadline_after_checkpoint_prevents_attempt(self):
         for mode in ("priority", "stop", "deadline"):

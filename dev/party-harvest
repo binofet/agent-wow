@@ -155,6 +155,16 @@ class Worker:
                     or not isinstance(row.get('request'),str) or not 1<=len(row['request'])<=64
                     or not 0<integer(row.get('guid',0))<2**64 or not isinstance(row.get('target'),dict)):
                 raise Error('Harvest ledger reservation is invalid')
+            if 'retirement' in row:
+                retired=row['retirement'];prior=retired.get('priorRow',{}) if isinstance(retired,dict) else {}
+                if (not isinstance(retired,dict) or not isinstance(prior,dict) or row['phase']!='blocked'
+                        or row.get('attempted') is not False or retired.get('reason')!='prior_body_pre_attempt_retired'
+                        or prior.get('phase') not in ('approaching','attempt_reserved','unconfirmed') or prior.get('attempted') is not False
+                        or prior.get('operationId') or prior.get('receipt') or retired.get('outcome')!='UNKNOWN'
+                        or retired.get('newSession')==row['session'] or not isinstance(retired.get('newSession'),str)
+                        or not 1<=len(retired['newSession'])<=128
+                        or {k:v for k,v in row.items() if k not in ('phase','retirement')}!={k:v for k,v in prior.items() if k!='phase'}):
+                    raise Error('Harvest prior-body retirement is invalid')
         self.priority=priority or (lambda:higher_priority(guid))
         self.status={'guid':guid,'skillId':self.skill,'spellId':self.spell,'phase':'starting','reason':'starting','busy':False}
         self.probe,self.next_query,self.session,self.token,self.controls,self.anchor=0,0,None,None,None,None
@@ -365,6 +375,34 @@ class Worker:
                 and integer(op.get('skillId',0))==self.skill and integer(op.get('spellId',0))==self.spell):
             self.rpc.call('buddy-professions.cancel',{'sessionId':row['session'],'operationId':row['operationId']})
 
+    def retire_pre_attempt(self,row):
+        if (row.get('attempted') is not False or row.get('operationId') or row.get('receipt')
+                or self.token is not None or self.stopped() or self.priority()):return False
+        def settled(state):
+            op=state.get('operation')
+            return (all(state.get(k,False) is False for k in ('active','closing'))
+                and (op is None or isinstance(op,dict) and op.get('status') in ('COMPLETED','BLOCKED','SERVER_REJECTED','CANCELLED')
+                    and op.get('cleanupUnconfirmed',False) is False and op.get('leaseReleased') is True))
+        try:
+            before=self.state()
+            if before['sessionId']==row['session'] or not settled(before):return False
+            actions=self.rpc.call('buddy-actions.status',{})
+            world=self.rpc.call('buddy-world.snapshot',{})
+            after=self.state()
+            if (after['sessionId']!=before['sessionId'] or not settled(after) or actions.get('interactionOwner')
+                    or any(actions.get(k,False) is not False for k in ('moving','traveling','motionUnconfirmed','castPending',
+                        'autoAttacking','autoAttackRequested','autoAttackUnconfirmed','practicing'))
+                    or actions.get('recovery',{}).get('active',False) is not False
+                    or not c.BuddyControls.quest_scene_safe(actions,world,self.guid)):return False
+        except (Error,prof.Error,OSError,KeyError,TypeError,ValueError):return False
+        prior=copy.deepcopy(row)
+        row.update(phase='blocked',retirement=dict(reason='prior_body_pre_attempt_retired',priorRow=prior,
+            newSession=after['sessionId'],outcome='UNKNOWN'))
+        try:self.persist()
+        except Exception:
+            row.clear();row.update(prior);raise
+        return True
+
     def tick(self):
         self.status.update(updatedAt=time.time(),reason='')
         self.deadline=self.now()+20
@@ -372,7 +410,9 @@ class Worker:
         pending=next((r for r in self.data['attempts'] if r['phase'] in ('approaching','attempt_reserved','unconfirmed')),None)
         if pending is not None:
             if pending.get('attempted') is True:self.receipt(self.state(),pending)
-            self.status.update(phase='harvest_'+pending['phase'],reason={'completed':'','blocked':'attempt_blocked'}.get(pending['phase'],'attempt_unconfirmed'))
+            else:self.retire_pre_attempt(pending)
+            self.status.update(phase='harvest_'+pending['phase'],
+                reason={'completed':'','blocked':'attempt_blocked'}.get(pending['phase'],'attempt_unconfirmed'),busy=False)
             return self.status
         if self.stopped() or self.priority():return self.report_wait(Error('Harvest yields to stop or higher-priority work'))
         if self.now()<self.next_query:return self.status
