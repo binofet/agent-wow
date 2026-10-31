@@ -56,6 +56,8 @@ type Service struct {
 	posEstimated                                             bool
 	posAt                                                    time.Time
 	posRevision                                              uint64
+	movementSequence                                         uint64
+	partyDefenseTarget, partyDefenseVictim                   uint64
 	interactionToken                                         string
 	interactionUntil                                         time.Time
 	harvestGuardAt                                           time.Time
@@ -704,7 +706,20 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		s.state.Reason = "fargodeep_movement_observations_changed"
 		return false
 	}
-	if moving && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
+	if moving && s.partyDefenseTarget != 0 {
+		var allowed bool
+		w, allowed = s.partyDefenseCurrentLocked(ctx)
+		if !allowed {
+			s.state.Reason = "party_defense_authority_changed_before_movement"
+			return false
+		}
+		target, known, _ := creaturePosition(partyDefenseCreature(w, s.partyDefenseTarget))
+		if !known || distance(s.pos, target) > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 {
+			s.state.Reason = "party_defense_target_left_bounded_approach"
+			return false
+		}
+	}
+	if moving && s.partyDefenseTarget == 0 && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -748,6 +763,7 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 			s.state.Following, s.state.Healing, s.state.Assisting = follow, heal, assist
 		}
 		s.state.MotionUnconfirmed = true
+		s.publishClientMovementLocked(ctx, nil, p, false)
 		return false
 	}
 	s.pos = p
@@ -755,6 +771,7 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 	s.posEstimated = true
 	s.posAt = s.now()
 	s.posRevision++
+	s.publishClientMovementLocked(ctx, w, p, snapshotErr == nil)
 	if snapshotErr != nil {
 		s.state.MotionUnconfirmed = true
 		return false
@@ -934,6 +951,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.selfDefenseLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
+	if s.partyDefenseLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

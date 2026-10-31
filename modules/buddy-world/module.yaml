@@ -8,6 +8,7 @@ grpc:
   descriptor_set: module.pb
 rpc:
   snapshot: /warcraftbuddy.world.v1.BuddyWorld/Snapshot
+  observe_client_movement: /warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement
 packets:
   SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_NEW_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
@@ -18,6 +19,8 @@ packets:
   SMSG_POWER_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_ATTACKSTART: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_ATTACKSTOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKERSTATEUPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_TELEPORT_ACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_ROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_FORCE_MOVE_UNROOT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

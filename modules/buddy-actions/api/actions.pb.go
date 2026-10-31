@@ -1050,8 +1050,12 @@ type State struct {
 	HarvestGuardGuids []uint64                 `protobuf:"varint,67,rep,packed,name=harvest_guard_guids,json=harvestGuardGuids,proto3" json:"harvest_guard_guids,omitempty"`
 	Recovery          *RecoveryState           `protobuf:"bytes,68,opt,name=recovery,proto3" json:"recovery,omitempty"`
 	Fargodeep         *FargodeepEncounterState `protobuf:"bytes,69,opt,name=fargodeep,proto3" json:"fargodeep,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Observation RPC acknowledgement, separate from actual movement transport.
+	// Tag70 is reserved for the separately developed Coldridge leveling status.
+	ClientMovementObservationConfirmed bool   `protobuf:"varint,71,opt,name=client_movement_observation_confirmed,json=clientMovementObservationConfirmed,proto3" json:"client_movement_observation_confirmed,omitempty"`
+	ClientMovementObservationFailures  uint64 `protobuf:"varint,72,opt,name=client_movement_observation_failures,json=clientMovementObservationFailures,proto3" json:"client_movement_observation_failures,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
@@ -1567,6 +1571,20 @@ func (x *State) GetFargodeep() *FargodeepEncounterState {
 	return nil
 }
 
+func (x *State) GetClientMovementObservationConfirmed() bool {
+	if x != nil {
+		return x.ClientMovementObservationConfirmed
+	}
+	return false
+}
+
+func (x *State) GetClientMovementObservationFailures() uint64 {
+	if x != nil {
+		return x.ClientMovementObservationFailures
+	}
+	return 0
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -1654,7 +1672,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0ealive_observed\x18\x13 \x01(\bR\raliveObserved\x12\x16\n" +
 	"\x06rested\x18\x14 \x01(\bR\x06rested\x121\n" +
 	"\x14movement_unconfirmed\x18\x15 \x01(\bR\x13movementUnconfirmed\x12#\n" +
-	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\xe1\x18\n" +
+	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\x85\x1a\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -1733,7 +1751,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13interaction_harvest\x18B \x01(\bR\x12interactionHarvest\x12.\n" +
 	"\x13harvest_guard_guids\x18C \x03(\x04R\x11harvestGuardGuids\x12C\n" +
 	"\brecovery\x18D \x01(\v2'.warcraftbuddy.actions.v1.RecoveryStateR\brecovery\x12O\n" +
-	"\tfargodeep\x18E \x01(\v21.warcraftbuddy.actions.v1.FargodeepEncounterStateR\tfargodeep2\x9c\r\n" +
+	"\tfargodeep\x18E \x01(\v21.warcraftbuddy.actions.v1.FargodeepEncounterStateR\tfargodeep\x12Q\n" +
+	"%client_movement_observation_confirmed\x18G \x01(\bR\"clientMovementObservationConfirmed\x12O\n" +
+	"$client_movement_observation_failures\x18H \x01(\x04R!clientMovementObservationFailures2\x9c\r\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +

@@ -98,8 +98,8 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 	sortObjects := func(objects []*worldv1.GameObjectState) {
 		sort.Slice(objects, func(i, j int) bool {
 			a, b := s.gameObjects[objects[i].Guid], s.gameObjects[objects[j].Guid]
-			da, ka := observedDistance(*a, s.players[0])
-			db, kb := observedDistance(*b, s.players[0])
+			da, ka := s.selfDiscoveryDistance(*a)
+			db, kb := s.selfDiscoveryDistance(*b)
 			if ka != kb {
 				return ka
 			}

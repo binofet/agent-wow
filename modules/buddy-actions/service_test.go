@@ -33,6 +33,8 @@ type fakeSession struct {
 	lookupCreatures                   map[uint64]*worldv1.CreatureState
 	lookups                           []uint64
 	failSend, failClock, failSnapshot bool
+	failMovementObservation           bool
+	movementObservations              []*worldv1.ClientMovementRequest
 }
 
 func (f *fakeSession) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -62,6 +64,18 @@ func (f *fakeSession) GetClock(ctx context.Context, _ *emptypb.Empty, _ ...grpc.
 func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if r.Module == "buddy-world" && r.Method == "observe_client_movement" && r.Request.MessageIs(&worldv1.ClientMovementRequest{}) {
+		request := &worldv1.ClientMovementRequest{}
+		if err := r.Request.UnmarshalTo(request); err != nil {
+			return nil, err
+		}
+		f.movementObservations = append(f.movementObservations, request)
+		if f.failMovementObservation {
+			return nil, errors.New("observation unavailable")
+		}
+		result, _ := anypb.New(&emptypb.Empty{})
+		return &modv1.InvokeModuleResponse{Result: result}, nil
+	}
 	if f.failSnapshot {
 		return nil, errors.New("snapshot unavailable")
 	}

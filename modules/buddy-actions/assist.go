@@ -79,7 +79,7 @@ func (s *Service) selfAttackerLocked(w *worldv1.SnapshotResponse) *worldv1.Creat
 	best := math.Inf(1)
 	for _, view := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget, w.RequestedCreature}} {
 		for _, c := range view {
-			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.HealthKnown || !c.AliveKnown || !c.Alive || c.Health == 0 || !c.AttackVictimKnown || c.AttackVictimGuid != s.selfGUID || c.AttackAgeMs > 30000 || w.Self.UnitFlags&0x80000 == 0 && c.AttackAgeMs > 5000 {
+			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.HealthKnown || !c.AliveKnown || !c.Alive || c.Health == 0 || !c.AttackVictimKnown || c.AttackVictimGuid != s.selfGUID || !ongoingAttack(c, w.Self) {
 				continue
 			}
 			if kind := c.Guid >> 48; kind != 0xf130 && kind != 0xf150 {
@@ -134,7 +134,7 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 		return fail("assist_target_outside_conservative_range")
 	}
 	if self.ClassId == 4 {
-		if defense && self.CombatReachKnown && target.CombatReachKnown && distance(s.pos, targetPosition) > math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5 {
+		if defense && s.partyDefenseTarget == 0 && self.CombatReachKnown && target.CombatReachKnown && distance(s.pos, targetPosition) > math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5 {
 			return fail("self_defense_melee_target_outside_range")
 		}
 		return s.rogueAssistLocked(ctx, w, target, targetPosition)
@@ -210,6 +210,14 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	}
 	if s.fargodeep.active && !s.fargodeepWriteAllowedLocked(ctx, target, spell) {
 		return false
+	}
+	if s.partyDefenseTarget != 0 {
+		if !s.partyDefenseOffenseAllowedLocked(ctx, target, spell) {
+			if s.state.Reason != "party_defense_resources_changed_before_cast" {
+				s.stopAutoAttackLocked(ctx)
+			}
+			return false
+		}
 	}
 	now := s.now()
 	s.castCount++

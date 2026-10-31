@@ -234,6 +234,30 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			p.observedAt = now
 		}
 		return true, nil
+	case opcode.SMSGAttackerstateupdate, opcode.SMSGSpellnonmeleedamagelog:
+		var attacker, victim uint64
+		var damage uint32
+		var err error
+		if op == opcode.SMSGAttackerstateupdate {
+			attacker, victim, damage, err = decodeIncomingMeleeDamage(payload)
+		} else {
+			attacker, victim, _, damage, err = decodeIncomingSpellDamage(payload)
+		}
+		if err != nil {
+			return true, err
+		}
+		v := player(players, victim)
+		if v == nil {
+			v = state.nearbyPlayers[victim]
+		}
+		if damage > 0 && v != nil && v.present && state.creatures[attacker] != nil {
+			p := state.target(attacker)
+			if p.present {
+				p.attackVictimKnown, p.attackVictim, p.attackAt = true, victim, now
+				p.observedAt = now
+			}
+		}
+		return true, nil
 	case opcode.SMSGAttackstart:
 		attacker, victim := c.u64(), c.u64()
 		if err := c.done(); err != nil {

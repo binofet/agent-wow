@@ -35,8 +35,8 @@ func (s *observations) putNearbyPlayer(p *observed) {
 		// Retain nearest actual self observations; ties prefer recent evidence,
 		// then the lower GUID. Party membership remains the consumer's gate.
 		worse := func(a, b *observed) bool {
-			da, ka := observedDistance(*a, s.players[0])
-			db, kb := observedDistance(*b, s.players[0])
+			da, ka := s.selfDiscoveryDistance(*a)
+			db, kb := s.selfDiscoveryDistance(*b)
 			if ka != kb {
 				return !ka
 			}
@@ -92,8 +92,8 @@ func (s *observations) appendNearbyPlayers(r *worldv1.SnapshotResponse, now time
 		}
 	}
 	sort.Slice(players, func(i, j int) bool {
-		a, ka := observedDistance(*players[i], s.players[0])
-		b, kb := observedDistance(*players[j], s.players[0])
+		a, ka := s.selfDiscoveryDistance(*players[i])
+		b, kb := s.selfDiscoveryDistance(*players[j])
 		if ka != kb {
 			return ka
 		}

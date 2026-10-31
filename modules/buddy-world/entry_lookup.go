@@ -18,16 +18,7 @@ func (s *observations) appendRequested(r *worldv1.SnapshotResponse, now time.Tim
 				r.RequestedCreatures = append(r.RequestedCreatures, creatureSnapshot(p, s, now))
 			}
 		}
-		sort.Slice(r.RequestedCreatures, func(i, j int) bool {
-			a, b := r.RequestedCreatures[i], r.RequestedCreatures[j]
-			if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
-				return a.DistanceToSelfObservedKnown
-			}
-			if a.DistanceToSelfObserved != b.DistanceToSelfObserved {
-				return a.DistanceToSelfObserved < b.DistanceToSelfObserved
-			}
-			return a.Guid < b.Guid
-		})
+		s.sortDiscoveryCreatures(r.RequestedCreatures, false, true)
 		if len(r.RequestedCreatures) > 32 {
 			r.RequestedCreatures = r.RequestedCreatures[:32]
 		}
@@ -40,8 +31,8 @@ func (s *observations) appendRequested(r *worldv1.SnapshotResponse, now time.Tim
 		}
 		sort.Slice(r.RequestedGameObjects, func(i, j int) bool {
 			a, b := s.gameObjects[r.RequestedGameObjects[i].Guid], s.gameObjects[r.RequestedGameObjects[j].Guid]
-			da, ka := observedDistance(*a, s.players[0])
-			db, kb := observedDistance(*b, s.players[0])
+			da, ka := s.selfDiscoveryDistance(*a)
+			db, kb := s.selfDiscoveryDistance(*b)
 			if ka != kb {
 				return ka
 			}

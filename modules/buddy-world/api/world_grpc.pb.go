@@ -21,8 +21,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyWorld_Snapshot_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
-	BuddyWorld_OnPacket_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/OnPacket"
+	BuddyWorld_Snapshot_FullMethodName              = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
+	BuddyWorld_ObserveClientMovement_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement"
+	BuddyWorld_OnPacket_FullMethodName              = "/warcraftbuddy.world.v1.BuddyWorld/OnPacket"
 )
 
 // BuddyWorldClient is the client API for BuddyWorld service.
@@ -30,6 +31,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyWorldClient interface {
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
+	ObserveClientMovement(ctx context.Context, in *ClientMovementRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -51,6 +53,16 @@ func (c *buddyWorldClient) Snapshot(ctx context.Context, in *SnapshotRequest, op
 	return out, nil
 }
 
+func (c *buddyWorldClient) ObserveClientMovement(ctx context.Context, in *ClientMovementRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuddyWorld_ObserveClientMovement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyWorldClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -66,6 +78,7 @@ func (c *buddyWorldClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opt
 // for forward compatibility.
 type BuddyWorldServer interface {
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
+	ObserveClientMovement(context.Context, *ClientMovementRequest) (*emptypb.Empty, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyWorldServer()
 }
@@ -79,6 +92,9 @@ type UnimplementedBuddyWorldServer struct{}
 
 func (UnimplementedBuddyWorldServer) Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Snapshot not implemented")
+}
+func (UnimplementedBuddyWorldServer) ObserveClientMovement(context.Context, *ClientMovementRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ObserveClientMovement not implemented")
 }
 func (UnimplementedBuddyWorldServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -122,6 +138,24 @@ func _BuddyWorld_Snapshot_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyWorld_ObserveClientMovement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClientMovementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyWorldServer).ObserveClientMovement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyWorld_ObserveClientMovement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyWorldServer).ObserveClientMovement(ctx, req.(*ClientMovementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyWorld_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -150,6 +184,10 @@ var BuddyWorld_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Snapshot",
 			Handler:    _BuddyWorld_Snapshot_Handler,
+		},
+		{
+			MethodName: "ObserveClientMovement",
+			Handler:    _BuddyWorld_ObserveClientMovement_Handler,
 		},
 		{
 			MethodName: "OnPacket",

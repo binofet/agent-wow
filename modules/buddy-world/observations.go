@@ -42,6 +42,8 @@ type observations struct {
 	offhandRevision     uint64
 	inventoryRevision   uint64
 	equipmentRevision   uint64
+	discovery           clientDiscoveryAnchor
+	discoverySequence   uint64
 }
 
 func (s observations) clone() observations {
@@ -101,6 +103,9 @@ func (s *observations) remove(guid uint64, now time.Time) {
 func creatureGUID(guid uint64) bool { return guid>>48 == 0xf130 && guid&0xffffff != 0 }
 func itemGUID(guid uint64) bool     { return guid>>48 == 0x4000 && uint32(guid) != 0 }
 func (s *observations) reference() observed {
+	if p, known := s.clientDiscoveryReference(); known {
+		return p
+	}
 	p := s.players[1]
 	if p.present && p.mapKnown && p.positionKnown {
 		return p
@@ -126,6 +131,12 @@ func (s *observations) putCreature(p *observed) {
 				worst = candidate
 				continue
 			}
+			if s.attackerPriority(candidate) != s.attackerPriority(worst) {
+				if s.attackerPriority(candidate) < s.attackerPriority(worst) {
+					worst = candidate
+				}
+				continue
+			}
 			if interesting(candidate) != interesting(worst) {
 				if !interesting(candidate) {
 					worst = candidate
@@ -144,10 +155,13 @@ func (s *observations) putCreature(p *observed) {
 				worst = candidate
 			}
 		}
-		if !interesting(p) && interesting(worst) {
+		if s.attackerPriority(p) < s.attackerPriority(worst) {
 			return
 		}
-		if interesting(p) == interesting(worst) {
+		if s.attackerPriority(p) == s.attackerPriority(worst) && !interesting(p) && interesting(worst) {
+			return
+		}
+		if s.attackerPriority(p) == s.attackerPriority(worst) && interesting(p) == interesting(worst) {
 			d, k := observedDistance(*p, ref)
 			old, ok := observedDistance(*worst, ref)
 			if k && ok && d > old {
@@ -269,29 +283,11 @@ func (s *observations) appendSnapshot(r *worldv1.SnapshotResponse, now time.Time
 			r.SkinnableCorpses = append(r.SkinnableCorpses, creatureSnapshot(p, s, now))
 		}
 	}
-	sortCreatures(r.QuestGivers)
-	sortCreatures(r.LootableCorpses)
-	sortCreatures(r.SkinnableCorpses)
-	sort.Slice(r.NearbyCreatures, func(i, j int) bool {
-		a, b := r.NearbyCreatures[i], r.NearbyCreatures[j]
-		if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
-			return a.DistanceToSelfObservedKnown
-		}
-		if a.DistanceToSelfObserved != b.DistanceToSelfObserved {
-			return a.DistanceToSelfObserved < b.DistanceToSelfObserved
-		}
-		return a.Guid < b.Guid
-	})
-	sort.Slice(r.TrainerCreatures, func(i, j int) bool {
-		a, b := r.TrainerCreatures[i], r.TrainerCreatures[j]
-		if a.DistanceToSelfObservedKnown != b.DistanceToSelfObservedKnown {
-			return a.DistanceToSelfObservedKnown
-		}
-		if a.DistanceToSelfObserved != b.DistanceToSelfObserved {
-			return a.DistanceToSelfObserved < b.DistanceToSelfObserved
-		}
-		return a.Guid < b.Guid
-	})
+	s.sortDiscoveryCreatures(r.QuestGivers, true, false)
+	s.sortDiscoveryCreatures(r.LootableCorpses, true, false)
+	s.sortDiscoveryCreatures(r.SkinnableCorpses, true, false)
+	s.sortDiscoveryCreatures(r.NearbyCreatures, false, true)
+	s.sortDiscoveryCreatures(r.TrainerCreatures, false, false)
 	if len(r.TrainerCreatures) > maxCreatureResults {
 		r.TrainerCreatures = r.TrainerCreatures[:maxCreatureResults]
 	}

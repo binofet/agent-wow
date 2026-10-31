@@ -168,6 +168,10 @@ message State {
   repeated uint64 harvest_guard_guids = 67;
   RecoveryState recovery = 68;
   FargodeepEncounterState fargodeep = 69;
+  // Observation RPC acknowledgement, separate from actual movement transport.
+  // Tag70 is reserved for the separately developed Coldridge leveling status.
+  bool client_movement_observation_confirmed = 71;
+  uint64 client_movement_observation_failures = 72;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);

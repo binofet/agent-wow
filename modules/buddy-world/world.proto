@@ -132,6 +132,34 @@ message SnapshotRequest {
   bool include_gathering_objects = 4;
 }
 
+// A successful client movement write, supplied by the movement controller.
+// This is discovery guidance, not server acceptance or an observed player pose.
+message ClientMovementRequest {
+  uint64 self_guid = 1;
+  uint32 map_id = 2;
+  uint64 server_position_revision = 3;
+  uint64 sequence = 4;
+  // false invalidates a preceding estimate after an ambiguous movement write.
+  bool valid = 5;
+  float x = 6;
+  float y = 7;
+  float z = 8;
+  float orientation = 9;
+}
+
+message DiscoveryAnchor {
+  uint64 self_guid = 1;
+  uint32 map_id = 2;
+  uint64 server_position_revision = 3;
+  uint64 sequence = 4;
+  float x = 5;
+  float y = 6;
+  float z = 7;
+  float orientation = 8;
+  bool estimated = 9;
+  uint64 age_ms = 10;
+}
+
 message GameObjectState {
   uint64 guid = 1;
   uint32 entry = 2;
@@ -192,7 +220,8 @@ message CreatureState {
   bool target_known = 28;
   uint64 target_guid = 29;
   uint32 unit_flags_2 = 30;
-  // Distinct from UNIT_FIELD_TARGET selection: actual ATTACKSTART evidence.
+  // Distinct from target selection: actual ATTACKSTART or positive incoming
+  // NPC damage evidence. Damage refreshes this age only from a complete frame.
   bool attack_victim_known = 31;
   uint64 attack_victim_guid = 32;
   uint64 attack_age_ms = 33;
@@ -299,7 +328,8 @@ message SnapshotResponse {
   repeated BackpackSlot backpack = 15;
   // Only the currently observed owner's target, if present in the NPC cache.
   CreatureState owner_target = 16;
-  // At most32 present creatures ordered by observed self distance.
+  // At most32 present creatures, prioritizing actual player attackers and then
+  // discovery distance. The optional client-written anchor never changes poses.
   repeated CreatureState nearby_creatures = 17;
   bool self_copper_known = 18;
   uint32 self_copper = 19;
@@ -354,9 +384,13 @@ message SnapshotResponse {
   repeated EquipmentSlotState self_equipment = 43;
   // Absent when unobserved, foreign, bones, or multiple own corpses disagree.
   CorpseState own_corpse = 44;
+  // Client-written estimate used only to rank/cache observations. Raw Self and
+  // observed distance fields remain server-only and retain their original ages.
+  DiscoveryAnchor discovery_anchor = 45;
 }
 
 service BuddyWorld {
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc ObserveClientMovement(ClientMovementRequest) returns (google.protobuf.Empty);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

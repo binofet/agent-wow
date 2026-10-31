@@ -20,7 +20,7 @@ func (s *observations) appendGatheringObjects(r *worldv1.SnapshotResponse, now t
 		if !gameObjectGUID(p.guid) || !p.present || !p.known[objectEntry] || p.fields[objectEntry] == 0 || uint32(p.guid>>24&0xffffff) != p.fields[objectEntry] || !p.known[gameObjectBytes] || p.fields[gameObjectBytes]>>8&0xff != 3 {
 			continue
 		}
-		d, known := observedDistance(*p, s.players[0])
+		d, known := s.selfDiscoveryDistance(*p)
 		if !known || math.IsNaN(d) || math.IsInf(d, 0) {
 			continue
 		}

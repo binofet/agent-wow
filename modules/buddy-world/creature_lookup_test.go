@@ -226,8 +226,12 @@ func TestRequestedCreatureDescriptorUsesExistingSnapshotAlias(t *testing.T) {
 		t.Fatal("missing buddy-world descriptor")
 	}
 	method, ok := module.RPC("snapshot")
-	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 1 {
-		t.Fatal("lookup changed snapshot alias or added RPC authority")
+	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 2 {
+		t.Fatal("snapshot/discovery observation aliases changed")
+	}
+	clientMovement, ok := module.RPC("observe_client_movement")
+	if !ok || clientMovement.Path() != "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement" || clientMovement.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.ClientMovementRequest" {
+		t.Fatal("client-written discovery observation descriptor missing")
 	}
 	guid := method.Descriptor().Input().Fields().ByName("creature_guid")
 	creature := method.Descriptor().Output().Fields().ByName("requested_creature")

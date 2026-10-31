@@ -151,6 +151,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 		r.Owner = snapshot(owner, now)
 	}
 	s.state.appendSnapshot(r, now)
+	r.DiscoveryAnchor = s.state.discoverySnapshot(now)
 	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry())
 	if request.GetIncludeGatheringObjects() {
 		s.state.appendGatheringObjects(r, now)
@@ -179,6 +180,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
+		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
+			next.discovery = clientDiscoveryAnchor{}
+		}
 		if old.copperKnown != current.copperKnown || old.copper != current.copper {
 			next.copperRevision++
 		}
