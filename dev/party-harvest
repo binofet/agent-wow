@@ -134,6 +134,7 @@ TARGET_REASONS = {
     'observed_pure_skinning_rank_below_creature_requirement':'skill_rank_too_low',
     'actual_public_creature_template_query_required':'target_metadata_pending',
     'known_skinnable_and_normal_lootable_clear_required':'not_yet_skinnable',
+    'actual_corpse_tapped_by_self_or_party_required':'not_our_party_corpse',
 }
 
 class Worker:

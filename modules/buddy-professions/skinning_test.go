@@ -29,7 +29,7 @@ func skinningFixture(t *testing.T) (*Service, *professionSessionFixture) {
 	w.Self.ChannelObjectKnown, w.Self.ChannelSpellKnown = true, true
 	w.SelfSkills[1] = &worldv1.SkillState{Slot: 1, SkillId: 393, Value: 75, MaxValue: 75, Step: 1}
 	w.InventoryBags[0].Slots[2] = &worldv1.BackpackSlot{Slot: 2, ItemGuid: 0x4000000000000099, Entry: 7005, StackCount: 1, MetadataKnown: true}
-	c := &worldv1.CreatureState{Guid: skinProtocolTarget, Entry: 291, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 5, X: w.Self.X + 2, Y: w.Self.Y, Z: w.Self.Z, HealthKnown: true, Health: 0, MaxHealth: 100, AliveKnown: true, UnitFlagsKnown: true, UnitFlags: 0x04000000, DynamicFlagsKnown: true, LevelKnown: true, Level: 5}
+	c := &worldv1.CreatureState{Guid: skinProtocolTarget, Entry: 291, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 5, X: w.Self.X + 2, Y: w.Self.Y, Z: w.Self.Z, HealthKnown: true, Health: 0, MaxHealth: 100, AliveKnown: true, UnitFlagsKnown: true, UnitFlags: 0x04000000, DynamicFlagsKnown: true, DynamicFlags: 4 | 8, LevelKnown: true, Level: 5}
 	w.SkinnableCorpses = []*worldv1.CreatureState{c}
 	w.NearbyCreatures = []*worldv1.CreatureState{c}
 	w.RequestedCreature = c
@@ -145,16 +145,13 @@ func TestSkinningTargetGateUsesActualPrerequisitesAndCanonicalPureThreshold(t *t
 			m.typeFlags |= 0x8000
 			s.skinTemplates[291] = m
 		},
-		"full_loot_missing": func(s *Service, f *professionSessionFixture) { delete(s.fullLoot, skinProtocolTarget) },
-		"full_loot_old": func(s *Service, f *professionSessionFixture) {
-			s.fullLoot[skinProtocolTarget] = s.now().Add(-61 * time.Second)
-		},
-		"replayed_guid":   func(s *Service, f *professionSessionFixture) { s.skinAttempted[skinProtocolTarget] = true },
-		"knife_missing":   func(s *Service, f *professionSessionFixture) { s.view.counts[7005] = 0 },
-		"spell_unknown":   func(s *Service, f *professionSessionFixture) { delete(s.book.spells, 8613) },
-		"skill_unknown":   func(s *Service, f *professionSessionFixture) { delete(s.view.skills, 393) },
-		"channel_unknown": func(s *Service, f *professionSessionFixture) { s.view.self.ChannelSpellKnown = false },
-		"moving":          func(s *Service, f *professionSessionFixture) { s.actions.Moving = true },
+		"party_tap_missing": func(s *Service, f *professionSessionFixture) { s.view.raw.RequestedCreature.DynamicFlags &^= 8 },
+		"replayed_guid":     func(s *Service, f *professionSessionFixture) { s.skinAttempted[skinProtocolTarget] = true },
+		"knife_missing":     func(s *Service, f *professionSessionFixture) { s.view.counts[7005] = 0 },
+		"spell_unknown":     func(s *Service, f *professionSessionFixture) { delete(s.book.spells, 8613) },
+		"skill_unknown":     func(s *Service, f *professionSessionFixture) { delete(s.view.skills, 393) },
+		"channel_unknown":   func(s *Service, f *professionSessionFixture) { s.view.self.ChannelSpellKnown = false },
+		"moving":            func(s *Service, f *professionSessionFixture) { s.actions.Moving = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f := skinningFixture(t)
@@ -182,7 +179,7 @@ func TestSkinningTargetGateUsesActualPrerequisitesAndCanonicalPureThreshold(t *t
 }
 
 func TestSkinningFinalWorldReadAndExactLeaseRejectChangesBeforeCast(t *testing.T) {
-	for _, mode := range []string{"success", "dead", "combat", "self_pose", "map", "unknown_inventory", "inventory_revision", "knife", "skill", "gone", "target_pose", "target_far", "target_level", "capacity", "replacement_token", "expired_lease"} {
+	for _, mode := range []string{"success", "dead", "combat", "self_pose", "map", "unknown_inventory", "inventory_revision", "knife", "skill", "gone", "target_pose", "target_far", "target_level", "capacity", "replacement_token", "expired_lease", "party_tap_lost", "skinnable_cleared", "normal_loot_returned"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f := skinningFixture(t)
 			op := skinningDirect(t, s, f)
@@ -228,6 +225,12 @@ func TestSkinningFinalWorldReadAndExactLeaseRejectChangesBeforeCast(t *testing.T
 					c.X += 10
 				case "target_level":
 					c.Level = 60
+				case "party_tap_lost":
+					c.DynamicFlags &^= 8
+				case "skinnable_cleared":
+					c.UnitFlags &^= 0x04000000
+				case "normal_loot_returned":
+					c.DynamicFlags |= 1
 				case "capacity":
 					for i, row := range w.InventoryBags[0].Slots {
 						if row.ItemGuid == 0 {
@@ -273,6 +276,10 @@ func skinningRequest(s *Service, id string) *professionsv1.AttemptRequest {
 
 func TestSkinningOneFiniteFullLastSlotCycleRequiresGOAndAllMaterialReceipts(t *testing.T) {
 	s, f := skinningFixture(t)
+	// Joel cleared ordinary loot; Rook received no normal loot-window receipt.
+	s.mu.Lock()
+	delete(s.fullLoot, skinProtocolTarget)
+	s.mu.Unlock()
 	f.mu.Lock()
 	for i, row := range f.world.InventoryBags[0].Slots {
 		if row.ItemGuid == 0 && i != 3 {

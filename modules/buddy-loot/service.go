@@ -41,6 +41,10 @@ type Service struct {
 	items                                      []lootItem
 	index                                      int
 	removed, pushed, moneySent, moneyCleared   bool
+	itemRequested                              bool
+	cleanup                                    ordinaryLootCleanup
+	retired                                    map[uint64]bool
+	retiredCursor                              uint64
 	seen                                       map[uint64]bool
 	gatherSeen                                 map[uint64]bool
 	opened                                     bool
@@ -83,6 +87,14 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 		return nil, status.Error(codes.FailedPrecondition, "session closing")
 	}
 	s.state.Enabled = r.Enabled
+	if s.cleanup.source != 0 {
+		if r.Enabled {
+			s.until = s.now().Add(4 * time.Hour)
+		} else {
+			s.state.Reason = "disabled_by_request"
+		}
+		return s.snapshotLocked(), nil
+	}
 	if r.Enabled {
 		s.until = s.now().Add(4 * time.Hour)
 		s.seen = map[uint64]bool{}
@@ -168,7 +180,7 @@ func (s *Service) finish(ctx context.Context) {
 				r.Reason = s.state.Reason
 			}
 		}
-	} else {
+	} else if s.cleanup.source == 0 {
 		s.state.LastCorpseGuid = s.state.PendingCorpseGuid
 	}
 	s.state.PendingCorpseGuid = 0
@@ -178,6 +190,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.items = nil
 	s.window = lootWindow{}
 	s.index = 0
+	s.itemRequested = false
 	s.opened = false
 	s.questWolf = false
 	s.questColdridge = false
@@ -230,6 +243,12 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	defer s.mu.Unlock()
 	s.closed = true
 	s.state.Enabled = false
+	if s.cleanup.source != 0 {
+		// Cleanup has already reserved its one release; logout never resends it.
+		s.releaseLease(ctx)
+		s.state.Reason = "session_closing"
+		return &emptypb.Empty{}, nil
+	}
 	if s.token != "" && s.opened && s.pendingGUID() != 0 {
 		s.beginRelease(ctx)
 	}
@@ -402,6 +421,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	now := s.now()
+	if s.cleanup.source != 0 {
+		s.tickOrdinaryCleanup(ctx)
+		return
+	}
 	if s.token != "" {
 		var observed *worldv1.SnapshotResponse
 		var currentActions *actionsv1.State
@@ -410,6 +433,10 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 		if s.state.Phase != "waiting_release" && !now.Before(s.transactionUntil) {
+			if !s.questGather {
+				s.beginOrdinaryTimeout(ctx, "loot_transaction_timeout")
+				return
+			}
 			if !s.gatherOpeningTimeoutRecoverable() {
 				s.state.Enabled = false
 			}
@@ -473,6 +500,10 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 		}
 		if (s.state.Phase == "waiting_open" || s.state.Phase == "waiting_item" || s.state.Phase == "waiting_money" || s.state.Phase == "waiting_release") && !now.Before(s.deadline) {
+			if !s.questGather && s.state.Enabled {
+				s.beginOrdinaryTimeout(ctx, "loot_response_timeout")
+				return
+			}
 			if !s.gatherOpeningTimeoutRecoverable() {
 				s.state.Enabled = false
 			}
@@ -548,6 +579,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 			s.removed = false
 			s.pushed = false
+			s.itemRequested = true
 			s.state.Phase = "waiting_item"
 			s.deadline = now.Add(2 * time.Second)
 			s.inventoryWriteRevision = observed.InventoryRevision
@@ -556,6 +588,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 		case "waiting_item":
 			if s.removed && s.pushed {
+				s.itemRequested = false
 				s.index++
 				s.state.Phase = "ready_item"
 			}
@@ -578,6 +611,10 @@ func (s *Service) Tick(ctx context.Context) {
 	world := &worldv1.SnapshotResponse{}
 	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, world); err != nil {
 		s.state.Reason = "world_observations_unavailable"
+		return
+	}
+	if s.refreshRetiredSource(ctx) {
+		s.state.Reason = "loot_source_new_life_observed_waiting_fresh_corpse"
 		return
 	}
 	if s.state.InventoryPaused {
@@ -616,6 +653,10 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 	}
 	if s.tryGatherLocked(ctx, world) {
+		return
+	}
+	if len(s.retired) >= maxRetiredLootSources {
+		s.state.Reason = "loot_retired_source_bound_waiting_for_actual_new_life"
 		return
 	}
 	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) {
@@ -667,7 +708,7 @@ func (s *Service) Tick(ctx context.Context) {
 		if !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) {
 			continue
 		}
-		if s.seen[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
+		if s.seen[c.Guid] || s.retired[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
 			continue
 		}
 		x, y, z, _ := corpsePosition(c)
@@ -739,6 +780,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.transactionUntil = now.Add(12 * time.Second)
 	s.moneySent = false
 	s.moneyCleared = false
+	s.itemRequested = false
 	if eligible(world.Self, lease.State.Position, selected) {
 		s.openLocked(ctx)
 	} else {
@@ -864,6 +906,17 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 	case opcode.SMSGLootReleaseResponse:
 		if len(p) != 9 || p[8] > 1 {
 			bad = true
+			break
+		}
+		if s.cleanup.source != 0 {
+			if binary.LittleEndian.Uint64(p) == s.cleanup.source && s.cleanup.releaseRequested {
+				if p[8] == 1 && !s.cleanup.releaseObserved {
+					s.cleanup.releaseObserved = true
+					s.state.ReleasesObserved++
+				} else if p[8] == 0 && !s.cleanup.releaseObserved {
+					s.cleanup.releaseRejected = true
+				}
+			}
 			break
 		}
 		if s.token != "" && binary.LittleEndian.Uint64(p) == s.pendingGUID() {

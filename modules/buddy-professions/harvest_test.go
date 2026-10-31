@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
@@ -44,7 +43,7 @@ func TestHarvestOnlyAllowsEnabledExactIdleOrdinaryLoot(t *testing.T) {
 }
 
 func TestSkinHarvestApproachableDoesNotRelaxReadyOrProof(t *testing.T) {
-	for _, mode := range []string{"far_ready", "outside", "height", "full_loot", "template", "rank", "knife", "inventory", "book", "flags"} {
+	for _, mode := range []string{"far_ready", "outside", "height", "party_tap", "template", "rank", "knife", "inventory", "book", "flags"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _ := skinningFixture(t)
 			s.mu.Lock()
@@ -58,8 +57,8 @@ func TestSkinHarvestApproachableDoesNotRelaxReadyOrProof(t *testing.T) {
 				c.X = s.actions.Position.X + 20.01
 			case "height":
 				c.Z = s.actions.Position.Z + 1.51
-			case "full_loot":
-				s.fullLoot[c.Guid] = s.now().Add(-61 * time.Second)
+			case "party_tap":
+				c.DynamicFlags &^= 8
 			case "template":
 				delete(s.skinTemplates, c.Entry)
 			case "rank":

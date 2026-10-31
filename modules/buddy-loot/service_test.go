@@ -404,7 +404,7 @@ func TestTimeoutIsFiniteEvenAfterOverallTransactionDeadline(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		s.Tick(context.Background())
 	}
-	if len(f.packets) != 2 || f.releases != 1 || current(t, s).Enabled {
+	if len(f.packets) != 2 || f.releases != 1 || !current(t, s).Enabled || current(t, s).Phase != "loot_cleanup_unconfirmed" {
 		t.Fatalf("timeout loop %+v packets%d", current(t, s), len(f.packets))
 	}
 }

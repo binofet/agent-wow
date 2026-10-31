@@ -613,7 +613,7 @@ func TestColdridge170LootLeaseLossAndAmbiguousOpenNeverWriteAgain(t *testing.T) 
 				wantReleases = 0 // The old token cannot release a different interaction.
 			}
 			got := current(t, s)
-			if len(f.packets) != wantWrites || cold170PacketCount(f, opcode.CMSGLoot) != 1 || cold170PacketCount(f, opcode.CMSGAutostoreLootItem) != 0 || got.Enabled || got.ItemsStoredConfirmed != 0 || got.ReleasesObserved != 0 || f.releases != wantReleases {
+			if len(f.packets) != wantWrites || cold170PacketCount(f, opcode.CMSGLoot) != 1 || cold170PacketCount(f, opcode.CMSGAutostoreLootItem) != 0 || got.Enabled != (mode == "missing_open_receipt") || got.ItemsStoredConfirmed != 0 || got.ReleasesObserved != 0 || f.releases != wantReleases {
 				t.Fatal("uncertain or unowned transaction retried or fabricated receipts", got, f.packets)
 			}
 		})
@@ -773,7 +773,7 @@ func TestColdridge170LootRenewalDoesNotExtendTransactionOrReceiptDeadline(t *tes
 	}
 	advance(1100 * time.Millisecond)
 	s.Tick(context.Background())
-	if cold170PacketCount(f, opcode.CMSGLoot) != 1 || cold170PacketCount(f, opcode.CMSGLootRelease) != 1 || current(t, s).Enabled {
+	if cold170PacketCount(f, opcode.CMSGLoot) != 1 || cold170PacketCount(f, opcode.CMSGLootRelease) != 1 || !current(t, s).Enabled || current(t, s).Phase != "waiting_release" {
 		t.Fatal("renewal hid a missing opening receipt", current(t, s), f.packets)
 	}
 	advance(3 * time.Second)

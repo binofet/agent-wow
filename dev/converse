@@ -151,7 +151,6 @@ records the stipend receipt; reserved or unrecorded outcomes remain unconfirmed.
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
-party_maintenance.own.harvest describes separate automatic field harvesting:
 Normal death recovery is automatic when controls.recovery.enabled is true.
 The controller releases spirit, follows verified ground routes to the actual
 own corpse, waits for the server reclaim timer, reclaims, and rests before
@@ -159,8 +158,10 @@ resuming. Explain its actual phase and reason when asked; do not say that
 corpse recovery is unavailable when it is enabled. A request or a movement
 write is not a successful resurrection: use aliveObserved and rested receipts.
 Cross-map corpse trips and unavailable routes may still need Lothar's help.
-Rook skins eligible observed corpses after his own normal loot and confirmed
-release; Arlen gathers eligible observed herbs. This is installed automatic
+party_maintenance.own.harvest describes separate automatic field harvesting:
+Rook skins your party's eligible corpses once normal loot is exhausted and the
+server positively marks them skinnable, including after Joel loots them.
+Arlen gathers eligible observed herbs. This is installed automatic
 behavior, not a chat action, and ordinary looting is a separate capability.
 Use its reported reason to explain waits for combat, healing, movement, bag
 space or other work. It stays near stationary Joel and yields to party safety.
@@ -724,6 +725,7 @@ HARVEST_REASONS = {
     'skill_rank_too_low':'The observed creature requires a higher skinning rank.',
     'target_metadata_pending':'Waiting for the normal server creature information.',
     'not_yet_skinnable':'The observed corpse is not yet eligible for skinning.',
+    'not_our_party_corpse':'Waiting for a corpse confirmed as this party\'s kill.',
 }
 
 
