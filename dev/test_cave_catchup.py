@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 
 loader = importlib.machinery.SourceFileLoader('tested_cave_catchup', str(Path(__file__).with_name('cave-catchup')))
@@ -451,6 +452,306 @@ class CatchupTests(unittest.TestCase):
             rpc=cave.RPC('http://127.0.0.1:8086/rpc');rpc.opener=Opener(mode)
             with self.assertRaises(cave.Error) as raised:rpc.call('buddy-actions.fargodeep_encounter',dict(enabled=True))
             self.assertEqual(isinstance(raised.exception,cave.EncounterRejected),mode=='matching')
+
+
+    def test_additional_attacker_terminal_retires_unknown_and_never_replays_or_credits(self):
+        for restart in (False, True):
+            with self.subTest(restart=restart):
+                p = Party(); w = p.worker(); w.tick(); row = w.data['encounters'][0]
+                target = row['target']
+                p.rpcs[4].actions['fargodeep'].update(active=False, phase='additional_attacker_observed')
+                if restart:
+                    row['phase'] = 'unconfirmed'
+                    w = p.worker(stored=copy.deepcopy(w.data)); row = w.data['encounters'][0]
+                before = [copy.deepcopy(a.bags) for a in p.rpcs.values()]
+                p.events = []; w.tick()
+                self.assertFalse(w.done); self.assertEqual(row['phase'], 'stopped')
+                self.assertFalse(row['deadObserved']); self.assertNotIn('deathObservation', row)
+                self.assertEqual(row['abandonment']['kind'], 'outcome_unknown_target_quarantined')
+                self.assertEqual(row['abandonment']['cause'], 'additional_attacker_observed')
+                self.assertEqual([a.bags for a in p.rpcs.values()], before)
+                self.assertFalse(any(request['enabled'] for _, request in p.events))
+                w.tick(); self.assertEqual(row['target'], target)
+                self.assertFalse(any(request['enabled'] for _, request in p.events))
+                self.assertTrue(all(not r['quest47Complete'] and not r['quest60Complete'] for r in w.status['characters']))
+
+    def test_unconfirmed_add_retirement_requires_exact_inactive_terminal_and_fresh_idle_cleanup(self):
+        for mode in ('target', 'engager', 'phase', 'active', 'combat', 'loot', 'owner', 'body', 'cleanup'):
+            with self.subTest(mode=mode):
+                p = Party(); w = p.worker(); w.tick(); row = w.data['encounters'][0]; row['phase'] = 'unconfirmed'
+                f = p.rpcs[4].actions['fargodeep']; f.update(active=False, phase='additional_attacker_observed')
+                if mode == 'target': f['targetGuid'] = str(TARGET+1)
+                if mode == 'engager': f['engagerGuid'] = '5'
+                if mode == 'phase': f['phase'] = 'unknown'
+                if mode == 'active': f['active'] = True
+                if mode == 'combat': p.rpcs[1].self['unitFlags'] |= 0x80000
+                if mode == 'loot': p.rpcs[5].loot.update(phase='waiting_item', pendingCorpseGuid=str(TARGET))
+                if mode == 'owner':
+                    old = p.rpcs[1].world
+                    p.rpcs[1].world = lambda params: dict(old(params), owner=dict(present=True, guid='3'))
+                if mode == 'body': p.rpcs[4].session = 'changed'
+                if mode == 'cleanup': p.rpcs[5].actions['fargodeep']['targetGuid'] = str(TARGET+2)
+                p.events = []
+                try: w.tick()
+                except cave.Error: pass
+                self.assertNotEqual(row['phase'], 'stopped'); self.assertFalse(row['deadObserved'])
+                self.assertNotIn('abandonment', row)
+                self.assertFalse(any(request['enabled'] for _, request in p.events))
+
+
+class SearchActor(Actor):
+    def __init__(self, party, guid):
+        super().__init__(party, guid)
+        self.self['movementFlagsKnown'] = True
+        self.actions['position'].update(cave.station(4), revision='1')
+        self.target['present'] = False
+        self.token = None
+        self.mode = 'arrive'
+        self.unblock = threading.Event()
+        self.forks = 0
+
+    def fork(self, timeout=35):
+        actor = self
+        self.forks += 1
+        class Route:
+            def call(self, method, params, timeout=None): return actor.route(method, params, timeout)
+        return Route()
+
+    def call(self, method, params, timeout=None):
+        if method not in ('buddy-actions.acquire_interaction', 'buddy-actions.release_interaction'):
+            return super().call(method, params)
+        self.calls.append((method, copy.deepcopy(params)))
+        self.party.movement.append((self.guid, method, copy.deepcopy(params)))
+        if self.party.hook: self.party.hook(self, method, params)
+        if method == 'buddy-actions.acquire_interaction':
+            assert self.party.saved[-1]['search']['legs'][-1]['phase'] == 'reserved'
+            assert params == dict(owner='exploration', leaseMs=30000, harvest=True)
+            self.token = 'token-' + str(self.guid)
+            self.actions.update(interactionOwner='exploration', interactionHarvest=True, interactionLeaseRemainingMs=30000)
+            if self.mode == 'acquire_lost': raise cave.Error('acquire response lost')
+            return dict(token=self.token, state=copy.deepcopy(self.actions))
+        assert params == dict(owner='exploration', token=self.token)
+        if self.actions.get('interactionOwner') != 'exploration': raise cave.Error('exact lease no longer held')
+        if self.mode == 'release_lost': raise cave.Error('release uncertain')
+        self.actions.update(interactionOwner='', interactionHarvest=False, moving=False, traveling=False)
+        self.unblock.set()
+        return copy.deepcopy(self.actions)
+
+    def route(self, method, params, timeout):
+        self.party.movement.append((self.guid, method, copy.deepcopy(params)))
+        assert method == 'buddy-actions.travel_to' and timeout == 35
+        assert all(a.token for a in self.party.rpcs.values()), 'cohort was not fully in custody'
+        assert params['token'] == self.token and params['mapId'] == 0 and params['arrivalDistance'] == .75
+        self.actions.update(moving=True, traveling=True)
+        if self.mode == 'block':
+            if not self.unblock.wait(3): raise cave.Error('test route cancellation was not released')
+            self.party.movement.append((self.guid, 'route_returned_after_release', {}))
+            raise cave.Error('route cancelled')
+        if self.mode != 'stall':
+            self.actions['position'].update({k: params[k] for k in ('x', 'y', 'z')})
+            self.actions['position']['revision'] = str(int(self.actions['position']['revision'])+1)
+        self.actions.update(moving=False, traveling=False, reason='exploration_within_distance')
+        if self.mode == 'partial': self.actions['position']['x'] += 2
+        if self.mode == 'lost': raise cave.Error('travel response lost')
+        if self.mode == 'nav_failure': self.actions['reason'] = 'exploration_navigation_unavailable'
+        return copy.deepcopy(self.actions)
+
+
+class SearchParty(Party):
+    def __init__(self):
+        super().__init__()
+        self.movement = []
+        self.rpcs = {g: SearchActor(self, g) for g in cave.ROSTER}
+
+    def scan(self, worker):
+        for _ in range(3): worker.tick()
+
+    def routes(self): return [v for v in self.movement if v[1] == 'buddy-actions.travel_to']
+
+
+class CorridorSearchTests(unittest.TestCase):
+    def test_idle_three_polls_then_cohort_precise_route_and_original_encounters_unchanged(self):
+        p = SearchParty(); w = p.worker(); raw = [copy.deepcopy(a.self) for a in p.rpcs.values()]
+        w.tick(); w.tick(); self.assertEqual(p.movement, [])
+        w.tick()
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        self.assertEqual(w.status['phase'], 'corridor_station_arrived_reobserve')
+        self.assertEqual(w.data['encounters'], [])
+        self.assertEqual(w.data['search']['cursor'], 5)
+        self.assertEqual(w.data['search']['legs'][0]['phase'], 'arrived')
+        self.assertTrue(w.data['search']['legs'][0]['cleanupResolved'])
+        self.assertEqual([a.self for a in p.rpcs.values()], raw, 'raw server pose must not be overwritten')
+        self.assertTrue(all(a.forks == 1 for a in p.rpcs.values()))
+        self.assertTrue(all(not a.actions['interactionOwner'] for a in p.rpcs.values()))
+        # Actual post-arrival observed target enters the ordinary candidate flow.
+        for a in p.rpcs.values():
+            a.target.update(cave.station(5), present=True)
+            a.target['x'] += 5
+        w.tick()
+        self.assertEqual([g for g, request in p.events if request['enabled']], [1, 5, 4])
+        self.assertEqual(w.data['search']['legs'][0]['phase'], 'arrived')
+
+    def test_max_eight_legs_and_ordered_reverse_next_pass_without_history_reset(self):
+        p = SearchParty(); w = p.worker()
+        for _ in range(8): p.scan(w)
+        self.assertFalse(w.done); self.assertEqual(w.data['search']['cursor'], 12)
+        self.assertEqual([leg['station'] for leg in w.data['search']['legs']], list(range(5, 13)))
+        p.scan(w); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 24)
+        old = copy.deepcopy(w.data['search']['legs'])
+        resumed = p.worker(stored=copy.deepcopy(w.data)); p.scan(resumed)
+        self.assertEqual(resumed.data['search']['cursor'], 11)
+        self.assertEqual(resumed.data['search']['direction'], -1)
+        self.assertEqual(resumed.data['search']['legs'][:-1], old)
+
+    def test_initial_station_is_actual_same_floor_and_regroups_spread_cohort(self):
+        p = SearchParty(); w = p.worker()
+        p.rpcs[5].actions['position']['x'] += 4
+        p.scan(w)
+        self.assertEqual({tuple(r[k] for k in ('x', 'y', 'z')) for _, _, r in p.routes()}, {cave.SEARCH_STATIONS[4]})
+        self.assertEqual(w.data['search']['cursor'], 4)
+        p = SearchParty(); w = p.worker()
+        for a in p.rpcs.values(): a.actions['position']['z'] += 100
+        p.scan(w); self.assertTrue(w.done); self.assertEqual(p.movement, [])
+        self.assertEqual(w.status['phase'], 'corridor_not_near_current_party_floor')
+
+    def test_search_refuses_resources_other_activities_unknowns_and_owner(self):
+        modes = ('mana', 'health', 'bag', 'cast', 'attack', 'quest', 'trade', 'profession', 'lease', 'moving', 'owner', 'movement_unknown', 'rooted', 'fresh_attacker')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                p = SearchParty(); w = p.worker(); a = p.rpcs[1]
+                if mode == 'mana': a.self['power'] = 59
+                if mode == 'health': a.self['health'] = 94
+                if mode == 'bag':
+                    for i in range(16): a.bags[0]['slots'][i] = dict(bag=0, slot=i, itemGuid=str(100+i), metadataKnown=True, entry=117, stackCount=1)
+                if mode == 'cast': a.actions['castPending'] = True
+                if mode == 'attack': a.actions['autoAttackRequested'] = True
+                if mode == 'quest':
+                    old = a.call
+                    def busy(method, params, timeout=None):
+                        if method == 'buddy-quests.state': return dict(sessionId=a.session, actionInFlight=True)
+                        return old(method, params, timeout)
+                    a.call = busy
+                if mode == 'trade': a.trade.update(phase='ACTIVE')
+                if mode == 'profession': a.professions['active'] = True
+                if mode == 'lease': a.actions.update(interactionOwner='quests')
+                if mode == 'moving': a.actions['moving'] = True
+                if mode == 'owner':
+                    old = a.world
+                    a.world = lambda params: dict(old(params), owner=dict(guid='3', present=True))
+                if mode == 'movement_unknown': a.self['movementFlagsKnown'] = False
+                if mode == 'rooted': a.self['unitFlags'] |= 0x40000
+                if mode == 'fresh_attacker': a.target.update(present=True, attackVictimKnown=True, attackVictimGuid='4', attackAgeMs=3)
+                p.scan(w); self.assertEqual(p.movement, []); self.assertEqual(p.events, [])
+
+    def test_each_acquire_rechecks_all_three_and_never_moves_after_body_or_control_change(self):
+        for mode in ('body', 'controls', 'owner', 'combat'):
+            with self.subTest(mode=mode):
+                p = SearchParty(); w = p.worker()
+                def change(actor, method, params):
+                    if method == 'buddy-actions.acquire_interaction' and actor.guid == 1:
+                        if mode == 'body': p.rpcs[4].session = 'replacement'
+                        if mode == 'controls': p.rpcs[4].actions['following'] = True
+                        if mode == 'owner': p.rpcs[4].world = lambda params: dict(Actor.world(p.rpcs[4], params), owner=dict(present=True, guid='3'))
+                        if mode == 'combat': p.rpcs[4].self['unitFlags'] |= 0x80000
+                p.hook = change; p.scan(w)
+                self.assertTrue(w.done); self.assertEqual(p.routes(), [])
+                self.assertFalse(p.rpcs[1].actions.get('interactionOwner'))
+
+    def test_ambiguous_partial_failed_and_nonprogress_route_never_retried_or_new_pull(self):
+        for mode in ('lost', 'partial', 'nav_failure', 'stall', 'release_lost', 'acquire_lost'):
+            with self.subTest(mode=mode):
+                p = SearchParty(); w = p.worker(); p.rpcs[4].mode = mode
+                p.scan(w); self.assertTrue(w.done); self.assertEqual(p.events, [])
+                self.assertEqual(w.data['search']['legs'][-1]['phase'], 'yielded')
+                calls = len(p.routes())
+                resumed = p.worker(stored=copy.deepcopy(w.data)); resumed.tick()
+                self.assertTrue(resumed.done); self.assertEqual(len(p.routes()), calls)
+
+    def test_watchdog_releases_every_owned_token_before_waiting_on_blocking_routes(self):
+        for mode in ('stop', 'deadline', 'combat', 'owner', 'controls', 'replacement'):
+            with self.subTest(mode=mode):
+                p = SearchParty(); stop = [False]; w = p.worker(stop=lambda: stop[0])
+                for a in p.rpcs.values(): a.mode = 'block'
+                changed = [False]
+                def trigger(actor, method, params):
+                    if method == 'buddy-party.state' and all(a.actions.get('moving') for a in p.rpcs.values()) and not changed[0]:
+                        changed[0] = True
+                        if mode == 'stop': stop[0] = True
+                        if mode == 'deadline': p.time = 601
+                        if mode == 'combat': p.rpcs[1].self['unitFlags'] |= 0x80000
+                        if mode == 'owner': p.rpcs[4].world = lambda params: dict(Actor.world(p.rpcs[4], params), owner=dict(present=True, guid='3'))
+                        if mode == 'controls': p.rpcs[4].actions['following'] = True
+                        if mode == 'replacement':
+                            p.rpcs[4].actions.update(interactionOwner='training', moving=False, traveling=False)
+                            p.rpcs[4].unblock.set()
+                p.hook = trigger; p.scan(w)
+                self.assertTrue(changed[0]); self.assertTrue(w.done)
+                self.assertEqual(len([v for v in p.movement if v[1] == 'buddy-actions.release_interaction']), 3)
+                self.assertFalse(p.rpcs[1].actions.get('interactionOwner'))
+                self.assertFalse(p.rpcs[5].actions.get('interactionOwner'))
+                if mode == 'replacement':
+                    self.assertEqual(p.rpcs[4].actions['interactionOwner'], 'training')
+                    self.assertFalse(w.data['search']['legs'][-1]['cleanupResolved'])
+
+    def test_reserved_leg_restart_does_not_arm_even_if_new_target_visible(self):
+        p = SearchParty(); w = p.worker(); p.scan(w)
+        saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['phase'] = 'reserved'
+        for a in p.rpcs.values(): a.target.update(cave.station(5), present=True)
+        count = len(p.movement); resumed = p.worker(stored=saved); resumed.tick()
+        self.assertTrue(resumed.done); self.assertEqual(p.events, []); self.assertEqual(len(p.movement), count)
+
+    def test_original_v1_target_history_survives_search_and_cannot_be_rearmed(self):
+        p = SearchParty(); w = p.worker()
+        old = dict(target=TARGET, entry=475, engager=4, phase='stopped', deadObserved=False, started=0., requests={},
+            abandonment=dict(kind='outcome_unknown_target_absent_all_three'))
+        w.data['encounters'].append(copy.deepcopy(old)); p.scan(w)
+        self.assertEqual(w.data['encounters'], [old])
+        for a in p.rpcs.values(): a.target.update(cave.station(5), present=True)
+        w.tick(); self.assertEqual(p.events, [])
+
+    def test_final_stop_before_route_threads_and_changed_endpoint_never_write(self):
+        p = SearchParty(); stop = [False]; w = p.worker(stop=lambda: stop[0])
+        original = p.rpcs[5].fork
+        def stop_before_fork(timeout=35):
+            stop[0] = True
+            return original(timeout)
+        p.rpcs[5].fork = stop_before_fork
+        p.scan(w); self.assertTrue(w.done); self.assertEqual(p.routes(), [])
+        self.assertTrue(all(not a.actions.get('interactionOwner') for a in p.rpcs.values()))
+        p = SearchParty(); w = p.worker()
+        for g, actor in p.rpcs.items(): actor.url = f'http://127.0.0.1:{cave.ROSTER[g][1]}/rpc'
+        def replace(actor, method, params):
+            if method == 'buddy-actions.acquire_interaction' and actor.guid == 1:
+                actor.url = 'http://127.0.0.1:8402/rpc'
+        p.hook = replace; p.scan(w)
+        self.assertTrue(w.done); self.assertEqual(p.routes(), [])
+        self.assertFalse(any(v[0] == 1 and v[1] == 'buddy-actions.release_interaction' for v in p.movement), 'never send a token to a changed endpoint')
+
+    def test_cleanup_body_or_endpoint_change_never_becomes_positive_custody_proof(self):
+        for mode in ('body', 'endpoint'):
+            with self.subTest(mode=mode):
+                p = SearchParty(); w = p.worker(); changed = [False]
+                for g, actor in p.rpcs.items(): actor.url = f'http://127.0.0.1:{cave.ROSTER[g][1]}/rpc'
+                def replace(actor, method, params):
+                    if actor.guid == 4 and method == 'buddy-actions.release_interaction':
+                        changed[0] = True
+                        if mode == 'body': actor.session = 'new-body'
+                        else: actor.url = 'http://127.0.0.1:8402/rpc'
+                p.hook = replace; p.scan(w)
+                self.assertTrue(changed[0]); self.assertTrue(w.done)
+                self.assertFalse(w.data['search']['legs'][-1]['cleanupResolved'])
+                self.assertEqual(p.events, [])
+
+    def test_search_budget_and_malformed_saved_state_never_write(self):
+        p = SearchParty(); w = p.worker(seconds=35); p.scan(w)
+        self.assertTrue(w.done); self.assertEqual(p.movement, [])
+        p = SearchParty(); w = p.worker(); p.scan(w); saved = copy.deepcopy(w.data)
+        for key, value in (('route', 'foreign'), ('cursor', -1), ('direction', 0), ('legs', [])):
+            bad = copy.deepcopy(saved); bad['search'][key] = value
+            with self.assertRaises(cave.Error): p.worker(stored=bad)
+        bad = copy.deepcopy(saved); bad['search']['legs'] *= 65
+        with self.assertRaises(cave.Error): p.worker(stored=bad)
+
 
 
 if __name__=='__main__':unittest.main()

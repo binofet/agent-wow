@@ -2,6 +2,7 @@
 """Finite, fixed-party Fargodeep collection encounters through normal game RPCs."""
 import argparse
 import copy
+import concurrent.futures
 import fcntl
 import http.client
 import importlib.machinery
@@ -26,7 +27,33 @@ GOALS = {47: (773, 10), 60: (772, 8)}
 ENTRIES = frozenset((40, 475))
 IDENTITY = {'version': 1, 'mode': 'fargodeep_collection', 'roster': [1, 4, 5], 'questIds': [47, 60, 62]}
 MAX_LEDGER = 131072
-AUTO_TERMINAL = frozenset(('navigation_unavailable', 'route_replan_limit', 'navigation_step_failed',
+# Actual samples from the complete physical entrance -> trigger corridor,
+# /private/tmp/cave-current-path.json (199 samples, 176.565 yd). These are
+# navigation goals, never authority to send an unplanned movement chord.
+SEARCH_ROUTE = '33b3fc5d5667036167c668ae7ba69fc7f5cf6af57944790a46e185eb3f6de14d'
+SEARCH_STATIONS = (
+    (-9821.469, 215.5862, 16.341442),       # sample0
+    (-9820.893, 227.19437, 24.214392),      # sample18
+    (-9826.351, 237.92334, 31.82744),       # sample37
+    (-9834.488, 240.53362, 26.891457),      # sample54
+    (-9839.6, 230.13333, 18.551823),        # sample70
+    (-9834.666, 217.06573, 14.587091),      # sample87
+    (-9828.954, 204.60019, 14.721489),      # sample102
+    (-9828.05, 190.13332, 13.459157),       # sample118
+    (-9828.8, 176.71109, 12.31047),         # sample133
+    (-9835.635, 164.62372, 5.3633475),      # sample150
+    (-9842.402, 153.3405, 5.521588),        # sample166
+    (-9849.066, 140.4, 6.935242),           # sample182
+    (-9843.54, 127.525, 5.370034),          # sample198
+)
+SEARCH_LEGS = 8
+SEARCH_HISTORY = 64
+SEARCH_ARRIVAL = .75
+
+
+def station(index): return dict(zip(('x', 'y', 'z'), SEARCH_STATIONS[index]))
+
+AUTO_TERMINAL = frozenset(('additional_attacker_observed', 'navigation_unavailable', 'route_replan_limit', 'navigation_step_failed',
     'target_unsafe_or_cast_failed', 'initial_target_not_idle_unclaimed', 'target_position_unavailable_or_outside_range',
     'target_changed_during_plan', 'observations_changed_during_plan', 'quest_changed_during_plan', 'prewrite_observations_changed'))
 
@@ -136,8 +163,11 @@ def write_private(path, value):
 class RPC(c.RPC):
     READS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state', 'buddy-loot.state', 'buddy-trade.state', 'buddy-professions.state'))
 
+    def fork(self, timeout=35): return RPC(self.url, timeout=timeout)
+
     def call(self, method, params, timeout=None):
-        if method not in self.READS | {'buddy-actions.fargodeep_encounter'} or not isinstance(params, dict) or self.request_id >= 8192:
+        if method not in self.READS | {'buddy-actions.fargodeep_encounter', 'buddy-actions.acquire_interaction',
+                'buddy-actions.release_interaction', 'buddy-actions.travel_to'} or not isinstance(params, dict) or self.request_id >= 8192:
             raise Error('Cave RPC method or finite request bound is invalid')
         self.request_id += 1
         identity = self.request_id
@@ -235,6 +265,22 @@ class Catchup:
             for request in row['requests'].values():
                 if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped') or not 0 < number(request.get('questRevision', 0)) < 2**64:
                     raise Error('Cave request reservation is invalid')
+        self.search_legs, self.idle_polls = 0, 0
+        search = self.data.get('search')
+        if 'search' in self.data and search is None: raise Error('Saved corridor search is invalid')
+        if search is not None:
+            if (not isinstance(search, dict) or search.get('route') != SEARCH_ROUTE
+                    or type(search.get('cursor')) is not int or not 0 <= search['cursor'] < len(SEARCH_STATIONS)
+                    or type(search.get('direction')) is not int or search['direction'] not in (-1, 1)
+                    or not isinstance(search.get('legs'), list) or not 1 <= len(search['legs']) <= SEARCH_HISTORY):
+                raise Error('Saved corridor search is invalid')
+            for leg in search['legs']:
+                if (not isinstance(leg, dict) or type(leg.get('station')) is not int or not 0 <= leg['station'] < len(SEARCH_STATIONS)
+                        or leg.get('phase') not in ('reserved', 'arrived', 'yielded')
+                        or type(leg.get('cleanupResolved', False)) is not bool
+                        or leg.get('phase') == 'arrived' and leg.get('cleanupResolved') is not True
+                        or type(leg.get('started')) not in (int, float) or not math.isfinite(leg['started']) or leg['started'] < 0):
+                    raise Error('Saved corridor leg is invalid')
         self.status = {'identity': copy.deepcopy(IDENTITY), 'phase': 'starting', 'observationsCurrent': False, 'characters': []}
         controls = self.data.get('controls')
         if controls is not None and (not isinstance(controls, list) or len(controls) != 3 or any(not isinstance(row, list) or len(row) != 4 or any(type(v) is not bool for v in row) for row in controls)):
@@ -242,17 +288,27 @@ class Catchup:
 
     def persist(self): self.save(copy.deepcopy(self.data))
 
-    def read(self, target=0):
+    def endpoint(self, guid):
+        rpc = self.rpcs[guid]
+        if hasattr(rpc, 'url') and rpc.url != f'http://127.0.0.1:{ROSTER[guid][1]}/rpc':
+            self.done = True; raise Error('Cave actor endpoint changed')
+        return rpc
+
+    def read(self, target=0, timeout=None, check=None):
         result, groups = {}, []
-        for guid, rpc in self.rpcs.items():
-            first = rpc.call('buddy-party.state', {})
-            world = rpc.call('buddy-world.snapshot', {'creatureGuid': str(target)} if target else {})
-            actions = rpc.call('buddy-actions.status', {})
-            loot = rpc.call('buddy-loot.state', {})
-            quests = rpc.call('buddy-quests.state', {})
-            trade = rpc.call('buddy-trade.state', {})
-            professions = rpc.call('buddy-professions.state', {})
-            final = rpc.call('buddy-party.state', {})
+        for guid in self.rpcs:
+            def call(method, params):
+                if check is not None and not check(): raise Error('Corridor read interrupted')
+                endpoint = self.endpoint(guid)
+                return endpoint.call(method, params, timeout=timeout) if timeout is not None else endpoint.call(method, params)
+            first = call('buddy-party.state', {})
+            world = call('buddy-world.snapshot', {'creatureGuid': str(target)} if target else {})
+            actions = call('buddy-actions.status', {})
+            loot = call('buddy-loot.state', {})
+            quests = call('buddy-quests.state', {})
+            trade = call('buddy-trade.state', {})
+            professions = call('buddy-professions.state', {})
+            final = call('buddy-party.state', {})
             expected = self.sessions[str(guid)]
             if any(session(value.get('sessionId')) != expected for value in (first, final, loot, quests, trade, professions)):
                 self.done = True; raise Error('A cave actor body session changed')
@@ -319,6 +375,146 @@ class Catchup:
                     or operation and (operation.get('status') not in ('COMPLETED', 'SERVER_REJECTED', 'BLOCKED', 'CANCELLED') or operation.get('leaseReleased') is not True)):
                 return False
         return scenes[1]['actions'].get('healing') is True
+
+    def search_read(self, cleanup=False):
+        return self.read(timeout=.5, check=None if cleanup else lambda: not self.stopped() and self.now() < self.deadline)
+
+    def safe_search(self, scenes, tokens=None):
+        """Reuse pull safety, allowing only our own harvest-tagged movement."""
+        tokens = tokens or {}
+        if self.controls(scenes) != self.data.get('controls'): return False
+        adjusted = {}
+        for guid, scene in scenes.items():
+            own, a = scene['self'], scene['actions']
+            if ((scene['world'].get('owner') or {}).get('present') is True
+                    or own.get('movementFlagsKnown') is not True
+                    or number(own.get('unitFlags', 0)) & (0x1|0x4|0x40000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
+                    or number(own.get('movementFlags', 0)) & ~0x1ff or number(own.get('extraMovementFlags', 0))
+                    or a.get('autoAttacking') is True or a.get('autoAttackRequested') is True
+                    or a.get('fargodeep', {}).get('active') is True): return False
+            for creature in scene['world'].get('nearbyCreatures', []):
+                if (creature.get('present') is True and creature.get('alive') is True
+                        and creature.get('attackVictimKnown') is True
+                        and number(creature.get('attackVictimGuid', 0)) in (1, 3, 4, 5)
+                        and number(creature.get('attackAgeMs', 0)) <= 5000): return False
+            adjusted[guid] = dict(scene, actions=dict(a))
+            if guid in tokens:
+                if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
+                        or not number(a.get('interactionLeaseRemainingMs', 0))): return False
+                # The unchanged pull guard still checks casts, uncertain motion,
+                # other modules, resources, logs and complete carried inventory.
+                adjusted[guid]['actions'].update(interactionOwner='', moving=False, traveling=False)
+        return self.safe_pull(adjusted)
+
+    def release_search(self, guid, token):
+        result = {'guid': guid, 'releaseAck': False, 'custodyResolved': False}
+        try:
+            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            try:
+                a = self.endpoint(guid).call('buddy-actions.release_interaction', {'owner': 'exploration', 'token': token}, timeout=.5)
+                result['releaseAck'] = True
+            except Error:
+                # Danger can already have revoked this harvest token. Fresh
+                # stopped absence is distinct proof, never a fabricated ACK.
+                if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+                a = self.endpoint(guid).call('buddy-actions.status', {}, timeout=.5)
+            if session(self.endpoint(guid).call('buddy-party.state', {}, timeout=.5).get('sessionId')) != self.sessions[str(guid)]: return result
+            result['custodyResolved'] = not a.get('interactionOwner') and not any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))
+        except Error: pass
+        return result
+
+    def search(self, scenes):
+        """One journaled, physically planned cohort leg; no same-goal retries."""
+        saved = self.data.get('search')
+        if self.search_legs >= SEARCH_LEGS or saved and len(saved['legs']) >= SEARCH_HISTORY:
+            self.done = True; self.status['phase'] = 'finite_corridor_search_limit'; return
+        if self.deadline-self.now() < 36:
+            self.done = True; self.status['phase'] = 'finite_corridor_search_time_remaining'; return
+        if saved and saved['legs'][-1]['phase'] != 'arrived':
+            # An interrupted process cannot reissue a reserved movement leg.
+            self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
+        if not self.safe_search(scenes):
+            self.status['phase'] = 'waiting_for_safe_idle_corridor_search'; return
+        if saved is None:
+            anchors = [i for i in range(len(SEARCH_STATIONS)) if all(
+                abs(s['position']['z']-station(i)['z']) <= 2 and distance(s['position'], station(i)) <= 18 for s in scenes.values())]
+            if not anchors:
+                self.done = True; self.status['phase'] = 'corridor_not_near_current_party_floor'; return
+            cursor = min(anchors, key=lambda i: (max(distance(s['position'], station(i)) for s in scenes.values()), i))
+            saved = {'route': SEARCH_ROUTE, 'cursor': cursor, 'direction': 1, 'legs': []}
+            self.data['search'] = saved
+        else:
+            cursor = saved['cursor']
+            if any(abs(s['position']['z']-station(cursor)['z']) > 2 or distance(s['position'], station(cursor)) > 28 for s in scenes.values()):
+                self.done = True; self.status['phase'] = 'corridor_party_left_current_station_floor'; return
+        direction = saved['direction']
+        # First regroup at the floor-matched station if the cohort is spread;
+        # otherwise advance in ordered 14.2--15.7yd corridor intervals.
+        if all(distance(s['position'], station(cursor)) <= SEARCH_ARRIVAL+1e-4 for s in scenes.values()):
+            if not 0 <= cursor+direction < len(SEARCH_STATIONS): direction = -direction
+            goal_index = cursor+direction
+        else: goal_index = cursor
+        goal = station(goal_index)
+        leg = {'station': goal_index, 'phase': 'reserved', 'cleanupResolved': False, 'started': self.now(),
+            'before': {str(g): dict(s['position']) for g, s in scenes.items()}}
+        saved['legs'].append(leg); self.search_legs += 1; self.persist()
+        tokens, pool, futures, results, releases = {}, None, {}, {}, []
+        cause = 'corridor_guard_changed'
+        try:
+            for guid in ROSTER:
+                fresh = self.search_read()
+                if not self.safe_search(fresh, tokens): raise Error('Corridor custody or party safety changed')
+                lease = self.endpoint(guid).call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True}, timeout=.5)
+                token, a = lease.get('token'), lease.get('state') or {}
+                if not isinstance(token, str) or not 1 <= len(token) <= 128: raise Error('Corridor lease outcome is unconfirmed')
+                tokens[guid] = token
+                if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
+                        or not number(a.get('interactionLeaseRemainingMs', 0))) or any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed')):
+                    raise Error('Stopped guarded corridor custody was not confirmed')
+            if not self.safe_search(self.search_read(), tokens): raise Error('Corridor safety changed before movement')
+            # Each blocking route uses a distinct connection/request sequence;
+            # watchdog reads never share its RPC instance or request counter.
+            routes = {g: self.endpoint(g).fork(timeout=35) for g in ROSTER}
+            def travel(guid):
+                if self.stopped() or self.now() >= self.deadline: raise Error('Corridor start interrupted')
+                return routes[guid].call('buddy-actions.travel_to',
+                    dict(token=tokens[guid], mapId=0, arrivalDistance=SEARCH_ARRIVAL, **goal), timeout=35)
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+            futures = {g: pool.submit(travel, g) for g in ROSTER}
+            while True:
+                for guid, future in futures.items():
+                    if future.done() and guid not in results:
+                        answer = future.result()
+                        if (answer.get('reason') != 'exploration_within_distance' or any(answer.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))):
+                            cause = 'corridor_route_not_confirmed'; raise Error('Corridor route did not confirm arrival')
+                        results[guid] = True
+                if not self.safe_search(self.search_read(), tokens): raise Error('Corridor safety changed during movement')
+                if len(results) == 3: break
+                time.sleep(.2)
+        except (Error, OSError): pass
+        finally:
+            # Revoke every exact owned token before waiting for route RPCs.
+            releases = [self.release_search(g, token) for g, token in tokens.items()]
+            if pool: pool.shutdown(wait=True)
+            leg['cleanup'] = releases
+            leg['cleanupResolved'] = len(tokens) == 3 and all(v['custodyResolved'] for v in releases)
+        try:
+            after = self.search_read(cleanup=True)
+            leg['after'] = {str(g): dict(s['position']) for g, s in after.items()}
+            arrival = all(distance(s['position'], goal) <= SEARCH_ARRIVAL+1e-4 for s in after.values())
+            progress = all(distance(leg['before'][str(g)], goal) <= SEARCH_ARRIVAL+1e-4 or
+                (number(s['position'].get('revision', 0)) > number(leg['before'][str(g)].get('revision', 0))
+                    and distance(leg['before'][str(g)], goal)-distance(s['position'], goal) >= .5) for g, s in after.items())
+            if (len(results) == 3 and leg['cleanupResolved'] and not self.stopped() and self.now() < self.deadline
+                    and self.safe_search(after) and arrival and progress):
+                saved.update(cursor=goal_index, direction=direction)
+                leg['phase'] = 'arrived'; self.persist(); self.idle_polls = 0
+                self.status.update(phase='corridor_station_arrived_reobserve', searchStation=goal_index, searchLegs=self.search_legs)
+                return
+            if not arrival or not progress: cause = 'corridor_arrival_or_progress_unconfirmed'
+        except Error: cause = 'corridor_after_observation_unavailable'
+        leg.update(phase='yielded', outcome=cause); self.persist()
+        self.done = True; self.status.update(phase='corridor_search_yielded_no_retry', searchLegs=self.search_legs)
 
     def candidate(self, scenes):
         attempted = {row['target'] for row in self.data['encounters']}
@@ -435,6 +631,8 @@ class Catchup:
             self.status.update(phase='stopped' if self.stopped() else 'finite_deadline', observationsCurrent=False)
             if row and not self.cleanup(row): self.status['phase'] = 'cleanup_unconfirmed'
             self.done = True; return
+        if self.data.get('search', {}).get('legs') and self.data['search']['legs'][-1]['phase'] != 'arrived':
+            self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
         self.status['observationsCurrent'] = False
         scenes = self.read(row['target'] if row else 0)
         if self.data.get('controls') is not None and self.controls(scenes) != self.data['controls']:
@@ -461,6 +659,12 @@ class Catchup:
             if row['deadObserved'] and row['phase'] in ('arming', 'unconfirmed'):
                 row['phase'] = 'active'; self.persist()
             if row['phase'] == 'unconfirmed':
+                designated = scenes[row['engager']]['actions']
+                terminal = designated.get('fargodeep') or {}
+                if (not row['deadObserved'] and self.scope(designated, row) and terminal.get('active') is not True
+                        and terminal.get('phase') == 'additional_attacker_observed'
+                        and self.abandon_terminal(row, 'additional_attacker_observed')):
+                    return
                 self.cleanup(row); self.done = True; self.status['phase'] = 'encounter_outcome_unconfirmed_no_replay'; return
             if row['phase'] in ('arming', 'active'):
                 if row['phase'] == 'arming':
@@ -500,7 +704,12 @@ class Catchup:
         if self.data.get('controls') is None:
             self.data['controls'] = self.controls(scenes); self.persist()
         target = self.candidate(scenes)
-        if target is None: self.status['phase'] = 'waiting_for_actual_nearby_isolated_kobold'; return
+        if target is None:
+            self.idle_polls += 1
+            self.status['phase'] = 'waiting_for_actual_nearby_isolated_kobold'
+            if self.idle_polls >= 3: self.search(scenes)
+            return
+        self.idle_polls = 0
         self.arm(scenes, target)
 
 
