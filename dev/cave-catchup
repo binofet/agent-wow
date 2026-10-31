@@ -267,6 +267,20 @@ class Catchup:
             for request in row['requests'].values():
                 if not isinstance(request, dict) or request.get('phase') not in ('reserved', 'sent', 'observed', 'stopped') or not 0 < number(request.get('questRevision', 0)) < 2**64:
                     raise Error('Cave request reservation is invalid')
+            approaches = row.get('lootApproaches', [])
+            if not isinstance(approaches, list) or len(approaches) > 3: raise Error('Corpse approach history exceeds its bound')
+            for leg in approaches:
+                if (not isinstance(leg, dict) or leg.get('phase') not in ('reserved', 'arrived', 'preempted', 'yielded')
+                        or leg.get('targetGuid') != row['target'] or not isinstance(leg.get('bodySessions'), dict)
+                        or set(leg['bodySessions']) != set(self.sessions)
+                        or any(not session(v) for v in leg['bodySessions'].values())
+                        or type(leg.get('cleanupResolved', False)) is not bool): raise Error('Saved corpse approach is invalid')
+            for key in ('lootWaitAt','lootWaitPauseAt'):
+                if key in row and (type(row[key]) not in (int,float) or not math.isfinite(row[key]) or row[key]<0):
+                    raise Error('Corpse loot clock is invalid')
+            history=row.get('lootWaitHistory',[])
+            if not isinstance(history,list) or len(history)>3 or any(type(t) not in (int,float) or not math.isfinite(t) or t<0 for t in history):
+                raise Error('Corpse loot clock history is invalid')
         self.search_legs, self.idle_polls = 0, 0
         search = self.data.get('search')
         if 'search' in self.data and search is None: raise Error('Saved corridor search is invalid')
@@ -380,8 +394,8 @@ class Catchup:
                 return False
         return scenes[1]['actions'].get('healing') is True
 
-    def search_read(self, cleanup=False):
-        return self.read(timeout=.5, check=None if cleanup else lambda: not self.stopped() and self.now() < self.deadline)
+    def search_read(self, cleanup=False, target=0):
+        return self.read(target, timeout=.5, check=None if cleanup else lambda: not self.stopped() and self.now() < self.deadline)
 
     def safe_search(self, scenes, tokens=None):
         """Reuse pull safety, allowing only our own harvest-tagged movement."""
@@ -461,7 +475,7 @@ class Catchup:
                 and answer.get('interactionOwner', '') in ('', 'exploration') and not any(answer.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed', 'autoAttackUnconfirmed')),
             'reason': Catchup.phase(answer.get('reason')), 'position': dict(pos)}
 
-    def stopped_arrival_evidence(self, leg):
+    def stopped_arrival_evidence(self, leg, goal=None):
         """All-three recorded arrival/progress and resolved custody, not RPC success."""
         clean, before, after = leg.get('cleanup'), leg.get('before'), leg.get('after')
         if (leg.get('phase') != 'yielded' or leg.get('cleanupResolved') is not True
@@ -471,7 +485,7 @@ class Catchup:
                 or not all(v.get('custodyResolved') is True for v in clean)
                 or not isinstance(before, dict) or set(before) != set(self.sessions)
                 or not isinstance(after, dict) or set(after) != set(self.sessions)): return False
-        goal = station(leg['station'])
+        goal = station(leg['station']) if goal is None else goal
         return all(point(before[g], 'known') and point(after[g], 'known')
             and number(before[g].get('mapId', 0)) == 0 and number(after[g].get('mapId', 0)) == 0
             and number(after[g].get('revision', 0)) > number(before[g].get('revision', 0))
@@ -493,59 +507,14 @@ class Catchup:
         self.status.update(phase='corridor_station_observed_after_stop', searchStation=leg['station'])
         return True
 
-    def search(self, scenes):
-        """One journaled, physically planned cohort leg; no same-goal retries."""
-        saved = self.data.get('search')
-        if self.search_legs >= SEARCH_LEGS or saved and len(saved['legs']) >= SEARCH_HISTORY:
-            self.done = True; self.status['phase'] = 'finite_corridor_search_limit'; return
-        if self.deadline-self.now() < 36:
-            self.done = True; self.status['phase'] = 'finite_corridor_search_time_remaining'; return
-        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted'):
-            # An interrupted process cannot reissue a reserved movement leg.
-            self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
-        if not self.safe_search(scenes):
-            self.status['phase'] = 'waiting_for_safe_idle_corridor_search'; return
-        if saved is None:
-            anchors = [i for i in range(len(SEARCH_STATIONS)) if all(
-                abs(s['position']['z']-station(i)['z']) <= 2 and distance(s['position'], station(i)) <= 18 for s in scenes.values())]
-            if not anchors:
-                self.done = True; self.status['phase'] = 'corridor_not_near_current_party_floor'; return
-            cursor = min(anchors, key=lambda i: (max(distance(s['position'], station(i)) for s in scenes.values()), i))
-            saved = {'route': SEARCH_ROUTE, 'cursor': cursor, 'direction': 1, 'legs': []}
-            self.data['search'] = saved
-        else:
-            cursor = saved['cursor']
-            if saved['legs'][-1]['phase'] == 'preempted':
-                previous = saved['legs'][-1]
-                if not self.known_preemption(previous): raise Error('Corridor preemption is unconfirmed')
-                previous['freshResumeObservation'] = {'sessions': dict(self.sessions), 'observedAt': self.now()}
-                if all(distance(v['position'], station(previous['station'])) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
-                    cursor = previous['station']; saved['cursor'] = cursor
-            elif any(abs(s['position']['z']-station(cursor)['z']) > 2 or distance(s['position'], station(cursor)) > 28 for s in scenes.values()):
-                self.done = True; self.status['phase'] = 'corridor_party_left_current_station_floor'; return
-        direction = saved['direction']
-        # First regroup at the floor-matched station if the cohort is spread;
-        # otherwise advance in ordered 14.2--15.7yd corridor intervals.
-        if all(distance(s['position'], station(cursor)) <= SEARCH_ARRIVAL+1e-4 for s in scenes.values()):
-            if not 0 <= cursor+direction < len(SEARCH_STATIONS): direction = -direction
-            goal_index = cursor+direction
-        else: goal_index = cursor
-        if saved['legs'] and saved['legs'][-1]['phase'] == 'preempted':
-            previous_goal = saved['legs'][-1]['station']
-            if not all(distance(v['position'], station(previous_goal)) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
-                goal_index = previous_goal
-            if any(distance(v['position'], station(goal_index)) > 40 for v in scenes.values()):
-                self.done = True; self.status['phase'] = 'corridor_preempted_party_left_bounded_goal'; return
-        goal = station(goal_index)
-        leg = {'station': goal_index, 'phase': 'reserved', 'cleanupResolved': False, 'started': self.now(),
-            'bodySessions': dict(self.sessions), 'before': {str(g): dict(s['position']) for g, s in scenes.items()}}
-        saved['legs'].append(leg); self.search_legs += 1; self.persist()
+    def move_cohort(self, leg, goal, observe, guard, arrival_guard=None):
+        """Shared normal NAV transport; caller owns the durable leg reservation."""
         tokens, pool, futures, results, releases = {}, None, {}, {}, []
         cause = 'corridor_guard_changed'
         try:
             for guid in ROSTER:
-                fresh = self.search_read()
-                if not self.safe_search(fresh, tokens): raise Error('Corridor custody or party safety changed')
+                fresh = observe()
+                if not guard(fresh, tokens): raise Error('Corridor custody or party safety changed')
                 lease = self.endpoint(guid).call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True}, timeout=.5)
                 token, a = lease.get('token'), lease.get('state') or {}
                 if not isinstance(token, str) or not 1 <= len(token) <= 128: raise Error('Corridor lease outcome is unconfirmed')
@@ -553,7 +522,7 @@ class Catchup:
                 if (a.get('interactionOwner') != 'exploration' or a.get('interactionHarvest') is not True
                         or not number(a.get('interactionLeaseRemainingMs', 0))) or any(a.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed')):
                     raise Error('Stopped guarded corridor custody was not confirmed')
-            if not self.safe_search(self.search_read(), tokens): raise Error('Corridor safety changed before movement')
+            if not guard(observe(), tokens): raise Error('Corridor safety changed before movement')
             # Each blocking route uses a distinct connection/request sequence;
             # watchdog reads never share its RPC instance or request counter.
             routes = {g: self.endpoint(g).fork(timeout=35) for g in ROSTER}
@@ -564,7 +533,7 @@ class Catchup:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
             futures = {g: pool.submit(travel, g) for g in ROSTER}
             while True:
-                fresh = self.search_read()
+                fresh = observe()
                 priority = self.search_priority(fresh)
                 if priority is not None: leg['priorityObservation'] = priority
                 for guid, future in futures.items():
@@ -573,7 +542,7 @@ class Catchup:
                         results[guid] = answer
                         if (answer.get('reason') != 'exploration_within_distance' or any(answer.get(k) is True for k in ('moving', 'traveling', 'motionUnconfirmed'))):
                             cause = 'corridor_route_not_confirmed'; raise Error('Corridor route did not confirm arrival')
-                if not self.safe_search(fresh, tokens): raise Error('Corridor safety changed during movement')
+                if not guard(fresh, tokens): raise Error('Corridor safety changed during movement')
                 if len(results) == 3: break
                 time.sleep(.2)
         except (Error, OSError): pass
@@ -595,32 +564,247 @@ class Catchup:
             leg['routeResults'] = summaries
             leg['cleanup'] = releases
             leg['cleanupResolved'] = len(tokens) == 3 and all(v['custodyResolved'] for v in releases)
+        after = None
         try:
-            after = self.search_read(cleanup=True)
-            leg['after'] = {str(g): dict(s['position']) for g, s in after.items()}
-            arrival = all(distance(s['position'], goal) <= SEARCH_ARRIVAL+1e-4 for s in after.values())
+            after = observe(cleanup=True)
+            leg['after'] = {str(g): dict(v['position']) for g, v in after.items()}
+            arrival = all(distance(v['position'], goal) <= SEARCH_ARRIVAL+1e-4 for v in after.values())
             progress = all(distance(leg['before'][str(g)], goal) <= SEARCH_ARRIVAL+1e-4 or
-                (number(s['position'].get('revision', 0)) > number(leg['before'][str(g)].get('revision', 0))
-                    and distance(leg['before'][str(g)], goal)-distance(s['position'], goal) >= .5) for g, s in after.items())
-            if (len(results) == 3 and all(v.get('reason') == 'exploration_within_distance' for v in results.values()) and leg['cleanupResolved'] and not self.stopped() and self.now() < self.deadline
-                    and self.safe_search(after) and arrival and progress):
-                saved.update(cursor=goal_index, direction=direction)
-                leg['phase'] = 'arrived'; self.persist(); self.idle_polls = 0
-                self.status.update(phase='corridor_station_arrived_reobserve', searchStation=goal_index, searchLegs=self.search_legs)
-                return
+                (number(v['position'].get('revision', 0)) > number(leg['before'][str(g)].get('revision', 0))
+                    and distance(leg['before'][str(g)], goal)-distance(v['position'], goal) >= .5) for g, v in after.items())
+            if (len(results) == 3 and all(v.get('reason') == 'exploration_within_distance' for v in results.values())
+                    and leg['cleanupResolved'] and not self.stopped() and self.now() < self.deadline
+                    and (arrival_guard or guard)(after) and arrival and progress): return 'arrived', after, ''
             if not arrival or not progress: cause = 'corridor_arrival_or_progress_unconfirmed'
         except Error: cause = 'corridor_after_observation_unavailable'
         if self.known_preemption(leg) and not self.stopped() and self.now() < self.deadline:
-            leg.update(phase='preempted', outcome='known_stopped_priority_preemption')
+            return 'preempted', after, 'known_stopped_priority_preemption'
+        return 'yielded', after, cause
+
+    def recent_corpse_arrival(self):
+        if not self.data['encounters']: return None
+        row=self.data['encounters'][-1]; legs=row.get('lootApproaches',[])
+        if row['phase'] not in ('settled','stopped') or not legs: return None
+        leg=legs[-1]; clean=leg.get('cleanup') or []
+        if (leg['phase']=='arrived' and leg.get('bodySessions')==self.sessions and leg.get('cleanupResolved') is True
+                and len(clean)==3 and {number(v.get('guid',0)) for v in clean}==set(ROSTER)
+                and all(v.get('custodyResolved') is True for v in clean)): return row['target']
+        return None
+
+    @staticmethod
+    def reconnect_station(scenes):
+        candidates=[i for i in range(len(SEARCH_STATIONS)) if all(distance(v['position'],station(i))<=60 for v in scenes.values())]
+        if not candidates: return None
+        same_floor=[i for i in candidates if all(abs(v['position']['z']-station(i)['z'])<=2 for v in scenes.values())]
+        return min(same_floor or candidates,key=lambda i:(max(distance(v['position'],station(i)) for v in scenes.values()),i))
+
+    def search(self, scenes):
+        """One journaled, physically planned cohort leg; no same-goal retries."""
+        saved = self.data.get('search')
+        if self.search_legs >= SEARCH_LEGS or saved and len(saved['legs']) >= SEARCH_HISTORY:
+            self.done = True; self.status['phase'] = 'finite_corridor_search_limit'; return
+        if self.deadline-self.now() < 36:
+            self.done = True; self.status['phase'] = 'finite_corridor_search_time_remaining'; return
+        if saved and saved['legs'][-1]['phase'] not in ('arrived', 'preempted'):
+            # An interrupted process cannot reissue a reserved movement leg.
+            self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
+        if not self.safe_search(scenes):
+            self.status['phase'] = 'waiting_for_safe_idle_corridor_search'; return
+        reanchor=None; reconnect=None; corpse_arrival=self.recent_corpse_arrival()
+        if saved is None:
+            anchors = [i for i in range(len(SEARCH_STATIONS)) if all(
+                abs(s['position']['z']-station(i)['z']) <= 2 and distance(s['position'], station(i)) <= 18 for s in scenes.values())]
+            if not anchors:
+                reconnect=self.reconnect_station(scenes) if corpse_arrival else None
+                if reconnect is None:
+                    self.done = True; self.status['phase'] = 'corridor_not_near_current_party_floor'; return
+                cursor=reconnect
+                reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':None,'corpseTargetGuid':corpse_arrival}
+            else: cursor = min(anchors, key=lambda i: (max(distance(s['position'], station(i)) for s in scenes.values()), i))
+            saved = {'route': SEARCH_ROUTE, 'cursor': cursor, 'direction': 1, 'legs': []}
+            self.data['search'] = saved
+        else:
+            cursor = saved['cursor']
+            if saved['legs'][-1]['phase'] == 'preempted':
+                previous = saved['legs'][-1]
+                if not self.known_preemption(previous): raise Error('Corridor preemption is unconfirmed')
+                previous['freshResumeObservation'] = {'sessions': dict(self.sessions), 'observedAt': self.now()}
+                if all(distance(v['position'], station(previous['station'])) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
+                    cursor = previous['station']; saved['cursor'] = cursor
+            elif any(abs(s['position']['z']-station(cursor)['z']) > 2 or distance(s['position'], station(cursor)) > 28 for s in scenes.values()):
+                reconnect=self.reconnect_station(scenes)
+                if reconnect is None:
+                    self.done = True; self.status['phase'] = 'corridor_party_left_current_station_floor'; return
+                reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':cursor,'corpseTargetGuid':corpse_arrival or 0}
+        direction = saved['direction']
+        # First regroup at the floor-matched station if the cohort is spread;
+        # otherwise advance in ordered 14.2--15.7yd corridor intervals.
+        if all(distance(s['position'], station(cursor)) <= SEARCH_ARRIVAL+1e-4 for s in scenes.values()):
+            if not 0 <= cursor+direction < len(SEARCH_STATIONS): direction = -direction
+            goal_index = cursor+direction
+        else: goal_index = cursor
+        if saved['legs'] and saved['legs'][-1]['phase'] == 'preempted':
+            previous_goal = saved['legs'][-1]['station']
+            if not all(distance(v['position'], station(previous_goal)) <= SEARCH_ARRIVAL+1e-4 for v in scenes.values()):
+                goal_index = previous_goal
+            if corpse_arrival and any(distance(v['position'],station(cursor))>28 or abs(v['position']['z']-station(cursor)['z'])>2 for v in scenes.values()):
+                reconnect=self.reconnect_station(scenes)
+                if reconnect is not None: reanchor={'kind':'fresh_safe_origin_reconnect','priorCursor':cursor,'corpseTargetGuid':corpse_arrival}
+            if reconnect is None and any(distance(v['position'], station(goal_index)) > 40 for v in scenes.values()):
+                self.done = True; self.status['phase'] = 'corridor_preempted_party_left_bounded_goal'; return
+        if reconnect is not None:
+            goal_index=reconnect
+            direction=saved['direction'] if cursor==goal_index else (1 if goal_index>cursor else -1)
+        goal = station(goal_index)
+        leg = {'station': goal_index, 'phase': 'reserved', 'cleanupResolved': False, 'started': self.now(),
+            'bodySessions': dict(self.sessions), 'before': {str(g): dict(s['position']) for g, s in scenes.items()}}
+        if reanchor is not None:
+            leg['reanchor']=dict(reanchor, sessions=dict(self.sessions), observedAt=self.now())
+        saved['legs'].append(leg); self.search_legs += 1; self.persist()
+        outcome, after, cause = self.move_cohort(leg, goal, self.search_read, self.safe_search)
+        if outcome == 'arrived':
+            saved.update(cursor=goal_index, direction=direction)
+            leg['phase'] = 'arrived'; self.persist(); self.idle_polls = 0
+            self.status.update(phase='corridor_station_arrived_reobserve', searchStation=goal_index, searchLegs=self.search_legs)
+            return
+        if outcome == 'preempted':
+            leg.update(phase='preempted', outcome=cause)
             self.persist(); self.idle_polls = 0
             self.status.update(phase='waiting_for_safe_party_after_known_corridor_preemption', searchLegs=self.search_legs)
             return
         leg.update(phase='yielded', outcome=cause); self.persist()
-        if 'after' in leg and not self.stopped() and self.now() < self.deadline:
+        if after is not None and not self.stopped() and self.now() < self.deadline:
             try:
                 if self.observe_stopped_arrival(after): return
             except Error: pass
         self.done = True; self.status.update(phase='corridor_search_yielded_no_retry', searchLegs=self.search_legs)
+
+    def corpse_views(self, scenes, row, expected=None):
+        """Exact currently observed dead target; no history or patrol projection."""
+        views, missing = {}, False
+        for guid, scene in scenes.items():
+            value = scene['world'].get('requestedCreature')
+            if value is None:
+                missing = True; continue
+            if isinstance(value,dict): value=dict(value,**{k:value.get(k,0) for k in ('x','y','z')})
+            if (not isinstance(value, dict) or number(value.get('guid', 0)) != row['target']
+                    or number(value.get('entry', 0)) != row['entry'] or row['entry'] not in ENTRIES
+                    or value.get('present') is not True or value.get('aliveKnown') is not True or value.get('alive',False) is not False
+                    or value.get('healthKnown') is not True or number(value.get('health', 0)) != 0
+                    or value.get('levelKnown') is not True or not 5 <= number(value.get('level', 0)) <= 7
+                    or value.get('unitFlagsKnown') is not True or value.get('dynamicFlagsKnown') is not True
+                    or not number(value.get('dynamicFlags', 0)) & 8 or not point(value) or number(value.get('mapId', 0)) != 0
+                    or not number(value.get('positionRevision', 0))
+                    or not (-10000 <= value['x'] <= -9700 and 50 <= value['y'] <= 320 and -10 <= value['z'] <= 65)):
+                raise Error('Exact dead corpse context changed')
+            views[str(guid)] = {k: value[k] for k in ('x','y','z')}
+            views[str(guid)].update(positionRevision=number(value['positionRevision']))
+            if expected is not None and views[str(guid)] != expected[str(guid)]:
+                raise Error('Bound corpse position or revision changed')
+        if views and any(distance(v, next(iter(views.values()))) > .05 for v in views.values()):
+            raise Error('Companion corpse positions disagree')
+        return None if missing else views
+
+    def corpse_context(self, scenes, row):
+        if (row['phase'] != 'loot' or row.get('deadObserved') is not True
+                or set(row['requests']) != set(self.sessions) or any(r.get('phase') != 'stopped' for r in row['requests'].values())
+                or any(s['actions'].get('fargodeep', {}).get('active') is True
+                    or number(s['actions'].get('fargodeep', {}).get('targetGuid', 0)) not in (0,row['target'])
+                    or number(s['actions'].get('fargodeep', {}).get('targetGuid', 0)) and not self.scope(s['actions'], row) for s in scenes.values())):
+            return False
+        return True
+
+    def corpse_guard(self, scenes, row, expected, tokens=None):
+        return self.corpse_context(scenes,row) and self.safe_search(scenes,tokens) and self.corpse_views(scenes,row)==expected
+
+    def corpse_loot_idle(self, scenes, row):
+        """Expected same-source normal loot may begin immediately after release."""
+        if not self.corpse_context(scenes,row): return False
+        adjusted = {}
+        for guid, scene in scenes.items():
+            a, loot = scene['actions'], scene['loot']; pending = number(loot.get('pendingCorpseGuid', 0))
+            if (pending not in (0,row['target']) or number(loot.get('pendingGameObjectGuid', 0))
+                    or 'unconfirmed' in str(loot.get('phase', '')).lower()): return False
+            adjusted[guid] = dict(scene, actions=dict(a), loot=dict(loot), free=max(1,scene['free']))
+            if pending == row['target']:
+                if a.get('interactionOwner', '') not in ('','loot'): return False
+                adjusted[guid]['actions'].update(interactionOwner='', moving=False, traveling=False)
+                adjusted[guid]['loot'].update(phase='idle', pendingCorpseGuid='0')
+                # A confirmed normal pickup may just have filled the last slot;
+                # it changes future readiness, not an already observed arrival.
+                adjusted[guid]['free'] = max(1, scene['free'])
+        return self.safe_search(adjusted)
+
+    def corpse_arrival_guard(self, scenes, row, expected):
+        views = self.corpse_views(scenes, row, expected)
+        # Missing after cleanup is not authority for another route. It cannot
+        # erase positive movement arrival merely because normal loot removed
+        # the object before the final snapshot.
+        return (views is None or views == expected) and self.corpse_loot_idle(scenes, row)
+
+    def corpse_arrival_observed(self, leg, goal, scenes, row, views):
+        return (self.stopped_arrival_evidence(leg, goal) and self.corpse_arrival_guard(scenes,row,views)
+            and all(distance(v['position'], goal) <= SEARCH_ARRIVAL+1e-4
+                and number(v['position'].get('revision',0)) >= number(leg['after'][str(g)].get('revision',0)) for g,v in scenes.items()))
+
+    def prepare_corpse_loot(self, scenes, row):
+        """Return true while movement/recovery owns this tick; never opens loot."""
+        legs = row.get('lootApproaches', [])
+        if legs and legs[-1]['phase'] == 'reserved':
+            self.done = True; self.status['phase'] = 'reserved_corpse_approach_no_replay'; return True
+        try: views = self.corpse_views(scenes, row)
+        except Error:
+            self.done = True; self.status['phase'] = 'bound_corpse_context_changed_no_retry'; return True
+        if views is None:
+            # Absence is never movement authority. Keep prior unknown movement
+            # quarantined, and leave ordinary missing-corpse settlement alone.
+            if legs and legs[-1]['phase'] in ('yielded','preempted'):
+                self.done = True; self.status['phase'] = 'corpse_approach_target_absent_no_replay'; return True
+            if any(s['loot'].get('phase') != 'idle' or number(s['loot'].get('pendingCorpseGuid',0)) or
+                    any(number(v.get('guid',0)) == row['target'] for v in s['world'].get('lootableCorpses',[])) for s in scenes.values()):
+                self.status['phase']='waiting_for_current_corpse_before_cohort_approach'; return True
+            return False
+        goal = {k: views['1'][k] for k in ('x','y','z')}
+        guard = lambda fresh, tokens=None: self.corpse_guard(fresh, row, views, tokens)
+        near = all(distance(s['position'], goal) <= 12 and abs(s['position']['z']-goal['z']) <= 1.5 for s in scenes.values())
+        if legs and legs[-1]['phase'] == 'yielded':
+            previous = legs[-1]
+            if not self.corpse_arrival_observed(previous,goal,scenes,row,views):
+                self.done = True; self.status['phase'] = 'corpse_approach_unconfirmed_no_replay'; return True
+            previous.update(phase='arrived', arrivalObservation={'kind':'actual_bound_corpse_after_resolved_stop',
+                'sessions':dict(self.sessions), 'observedAt':self.now(), 'oldRpcSuccessClaimed':False})
+            self.persist()
+        if legs and legs[-1]['phase'] == 'preempted' and not self.known_preemption(legs[-1]):
+            self.done = True; self.status['phase'] = 'corpse_approach_unconfirmed_no_replay'; return True
+        if near:
+            if not self.corpse_loot_idle(scenes,row):
+                if 'lootWaitAt' in row: row.setdefault('lootWaitPauseAt', self.now()); self.persist()
+                self.status['phase']='waiting_for_safe_party_before_corpse_loot_clock'; return True
+            if 'lootWaitPauseAt' in row:
+                row['lootWaitAt'] += max(0,self.now()-row.pop('lootWaitPauseAt')); self.persist()
+            return False
+        if not any(number(s['world']['requestedCreature'].get('dynamicFlags', 0)) & 1 for s in scenes.values()): return False
+        if not guard(scenes):
+            self.status['phase'] = 'waiting_for_safe_idle_party_before_corpse_approach'; return True
+        if len(legs) >= 3 or self.deadline-self.now() < 36 or any(distance(v['position'], goal) > 60 for v in scenes.values()):
+            self.done = True; self.status['phase'] = 'finite_bound_corpse_approach_limit'; return True
+        if 'lootWaitAt' in row:
+            row.setdefault('lootWaitHistory', []).append(row.pop('lootWaitAt')); row.pop('lootWaitPauseAt',None)
+        leg = {'targetGuid':row['target'], 'phase':'reserved', 'cleanupResolved':False, 'started':self.now(),
+            'bodySessions':dict(self.sessions), 'targetViews':copy.deepcopy(views), 'goal':goal,
+            'before':{str(g):dict(v['position']) for g,v in scenes.items()}}
+        row.setdefault('lootApproaches', []).append(leg); self.persist()
+        observe = lambda cleanup=False: self.search_read(cleanup=cleanup, target=row['target'])
+        outcome, after, cause = self.move_cohort(leg, goal, observe, guard, lambda fresh:self.corpse_arrival_guard(fresh,row,views))
+        leg.update(phase=outcome, outcome=cause); self.persist()
+        if outcome == 'yielded':
+            if after is not None and self.corpse_arrival_observed(leg,goal,after,row,views):
+                leg.update(phase='arrived', arrivalObservation={'kind':'actual_bound_corpse_after_resolved_stop',
+                    'sessions':dict(self.sessions), 'observedAt':self.now(), 'oldRpcSuccessClaimed':False}); self.persist()
+            else:
+                self.done = True; self.status['phase'] = 'corpse_approach_unconfirmed_no_replay'; return True
+        self.status['phase'] = 'bound_corpse_cohort_arrived_reobserve' if leg['phase'] == 'arrived' else 'waiting_for_safe_party_after_known_corpse_preemption'
+        return True
 
     def candidate(self, scenes):
         attempted = {row['target'] for row in self.data['encounters']}
@@ -754,7 +938,7 @@ class Catchup:
                 self.status['phase'] = 'waiting_for_safe_stopped_arrival_observation'; return
             if not self.observe_stopped_arrival(scenes):
                 self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
-        if search and search['legs'][-1]['phase'] == 'preempted':
+        if search and search['legs'][-1]['phase'] == 'preempted' and row is None:
             if not self.known_preemption(search['legs'][-1]):
                 self.done = True; self.status['phase'] = 'corridor_previous_leg_requires_reconciliation'; return
             if not self.safe_search(scenes):
@@ -808,11 +992,14 @@ class Catchup:
                 else:
                     self.status['phase'] = 'waiting_for_actual_engagement'; return
             if row['phase'] == 'loot':
+                if self.prepare_corpse_loot(scenes, row): return
+                if 'lootWaitAt' not in row:
+                    row['lootWaitAt'] = self.now(); self.persist()
                 pending = any(number(s['loot'].get('pendingCorpseGuid', 0)) or s['loot'].get('phase') != 'idle' for s in scenes.values())
                 eligible = any(any(number(t.get('guid', 0)) == row['target'] for t in s['world'].get('lootableCorpses', [])) for s in scenes.values())
-                if pending or eligible or self.now()-row.get('lootAt', self.now()) < 2:
+                if pending or eligible or self.now()-row['lootWaitAt'] < 2:
                     self.status['phase'] = 'waiting_for_each_own_server_permitted_loot'
-                    if self.now()-row.get('lootAt', self.now()) > 35:
+                    if self.now()-row['lootWaitAt'] > 35:
                         self.done = True; self.status['phase'] = 'loot_uncollected_or_cleanup_unconfirmed_no_new_pull'
                     return
                 row['phase'] = 'settled'; self.persist()

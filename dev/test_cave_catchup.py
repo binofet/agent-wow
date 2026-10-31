@@ -27,6 +27,7 @@ class Party:
     def kill(self):
         for actor in self.rpcs.values():
             actor.target['alive'], actor.target['health'] = False, 0
+            actor.target['dynamicFlags'] = actor.target.get('dynamicFlags', 0) | 8
             actor.actions['fargodeep']['active'] = False
             actor.self['unitFlags'] &= ~0x80000
 
@@ -37,7 +38,7 @@ class Actor:
         self.calls = []
         self.self = dict(guid=str(guid), present=True, mapKnown=True, mapId=0, positionKnown=True,
             x=-9800., y=120., z=8., aliveKnown=True, alive=True, healthKnown=True, health=100,
-            maxHealth=100, classKnown=True, classId=cave.ROSTER[guid][2], unitFlagsKnown=True,
+            maxHealth=100, movementFlagsKnown=True, classKnown=True, classId=cave.ROSTER[guid][2], unitFlagsKnown=True,
             unitFlags=8, levelKnown=True, level=6, powerKnown=True, powerType=3 if guid==5 else 0, power=100, maxPower=100)
         self.actions = dict(position=dict(known=True, mapKnown=True, mapId=0, x=-9800., y=120., z=8.),
             healing=guid==1, assisting=True, following=False)
@@ -524,7 +525,9 @@ class SearchActor(Actor):
         self.party.movement.append((self.guid, method, copy.deepcopy(params)))
         if self.party.hook: self.party.hook(self, method, params)
         if method == 'buddy-actions.acquire_interaction':
-            assert self.party.saved[-1]['search']['legs'][-1]['phase'] == 'reserved'
+            saved = self.party.saved[-1]
+            reserved = saved.get('search', {}).get('legs', [])[-1:] + [r['lootApproaches'][-1] for r in saved['encounters'] if r.get('lootApproaches')]
+            assert any(leg['phase'] == 'reserved' for leg in reserved)
             assert params == dict(owner='exploration', leaseMs=30000, harvest=True)
             self.token = 'token-' + str(self.guid)
             self.actions.update(interactionOwner='exploration', interactionHarvest=True, interactionLeaseRemainingMs=30000)
@@ -905,6 +908,261 @@ class KnownSearchStopTests(unittest.TestCase):
         with self.assertRaises(cave.Error): p.worker(stored=saved)
         saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['cleanup'].pop()
         with self.assertRaises(cave.Error): p.worker(stored=saved)
+
+
+
+LOWER_FLOOR = dict(x=-9820.912, y=226.80743, z=23.68278)
+UPPER_CORPSE = dict(x=-9804.73, y=238.0915, z=40.68351)
+
+
+def corpse_party(priority=False):
+    p = PriorityParty() if priority else SearchParty()
+    for actor in p.rpcs.values():
+        actor.actions['position'].update(LOWER_FLOOR)
+        actor.target.update(UPPER_CORPSE, present=True, level=6)
+    w = p.worker(); w.tick(); p.kill(); row = w.data['encounters'][0]
+    assert w.cleanup(row)
+    row.update(phase='loot', deadObserved=True, lootAt=0.)
+    for actor in p.rpcs.values():
+        actor.target['dynamicFlags'] = 13
+        actor.lootable = [copy.deepcopy(actor.target)]
+    return p, w, row
+
+
+class CorpseCohortTests(unittest.TestCase):
+    def test_reported_upper_floor_corpse_gets_full_normal_guarded_cohort_move_before_loot_clock(self):
+        p, w, row = corpse_party(); p.time = 100
+        before = [copy.deepcopy(a.bags) for a in p.rpcs.values()]
+        requests = copy.deepcopy(row['requests']); target = row['target']
+        w.tick()
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        self.assertEqual({tuple(r[k] for k in ('x','y','z')) for _,_,r in p.routes()}, {tuple(UPPER_CORPSE[k] for k in ('x','y','z'))})
+        leg = row['lootApproaches'][0]
+        self.assertEqual(leg['phase'], 'arrived'); self.assertTrue(leg['cleanupResolved'])
+        self.assertEqual(row['lootAt'], 0); self.assertNotIn('lootWaitAt', row)
+        self.assertEqual([a.bags for a in p.rpcs.values()], before)
+        self.assertEqual(row['requests'], requests); self.assertEqual(row['target'], target)
+        self.assertNotIn('search', w.data)
+        p.time = 102; w.tick()
+        self.assertFalse(w.done); self.assertEqual(row['lootWaitAt'], 102)
+        p.time = 136; w.tick(); self.assertFalse(w.done)
+        p.time = 138; w.tick(); self.assertTrue(w.done)
+        self.assertEqual(w.status['phase'], 'loot_uncollected_or_cleanup_unconfirmed_no_new_pull')
+
+    def test_actual_protobuf_json_omits_dead_alive_false_and_zero_health(self):
+        p,w,row=corpse_party()
+        for actor in p.rpcs.values():
+            actor.target.pop('alive');actor.target.pop('health');actor.target.pop('mapId')
+        w.tick();self.assertFalse(w.done);self.assertEqual(len(p.routes()),3)
+        self.assertEqual(row['lootApproaches'][0]['phase'],'arrived')
+        p,w,row=corpse_party()
+        for actor in p.rpcs.values():
+            actor.target.pop('alive');actor.target.pop('health');actor.target['aliveKnown']=False
+        w.tick();self.assertTrue(w.done);self.assertEqual(p.routes(),[])
+
+    def test_missing_observer_never_hides_contradictory_corpse_after_cleanup(self):
+        for mode in ('alive','moved','wrong_guid','both_moved','both_revision'):
+            with self.subTest(mode=mode):
+                p,w,row=corpse_party();scenes=w.read(TARGET)
+                expected=w.corpse_views(scenes,row)
+                scenes[1]['world'].pop('requestedCreature')
+                other=scenes[4]['world']['requestedCreature']
+                if mode=='alive':other.update(alive=True,health=10)
+                if mode=='moved':other['x']+=1
+                if mode=='wrong_guid':other['guid']=str(TARGET+1)
+                if mode=='both_moved':
+                    for g in (4,5):scenes[g]['world']['requestedCreature']['x']+=1
+                if mode=='both_revision':
+                    for g in (4,5):scenes[g]['world']['requestedCreature']['positionRevision']='2'
+                with self.assertRaises(cave.Error):w.corpse_arrival_guard(scenes,row,expected)
+
+    def test_already_same_floor_in_loot_range_needs_no_exploration_or_new_encounter(self):
+        p, w, row = corpse_party()
+        for actor in p.rpcs.values(): actor.actions['position'].update(UPPER_CORPSE)
+        p.events = []; p.time = 30; w.tick()
+        self.assertFalse(w.done); self.assertEqual(p.routes(), []); self.assertEqual(p.events, [])
+        self.assertEqual(row['lootWaitAt'], 30); self.assertNotIn('lootApproaches', row)
+
+    def test_actual_bound_dead_corpse_and_normal_safety_are_required_before_any_move(self):
+        modes = ('alive','wrong_guid','wrong_entry','wrong_map','unknown_position','unknown_revision','untapped','disagree',
+            'request_not_stopped','foreign_encounter','mana','health','pending_loot','trade','profession','quest','owner','control','body','far')
+        for mode in modes:
+            with self.subTest(mode=mode):
+                p, w, row = corpse_party(); a = p.rpcs[4]
+                if mode == 'alive': a.target.update(alive=True, health=50)
+                if mode == 'wrong_guid': a.target['guid'] = str(TARGET+1)
+                if mode == 'wrong_entry': a.target['entry'] = 40
+                if mode == 'wrong_map': a.target['mapId'] = 1
+                if mode == 'unknown_position': a.target['positionKnown'] = False
+                if mode == 'unknown_revision': a.target['positionRevision'] = '0'
+                if mode == 'untapped': a.target['dynamicFlags'] = 1
+                if mode == 'disagree': a.target['x'] += 1
+                if mode == 'request_not_stopped': row['requests']['4']['phase'] = 'observed'
+                if mode == 'foreign_encounter': a.actions['fargodeep']['targetGuid'] = str(TARGET+2)
+                if mode == 'mana': a.self['power'] = 59
+                if mode == 'health': a.self['health'] = 94
+                if mode == 'pending_loot': a.loot.update(phase='waiting_item', pendingCorpseGuid=str(TARGET))
+                if mode == 'trade': a.trade['phase'] = 'ACTIVE'
+                if mode == 'profession': a.professions['active'] = True
+                if mode == 'quest':
+                    old = a.call
+                    def busy(method, params, timeout=None):
+                        if method == 'buddy-quests.state': return dict(sessionId=a.session, actionInFlight=True)
+                        return old(method, params, timeout)
+                    a.call = busy
+                if mode == 'owner': a.world = lambda params: dict(Actor.world(a, params), owner=dict(guid='3', present=True))
+                if mode == 'control': a.actions['following'] = True
+                if mode == 'body': a.session = 'other-body'
+                if mode == 'far':
+                    for actor in p.rpcs.values(): actor.actions['position']['x'] -= 100
+                p.events = []
+                try: w.tick()
+                except cave.Error: pass
+                self.assertEqual(p.routes(), []); self.assertEqual(p.events, [])
+
+    def test_corpse_revision_pose_or_life_change_during_lease_reads_stops_before_route(self):
+        for mode in ('revision','pose','alive','absent','body'):
+            with self.subTest(mode=mode):
+                p, w, row = corpse_party()
+                def change(actor, method, params):
+                    if actor.guid == 1 and method == 'buddy-actions.acquire_interaction':
+                        other = p.rpcs[4]
+                        if mode == 'revision': other.target['positionRevision'] = '2'
+                        if mode == 'pose': other.target['x'] += 1
+                        if mode == 'alive': other.target.update(alive=True, health=50)
+                        if mode == 'body': other.session = 'replacement'
+                        if mode == 'absent':
+                            old = other.world
+                            def gone(params):
+                                result = old(params); result.pop('requestedCreature', None); return result
+                            other.world = gone
+                p.hook = change; w.tick()
+                self.assertTrue(w.done); self.assertEqual(p.routes(), [])
+                self.assertFalse(p.rpcs[1].actions.get('interactionOwner'))
+                self.assertEqual(row['lootApproaches'][0]['phase'], 'yielded')
+
+    def test_known_combat_partial_defends_then_uses_new_snapshot_and_new_physical_plan(self):
+        p, w, row = corpse_party(priority=True); w.tick()
+        self.assertFalse(w.done); self.assertEqual(row['lootApproaches'][0]['phase'], 'preempted')
+        self.assertNotIn('lootWaitAt', row); calls = len(p.routes())
+        w.tick(); self.assertEqual(len(p.routes()), calls); self.assertFalse(w.done)
+        p.recover()
+        # A NEW dead-corpse observation is the new route goal. Frozen revision
+        # comparisons applied within the prior leg, not guessed old coordinates.
+        for a in p.rpcs.values(): a.target.update(x=UPPER_CORPSE['x']+.5, positionRevision='2')
+        w.tick()
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls+3)
+        self.assertEqual([leg['phase'] for leg in row['lootApproaches']], ['preempted','arrived'])
+        second = row['lootApproaches'][1]
+        self.assertEqual(second['targetViews']['1']['positionRevision'], 2)
+        self.assertEqual(second['goal']['x'], UPPER_CORPSE['x']+.5)
+        self.assertEqual(second['before']['1'], row['lootApproaches'][0]['after']['1'])
+        self.assertNotIn('lootWaitAt', row)
+        w.tick(); self.assertEqual(row['lootWaitAt'], p.time)
+
+    def test_unknown_or_reserved_corpse_movement_cannot_gain_retry_from_later_nearby_pose(self):
+        for mode in ('lost_nonarrival','reserved'):
+            with self.subTest(mode=mode):
+                p, w, row = corpse_party()
+                if mode == 'lost_nonarrival': p.rpcs[4].mode = mode
+                w.tick()
+                if mode == 'reserved': row['lootApproaches'][0]['phase'] = 'reserved'
+                saved = copy.deepcopy(w.data); calls = len(p.routes()); restored = p.worker(stored=saved)
+                restored.tick()
+                self.assertTrue(restored.done); self.assertEqual(len(p.routes()), calls)
+                self.assertNotIn('lootWaitAt', restored.data['encounters'][0])
+
+    def test_expected_bound_loot_starts_after_release_without_invalidating_actual_arrival(self):
+        for foreign in (False, True):
+            with self.subTest(foreign=foreign):
+                p,w,row=corpse_party()
+                def begin_loot(actor,method,params):
+                    if actor.guid==5 and method=='buddy-actions.release_interaction':
+                        p.rpcs[4].loot.update(phase='waiting_item',pendingCorpseGuid=str(TARGET+1 if foreign else TARGET))
+                        p.rpcs[4].actions['interactionOwner']='loot'
+                p.hook=begin_loot;w.tick()
+                if foreign:
+                    self.assertTrue(w.done);self.assertEqual(row['lootApproaches'][0]['phase'],'yielded')
+                else:
+                    self.assertFalse(w.done);self.assertEqual(row['lootApproaches'][0]['phase'],'arrived')
+                    w.tick();self.assertFalse(w.done);self.assertIn('lootWaitAt',row)
+                    self.assertEqual(w.status['phase'],'waiting_for_each_own_server_permitted_loot')
+                self.assertEqual(len(p.routes()),3)
+
+    def test_near_corpse_loot_clock_pauses_during_actual_combat_without_resetting_history(self):
+        p,w,row=corpse_party()
+        for a in p.rpcs.values():a.actions['position'].update(UPPER_CORPSE)
+        p.time=1;w.tick();self.assertEqual(row['lootWaitAt'],1)
+        p.time=20;p.rpcs[1].self['unitFlags']|=0x80000;w.tick()
+        self.assertFalse(w.done);self.assertEqual(row['lootWaitPauseAt'],20)
+        p.time=80;p.rpcs[1].self['unitFlags']&=~0x80000;w.tick()
+        self.assertFalse(w.done);self.assertEqual(row['lootWaitAt'],61)
+        self.assertNotIn('lootWaitPauseAt',row);self.assertEqual(p.routes(),[])
+        p.time=98;w.tick();self.assertTrue(w.done)
+
+    def test_known_partial_corpse_movement_has_three_attempt_cap_and_missing_target_never_moves(self):
+        p, w, row = corpse_party(priority=True)
+        for n in range(3):
+            if n: p.recover(); p.rpcs[1].mode = 'priority'; p.rpcs[4].mode = p.rpcs[5].mode = 'normal_cancel'
+            w.tick(); self.assertFalse(w.done)
+        p.recover(); w.tick(); self.assertTrue(w.done)
+        self.assertEqual(len(p.routes()), 9); self.assertEqual(len(row['lootApproaches']), 3)
+        p, w, row = corpse_party(priority=True); w.tick(); p.recover()
+        for actor in p.rpcs.values():
+            original = actor.world
+            def gone(params,original=original):
+                v=original(params);v.pop('requestedCreature',None);return v
+            actor.world = gone
+        calls=len(p.routes());w.tick();self.assertTrue(w.done);self.assertEqual(len(p.routes()),calls)
+
+
+
+class FreshCorridorReconnectTests(unittest.TestCase):
+    def test_upper_floor_corpse_pickup_then_no_candidates_returns_via_new_verified_goal(self):
+        p,w,row=corpse_party();w.tick()
+        self.assertEqual(row['lootApproaches'][-1]['phase'],'arrived')
+        for a in p.rpcs.values():a.lootable=[];a.target['dynamicFlags']=8
+        w.tick();p.time=3;w.tick();self.assertEqual(row['phase'],'settled')
+        before=copy.deepcopy(row);w.tick();w.tick()
+        self.assertFalse(w.done);self.assertEqual(len(p.routes()),6)
+        leg=w.data['search']['legs'][-1]
+        self.assertEqual(leg['phase'],'arrived');self.assertEqual(leg['reanchor']['corpseTargetGuid'],TARGET)
+        self.assertEqual(row,before)
+        self.assertEqual(leg['station'],2)
+        self.assertEqual({tuple(v[k] for k in ('x','y','z')) for _,_,v in p.routes()[3:]},{cave.SEARCH_STATIONS[2]})
+
+    def test_closed_arrived_cursor_reanchors_after_observed_normal_external_walk(self):
+        p=SearchParty();w=p.worker();p.scan(w);old=copy.deepcopy(w.data['search']['legs'][0])
+        for a in p.rpcs.values():a.actions['position'].update(cave.station(8),revision='10')
+        p.scan(w)
+        self.assertFalse(w.done);self.assertEqual(w.data['search']['cursor'],8)
+        self.assertEqual(w.data['search']['legs'][0],old)
+        new=w.data['search']['legs'][-1]
+        self.assertEqual(new['reanchor']['priorCursor'],5);self.assertEqual(new['station'],8)
+        self.assertEqual(w.search_legs,2)
+        self.assertEqual(new['before']['1']['x'],cave.SEARCH_STATIONS[8][0])
+
+    def test_unknown_scope_or_unbounded_origin_never_reanchors(self):
+        for mode in ('reserved','yielded','too_far','no_closed_corpse'):
+            with self.subTest(mode=mode):
+                p=SearchParty();w=p.worker()
+                if mode!='no_closed_corpse':p.scan(w)
+                if mode in ('reserved','yielded'):w.data['search']['legs'][-1]['phase']=mode
+                for a in p.rpcs.values():
+                    a.actions['position'].update(UPPER_CORPSE if mode=='no_closed_corpse' else cave.station(8),revision='20')
+                    if mode=='too_far':a.actions['position']['x']=-9700
+                count=len(p.routes())
+                if mode in ('reserved','yielded'):w.tick()
+                else:p.scan(w)
+                self.assertTrue(w.done);self.assertEqual(len(p.routes()),count)
+
+    def test_known_stopped_search_never_blocks_processing_a_new_owned_encounter(self):
+        p=PriorityParty();w=p.worker();p.scan(w);p.recover()
+        for a in p.rpcs.values():a.target.update(cave.station(4),present=True);a.target['x']+=5
+        w.tick();self.assertEqual(w.data['encounters'][0]['phase'],'active')
+        p.kill();w.tick()
+        self.assertEqual(w.data['encounters'][0]['phase'],'loot')
+        self.assertNotEqual(w.status['phase'],'waiting_for_safe_party_after_known_corridor_preemption')
 
 
 
