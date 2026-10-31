@@ -422,13 +422,15 @@ class Maintenance:
             return [(p,.75) for p in INN_STAIRS[2:]]
         if -9478.5<=x<=-9475.5 and 15<y<=22.5 and 56.8<=z<=60.7:
             return [(p,.75) for p in INN_STAIRS[1:]]
+        if -9468<=x<=-9462 and 29<=y<=35.5 and 56<=z<=58.3:
+            return [((-9467.,30.,56.96606),.75)]+[(p,.75) for p in INN_STAIRS]
         route=[]
         if x>-9435 and 45<=y<=70:
             route.append(((-9432.,60.,56.625515),.5))
         route.append(((-9465.93,24.9355,56.52882),.5))
         return route+[(p,.75) for p in INN_STAIRS]
 
-    def travel_inn(self, body, creature, owner, controls, key, route, deadline):
+    def travel_inn(self, body, creature, owner, controls, key, route, deadline, extra_guard=None):
         npc=integer(creature['guid'])
         binding=tuple(creature.get(k,0) for k in ('mapId','x','y','z','positionRevision'))
         lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'exploration','leaseMs':30000})
@@ -455,6 +457,7 @@ class Maintenance:
             trajectory=current.get('trajectory',{})
             if trajectory.get('known') is True and (trajectory.get('stopped') is not True or trajectory.get('transportRelative') is True):
                 raise Error('Actual inn trainer moved')
+            if extra_guard is not None:extra_guard(scene[0],scene[1])
             return scene
         renew_at=[0.]
         def renew(force=False):
@@ -469,10 +472,10 @@ class Maintenance:
                     or control.get('moving') is True or control.get('motionUnconfirmed') is True):
                 raise Error('Inn exploration stop is unconfirmed')
             guard()
-            self.travel_attempts[key]=self.travel_attempts.get(key,0)+1
+            if key is not None:self.travel_attempts[key]=self.travel_attempts.get(key,0)+1
             for goal,radius in route:
                 renew(True)
-                self.status['phase']='traveling_verified_inn_stair_landings'
+                self.status['phase']='traveling_verified_inn_stair_landings' if key is not None else 'returning_verified_inn_stair_landings'
                 response=self.route_call('buddy-actions.travel_to',{'token':token,'mapId':0,
                     'x':goal[0],'y':goal[1],'z':goal[2],'arrivalDistance':radius},guard,deadline,renew)
                 scene=guard()
@@ -485,6 +488,31 @@ class Maintenance:
             return True
         finally:
             self.release_route(body,'exploration',token)
+
+    def return_from_exhausted_inn(self,body,creature):
+        if integer(creature.get('entry',0)) not in INN_TRAINERS.values():return
+        npc=integer(creature.get('guid',0));cached=self.exhausted_trainers.get(npc)
+        if (cached is None or cached.get('returnAttempted') is True or self.exhausted_body!=body
+                or any(row['status']=='reserved' for row in self.data['training'])
+                or (self.data['mail'] or {}).get('status')=='reserved'):return
+        state,world,actions,owner=self.travel_scene(body)
+        pos=actions['position'];own=world['self']
+        if (self.inn_route(creature,own,pos)!=[] or not -9480<=pos['x']<=-9455
+                or not 8<=pos['y']<=39 or not 62.8<=pos['z']<=65.5
+                or npc>>48!=0xf130 or not npc&0xffffff or npc>>24&0xffffff!=integer(creature.get('entry',0))
+                or creature.get('present') is not True or not point(creature)
+                or any(creature.get(k) is not True for k in ('aliveKnown','alive','healthKnown'))
+                or not integer(creature.get('health',0)) or integer(creature.get('npcFlags',0))&0x30!=0x30
+                or integer(creature.get('movementFlags',0))&0x080000ff or integer(creature.get('unitFlags',0))&0x80000
+                or not self.trainer_exhausted(body,npc,world,state)):return
+        controls={k:actions.get(k,False) for k in ('following','healing','assisting')}
+        def still_exhausted(state,world):
+            if self.exhausted_trainers.get(npc) is not cached or not self.trainer_exhausted(body,npc,world,state):
+                raise Error('Inn return no longer has a current exhausted class offer')
+        cached['returnAttempted']=True  # One finite route per positively observed exhausted visit.
+        if self.travel_inn(body,creature,owner,controls,None,[(p,.75) for p in reversed(INN_STAIRS)],
+                time.monotonic()+75,extra_guard=still_exhausted):
+            self.status['phase']='no_affordable_unattempted_class_training'
 
     def travel_trainer(self, discovery, candidate):
         body=sync.session_id(discovery['state'])
@@ -628,10 +656,14 @@ class Maintenance:
             nearby=[r for r in nearby if integer(r.get('creature',{}).get('guid',0))==integer(pending['npc'])]
         else:
             before=len(nearby)
+            exhausted_nearby=nearby
             nearby=[r for r in nearby if not self.trainer_exhausted(sync.session_id(state),
                 r.get('creature',{}).get('guid',0),world,state)]
             if before and not nearby:
-                self.status['phase']='no_affordable_unattempted_class_training';return
+                self.status['phase']='no_affordable_unattempted_class_training'
+                for row in exhausted_nearby:
+                    self.return_from_exhausted_inn(sync.session_id(state),row.get('creature',{}))
+                return
         trainers = [row for row in nearby if row.get('interactable') is True]
         travel_guard=None
         if not trainers:
@@ -692,6 +724,7 @@ class Maintenance:
         if not choices:
             self.remember_exhausted_trainer(listed_body,npc,world,state,spells,attempted,budget)
             self.status['phase'] = 'no_affordable_unattempted_class_training'
+            self.return_from_exhausted_inn(listed_body,trainers[0].get('creature',{}))
             return
         spell = min(choices, key=lambda s:(integer(s.get('costCopper',0)), integer(s['spellId'])))
         cost, spell_id = integer(spell.get('costCopper',0)), integer(spell['spellId'])

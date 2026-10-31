@@ -159,6 +159,14 @@ class MaintenanceTests(unittest.TestCase):
         self.rpc=InnRPC(guid,class_id,start)
         self.agent=m.Maintenance(name,guid,self.rpc,lambda d:self.saved.append(copy.deepcopy(d)),now=lambda:self.now[0])
 
+    def complete_inn_offer(self):
+        self.rpc.offer['spells']=[dict(spellId=123,usable=2,costCopper=100,requiredLevel=4,pointCost=[0,0])]
+
+    def cache_inn_offer(self):
+        self.complete_inn_offer()
+        self.agent.remember_exhausted_trainer('body1',self.rpc.offer['npcGuid'],self.rpc.world,self.rpc.training,
+            self.rpc.offer['spells'],set(),9900)
+
     def test_all_three_actual_class_teachers_use_precise_inn_route_before_normal_offer(self):
         for name,guid,class_id,start in (('Arlen',1,5,(-9427.,56.,56.79)),
                 ('Mira',4,8,(-9461.812,17.964062,58.20209)),('Rook',5,4,(-9448.55,68.236,56.3225))):
@@ -181,6 +189,106 @@ class MaintenanceTests(unittest.TestCase):
                 self.assertEqual(list(self.agent.travel_attempts.values()),[1])
                 self.assertIsNone(self.rpc.token)
                 self.assertNotIn('buddy-actions.follow',self.methods())
+
+    def test_observed_lower_inn_trap_uses_verified_detour_before_stairs_and_training(self):
+        self.inn_rig('Rook',5,4,(-9464.171,33.176174,56.96606));self.tick()
+        routes=[p for method,p in self.rpc.calls if method=='buddy-actions.travel_to']
+        self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],
+            [(-9467.,30.,56.96606)]+list(m.INN_STAIRS))
+        self.assertTrue(all(p['arrivalDistance']==.75 for p in routes))
+        self.assertEqual(self.methods().count('buddy-training.buy'),1)
+        self.assertLess(max(i for i,(method,_) in enumerate(self.rpc.calls) if method=='buddy-actions.travel_to'),
+            self.methods().index('buddy-training.list'))
+        self.assertIsNone(self.rpc.token)
+
+    def test_fresh_exhausted_inn_offer_returns_all_classes_without_changing_training_history_or_looping(self):
+        for name,guid,class_id,start in (('Arlen',1,5,(-9462.666,31.836138,64.71143)),
+                ('Mira',4,8,(-9471.999,32.260372,63.820427)),('Rook',5,4,(-9466.226,15.32826,63.820427))):
+            with self.subTest(name=name):
+                self.setUp();self.inn_rig(name,guid,class_id,start);self.complete_inn_offer()
+                self.agent.data['training']=[dict(session='body1',spell=123,cost=100,npc=self.rpc.offer['npcGuid'],baselineId=0,status='confirmed')]
+                self.agent.data.update(reservedCopper=100,spentCopper=100)
+                history=copy.deepcopy(self.agent.data)
+                self.rpc.actions.update(following=True,healing=True,assisting=True)
+                self.tick()
+                routes=[p for method,p in self.rpc.calls if method=='buddy-actions.travel_to']
+                self.assertEqual([tuple(p[k] for k in ('x','y','z')) for p in routes],list(reversed(m.INN_STAIRS)))
+                self.assertTrue(all(p['arrivalDistance']==.75 for p in routes))
+                self.assertEqual(self.agent.data,history);self.assertEqual(self.saved,[])
+                self.assertNotIn('buddy-training.buy',self.methods());self.assertIsNone(self.rpc.token)
+                self.assertEqual(self.agent.status['exhaustedTrainerCount'],1)
+                for _ in range(3):self.tick()
+                self.assertEqual(self.methods().count('buddy-training.list'),1)
+                self.assertEqual(self.methods().count('buddy-actions.travel_to'),4)
+                self.assertNotIn('buddy-actions.follow',self.methods())
+                self.assertTrue(all(self.rpc.actions[k] for k in ('following','healing','assisting')))
+
+    def test_warm_inn_cache_returns_once_and_new_actual_level_can_establish_another_visit(self):
+        upper=(-9466.226,15.32826,63.820427)
+        self.inn_rig('Rook',5,4,upper);self.cache_inn_offer();self.tick()
+        self.assertEqual(self.methods().count('buddy-actions.travel_to'),4)
+        self.assertNotIn('buddy-training.list',self.methods())
+        self.rpc.actions['position'].update(x=upper[0],y=upper[1],z=upper[2]);self.tick()
+        self.assertEqual(self.methods().count('buddy-actions.travel_to'),4)
+        self.rpc.world['self']['level']=6;self.tick()
+        self.assertEqual(self.methods().count('buddy-training.list'),1)
+        self.assertEqual(self.methods().count('buddy-actions.travel_to'),8)
+        self.assertEqual(self.agent.status['exhaustedTrainerCount'],1)
+
+    def test_inn_return_stops_on_human_return_combat_control_or_trainer_changes_and_keeps_cache(self):
+        for mode in ('owner_returned','combat','control','trainer_absent','activity'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig('Rook',5,4,(-9466.226,15.32826,63.820427));self.cache_inn_offer()
+                def change(r):
+                    if mode=='owner_returned':
+                        r.world['owner']=dict(guid='3',present=True,aliveKnown=True,alive=True,unitFlagsKnown=True,
+                            positionKnown=True,mapKnown=True,movementFlagsKnown=True,x=-9470.,y=20.,z=63.82)
+                    elif mode=='combat':r.world['self']['unitFlags']=0x80000
+                    elif mode=='control':r.actions['following']=True
+                    elif mode=='activity':self.agent.activities=lambda:True
+                    else:r.creatures=[c for c in r.creatures if c['guid']!=r.offer['npcGuid']]
+                self.rpc.after_waypoint=change
+                with self.assertRaises(m.Error):self.tick()
+                self.assertEqual(self.methods().count('buddy-actions.travel_to'),1)
+                self.assertIsNone(self.rpc.token)
+                self.assertEqual(self.agent.status['exhaustedTrainerCount'],1)
+                self.assertTrue(self.agent.exhausted_trainers[int(self.rpc.offer['npcGuid'])]['returnAttempted'])
+                self.assertNotIn('buddy-training.buy',self.methods());self.assertEqual(self.saved,[])
+                self.assertNotIn('buddy-actions.follow',self.methods())
+
+    def test_inn_return_requires_actual_upper_floor_and_current_own_class_teacher(self):
+        for mode in ('lower_floor','wrong_map','outside_inn','trainer_absent','trainer_dead'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig('Rook',5,4,(-9466.226,15.32826,63.820427));self.cache_inn_offer()
+                if mode=='lower_floor':self.rpc.actions['position'].update(x=-9464.171,y=33.176174,z=56.96606)
+                elif mode=='wrong_map':
+                    self.rpc.world['self']['mapId']=1;self.rpc.actions['position']['mapId']=1
+                    for creature in self.rpc.creatures:creature['mapId']=1
+                elif mode=='outside_inn':self.rpc.actions['position'].update(x=-9420.,y=60.,z=64.)
+                elif mode=='trainer_absent':self.rpc.creatures=[]
+                else:next(c for c in self.rpc.creatures if c['guid']==self.rpc.offer['npcGuid'])['alive']=False
+                self.tick()
+                self.assertNotIn('buddy-actions.travel_to',self.methods())
+                self.assertNotIn('buddy-actions.acquire_interaction',self.methods())
+                self.assertNotIn('buddy-training.buy',self.methods())
+
+    def test_partial_or_timed_out_inn_return_has_one_finite_attempt_and_exact_cleanup(self):
+        for mode in ('partial','false_arrival','deadline'):
+            with self.subTest(mode=mode):
+                self.setUp();self.inn_rig('Rook',5,4,(-9466.226,15.32826,63.820427));self.cache_inn_offer()
+                clock=[1000.]
+                if mode=='partial':self.rpc.waypoint_reason='exploration_navigation_unavailable'
+                elif mode=='false_arrival':self.rpc.false_arrival=True
+                else:self.rpc.after_waypoint=lambda r:clock.__setitem__(0,clock[0]+76)
+                with patch.object(m.time,'monotonic',side_effect=lambda:clock[0]):
+                    if mode=='deadline':
+                        with self.assertRaises(m.Error):self.tick()
+                    else:self.tick()
+                self.assertIsNone(self.rpc.token)
+                self.assertEqual(self.methods().count('buddy-actions.travel_to'),1)
+                self.rpc.after_waypoint=None
+                self.tick();self.assertEqual(self.methods().count('buddy-actions.travel_to'),1)
+                self.assertNotIn('buddy-training.buy',self.methods());self.assertEqual(self.saved,[])
 
     def test_nearer_inn_teacher_for_another_class_does_not_starve_own_teacher(self):
         self.inn_rig('Mira',4,8,(-9460.75,33.1338,63.9038));self.tick()
