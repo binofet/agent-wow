@@ -547,12 +547,12 @@ class SearchActor(Actor):
             if not self.unblock.wait(3): raise cave.Error('test route cancellation was not released')
             self.party.movement.append((self.guid, 'route_returned_after_release', {}))
             raise cave.Error('route cancelled')
-        if self.mode != 'stall':
+        if self.mode not in ('stall', 'nav_failure'):
             self.actions['position'].update({k: params[k] for k in ('x', 'y', 'z')})
             self.actions['position']['revision'] = str(int(self.actions['position']['revision'])+1)
         self.actions.update(moving=False, traveling=False, reason='exploration_within_distance')
-        if self.mode == 'partial': self.actions['position']['x'] += 2
-        if self.mode == 'lost': raise cave.Error('travel response lost')
+        if self.mode in ('partial', 'lost_nonarrival'): self.actions['position']['x'] += 2
+        if self.mode in ('lost', 'lost_nonarrival'): raise cave.Error('travel response lost')
         if self.mode == 'nav_failure': self.actions['reason'] = 'exploration_navigation_unavailable'
         return copy.deepcopy(self.actions)
 
@@ -658,7 +658,7 @@ class CorridorSearchTests(unittest.TestCase):
                 self.assertFalse(p.rpcs[1].actions.get('interactionOwner'))
 
     def test_ambiguous_partial_failed_and_nonprogress_route_never_retried_or_new_pull(self):
-        for mode in ('lost', 'partial', 'nav_failure', 'stall', 'release_lost', 'acquire_lost'):
+        for mode in ('lost_nonarrival', 'partial', 'nav_failure', 'stall', 'release_lost', 'acquire_lost'):
             with self.subTest(mode=mode):
                 p = SearchParty(); w = p.worker(); p.rpcs[4].mode = mode
                 p.scan(w); self.assertTrue(w.done); self.assertEqual(p.events, [])
@@ -751,6 +751,160 @@ class CorridorSearchTests(unittest.TestCase):
             with self.assertRaises(cave.Error): p.worker(stored=bad)
         bad = copy.deepcopy(saved); bad['search']['legs'] *= 65
         with self.assertRaises(cave.Error): p.worker(stored=bad)
+
+
+
+class PriorityActor(SearchActor):
+    def route(self, method, params, timeout):
+        if self.mode not in ('priority', 'plain_cancel', 'normal_cancel', 'cancel_lost', 'cancel_motion_unknown'):
+            return super().route(method, params, timeout)
+        self.party.movement.append((self.guid, method, copy.deepcopy(params)))
+        assert method == 'buddy-actions.travel_to' and params['token'] == self.token
+        assert all(a.token for a in self.party.rpcs.values())
+        self.actions.update(moving=True, traveling=True)
+        if self.mode in ('priority', 'plain_cancel'):
+            p = self.actions['position']
+            p.update({k: p[k]+.4*(params[k]-p[k]) for k in ('x', 'y', 'z')})
+            p['revision'] = str(int(p['revision'])+1)
+            if self.mode == 'priority': self.self['unitFlags'] |= 0x80000
+            self.actions.update(moving=False, traveling=False, reason='harvest_fresh_actual_attacker_takes_priority' if self.mode == 'priority' else 'exploration_lease_changed_or_expiring')
+        else:
+            if not self.unblock.wait(3): raise cave.Error('normal stop never arrived')
+            self.actions.update(moving=False, traveling=False, reason='exploration_following_client_navmesh_estimate')
+            if self.mode == 'cancel_lost': raise cave.Error('normal cancellation response lost')
+            if self.mode == 'cancel_motion_unknown': self.actions['motionUnconfirmed'] = True
+        return copy.deepcopy(self.actions)
+
+
+class PriorityParty(SearchParty):
+    def __init__(self):
+        super().__init__(); self.rpcs = {g: PriorityActor(self, g) for g in cave.ROSTER}
+        self.rpcs[1].mode = 'priority'
+        for g in (4, 5): self.rpcs[g].mode = 'normal_cancel'
+
+    def recover(self):
+        for a in self.rpcs.values():
+            a.self['unitFlags'] &= ~0x80000; a.self.update(health=100, power=100)
+            a.mode = 'arrive'
+
+
+class KnownSearchStopTests(unittest.TestCase):
+    def test_known_combat_partial_waits_then_new_token_and_fresh_plan_without_claiming_old_arrival(self):
+        p = PriorityParty(); w = p.worker(); p.scan(w)
+        self.assertFalse(w.done)
+        old = w.data['search']['legs'][0]
+        self.assertEqual(old['phase'], 'preempted'); self.assertTrue(old['cleanupResolved'])
+        self.assertTrue(all(r['normalStopped'] for r in old['routeResults'].values()))
+        self.assertEqual(w.data['search']['cursor'], 4)
+        calls = len(p.routes()); w.tick(); self.assertEqual(len(p.routes()), calls)
+        self.assertEqual(w.status['phase'], 'waiting_for_safe_party_after_known_corridor_preemption')
+        p.recover(); p.scan(w)
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls+3)
+        self.assertEqual([leg['phase'] for leg in w.data['search']['legs']], ['preempted', 'arrived'])
+        self.assertEqual(w.data['search']['cursor'], 5); self.assertEqual(w.search_legs, 2)
+        self.assertEqual(w.data['search']['legs'][1]['before']['1'], old['after']['1'])
+        self.assertNotIn('arrivalObservation', old)
+        self.assertEqual(w.data['encounters'], [])
+
+    def test_preemption_recovery_fresh_resources_idle_owner_and_control_gates(self):
+        for mode in ('mana', 'cast', 'attack', 'lease', 'owner', 'trade', 'loot'):
+            with self.subTest(mode=mode):
+                p = PriorityParty(); w = p.worker(); p.scan(w); p.recover(); a = p.rpcs[4]
+                if mode == 'mana': a.self['power'] = 59
+                if mode == 'cast': a.actions['castPending'] = True
+                if mode == 'attack': a.actions['autoAttacking'] = True
+                if mode == 'lease': a.actions['interactionOwner'] = 'quests'
+                if mode == 'owner': a.world = lambda params: dict(Actor.world(a, params), owner=dict(present=True, guid='3'))
+                if mode == 'trade': a.trade['phase'] = 'ACTIVE'
+                if mode == 'loot': a.loot.update(phase='waiting_release', pendingCorpseGuid=str(TARGET))
+                calls = len(p.routes()); p.scan(w)
+                self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+                self.assertEqual(w.status['phase'], 'waiting_for_safe_party_after_known_corridor_preemption')
+        p = PriorityParty(); w = p.worker(); p.scan(w); p.recover(); p.rpcs[4].actions['following'] = True
+        w.tick(); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 3)
+
+    def test_unknown_nonarrival_or_unresolved_stop_never_rearms_even_when_later_idle(self):
+        for mode in ('cancel_lost', 'cancel_motion_unknown', 'release_lost', 'no_priority'):
+            with self.subTest(mode=mode):
+                p = PriorityParty(); w = p.worker()
+                if mode == 'no_priority': p.rpcs[1].mode = 'plain_cancel'
+                else: p.rpcs[4].mode = mode
+                p.scan(w); self.assertTrue(w.done)
+                self.assertEqual(w.data['search']['legs'][-1]['phase'], 'yielded')
+                p.recover(); p.rpcs[4].actions.update(motionUnconfirmed=False, interactionOwner='')
+                calls = len(p.routes()); restored = p.worker(stored=copy.deepcopy(w.data)); restored.tick()
+                self.assertTrue(restored.done); self.assertEqual(len(p.routes()), calls)
+
+    def test_observed_full_arrival_with_lost_rpc_records_station_fact_without_resending(self):
+        p = SearchParty(); w = p.worker(); p.rpcs[4].mode = 'lost'; p.scan(w)
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), 3)
+        leg = w.data['search']['legs'][0]
+        self.assertEqual(leg['phase'], 'arrived'); self.assertEqual(w.data['search']['cursor'], 5)
+        self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
+        self.assertFalse(leg['routeResults']['4']['normalStopped'])
+        self.assertEqual(w.data['encounters'], [])
+
+    def legacy_yielded_arrival(self):
+        p = SearchParty(); w = p.worker(); p.scan(w); saved = copy.deepcopy(w.data)
+        leg = saved['search']['legs'][-1]; leg.update(phase='yielded', outcome='corridor_guard_changed')
+        leg.pop('bodySessions', None); leg.pop('routeResults', None)
+        saved['search']['cursor'] = 4
+        return p, saved
+
+    def test_existing_119_yielded_arrived_reconciles_only_positive_complete_samebody_proof(self):
+        p, saved = self.legacy_yielded_arrival(); before = copy.deepcopy(saved['encounters'])
+        calls = len(p.routes()); w = p.worker(stored=saved); w.tick()
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+        leg = w.data['search']['legs'][-1]
+        self.assertEqual(leg['phase'], 'arrived'); self.assertEqual(w.data['search']['cursor'], 5)
+        self.assertEqual(leg['outcome'], 'corridor_guard_changed')
+        self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
+        self.assertEqual(w.data['encounters'], before)
+        for mode in ('no_close', 'missing_close', 'no_progress', 'not_arrived', 'fresh_not_arrived', 'reserved', 'wrong_body', 'revision_regressed'):
+            with self.subTest(mode=mode):
+                p, saved = self.legacy_yielded_arrival(); leg = saved['search']['legs'][-1]
+                if mode == 'no_close': leg['cleanup'][0]['custodyResolved'] = False
+                if mode == 'missing_close': leg['cleanup'].pop()
+                if mode == 'no_progress': leg['after']['1']['revision'] = leg['before']['1']['revision']
+                if mode == 'not_arrived': leg['after']['1']['x'] += 3
+                if mode == 'fresh_not_arrived': p.rpcs[1].actions['position']['x'] += 3
+                if mode == 'reserved': leg['phase'] = 'reserved'
+                if mode == 'wrong_body': p.rpcs[4].session = 'replacement'
+                if mode == 'revision_regressed': p.rpcs[1].actions['position']['revision'] = '0'
+                if mode == 'wrong_body':
+                    with self.assertRaises(cave.Error): p.worker(stored=saved)
+                    continue
+                w = p.worker(stored=saved); calls = len(p.routes())
+                try: w.tick()
+                except cave.Error: pass
+                self.assertTrue(w.done); self.assertEqual(len(p.routes()), calls)
+                self.assertNotEqual(leg['phase'], 'arrived'); self.assertNotIn('arrivalObservation', leg)
+
+    def test_existing_trigger_to_station11_arrival_sets_reverse_cursor_without_resending(self):
+        p, saved = self.legacy_yielded_arrival(); leg = saved['search']['legs'][-1]
+        saved['search'].update(cursor=12, direction=1); leg['station'] = 11
+        for g, actor in p.rpcs.items():
+            leg['before'][str(g)].update(cave.station(12))
+            leg['after'][str(g)].update(cave.station(11))
+            actor.actions['position'].update(leg['after'][str(g)])
+        calls = len(p.routes()); w = p.worker(stored=saved); w.tick()
+        self.assertFalse(w.done); self.assertEqual(len(p.routes()), calls)
+        self.assertEqual(w.data['search']['cursor'], 11); self.assertEqual(w.data['search']['direction'], -1)
+        self.assertFalse(leg['arrivalObservation']['oldRpcSuccessClaimed'])
+
+    def test_known_preemption_still_counts_every_attempt_toward_eight_and_body_binding(self):
+        p = PriorityParty(); w = p.worker()
+        for n in range(8):
+            if n: p.recover(); p.rpcs[1].mode = 'priority'; p.rpcs[4].mode = p.rpcs[5].mode = 'normal_cancel'
+            p.scan(w)
+            self.assertFalse(w.done); self.assertEqual(w.search_legs, n+1)
+        p.recover(); p.scan(w); self.assertTrue(w.done); self.assertEqual(len(p.routes()), 24)
+        saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['bodySessions']['4'] = 'other'
+        with self.assertRaises(cave.Error): p.worker(stored=saved)
+        saved = copy.deepcopy(w.data); saved['search']['legs'][-1].pop('routeResults')
+        with self.assertRaises(cave.Error): p.worker(stored=saved)
+        saved = copy.deepcopy(w.data); saved['search']['legs'][-1]['cleanup'].pop()
+        with self.assertRaises(cave.Error): p.worker(stored=saved)
 
 
 
