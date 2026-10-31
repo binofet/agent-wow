@@ -134,6 +134,7 @@ func validCastBody(data []byte, offset int, goEvent bool) bool {
 func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget uint64, implicitSelf ...bool) bool {
 	allowSelf := len(implicitSelf) > 0 && implicitSelf[0]
 	hitSelf := false
+	exactSelfHit := false
 	pos := offset + 8 // uint32 castFlags + uint32 castTime/timestamp
 	if pos > len(data) {
 		return false
@@ -163,6 +164,10 @@ func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget u
 			return false
 		}
 		misses := int(data[pos])
+		exactSelfHit = hits == 1 && hitSelf && misses == 0
+		if allowSelf && !exactSelfHit {
+			return false
+		}
 		pos++
 		for i := 0; i < misses; i++ {
 			if len(data)-pos < 9 {
@@ -183,11 +188,11 @@ func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget u
 	}
 	mask := binary.LittleEndian.Uint32(data[pos:])
 	pos += 4
-	if mask == 0 && allowSelf && (!goEvent || hitSelf) {
+	if mask == 0 && allowSelf && (!goEvent || exactSelfHit) {
 		// Server normalization for an implicit self-only effect.
 	} else if mask == 2 || expectedTarget>>48 == 0xf101 && (mask == 0x8000 || mask == 0x8200) {
 		target, n, err := readGUID(data[pos:])
-		if err != nil || target != expectedTarget && !(allowSelf && target == 0 && goEvent && hitSelf) {
+		if err != nil || target != expectedTarget && !(allowSelf && target == 0 && goEvent && exactSelfHit) {
 			return false
 		}
 		pos += n

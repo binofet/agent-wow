@@ -86,4 +86,16 @@ func TestImplicitSelfCastNormalizationRequiresActualSelfHitAndExactSpell(t *test
 	if validCastTargetBody(p, off, true, s.selfGUID, true) {
 		t.Fatal("foreign hit granted implicit self")
 	}
+	for _, other := range []uint64{s.selfGUID, 99} {
+		mixed := append([]byte(nil), p[:off+8]...)
+		mixed = append(mixed, 2)
+		mixed = binary.LittleEndian.AppendUint64(mixed, s.selfGUID)
+		mixed = binary.LittleEndian.AppendUint64(mixed, other)
+		mixed = append(mixed, 0)
+		mixed = binary.LittleEndian.AppendUint32(mixed, 2)
+		mixed = append(mixed, 0)
+		if validCastTargetBody(mixed, off, true, s.selfGUID, true) {
+			t.Fatal("mixed/duplicate hit list accepted")
+		}
+	}
 }

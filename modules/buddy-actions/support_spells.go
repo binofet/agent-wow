@@ -223,6 +223,10 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	}
 	if rejected {
 		op.view.Phase = "server_rejected_no_replay"
+		if op.view.Capability == string(spellcatalog.Resurrect) {
+			delete(s.resurrectionBindings, op.owner)
+			s.nextHeal = s.now().Add(10 * time.Second)
+		}
 	}
 	s.state.CastPending = false
 	s.pendingSpell = 0

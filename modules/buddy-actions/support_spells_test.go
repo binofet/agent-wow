@@ -72,6 +72,35 @@ func TestResurrectionRefusesCombatNonmembersUnlearnedAndOutOfRange(t *testing.T)
 		})
 	}
 }
+
+func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testing.T) {
+	s, f, advance := resRig(t)
+	s.Tick(context.Background())
+	first := s.castCount
+	p := []byte{first}
+	p = binary.LittleEndian.AppendUint32(p, 2006)
+	p = append(p, 47)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: p})
+	if s.resurrectionBindings[3] || s.state.CastPending {
+		t.Fatal("definite rejection quarantined the death")
+	}
+	advance(9 * time.Second)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("rejection cooldown ignored")
+	}
+	advance(2 * time.Second)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 2 || s.castCount == first {
+		t.Fatal("fresh eligible resurrection could not start")
+	}
+	s, f, _ = resRig(t)
+	f.failSend = true
+	s.Tick(context.Background())
+	if !s.resurrectionBindings[3] || s.supportOp.view.Phase != "transport_unconfirmed_no_retry" {
+		t.Fatal("ambiguous transport was rearmed")
+	}
+}
 func TestActualPartyResurrectionOfferAcceptedOnceNotForgedOrUnsolicited(t *testing.T) {
 	for _, caster := range []uint64{3, 99} {
 		t.Run(string(rune(caster)), func(t *testing.T) {
