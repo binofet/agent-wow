@@ -62,6 +62,26 @@ class GearTests(unittest.TestCase):
         self.rpc.journal=journal
         return m.Worker(self.rpc,5,journal,guard=lambda:None,**kw)
     def writes(self):return [r for method,r in self.rpc.calls if method=='buddy-inventory.equip_gear']
+    def review_fixture(self,journal):
+        old=journal.data['attempts'][0]['request']['sessionId'];new='reviewed-new-body';now=m.time.time()
+        baseline=initial();baseline['sessionId']=old
+        current=copy.deepcopy(baseline);current['sessionId']=new
+        own=dict(guid='5',present=True,mapKnown=True,mapId=0,positionKnown=True,positionRevision='1',x=0.,y=0.,z=0.,
+            aliveKnown=True,alive=True,unitFlagsKnown=True,movementFlagsKnown=True)
+        world=dict(self=own,inventoryKnown=True,inventoryRevision=current['inventoryRevision'],inventoryBags=copy.deepcopy(current['inventoryBags']),
+            selfEquipmentKnown=True,selfEquipmentRevision=current['equipmentRevision'],selfEquipment=copy.deepcopy(current['equipment']))
+        docs=dict(completedPass=dict(at=now-5,finishedAt=now-4,phase='finished',actors=[dict(guid=5,sessionId=old,afterInventory=baseline)]),
+            lifecycle=dict(at=now-3,finishedAt=now-2,phase='all_three_ready',actors=[dict(guid=5,oldSession=old,newSession=new,
+                stop=dict(returncode=0,stdout='Stopped: PID 12345; server logout completion and process exit verified.\nLog: /private/client.log\n'),
+                before=dict(party=dict(sessionId=old)),newBaseline=dict(party=dict(sessionId=new)))]),
+            current=dict(at=now-1,guid=5,sessionId=new,partyBefore=dict(sessionId=new),partyAfter=dict(sessionId=new),
+                inventory=current,world=world,actions=dict(position=dict(known=True,mapKnown=True,mapId=0,x=0.,y=0.,z=0.))))
+        artifacts={}
+        def write():
+            for kind,value in docs.items():
+                path=self.path.parent/(kind+'.json');raw=m.json.dumps(value).encode();path.write_bytes(raw);path.chmod(0o600)
+                artifacts[kind]=dict(path=str(path),sha256=m.hashlib.sha256(raw).hexdigest())
+        write();return docs,artifacts,write
     def test_conservative_exact_swap_keeps_displaced_pants_and_persists_no_replay(self):
         with m.Journal(self.path,self.rpc.url,5) as j:
             result=self.worker(j).run()
@@ -278,5 +298,104 @@ class GearTests(unittest.TestCase):
                     elif mode=='unknown_reason':row['localAbort']['reason']='later_idle_so_assumed_safe'
                     else:row['receipt']['status']='OUTCOME_UNCONFIRMED'
                     with self.assertRaises(m.Error):j.validate()
+
+    def test_reviewed_terminated_body_retirement_preserves_unknown_row_and_allows_only_new_request(self):
+        self.rpc.mode='unknown'
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            self.worker(j).run();prior=copy.deepcopy(j.data['attempts'][0]);docs,artifacts,_=self.review_fixture(j)
+            result=j.retire_prior_session(prior['request']['requestId'],artifacts)
+            self.assertEqual(result['phase'],'retired_prior_session')
+            self.assertEqual(result['retirement']['priorRow'],prior)
+            self.assertEqual(result['retirement']['originalPhase'],'unconfirmed')
+            self.assertEqual(result['retirement']['outcome'],'UNKNOWN')
+            self.assertNotIn('localAbort',result);self.assertEqual(result['receipt'],prior['receipt'])
+            self.assertEqual(self.writes(),[prior['request']])  # Review itself issues no RPC.
+            self.rpc.current=copy.deepcopy(docs['current']['inventory']);self.rpc.mode='confirmed'
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            result=self.worker(j).run()
+            self.assertEqual(result['newConfirmedOperations'],1)
+            self.assertNotEqual(self.writes()[-1]['requestId'],prior['request']['requestId'])
+            self.assertEqual(self.writes()[-1]['sessionId'],'reviewed-new-body')
+            self.assertEqual(j.data['attempts'][0]['retirement']['priorRow'],prior)
+
+    def test_prior_session_review_refuses_missing_termination_or_changed_owned_state_without_writing(self):
+        for mode in ('active','operation','lease','same_session','source_changed','unproven_logout','wrong_old_session',
+                     'raw_vector_changed','equipment_changed','missing_metadata','unknown_raw','body_changed','bad_order','not_after_exit','wrong_hash'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                self.path=Path(temp).resolve()/'gear.json';self.rpc=RPC();self.rpc.mode='unknown'
+                with m.Journal(self.path,self.rpc.url,5) as j:
+                    self.worker(j).run();docs,artifacts,write=self.review_fixture(j);before=self.path.read_bytes()
+                    cur=docs['current'];inv=cur['inventory'];rollout=docs['lifecycle']['actors'][0]
+                    if mode=='active':inv['active']=True
+                    elif mode=='operation':inv['operation']=dict(kind='equip_gear',status='OUTCOME_UNCONFIRMED')
+                    elif mode=='lease':cur['actions']['interactionOwner']='trade'
+                    elif mode=='same_session':cur['sessionId']=rollout['oldSession']
+                    elif mode=='source_changed':inv['inventoryBags'][0]['slots'][2]['itemGuid']=str(NEW+100)
+                    elif mode=='unproven_logout':rollout['stop']['stdout']='SMSG_LOGOUT_COMPLETE mentioned, exit unknown'
+                    elif mode=='wrong_old_session':rollout['oldSession']='foreign-old-body'
+                    elif mode=='raw_vector_changed':cur['world']['inventoryBags'][0]['slots'][2]['entry']=80
+                    elif mode=='equipment_changed':inv['equipment'][6]['entry']=80
+                    elif mode=='missing_metadata':inv['equipment'][6]['metadataKnown']=False
+                    elif mode=='unknown_raw':cur['world']['selfEquipmentKnown']=False
+                    elif mode=='body_changed':cur['partyAfter']['sessionId']='different-body'
+                    elif mode=='bad_order':cur['at']-=60
+                    elif mode=='not_after_exit':cur['at']=docs['lifecycle']['finishedAt']
+                    write()
+                    if mode=='wrong_hash':artifacts['lifecycle']['sha256']='0'*64
+                    with self.assertRaises(m.Error):j.retire_prior_session(j.data['attempts'][0]['request']['requestId'],artifacts)
+                    self.assertEqual(self.path.read_bytes(),before)
+                    self.assertEqual(j.data['attempts'][0]['phase'],'unconfirmed')
+                    self.assertEqual(len(self.writes()),1)
+
+    def test_generic_issued_ambiguity_is_not_automatically_retired_on_reconnect(self):
+        self.rpc.mode='unknown'
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            self.worker(j).run();old=copy.deepcopy(j.data['attempts'][0])
+            self.rpc.current=initial();self.rpc.current['sessionId']='fresh-body'
+            result=self.worker(j).run()
+            self.assertEqual(result['phase'],'unconfirmed');self.assertEqual(len(self.writes()),1)
+            row=j.data['attempts'][0]
+            self.assertEqual(row['phase'],'new_session_requires_review');self.assertNotIn('retirement',row)
+            self.assertEqual(row['request'],old['request'])
+
+    def test_ordered_historical_retirement_evidence_survives_later_ordinary_inventory_changes(self):
+        self.rpc.mode='unknown'
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            self.worker(j).run();docs,artifacts,write=self.review_fixture(j)
+            for document in docs.values():
+                document['at']-=3600
+                if 'finishedAt' in document:document['finishedAt']-=3600
+            write();historical=copy.deepcopy(docs['current']);old_request=copy.deepcopy(j.data['attempts'][0]['request'])
+            self.rpc.current=copy.deepcopy(historical['inventory'])
+            empty=next(slot for slot in self.rpc.current['inventoryBags'][0]['slots'] if not int(slot.get('itemGuid',0)))
+            empty.update(itemGuid=str(NEW+100),entry=1971,stackCount=1,metadataKnown=True)
+            self.rpc.current.update(revision='20',inventoryRevision='2')  # A later normal quest acceptance.
+            retired=j.retire_prior_session(old_request['requestId'],artifacts)
+            self.assertEqual(retired['retirement']['outcome'],'UNKNOWN')
+            self.assertEqual(docs['current'],historical)  # Never freshen or rewrite captured history.
+            self.assertEqual(len(self.writes()),1)  # Reviewing history has no RPC side effects.
+            self.rpc.mode='confirmed';result=self.worker(j).run()
+            self.assertEqual(result['newConfirmedOperations'],1)
+            self.assertEqual(self.writes()[-1]['expectedRevision'],'20')
+            self.assertEqual(self.writes()[-1]['expectedInventoryRevision'],'2')
+            self.assertNotEqual(self.writes()[-1]['requestId'],old_request['requestId'])
+
+    def test_retirement_terminal_validation_preserves_prior_uncertainty_and_session_binding(self):
+        self.rpc.mode='unknown'
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            self.worker(j).run();_,artifacts,_=self.review_fixture(j)
+            j.retire_prior_session(j.data['attempts'][0]['request']['requestId'],artifacts)
+            valid=copy.deepcopy(j.data['attempts'][0])
+            for mode in ('success_claim','same_session','prior_request_changed','original_phase','no_logout','no_artifact'):
+                with self.subTest(mode=mode):
+                    j.data['attempts'][0]=copy.deepcopy(valid);row=j.data['attempts'][0];review=row['retirement']
+                    if mode=='success_claim':review['outcome']='CONFIRMED'
+                    elif mode=='same_session':review['newSessionId']=row['request']['sessionId']
+                    elif mode=='prior_request_changed':review['priorRow']['request']['requestId']='modified-old-request'
+                    elif mode=='original_phase':review['originalPhase']='confirmed'
+                    elif mode=='no_logout':review['oldLogoutObserved']=False
+                    else:del review['artifacts']['lifecycle']
+                    with self.assertRaises(m.Error):j.validate()
+            j.data['attempts'][0]=valid
 
 if __name__=='__main__':unittest.main()

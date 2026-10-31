@@ -2,12 +2,15 @@
 """Equip finite, actual conservative gear upgrades; keep displaced equipment."""
 import argparse
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import time
+import re
 import uuid
 
 def load(name,file):
@@ -20,7 +23,7 @@ c=load('party_gear_converse','converse')
 Error,number,positive,token=town.Error,town.number,town.positive,town.token
 ROOT=Path(__file__).resolve().parent.parent
 ROSTER={1:8086,4:8087,5:8088}
-TERMINAL={'confirmed','blocked','server_rejected','not_dispatched'}
+TERMINAL={'confirmed','blocked','server_rejected','not_dispatched','retired_prior_session'}
 PHASES=TERMINAL|{'reserved','requested','unconfirmed','new_session_requires_review'}
 GEAR_SLOTS={0,2,4,5,6,7,8,9,14,15}
 PENDING_METADATA={'complete_owned_item_metadata_pending','actual_class_race_level_required',
@@ -78,6 +81,25 @@ def candidates(state):
         out.append(row)
     return sorted(out,key=lambda row:(number(row.get('gearEquipmentSlot',0)),number(row['item'].get('bag',0)),number(row['item'].get('slot',0))))
 
+def reviewed_artifact(ref):
+    if (not isinstance(ref,dict) or set(ref)!={'path','sha256'} or not isinstance(ref['path'],str)
+            or not Path(ref['path']).is_absolute() or not isinstance(ref['sha256'],str)
+            or not re.fullmatch('[0-9a-f]{64}',ref['sha256'])):raise Error('invalid_gear_review_artifact')
+    with os.fdopen(c.private_open(Path(ref['path']),os.O_RDONLY),'rb') as stream:raw=stream.read(2097153)
+    if len(raw)>2097152 or hashlib.sha256(raw).hexdigest()!=ref['sha256']:raise Error('gear_review_artifact_hash_or_bound')
+    value=town.base.decode_json(raw)
+    if not isinstance(value,dict):raise Error('invalid_gear_review_artifact')
+    return value
+
+def owned_vector(state):
+    equipped=equipment(state);bags,slots=town.layout(state)
+    if any(number(r.get('itemGuid',0)) and r.get('metadataKnown') is not True for r in [*equipped.values(),*slots.values()]):
+        raise Error('complete_owned_gear_metadata_required')
+    item=lambda r:(number(r.get('itemGuid',0)),number(r.get('entry',0)),number(r.get('stackCount',0)))
+    return dict(equipment=[(slot,*item(row)) for slot,row in sorted(equipped.items())],
+        bags=[(bag,number(row.get('containerGuid',0)),number(row.get('entry',0)),number(row.get('slotCount',0))) for bag,row in sorted(bags.items())],
+        carried=[(bag,slot,*item(row)) for (bag,slot),row in sorted(slots.items())])
+
 class Journal(town.base.Journal):
     def __init__(self,path,url,guid):
         if url!=endpoint(guid):raise Error('gear_endpoint_identity_mismatch')
@@ -100,6 +122,22 @@ class Journal(town.base.Journal):
             if req['equipmentSlot'] not in GEAR_SLOTS or req['source']['stackCount']!=1:raise Error('unsupported_automatic_gear_slot')
             for field in ('expectedRevision','expectedInventoryRevision','expectedEquipmentRevision'):positive(req[field])
             town.item_guid(req['expectedEquippedItemGuid'],allow_empty=True)
+            if row['phase']=='retired_prior_session':
+                retirement=row.get('retirement',{});prior=retirement.get('priorRow',{})
+                if (retirement.get('kind')!='reviewed_prior_session_retirement' or retirement.get('outcome')!='UNKNOWN'
+                        or retirement.get('originalPhase') not in ('reserved','requested','unconfirmed','new_session_requires_review')
+                        or prior.get('phase')!=retirement.get('originalPhase') or 'retirement' in prior
+                        or {k:v for k,v in row.items() if k not in ('phase','retirement')}!={k:v for k,v in prior.items() if k!='phase'}
+                        or retirement.get('oldSessionId')!=req['sessionId'] or retirement.get('newSessionId')==req['sessionId']
+                        or retirement.get('oldLogoutObserved') is not True or retirement.get('oldProcessExited') is not True
+                        or not re.fullmatch('[0-9a-f]{64}',str(retirement.get('ownedVectorSHA256','')))
+                        or set(retirement.get('artifacts',{}))!={'completedPass','lifecycle','current'}):raise Error('invalid_gear_prior_session_retirement')
+                token(retirement.get('newSessionId'))
+                for ref in retirement['artifacts'].values():
+                    if (not isinstance(ref,dict) or set(ref)!={'path','sha256'} or not isinstance(ref['path'],str)
+                            or not Path(ref['path']).is_absolute() or not re.fullmatch('[0-9a-f]{64}',str(ref['sha256']))):
+                        raise Error('invalid_gear_review_artifact')
+                continue
             if row['phase']=='not_dispatched':
                 local=row.get('localAbort')
                 if (not isinstance(local,dict) or set(local)!={'reason','rpcInvoked'} or local.get('rpcInvoked') is not False
@@ -113,6 +151,58 @@ class Journal(town.base.Journal):
                 if row['phase']=='blocked' and op.get('transportAttempted',False) is not False:raise Error('written_gear_marked_blocked')
                 if row['phase']=='server_rejected' and op.get('serverErrorObserved') is not True:raise Error('gear_rejection_unproven')
         if len(json.dumps(d,allow_nan=False).encode())>262144:raise Error('gear_journal_size_bound')
+    def retire_prior_session(self,request_id,artifacts):
+        """Manual evidence review only; never invoked by the automatic worker."""
+        if self.lock is None or not isinstance(artifacts,dict) or set(artifacts)!={'completedPass','lifecycle','current'}:
+            raise Error('locked_complete_gear_review_required')
+        self.validate();rows=self.data['attempts'];row=next((r for r in rows if r['request']['requestId']==request_id),None)
+        if row is None or row['phase'] in TERMINAL:raise Error('unsettled_gear_request_required')
+        prior=copy.deepcopy(row);req=row['request'];old=req['sessionId']
+        completed,lifecycle,current=(reviewed_artifact(artifacts[k]) for k in ('completedPass','lifecycle','current'))
+        def actor(value):
+            actors=value.get('actors',[])
+            if not isinstance(actors,list) or len(actors)>3:raise Error('invalid_gear_review_roster')
+            matches=[a for a in actors if isinstance(a,dict) and number(a.get('guid',0))==self.guid]
+            if len(matches)!=1:raise Error('gear_review_actor_missing')
+            return matches[0]
+        before,rollout=actor(completed),actor(lifecycle)
+        stamps=[completed.get('at'),completed.get('finishedAt'),lifecycle.get('at'),lifecycle.get('finishedAt'),current.get('at')]
+        if (any(type(t) not in (int,float) or not math.isfinite(t) or t<=0 for t in stamps)
+                or stamps!=sorted(stamps) or stamps[-1]<=stamps[-2]):raise Error('gear_review_evidence_order')
+        new=token(current.get('sessionId'));stop=rollout.get('stop',{})
+        if (completed.get('phase')!='finished' or lifecycle.get('phase')!='all_three_ready'
+                or before.get('sessionId')!=old or rollout.get('oldSession')!=old or rollout.get('newSession')!=new or old==new
+                or type(stop.get('returncode')) is not int or stop['returncode']!=0 or not re.fullmatch(r'Stopped: PID [1-9][0-9]*; server logout completion and process exit verified\.\nLog: [^\n]+\n',stop.get('stdout',''))
+                or rollout.get('before',{}).get('party',{}).get('sessionId')!=old
+                or rollout.get('newBaseline',{}).get('party',{}).get('sessionId')!=new
+                or number(current.get('guid',0))!=self.guid
+                or any(current.get(k,{}).get('sessionId')!=new for k in ('partyBefore','partyAfter'))):raise Error('gear_review_normal_body_termination_unproven')
+        inv=town.checked_state(current.get('inventory'),self.guid);world=current.get('world',{});actions=current.get('actions',{})
+        if (inv['sessionId']!=new or inv.get('active') is True or inv.get('closing') is True or inv.get('operation')
+                or actions.get('interactionOwner') or any(actions.get(k) is True for k in ('moving','traveling','castPending','autoAttacking','autoAttackRequested','autoAttackUnconfirmed','motionUnconfirmed','practicing'))
+                or actions.get('recovery',{}).get('active') is True or not c.BuddyControls.quest_scene_safe(actions,world,self.guid)
+                or number(world.get('self',{}).get('movementFlags',0)) & 0x1ff
+                or world.get('self',{}).get('positionKnown') is not True or not positive(world.get('self',{}).get('positionRevision',0))):
+            raise Error('gear_review_current_body_not_settled')
+        raw=dict(inventoryKnown=world.get('inventoryKnown'),inventoryRevision=world.get('inventoryRevision'),inventoryBags=world.get('inventoryBags'),
+            equipmentKnown=world.get('selfEquipmentKnown'),equipmentRevision=world.get('selfEquipmentRevision'),equipment=world.get('selfEquipment'))
+        baseline=town.checked_state(before.get('afterInventory'),self.guid);vector=owned_vector(baseline)
+        if (baseline['sessionId']!=old or baseline.get('active') is True or baseline.get('closing') is True or baseline.get('operation')
+                or number(baseline['inventoryRevision'])!=number(req['expectedInventoryRevision'])
+                or number(baseline['equipmentRevision'])!=number(req['expectedEquipmentRevision'])):
+            raise Error('gear_review_old_snapshot_not_settled')
+        if vector!=owned_vector(raw) or vector!=owned_vector(inv):raise Error('gear_review_owned_vectors_changed')
+        _,slots=town.layout(inv);equipped=equipment(inv)
+        if town.ref(slots.get((req['source']['bag'],req['source']['slot'])))!=req['source'] or number(equipped[req['equipmentSlot']].get('itemGuid',0))!=number(req['expectedEquippedItemGuid']):
+            raise Error('gear_review_exact_request_items_changed')
+        retirement=dict(kind='reviewed_prior_session_retirement',outcome='UNKNOWN',originalPhase=prior['phase'],priorRow=prior,
+            oldSessionId=old,newSessionId=new,oldLogoutObserved=True,oldProcessExited=True,artifacts=copy.deepcopy(artifacts),
+            ownedVectorSHA256=hashlib.sha256(json.dumps(vector,sort_keys=True,separators=(',',':')).encode()).hexdigest())
+        row.update(phase='retired_prior_session',retirement=retirement)
+        try:self.save()
+        except Exception:
+            row.clear();row.update(prior);raise
+        return copy.deepcopy(row)
 
 def ledger_facts(guid):
     path=ROOT/'data/autonomy/town-maintenance'/f'{guid}-{ROSTER[guid]}'/'gear.json'
