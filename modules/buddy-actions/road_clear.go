@@ -670,6 +670,11 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 			s.roadPoisonCastLocked(op, p, "cast_failure_conflicts_with_pending")
 			return
 		}
+		// Resolve only this road cast, including a matching late failure after
+		// STOP. An unrelated cast cannot settle retained post-GO damage proof.
+		if s.road.waitingResult && !s.road.resultGo && s.road.reserved && spell == shadowBolt && s.roadCast.target == s.road.source && s.state.CastPending && s.pendingSpell == spell && s.pendingTarget == s.road.source && s.castCount == count {
+			s.road.waitingResult = false
+		}
 		if s.road.active {
 			s.road.active, s.road.invalid, s.road.phase = false, true, "cast_failed_no_retry"
 		}
