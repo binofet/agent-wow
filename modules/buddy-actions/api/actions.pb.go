@@ -1733,6 +1733,11 @@ type RoadCastObserverState struct {
 	FirstRejected     *RoadCastObservedEvent `protobuf:"bytes,9,opt,name=first_rejected,json=firstRejected,proto3" json:"first_rejected,omitempty"`
 	EpochKnown        bool                   `protobuf:"varint,10,opt,name=epoch_known,json=epochKnown,proto3" json:"epoch_known,omitempty"`
 	FirstOwnGo        *RoadCastObservedEvent `protobuf:"bytes,11,opt,name=first_own_go,json=firstOwnGo,proto3" json:"first_own_go,omitempty"`
+	Login_836Accepted bool                   `protobuf:"varint,12,opt,name=login_836_accepted,json=login836Accepted,proto3" json:"login_836_accepted,omitempty"`
+	AnyWriteAttempted bool                   `protobuf:"varint,13,opt,name=any_write_attempted,json=anyWriteAttempted,proto3" json:"any_write_attempted,omitempty"`
+	OwnStartSeen      bool                   `protobuf:"varint,14,opt,name=own_start_seen,json=ownStartSeen,proto3" json:"own_start_seen,omitempty"`
+	OwnGoSeen         bool                   `protobuf:"varint,15,opt,name=own_go_seen,json=ownGoSeen,proto3" json:"own_go_seen,omitempty"`
+	InitialCount      uint64                 `protobuf:"varint,16,opt,name=initial_count,json=initialCount,proto3" json:"initial_count,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1842,6 +1847,41 @@ func (x *RoadCastObserverState) GetFirstOwnGo() *RoadCastObservedEvent {
 		return x.FirstOwnGo
 	}
 	return nil
+}
+
+func (x *RoadCastObserverState) GetLogin_836Accepted() bool {
+	if x != nil {
+		return x.Login_836Accepted
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetAnyWriteAttempted() bool {
+	if x != nil {
+		return x.AnyWriteAttempted
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetOwnStartSeen() bool {
+	if x != nil {
+		return x.OwnStartSeen
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetOwnGoSeen() bool {
+	if x != nil {
+		return x.OwnGoSeen
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetInitialCount() uint64 {
+	if x != nil {
+		return x.InitialCount
+	}
+	return 0
 }
 
 type State struct {
@@ -2643,7 +2683,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0ffirst_miss_guid\x18\x1e \x01(\x04R\rfirstMissGuid\x12*\n" +
 	"\x11first_miss_reason\x18\x1f \x01(\rR\x0ffirstMissReason\x127\n" +
 	"\x18first_miss_reflect_known\x18  \x01(\bR\x15firstMissReflectKnown\x129\n" +
-	"\x19first_miss_reflect_result\x18! \x01(\rR\x16firstMissReflectResult\"\xf4\x03\n" +
+	"\x19first_miss_reflect_result\x18! \x01(\rR\x16firstMissReflectResult\"\xbd\x05\n" +
 	"\x15RoadCastObserverState\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x12\n" +
 	"\x04busy\x18\x02 \x01(\bR\x04busy\x12\x1a\n" +
@@ -2658,7 +2698,12 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"epochKnown\x12Q\n" +
 	"\ffirst_own_go\x18\v \x01(\v2/.warcraftbuddy.actions.v1.RoadCastObservedEventR\n" +
-	"firstOwnGo\"\xea\x1a\n" +
+	"firstOwnGo\x12,\n" +
+	"\x12login_836_accepted\x18\f \x01(\bR\x10login836Accepted\x12.\n" +
+	"\x13any_write_attempted\x18\r \x01(\bR\x11anyWriteAttempted\x12$\n" +
+	"\x0eown_start_seen\x18\x0e \x01(\bR\fownStartSeen\x12\x1e\n" +
+	"\vown_go_seen\x18\x0f \x01(\bR\townGoSeen\x12#\n" +
+	"\rinitial_count\x18\x10 \x01(\x04R\finitialCount\"\xea\x1a\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +

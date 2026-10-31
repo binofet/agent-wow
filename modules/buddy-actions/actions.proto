@@ -189,6 +189,11 @@ message RoadCastObserverState {
   RoadCastObservedEvent first_rejected = 9;
   bool epoch_known = 10;
   RoadCastObservedEvent first_own_go = 11;
+  bool login_836_accepted = 12;
+  bool any_write_attempted = 13;
+  bool own_start_seen = 14;
+  bool own_go_seen = 15;
+  uint64 initial_count = 16;
 }
 message State {
   bool following = 1;

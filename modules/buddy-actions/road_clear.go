@@ -451,6 +451,9 @@ func (s *Service) roadFaceLocked(ctx context.Context, aim position) bool {
 
 func (s *Service) roadPacketLocked(op uint32, p []byte) {
 	if op == opcode.SMSGInitialSpells {
+		if s.roadInitialCount != ^uint64(0) {
+			s.roadInitialCount++
+		}
 		known, err := initialSpellKnown(p, shadowBolt)
 		s.roadSpellbookKnown = err == nil && known
 		if err == nil && p[0] > 1 {
@@ -586,6 +589,16 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 		}
 		if guid != s.selfGUID {
 			return
+		}
+		if op == opcode.SMSGSpellStart {
+			s.roadOwnStartSeen = true
+		} else {
+			accepted := s.roadLogin836AllowedLocked(p)
+			s.roadOwnGoSeen = true
+			if accepted {
+				s.roadLogin836Accepted = true
+				return // Preserve already known idle; never establish or heal it.
+			}
 		}
 		// Only a complete supported unit-target frame can establish this mode's
 		// cast proof. Trying candidate GUIDs never creates target authority.

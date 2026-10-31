@@ -29,6 +29,7 @@ func (s *Service) roadCastObserverSnapshotLocked() *actionsv1.RoadCastObserverSt
 	return &actionsv1.RoadCastObserverState{Known: s.roadCast.known, Busy: s.roadCast.busy, Poisoned: s.roadCast.poisoned,
 		InitialSeen: s.roadInitialSeen, SpellbookKnown: s.roadSpellbookKnown, EpochKnown: s.roadEpochKnown,
 		OutgoingSeen: s.roadOutgoingSeen, PendingSpellId: s.roadCast.spell, PendingTargetGuid: s.roadCast.target,
+		Login_836Accepted: s.roadLogin836Accepted, AnyWriteAttempted: s.roadAnyWriteAttempted, OwnStartSeen: s.roadOwnStartSeen, OwnGoSeen: s.roadOwnGoSeen, InitialCount: s.roadInitialCount,
 		FirstRejected: aged(s.roadFirstRejected, s.roadFirstRejectedAt), FirstOwnGo: aged(s.roadFirstOwnGo, s.roadFirstOwnGoAt)}
 }
 

@@ -1,6 +1,7 @@
 package buddyactions
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"testing"
@@ -25,8 +26,14 @@ func TestRoadClearRealAgesOneSplineSevenCastsAndDeath(t *testing.T) {
 	}
 }
 
-func roadAgingLifecycle(t *testing.T, terminal string) {
+func roadAgingLifecycle(t *testing.T, terminal string, startupGo ...[]byte) {
 	s, f, c, q, advance := roadRig(t)
+	if len(startupGo) > 0 {
+		roadPacket(s, opcode.SMSGSpellGo, startupGo[0])
+		if !s.roadLogin836Accepted || !s.roadCast.known || s.roadCast.poisoned {
+			t.Fatal("actual login GO did not preserve eligible idle")
+		}
+	}
 	h2 := proto.Clone(c).(*worldv1.CreatureState)
 	h2.Guid = 17379390990846026630
 	h2.Level = 3
@@ -171,6 +178,9 @@ func roadAgingLifecycle(t *testing.T, terminal string) {
 		}
 	}
 	a := s.roadSnapshotLocked()
+	if len(startupGo) > 0 && (!s.roadLogin836Accepted || s.roadFirstOwnGo == nil || !bytes.Equal(s.roadFirstOwnGo.Payload, startupGo[0]) || s.roadFirstRejected != nil) {
+		t.Fatal("login diagnostic or decision changed through the fight")
+	}
 	valid := terminal == "retained_elapsed_pose" || terminal == "fresh_server_stop"
 	if a.Active || a.SourceDeathObserved != valid || valid && (a.RemainingMs == 0 || a.SourceDeathPositionRevision != c.PositionRevision) || a.SourceGuid != c.Guid || countPackets(f.fakeSession, opcode.CMSGCastSpell) != 7 || h2.PositionAgeMs <= 20000 || terminal == "retained_elapsed_pose" && c.PositionAgeMs <= 15000 || a.Origin.AgeMs <= 20000 {
 		t.Fatal("real age lifecycle failed", a, h2.PositionAgeMs, c.PositionAgeMs)

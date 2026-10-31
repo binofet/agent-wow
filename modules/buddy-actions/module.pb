@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ÊV
+“X
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -208,7 +208,7 @@ miss_count (R	missCount(
 first_miss_guid (RfirstMissGuid*
 first_miss_reason (RfirstMissReason7
 first_miss_reflect_known  (RfirstMissReflectKnown9
-first_miss_reflect_result! (RfirstMissReflectResult"ô
+first_miss_reflect_result! (RfirstMissReflectResult"½
 RoadCastObserverState
 known (Rknown
 busy (Rbusy
@@ -223,7 +223,12 @@ miss_count (R	missCount(
  (R
 epochKnownQ
 first_own_go (2/.warcraftbuddy.actions.v1.RoadCastObservedEventR
-firstOwnGo"ê
+firstOwnGo,
+login_836_accepted (Rlogin836Accepted.
+any_write_attempted (RanyWriteAttempted$
+own_start_seen (RownStartSeen
+own_go_seen (R	ownGoSeen#
+initial_count (RinitialCount"ê
 State
 	following (R	following
 healing (Rhealing

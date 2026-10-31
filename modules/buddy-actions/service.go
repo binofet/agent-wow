@@ -107,6 +107,9 @@ type Service struct {
 	roadFirstRejected, roadFirstOwnGo                        *actionsv1.RoadCastObservedEvent
 	roadFirstRejectedAt, roadFirstOwnGoAt                    time.Time
 	roadObserverRevision                                     uint64
+	roadInitialCount                                         uint64
+	roadAnyWriteAttempted, roadOwnStartSeen, roadOwnGoSeen   bool
+	roadLogin836Accepted                                     bool
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -699,6 +702,7 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 		s.roadCast.spell, s.roadCast.count, s.roadCast.target = s.pendingSpell, s.castCount, s.pendingTarget
 		s.roadCast.started = false
 	}
+	s.roadAnyWriteAttempted = true
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
 		s.state.Healing = false
