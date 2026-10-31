@@ -145,6 +145,18 @@ class RewardTests(unittest.TestCase):
             self.assertIs(self.select(choices, shape)["choice"], choices[0])
         self.assertEqual((choices, rows), before)
 
+    def test_proto_json_omitted_zero_index_selects_the_actual_row_without_rewriting_offer(self):
+        choices=[offer(6076,4),{'itemId':3070,'count':1}]
+        rows=[item(6076,itemClass=4,subclass=2,inventoryType=7,armor=25),
+              item(3070,itemClass=4,subclass=1,inventoryType=16,armor=6)]
+        before=copy.deepcopy(choices)
+        result=self.select(choices,rows,5)
+        self.assertEqual(result['status'],'selected')
+        self.assertIs(result['choice'],choices[1])
+        self.assertEqual(result['choice'].get('index',0),0)
+        self.assertEqual(choices,before)
+        self.assertEqual(self.select([{'itemId':3070,'count':1},offer(6076,0)],rows,5)['status'],'invalid')
+
     def test_malformed_choices_and_conflicting_metadata_never_select(self):
         for choices in ([], [offer(1)] * 2, [offer(1), offer(2)], [offer(1, 6)],
                         [offer(1, count=0)], [offer(True)], [offer(1, True)],

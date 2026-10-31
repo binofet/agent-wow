@@ -327,15 +327,42 @@ class PartyQuestTests(unittest.TestCase):
         self.assertEqual(profile.status["rewardChoiceItemIds"],[123,456])
         self.assertFalse(any(m in ("buddy-quests.claim_reward","buddy-quests.offer") for m,_ in rpc.calls))
 
-    def queried_rewards(self):
+    def queried_rewards(self,choices=None):
         profile,rpc,clock,saved=self.rig()
-        rpc.choices=[{"index":4,"itemId":6076,"count":1},{"index":2,"itemId":3070,"count":1}]
+        rpc.choices=choices if choices is not None else [{"index":4,"itemId":6076,"count":1},{"index":2,"itemId":3070,"count":1}]
         rows={6076:{"itemId":6076,"available":True,"name":"Tapered Pants","itemClass":4,"subclass":2,
                     "inventoryType":7,"armor":25,"allowableClass":0xffffffff,"allowableRace":0xffffffff},
               3070:{"itemId":3070,"available":True,"name":"Ensign Cloak","itemClass":4,"subclass":1,
                     "inventoryType":16,"armor":6,"allowableClass":0xffffffff,"allowableRace":0xffffffff}}
         profile.tick();clock[0]+=10
         return profile,rpc,clock,saved,rows
+
+    def test_proto_json_omitted_zero_reward_index_claims_exact_offered_item_once(self):
+        for reverse in (False,True):
+            with self.subTest(reverse=reverse):
+                choices=[{'itemId':3070,'count':1},{'index':4,'itemId':6076,'count':1}]
+                if reverse:choices.reverse()
+                profile,rpc,clock,_,rows=self.queried_rewards(choices)
+                before=copy.deepcopy(rpc.reward)
+                rpc.item_details=rows;profile.tick()
+                claims=[params for method,params in rpc.calls if method=='buddy-quests.claim_reward']
+                self.assertEqual(len(claims),1)
+                claim=claims[0]
+                self.assertEqual((claim['sessionId'],claim['offerRevision'],claim['questId'],claim['noChoice'],claim['choiceIndex'],claim['expectedItemId']),
+                                 (rpc.session,before['revision'],7,False,0,3070))
+                self.assertEqual(rpc.reward['choices'],before['choices'])
+                self.assertNotIn('index',next(row for row in rpc.reward['choices'] if row['itemId']==3070))
+                clock[0]+=10;profile.tick()
+                self.assertEqual(profile.status['confirmedRewardQuestIds'],[7])
+                self.assertEqual(sum(method=='buddy-quests.claim_reward' for method,_ in rpc.calls),1)
+
+    def test_omitted_zero_index_is_an_actual_offer_slot_not_an_arbitrary_default_choice(self):
+        profile,rpc,_,_=self.rig()
+        with self.assertRaises(party.Error):
+            profile.choice({'questId':7,'choices':[{'itemId':3070,'count':1},{'index':0,'itemId':6076,'count':1}]},rpc.world()['self'])
+        self.assertFalse(any(method=='buddy-quests.claim_reward' for method,_ in rpc.calls))
+        self.assertEqual(profile.choice({'questId':7,'choices':[{'itemId':3070,'count':1}]},rpc.world()['self']),
+                         {'index':0,'itemId':3070,'count':1})
 
     def test_metadata_pending_has_no_claim_reservation_or_cooldown_then_ready_claims_exact_choice(self):
         profile,rpc,clock,saved,rows=self.queried_rewards()

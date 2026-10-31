@@ -332,7 +332,9 @@ class PartyQuestSync:
         if self.reward_lookup is None or self.reward_lookup["key"] != key:
             decision = {"status": "pending"}
         else:
-            decision = converse.quest_rewards.select_reward(choices, self.reward_lookup["response"], class_id,
+            # The selector returns its actual input row. Preserve the validated
+            # protobuf defaults above, including an omitted wire index of zero.
+            decision = converse.quest_rewards.select_reward(valid, self.reward_lookup["response"], class_id,
                 level=integer(player.get("level", 0)) if player.get("levelKnown") is True else None)
         self.status.update(rewardQuestId=integer(offer.get("questId", 0)),
                            rewardChoiceItemIds=[row["itemId"] for row in valid])
