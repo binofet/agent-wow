@@ -42,6 +42,10 @@ type Service struct {
 	index                                      int
 	removed, pushed, moneySent, moneyCleared   bool
 	itemRequested                              bool
+	unconfirmedItems                           map[uint32]bool
+	removedSlots                               map[byte]bool
+	itemCountBefore                            uint64
+	itemCountKnown                             bool
 	cleanup                                    ordinaryLootCleanup
 	retired                                    map[uint64]bool
 	retiredCursor                              uint64
@@ -170,6 +174,13 @@ func (s *Service) releaseLease(ctx context.Context) {
 	}
 }
 func (s *Service) finish(ctx context.Context) {
+	// Every exit must retain an unsettled ordinary mutation. A failed release,
+	// lost lease or disable cannot turn generic cleanup into a success receipt.
+	if !s.questGather && s.cleanup.source == 0 && s.pendingGUID() != 0 && s.hasUnsettledLootMutation() {
+		s.reserveMutationQuarantine()
+		s.releaseLease(ctx)
+		return
+	}
 	s.releaseLease(ctx)
 	if s.questGather {
 		r := s.state.LastGather
@@ -190,6 +201,8 @@ func (s *Service) finish(ctx context.Context) {
 	s.questGather = false
 	s.gatherObjectRevision = 0
 	s.items = nil
+	s.removedSlots = nil
+	s.itemCountKnown = false
 	s.window = lootWindow{}
 	s.index = 0
 	s.itemRequested = false
@@ -508,7 +521,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 		}
 		if (s.state.Phase == "waiting_open" || s.state.Phase == "waiting_item" || s.state.Phase == "waiting_money" || s.state.Phase == "waiting_release") && !now.Before(s.deadline) {
-			if !s.questGather && s.state.Enabled {
+			if !s.questGather && (s.state.Enabled || s.hasUnsettledLootMutation()) {
 				s.beginOrdinaryTimeout(ctx, "loot_response_timeout")
 				return
 			}
@@ -574,6 +587,11 @@ func (s *Service) Tick(ctx context.Context) {
 				s.beginRelease(ctx)
 				return
 			}
+			// Shared loot may be removed by another party member before our turn.
+			// Skip only slots actually removed from this bound open window.
+			for s.index < len(s.items) && s.removedSlots[s.items[s.index].slot] {
+				s.index++
+			}
 			if s.index >= len(s.items) {
 				s.state.Reason = "ordinary_loot_cycle_released"
 				s.beginRelease(ctx)
@@ -585,6 +603,16 @@ func (s *Service) Tick(ctx context.Context) {
 				s.beginRelease(ctx)
 				return
 			}
+			s.itemCountBefore, s.itemCountKnown = 0, false
+			if s.unconfirmedItems[item.id] {
+				counts, known := completeOwnItemCounts(observed, s.selfGUID)
+				if !known {
+					s.state.Reason = "complete_owned_inventory_required_for_unconfirmed_item"
+					s.beginRelease(ctx)
+					return
+				}
+				s.itemCountBefore, s.itemCountKnown = counts[item.id], true
+			}
 			s.removed = false
 			s.pushed = false
 			s.itemRequested = true
@@ -595,7 +623,7 @@ func (s *Service) Tick(ctx context.Context) {
 				s.state.Phase = "abort"
 			}
 		case "waiting_item":
-			if s.removed && s.pushed {
+			if s.removed && s.pushed || s.unconfirmedItemDelta(observed) {
 				s.itemRequested = false
 				s.index++
 				s.state.Phase = "ready_item"
@@ -845,6 +873,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			break
 		}
 		s.window = window
+		s.removedSlots = map[byte]bool{}
 		s.items = nil
 		s.index = 0
 		s.state.LootWindowsObserved++
@@ -874,6 +903,17 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 			break
 		}
+		if s.token != "" && s.cleanup.source == 0 && s.window.guid == s.pendingGUID() {
+			for _, item := range s.window.items {
+				if item.slot == p[0] {
+					if s.removedSlots == nil {
+						s.removedSlots = map[byte]bool{}
+					}
+					s.removedSlots[p[0]] = true
+					break
+				}
+			}
+		}
 		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && p[0] == s.items[s.index].slot && !s.removed {
 			s.removed = true
 			s.state.LootSlotsRemoved++
@@ -887,7 +927,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 			break
 		}
-		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && !s.pushed && push.player == s.selfGUID && push.received == 0 && push.created == 0 && push.id == s.items[s.index].id && push.count == s.items[s.index].count {
+		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && !s.pushed && !s.unconfirmedItems[push.id] && push.player == s.selfGUID && push.received == 0 && push.created == 0 && push.id == s.items[s.index].id && push.count == s.items[s.index].count {
 			s.pushed = true
 			s.state.ItemsStoredConfirmed += uint64(push.count)
 			if s.questGather {
@@ -932,6 +972,10 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.token != "" && binary.LittleEndian.Uint64(p) == s.pendingGUID() {
 			if p[8] == 1 {
 				s.state.ReleasesObserved++
+				if !s.questGather && s.hasUnsettledLootMutation() {
+					s.quarantineReleasedMutation(true)
+					break
+				}
 				if s.questGather {
 					s.state.LastGather.ReleaseObserved = true
 				}
@@ -939,6 +983,10 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			} else {
 				s.state.Enabled = false
 				s.state.Reason = "server_release_unconfirmed"
+				if !s.questGather && s.hasUnsettledLootMutation() {
+					s.quarantineReleasedMutation(false)
+					break
+				}
 				s.state.Phase = "release_observed"
 			}
 		}
@@ -949,6 +997,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		}
 		if p[0] != 0 && s.token != "" {
 			s.state.LastInventoryError = uint32(p[0])
+			// A real inventory rejection settles this request as rejected, not
+			// as an ambiguous pickup. Keep its existing pause/disable policy.
+			s.itemRequested = false
 			if p[0] == 50 && s.state.Phase == "waiting_item" {
 				s.state.InventoryPaused = true
 				if s.inventoryWriteRevision > s.rejectedInventoryRevision {

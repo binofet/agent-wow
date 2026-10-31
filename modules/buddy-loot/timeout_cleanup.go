@@ -26,8 +26,9 @@ func (s *Service) hasUnsettledLootMutation() bool {
 }
 
 // A timeout retires this attempt, never the user's opt-in intent. Only a
-// positive source-bound cleanup and no unsettled GUID-less item/money request
-// can authorize trying another source. An uncertain mutation is never retried.
+// positive source-bound cleanup authorizes trying another source. Uncertain
+// items also require complete owned inventory and permanent push isolation;
+// uncertain money remains blocked. An uncertain mutation is never retried.
 func (s *Service) beginOrdinaryTimeout(ctx context.Context, reason string) {
 	phase := s.state.Phase
 	s.cleanup = ordinaryLootCleanup{source: s.state.PendingCorpseGuid, timedOutPhase: phase, safeToContinue: !s.hasUnsettledLootMutation()}
@@ -82,6 +83,9 @@ func (s *Service) tickOrdinaryCleanup(ctx context.Context) {
 	if s.state.Enabled && !s.now().Before(s.until) {
 		s.state.Enabled = false
 		s.state.Reason = "automatic_loot_enable_expired"
+	}
+	if s.retireUnconfirmedItem(ctx) {
+		return
 	}
 	if s.cleanup.releaseObserved && s.cleanup.safeToContinue {
 		s.state.Reason = "loot_timeout_source_released_and_skipped"

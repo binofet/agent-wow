@@ -141,6 +141,9 @@ func TestOrdinaryItemOrMoneyTimeoutStaysQuarantinedAfterCleanup(t *testing.T) {
 				}
 			}
 			actualPush := current(t, s).ItemsStoredConfirmed
+			// An unknown owned layout cannot drain an uncertain item request.
+			// Money remains blocked independently of inventory completeness.
+			f.world.InventoryKnown = false
 			advance(3 * time.Second)
 			s.Tick(context.Background())
 			if s.cleanup.safeToContinue {
