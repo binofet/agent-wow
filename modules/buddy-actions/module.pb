@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-“X
+‡_
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -67,7 +67,36 @@ sourceGuid+
 observed_level	 (RobservedLevel.
 level_five_observed
  (RlevelFiveObserved
-	self_guid (RselfGuid"õ
+	self_guid (RselfGuid"ª
+ColdridgeCatchupRequest
+
+request_id (	R	requestId
+target_guid (R
+targetGuid
+
+session_id (	R	sessionId0
+expected_start_level (RexpectedStartLevel"ù
+ColdridgeCatchupState
+
+request_id (	R	requestId
+goal (	Rgoal
+start_level (R
+startLevel!
+target_level (RtargetLevel
+	max_pulls (RmaxPulls
+source_guid (R
+sourceGuid+
+position_revision (RpositionRevision#
+pull_reserved (RpullReserved!
+remaining_ms	 (RremainingMs%
+observed_level
+ (RobservedLevel2
+target_level_observed (RtargetLevelObserved
+	self_guid (RselfGuid
+
+session_id (	R	sessionId
+target_guid (R
+targetGuid"õ
 RoadClearRequest
 
 request_id (	R	requestId
@@ -228,7 +257,7 @@ firstOwnGo,
 any_write_attempted (RanyWriteAttempted$
 own_start_seen (RownStartSeen
 own_go_seen (R	ownGoSeen#
-initial_count (RinitialCount"ê
+initial_count (RinitialCount"È
 State
 	following (R	following
 healing (Rhealing
@@ -311,7 +340,8 @@ practicing%
 coldridge_levelingF (20.warcraftbuddy.actions.v1.ColdridgeLevelingStateRcoldridgeLevelingG
 
 road_clearI (2(.warcraftbuddy.actions.v1.RoadClearStateR	roadClear]
-road_cast_observerJ (2/.warcraftbuddy.actions.v1.RoadCastObserverStateRroadCastObserver2ê
+road_cast_observerJ (2/.warcraftbuddy.actions.v1.RoadCastObserverStateRroadCastObserver\
+coldridge_catchupK (2/.warcraftbuddy.actions.v1.ColdridgeCatchupStateRcoldridgeCatchup2×
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -329,7 +359,8 @@ road_clearI (2(.warcraftbuddy.actions.v1.RoadClearStateR	roadClear]
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
 Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.Statej
 FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.Statem
-StartColdridgeLeveling2.warcraftbuddy.actions.v1.ColdridgeLevelingRequest.warcraftbuddy.actions.v1.State]
+StartColdridgeLeveling2.warcraftbuddy.actions.v1.ColdridgeLevelingRequest.warcraftbuddy.actions.v1.Statek
+StartColdridgeCatchup1.warcraftbuddy.actions.v1.ColdridgeCatchupRequest.warcraftbuddy.actions.v1.State]
 StartRoadClear*.warcraftbuddy.actions.v1.RoadClearRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>

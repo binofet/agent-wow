@@ -60,6 +60,7 @@ type Service struct {
 	inventoryWriteRevision                     uint64
 	rejectedInventoryRevision                  uint64
 	levelingRequests                           map[string]coldridgeLevelingLootRequest
+	catchupRequests                            map[string]coldridgeCatchupLootRequest
 	roadRequests                               map[string]*roadLootRequest
 }
 
@@ -164,9 +165,11 @@ func (s *Service) invoke(ctx context.Context, module, method string, in, out pro
 		switch a := out.(type) {
 		case *actionsv1.State:
 			s.noteLevelingLootTTL(before, a)
+			s.noteCatchupLootTTL(before, a)
 			s.noteRoadLootTTL(before, a)
 		case *actionsv1.InteractionLease:
 			s.noteLevelingLootTTL(before, a.State)
+			s.noteCatchupLootTTL(before, a.State)
 			s.noteRoadLootTTL(before, a.State)
 		}
 	}
@@ -176,7 +179,7 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	if s.session == nil {
 		return false
 	}
-	if !s.levelingPacketAllowed(op) || !s.roadPacketAllowed(op) {
+	if !s.levelingPacketAllowed(op) || !s.catchupPacketAllowed(op) || !s.roadPacketAllowed(op) {
 		return false
 	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
@@ -190,6 +193,7 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 }
 func (s *Service) releaseLease(ctx context.Context) {
 	if s.token != "" {
+		s.finishCatchupLootRequest(s.coldridgeGoal.catchupRequest)
 		_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "loot", Token: s.token}, &actionsv1.State{})
 		s.token = ""
 		s.questWolf = false
@@ -199,6 +203,7 @@ func (s *Service) releaseLease(ctx context.Context) {
 	}
 }
 func (s *Service) finish(ctx context.Context) {
+	s.finishCatchupLootRequest(s.coldridgeGoal.catchupRequest)
 	s.releaseLease(ctx)
 	if s.questGather {
 		r := s.state.LastGather
@@ -694,7 +699,7 @@ func (s *Service) Tick(ctx context.Context) {
 	// for this own profile. Reuse this response for corpse selection below.
 	var actions *actionsv1.State
 	actionsBefore := s.now()
-	if self := world.Self; self != nil && self.ClassKnown && self.ClassId == 9 && self.LevelKnown && self.Level == 5 {
+	if self := world.Self; s.selfGUID == 8 || self != nil && self.ClassKnown && self.ClassId == 9 && self.LevelKnown && self.Level == 5 {
 		actions = &actionsv1.State{}
 		if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, actions) != nil {
 			s.state.Reason = "road_clear_intent_unavailable_no_ambient_fallback"
@@ -705,7 +710,7 @@ func (s *Service) Tick(ctx context.Context) {
 			return
 		}
 	}
-	if (actions == nil || actions.RoadClear == nil) && s.tryGatherLocked(ctx, world) {
+	if (actions == nil || actions.RoadClear == nil && actions.ColdridgeCatchup == nil) && s.tryGatherLocked(ctx, world) {
 		return
 	}
 	if len(s.retired) >= maxRetiredLootSources {
@@ -713,11 +718,16 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	roadScope := actions != nil && actions.RoadClear != nil && roadClearLootReceipt(world, actions, s.selfGUID, s.state.SessionId)
-	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope {
+	catchupScope := actions != nil && coldridgeCatchupContext(world, actions, s.selfGUID, s.state.SessionId)
+	if actions != nil && actions.ColdridgeCatchup != nil && !catchupScope {
+		s.state.Reason = "coldridge_catchup_handoff_unavailable_no_ambient_fallback"
+		return
+	}
+	if !ownerReady(world.Owner) && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope && !catchupScope {
 		s.state.Reason = "loot_deferred_owner_absent_afk_or_unsafe"
 		return
 	}
-	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope {
+	if world.Owner != nil && world.Owner.UnitFlags&0x80000 != 0 && !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) && !coldridgeLevelingLog(world, s.selfGUID) && !roadScope && !catchupScope {
 		s.state.Reason = "loot_deferred_owner_combat"
 		return
 	}
@@ -750,6 +760,12 @@ func (s *Service) Tick(ctx context.Context) {
 	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
 	wolfScope := !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
 	levelingMode := actions.ColdridgeLeveling != nil
+	catchupMode := actions.ColdridgeCatchup != nil
+	catchupScope = catchupMode && coldridgeCatchupContext(world, actions, s.selfGUID, s.state.SessionId)
+	if catchupMode && !catchupScope {
+		s.state.Reason = "coldridge_catchup_handoff_unavailable_no_ambient_fallback"
+		return
+	}
 	roadMode := actions.RoadClear != nil
 	roadScope = roadMode && roadClearLootReceipt(world, actions, s.selfGUID, s.state.SessionId)
 	if roadMode && (!s.roadPreflightEpoch(world, actions.RoadClear, actionsBefore) || !roadScope || levelingMode) {
@@ -761,7 +777,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "coldridge_leveling_handoff_unavailable_no_owner_fallback"
 		return
 	}
-	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID) || levelingScope || roadScope
+	coldridgeScope := !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID) || levelingScope || roadScope || catchupScope
 	fargodeepScope := ownFargodeepQuest(world, s.selfGUID) && actions.Fargodeep != nil && fargodeepLootContext(world, actions, s.selfGUID, actions.Fargodeep.TargetGuid) && s.fargodeepPartyCurrent(ctx)
 	if !ownerNearby && !wolfScope && !coldridgeScope && !fargodeepScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
@@ -775,6 +791,9 @@ func (s *Service) Tick(ctx context.Context) {
 			continue
 		}
 		goal, matchesColdridge := selectColdridgeLootGoalWithActions(world, actions, s.selfGUID, c, s.state.SessionId)
+		if catchupMode && (!matchesColdridge || goal.catchupRequest == "" || !s.bindCatchupLootDeadline(&goal, actionsBefore, actions.ColdridgeCatchup.RemainingMs)) {
+			continue
+		}
 		if roadMode && (!matchesColdridge || goal.roadRequest == "" || !eligible(world.Self, actions.Position, c) || !s.bindRoadLootDeadline(&goal, actionsBefore, actions.RoadClear.RemainingMs)) {
 			continue
 		}
@@ -805,18 +824,26 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	lease := &actionsv1.InteractionLease{}
+	beforeAcquire := s.now()
 	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}, lease); err != nil {
+		if catchupMode {
+			s.finishCatchupLootRequest(selectedColdridgeGoal.catchupRequest)
+		}
 		s.state.Reason = "interaction_busy_or_unavailable"
 		return
 	}
 	if lease.Token == "" || lease.State == nil || lease.State.InteractionOwner != "loot" {
+		if catchupMode {
+			s.finishCatchupLootRequest(selectedColdridgeGoal.catchupRequest)
+		}
 		s.state.Reason = "invalid_interaction_lease"
 		return
 	}
 	s.token = lease.Token
 	s.questWolf = selected.Entry == 299 && wolfScope
 	s.coldridgeGoal = selectedColdridgeGoal
-	s.questColdridge = selectedColdridgeGoal.questID != 0 || selectedColdridgeGoal.levelingRequest != "" || selectedColdridgeGoal.roadRequest != ""
+	s.noteCatchupLootTTL(beforeAcquire, lease.State)
+	s.questColdridge = selectedColdridgeGoal.questID != 0 || selectedColdridgeGoal.levelingRequest != "" || selectedColdridgeGoal.roadRequest != "" || selectedColdridgeGoal.catchupRequest != ""
 	s.questFargodeep = fargodeepScope && selected.Guid == actions.Fargodeep.TargetGuid
 	if s.questWolf || s.questColdridge || s.questFargodeep {
 		selectedGUID := selected.Guid

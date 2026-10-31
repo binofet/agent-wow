@@ -6,14 +6,14 @@ import (
 )
 
 func (g coldridgePracticeGoal) usesTrollRegion() bool {
-	return g.leveling && g.questID == 0 || !g.leveling && g.questID == 182
+	return g.catchup && !g.leveling && g.questID == 0 || !g.catchup && (g.leveling && g.questID == 0 || !g.leveling && g.questID == 182)
 }
 
 func (g coldridgePracticeGoal) contains(p position) bool {
 	if g.usesTrollRegion() {
 		return finite(p) && buddynav.RegionColdridgeTrollCave.Contains(buddynav.Point{X: p.x, Y: p.y, Z: p.z})
 	}
-	if g.leveling {
+	if g.finite() {
 		return false
 	}
 	switch g.questID {

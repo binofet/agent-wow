@@ -138,6 +138,12 @@ func coldridgeLevelingContext(w *worldv1.SnapshotResponse, a *actionsv1.State, s
 }
 
 func selectColdridgeLootGoalWithActions(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, c *worldv1.CreatureState, session ...string) (coldridgeLootGoal, bool) {
+	if a != nil && a.ColdridgeCatchup != nil {
+		if len(session) != 1 {
+			return coldridgeLootGoal{}, false
+		}
+		return selectColdridgeCatchupLootGoal(w, a, self, session[0], c)
+	}
 	if a != nil && a.RoadClear != nil {
 		if len(session) != 1 || a.ColdridgeLeveling != nil {
 			return coldridgeLootGoal{}, false
@@ -160,6 +166,12 @@ func selectColdridgeLootGoalWithActions(w *worldv1.SnapshotResponse, a *actionsv
 // validation stays unchanged; leveling never falls through to a quest or owner.
 func (g *coldridgeLootGoal) contextWithActions(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, pendingGUID uint64) bool {
 	if g == nil || a == nil {
+		return false
+	}
+	if g.catchupRequest != "" {
+		return g.catchupContext(w, a, self, pendingGUID)
+	}
+	if a.ColdridgeCatchup != nil {
 		return false
 	}
 	if g.roadRequest != "" {

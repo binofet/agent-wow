@@ -31,6 +31,10 @@ type coldridgeLootGoal struct {
 	levelingLevel                         uint32
 	levelingMaxHP                         uint32
 	levelingUntil                         time.Time
+	catchupRequest, catchupSession        string
+	catchupStart, catchupTarget           uint32
+	catchupObserved                       uint32
+	catchupUntil                          time.Time
 	roadRequest                           string
 	roadSession                           string
 	roadLevel                             uint32
@@ -183,7 +187,7 @@ func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 		return false
 	}
 	if g.roadRequest != "" {
-		if g.questID != 0 || g.levelingRequest != "" || !roadClearProfile(c) || c.Level != g.roadLevel || c.MaxHealth != g.roadMaxHP || c.PositionRevision != g.roadDeathRevision || !c.PositionKnown || !roadClearPoint(c.X, c.Y, c.Z) {
+		if g.questID != 0 || g.levelingRequest != "" || g.catchupRequest != "" || !roadClearProfile(c) || c.Level != g.roadLevel || c.MaxHealth != g.roadMaxHP || c.PositionRevision != g.roadDeathRevision || !c.PositionKnown || !roadClearPoint(c.X, c.Y, c.Z) {
 			return false
 		}
 		if t := c.Trajectory; t != nil && t.Known && t.DestinationKnown && !roadClearPoint(t.DestinationX, t.DestinationY, t.DestinationZ) {
@@ -191,6 +195,13 @@ func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 		}
 		x, y, z, known := corpsePosition(c)
 		return known && roadClearPoint(x, y, z)
+	}
+	if g.catchupRequest != "" {
+		if g.questID != 0 || g.levelingRequest != "" || !coldridge182CorpseProfile(c) || c.Level != 3 || c.MaxHealth != 71 || !coldridge182PositionEvidenceWithin(c) {
+			return false
+		}
+		x, y, z, known := corpsePosition(c)
+		return known && g.containsPoint(x, y, z)
 	}
 	if g.questID == 179 {
 		return coldridgeCorpse(c)
@@ -233,7 +244,7 @@ func coldridge182CorpseProfile(c *worldv1.CreatureState) bool {
 }
 
 func (g coldridgeLootGoal) containsPoint(x, y, z float32) bool {
-	if g.levelingRequest != "" {
+	if g.levelingRequest != "" || g.catchupRequest != "" {
 		return coldridge182Point(x, y, z)
 	}
 	switch g.questID {
@@ -246,7 +257,7 @@ func (g coldridgeLootGoal) containsPoint(x, y, z float32) bool {
 }
 
 func (g coldridgeLootGoal) baselineContainsPoint(x, y, z float32) bool {
-	return (g.questID == 182 || g.levelingRequest != "") && coldridgePoint(x, y, z) || g.containsPoint(x, y, z)
+	return (g.questID == 182 || g.levelingRequest != "" || g.catchupRequest != "") && coldridgePoint(x, y, z) || g.containsPoint(x, y, z)
 }
 
 func coldridgePoint(x, y, z float32) bool {

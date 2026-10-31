@@ -135,6 +135,9 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) {
 	self := w.Self
 	goal := &s.coldridgeGoal
+	if goal.catchup {
+		s.observeColdridgeCatchupLevelLocked(w)
+	}
 	if goal.leveling {
 		s.observeColdridgeLevelingLevelLocked(w)
 	}
@@ -145,12 +148,20 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.stopPracticeLocked(ctx, "coldridge_authoritative_position_changed")
 		return
 	}
+	if goal.catchup && !s.coldridgeCatchupRunValidLocked() {
+		s.stopPracticeLocked(ctx, "coldridge_catchup_run_invalid_or_expired")
+		return
+	}
 	if goal.leveling && !s.coldridgeLevelingRunValidLocked() {
 		s.stopPracticeLocked(ctx, "coldridge_leveling_run_invalid_or_expired")
 		return
 	}
 	// Rebase a correction before STOP, even when that same observation reaches
 	// the level cap. No owned-fight exemption permits further leveling offense.
+	if goal.catchup && self.Guid == s.selfGUID && self.Present && self.LevelKnown && self.Level >= s.coldridgeCatchup.startLevel+1 {
+		s.stopPracticeLocked(ctx, "coldridge_catchup_level_cap_reached")
+		return
+	}
 	if goal.leveling && self.Guid == s.selfGUID && self.Present && self.LevelKnown && self.Level >= 5 {
 		s.stopPracticeLocked(ctx, "coldridge_leveling_level_cap_reached")
 		return
@@ -162,10 +173,12 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	target := practiceTargetObservation(w, s.practiceTarget)
 	active, needed := goal.observe(w, s.selfGUID)
 	selectedObjectiveComplete := target != nil && !goal.targetNeeded(target.Entry)
-	finishing := !goal.leveling && active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
+	finishing := !goal.finite() && active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 	if !needed && !finishing {
 		why := "quest_179_complete_absent_or_level_limit"
-		if goal.leveling {
+		if goal.catchup {
+			why = "coldridge_catchup_context_absent_or_invalid"
+		} else if goal.leveling {
 			why = "coldridge_leveling_context_absent_or_invalid"
 		} else if goal.questID == 170 {
 			why = "quest_170_complete_absent_or_invalid"
@@ -193,6 +206,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.state.PracticePhase = "waiting_for_server_attack_stop"
 		return
 	}
+	if goal.catchup && len(w.NearbyCreatures) >= 32 {
+		s.stopPracticeLocked(ctx, "coldridge_catchup_cache_saturated")
+		return
+	}
 	if len(w.NearbyCreatures) > 32 || s.practiceTarget != 0 && target == nil {
 		s.stopPracticeLocked(ctx, "coldridge_target_observation_unavailable")
 		return
@@ -204,6 +221,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 	}
 	if target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {
+		if goal.catchup {
+			s.stopPracticeLocked(ctx, "coldridge_catchup_target_death_observed")
+			return
+		}
 		if goal.leveling {
 			s.stopPracticeLocked(ctx, "coldridge_leveling_target_death_observed")
 			return
@@ -223,6 +244,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 		s.practiceRoute = nil
 		s.state.PracticePhase = "selected_quest_objective_already_satisfied"
+		return
+	}
+	if goal.catchup && s.practiceTarget == 0 {
+		s.stopPracticeLocked(ctx, "coldridge_catchup_selected_target_unavailable")
 		return
 	}
 	if s.practiceTarget == 0 {
@@ -259,6 +284,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 		s.practiceTarget, s.state.PracticeTargetGuid = target.Guid, target.Guid
 		s.practiceRoute, s.practicePullStarted, s.practiceReplans, s.practiceKillCredited = nil, false, 0, false
+	}
+	if goal.catchup && !s.practicePullStarted && !catchupFreshPull(target) {
+		s.stopPracticeLocked(ctx, "coldridge_catchup_target_cache_stale")
+		return
 	}
 	if !goal.eligible(target, self) || !s.practicePullStarted && !unclaimedColdridgePull(target) || target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 || s.failedAssistTarget == s.practiceTarget || self.UnitFlags&0x80000 != 0 && !s.practicePullStarted {
 		s.stopPracticeLocked(ctx, "coldridge_target_claimed_unsafe_or_cast_failed")
@@ -341,7 +370,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	}
 	if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) {
 		if !s.faceEnemyLocked(ctx, p) {
-			if goal.leveling {
+			if goal.finite() {
 				s.stopPracticeLocked(ctx, "coldridge_leveling_facing_unconfirmed_or_unsafe")
 				return
 			}
@@ -355,14 +384,16 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 				s.practicePullStarted, s.practiceRoute = true, nil
 				s.state.PracticePulls++
 			}
-			if !s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second) && goal.leveling {
+			if !s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second) && goal.finite() {
 				s.stopPracticeLocked(ctx, "coldridge_leveling_cast_unconfirmed")
 				return
 			}
 		}
 	}
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
-	if goal.leveling {
+	if goal.catchup {
+		s.state.PracticePhase = "fighting_selected_coldridge_catchup_target"
+	} else if goal.leveling {
 		s.state.PracticePhase = "fighting_observed_coldridge_leveling_target"
 	} else if goal.questID == 170 {
 		s.state.PracticePhase = "fighting_observed_quest_170_target"
@@ -390,6 +421,12 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 	}
 	self := w.Self
 	goal := &s.coldridgeGoal
+	if goal.catchup {
+		s.observeColdridgeCatchupLevelLocked(w)
+		if !s.coldridgeCatchupRunValidLocked() || !self.LevelKnown || self.Level != s.coldridgeCatchup.startLevel {
+			return reject("catchup_deadline_level_or_context_changed")
+		}
+	}
 	if goal.leveling {
 		s.observeColdridgeLevelingLevelLocked(w)
 		if !s.coldridgeLevelingRunValidLocked() {
@@ -413,8 +450,11 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 		return reject("bound_goal_absent_or_invalid")
 	}
 	target := practiceTargetObservation(w, s.practiceTarget)
-	if !goal.eligible(target, self) || len(w.NearbyCreatures) > 32 {
+	if !goal.eligible(target, self) || len(w.NearbyCreatures) > 32 || goal.catchup && len(w.NearbyCreatures) >= 32 {
 		return reject("target_observations_unavailable_or_unsafe")
+	}
+	if goal.catchup && !s.practicePullStarted && !catchupFreshPull(target) {
+		return reject("catchup_target_cache_stale")
 	}
 	if !s.practicePullStarted {
 		if !needed || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) || self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
@@ -443,6 +483,9 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 	}
 	// Reserve the single pull from this last post-facing snapshot, before the
 	// caller reserves its first cast. An uncertain write must consume the pull.
+	if goal.catchup && !s.practicePullStarted && !s.reserveColdridgeCatchupPullLocked(w, target.Guid) {
+		return reject("catchup_pull_unavailable")
+	}
 	if goal.leveling && !s.practicePullStarted && !s.reserveColdridgeLevelingPullLocked(w, target.Guid) {
 		return reject("leveling_pull_unavailable")
 	}

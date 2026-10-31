@@ -89,6 +89,9 @@ type Service struct {
 	coldridgeGoal                                            coldridgePracticeGoal
 	coldridgeLeveling                                        coldridgeLevelingRun
 	coldridgeLevelingRequests                                map[string]struct{}
+	coldridgeCatchup                                         coldridgeCatchupRun
+	coldridgeCatchupRequests                                 map[string]*actionsv1.ColdridgeCatchupRequest
+	coldridgeCatchupBodies                                   map[uint64]bool
 	formation                                                followFormation
 	followNav                                                followNavigation
 	meleeNav                                                 followNavigation
@@ -132,6 +135,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.ColdridgeLeveling = s.coldridgeLevelingSnapshotLocked()
+	out.ColdridgeCatchup = s.coldridgeCatchupSnapshotLocked()
 	out.RoadClear = s.roadSnapshotLocked()
 	out.RoadCastObserver = s.roadCastObserverSnapshotLocked()
 	now := s.now()
@@ -686,6 +690,10 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
 		return false
 	}
+	if op == opcode.CMSGCastSpell && s.coldridgeGoal.catchup && !s.coldridgeCatchupCastAllowedLocked() {
+		s.state.Reason = "coldridge_catchup_cast_boundary_expired_or_unavailable"
+		return false
+	}
 	if op == opcode.CMSGCastSpell && s.coldridgeGoal.leveling && !s.coldridgeLevelingCastAllowedLocked() {
 		s.state.Reason = "coldridge_leveling_cast_boundary_expired_or_unavailable"
 		return false
@@ -793,6 +801,10 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		at := len(packedGUID(s.selfGUID))
 		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
 		binary.LittleEndian.PutUint32(payload[at:], flags)
+	}
+	if op != opcode.MSGMoveStop && !s.coldridgeCatchupMovementAllowedLocked(w, p) {
+		s.state.Reason = "coldridge_catchup_movement_boundary_expired_or_unavailable"
+		return false
 	}
 	if op != opcode.MSGMoveStop && !s.coldridgeLevelingMovementAllowedLocked(w, p) {
 		s.state.Reason = "coldridge_leveling_movement_boundary_expired_or_unavailable"

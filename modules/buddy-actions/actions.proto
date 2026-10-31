@@ -36,6 +36,30 @@ message ColdridgeLevelingState {
   bool level_five_observed = 10;
   uint64 self_guid = 11;
 }
+// A separate next-level catch-up window: one explicit observed706, never a quest kill goal.
+message ColdridgeCatchupRequest {
+  string request_id = 1;
+  uint64 target_guid = 2;
+  string session_id = 3;
+  uint32 expected_start_level = 4;
+}
+message ColdridgeCatchupState {
+  string request_id = 1;
+  string goal = 2;
+  uint32 start_level = 3;
+  uint32 target_level = 4;
+  uint32 max_pulls = 5;
+  // Source is published only when the first potentially sent offense is reserved.
+  uint64 source_guid = 6;
+  uint64 position_revision = 7;
+  bool pull_reserved = 8;
+  uint64 remaining_ms = 9;
+  uint32 observed_level = 10;
+  bool target_level_observed = 11;
+  uint64 self_guid = 12;
+  string session_id = 13;
+  uint64 target_guid = 14;
+}
 // One explicitly selected observed road hostile; no quest credit or travel.
 message RoadClearRequest {
   string request_id = 1;
@@ -275,6 +299,7 @@ message State {
   ColdridgeLevelingState coldridge_leveling = 70;
   RoadClearState road_clear = 73;
   RoadCastObserverState road_cast_observer = 74;
+  ColdridgeCatchupState coldridge_catchup = 75;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -295,6 +320,7 @@ service BuddyActions {
   rpc Practice(ToggleRequest) returns (State);
   rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);
   rpc StartColdridgeLeveling(ColdridgeLevelingRequest) returns (State);
+  rpc StartColdridgeCatchup(ColdridgeCatchupRequest) returns (State);
   rpc StartRoadClear(RoadClearRequest) returns (State);
   // Normal release, validated same-map ghost route, and corpse reclamation.
   rpc Recovery(ToggleRequest) returns (State);

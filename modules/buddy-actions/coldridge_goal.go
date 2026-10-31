@@ -6,10 +6,13 @@ import worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 // are high-water marks from complete own quest-log observations, not kill or
 // transport counters. Needed is refreshed on every observation and fails closed.
 type coldridgePracticeGoal struct {
-	questID  uint32
-	leveling bool
-	counts   [2]uint32
-	needed   bool
+	questID    uint32
+	leveling   bool
+	catchup    bool
+	startLevel uint32
+	targetGUID uint64
+	counts     [2]uint32
+	needed     bool
 }
 
 func selectColdridgePracticeGoal(w *worldv1.SnapshotResponse, selfGUID uint64) (coldridgePracticeGoal, bool) {
@@ -27,6 +30,13 @@ func (g *coldridgePracticeGoal) observe(w *worldv1.SnapshotResponse, selfGUID ui
 		return false, false
 	}
 	g.needed = false
+	if g.catchup {
+		if g.leveling || g.questID != 0 || g.startLevel < 5 || g.startLevel > 7 || !ownColdridgeCatchupContext(w, selfGUID) || w.Self.Level < g.startLevel || w.Self.Level > g.startLevel+1 {
+			return false, false
+		}
+		g.needed = w.Self.Level == g.startLevel
+		return true, g.needed
+	}
 	if g.leveling {
 		// Quest218 is context for this separate ordinary leveling goal. Its
 		// item objective supplies neither a creature mapping nor kill credit.
@@ -106,9 +116,14 @@ func validColdridge182Counts(counts []uint32) bool {
 	return len(counts) == 4 && counts[0] <= 10 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0
 }
 
+func (g coldridgePracticeGoal) finite() bool { return g.leveling || g.catchup }
+
 func (g coldridgePracticeGoal) targetNeeded(entry uint32) bool {
 	if !g.needed {
 		return false
+	}
+	if g.catchup {
+		return !g.leveling && g.questID == 0 && entry == 706
 	}
 	if g.leveling {
 		return g.questID == 0 && entry == 706
@@ -129,6 +144,9 @@ func (g coldridgePracticeGoal) targetNeeded(entry uint32) bool {
 }
 
 func (g coldridgePracticeGoal) supportsEntry(entry uint32) bool {
+	if g.catchup {
+		return !g.leveling && g.questID == 0 && entry == 706
+	}
 	if g.leveling {
 		return g.questID == 0 && entry == 706
 	}
@@ -174,6 +192,10 @@ func matches182Profile(c *worldv1.CreatureState) bool {
 // own fight to finish. Fresh position, ownership, pull and route gates remain
 // the controller's responsibility; only targetNeeded authorizes a new pull.
 func (g coldridgePracticeGoal) eligible(c *worldv1.CreatureState, self *worldv1.PlayerState) bool {
+	if g.catchup && (g.leveling || g.questID != 0 || c == nil || c.Guid != g.targetGUID || !catchupProfile(c)) {
+		return false
+	}
+
 	if !g.leveling && g.questID == 179 {
 		return eligibleColdridgeWolf(c)
 	}

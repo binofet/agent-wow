@@ -120,7 +120,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		}
 		quest33, _ := ownWolfQuest(w)
 		quest179, _ := ownColdridgeQuest(w, s.selfGUID)
-		if s.coldridgeGoal.leveling || s.coldridgeGoal.questID == 170 || s.coldridgeGoal.questID == 183 || s.coldridgeGoal.questID == 182 {
+		if s.coldridgeGoal.finite() || s.coldridgeGoal.questID == 170 || s.coldridgeGoal.questID == 183 || s.coldridgeGoal.questID == 182 {
 			// Another accepted quest must not replace the goal bound at start.
 			quest179 = false
 		}
@@ -129,7 +129,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 			coldridgeCorpse = true
 			coldridgeNavigationGoal = s.coldridgeGoal
 		}
-		if s.coldridgeGoal.leveling && !coldridgeCorpse {
+		if s.coldridgeGoal.finite() && !coldridgeCorpse {
 			return pause("loot_approach_bound_coldridge_leveling_scope_invalid")
 		}
 		if s.coldridgeGoal.questID == 182 && !coldridgeCorpse {
@@ -281,6 +281,9 @@ func (s *Service) ownFargodeepCorpseLocked(ctx context.Context, w *worldv1.Snaps
 // quest completion may precede looting.
 func (s *Service) ownColdridgeGoalCorpseLocked(w *worldv1.SnapshotResponse, corpse *worldv1.CreatureState) bool {
 	goal := &s.coldridgeGoal
+	if goal.catchup {
+		return s.coldridgeCatchupCorpseContextLocked(w, corpse)
+	}
 	if goal.leveling {
 		return s.coldridgeLevelingCorpseContextLocked(w, corpse)
 	}

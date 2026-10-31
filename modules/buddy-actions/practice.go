@@ -83,7 +83,7 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		s.stopPracticeLocked(ctx, "disabled")
 		return s.stateLocked(), nil
 	}
-	if s.coldridgeLevelingActiveLocked() {
+	if s.coldridgeLevelingActiveLocked() || s.coldridgeCatchupActiveLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "ordinary practice cannot replace an active Coldridge leveling run")
 	}
 	if s.road.active {

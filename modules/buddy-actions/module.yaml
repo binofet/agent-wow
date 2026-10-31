@@ -25,6 +25,7 @@ rpc:
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   start_coldridge_leveling: /warcraftbuddy.actions.v1.BuddyActions/StartColdridgeLeveling
+  start_coldridge_catchup: /warcraftbuddy.actions.v1.BuddyActions/StartColdridgeCatchup
   start_road_clear: /warcraftbuddy.actions.v1.BuddyActions/StartRoadClear
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
