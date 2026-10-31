@@ -17,9 +17,11 @@ func lostGuardObjectGUID(guid uint64) bool {
 	entry := uint32(guid >> 24 & 0xffffff)
 	return guid>>48 == 0xf110 && guid&0xffffff != 0 && (entry == 55 || entry == 56)
 }
-func questGiverGUID(guid uint64) bool { return creatureGUID(guid) || lostGuardObjectGUID(guid) }
+func questGiverGUID(guid uint64) bool {
+	return creatureGUID(guid) || lostGuardObjectGUID(guid) || itemGiverGUID(guid)
+}
 func giverStarts(guid uint64, quest uint32) bool {
-	return creatureGUID(guid) || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 45 || guid>>24&0xffffff == 56 && quest == 71)
+	return creatureGUID(guid) || itemGiverGUID(guid) && quest == deedQuestID || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 45 || guid>>24&0xffffff == 56 && quest == 71)
 }
 func giverEnds(guid uint64, quest uint32) bool {
 	return creatureGUID(guid) || lostGuardObjectGUID(guid) && (guid>>24&0xffffff == 55 && quest == 37 || guid>>24&0xffffff == 56 && quest == 45)

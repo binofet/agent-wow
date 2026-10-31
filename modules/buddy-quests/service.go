@@ -44,6 +44,9 @@ type Service struct {
 	shares                              sharedQuestRuntime
 	explorationRequest                  *questsv1.ExploreRequest
 	explorations                        map[uint32]*explorationRecord
+	activeItemGiver                     *itemGiverBinding
+	itemGiverOffer                      *itemGiverOffer
+	deedAcceptReserved                  bool
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -244,6 +247,9 @@ func interaction(w *worldv1.SnapshotResponse, a *actionsv1.State, npc *worldv1.C
 	return "", d, true
 }
 func (s *Service) gate(ctx context.Context, npcGUID uint64) (*worldv1.SnapshotResponse, error) {
+	if itemGiverGUID(npcGUID) {
+		return s.itemGate(ctx, npcGUID)
+	}
 	if lostGuardObjectGUID(npcGUID) {
 		return s.objectGate(ctx, npcGUID)
 	}
@@ -291,7 +297,12 @@ func (s *Service) reserve(ctx context.Context, sessionID string, shared ...bool)
 	s.state.Revision++
 	return nil
 }
-func (s *Service) releaseBusy() { s.mu.Lock(); s.state.ActionInFlight = false; s.mu.Unlock() }
+func (s *Service) releaseBusy() {
+	s.mu.Lock()
+	s.state.ActionInFlight = false
+	s.activeItemGiver = nil
+	s.mu.Unlock()
+}
 func (s *Service) send(ctx context.Context, op uint32, payload []byte) error {
 	if s.session == nil {
 		return status.Error(codes.FailedPrecondition, "session callback unavailable")
@@ -303,6 +314,12 @@ func (s *Service) validateQuestLocked(r *questsv1.QuestRequest) (*questsv1.Quest
 	o := s.state.Offer
 	if r == nil || r.QuestId == 0 || !giverStarts(r.NpcGuid, r.QuestId) || o == nil || r.SessionId != s.state.SessionId || r.OfferRevision != o.Revision || r.NpcGuid != o.NpcGuid || !s.now().Before(s.offerUntil) {
 		return nil, status.Error(codes.FailedPrecondition, "quest offer no longer matches this session, revision, NPC and quest")
+	}
+	if itemGiverGUID(r.NpcGuid) && s.deedAcceptReserved {
+		return nil, status.Error(codes.FailedPrecondition, "deed acceptance already reserved for this body; inspect actual own log")
+	}
+	if itemGiverGUID(r.NpcGuid) && (s.itemGiverOffer == nil || s.itemGiverOffer.binding.guid != r.NpcGuid || s.itemGiverOffer.revision != o.Revision) {
+		return nil, status.Error(codes.FailedPrecondition, "actual owned quest item offer binding unavailable")
 	}
 	for _, q := range o.Quests {
 		if q.QuestId == r.QuestId {
@@ -343,6 +360,11 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 			return nil, err
 		}
 	}
+	if itemGiverGUID(npcGUID) {
+		if err := s.bindItemGiver(call, npcGUID, detail != nil); err != nil {
+			return nil, err
+		}
+	}
 	token, err := s.acquire(call)
 	if err != nil {
 		return nil, err
@@ -368,6 +390,9 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 		}
 	}
 	s.queryNPC, s.queryQuest = npcGUID, 0
+	if itemGiverGUID(npcGUID) {
+		s.queryQuest = deedQuestID
+	}
 	if detail != nil {
 		s.queryQuest = detail.QuestId
 	}
@@ -382,7 +407,9 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 	s.state.Revision++
 	s.mu.Unlock()
 	if detail == nil {
-		if lostGuardObjectGUID(npcGUID) {
+		if itemGiverGUID(npcGUID) {
+			err = s.send(call, opcode.CMSGQuestgiverQueryQuest, questPacket(npcGUID, deedQuestID, false))
+		} else if lostGuardObjectGUID(npcGUID) {
 			err = s.send(call, opcode.CMSGGameobjUse, npcPacket(npcGUID))
 		} else {
 			if err := s.send(call, opcode.CMSGQuestgiverStatusQuery, npcPacket(npcGUID)); err != nil {
@@ -439,6 +466,11 @@ func (s *Service) Accept(ctx context.Context, r *questsv1.QuestRequest) (*quests
 	if err := guard(); err != nil {
 		return nil, err
 	}
+	if itemGiverGUID(r.NpcGuid) {
+		if err := s.bindItemGiver(call, r.NpcGuid, true); err != nil {
+			return nil, err
+		}
+	}
 	token, err := s.acquire(call)
 	if err != nil {
 		return nil, err
@@ -455,6 +487,9 @@ func (s *Service) Accept(ctx context.Context, r *questsv1.QuestRequest) (*quests
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
+	}
+	if itemGiverGUID(r.NpcGuid) {
+		s.deedAcceptReserved = true
 	}
 	q.AcceptRequested = true
 	s.acceptUntil = s.now().Add(responseTimeout)
@@ -580,6 +615,10 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		offer.Revision = s.state.Revision
 		s.offerUntil = s.now().Add(30 * time.Second)
 		s.state.Offer = offer
+		s.itemGiverOffer = nil
+		if itemGiverGUID(offer.NpcGuid) && s.activeItemGiver != nil && s.activeItemGiver.guid == offer.NpcGuid {
+			s.itemGiverOffer = &itemGiverOffer{*s.activeItemGiver, offer.Revision}
+		}
 		s.responseReceived = true
 		if s.wait != nil {
 			close(s.wait)

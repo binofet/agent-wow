@@ -78,7 +78,7 @@ func (s *Service) handleSharedPacket(packet *modv1.WorldPacket) bool {
 	var err error
 	switch packet.Opcode {
 	case opcode.SMSGQuestgiverQuestDetails:
-		if len(packet.Payload) >= 16 && creatureGUID(binary.LittleEndian.Uint64(packet.Payload)) && binary.LittleEndian.Uint64(packet.Payload[8:]) == 0 {
+		if len(packet.Payload) >= 16 && questGiverGUID(binary.LittleEndian.Uint64(packet.Payload)) && binary.LittleEndian.Uint64(packet.Payload[8:]) == 0 {
 			return false
 		}
 		offer, err = decodeSharedDetails(packet.Payload, s.selfGUID)
