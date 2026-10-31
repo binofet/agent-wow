@@ -293,7 +293,9 @@ func (s *Service) castFailedLocked(code uint32, reason string) {
 			s.state.Reason = "server_offensive_spell_failed_target_paused"
 		}
 	} else {
-		s.state.Healing = false
+		// A definite rejection settles this cast, not the user's healing opt-in.
+		// After the cooldown, triage must select again from fresh observations.
+		// Leave an explicit disable untouched; never replay this pending cast.
 		s.nextHeal = s.now().Add(5 * time.Second)
 		s.state.Reason = reason
 	}

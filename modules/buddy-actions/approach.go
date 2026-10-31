@@ -15,7 +15,7 @@ import (
 )
 
 // ApproachLoot advances at most one ordinary ground-movement step toward an
-// observed eligible corpse or own Milly harvest crate. Only the current loot interaction token permits it;
+// observed eligible corpse or own verified quest chest. Only the current loot interaction token permits it;
 // callers cannot select coordinates or an arbitrary living target.
 func (s *Service) ApproachLoot(ctx context.Context, r *actionsv1.ApproachLootRequest) (result *actionsv1.State, err error) {
 	if r == nil || r.Token == "" || (r.CorpseGuid == 0) == (r.GameObjectGuid == 0) {
@@ -83,7 +83,8 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		if s.navDataDir == "" {
 			return pause("loot_approach_harvest_requires_verified_navigation")
 		}
-		if !ownHarvestQuest(w, s.selfGUID) {
+		entry := uint32(r.GameObjectGuid >> 24 & 0xffffff)
+		if !ownHarvestQuest(w, s.selfGUID, entry) {
 			return pause("loot_approach_harvest_quest_not_incomplete")
 		}
 		var object *worldv1.GameObjectState
@@ -97,7 +98,7 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 				}
 			}
 		}
-		if object == nil || !object.Present || object.Guid>>48 != 0xf110 || object.Guid&0xffffff == 0 || uint32(object.Guid>>24&0xffffff) != 161557 || object.Entry != 161557 || !object.TypeKnown || object.GameObjectType != 3 || !object.MapKnown || object.MapId != w.Self.MapId || !object.PositionKnown || !object.FlagsKnown || object.Flags&(1|8|16) != 0 {
+		if object == nil || !object.Present || object.Guid>>48 != 0xf110 || object.Guid&0xffffff == 0 || uint32(object.Guid>>24&0xffffff) != entry || object.Entry != entry || !object.TypeKnown || object.GameObjectType != 3 || !object.MapKnown || object.MapId != w.Self.MapId || !object.PositionKnown || !object.FlagsKnown || object.Flags&(1|8|16) != 0 {
 			return pause("loot_approach_harvest_object_not_eligible")
 		}
 		target = position{x: object.X, y: object.Y, z: object.Z, o: object.Orientation}
@@ -235,15 +236,18 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		} else {
 			p.o = followFacing(p, route.path[index])
 		}
-		if fargodeepCorpse {
+		if fargodeepCorpse || r.GameObjectGuid != 0 {
 			previous := s.lootApproachGuard
 			s.lootApproachGuard = func(call context.Context, current *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool) {
+				if r.GameObjectGuid != 0 {
+					return current, call.Err() == nil && s.harvestApproachCurrentLocked(r, route, current)
+				}
 				return s.fargodeepApproachCurrentLocked(call, r, route, current)
 			}
 			defer func() { s.lootApproachGuard = previous }()
 		}
 		if !s.movementLocked(ctx, op, p, true) {
-			if fargodeepCorpse && s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) == 1 {
+			if (fargodeepCorpse || r.GameObjectGuid != 0) && s.state.InteractionOwner == "loot" && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) == 1 {
 				return pause(s.state.Reason)
 			}
 			return s.stateLocked(), nil
@@ -254,6 +258,29 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		s.state.Reason = "loot_approaching_client_navmesh_estimate"
 		return s.stateLocked(), nil
 	}
+}
+
+// The clock callback may receive a quest completion, combat or object update.
+// Recheck this exact recipe/source before START/HEARTBEAT; STOP needs no chest.
+func (s *Service) harvestApproachCurrentLocked(r *actionsv1.ApproachLootRequest, route *lootApproachNavigation, w *worldv1.SnapshotResponse) bool {
+	entry := uint32(r.GameObjectGuid >> 24 & 0xffffff)
+	if route == nil || safeQuestCharacter(w, s.selfGUID) != "" || !ownHarvestQuest(w, s.selfGUID, entry) || len(w.QuestObjects) > 32 || s.closed || s.state.InteractionOwner != "loot" || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 || s.interactionUntil.Sub(s.now()) < time.Second || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 || w.Self.MapId != route.mapID || w.Self.PositionRevision != route.selfRevision || s.posMap != route.mapID || s.positionRevision != route.selfRevision || distance(s.pos, route.start) > .05 {
+		return false
+	}
+	var object *worldv1.GameObjectState
+	for _, g := range w.QuestObjects {
+		if g != nil && g.Guid == r.GameObjectGuid {
+			if object != nil {
+				return false
+			}
+			object = g
+		}
+	}
+	if object == nil || !object.Present || object.Guid>>48 != 0xf110 || object.Guid&0xffffff == 0 || uint32(object.Guid>>24&0xffffff) != entry || object.Entry != entry || !object.TypeKnown || object.GameObjectType != 3 || !object.MapKnown || object.MapId != route.mapID || !object.PositionKnown || !object.FlagsKnown || object.Flags&(1|8|16) != 0 || object.PositionRevision != route.targetRevision {
+		return false
+	}
+	target := position{x: object.X, y: object.Y, z: object.Z, o: object.Orientation}
+	return finite(target) && distance(target, route.target) <= .01 && distance(s.pos, target) <= 12 && math.Abs(float64(target.z-s.pos.z)) <= 1.5
 }
 
 // An incomplete own collection goal may approach an actually lootable party
@@ -369,7 +396,16 @@ func (s *Service) ownColdridgeGoalCorpseLocked(w *worldv1.SnapshotResponse, corp
 
 // This movement exception is bound to the acting character's actual own quest
 // log, never to a party member's quests or an arbitrary game-object target.
-func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64) bool {
+func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64, objectEntry uint32) bool {
+	questID := uint32(0)
+	switch objectEntry {
+	case 161557:
+		questID = 3904
+	case 176793:
+		questID = 5545
+	default:
+		return false
+	}
 	if w == nil || w.Self == nil || w.Self.Guid != self || !w.SelfQuestLogKnown || len(w.SelfQuestLog) != 25 {
 		return false
 	}
@@ -380,7 +416,7 @@ func ownHarvestQuest(w *worldv1.SnapshotResponse, self uint64) bool {
 			return false
 		}
 		seen[q.Slot] = true
-		if q.QuestId == 3904 && !q.Complete && !q.Failed && q.State&3 == 0 {
+		if q.QuestId == questID && !q.Complete && !q.Failed && q.State&3 == 0 {
 			found = true
 		}
 	}

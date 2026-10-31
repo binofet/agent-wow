@@ -508,13 +508,13 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 			if s.questGather {
 				s.observeGatherQuest(world)
-				if active.Moving && s.state.Phase != "gather_approaching" || !harvestContext(world, active, s.selfGUID, false) {
+				if active.Moving && s.state.Phase != "gather_approaching" || !s.boundHarvestRecipe().context(world, active, s.selfGUID, false) {
 					s.state.Reason = "gather_character_or_quest_became_unsafe"
 					s.beginRelease(ctx)
 					return
 				}
 			}
-			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questFargodeep && fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && harvestContext(world, active, s.selfGUID, false)) {
+			if !activeOwnerReady(world) && !(s.questWolf && !active.MotionUnconfirmed && wolfQuestContext(world, active.Position, s.selfGUID)) && !(s.questFargodeep && fargodeepLootContext(world, active, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questColdridge && !active.MotionUnconfirmed && s.coldridgeGoal.context(world, active.Position, s.selfGUID, s.state.PendingCorpseGuid)) && !(s.questGather && (!active.Moving || s.state.Phase == "gather_approaching") && s.boundHarvestRecipe().context(world, active, s.selfGUID, false)) {
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
 				return
@@ -577,12 +577,12 @@ func (s *Service) Tick(ctx context.Context) {
 				s.state.Phase = "ready_item"
 			}
 		case "ready_item":
-			if s.questGather && s.index < len(s.items) && !gatherObjectCurrent(observed, currentActions, s.pendingGUID()) {
+			if s.questGather && s.index < len(s.items) && !s.boundHarvestRecipe().objectCurrent(observed, currentActions, s.pendingGUID()) {
 				s.state.Reason = "harvest_object_no_longer_in_range"
 				s.beginRelease(ctx)
 				return
 			}
-			if s.questGather && !harvestQuest(observed, s.selfGUID, true) {
+			if s.questGather && !s.boundHarvestRecipe().quest(observed, s.selfGUID, true) {
 				s.state.Reason = "harvest_quest_no_longer_incomplete"
 				s.beginRelease(ctx)
 				return
@@ -884,7 +884,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.LastGather.LootWindowObserved = true
 		}
 		for _, item := range window.items {
-			if s.questGather && (item.id != harvestItemID || item.count > 8) {
+			if s.questGather && (item.id != s.boundHarvestRecipe().itemID || item.count > 8) {
 				continue
 			}
 			if item.slotType == 0 || item.slotType == 4 {

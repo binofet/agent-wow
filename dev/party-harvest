@@ -25,7 +25,8 @@ c, prof = load('harvest_converse', 'converse'), load('harvest_professions', 'sec
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
 ROLES = {1: ('Arlen', 8086, 182, 2366), 5: ('Rook', 8088, 393, 8613)}
 IDLE_PHASES = frozenset(('waiting_near_class_trainer_or_mailbox', 'no_affordable_unattempted_class_training', 'training_budget_reserved'))
-PASSIVE_QUEST_PHASES = frozenset(('following_joels_quest_changes', 'waiting_for_own_quest_objectives'))
+PASSIVE_QUEST_PHASES = frozenset(('following_joels_quest_changes', 'waiting_for_own_quest_objectives',
+    'waiting_for_joel_at_followup_giver_or_server_offer'))
 METHODS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state',
     'buddy-loot.state', 'buddy-trade.state', 'buddy-inventory.state', 'buddy-professions.state', 'buddy-professions.inspect_herb',
     'buddy-professions.attempt', 'buddy-professions.cancel', 'buddy-actions.acquire_interaction',

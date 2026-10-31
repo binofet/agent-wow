@@ -23,7 +23,9 @@ func mailbox(p *observed) bool {
 	return p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 19
 }
 func harvestCrate(p *observed) bool {
-	return p.known[objectEntry] && p.fields[objectEntry] == 161557 && p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 3
+	entry := p.fields[objectEntry]
+	return gameObjectGUID(p.guid) && p.guid>>24&0xffffff == uint64(entry) && p.known[objectEntry] &&
+		(entry == 161557 || entry == 176793) && p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 3
 }
 func spellFocus(p *observed) bool {
 	return p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 8

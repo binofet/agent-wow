@@ -1224,7 +1224,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		if len(p) < 6 {
 			malformed = true
 		} else if s.state.CastPending && s.pendingSpell != 0 && binary.LittleEndian.Uint32(p[1:]) == s.pendingSpell && p[0] == s.castCount {
-			s.castFailedLocked(uint32(p[5]), "server_cast_failed_healing_disabled")
+			s.castFailedLocked(uint32(p[5]), "server_cast_failed_healing_paused")
 		}
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo:
 		guid, count, spell, offset, err := castEvent(p)
@@ -1262,7 +1262,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		if err != nil || len(p) < n+6 {
 			malformed = true
 		} else if s.state.CastPending && s.pendingSpell != 0 && guid == s.selfGUID && p[n] == s.castCount && binary.LittleEndian.Uint32(p[n+1:]) == s.pendingSpell {
-			s.castFailedLocked(uint32(p[n+5]), "server_cast_interrupted_healing_disabled")
+			s.castFailedLocked(uint32(p[n+5]), "server_cast_interrupted_healing_paused")
 		}
 	}
 	if malformed {

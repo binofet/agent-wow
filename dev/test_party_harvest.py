@@ -231,6 +231,40 @@ class HarvestTests(unittest.TestCase):
                 clock.sleep(3); worker.tick()
                 self.assertEqual(sum(method == "buddy-professions.attempt" for method, _ in rpc.calls), 1)
 
+    def test_idle_followup_quest_wait_allows_harvest_but_current_safety_still_blocks(self):
+        phase = "waiting_for_joel_at_followup_giver_or_server_offer"
+        with patch.object(m, "routine_locked", return_value=False), \
+                patch.object(m.c, "quest_task_snapshot", return_value=dict(active=False)), \
+                patch.object(m.c, "area_quest_snapshot", return_value=dict(active=False)), \
+                patch.object(m.c, "party_town_snapshot", return_value=dict(active=True, busy=False)), \
+                patch.object(m.c, "party_quest_sync_snapshot") as snapshot:
+            for guid in (1, 5):
+                for mode in ("idle", "party_alive_wait", "own_dead", "party_combat", "unknown_alive",
+                             "unknown_party", "unknown_sync", "stale_sync", "active_sync", "quest_action"):
+                    with self.subTest(guid=guid, mode=mode):
+                        sync = dict(active=True, updatedAt=m.time.time(), own=dict(phase=phase))
+                        worker, rpc, _ = self.rig(guid, priority=lambda: m.higher_priority(guid))
+                        if mode == "party_alive_wait": sync["own"]["phase"] = "waiting_for_alive_known_party_members"
+                        elif mode == "own_dead": rpc.own["alive"] = False
+                        elif mode == "party_combat": rpc.owner["unitFlags"] = 0x80000
+                        elif mode == "unknown_alive": rpc.own["aliveKnown"] = False
+                        elif mode == "unknown_party": rpc.group["known"] = False
+                        elif mode == "unknown_sync": sync["own"].pop("phase")
+                        elif mode == "stale_sync": sync["updatedAt"] = m.time.time()-16
+                        elif mode == "active_sync": sync["own"]["phase"] = "approaching_joels_observed_questgiver"
+                        elif mode == "quest_action": rpc.quests["actionInFlight"] = True
+                        snapshot.return_value = sync
+                        if mode == "idle":
+                            worker.tick()
+                            self.assertEqual(worker.data["attempts"][0]["phase"], "completed")
+                            self.assertEqual(sum(method == "buddy-professions.attempt" for method, _ in rpc.calls), 1)
+                        else:
+                            worker.deadline = 120
+                            with self.assertRaises((m.Error, m.prof.Error)): worker.read()
+                            self.assertEqual(worker.data["attempts"], [])
+                            self.assertFalse(any(method in ("buddy-professions.attempt", "buddy-actions.acquire_interaction")
+                                                 for method, _ in rpc.calls))
+
     def test_read_blocks_actual_danger_missing_learning_knife_and_inventory(self):
         for mode in ("combat", "owner_combat", "healing", "attacker", "quest", "loot", "trade", "skill", "spell", "knife", "unknown_bag", "unknown_item", "partial_bag", "no_capacity", "other_profession", "owner_moving"):
             with self.subTest(mode=mode):

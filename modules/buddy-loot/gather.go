@@ -17,14 +17,46 @@ const harvestObjectEntry uint32 = 161557
 const harvestItemID uint32 = 11119
 const harvestOpenSpell uint32 = 6478
 
+type harvestRecipe struct{ questID, objectEntry, itemID uint32 }
+
+func harvestRecipeForObject(entry uint32) harvestRecipe {
+	switch entry {
+	case harvestObjectEntry:
+		return harvestRecipe{harvestQuestID, harvestObjectEntry, harvestItemID}
+	case 176793:
+		// Public gameobject_template176793: type3, lock43, loot14105;
+		// gameobject_loot_template14105 gives quest item13872 for quest5545.
+		return harvestRecipe{5545, 176793, 13872}
+	}
+	return harvestRecipe{}
+}
+
+func (r harvestRecipe) valid() bool {
+	return r.questID != 0 && r == harvestRecipeForObject(r.objectEntry)
+}
+
+// The existing receipt is the immutable recipe/source binding for this operation.
+// Observing another eligible quest or chest cannot replace it mid-window.
+func (s *Service) boundHarvestRecipe() harvestRecipe {
+	r := s.state.LastGather
+	if !s.questGather || r == nil || r.ObjectGuid == 0 || r.ObjectGuid != s.state.PendingGameObjectGuid {
+		return harvestRecipe{}
+	}
+	recipe := harvestRecipeForObject(r.ObjectEntry)
+	if !recipe.valid() || r.QuestId != recipe.questID || r.ItemId != recipe.itemID || r.ObjectGuid>>48 != 0xf110 || uint32(r.ObjectGuid>>24&0xffffff) != recipe.objectEntry {
+		return harvestRecipe{}
+	}
+	return recipe
+}
+
 // Public quest_template3904 requires item11119x8; gameobject_template161557
 // is a chest(type3), loot10119, lock43. Build12340 Lock.dbc43 requires
 // OPEN_KNEELING13; Spell6478 opens that lock in1s at5yd. GO_USE/REPORT_USE
 // do not open an ordinary chest. SpellHandler.cpp+SpellEffects::EffectOpenLock:
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Handlers/SpellHandler.cpp
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Spells/SpellEffects.cpp
-func harvestQuest(world *worldv1.SnapshotResponse, self uint64, incomplete bool) bool {
-	if world == nil || world.Self == nil || world.Self.Guid != self || !world.SelfQuestLogKnown || len(world.SelfQuestLog) != 25 {
+func (r harvestRecipe) quest(world *worldv1.SnapshotResponse, self uint64, incomplete bool) bool {
+	if !r.valid() || world == nil || world.Self == nil || world.Self.Guid != self || !world.SelfQuestLogKnown || len(world.SelfQuestLog) != 25 {
 		return false
 	}
 	var seen [25]bool
@@ -34,14 +66,14 @@ func harvestQuest(world *worldv1.SnapshotResponse, self uint64, incomplete bool)
 			return false
 		}
 		seen[q.Slot] = true
-		if q.QuestId == harvestQuestID && !q.Failed && q.State&2 == 0 && (!incomplete || !q.Complete && q.State&1 == 0) {
+		if q.QuestId == r.questID && !q.Failed && q.State&2 == 0 && (!incomplete || !q.Complete && q.State&1 == 0) {
 			found = true
 		}
 	}
 	return found
 }
-func harvestContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, incomplete bool) bool {
-	if !harvestQuest(w, self, incomplete) || a == nil || a.Position == nil || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending {
+func (r harvestRecipe) context(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, incomplete bool) bool {
+	if !r.quest(w, self, incomplete) || a == nil || a.Position == nil || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending {
 		return false
 	}
 	p, pos := w.Self, a.Position
@@ -58,11 +90,11 @@ func harvestContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64
 	}
 	return true
 }
-func harvestObject(p *actionsv1.ClientPosition, g *worldv1.GameObjectState) bool {
-	return harvestObjectWithin(p, g, 4.5)
+func (r harvestRecipe) object(p *actionsv1.ClientPosition, g *worldv1.GameObjectState) bool {
+	return r.objectWithin(p, g, 4.5)
 }
-func harvestObjectWithin(p *actionsv1.ClientPosition, g *worldv1.GameObjectState, maxDistance float64) bool {
-	if p == nil || g == nil || g.Guid>>48 != 0xf110 || g.Guid&0xffffff == 0 || uint32(g.Guid>>24&0xffffff) != harvestObjectEntry || g.Entry != harvestObjectEntry || !g.Present || !g.TypeKnown || g.GameObjectType != 3 || !g.MapKnown || g.MapId != p.MapId || !g.PositionKnown || !g.FlagsKnown || g.Flags&(1|8|16) != 0 {
+func (r harvestRecipe) objectWithin(p *actionsv1.ClientPosition, g *worldv1.GameObjectState, maxDistance float64) bool {
+	if !r.valid() || p == nil || g == nil || g.Guid>>48 != 0xf110 || g.Guid&0xffffff == 0 || uint32(g.Guid>>24&0xffffff) != r.objectEntry || g.Entry != r.objectEntry || !g.Present || !g.TypeKnown || g.GameObjectType != 3 || !g.MapKnown || g.MapId != p.MapId || !g.PositionKnown || !g.FlagsKnown || g.Flags&(1|8|16) != 0 {
 		return false
 	}
 	for _, n := range []float32{g.X, g.Y, g.Z} {
@@ -104,35 +136,42 @@ func (s *Service) gatherOpeningTimeoutRecoverable() bool {
 }
 func (s *Service) observeGatherQuest(w *worldv1.SnapshotResponse) {
 	r := s.state.LastGather
-	if !s.questGather || r == nil || !harvestQuest(w, s.selfGUID, false) {
+	recipe := s.boundHarvestRecipe()
+	if !recipe.quest(w, s.selfGUID, false) {
 		return
 	}
 	if w.SelfQuestLogRevision >= r.ObservedQuestLogRevision {
 		r.ObservedQuestLogRevision = w.SelfQuestLogRevision
 		for _, q := range w.SelfQuestLog {
-			if q.QuestId == harvestQuestID {
+			if q.QuestId == recipe.questID {
 				r.OwnQuestCompleteObserved = q.Complete || q.State&1 != 0
 			}
 		}
 	}
 }
 func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	if !harvestQuest(w, s.selfGUID, true) || len(w.QuestObjects) == 0 || len(w.QuestObjects) > 32 || len(s.gatherSeen) >= 128 {
+	if w == nil || len(w.QuestObjects) == 0 || len(w.QuestObjects) > 32 || len(s.gatherSeen) >= 128 {
 		return false
 	}
 	a := &actionsv1.State{}
-	if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a) != nil || !harvestContext(w, a, s.selfGUID, true) {
+	if s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a) != nil {
 		return false
 	}
 	var selected *worldv1.GameObjectState
+	var recipe harvestRecipe
 	best := math.Inf(1)
 	for _, g := range w.QuestObjects {
-		if g == nil || s.gatherSeen[g.Guid] || !harvestObjectWithin(a.Position, g, 12) {
+		if g == nil {
+			continue
+		}
+		candidate := harvestRecipeForObject(g.Entry)
+		if s.gatherSeen[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
 			continue
 		}
 		d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)
 		if d < best || d == best && g.Guid < selected.Guid {
 			selected, best = g, d
+			recipe = candidate
 		}
 	}
 	if selected == nil {
@@ -148,7 +187,7 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 	}
 	s.token = l.Token
 	fresh := &worldv1.SnapshotResponse{}
-	valid := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) == nil && !l.State.Moving && harvestContext(fresh, l.State, s.selfGUID, true)
+	valid := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, fresh) == nil && !l.State.Moving && recipe.context(fresh, l.State, s.selfGUID, true)
 	var current *worldv1.GameObjectState
 	if valid && len(fresh.QuestObjects) <= 32 {
 		for _, g := range fresh.QuestObjects {
@@ -161,7 +200,7 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 			}
 		}
 	}
-	if !valid || current == nil || current.PositionRevision != selected.PositionRevision || fresh.SelfQuestLogRevision != w.SelfQuestLogRevision || !harvestObjectWithin(l.State.Position, current, 12) {
+	if !valid || current == nil || current.PositionRevision != selected.PositionRevision || fresh.SelfQuestLogRevision != w.SelfQuestLogRevision || !recipe.objectWithin(l.State.Position, current, 12) {
 		s.releaseLease(ctx)
 		s.state.Reason = "gather_observation_changed_after_stop"
 		return true
@@ -177,11 +216,11 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 	s.gatherSeen[current.Guid] = true
 	s.state.PendingGameObjectGuid = current.Guid
 	s.gatherObjectRevision = current.PositionRevision
-	s.state.LastGather = &lootv1.GatherReceipt{Id: id, ObjectGuid: current.Guid, ObjectEntry: harvestObjectEntry, QuestId: harvestQuestID, ItemId: harvestItemID, Status: lootv1.GatherStatus_GATHER_REQUESTED, BaselineQuestLogRevision: fresh.SelfQuestLogRevision, ObservedQuestLogRevision: fresh.SelfQuestLogRevision, Reason: "opening_requested_waiting_for_server"}
+	s.state.LastGather = &lootv1.GatherReceipt{Id: id, ObjectGuid: current.Guid, ObjectEntry: recipe.objectEntry, QuestId: recipe.questID, ItemId: recipe.itemID, Status: lootv1.GatherStatus_GATHER_REQUESTED, BaselineQuestLogRevision: fresh.SelfQuestLogRevision, ObservedQuestLogRevision: fresh.SelfQuestLogRevision, Reason: "opening_requested_waiting_for_server"}
 	s.transactionUntil = s.now().Add(12 * time.Second)
 	s.moneySent = false
 	s.moneyCleared = false
-	if harvestObject(l.State.Position, current) {
+	if recipe.object(l.State.Position, current) {
 		s.openLocked(ctx)
 	} else {
 		s.state.Phase = "gather_approaching"
@@ -191,14 +230,15 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 }
 
 func (s *Service) gatherApproachLocked(ctx context.Context, w *worldv1.SnapshotResponse, a *actionsv1.State) {
+	recipe := s.boundHarvestRecipe()
 	valid := func(world *worldv1.SnapshotResponse, actions *actionsv1.State, maxDistance float64) bool {
-		if !harvestContext(world, actions, s.selfGUID, true) || len(world.QuestObjects) > 32 {
+		if !recipe.context(world, actions, s.selfGUID, true) || len(world.QuestObjects) > 32 {
 			return false
 		}
 		matches := 0
 		for _, g := range world.QuestObjects {
 			if g != nil && g.Guid == s.state.PendingGameObjectGuid {
-				if g.PositionRevision != s.gatherObjectRevision || !harvestObjectWithin(actions.Position, g, maxDistance) {
+				if g.PositionRevision != s.gatherObjectRevision || !recipe.objectWithin(actions.Position, g, maxDistance) {
 					return false
 				}
 				matches++
@@ -237,7 +277,7 @@ func (s *Service) gatherApproachLocked(ctx context.Context, w *worldv1.SnapshotR
 	s.openLocked(ctx)
 }
 
-func gatherObjectCurrent(w *worldv1.SnapshotResponse, a *actionsv1.State, guid uint64) bool {
+func (r harvestRecipe) objectCurrent(w *worldv1.SnapshotResponse, a *actionsv1.State, guid uint64) bool {
 	if w == nil || a == nil || len(w.QuestObjects) > 32 {
 		return false
 	}
@@ -250,5 +290,5 @@ func gatherObjectCurrent(w *worldv1.SnapshotResponse, a *actionsv1.State, guid u
 			object = g
 		}
 	}
-	return harvestObject(a.Position, object)
+	return r.object(a.Position, object)
 }
