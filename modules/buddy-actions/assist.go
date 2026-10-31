@@ -123,7 +123,8 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if self.LevelKnown && target.LevelKnown && uint64(target.Level) > uint64(self.Level)+3 {
 		return fail("assist_target_level_exceeds_self_plus_three")
 	}
-	if s.failedAssistTarget == target.Guid {
+	if s.failedAssistTarget == target.Guid && (!defense || s.failedAssistCastTarget != target.Guid ||
+		s.state.Practicing || s.fargodeep.active || s.now().Before(s.nextAssist)) {
 		return fail("assist_target_failed_no_retry")
 	}
 	targetPosition, known, _ := creaturePosition(target)
@@ -211,8 +212,14 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	if s.fargodeep.active && !s.fargodeepWriteAllowedLocked(ctx, target, spell) {
 		return false
 	}
-	if s.partyDefenseTarget != 0 {
-		if !s.partyDefenseOffenseAllowedLocked(ctx, target, spell) {
+	if s.partyDefenseTarget != 0 || s.failedAssistTarget == target {
+		allowed := false
+		if s.failedAssistTarget == target {
+			allowed = s.failedDefenseRetryAllowedLocked(ctx, target, spell)
+		} else {
+			allowed = s.partyDefenseOffenseAllowedLocked(ctx, target, spell)
+		}
+		if !allowed {
 			if s.state.Reason != "party_defense_resources_changed_before_cast" {
 				s.stopAutoAttackLocked(ctx)
 			}
@@ -286,6 +293,7 @@ func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.CastPending = false
 	if !spellFamily(s.pendingSpell, lesserHeal) {
 		s.failedAssistTarget = s.pendingTarget
+		s.failedAssistCastTarget = s.pendingTarget
 		s.nextAssist = s.now().Add(5 * time.Second)
 		if spellFamily(s.pendingSpell, smite) {
 			s.state.Reason = "server_smite_failed_target_paused"

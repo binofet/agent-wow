@@ -64,6 +64,7 @@ type Service struct {
 	assistUntil, nextAssist                                  time.Time
 	pendingSpell                                             uint32
 	pendingTarget, failedAssistTarget                        uint64
+	failedAssistCastTarget                                   uint64
 	weaponQueries                                            map[uint32]bool
 	weapons                                                  map[uint32]weaponProof
 	weaponOrder                                              []uint32
@@ -435,6 +436,7 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.assistUntil = s.now().Add(lease)
 		s.lastStep = s.now()
 		s.failedAssistTarget = 0
+		s.failedAssistCastTarget = 0
 		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
 	} else {
 		if s.fargodeep.active {
@@ -1182,6 +1184,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		if attacker == s.selfGUID {
 			if !s.autoStopping && dead == 0 && s.autoTarget != 0 {
 				s.failedAssistTarget = s.autoTarget
+				s.failedAssistCastTarget = 0
 			}
 			_ = target
 			s.autoTarget = 0

@@ -72,7 +72,13 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 	if !s.faceEnemyLocked(ctx, targetPosition) {
 		return true
 	}
-	if s.partyDefenseTarget != 0 && !s.partyDefenseOffenseAllowedLocked(ctx, target.Guid, 0) {
+	allowed := true
+	if s.failedAssistTarget == target.Guid {
+		allowed = s.failedDefenseRetryAllowedLocked(ctx, target.Guid, 0)
+	} else if s.partyDefenseTarget != 0 {
+		allowed = s.partyDefenseOffenseAllowedLocked(ctx, target.Guid, 0)
+	}
+	if !allowed {
 		s.state.Reason = "party_defense_authority_changed_before_attack"
 		s.stopAutoAttackLocked(ctx)
 		return true

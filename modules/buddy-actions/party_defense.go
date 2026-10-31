@@ -117,6 +117,36 @@ func (s *Service) partyDefenseOffenseAllowedLocked(ctx context.Context, target u
 	if !ok || target != s.partyDefenseTarget {
 		return false
 	}
+	return s.defenseOffenseAllowedLocked(w, target, spell)
+}
+
+// A definite correlated spell failure can settle one defensive cast without
+// retiring defense against a still-attacking enemy. Initial pulls and uncertain
+// casts keep their existing quarantine. The final observation follows facing.
+func (s *Service) failedDefenseRetryAllowedLocked(ctx context.Context, target uint64, spell uint32) bool {
+	s.state.Reason = "defense_retry_requires_current_attacker"
+	if target == 0 || s.failedAssistTarget != target || s.failedAssistCastTarget != target ||
+		s.state.Practicing || s.fargodeep.active || s.now().Before(s.nextAssist) {
+		return false
+	}
+	if s.partyDefenseTarget != 0 {
+		return target == s.partyDefenseTarget && s.partyDefenseOffenseAllowedLocked(ctx, target, spell)
+	}
+	w, err := s.snapshot(ctx)
+	if err != nil || safeSelfCombat(w, s.selfGUID) != "" || w.Self.MapId != s.posMap || w.Self.PositionRevision != s.positionRevision {
+		return false
+	}
+	c := partyDefenseCreature(w, target)
+	if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || !ongoingAttack(c, w.Self) {
+		return false
+	}
+	if kind := c.Guid >> 48; kind != 0xf130 && kind != 0xf150 {
+		return false
+	}
+	return s.defenseOffenseAllowedLocked(w, target, spell)
+}
+
+func (s *Service) defenseOffenseAllowedLocked(w *worldv1.SnapshotResponse, target uint64, spell uint32) bool {
 	c := partyDefenseCreature(w, target)
 	p, known, _ := creaturePosition(c)
 	self := w.Self

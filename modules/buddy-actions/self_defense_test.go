@@ -262,6 +262,7 @@ func TestSelfDefenseCastResultAndFailureRemainBoundToActualTarget(t *testing.T) 
 	failure = binary.LittleEndian.AppendUint32(failure, smite)
 	failure = append(failure, 49)
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: failure})
+	target.AttackVictimKnown = false // A settled rejection alone cannot authorize a new defensive cast.
 	advance(6 * time.Second)
 	s.Tick(context.Background())
 	if got := state(t, s); !got.Assisting || got.AssistAttempts != 1 || got.CastPending || got.ServerAssistGo != 0 || countPackets(f, opcode.CMSGCastSpell) != 1 {
