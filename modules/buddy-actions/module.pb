@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¡I
+­I
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -161,7 +161,7 @@ targetGuid
 	last_buff (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
 
 session_id (	R	sessionId
-	self_guid (RselfGuid"Ç
+	self_guid (RselfGuid"Ó
 State
 	following (R	following
 healing (Rhealing
@@ -243,16 +243,16 @@ practicing%
 	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeepQ
 %client_movement_observation_confirmedG (R"clientMovementObservationConfirmedO
 $client_movement_observation_failuresH (R!clientMovementObservationFailures
-buffingI (Rbuffing5
-buff_lease_remaining_msJ (RbuffLeaseRemainingMs
-buff_reasonK (	R
+buffingd (Rbuffing5
+buff_lease_remaining_mse (RbuffLeaseRemainingMs
+buff_reasonf (	R
 buffReason#
-buff_attemptsL (RbuffAttempts'
-buffs_confirmedM (RbuffsConfirmedD
-	last_buffN (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
+buff_attemptsg (RbuffAttempts'
+buffs_confirmedh (RbuffsConfirmedD
+	last_buffi (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
 
-session_idO (	R	sessionId
-	self_guidP (RselfGuid2Ä
+session_idj (	R	sessionId
+	self_guidk (RselfGuidJFGJId2Ä
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

@@ -1509,21 +1509,19 @@ type State struct {
 	InteractionHarvest       bool   `protobuf:"varint,66,opt,name=interaction_harvest,json=interactionHarvest,proto3" json:"interaction_harvest,omitempty"`
 	// Actual online party plus self/fixed owner, refreshed by guarded renewal.
 	// Only present while interaction_harvest is true; at most42 unique GUIDs.
-	HarvestGuardGuids []uint64                 `protobuf:"varint,67,rep,packed,name=harvest_guard_guids,json=harvestGuardGuids,proto3" json:"harvest_guard_guids,omitempty"`
-	Recovery          *RecoveryState           `protobuf:"bytes,68,opt,name=recovery,proto3" json:"recovery,omitempty"`
-	Fargodeep         *FargodeepEncounterState `protobuf:"bytes,69,opt,name=fargodeep,proto3" json:"fargodeep,omitempty"`
-	// Observation RPC acknowledgement, separate from actual movement transport.
-	// Tag70 is reserved for the separately developed Coldridge leveling status.
-	ClientMovementObservationConfirmed bool           `protobuf:"varint,71,opt,name=client_movement_observation_confirmed,json=clientMovementObservationConfirmed,proto3" json:"client_movement_observation_confirmed,omitempty"`
-	ClientMovementObservationFailures  uint64         `protobuf:"varint,72,opt,name=client_movement_observation_failures,json=clientMovementObservationFailures,proto3" json:"client_movement_observation_failures,omitempty"`
-	Buffing                            bool           `protobuf:"varint,73,opt,name=buffing,proto3" json:"buffing,omitempty"`
-	BuffLeaseRemainingMs               uint64         `protobuf:"varint,74,opt,name=buff_lease_remaining_ms,json=buffLeaseRemainingMs,proto3" json:"buff_lease_remaining_ms,omitempty"`
-	BuffReason                         string         `protobuf:"bytes,75,opt,name=buff_reason,json=buffReason,proto3" json:"buff_reason,omitempty"`
-	BuffAttempts                       uint64         `protobuf:"varint,76,opt,name=buff_attempts,json=buffAttempts,proto3" json:"buff_attempts,omitempty"`
-	BuffsConfirmed                     uint64         `protobuf:"varint,77,opt,name=buffs_confirmed,json=buffsConfirmed,proto3" json:"buffs_confirmed,omitempty"`
-	LastBuff                           *BuffOperation `protobuf:"bytes,78,opt,name=last_buff,json=lastBuff,proto3" json:"last_buff,omitempty"`
-	SessionId                          string         `protobuf:"bytes,79,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid                           uint64         `protobuf:"varint,80,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	HarvestGuardGuids                  []uint64                 `protobuf:"varint,67,rep,packed,name=harvest_guard_guids,json=harvestGuardGuids,proto3" json:"harvest_guard_guids,omitempty"`
+	Recovery                           *RecoveryState           `protobuf:"bytes,68,opt,name=recovery,proto3" json:"recovery,omitempty"`
+	Fargodeep                          *FargodeepEncounterState `protobuf:"bytes,69,opt,name=fargodeep,proto3" json:"fargodeep,omitempty"`
+	ClientMovementObservationConfirmed bool                     `protobuf:"varint,71,opt,name=client_movement_observation_confirmed,json=clientMovementObservationConfirmed,proto3" json:"client_movement_observation_confirmed,omitempty"`
+	ClientMovementObservationFailures  uint64                   `protobuf:"varint,72,opt,name=client_movement_observation_failures,json=clientMovementObservationFailures,proto3" json:"client_movement_observation_failures,omitempty"`
+	Buffing                            bool                     `protobuf:"varint,100,opt,name=buffing,proto3" json:"buffing,omitempty"`
+	BuffLeaseRemainingMs               uint64                   `protobuf:"varint,101,opt,name=buff_lease_remaining_ms,json=buffLeaseRemainingMs,proto3" json:"buff_lease_remaining_ms,omitempty"`
+	BuffReason                         string                   `protobuf:"bytes,102,opt,name=buff_reason,json=buffReason,proto3" json:"buff_reason,omitempty"`
+	BuffAttempts                       uint64                   `protobuf:"varint,103,opt,name=buff_attempts,json=buffAttempts,proto3" json:"buff_attempts,omitempty"`
+	BuffsConfirmed                     uint64                   `protobuf:"varint,104,opt,name=buffs_confirmed,json=buffsConfirmed,proto3" json:"buffs_confirmed,omitempty"`
+	LastBuff                           *BuffOperation           `protobuf:"bytes,105,opt,name=last_buff,json=lastBuff,proto3" json:"last_buff,omitempty"`
+	SessionId                          string                   `protobuf:"bytes,106,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid                           uint64                   `protobuf:"varint,107,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
 	unknownFields                      protoimpl.UnknownFields
 	sizeCache                          protoimpl.SizeCache
 }
@@ -2244,7 +2242,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\tlast_buff\x18\x05 \x01(\v2'.warcraftbuddy.actions.v1.BuffOperationR\blastBuff\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1b\n" +
-	"\tself_guid\x18\a \x01(\x04R\bselfGuid\"\xc7\x1c\n" +
+	"\tself_guid\x18\a \x01(\x04R\bselfGuid\"\xd3\x1c\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -2326,16 +2324,16 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\tfargodeep\x18E \x01(\v21.warcraftbuddy.actions.v1.FargodeepEncounterStateR\tfargodeep\x12Q\n" +
 	"%client_movement_observation_confirmed\x18G \x01(\bR\"clientMovementObservationConfirmed\x12O\n" +
 	"$client_movement_observation_failures\x18H \x01(\x04R!clientMovementObservationFailures\x12\x18\n" +
-	"\abuffing\x18I \x01(\bR\abuffing\x125\n" +
-	"\x17buff_lease_remaining_ms\x18J \x01(\x04R\x14buffLeaseRemainingMs\x12\x1f\n" +
-	"\vbuff_reason\x18K \x01(\tR\n" +
+	"\abuffing\x18d \x01(\bR\abuffing\x125\n" +
+	"\x17buff_lease_remaining_ms\x18e \x01(\x04R\x14buffLeaseRemainingMs\x12\x1f\n" +
+	"\vbuff_reason\x18f \x01(\tR\n" +
 	"buffReason\x12#\n" +
-	"\rbuff_attempts\x18L \x01(\x04R\fbuffAttempts\x12'\n" +
-	"\x0fbuffs_confirmed\x18M \x01(\x04R\x0ebuffsConfirmed\x12D\n" +
-	"\tlast_buff\x18N \x01(\v2'.warcraftbuddy.actions.v1.BuffOperationR\blastBuff\x12\x1d\n" +
+	"\rbuff_attempts\x18g \x01(\x04R\fbuffAttempts\x12'\n" +
+	"\x0fbuffs_confirmed\x18h \x01(\x04R\x0ebuffsConfirmed\x12D\n" +
+	"\tlast_buff\x18i \x01(\v2'.warcraftbuddy.actions.v1.BuffOperationR\blastBuff\x12\x1d\n" +
 	"\n" +
-	"session_id\x18O \x01(\tR\tsessionId\x12\x1b\n" +
-	"\tself_guid\x18P \x01(\x04R\bselfGuid2\xc4\x0e\n" +
+	"session_id\x18j \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18k \x01(\x04R\bselfGuidJ\x04\bF\x10GJ\x04\bI\x10d2\xc4\x0e\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +

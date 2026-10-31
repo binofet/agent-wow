@@ -216,17 +216,19 @@ message State {
   RecoveryState recovery = 68;
   FargodeepEncounterState fargodeep = 69;
   // Observation RPC acknowledgement, separate from actual movement transport.
-  // Tag70 is reserved for the separately developed Coldridge leveling status.
+  // Retained Nixwick modules decode these legacy finite-controller messages.
+  // Do not reuse their tags even though these controllers are absent here.
+  reserved 70, 73 to 99;
   bool client_movement_observation_confirmed = 71;
   uint64 client_movement_observation_failures = 72;
-  bool buffing = 73;
-  uint64 buff_lease_remaining_ms = 74;
-  string buff_reason = 75;
-  uint64 buff_attempts = 76;
-  uint64 buffs_confirmed = 77;
-  BuffOperation last_buff = 78;
-  string session_id = 79;
-  uint64 self_guid = 80;
+  bool buffing = 100;
+  uint64 buff_lease_remaining_ms = 101;
+  string buff_reason = 102;
+  uint64 buff_attempts = 103;
+  uint64 buffs_confirmed = 104;
+  BuffOperation last_buff = 105;
+  string session_id = 106;
+  uint64 self_guid = 107;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
