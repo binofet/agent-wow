@@ -5,6 +5,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 )
 
 // Primary UpdateFields.h: OBJECT_END6 + GAMEOBJECT_BYTES_1 offset0xb.
@@ -22,10 +23,10 @@ func gameObjectGUID(guid uint64) bool { return guid>>48 == 0xf110 && guid&0xffff
 func mailbox(p *observed) bool {
 	return p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 19
 }
-func harvestCrate(p *observed) bool {
+func questContainer(p *observed) bool {
 	entry := p.fields[objectEntry]
 	return gameObjectGUID(p.guid) && p.guid>>24&0xffffff == uint64(entry) && p.known[objectEntry] &&
-		(entry == 161557 || entry == 176793) && p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 3
+		p.known[gameObjectBytes] && (p.fields[gameObjectBytes]>>8)&0xff == 3
 }
 func lostGuardQuestGiver(p *observed) bool {
 	entry := p.fields[objectEntry]
@@ -42,13 +43,19 @@ func ownFishingBobber(p *observed, self uint64) bool {
 	return self != 0 && fishingBobber(p) && p.known[gameObjectCreatedBy] && p.known[gameObjectCreatedBy+1] && uint64(p.fields[gameObjectCreatedBy])|uint64(p.fields[gameObjectCreatedBy+1])<<32 == self
 }
 func importantGameObject(p *observed) bool {
-	return mailbox(p) || harvestCrate(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p)
+	return mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) || fishingBobber(p)
 }
 func gameObjectPriority(p *observed, self uint64) int {
 	if ownFishingBobber(p, self) {
 		return 3
 	}
-	if mailbox(p) || harvestCrate(p) || lostGuardQuestGiver(p) || spellFocus(p) {
+	if mailbox(p) || questContainer(p) || lostGuardQuestGiver(p) || spellFocus(p) {
+		if questContainer(p) {
+			r, known := gamecatalog.Default().Container(p.fields[objectEntry])
+			if !known || len(r.QuestItems) == 0 {
+				return 1
+			}
+		}
 		return 2
 	}
 	if fishingBobber(p) {
@@ -94,7 +101,7 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 		v := gameObjectSnapshot(p, now)
 		if mailbox(p) {
 			r.Mailboxes = append(r.Mailboxes, v)
-		} else if harvestCrate(p) || lostGuardQuestGiver(p) {
+		} else if questContainer(p) || lostGuardQuestGiver(p) {
 			r.QuestObjects = append(r.QuestObjects, v)
 		} else if spellFocus(p) {
 			r.SpellFocuses = append(r.SpellFocuses, v)
@@ -105,6 +112,10 @@ func (s *observations) appendGameObjects(r *worldv1.SnapshotResponse, now time.T
 	sortObjects := func(objects []*worldv1.GameObjectState) {
 		sort.Slice(objects, func(i, j int) bool {
 			a, b := s.gameObjects[objects[i].Guid], s.gameObjects[objects[j].Guid]
+			pa, pb := gameObjectPriority(a, s.players[0].guid), gameObjectPriority(b, s.players[0].guid)
+			if pa != pb {
+				return pa > pb
+			}
 			da, ka := s.selfDiscoveryDistance(*a)
 			db, kb := s.selfDiscoveryDistance(*b)
 			if ka != kb {

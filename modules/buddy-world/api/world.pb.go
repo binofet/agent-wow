@@ -931,6 +931,9 @@ type SnapshotRequest struct {
 	// Raw server distance only orders candidates; the current client position
 	// and public template proof remain required before approach or gathering.
 	IncludeGatheringObjects bool `protobuf:"varint,4,opt,name=include_gathering_objects,json=includeGatheringObjects,proto3" json:"include_gathering_objects,omitempty"`
+	// Retain the existing Nixwick client lookup contract during consolidation.
+	// Both nonzero filters must match actual observed fields.
+	CreatureFactionTemplate uint32 `protobuf:"varint,5,opt,name=creature_faction_template,json=creatureFactionTemplate,proto3" json:"creature_faction_template,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -991,6 +994,13 @@ func (x *SnapshotRequest) GetIncludeGatheringObjects() bool {
 		return x.IncludeGatheringObjects
 	}
 	return false
+}
+
+func (x *SnapshotRequest) GetCreatureFactionTemplate() uint32 {
+	if x != nil {
+		return x.CreatureFactionTemplate
+	}
+	return 0
 }
 
 // A successful client movement write, supplied by the movement controller.
@@ -2915,12 +2925,13 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
 	"durability\x18\x06 \x01(\rR\n" +
 	"durability\x12%\n" +
-	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\xc5\x01\n" +
+	"\x0emax_durability\x18\a \x01(\rR\rmaxDurability\"\x81\x02\n" +
 	"\x0fSnapshotRequest\x12#\n" +
 	"\rcreature_guid\x18\x01 \x01(\x04R\fcreatureGuid\x12%\n" +
 	"\x0ecreature_entry\x18\x02 \x01(\rR\rcreatureEntry\x12*\n" +
 	"\x11game_object_entry\x18\x03 \x01(\rR\x0fgameObjectEntry\x12:\n" +
-	"\x19include_gathering_objects\x18\x04 \x01(\bR\x17includeGatheringObjects\"\x83\x02\n" +
+	"\x19include_gathering_objects\x18\x04 \x01(\bR\x17includeGatheringObjects\x12:\n" +
+	"\x19creature_faction_template\x18\x05 \x01(\rR\x17creatureFactionTemplate\"\x83\x02\n" +
 	"\x15ClientMovementRequest\x12\x1b\n" +
 	"\tself_guid\x18\x01 \x01(\x04R\bselfGuid\x12\x15\n" +
 	"\x06map_id\x18\x02 \x01(\rR\x05mapId\x128\n" +

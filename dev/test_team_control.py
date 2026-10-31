@@ -179,6 +179,29 @@ class TeamTests(unittest.TestCase):
         self.assertNotIn('restore',ctl.calls)
         self.assertFalse(any(name in {v[1] for v in m.CONTROLS} for name,_ in rpc.calls))
 
+    def test_relog_reorders_quest_slots_without_changing_progress(self):
+        host,rpc,adapter,ctl,row,_=self.rig()
+        rpc.scene['quests']['questLog'][9].update(questId=59,state=0,objectiveCounts=[2,0,0,0])
+        def compact():
+            log=rpc.scene['quests']['questLog']
+            log[0].update(questId=59,objectiveCounts=[2,0,0,0])
+            log[9]=dict(slot=9)
+        adapter.on_start=compact
+        host.execute(row)
+        self.assertEqual(row['phase'],'COMPLETE',row)
+        self.assertIn('restore',ctl.calls)
+
+    def test_unstuck_accepts_proto_json_omitted_zero_map_id(self):
+        host,rpc,adapter,ctl,row,_=self.rig()
+        row['action']='UNSTUCK'
+        rpc.requests[0]['action']='UNSTUCK'
+        for p in (rpc.scene['world']['self'],rpc.scene['world']['owner'],rpc.scene['actions']['position']):
+            del p['mapId']
+        host.execute(row)
+        self.assertEqual(row['phase'],'COMPLETE',row)
+        writes=[p for method,p in rpc.calls if method=='buddy-actions.travel_to']
+        self.assertEqual(writes[0]['mapId'],0)
+
     def test_reset_only_sticky_latches_retire_by_positive_logout_not_synthetic_ack(self):
         host,rpc,adapter,_,row,_=self.rig()
         host.rpcs[4]=FakeRPC(initial(4,'aw-444'));host.rpcs[5]=FakeRPC(initial(5,'aw-555'))

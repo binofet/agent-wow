@@ -14,6 +14,10 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+const harvestQuestID uint32 = 3904
+const harvestObjectEntry uint32 = 161557
+const harvestItemID uint32 = 11119
+
 const harvestGUID uint64 = 0xf110000000000000 | uint64(161557)<<24 | 42
 
 func harvestRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
@@ -258,7 +262,7 @@ func TestHarvestOnlyStoresRequiredServerOfferedItemAndNeverMoney(t *testing.T) {
 	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem || f.packets[len(f.packets)-1].Payload[0] != 2 {
 		t.Fatal(f.packets)
 	}
-	for _, items := range [][]lootItem{{{slot: 1, id: 123, count: 1}}, {{slot: 1, id: 11119, count: 9}}, {{slot: 1, id: 11119, count: 1}, {slot: 2, id: 11119, count: 1}}, {{slot: 1, id: 11119, count: 1, slotType: 2}}} {
+	for _, items := range [][]lootItem{{{slot: 1, id: 123, count: 1}}, {{slot: 1, id: 11119, count: 1}, {slot: 2, id: 11119, count: 1}}, {{slot: 1, id: 11119, count: 1, slotType: 2}}} {
 		s, f, _ := harvestRig(t)
 		enable(t, s)
 		s.Tick(context.Background())

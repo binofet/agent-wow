@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-æW
+˙W
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"≠
 PlayerState
 guid (Rguid
@@ -152,12 +152,13 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"≈
+max_durability (RmaxDurability"Å
 SnapshotRequest#
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
 game_object_entry (RgameObjectEntry:
-include_gathering_objects (RincludeGatheringObjects"É
+include_gathering_objects (RincludeGatheringObjects:
+creature_faction_template (RcreatureFactionTemplate"É
 ClientMovementRequest
 	self_guid (RselfGuid
 map_id (RmapId8

@@ -152,7 +152,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	}
 	s.state.appendSnapshot(r, now)
 	r.DiscoveryAnchor = s.state.discoverySnapshot(now)
-	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry())
+	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry(), request.GetCreatureFactionTemplate())
 	if request.GetIncludeGatheringObjects() {
 		s.state.appendGatheringObjects(r, now)
 	}

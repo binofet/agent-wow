@@ -1,5 +1,5 @@
 // Package buddyloot collects server-permitted nearby corpse loot and the
-// fixed Milly harvest quest object. It never rolls, sells or destroys items.
+// catalog-described ordinary quest containers. It never rolls, sells or destroys items.
 package buddyloot
 
 import (
@@ -13,6 +13,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -32,6 +33,7 @@ type Service struct {
 	lootv1.UnimplementedBuddyLootServer
 	mu                                         sync.Mutex
 	session                                    sessionAPI
+	catalog                                    *gamecatalog.Catalog
 	selfGUID                                   uint64
 	now                                        func() time.Time
 	state                                      lootv1.State
@@ -67,7 +69,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
-	s := &Service{session: session, selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}}
+	s := &Service{session: session, catalog: gamecatalog.Default(), selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}}
 	if len(sessionID) > 0 {
 		s.state.SessionId = sessionID[0]
 	}
@@ -231,7 +233,7 @@ func (s *Service) finishReleased(ctx context.Context) {
 func (s *Service) beginRelease(ctx context.Context) {
 	if s.questGather && s.opened && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
 		packet := []byte{s.gatherCastCount}
-		packet = binary.LittleEndian.AppendUint32(packet, harvestOpenSpell)
+		packet = binary.LittleEndian.AppendUint32(packet, s.boundHarvestRecipe().openSpell)
 		if !s.write(ctx, opcode.CMSGCancelCast, packet) {
 			s.finish(ctx)
 			return
@@ -421,7 +423,7 @@ func (s *Service) openLocked(ctx context.Context) {
 	s.inventoryWriteRevision = world.InventoryRevision
 	if s.questGather {
 		s.gatherCastCount++
-		if s.write(ctx, opcode.CMSGCastSpell, gatherOpenPacket(s.gatherCastCount, s.pendingGUID())) {
+		if s.write(ctx, opcode.CMSGCastSpell, gatherOpenPacket(s.gatherCastCount, s.pendingGUID(), s.boundHarvestRecipe().openSpell)) {
 			s.state.LastGather.OpeningTransportWritten = true
 		} else {
 			s.finish(ctx)
@@ -845,7 +847,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 			break
 		}
-		if s.questGather && s.token != "" && s.state.Phase == "waiting_open" && p[0] == s.gatherCastCount && binary.LittleEndian.Uint32(p[1:]) == harvestOpenSpell {
+		if s.questGather && s.token != "" && s.state.Phase == "waiting_open" && p[0] == s.gatherCastCount && binary.LittleEndian.Uint32(p[1:]) == s.boundHarvestRecipe().openSpell {
 			s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
 			s.state.LastGather.Reason = "server_opening_cast_rejected"
 			s.state.Reason = "server_opening_cast_rejected"
@@ -885,7 +887,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.LastGather.LootWindowObserved = true
 		}
 		for _, item := range window.items {
-			if s.questGather && (item.id != s.boundHarvestRecipe().itemID || item.count > 8) {
+			if s.questGather && item.id != s.boundHarvestRecipe().itemID {
 				continue
 			}
 			if item.slotType == 0 || item.slotType == 4 {

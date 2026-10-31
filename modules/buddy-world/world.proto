@@ -130,6 +130,9 @@ message SnapshotRequest {
   // Raw server distance only orders candidates; the current client position
   // and public template proof remain required before approach or gathering.
   bool include_gathering_objects = 4;
+  // Retain the existing Nixwick client lookup contract during consolidation.
+  // Both nonzero filters must match actual observed fields.
+  uint32 creature_faction_template = 5;
 }
 
 // A successful client movement write, supplied by the movement controller.

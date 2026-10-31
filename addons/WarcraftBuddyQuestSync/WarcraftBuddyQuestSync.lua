@@ -341,6 +341,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         WarcraftBuddyQuestSyncDB = type(WarcraftBuddyQuestSyncDB) == "table" and WarcraftBuddyQuestSyncDB or {}
         db = WarcraftBuddyQuestSyncDB
+        -- Joel's requested client preference, applied once so the normal game
+        -- setting remains editable afterward.
+        if not db.languageFilterPreferenceApplied and type(SetCVar) == "function" then
+            SetCVar("profanityFilter", "0")
+            db.languageFilterPreferenceApplied = true
+        end
         db.rewarded, db.accepted = cleanEvents(db.rewarded), cleanEvents(db.accepted)
         local ok, log = pcall(readLog)
         if ok then previous = log else snapshotting = false end

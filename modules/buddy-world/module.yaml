@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Read-only bounded player, creature, quest-log, carried inventory and entry-filtered object observations
+description: Read-only bounded player, creature, quest-log, carried inventory and typed container and object observations
 compose:
   file: compose.yaml
   service: module

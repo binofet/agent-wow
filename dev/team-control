@@ -168,8 +168,12 @@ def progress(s):
     for item in gear:
         check(item.get('slotKnown') is True and (not number(item.get('itemGuid', 0)) or item.get('metadataKnown') is True), 'Equipment metadata unknown')
         items.append(('gear', number(item.get('slot', 0)), number(item.get('itemGuid', 0)), number(item.get('entry', 0)), number(item.get('stackCount', 0))))
-    value = dict(items=sorted(items), quests=sorted((number(q.get('slot', 0)), number(q.get('questId', 0)),
-        number(q.get('state', 0)), tuple(q.get('objectiveCounts', []))) for q in log))
+    # Login compacts/reorders the quest-log slots. Compare actual progress by
+    # quest ID; display positions and empty rows are not progression.
+    active = [q for q in log if number(q.get('questId', 0))]
+    check(len({number(q['questId']) for q in active}) == len(active), 'Duplicate active quest IDs')
+    value = dict(items=sorted(items), quests=sorted((number(q['questId']),
+        number(q.get('state', 0)), tuple(q.get('objectiveCounts', []))) for q in active))
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -562,7 +566,7 @@ class Supervisor:
               and owner.get('mapKnown') is True and number(owner.get('movementFlags', 0)) & 0xff == 0
               and number(owner.get('mapId', 0)) == number(own.get('mapId', 0)), 'No safe actual stationary owner destination')
         goal = {key: owner.get(key) for key in ('x', 'y', 'z')}
-        original_map = number(own['mapId'])
+        original_map = number(own.get('mapId', 0))
         def bound_map(s):
             raw, pos, observed_owner = s['world'].get('self', {}), s['actions'].get('position', {}), s['world'].get('owner', {})
             check(raw.get('mapKnown') is True and number(raw.get('mapId', 0)) == original_map
@@ -626,7 +630,7 @@ class Supervisor:
             check(intents(current) == original_controls, 'Control intent changed before Unstuck travel')
             self.reserve(row, 'normal_travel', {'sessionId': sid, 'goal': goal})
             watcher.start()
-            response = self.rpcs[g].call('buddy-actions.travel_to', dict(token=lease, mapId=number(own['mapId']), arrivalDistance=3, **goal), timeout=35)
+            response = self.rpcs[g].call('buddy-actions.travel_to', dict(token=lease, mapId=original_map, arrivalDistance=3, **goal), timeout=35)
             row['travelReply'] = {k: response.get(k) for k in ('reason', 'moving', 'traveling', 'motionUnconfirmed', 'position')}; self.persist(); returned = True
             held = self.read(g, sid, guard=False)
             bound_map(held)

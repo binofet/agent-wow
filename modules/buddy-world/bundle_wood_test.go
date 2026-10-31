@@ -38,7 +38,7 @@ func TestBundleWoodAndMillyCratesRemainExactTypedQuestObjects(t *testing.T) {
 		guid := uint64(0xf110000000000000) | uint64(entry)<<24 | i
 		r = packet(t, s, opcode.SMSGUpdateObject, gameObjectFixture(guid, map[int]uint32{objectEntry: entry, gameObjectBytes: 3 << 8}))
 	}
-	if len(s.state.gameObjects) > maxGameObjects || len(r.QuestObjects) != 2 {
+	if len(s.state.gameObjects) > maxGameObjects || len(r.QuestObjects) != 32 || r.QuestObjects[0].Entry != 161557 || r.QuestObjects[1].Entry != 176793 {
 		t.Fatal("lost protected quest objects", r)
 	}
 }

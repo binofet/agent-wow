@@ -13,27 +13,26 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-const harvestQuestID uint32 = 3904
-const harvestObjectEntry uint32 = 161557
-const harvestItemID uint32 = 11119
+// OPEN_KNEELING is a shared lock mechanic, not a quest-specific command.
 const harvestOpenSpell uint32 = 6478
 
-type harvestRecipe struct{ questID, objectEntry, itemID uint32 }
+type harvestRecipe struct{ questID, objectEntry, itemID, openSpell uint32 }
 
-func harvestRecipeForObject(entry uint32) harvestRecipe {
-	switch entry {
-	case harvestObjectEntry:
-		return harvestRecipe{harvestQuestID, harvestObjectEntry, harvestItemID}
-	case 176793:
-		// Public gameobject_template176793: type3, lock43, loot14105;
-		// gameobject_loot_template14105 gives quest item13872 for quest5545.
-		return harvestRecipe{5545, 176793, 13872}
+func (s *Service) harvestRecipes(entry uint32) []harvestRecipe {
+	record, ok := s.catalog.Container(entry)
+	if !ok || record.Type != 3 || record.Action != "open_and_loot" || !ordinaryOpeningSpell(record.OpenSpell) {
+		return nil
 	}
-	return harvestRecipe{}
+	var recipes []harvestRecipe
+	for _, q := range record.QuestItems {
+		if q.QuestID != 0 && q.ItemID != 0 && q.Count != 0 {
+			recipes = append(recipes, harvestRecipe{q.QuestID, entry, q.ItemID, record.OpenSpell})
+		}
+	}
+	return recipes
 }
-
 func (r harvestRecipe) valid() bool {
-	return r.questID != 0 && r == harvestRecipeForObject(r.objectEntry)
+	return r.questID != 0 && r.objectEntry != 0 && r.itemID != 0 && ordinaryOpeningSpell(r.openSpell)
 }
 
 // The existing receipt is the immutable recipe/source binding for this operation.
@@ -43,19 +42,21 @@ func (s *Service) boundHarvestRecipe() harvestRecipe {
 	if !s.questGather || r == nil || r.ObjectGuid == 0 || r.ObjectGuid != s.state.PendingGameObjectGuid {
 		return harvestRecipe{}
 	}
-	recipe := harvestRecipeForObject(r.ObjectEntry)
-	if !recipe.valid() || r.QuestId != recipe.questID || r.ItemId != recipe.itemID || r.ObjectGuid>>48 != 0xf110 || uint32(r.ObjectGuid>>24&0xffffff) != recipe.objectEntry {
+	record, _ := s.catalog.Container(r.ObjectEntry)
+	recipe := harvestRecipe{r.QuestId, r.ObjectEntry, r.ItemId, record.OpenSpell}
+	if !recipe.valid() || r.ObjectGuid>>48 != 0xf110 || uint32(r.ObjectGuid>>24&0xffffff) != recipe.objectEntry {
 		return harvestRecipe{}
 	}
-	return recipe
+	for _, allowed := range s.harvestRecipes(r.ObjectEntry) {
+		if allowed == recipe {
+			return recipe
+		}
+	}
+	return harvestRecipe{}
 }
 
-// Public quest_template3904 requires item11119x8; gameobject_template161557
-// is a chest(type3), loot10119, lock43. Build12340 Lock.dbc43 requires
-// OPEN_KNEELING13; Spell6478 opens that lock in1s at5yd. GO_USE/REPORT_USE
-// do not open an ordinary chest. SpellHandler.cpp+SpellEffects::EffectOpenLock:
-// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Handlers/SpellHandler.cpp
-// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Spells/SpellEffects.cpp
+// A catalog relationship is actionable only when this character's complete
+// live quest log still contains the matching incomplete quest.
 func (r harvestRecipe) quest(world *worldv1.SnapshotResponse, self uint64, incomplete bool) bool {
 	if !r.valid() || world == nil || world.Self == nil || world.Self.Guid != self || !world.SelfQuestLogKnown || len(world.SelfQuestLog) != 25 {
 		return false
@@ -78,7 +79,7 @@ func (r harvestRecipe) context(w *worldv1.SnapshotResponse, a *actionsv1.State, 
 		return false
 	}
 	p, pos := w.Self, a.Position
-	if !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.MapKnown || p.MapId != 0 || !p.UnitFlagsKnown || p.UnitFlags&(0x1|0x4|0x2000|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
+	if !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.MapKnown || !p.UnitFlagsKnown || p.UnitFlags&(0x1|0x4|0x2000|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return false
 	}
 	if !pos.Known || !pos.MapKnown || pos.MapId != p.MapId {
@@ -106,10 +107,16 @@ func (r harvestRecipe) objectWithin(p *actionsv1.ClientPosition, g *worldv1.Game
 	dx, dy, dz := float64(g.X-p.X), float64(g.Y-p.Y), float64(g.Z-p.Z)
 	return dx*dx+dy*dy+dz*dz <= maxDistance*maxDistance && math.Abs(dz) <= 1.5
 }
-func gatherOpenPacket(count byte, guid uint64) []byte {
+func ordinaryOpeningSpell(id uint32) bool { return id == 3365 || id == 6477 || id == 6478 }
+
+func gatherOpenPacket(count byte, guid uint64, opening ...uint32) []byte {
+	spell := harvestOpenSpell
+	if len(opening) > 0 {
+		spell = opening[0]
+	}
 	p := make([]byte, 10)
 	p[0] = count
-	binary.LittleEndian.PutUint32(p[1:], harvestOpenSpell)
+	binary.LittleEndian.PutUint32(p[1:], spell)
 	binary.LittleEndian.PutUint32(p[6:], 0x800) // TARGET_FLAG_GAMEOBJECT +packedGUID.
 	mask := byte(0)
 	var packed []byte
@@ -165,14 +172,14 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 		if g == nil {
 			continue
 		}
-		candidate := harvestRecipeForObject(g.Entry)
-		if s.gatherSeen[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
-			continue
-		}
-		d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)
-		if d < best || d == best && g.Guid < selected.Guid {
-			selected, best = g, d
-			recipe = candidate
+		for _, candidate := range s.harvestRecipes(g.Entry) {
+			if s.gatherSeen[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
+				continue
+			}
+			d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)
+			if d < best || d == best && (selected == nil || g.Guid < selected.Guid) {
+				selected, best, recipe = g, d, candidate
+			}
 		}
 	}
 	if selected == nil {

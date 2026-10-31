@@ -34,6 +34,9 @@ ROOT = Path(__file__).resolve().parent.parent
 _reward_spec = importlib.util.spec_from_file_location("quest_rewards", Path(__file__).with_name("quest-rewards.py"))
 quest_rewards = importlib.util.module_from_spec(_reward_spec)
 _reward_spec.loader.exec_module(quest_rewards)
+_catalog_spec = importlib.util.spec_from_file_location("game_catalog", Path(__file__).with_name("game-catalog.py"))
+game_catalog = importlib.util.module_from_spec(_catalog_spec)
+_catalog_spec.loader.exec_module(game_catalog)
 DEFAULT_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 DISABLED_FEATURES = (
     "shell_tool", "unified_exec", "apps", "plugins", "remote_plugin",
@@ -1527,6 +1530,8 @@ class BuddyControls:
             state["observations"] = self.rpc.call("buddy-world.snapshot", {})
         except ConversationError:
             state["observations"] = {}
+        state["content_knowledge"] = game_catalog.context(state["observations"], self.inventory,
+                                                          self.quests if self.quests_available else {})
         offer = self.quests.get("turnInOffer", {}) if self.quests_available else {}
         if (isinstance(offer, dict) and isinstance(offer.get("choices"), list)
                 and 1 < len(offer["choices"]) <= 6 and offer.get("rewardRequested") is not True
