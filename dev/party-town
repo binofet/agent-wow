@@ -424,6 +424,7 @@ class Supervisor:
         if not kind:
             self.status["phase"]="idle_no_qualified_town_upkeep"; return
         key = f"{self.session}/{integer(inv['inventoryRevision'])}/{kind}/{target}/{mode}"
+        if kind == "gear": key += f"/module/{integer(inv['revision'])}"
         if any(row["key"] == key for row in self.data["attempts"]):
             self.status["phase"]="unchanged_town_attempt_not_repeated"; return
         if len(self.data["attempts"]) >= 128:

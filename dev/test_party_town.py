@@ -158,6 +158,62 @@ class TownTests(unittest.TestCase):
                     self.assertEqual(len(writes),1);self.assertEqual(rows[0]['phase'],'unconfirmed')
                     self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
 
+    def test_gear_metadata_revision_retries_read_only_abort_but_never_replays_issued_request(self):
+        gear_fakes=load('town_gear_metadata_retry_fakes','test_party_gear.py')
+        for outcome in ('BLOCKED','OUTCOME_UNCONFIRMED'):
+            with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as temp:
+                actor,rpc,clock,saved,_=self.rig();rpc.inv=gear_fakes.initial();rpc.inv['selfGuid']='1'
+                root=Path(temp).resolve();reads=[0];workers=[];writes=[];run=actor.run_worker
+                def worker(kind,target):workers.append((kind,target));return run(kind,target)
+                actor.worker=worker
+                class Client:
+                    url=rpc.url
+                    def call(self,method,params):
+                        if method=='buddy-inventory.state':
+                            reads[0]+=1
+                            if reads[0]==4:rpc.inv['revision']='19'  # Template reply, no owned-item change.
+                            return rpc.call(method,params)
+                        self_test.assertEqual(method,'buddy-inventory.equip_gear');writes.append(copy.deepcopy(params))
+                        rpc.inv['operation']=dict(requestId=params['requestId'],kind='equip_gear',status=outcome,
+                            source=copy.deepcopy(params['source']),equipmentSlot=params['equipmentSlot'],
+                            displacedItemGuid=params['expectedEquippedItemGuid'],leaseReleased=outcome=='BLOCKED',
+                            transportAttempted=False,baselineInventoryRevision=params['expectedInventoryRevision'],
+                            baselineEquipmentRevision=params['expectedEquipmentRevision'])
+                        return copy.deepcopy(rpc.inv)
+                self_test=self;inventory_revision=rpc.inv['inventoryRevision']
+                with patch.object(m,'ROOT',root),patch.object(m.gear,'ROOT',root),patch.object(m.gear,'RPC',return_value=Client()):
+                    self.run_tick(actor,clock);self.run_tick(actor,clock)
+                    self.assertEqual(len(workers),1);self.assertFalse(writes)
+                    first=copy.deepcopy(saved[-1]['attempts'][0]);self.assertEqual(first['phase'],'blocked')
+                    self.assertTrue(rpc.following)
+                    self.run_tick(actor,clock)
+                    self.assertEqual(len(workers),2);self.assertEqual(len(writes),1)
+                    self.assertEqual(writes[0]['expectedRevision'],'19')
+                    self.assertEqual(rpc.inv['inventoryRevision'],inventory_revision)
+                    self.assertNotEqual(saved[-1]['attempts'][1]['key'],first['key'])
+                    if outcome=='BLOCKED':
+                        self.run_tick(actor,clock)
+                        self.assertEqual(len(workers),2)  # Same current module revision is suppressed.
+                        self.assertEqual(actor.status['phase'],'unchanged_town_attempt_not_repeated')
+                        rpc.inv['revision']='20';self.run_tick(actor,clock)
+                        self.assertEqual(len(workers),3)
+                    else:
+                        rpc.inv['revision']='20'
+                        with self.assertRaises(m.Error):self.run_tick(actor,clock)
+                        self.assertEqual(len(workers),2)
+                    self.assertEqual(len(writes),1)  # Neither settled nor pending request is replayed.
+                    self.assertEqual(saved[-1]['attempts'][0],first)
+
+    def test_non_gear_town_key_ignores_metadata_only_module_revision(self):
+        actor,rpc,clock,saved,calls=self.rig();rpc.vendor_x=3
+        self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('sell',VENDOR)])
+        key=saved[-1]['attempts'][0]['key']
+        self.assertEqual(key,f"body1/{rpc.inv['inventoryRevision']}/sell/{VENDOR}/local")
+        rpc.inv['revision']='19';self.run_tick(actor,clock)
+        self.assertEqual(calls,[('sell',VENDOR)])
+        self.assertEqual(actor.status['phase'],'unchanged_town_attempt_not_repeated')
+
     def test_actual_complete_trade_with_historical_pants_allows_safe_upkeep(self):
         actor,rpc,clock,_,calls=self.rig()
         original=rpc.call
