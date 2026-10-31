@@ -576,9 +576,12 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 		return
 	}
 	if op == opcode.SMSGSpellStart || op == opcode.SMSGSpellGo {
+		if op == opcode.SMSGSpellGo {
+			s.roadCaptureOwnGoLocked(p)
+		}
 		guid, count, spell, offset, err := castEvent(p)
 		if err != nil {
-			s.roadPoisonCastLocked()
+			s.roadPoisonCastLocked(op, p, "cast_header_invalid")
 			return
 		}
 		if guid != s.selfGUID {
@@ -594,7 +597,7 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 			}
 		}
 		if target == 0 {
-			s.roadPoisonCastLocked()
+			s.roadPoisonCastLocked(op, p, "cast_target_body_unsupported")
 			return
 		}
 		if op == opcode.SMSGSpellStart {
@@ -605,7 +608,7 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 				return
 			}
 			if s.roadCast.busy && (s.roadCast.spell != spell || s.roadCast.count != count || s.roadCast.target != target) {
-				s.roadPoisonCastLocked()
+				s.roadPoisonCastLocked(op, p, "cast_start_conflicts_with_pending")
 				return
 			}
 			s.roadCast = roadCastObservation{busy: true, started: true, spell: spell, count: count, target: target}
@@ -621,7 +624,7 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 				}
 			}
 		} else {
-			s.roadPoisonCastLocked()
+			s.roadPoisonCastLocked(op, p, "unpaired_or_conflicting_own_go")
 		}
 		return
 	}
@@ -629,21 +632,21 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 		count, spell := byte(0), uint32(0)
 		if op == opcode.SMSGCastFailed {
 			if len(p) != 6 {
-				s.roadPoisonCastLocked()
+				s.roadPoisonCastLocked(op, p, "cast_failure_body_invalid")
 				return
 			}
 			count, spell = p[0], binary.LittleEndian.Uint32(p[1:])
 		} else {
 			guid, n, err := readGUID(p)
 			if err != nil {
-				s.roadPoisonCastLocked()
+				s.roadPoisonCastLocked(op, p, "cast_failure_caster_unknown")
 				return
 			}
 			if guid != s.selfGUID {
 				return
 			}
 			if len(p) != n+6 {
-				s.roadPoisonCastLocked()
+				s.roadPoisonCastLocked(op, p, "cast_failure_body_invalid")
 				return
 			}
 			count, spell = p[n], binary.LittleEndian.Uint32(p[n+1:])
@@ -651,7 +654,7 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 		// Failure does not grant a retry or a source-death receipt. Legacy packet
 		// handling still accounts exact matching module failures below this hook.
 		if s.roadCast.poisoned || !s.roadCast.busy || s.roadCast.count != count || s.roadCast.spell != spell {
-			s.roadPoisonCastLocked()
+			s.roadPoisonCastLocked(op, p, "cast_failure_conflicts_with_pending")
 			return
 		}
 		if s.road.active {
@@ -660,7 +663,8 @@ func (s *Service) roadPacketLocked(op uint32, p []byte) {
 		s.roadCast = roadCastObservation{known: true}
 	}
 }
-func (s *Service) roadPoisonCastLocked() {
+func (s *Service) roadPoisonCastLocked(op uint32, p []byte, reason string) {
+	s.roadCaptureRejectedLocked(op, p, reason)
 	s.roadCast.known, s.roadCast.poisoned = false, true
 	if s.road.active {
 		s.road.active, s.road.invalid, s.road.phase = false, true, "current_cast_unknown_no_retry"

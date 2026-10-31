@@ -139,6 +139,57 @@ message RecoveryState {
   bool movement_unconfirmed = 21;
   uint32 verified_legs = 22;
 }
+// Passive diagnostics only. These fields grant no cast or retry authority.
+message RoadCastObservedEvent {
+  uint32 opcode = 1;
+  uint32 payload_size = 2;
+  bytes payload = 3;
+  bool payload_truncated = 4;
+  string payload_sha256 = 5;
+  string reason = 6;
+  uint64 revision = 7;
+  uint64 age_ms = 8;
+  bool caster_known = 9;
+  // First wire identifier may be a cast item or the caster itself.
+  uint64 cast_object_guid = 10;
+  uint64 caster_guid = 11;
+  bool header_known = 12;
+  uint32 cast_count = 13;
+  uint32 spell_id = 14;
+  bool cast_flags_known = 15;
+  uint32 cast_flags = 16;
+  bool target_flags_known = 17;
+  uint32 target_flags = 18;
+  bool target_guid_known = 19;
+  uint64 target_guid = 20;
+  // Supported by the ordinary unit-target parser; not general wire validity.
+  bool body_supported = 21;
+  bool go_event = 22;
+  bool hit_count_known = 23;
+  uint32 hit_count = 24;
+  bool first_hit_known = 25;
+  uint64 first_hit_guid = 26;
+  bool miss_count_known = 27;
+  uint32 miss_count = 28;
+  bool first_miss_known = 29;
+  uint64 first_miss_guid = 30;
+  uint32 first_miss_reason = 31;
+  bool first_miss_reflect_known = 32;
+  uint32 first_miss_reflect_result = 33;
+}
+message RoadCastObserverState {
+  bool known = 1;
+  bool busy = 2;
+  bool poisoned = 3;
+  bool initial_seen = 4;
+  bool spellbook_known = 5;
+  bool outgoing_seen = 6;
+  uint32 pending_spell_id = 7;
+  uint64 pending_target_guid = 8;
+  RoadCastObservedEvent first_rejected = 9;
+  bool epoch_known = 10;
+  RoadCastObservedEvent first_own_go = 11;
+}
 message State {
   bool following = 1;
   bool healing = 2;
@@ -218,6 +269,7 @@ message State {
   FargodeepEncounterState fargodeep = 69;
   ColdridgeLevelingState coldridge_leveling = 70;
   RoadClearState road_clear = 73;
+  RoadCastObserverState road_cast_observer = 74;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);

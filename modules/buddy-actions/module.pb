@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¤H
+ÊV
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -168,7 +168,62 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"‹
+verified_legs (RverifiedLegs"Í	
+RoadCastObservedEvent
+opcode (Ropcode!
+payload_size (RpayloadSize
+payload (Rpayload+
+payload_truncated (RpayloadTruncated%
+payload_sha256 (	RpayloadSha256
+reason (	Rreason
+revision (Rrevision
+age_ms (RageMs!
+caster_known	 (RcasterKnown(
+cast_object_guid
+ (RcastObjectGuid
+caster_guid (R
+casterGuid!
+header_known (RheaderKnown
+
+cast_count (R	castCount
+spell_id (RspellId(
+cast_flags_known (RcastFlagsKnown
+
+cast_flags (R	castFlags,
+target_flags_known (RtargetFlagsKnown!
+target_flags (RtargetFlags*
+target_guid_known (RtargetGuidKnown
+target_guid (R
+targetGuid%
+body_supported (RbodySupported
+go_event (RgoEvent&
+hit_count_known (RhitCountKnown
+	hit_count (RhitCount&
+first_hit_known (RfirstHitKnown$
+first_hit_guid (RfirstHitGuid(
+miss_count_known (RmissCountKnown
+
+miss_count (R	missCount(
+first_miss_known (RfirstMissKnown&
+first_miss_guid (RfirstMissGuid*
+first_miss_reason (RfirstMissReason7
+first_miss_reflect_known  (RfirstMissReflectKnown9
+first_miss_reflect_result! (RfirstMissReflectResult"ô
+RoadCastObserverState
+known (Rknown
+busy (Rbusy
+poisoned (Rpoisoned!
+initial_seen (RinitialSeen'
+spellbook_known (RspellbookKnown#
+outgoing_seen (RoutgoingSeen(
+pending_spell_id (RpendingSpellId.
+pending_target_guid (RpendingTargetGuidV
+first_rejected	 (2/.warcraftbuddy.actions.v1.RoadCastObservedEventRfirstRejected
+epoch_known
+ (R
+epochKnownQ
+first_own_go (2/.warcraftbuddy.actions.v1.RoadCastObservedEventR
+firstOwnGo"ê
 State
 	following (R	following
 healing (Rhealing
@@ -250,7 +305,8 @@ practicing%
 	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeep_
 coldridge_levelingF (20.warcraftbuddy.actions.v1.ColdridgeLevelingStateRcoldridgeLevelingG
 
-road_clearI (2(.warcraftbuddy.actions.v1.RoadClearStateR	roadClear2ê
+road_clearI (2(.warcraftbuddy.actions.v1.RoadClearStateR	roadClear]
+road_cast_observerJ (2/.warcraftbuddy.actions.v1.RoadCastObserverStateRroadCastObserver2ê
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

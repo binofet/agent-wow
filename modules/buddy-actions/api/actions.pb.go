@@ -1417,6 +1417,433 @@ func (x *RecoveryState) GetVerifiedLegs() uint32 {
 	return 0
 }
 
+// Passive diagnostics only. These fields grant no cast or retry authority.
+type RoadCastObservedEvent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Opcode           uint32                 `protobuf:"varint,1,opt,name=opcode,proto3" json:"opcode,omitempty"`
+	PayloadSize      uint32                 `protobuf:"varint,2,opt,name=payload_size,json=payloadSize,proto3" json:"payload_size,omitempty"`
+	Payload          []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
+	PayloadTruncated bool                   `protobuf:"varint,4,opt,name=payload_truncated,json=payloadTruncated,proto3" json:"payload_truncated,omitempty"`
+	PayloadSha256    string                 `protobuf:"bytes,5,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	Reason           string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	Revision         uint64                 `protobuf:"varint,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	AgeMs            uint64                 `protobuf:"varint,8,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
+	CasterKnown      bool                   `protobuf:"varint,9,opt,name=caster_known,json=casterKnown,proto3" json:"caster_known,omitempty"`
+	// First wire identifier may be a cast item or the caster itself.
+	CastObjectGuid   uint64 `protobuf:"varint,10,opt,name=cast_object_guid,json=castObjectGuid,proto3" json:"cast_object_guid,omitempty"`
+	CasterGuid       uint64 `protobuf:"varint,11,opt,name=caster_guid,json=casterGuid,proto3" json:"caster_guid,omitempty"`
+	HeaderKnown      bool   `protobuf:"varint,12,opt,name=header_known,json=headerKnown,proto3" json:"header_known,omitempty"`
+	CastCount        uint32 `protobuf:"varint,13,opt,name=cast_count,json=castCount,proto3" json:"cast_count,omitempty"`
+	SpellId          uint32 `protobuf:"varint,14,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	CastFlagsKnown   bool   `protobuf:"varint,15,opt,name=cast_flags_known,json=castFlagsKnown,proto3" json:"cast_flags_known,omitempty"`
+	CastFlags        uint32 `protobuf:"varint,16,opt,name=cast_flags,json=castFlags,proto3" json:"cast_flags,omitempty"`
+	TargetFlagsKnown bool   `protobuf:"varint,17,opt,name=target_flags_known,json=targetFlagsKnown,proto3" json:"target_flags_known,omitempty"`
+	TargetFlags      uint32 `protobuf:"varint,18,opt,name=target_flags,json=targetFlags,proto3" json:"target_flags,omitempty"`
+	TargetGuidKnown  bool   `protobuf:"varint,19,opt,name=target_guid_known,json=targetGuidKnown,proto3" json:"target_guid_known,omitempty"`
+	TargetGuid       uint64 `protobuf:"varint,20,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	// Supported by the ordinary unit-target parser; not general wire validity.
+	BodySupported          bool   `protobuf:"varint,21,opt,name=body_supported,json=bodySupported,proto3" json:"body_supported,omitempty"`
+	GoEvent                bool   `protobuf:"varint,22,opt,name=go_event,json=goEvent,proto3" json:"go_event,omitempty"`
+	HitCountKnown          bool   `protobuf:"varint,23,opt,name=hit_count_known,json=hitCountKnown,proto3" json:"hit_count_known,omitempty"`
+	HitCount               uint32 `protobuf:"varint,24,opt,name=hit_count,json=hitCount,proto3" json:"hit_count,omitempty"`
+	FirstHitKnown          bool   `protobuf:"varint,25,opt,name=first_hit_known,json=firstHitKnown,proto3" json:"first_hit_known,omitempty"`
+	FirstHitGuid           uint64 `protobuf:"varint,26,opt,name=first_hit_guid,json=firstHitGuid,proto3" json:"first_hit_guid,omitempty"`
+	MissCountKnown         bool   `protobuf:"varint,27,opt,name=miss_count_known,json=missCountKnown,proto3" json:"miss_count_known,omitempty"`
+	MissCount              uint32 `protobuf:"varint,28,opt,name=miss_count,json=missCount,proto3" json:"miss_count,omitempty"`
+	FirstMissKnown         bool   `protobuf:"varint,29,opt,name=first_miss_known,json=firstMissKnown,proto3" json:"first_miss_known,omitempty"`
+	FirstMissGuid          uint64 `protobuf:"varint,30,opt,name=first_miss_guid,json=firstMissGuid,proto3" json:"first_miss_guid,omitempty"`
+	FirstMissReason        uint32 `protobuf:"varint,31,opt,name=first_miss_reason,json=firstMissReason,proto3" json:"first_miss_reason,omitempty"`
+	FirstMissReflectKnown  bool   `protobuf:"varint,32,opt,name=first_miss_reflect_known,json=firstMissReflectKnown,proto3" json:"first_miss_reflect_known,omitempty"`
+	FirstMissReflectResult uint32 `protobuf:"varint,33,opt,name=first_miss_reflect_result,json=firstMissReflectResult,proto3" json:"first_miss_reflect_result,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *RoadCastObservedEvent) Reset() {
+	*x = RoadCastObservedEvent{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoadCastObservedEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoadCastObservedEvent) ProtoMessage() {}
+
+func (x *RoadCastObservedEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoadCastObservedEvent.ProtoReflect.Descriptor instead.
+func (*RoadCastObservedEvent) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RoadCastObservedEvent) GetOpcode() uint32 {
+	if x != nil {
+		return x.Opcode
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetPayloadSize() uint32 {
+	if x != nil {
+		return x.PayloadSize
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RoadCastObservedEvent) GetPayloadTruncated() bool {
+	if x != nil {
+		return x.PayloadTruncated
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetPayloadSha256() string {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return ""
+}
+
+func (x *RoadCastObservedEvent) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *RoadCastObservedEvent) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetAgeMs() uint64 {
+	if x != nil {
+		return x.AgeMs
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetCasterKnown() bool {
+	if x != nil {
+		return x.CasterKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetCastObjectGuid() uint64 {
+	if x != nil {
+		return x.CastObjectGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetCasterGuid() uint64 {
+	if x != nil {
+		return x.CasterGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetHeaderKnown() bool {
+	if x != nil {
+		return x.HeaderKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetCastCount() uint32 {
+	if x != nil {
+		return x.CastCount
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetCastFlagsKnown() bool {
+	if x != nil {
+		return x.CastFlagsKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetCastFlags() uint32 {
+	if x != nil {
+		return x.CastFlags
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetTargetFlagsKnown() bool {
+	if x != nil {
+		return x.TargetFlagsKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetTargetFlags() uint32 {
+	if x != nil {
+		return x.TargetFlags
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetTargetGuidKnown() bool {
+	if x != nil {
+		return x.TargetGuidKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetBodySupported() bool {
+	if x != nil {
+		return x.BodySupported
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetGoEvent() bool {
+	if x != nil {
+		return x.GoEvent
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetHitCountKnown() bool {
+	if x != nil {
+		return x.HitCountKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetHitCount() uint32 {
+	if x != nil {
+		return x.HitCount
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetFirstHitKnown() bool {
+	if x != nil {
+		return x.FirstHitKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetFirstHitGuid() uint64 {
+	if x != nil {
+		return x.FirstHitGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetMissCountKnown() bool {
+	if x != nil {
+		return x.MissCountKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetMissCount() uint32 {
+	if x != nil {
+		return x.MissCount
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetFirstMissKnown() bool {
+	if x != nil {
+		return x.FirstMissKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetFirstMissGuid() uint64 {
+	if x != nil {
+		return x.FirstMissGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetFirstMissReason() uint32 {
+	if x != nil {
+		return x.FirstMissReason
+	}
+	return 0
+}
+
+func (x *RoadCastObservedEvent) GetFirstMissReflectKnown() bool {
+	if x != nil {
+		return x.FirstMissReflectKnown
+	}
+	return false
+}
+
+func (x *RoadCastObservedEvent) GetFirstMissReflectResult() uint32 {
+	if x != nil {
+		return x.FirstMissReflectResult
+	}
+	return 0
+}
+
+type RoadCastObserverState struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Known             bool                   `protobuf:"varint,1,opt,name=known,proto3" json:"known,omitempty"`
+	Busy              bool                   `protobuf:"varint,2,opt,name=busy,proto3" json:"busy,omitempty"`
+	Poisoned          bool                   `protobuf:"varint,3,opt,name=poisoned,proto3" json:"poisoned,omitempty"`
+	InitialSeen       bool                   `protobuf:"varint,4,opt,name=initial_seen,json=initialSeen,proto3" json:"initial_seen,omitempty"`
+	SpellbookKnown    bool                   `protobuf:"varint,5,opt,name=spellbook_known,json=spellbookKnown,proto3" json:"spellbook_known,omitempty"`
+	OutgoingSeen      bool                   `protobuf:"varint,6,opt,name=outgoing_seen,json=outgoingSeen,proto3" json:"outgoing_seen,omitempty"`
+	PendingSpellId    uint32                 `protobuf:"varint,7,opt,name=pending_spell_id,json=pendingSpellId,proto3" json:"pending_spell_id,omitempty"`
+	PendingTargetGuid uint64                 `protobuf:"varint,8,opt,name=pending_target_guid,json=pendingTargetGuid,proto3" json:"pending_target_guid,omitempty"`
+	FirstRejected     *RoadCastObservedEvent `protobuf:"bytes,9,opt,name=first_rejected,json=firstRejected,proto3" json:"first_rejected,omitempty"`
+	EpochKnown        bool                   `protobuf:"varint,10,opt,name=epoch_known,json=epochKnown,proto3" json:"epoch_known,omitempty"`
+	FirstOwnGo        *RoadCastObservedEvent `protobuf:"bytes,11,opt,name=first_own_go,json=firstOwnGo,proto3" json:"first_own_go,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RoadCastObserverState) Reset() {
+	*x = RoadCastObserverState{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoadCastObserverState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoadCastObserverState) ProtoMessage() {}
+
+func (x *RoadCastObserverState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoadCastObserverState.ProtoReflect.Descriptor instead.
+func (*RoadCastObserverState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RoadCastObserverState) GetKnown() bool {
+	if x != nil {
+		return x.Known
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetBusy() bool {
+	if x != nil {
+		return x.Busy
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetPoisoned() bool {
+	if x != nil {
+		return x.Poisoned
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetInitialSeen() bool {
+	if x != nil {
+		return x.InitialSeen
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetSpellbookKnown() bool {
+	if x != nil {
+		return x.SpellbookKnown
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetOutgoingSeen() bool {
+	if x != nil {
+		return x.OutgoingSeen
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetPendingSpellId() uint32 {
+	if x != nil {
+		return x.PendingSpellId
+	}
+	return 0
+}
+
+func (x *RoadCastObserverState) GetPendingTargetGuid() uint64 {
+	if x != nil {
+		return x.PendingTargetGuid
+	}
+	return 0
+}
+
+func (x *RoadCastObserverState) GetFirstRejected() *RoadCastObservedEvent {
+	if x != nil {
+		return x.FirstRejected
+	}
+	return nil
+}
+
+func (x *RoadCastObserverState) GetEpochKnown() bool {
+	if x != nil {
+		return x.EpochKnown
+	}
+	return false
+}
+
+func (x *RoadCastObserverState) GetFirstOwnGo() *RoadCastObservedEvent {
+	if x != nil {
+		return x.FirstOwnGo
+	}
+	return nil
+}
+
 type State struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Following       bool                   `protobuf:"varint,1,opt,name=following,proto3" json:"following,omitempty"`
@@ -1497,13 +1924,14 @@ type State struct {
 	Fargodeep         *FargodeepEncounterState `protobuf:"bytes,69,opt,name=fargodeep,proto3" json:"fargodeep,omitempty"`
 	ColdridgeLeveling *ColdridgeLevelingState  `protobuf:"bytes,70,opt,name=coldridge_leveling,json=coldridgeLeveling,proto3" json:"coldridge_leveling,omitempty"`
 	RoadClear         *RoadClearState          `protobuf:"bytes,73,opt,name=road_clear,json=roadClear,proto3" json:"road_clear,omitempty"`
+	RoadCastObserver  *RoadCastObserverState   `protobuf:"bytes,74,opt,name=road_cast_observer,json=roadCastObserver,proto3" json:"road_cast_observer,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1515,7 +1943,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1528,7 +1956,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{16}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *State) GetFollowing() bool {
@@ -2028,6 +2456,13 @@ func (x *State) GetRoadClear() *RoadClearState {
 	return nil
 }
 
+func (x *State) GetRoadCastObserver() *RoadCastObserverState {
+	if x != nil {
+		return x.RoadCastObserver
+	}
+	return nil
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -2168,7 +2603,62 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0ealive_observed\x18\x13 \x01(\bR\raliveObserved\x12\x16\n" +
 	"\x06rested\x18\x14 \x01(\bR\x06rested\x121\n" +
 	"\x14movement_unconfirmed\x18\x15 \x01(\bR\x13movementUnconfirmed\x12#\n" +
-	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\x8b\x1a\n" +
+	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\xcd\t\n" +
+	"\x15RoadCastObservedEvent\x12\x16\n" +
+	"\x06opcode\x18\x01 \x01(\rR\x06opcode\x12!\n" +
+	"\fpayload_size\x18\x02 \x01(\rR\vpayloadSize\x12\x18\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\x12+\n" +
+	"\x11payload_truncated\x18\x04 \x01(\bR\x10payloadTruncated\x12%\n" +
+	"\x0epayload_sha256\x18\x05 \x01(\tR\rpayloadSha256\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason\x12\x1a\n" +
+	"\brevision\x18\a \x01(\x04R\brevision\x12\x15\n" +
+	"\x06age_ms\x18\b \x01(\x04R\x05ageMs\x12!\n" +
+	"\fcaster_known\x18\t \x01(\bR\vcasterKnown\x12(\n" +
+	"\x10cast_object_guid\x18\n" +
+	" \x01(\x04R\x0ecastObjectGuid\x12\x1f\n" +
+	"\vcaster_guid\x18\v \x01(\x04R\n" +
+	"casterGuid\x12!\n" +
+	"\fheader_known\x18\f \x01(\bR\vheaderKnown\x12\x1d\n" +
+	"\n" +
+	"cast_count\x18\r \x01(\rR\tcastCount\x12\x19\n" +
+	"\bspell_id\x18\x0e \x01(\rR\aspellId\x12(\n" +
+	"\x10cast_flags_known\x18\x0f \x01(\bR\x0ecastFlagsKnown\x12\x1d\n" +
+	"\n" +
+	"cast_flags\x18\x10 \x01(\rR\tcastFlags\x12,\n" +
+	"\x12target_flags_known\x18\x11 \x01(\bR\x10targetFlagsKnown\x12!\n" +
+	"\ftarget_flags\x18\x12 \x01(\rR\vtargetFlags\x12*\n" +
+	"\x11target_guid_known\x18\x13 \x01(\bR\x0ftargetGuidKnown\x12\x1f\n" +
+	"\vtarget_guid\x18\x14 \x01(\x04R\n" +
+	"targetGuid\x12%\n" +
+	"\x0ebody_supported\x18\x15 \x01(\bR\rbodySupported\x12\x19\n" +
+	"\bgo_event\x18\x16 \x01(\bR\agoEvent\x12&\n" +
+	"\x0fhit_count_known\x18\x17 \x01(\bR\rhitCountKnown\x12\x1b\n" +
+	"\thit_count\x18\x18 \x01(\rR\bhitCount\x12&\n" +
+	"\x0ffirst_hit_known\x18\x19 \x01(\bR\rfirstHitKnown\x12$\n" +
+	"\x0efirst_hit_guid\x18\x1a \x01(\x04R\ffirstHitGuid\x12(\n" +
+	"\x10miss_count_known\x18\x1b \x01(\bR\x0emissCountKnown\x12\x1d\n" +
+	"\n" +
+	"miss_count\x18\x1c \x01(\rR\tmissCount\x12(\n" +
+	"\x10first_miss_known\x18\x1d \x01(\bR\x0efirstMissKnown\x12&\n" +
+	"\x0ffirst_miss_guid\x18\x1e \x01(\x04R\rfirstMissGuid\x12*\n" +
+	"\x11first_miss_reason\x18\x1f \x01(\rR\x0ffirstMissReason\x127\n" +
+	"\x18first_miss_reflect_known\x18  \x01(\bR\x15firstMissReflectKnown\x129\n" +
+	"\x19first_miss_reflect_result\x18! \x01(\rR\x16firstMissReflectResult\"\xf4\x03\n" +
+	"\x15RoadCastObserverState\x12\x14\n" +
+	"\x05known\x18\x01 \x01(\bR\x05known\x12\x12\n" +
+	"\x04busy\x18\x02 \x01(\bR\x04busy\x12\x1a\n" +
+	"\bpoisoned\x18\x03 \x01(\bR\bpoisoned\x12!\n" +
+	"\finitial_seen\x18\x04 \x01(\bR\vinitialSeen\x12'\n" +
+	"\x0fspellbook_known\x18\x05 \x01(\bR\x0espellbookKnown\x12#\n" +
+	"\routgoing_seen\x18\x06 \x01(\bR\foutgoingSeen\x12(\n" +
+	"\x10pending_spell_id\x18\a \x01(\rR\x0ependingSpellId\x12.\n" +
+	"\x13pending_target_guid\x18\b \x01(\x04R\x11pendingTargetGuid\x12V\n" +
+	"\x0efirst_rejected\x18\t \x01(\v2/.warcraftbuddy.actions.v1.RoadCastObservedEventR\rfirstRejected\x12\x1f\n" +
+	"\vepoch_known\x18\n" +
+	" \x01(\bR\n" +
+	"epochKnown\x12Q\n" +
+	"\ffirst_own_go\x18\v \x01(\v2/.warcraftbuddy.actions.v1.RoadCastObservedEventR\n" +
+	"firstOwnGo\"\xea\x1a\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -2250,7 +2740,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\tfargodeep\x18E \x01(\v21.warcraftbuddy.actions.v1.FargodeepEncounterStateR\tfargodeep\x12_\n" +
 	"\x12coldridge_leveling\x18F \x01(\v20.warcraftbuddy.actions.v1.ColdridgeLevelingStateR\x11coldridgeLeveling\x12G\n" +
 	"\n" +
-	"road_clear\x18I \x01(\v2(.warcraftbuddy.actions.v1.RoadClearStateR\troadClear2\xea\x0e\n" +
+	"road_clear\x18I \x01(\v2(.warcraftbuddy.actions.v1.RoadClearStateR\troadClear\x12]\n" +
+	"\x12road_cast_observer\x18J \x01(\v2/.warcraftbuddy.actions.v1.RoadCastObserverStateR\x10roadCastObserver2\xea\x0e\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +
@@ -2286,7 +2777,7 @@ func file_modules_buddy_actions_actions_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_actions_actions_proto_rawDescData
 }
 
-var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*ToggleRequest)(nil),             // 0: warcraftbuddy.actions.v1.ToggleRequest
 	(*FargodeepEncounterRequest)(nil), // 1: warcraftbuddy.actions.v1.FargodeepEncounterRequest
@@ -2304,68 +2795,73 @@ var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*ExitCryptRequest)(nil),          // 13: warcraftbuddy.actions.v1.ExitCryptRequest
 	(*InteractionLease)(nil),          // 14: warcraftbuddy.actions.v1.InteractionLease
 	(*RecoveryState)(nil),             // 15: warcraftbuddy.actions.v1.RecoveryState
-	(*State)(nil),                     // 16: warcraftbuddy.actions.v1.State
-	(*emptypb.Empty)(nil),             // 17: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),            // 18: agentwow.module.v1.WorldPacket
+	(*RoadCastObservedEvent)(nil),     // 16: warcraftbuddy.actions.v1.RoadCastObservedEvent
+	(*RoadCastObserverState)(nil),     // 17: warcraftbuddy.actions.v1.RoadCastObserverState
+	(*State)(nil),                     // 18: warcraftbuddy.actions.v1.State
+	(*emptypb.Empty)(nil),             // 19: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),            // 20: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	7,  // 0: warcraftbuddy.actions.v1.RoadClearRequest.expected_position:type_name -> warcraftbuddy.actions.v1.ClientPosition
 	7,  // 1: warcraftbuddy.actions.v1.RoadClearState.origin:type_name -> warcraftbuddy.actions.v1.ClientPosition
-	16, // 2: warcraftbuddy.actions.v1.InteractionLease.state:type_name -> warcraftbuddy.actions.v1.State
+	18, // 2: warcraftbuddy.actions.v1.InteractionLease.state:type_name -> warcraftbuddy.actions.v1.State
 	7,  // 3: warcraftbuddy.actions.v1.RecoveryState.corpse_location:type_name -> warcraftbuddy.actions.v1.ClientPosition
 	7,  // 4: warcraftbuddy.actions.v1.RecoveryState.graveyard_location:type_name -> warcraftbuddy.actions.v1.ClientPosition
-	7,  // 5: warcraftbuddy.actions.v1.State.position:type_name -> warcraftbuddy.actions.v1.ClientPosition
-	15, // 6: warcraftbuddy.actions.v1.State.recovery:type_name -> warcraftbuddy.actions.v1.RecoveryState
-	2,  // 7: warcraftbuddy.actions.v1.State.fargodeep:type_name -> warcraftbuddy.actions.v1.FargodeepEncounterState
-	4,  // 8: warcraftbuddy.actions.v1.State.coldridge_leveling:type_name -> warcraftbuddy.actions.v1.ColdridgeLevelingState
-	6,  // 9: warcraftbuddy.actions.v1.State.road_clear:type_name -> warcraftbuddy.actions.v1.RoadClearState
-	0,  // 10: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 11: warcraftbuddy.actions.v1.BuddyActions.Healing:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 12: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	17, // 13: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
-	17, // 14: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
-	8,  // 15: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
-	9,  // 16: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
-	10, // 17: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
-	11, // 18: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 19: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 20: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 21: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	12, // 22: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
-	13, // 23: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	0,  // 24: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	1,  // 25: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
-	3,  // 26: warcraftbuddy.actions.v1.BuddyActions.StartColdridgeLeveling:input_type -> warcraftbuddy.actions.v1.ColdridgeLevelingRequest
-	5,  // 27: warcraftbuddy.actions.v1.BuddyActions.StartRoadClear:input_type -> warcraftbuddy.actions.v1.RoadClearRequest
-	0,  // 28: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	18, // 29: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	17, // 30: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	16, // 31: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	16, // 32: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
-	16, // 33: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	16, // 34: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	16, // 35: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	14, // 36: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	16, // 37: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	16, // 38: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	16, // 39: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	16, // 40: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	16, // 41: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
-	16, // 42: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
-	16, // 43: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
-	16, // 44: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	16, // 45: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	16, // 46: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
-	16, // 47: warcraftbuddy.actions.v1.BuddyActions.StartColdridgeLeveling:output_type -> warcraftbuddy.actions.v1.State
-	16, // 48: warcraftbuddy.actions.v1.BuddyActions.StartRoadClear:output_type -> warcraftbuddy.actions.v1.State
-	16, // 49: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
-	17, // 50: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	17, // 51: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	31, // [31:52] is the sub-list for method output_type
-	10, // [10:31] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	16, // 5: warcraftbuddy.actions.v1.RoadCastObserverState.first_rejected:type_name -> warcraftbuddy.actions.v1.RoadCastObservedEvent
+	16, // 6: warcraftbuddy.actions.v1.RoadCastObserverState.first_own_go:type_name -> warcraftbuddy.actions.v1.RoadCastObservedEvent
+	7,  // 7: warcraftbuddy.actions.v1.State.position:type_name -> warcraftbuddy.actions.v1.ClientPosition
+	15, // 8: warcraftbuddy.actions.v1.State.recovery:type_name -> warcraftbuddy.actions.v1.RecoveryState
+	2,  // 9: warcraftbuddy.actions.v1.State.fargodeep:type_name -> warcraftbuddy.actions.v1.FargodeepEncounterState
+	4,  // 10: warcraftbuddy.actions.v1.State.coldridge_leveling:type_name -> warcraftbuddy.actions.v1.ColdridgeLevelingState
+	6,  // 11: warcraftbuddy.actions.v1.State.road_clear:type_name -> warcraftbuddy.actions.v1.RoadClearState
+	17, // 12: warcraftbuddy.actions.v1.State.road_cast_observer:type_name -> warcraftbuddy.actions.v1.RoadCastObserverState
+	0,  // 13: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	0,  // 14: warcraftbuddy.actions.v1.BuddyActions.Healing:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	0,  // 15: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	19, // 16: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
+	19, // 17: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
+	8,  // 18: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
+	9,  // 19: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
+	10, // 20: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
+	11, // 21: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 22: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 23: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 24: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	12, // 25: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
+	13, // 26: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	0,  // 27: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	1,  // 28: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
+	3,  // 29: warcraftbuddy.actions.v1.BuddyActions.StartColdridgeLeveling:input_type -> warcraftbuddy.actions.v1.ColdridgeLevelingRequest
+	5,  // 30: warcraftbuddy.actions.v1.BuddyActions.StartRoadClear:input_type -> warcraftbuddy.actions.v1.RoadClearRequest
+	0,  // 31: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	20, // 32: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	19, // 33: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	18, // 34: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	18, // 35: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
+	18, // 36: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	18, // 37: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	18, // 38: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	14, // 39: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	18, // 40: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	18, // 41: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	18, // 42: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	18, // 43: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	18, // 44: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	18, // 45: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
+	18, // 46: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
+	18, // 47: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	18, // 48: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	18, // 49: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
+	18, // 50: warcraftbuddy.actions.v1.BuddyActions.StartColdridgeLeveling:output_type -> warcraftbuddy.actions.v1.State
+	18, // 51: warcraftbuddy.actions.v1.BuddyActions.StartRoadClear:output_type -> warcraftbuddy.actions.v1.State
+	18, // 52: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
+	19, // 53: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	19, // 54: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	34, // [34:55] is the sub-list for method output_type
+	13, // [13:34] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_actions_actions_proto_init() }
@@ -2379,7 +2875,7 @@ func file_modules_buddy_actions_actions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_actions_actions_proto_rawDesc), len(file_modules_buddy_actions_actions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

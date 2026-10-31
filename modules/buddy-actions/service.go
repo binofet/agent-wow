@@ -103,6 +103,10 @@ type Service struct {
 	roadEpochKnown                                           bool
 	roadEpochSession                                         string
 	roadWorldPackets                                         uint64
+	roadOutgoingSeen                                         bool
+	roadFirstRejected, roadFirstOwnGo                        *actionsv1.RoadCastObservedEvent
+	roadFirstRejectedAt, roadFirstOwnGoAt                    time.Time
+	roadObserverRevision                                     uint64
 }
 
 func NewService(session sessionAPI, selfGUID uint64) *Service {
@@ -126,6 +130,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.ColdridgeLeveling = s.coldridgeLevelingSnapshotLocked()
 	out.RoadClear = s.roadSnapshotLocked()
+	out.RoadCastObserver = s.roadCastObserverSnapshotLocked()
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -690,6 +695,7 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 		// Bookkeeping for every outgoing own cast, including older ordinary
 		// controllers. Transport ambiguity cannot restore observed idle.
 		s.roadCast.busy, s.roadCast.known = true, false
+		s.roadOutgoingSeen = true
 		s.roadCast.spell, s.roadCast.count, s.roadCast.target = s.pendingSpell, s.castCount, s.pendingTarget
 		s.roadCast.started = false
 	}
