@@ -26,6 +26,14 @@ GOALS = {47: (773, 10), 60: (772, 8)}
 ENTRIES = frozenset((40, 475))
 IDENTITY = {'version': 1, 'mode': 'fargodeep_collection', 'roster': [1, 4, 5], 'questIds': [47, 60, 62]}
 MAX_LEDGER = 131072
+AUTO_TERMINAL = frozenset(('navigation_unavailable', 'route_replan_limit', 'navigation_step_failed',
+    'target_unsafe_or_cast_failed', 'initial_target_not_idle_unclaimed', 'target_position_unavailable_or_outside_range',
+    'target_changed_during_plan', 'observations_changed_during_plan', 'quest_changed_during_plan', 'prewrite_observations_changed'))
+
+
+class EncounterRejected(Error):
+    """Actual matching module FailedPrecondition; not a transport timeout."""
+
 
 
 def number(value):
@@ -140,8 +148,17 @@ class RPC(c.RPC):
             value = decode(raw) if len(raw) <= 262144 else None
         except (OSError, ValueError, http.client.HTTPException): raise Error('Cave RPC outcome is unconfirmed') from None
         if (not isinstance(value, dict) or value.get('jsonrpc') != '2.0' or type(value.get('id')) is not int
-                or value['id'] != identity or ('error' in value) == ('result' in value) or not isinstance(value.get('result'), dict)):
+                or value['id'] != identity or ('error' in value) == ('result' in value)):
             raise Error('Cave RPC outcome is unconfirmed')
+        fault = value.get('error')
+        if isinstance(fault, dict):
+            data = fault.get('data') or {}
+            if (method == 'buddy-actions.fargodeep_encounter' and params.get('enabled') is True
+                    and fault.get('code') == -32000 and isinstance(data, dict) and data.get('module') == 'buddy-actions'
+                    and data.get('method') == 'fargodeep_encounter' and data.get('grpc_status') == 'FailedPrecondition'):
+                raise EncounterRejected('Encounter activation was rejected before acceptance')
+            raise Error('Cave RPC outcome is unconfirmed')
+        if not isinstance(value.get('result'), dict): raise Error('Cave RPC outcome is unconfirmed')
         return value['result']
 
 
@@ -352,9 +369,35 @@ class Catchup:
         self.persist()
         return clean
 
+    def abandon_terminal(self, row, cause):
+        """Retire this GUID only after exact cleanup and fresh positive idle proof."""
+        if not self.cleanup(row): return False
+        scenes = self.read(row['target'])
+        if self.stopped() or self.now() >= self.deadline or self.controls(scenes) != self.data.get('controls'): return False
+        for scene in scenes.values():
+            p, a, loot = scene['self'], scene['actions'], scene['loot']
+            operation = scene['professions'].get('operation') or {}
+            f = a.get('fargodeep') or {}
+            if (any(p.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown'))
+                    or not 0 < number(p.get('health', 0)) <= number(p.get('maxHealth', 0)) or self.combat(scene)
+                    or (scene['world'].get('owner') or {}).get('present') is True
+                    or any(a.get(k) is True for k in ('moving', 'motionUnconfirmed', 'castPending', 'autoAttacking', 'autoAttackRequested', 'autoAttackUnconfirmed', 'traveling', 'practicing'))
+                    or a.get('interactionOwner') or f.get('active') is True
+                    or f.get('phase') in ('explicit_follow_stop', 'explicit_assist_stop', 'authorization_expired')
+                    or loot.get('phase') != 'idle' or number(loot.get('pendingCorpseGuid', 0)) or number(loot.get('pendingGameObjectGuid', 0))
+                    or scene['quests'].get('actionInFlight') is True or not c.trade_idle(scene['trade'])
+                    or scene['professions'].get('active') is True or scene['professions'].get('closing') is True
+                    or operation and (operation.get('status') not in ('COMPLETED', 'SERVER_REJECTED', 'BLOCKED', 'CANCELLED') or operation.get('leaseReleased') is not True or operation.get('cleanupUnconfirmed') is True)):
+                return False
+        row['abandonment'] = {'kind': 'outcome_unknown_target_quarantined', 'cause': cause,
+            'sessions': dict(self.sessions), 'observedAt': self.now()}
+        row['phase'] = 'stopped'; self.persist()
+        self.status['phase'] = 'terminal_encounter_cleaned_target_quarantined'
+        return True
+
     def arm(self, scenes, target):
         if len(self.data['encounters']) >= 96: raise Error('Finite encounter journal is full')
-        engager = next(g for g in (5, 4, 1) if not all(scenes[g]['log'][q] for q in GOALS))
+        engager = next(g for g in (4, 1, 5) if not all(scenes[g]['log'][q] for q in GOALS))
         row = {'target': number(target['guid']), 'entry': number(target['entry']), 'engager': engager, 'phase': 'arming',
             'deadObserved': False, 'requests': {}, 'started': self.now()}
         self.data['encounters'].append(row); self.persist()
@@ -375,6 +418,11 @@ class Catchup:
                 if not self.scope(answer, row) or answer.get('fargodeep', {}).get('active') is not True: raise Error('Encounter activation is unconfirmed')
                 row['requests'][str(guid)]['phase'] = 'observed'; self.persist()
             row['phase'] = 'active'; self.persist()
+        except EncounterRejected:
+            row['activationRejection'] = {'guid': guid, 'status': 'FailedPrecondition'}
+            row['phase'] = 'unconfirmed'; self.persist()
+            if self.abandon_terminal(row, 'activation_failed_precondition'): return
+            self.done = True; self.status['phase'] = 'rejected_encounter_cleanup_unconfirmed'; return
         except Error:
             row['phase'] = 'unconfirmed'; self.persist(); self.cleanup(row)
             self.done = True; self.status['phase'] = 'encounter_arming_unconfirmed_no_replay'; return
@@ -410,6 +458,14 @@ class Catchup:
                     self.done = True; self.status['phase'] = 'reserved_encounter_requires_reconciliation_no_replay'; return
                 if any(self.combat(s) for s in scenes.values()):
                     self.status['phase'] = 'actual_party_combat_in_progress'; return
+                designated = scenes[row['engager']]['actions']
+                terminal = designated.get('fargodeep') or {}
+                if (not row['deadObserved'] and self.scope(designated, row) and terminal.get('active') is not True
+                        and terminal.get('phase') in AUTO_TERMINAL):
+                    cause = terminal['phase']
+                    if self.abandon_terminal(row, cause): return
+                    row['phase'] = 'unconfirmed'; self.persist(); self.done = True
+                    self.status['phase'] = 'terminal_encounter_cleanup_unconfirmed'; return
                 if row['deadObserved']:
                     if not self.cleanup(row): self.status['phase'] = 'waiting_for_exact_encounter_cleanup'; return
                     row['phase'], row['lootAt'] = 'loot', self.now(); self.persist()

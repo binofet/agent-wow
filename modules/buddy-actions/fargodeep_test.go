@@ -304,7 +304,6 @@ func TestFargodeepPrewriteCallbacksRevalidatePartyTargetQuestManaAndBody(t *test
 			s, f, c, r, advance := fargodeepRig(t, 4)
 			r.EngagerGuid = 4
 			armFargodeep(t, s, r)
-			s.Tick(context.Background())
 			advance(200 * time.Millisecond)
 			fired := false
 			f.onClock = func() {
@@ -426,7 +425,6 @@ func TestFargodeepNoSameBodyTargetRetryAfterAmbiguousWrite(t *testing.T) {
 	s, f, c, r, advance := fargodeepRig(t, 4)
 	r.EngagerGuid = 4
 	armFargodeep(t, s, r)
-	s.Tick(context.Background())
 	advance(200 * time.Millisecond)
 	f.failSend = true
 	s.Tick(context.Background())
@@ -456,7 +454,6 @@ func TestFargodeepGCDDoesNotConsumeTheOnlyInitialAttack(t *testing.T) {
 	s, f, _, r, advance := fargodeepRig(t, 4)
 	r.EngagerGuid = 4
 	armFargodeep(t, s, r)
-	s.Tick(context.Background())
 	s.nextAssist = s.now().Add(time.Second)
 	advance(200 * time.Millisecond)
 	s.Tick(context.Background())
@@ -638,7 +635,11 @@ func TestFargodeepOrdinaryPatrolCanPullWithVerifiedCurrentEndpoint(t *testing.T)
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 				got := state(t, s)
-				if plans != 1 || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
+				wantPlans := 0
+				if guid == 5 {
+					wantPlans = 1
+				}
+				if plans != wantPlans || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
 					t.Fatal(got, plans, f.packets)
 				}
 			})
@@ -717,12 +718,11 @@ func TestFargodeepPatrolChangingDuringFinalFacingCannotUseStaleRoute(t *testing.
 			r.EngagerGuid = 4
 			ordinaryFargodeepPatrol(c, 4000)
 			armFargodeep(t, s, r)
-			s.Tick(context.Background())
 			advance(200 * time.Millisecond)
 			f.onClock = func() {
 				switch mode {
 				case "endpoint moved":
-					c.Trajectory.DestinationY += 3
+					c.Trajectory.DestinationY += 40
 				case "midleg":
 					c.Trajectory.AgeMs, c.PositionAgeMs = 1000, 1000
 				case "cyclic":
@@ -799,5 +799,56 @@ func TestFargodeepMovementClockRebindsPartyTargetAndOwner(t *testing.T) {
 				t.Fatal(state(t, s), f.packets)
 			}
 		})
+	}
+}
+
+func TestFargodeepInRangeCasterPullDoesNotNeedAWalkingRoute(t *testing.T) {
+	for _, guid := range []uint64{1, 4} {
+		t.Run(fmt.Sprint(guid), func(t *testing.T) {
+			s, f, c, r, _ := fargodeepRig(t, guid)
+			r.EngagerGuid = guid
+			c.X += 20
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("in-range spell must not request walking authority")
+				return nil, errors.New("unreachable walking floor")
+			}
+			armFargodeep(t, s, r)
+			s.Tick(context.Background())
+			got := state(t, s)
+			if countPackets(f, opcode.CMSGCastSpell) != 1 || countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || got.LastCastTargetGuid != c.Guid || got.AssistAttempts != 1 || got.AssistDamageEvents != 0 || got.ServerAssistGo != 0 {
+				t.Fatal(got, f.packets)
+			}
+		})
+	}
+}
+
+func TestFargodeepInRangeCasterUsesFreshOrdinaryPositionAfterFacing(t *testing.T) {
+	s, f, c, r, _ := fargodeepRig(t, 4)
+	r.EngagerGuid = 4
+	ordinaryFargodeepPatrol(c, 4000)
+	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+		t.Fatal("unexpected walking plan")
+		return nil, nil
+	}
+	armFargodeep(t, s, r)
+	f.onClock = func() { c.Trajectory.DestinationY += 1; c.PositionRevision++ }
+	s.Tick(context.Background())
+	if got := state(t, s); countPackets(f, opcode.CMSGCastSpell) != 1 || got.LastCastTargetGuid != c.Guid {
+		t.Fatal(got, f.packets)
+	}
+}
+
+func TestFargodeepRogueLongWalkingRouteHasExplicitMissionDiagnostic(t *testing.T) {
+	s, f, _, r, _ := fargodeepRig(t, 5)
+	s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+		mid := a
+		mid.y += 40
+		return []position{a, mid, b}, nil
+	}
+	armFargodeep(t, s, r)
+	s.Tick(context.Background())
+	got := state(t, s)
+	if got.Fargodeep.Active || got.Fargodeep.Phase != "navigation_unavailable" || got.NavReason != "mission_route_exceeds_60yd" || len(f.packets) != 0 {
+		t.Fatal(got, f.packets)
 	}
 }

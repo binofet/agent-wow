@@ -360,13 +360,16 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 		f.phase = "waiting_for_server_attack_stop"
 		return true
 	}
-	stand := float64(25)
-	if w.Self.ClassId == 4 {
+	stand := float64(28) // Existing verified conservative Smite range.
+	if w.Self.ClassId == 8 {
+		stand = 33 // Existing verified conservative Fireball range.
+	} else if w.Self.ClassId == 4 {
 		stand = 3.5
 	}
-	// Supports stay in place. Only the designated engager approaches on a fully
-	// verified route; no chord or stale creature position grants an initial pull.
-	if f.engager == s.selfGUID && (!f.pulled || distance(s.pos, p) > stand) {
+	// A fresh in-range unit-target spell needs no walking authority. The server
+	// validates spell LOS/range; a rejected spell is never damage confirmation.
+	// Every actual approach still requires the complete verified ground route.
+	if f.engager == s.selfGUID && (w.Self.ClassId == 4 && !f.pulled || distance(s.pos, p) > stand) {
 		if f.route != nil && (f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05) {
 			f.route = nil
 		}
@@ -381,7 +384,10 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 			path, err := s.mapNavigationPath(ctx, s.navDataDir, 0, s.pos, p)
 			if err != nil || routeRemaining(s.pos, path, 0) > 60 {
 				s.state.NavAvailable = false
-				s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
+				s.state.NavReason = "mission_route_exceeds_60yd"
+				if err != nil {
+					s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
+				}
 				return fail("navigation_unavailable")
 			}
 			// A plan is no authority to reuse older body, party, quest or target views.
@@ -506,7 +512,12 @@ func (s *Service) fargodeepActionAllowedLocked(ctx context.Context, targetGUID u
 		engaged = victim != nil && (victim.UnitFlags&0x80000 != 0 || c.AttackAgeMs <= 5000)
 	}
 	if !engaged {
-		if f.engager != s.selfGUID || f.pulled || f.route == nil || f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05 || distance(f.routeTarget, p) > .25 || !movement && !directRemainingRoute(s.pos, p, f.route, f.routeIndex) || c.UnitFlags&0x80000 != 0 || c.DynamicFlags != 0 || c.AttackVictimKnown && c.AttackVictimGuid != 0 || !c.TargetKnown || c.TargetGuid != 0 {
+		if f.engager != s.selfGUID || f.pulled || c.UnitFlags&0x80000 != 0 || c.DynamicFlags != 0 || c.AttackVictimKnown && c.AttackVictimGuid != 0 || !c.TargetKnown || c.TargetGuid != 0 {
+			return refuse()
+		}
+		// Ground-route authority is needed for movement and melee, never for
+		// an otherwise valid in-range unit-target spell cast from this pose.
+		if (movement || w.Self.ClassId == 4) && (f.route == nil || f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05 || distance(f.routeTarget, p) > .25 || !movement && !directRemainingRoute(s.pos, p, f.route, f.routeIndex)) {
 			return refuse()
 		}
 		if _, reason = s.fargodeepPartyLocked(ctx, w, f.session, true, p); reason != "" {

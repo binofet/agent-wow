@@ -39,7 +39,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(worker.status['phase'], 'waiting_for_actual_nearby_isolated_kobold')
         for actor in p.rpcs.values(): actor.target['guid'] = str(TARGET+1)
         worker.tick()
-        self.assertEqual([g for g, request in p.events if request['enabled']], [1, 4, 5])
+        self.assertEqual([g for g, request in p.events if request['enabled']], [1, 5, 4])
         self.assertTrue(all(request['targetGuid'] == str(TARGET+1) for _, request in p.events))
 
     def test_actual_dead_settled_corpse_all_three_receivers_can_be_retired_without_claiming_items(self):

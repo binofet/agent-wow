@@ -59,7 +59,7 @@ class Actor:
         value = dict(self=copy.deepcopy(self.self),selfQuestLogKnown=True,selfQuestLogRevision='1',
             selfQuestLog=copy.deepcopy(self.logs),inventoryKnown=True,inventoryRevision='1',inventoryBags=copy.deepcopy(self.bags),
             nearbyCreatures=[copy.deepcopy(self.target)],lootableCorpses=copy.deepcopy(self.lootable))
-        if params.get('creatureGuid') == str(TARGET): value['requestedCreature']=copy.deepcopy(self.target)
+        if params.get('creatureGuid') == self.target['guid']: value['requestedCreature']=copy.deepcopy(self.target)
         return value
 
     def call(self, method, params):
@@ -102,7 +102,7 @@ class Actor:
 class CatchupTests(unittest.TestCase):
     def test_supports_arm_before_engager_and_only_bound_rpc_writes(self):
         p=Party(); w=p.worker(); w.tick()
-        self.assertEqual([g for g,r in p.events if r['enabled']], [1,4,5])
+        self.assertEqual([g for g,r in p.events if r['enabled']], [1,5,4])
         self.assertEqual(w.data['encounters'][0]['phase'],'active')
         self.assertEqual(w.status['phase'],'waiting_for_actual_combat_and_loot')
         self.assertFalse(w.done)
@@ -144,7 +144,7 @@ class CatchupTests(unittest.TestCase):
     def test_ambiguous_arming_reserved_before_write_and_never_replayed(self):
         p=Party();p.lost_reply=4;w=p.worker();w.tick()
         self.assertTrue(w.done)
-        self.assertEqual([g for g,r in p.events if r['enabled']],[1,4])
+        self.assertEqual([g for g,r in p.events if r['enabled']],[1,5,4])
         saved=copy.deepcopy(w.data);p.events=[];p.lost_reply=None
         resumed=p.worker(stored=saved);resumed.tick()
         self.assertTrue(resumed.done)
@@ -267,7 +267,7 @@ class CatchupTests(unittest.TestCase):
             scenes=w.read();candidate=w.candidate(scenes)
             self.assertIsNotNone(candidate);self.assertEqual(candidate['x'],-9790.)
             self.assertEqual(p.rpcs[1].target['x'],-9840. if age>3000 else -9790.)
-            w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,4,5])
+            w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,5,4])
 
     def test_unknown_unsupported_or_stale_patrol_never_consumes_target(self):
         for mode in ('midleg','stale','cyclic','transport','destination','zero_duration','long_duration','flying','long_route','far_endpoint'):
@@ -315,6 +315,94 @@ class CatchupTests(unittest.TestCase):
         self.assertTrue(cave.neighbor_near(row,p.rpcs[1].target))
         row['x']=-9750.;row['trajectory']['destinationX']=-9740.
         self.assertFalse(cave.neighbor_near(row,p.rpcs[1].target))
+
+
+    def test_caster_priority_changes_only_after_own_collection_completion(self):
+        for complete,expected in (((),4),((4,),1),((4,1),5)):
+            p=Party();w=p.worker()
+            for guid in complete:
+                for qid in cave.GOALS:p.rpcs[guid].complete(qid)
+            w.tick();row=w.data['encounters'][0]
+            self.assertEqual(row['engager'],expected)
+            self.assertEqual([g for g,r in p.events if r['enabled']][-1],expected)
+
+    def test_terminal_engager_cleans_supports_immediately_and_tries_different_guid(self):
+        p=Party();w=p.worker();w.tick();row=w.data['encounters'][0]
+        p.rpcs[4].actions['fargodeep'].update(active=False,phase='navigation_unavailable');p.events=[]
+        w.tick()
+        self.assertFalse(w.done);self.assertEqual(row['phase'],'stopped');self.assertFalse(row['deadObserved'])
+        self.assertEqual(row['abandonment']['kind'],'outcome_unknown_target_quarantined')
+        self.assertEqual([g for g,r in p.events if not r['enabled']],[1,5]);self.assertEqual(p.time,0.)
+        self.assertFalse(any(r['enabled'] for _,r in p.events))
+        old=copy.deepcopy(row)
+        for actor in p.rpcs.values():actor.target['guid']=str(TARGET+1)
+        w.tick()
+        self.assertEqual(w.data['encounters'][0],old)
+        self.assertEqual([int(r['targetGuid']) for _,r in p.events if r['enabled']],[TARGET+1]*3)
+        self.assertEqual(w.data['encounters'][1]['phase'],'active')
+
+    def test_terminal_failure_cannot_advance_before_actual_safe_cleanup(self):
+        for mode in ('cast','autoattack','motion','lease','loot','profession','combat','owner','human_stop','foreign_active','body'):
+            p=Party();w=p.worker();w.tick();row=w.data['encounters'][0]
+            p.rpcs[4].actions['fargodeep'].update(active=False,phase='navigation_unavailable');a=p.rpcs[1]
+            if mode=='cast':a.actions['castPending']=True
+            if mode=='autoattack':a.actions['autoAttackRequested']=True
+            if mode=='motion':a.actions['motionUnconfirmed']=True
+            if mode=='lease':a.actions['interactionOwner']='quests'
+            if mode=='loot':a.loot.update(phase='waiting_release',pendingCorpseGuid=str(TARGET))
+            if mode=='profession':a.professions['active']=True
+            if mode=='combat':a.self['unitFlags']|=0x80000
+            if mode=='owner':
+                original=a.world
+                def with_owner(params,original=original):
+                    value=original(params);value['owner']=dict(guid='3',present=True);return value
+                a.world=with_owner
+            if mode=='human_stop':a.actions['fargodeep'].update(active=False,phase='explicit_follow_stop')
+            if mode=='foreign_active':a.actions['fargodeep']['targetGuid']=str(TARGET+1)
+            if mode=='body':a.session='replaced-body'
+            p.events=[]
+            if mode=='body':
+                with self.assertRaises(cave.Error):w.tick()
+            else:w.tick()
+            self.assertNotEqual(row['phase'],'stopped',mode)
+            self.assertFalse(any(r['enabled'] for _,r in p.events),mode)
+            self.assertEqual(len(w.data['encounters']),1,mode)
+
+    def test_definite_activation_rejection_can_quarantine_but_ambiguous_cannot(self):
+        for definite in (True,False):
+            p=Party();w=p.worker()
+            def reject(actor,method,params):
+                if actor.guid==4 and method=='buddy-actions.fargodeep_encounter' and params.get('enabled'):
+                    raise (cave.EncounterRejected if definite else cave.Error)('FailedPrecondition')
+            p.hook=reject;w.tick();row=w.data['encounters'][0]
+            self.assertEqual(row['phase'],'stopped' if definite else 'unconfirmed')
+            self.assertEqual(w.done,not definite)
+            if definite:
+                self.assertEqual(row['activationRejection'],{'guid':4,'status':'FailedPrecondition'})
+                self.assertEqual(row['abandonment']['cause'],'activation_failed_precondition')
+            else:self.assertNotIn('abandonment',row)
+            self.assertFalse(row['deadObserved'])
+
+    def test_rpc_definite_rejection_requires_matching_structured_server_identity(self):
+        class Response:
+            def __init__(self,value):self.body=json.dumps(value).encode()
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,limit):return self.body[:limit]
+        class Opener:
+            def __init__(self,mode):self.mode=mode
+            def open(self,request,timeout):
+                body=json.loads(request.data);value=dict(jsonrpc='2.0',id=body['id'],error=dict(code=-32000,data=dict(module='buddy-actions',method='fargodeep_encounter',grpc_status='FailedPrecondition')))
+                if self.mode=='wrongid':value['id']+=1
+                if self.mode=='wrongmodule':value['error']['data']['module']='other'
+                if self.mode=='wrongmethod':value['error']['data']['method']='follow'
+                if self.mode=='unavailable':value['error']['data']['grpc_status']='Unavailable'
+                if self.mode=='messageonly':value['error']=dict(code=-32000,message='FailedPrecondition')
+                return Response(value)
+        for mode in ('matching','wrongid','wrongmodule','wrongmethod','unavailable','messageonly'):
+            rpc=cave.RPC('http://127.0.0.1:8086/rpc');rpc.opener=Opener(mode)
+            with self.assertRaises(cave.Error) as raised:rpc.call('buddy-actions.fargodeep_encounter',dict(enabled=True))
+            self.assertEqual(isinstance(raised.exception,cave.EncounterRejected),mode=='matching')
 
 
 if __name__=='__main__':unittest.main()
