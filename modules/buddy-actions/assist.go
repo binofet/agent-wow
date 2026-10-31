@@ -127,6 +127,9 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 		return fail("assist_target_failed_no_retry")
 	}
 	targetPosition, known, _ := creaturePosition(target)
+	if s.fargodeep.active && s.fargodeep.target == target.Guid {
+		targetPosition, known = fargodeepCreaturePosition(target)
+	}
 	if !known {
 		return fail("assist_target_outside_conservative_range")
 	}

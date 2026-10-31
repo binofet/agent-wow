@@ -48,6 +48,47 @@ def point(row, known='positionKnown'):
 def distance(a, b): return math.dist(tuple(a[k] for k in ('x', 'y', 'z')), tuple(b[k] for k in ('x', 'y', 'z')))
 
 
+def ordinary_patrol(row):
+    if not point(row) or number(row.get('movementFlags', 0)) & ~0x080001ff: return False
+    t = row.get('trajectory')
+    if (not isinstance(t, dict) or t.get('known') is not True or t.get('stopped') is True
+            or t.get('cyclic') is True or t.get('transportRelative') is True or t.get('destinationKnown') is not True
+            or not 1 <= number(t.get('durationMs', 0)) <= 120000): return False
+    end = {k: t.get('destination'+k.upper()) for k in ('x', 'y', 'z')}
+    def area(p): return all(type(p[k]) in (int, float) and math.isfinite(p[k]) for k in p) and -10000 <= p['x'] <= -9700 and 50 <= p['y'] <= 320 and -10 <= p['z'] <= 65
+    return area({k: row[k] for k in end}) and area(end) and distance(row, end) <= 60
+
+
+def creature_position(row):
+    """Actual fresh patrol header or bounded elapsed endpoint, never interpolation."""
+    if not point(row) or number(row.get('movementFlags', 0)) & ~0x080001ff: return None
+    t = row.get('trajectory') or {}
+    if not isinstance(t, dict): return None
+    if t.get('known') is True:
+        if t.get('transportRelative') is True: return None
+        if t.get('stopped') is not True:
+            if not ordinary_patrol(row): return None
+            age, duration = number(t.get('ageMs', 0)), number(t.get('durationMs', 0))
+            if age >= duration:
+                if age-duration > 5000: return None
+                return dict(row, **{k: t['destination'+k.upper()] for k in ('x', 'y', 'z')})
+            if age > 750 or number(row.get('positionAgeMs', 0)) > 750: return None
+            return row
+        return row
+    return None if number(row.get('movementFlags', 0)) & 0x080000ff else row
+
+
+def neighbor_near(row, target):
+    p = creature_position(row)
+    if p is not None: return distance(p, target) < 8
+    if ordinary_patrol(row):
+        t = row['trajectory']; age = number(t.get('ageMs', 0)); duration = number(t['durationMs'])
+        end = {k: t['destination'+k.upper()] for k in ('x', 'y', 'z')}
+        # Only displacement bounds, not a guessed point on the patrol path.
+        return distance(row, target) < 8+7*age/1000 and distance(end, target) < 8+7*abs(duration-age)/1000
+    return point(row) and distance(row, target) < 8
+
+
 def decode(raw):
     def unique(pairs):
         result = {}
@@ -271,24 +312,23 @@ class Catchup:
             for row in rows:
                 guid, entry = number(row.get('guid', 0)), number(row.get('entry', 0))
                 all_observed[guid] = row
+                current = creature_position(row)
                 if (guid in attempted or guid >> 48 != 0xf130 or not guid & 0xffffff or guid >> 24 & 0xffffff != entry or entry not in ENTRIES
                         or row.get('present') is not True or row.get('aliveKnown') is not True or row.get('alive') is not True
                         or row.get('healthKnown') is not True or not number(row.get('health', 0))
                         or number(row.get('health', 0)) != number(row.get('maxHealth', 0)) or row.get('levelKnown') is not True
-                        or not 5 <= number(row.get('level', 0)) <= 7 or not point(row) or number(row.get('mapId', 0)) != 0
+                        or not 5 <= number(row.get('level', 0)) <= 7 or current is None or number(row.get('mapId', 0)) != 0
                         or any(s['self'].get('levelKnown') is not True or number(row['level']) > number(s['self'].get('level', 0))+1 for s in scenes.values())
                         or row.get('unitFlagsKnown') is not True or row.get('dynamicFlagsKnown') is not True
                         or number(row.get('unitFlags', 0)) & (0x80000|0x2|0x80|0x100|0x10000|0x2000000|0x80000000)
                         or number(row.get('unitFlags2', 0)) & 1 or number(row.get('dynamicFlags', 0)) or number(row.get('npcFlags', 0))
                         or row.get('targetKnown') is not True or number(row.get('targetGuid', 0))
                         or row.get('attackVictimKnown') is True and number(row.get('attackVictimGuid', 0))
-                        or number(row.get('movementFlags', 0)) & 0x080000ff
-                        or row.get('trajectory', {}).get('known') is True and row['trajectory'].get('stopped') is not True
-                        or any(distance(row, other['position']) > 28 for other in scenes.values())): continue
-                candidates[guid] = row
+                        or any(distance(current, other['position']) > 28 for other in scenes.values())): continue
+                candidates[guid] = current
         candidates = {guid: row for guid, row in candidates.items() if not any(
             other_guid != guid and other.get('present') is True and other.get('aliveKnown') is True and other.get('alive') is True
-            and not number(other.get('npcFlags', 0)) and point(other) and number(other.get('mapId', 0)) == 0 and distance(row, other) < 8
+            and not number(other.get('npcFlags', 0)) and other.get('mapKnown') is True and number(other.get('mapId', 0)) == 0 and neighbor_near(other, row)
             for other_guid, other in all_observed.items())}
         return min(candidates.values(), key=lambda row: (max(distance(row, s['position']) for s in scenes.values()), number(row['guid']))) if candidates else None
 

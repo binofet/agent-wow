@@ -255,4 +255,66 @@ class CatchupTests(unittest.TestCase):
         with self.assertRaises(ValueError):cave.decode(b'{"x":NaN}')
 
 
+    def test_ordinary_patrol_uses_fresh_header_or_recent_endpoint_before_arming(self):
+        for age in (500, 4000):
+            p=Party();w=p.worker()
+            for actor in p.rpcs.values():
+                row=actor.target
+                row.update(movementFlags=0x08000101,positionAgeMs=age)
+                row['trajectory']=dict(known=True,durationMs=3000,ageMs=age,destinationKnown=True,
+                    destinationX=-9790.,destinationY=120.,destinationZ=8.)
+                if age>3000:row['x']=-9840. # Stale raw XYZ would incorrectly fail the28yd gate.
+            scenes=w.read();candidate=w.candidate(scenes)
+            self.assertIsNotNone(candidate);self.assertEqual(candidate['x'],-9790.)
+            self.assertEqual(p.rpcs[1].target['x'],-9840. if age>3000 else -9790.)
+            w.tick();self.assertEqual([g for g,r in p.events if r['enabled']],[1,4,5])
+
+    def test_unknown_unsupported_or_stale_patrol_never_consumes_target(self):
+        for mode in ('midleg','stale','cyclic','transport','destination','zero_duration','long_duration','flying','long_route','far_endpoint'):
+            p=Party();w=p.worker()
+            for actor in p.rpcs.values():
+                row=actor.target;row.update(movementFlags=0x08000001,positionAgeMs=4000)
+                t=dict(known=True,durationMs=3000,ageMs=4000,destinationKnown=True,
+                    destinationX=-9790.,destinationY=120.,destinationZ=8.)
+                row['trajectory']=t
+                if mode=='midleg':t['ageMs']=1000;row['positionAgeMs']=1000
+                if mode=='stale':t['ageMs']=8001
+                if mode=='cyclic':t['cyclic']=True
+                if mode=='transport':t['transportRelative']=True
+                if mode=='destination':t['destinationKnown']=False
+                if mode=='zero_duration':t['durationMs']=0
+                if mode=='long_duration':t['durationMs']=120001
+                if mode=='flying':row['movementFlags']|=0x2000000
+                if mode=='long_route':t['destinationX']+=70
+                if mode=='far_endpoint':t['destinationX']+=30
+            w.tick();self.assertEqual(p.events,[],mode);self.assertEqual(w.data['encounters'],[],mode)
+
+    def test_patrol_isolation_uses_current_endpoint_not_stale_header(self):
+        for near in (True,False):
+            p=Party();w=p.worker()
+            for actor in p.rpcs.values():
+                original=actor.world
+                def with_patrol(params,original=original):
+                    result=original(params);other=copy.deepcopy(result['nearbyCreatures'][0]);other['guid']=str(TARGET+1)
+                    other.update(x=-9830. if near else -9788.,movementFlags=0x08000001,positionAgeMs=4000)
+                    other['trajectory']=dict(known=True,durationMs=3000,ageMs=4000,destinationKnown=True,
+                        destinationX=-9788. if near else -9830.,destinationY=120.,destinationZ=8.)
+                    result['nearbyCreatures'].append(other);return result
+                actor.world=with_patrol
+            # Ignore the other NPC as a candidate to isolate neighbor behavior.
+            w.data['encounters'].append(dict(target=TARGET+1))
+            candidate=w.candidate(w.read())
+            self.assertEqual(candidate is None,near)
+
+    def test_unknown_midleg_neighbor_is_not_treated_as_absent(self):
+        p=Party();row=copy.deepcopy(p.rpcs[1].target)
+        row.update(x=-9780.,movementFlags=0x08000001,positionAgeMs=1500)
+        row['trajectory']=dict(known=True,durationMs=3000,ageMs=1500,destinationKnown=True,
+            destinationX=-9795.,destinationY=120.,destinationZ=8.)
+        self.assertIsNone(cave.creature_position(row))
+        self.assertTrue(cave.neighbor_near(row,p.rpcs[1].target))
+        row['x']=-9750.;row['trajectory']['destinationX']=-9740.
+        self.assertFalse(cave.neighbor_near(row,p.rpcs[1].target))
+
+
 if __name__=='__main__':unittest.main()

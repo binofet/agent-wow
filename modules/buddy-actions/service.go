@@ -699,7 +699,12 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		}
 		p = s.pos
 	}
-	if moving && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
+	missionMovement := moving && s.fargodeep.active
+	if missionMovement && !s.fargodeepMovementAllowedLocked(ctx) {
+		s.state.Reason = "fargodeep_movement_observations_changed"
+		return false
+	}
+	if moving && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}

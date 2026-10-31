@@ -558,3 +558,246 @@ func TestFargodeepRogueRechecksActualEnergyAfterFacing(t *testing.T) {
 		})
 	}
 }
+
+func ordinaryFargodeepPatrol(c *worldv1.CreatureState, age uint64) {
+	c.MovementFlags = 0x08000001
+	c.PositionAgeMs = age
+	c.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 3000, AgeMs: age, DestinationKnown: true, DestinationX: c.X, DestinationY: c.Y, DestinationZ: c.Z}
+}
+
+func TestFargodeepPatrolUsesOnlyFreshHeaderOrRecentOrdinaryEndpoint(t *testing.T) {
+	for _, mode := range []string{"fresh header", "elapsed endpoint", "walking endpoint", "midleg", "stale endpoint", "cyclic", "transport", "unknown destination", "flying", "zero duration", "long duration", "distant endpoint"} {
+		t.Run(mode, func(t *testing.T) {
+			_, _, c, _, _ := fargodeepRig(t, 5)
+			ordinaryFargodeepPatrol(c, 4000)
+			c.X -= 10 // The old server header must not win over the elapsed endpoint.
+			wantX, want := c.Trajectory.DestinationX, true
+			switch mode {
+			case "fresh header":
+				c.Trajectory.AgeMs, c.PositionAgeMs = 500, 500
+				wantX = c.X
+			case "walking endpoint":
+				c.MovementFlags = 0x08000101
+			case "midleg":
+				c.Trajectory.AgeMs, c.PositionAgeMs = 1000, 1000
+				want = false
+			case "stale endpoint":
+				c.Trajectory.AgeMs = 8001
+				want = false
+			case "cyclic":
+				c.Trajectory.Cyclic = true
+				want = false
+			case "transport":
+				c.Trajectory.TransportRelative = true
+				want = false
+			case "unknown destination":
+				c.Trajectory.DestinationKnown = false
+				want = false
+			case "flying":
+				c.MovementFlags |= 0x2000000
+				want = false
+			case "zero duration":
+				c.Trajectory.DurationMs = 0
+				want = false
+			case "long duration":
+				c.Trajectory.DurationMs = 120001
+				want = false
+			case "distant endpoint":
+				c.Trajectory.DestinationX += 70
+				want = false
+			}
+			p, known := fargodeepCreaturePosition(c)
+			if known != want || known && p.x != wantX {
+				t.Fatal(mode, p, known, wantX, want)
+			}
+		})
+	}
+}
+
+func TestFargodeepOrdinaryPatrolCanPullWithVerifiedCurrentEndpoint(t *testing.T) {
+	for _, guid := range []uint64{1, 4, 5} {
+		for _, age := range []uint64{500, 4000} {
+			t.Run(fmt.Sprintf("%d/%d", guid, age), func(t *testing.T) {
+				s, f, c, r, advance := fargodeepRig(t, guid)
+				r.EngagerGuid = guid
+				ordinaryFargodeepPatrol(c, age)
+				if age > 3000 {
+					c.X -= 10
+				}
+				want, _ := fargodeepCreaturePosition(c)
+				plans := 0
+				s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					plans++
+					if distance(b, want) > .001 {
+						t.Fatal("stale header planned", b, want)
+					}
+					return []position{a, b}, nil
+				}
+				armFargodeep(t, s, r)
+				s.Tick(context.Background())
+				advance(200 * time.Millisecond)
+				s.Tick(context.Background())
+				got := state(t, s)
+				if plans != 1 || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
+					t.Fatal(got, plans, f.packets)
+				}
+			})
+		}
+	}
+}
+
+func TestFargodeepPatrolMidlegWaitsAndReplansWithoutGuessingOrLosingPartyGates(t *testing.T) {
+	s, f, c, r, advance := fargodeepRig(t, 5)
+	ordinaryFargodeepPatrol(c, 1000)
+	armFargodeep(t, s, r) // Reservation is safe; it cannot authorize a midleg pull.
+	s.Tick(context.Background())
+	if got := state(t, s); !got.Fargodeep.Active || got.Fargodeep.Phase != "waiting_for_fresh_patrol_position" || len(f.packets) != 0 {
+		t.Fatal(got, f.packets)
+	}
+	c.Trajectory.AgeMs, c.PositionAgeMs = 4000, 4000
+	s.Tick(context.Background())
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGAttackswing) != 1 {
+		t.Fatal(state(t, s), f.packets)
+	}
+	for _, mode := range []string{"owner", "party"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, c, r, _ := fargodeepRig(t, 5)
+			ordinaryFargodeepPatrol(c, 1000)
+			armFargodeep(t, s, r)
+			if mode == "owner" {
+				f.world.Owner = &worldv1.PlayerState{Guid: 3, Present: true}
+			} else {
+				f.party.Group.InGroup = false
+			}
+			s.Tick(context.Background())
+			if state(t, s).Fargodeep.Active || len(f.packets) != 0 {
+				t.Fatal(state(t, s), f.packets)
+			}
+		})
+	}
+}
+
+func TestFargodeepMovingPlanIsDiscardedAndTwelveFreshReplansAreBounded(t *testing.T) {
+	for _, eventuallyStable := range []bool{true, false} {
+		t.Run(fmt.Sprint(eventuallyStable), func(t *testing.T) {
+			s, f, c, r, advance := fargodeepRig(t, 5)
+			ordinaryFargodeepPatrol(c, 4000)
+			armFargodeep(t, s, r)
+			plans := 0
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+				plans++
+				if !eventuallyStable || plans <= 4 {
+					c.Trajectory.DestinationY += .2
+					c.PositionRevision++
+				}
+				return []position{a, b}, nil
+			}
+			for i := 0; i < 15 && s.fargodeep.active && countPackets(f, opcode.CMSGAttackswing) == 0; i++ {
+				advance(200 * time.Millisecond)
+				s.Tick(context.Background())
+			}
+			got := state(t, s)
+			if eventuallyStable {
+				if plans != 5 || countPackets(f, opcode.CMSGAttackswing) != 1 {
+					t.Fatal(got, plans, f.packets)
+				}
+			} else if plans != 12 || got.Fargodeep.Active || got.Fargodeep.Phase != "route_replan_limit" || countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.MSGMoveStartForward) != 0 {
+				t.Fatal(got, plans, f.packets)
+			}
+		})
+	}
+}
+
+func TestFargodeepPatrolChangingDuringFinalFacingCannotUseStaleRoute(t *testing.T) {
+	for _, mode := range []string{"endpoint moved", "midleg", "cyclic"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, c, r, advance := fargodeepRig(t, 4)
+			r.EngagerGuid = 4
+			ordinaryFargodeepPatrol(c, 4000)
+			armFargodeep(t, s, r)
+			s.Tick(context.Background())
+			advance(200 * time.Millisecond)
+			f.onClock = func() {
+				switch mode {
+				case "endpoint moved":
+					c.Trajectory.DestinationY += 3
+				case "midleg":
+					c.Trajectory.AgeMs, c.PositionAgeMs = 1000, 1000
+				case "cyclic":
+					c.Trajectory.Cyclic = true
+				}
+			}
+			s.Tick(context.Background())
+			if countPackets(f, opcode.CMSGCastSpell) != 0 || state(t, s).AssistAttempts != 0 {
+				t.Fatal(state(t, s), f.packets)
+			}
+		})
+	}
+}
+
+func TestFargodeepRogueWalksFreshVerifiedPatrolRouteWithoutJoel(t *testing.T) {
+	s, f, c, r, advance := fargodeepRig(t, 5)
+	c.X = -9806
+	ordinaryFargodeepPatrol(c, 4000)
+	plans := 0
+	s.planMapPath = func(_ context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+		plans++
+		path := []position{a}
+		for at := a.x + 1; at < b.x; at++ {
+			path = append(path, position{x: at, y: a.y, z: a.z})
+		}
+		return append(path, b), nil
+	}
+	armFargodeep(t, s, r)
+	for i := 0; i < 45 && s.fargodeep.active && countPackets(f, opcode.CMSGAttackswing) == 0; i++ {
+		advance(200 * time.Millisecond)
+		// A new actual ordinary header/endpoint may change while approaching.
+		if i == 4 {
+			c.Trajectory.DestinationX -= 1
+			c.PositionRevision++
+		}
+		s.Tick(context.Background())
+	}
+	got := state(t, s)
+	if !got.Fargodeep.Active || countPackets(f, opcode.MSGMoveStartForward) < 1 || countPackets(f, opcode.MSGMoveHeartbeat) < 1 || countPackets(f, opcode.CMSGAttackswing) != 1 || plans != 2 {
+		t.Fatal(got, plans, f.packets)
+	}
+	if distance(s.pos, position{x: c.Trajectory.DestinationX, y: c.Y, z: c.Z}) > 3.5 || got.Moving {
+		t.Fatal("did not stop in current melee range", got)
+	}
+}
+
+func TestFargodeepMovementClockRebindsPartyTargetAndOwner(t *testing.T) {
+	for _, mode := range []string{"owner", "party", "target changed", "midleg", "own quest", "explicit assist stop"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, c, r, advance := fargodeepRig(t, 5)
+			c.X += 10
+			ordinaryFargodeepPatrol(c, 4000)
+			armFargodeep(t, s, r)
+			s.Tick(context.Background())
+			advance(200 * time.Millisecond)
+			f.onClock = func() {
+				switch mode {
+				case "owner":
+					f.world.Owner = &worldv1.PlayerState{Guid: 3, Present: true}
+				case "party":
+					f.party.Group.InGroup = false
+				case "target changed":
+					c.Trajectory.DestinationY += 3
+				case "midleg":
+					c.Trajectory.AgeMs, c.PositionAgeMs = 1000, 1000
+				case "own quest":
+					f.world.SelfQuestLogKnown = false
+				case "explicit assist stop":
+					s.state.Assisting = false
+				}
+			}
+			s.Tick(context.Background())
+			if countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 {
+				t.Fatal(state(t, s), f.packets)
+			}
+		})
+	}
+}
