@@ -177,6 +177,54 @@ class CatchupTests(unittest.TestCase):
         p.time+=30;w.tick();self.assertTrue(w.done)
         self.assertEqual(w.status['phase'],'loot_uncollected_or_cleanup_unconfirmed_no_new_pull')
 
+    def test_retained_bound_death_recovers_missed_short_corpse_without_fake_credit_or_rearming(self):
+        for resumed in (False, True):
+            p=Party();w=p.worker();w.tick();row=w.data['encounters'][0];old_requests=copy.deepcopy(row['requests'])
+            for actor in p.rpcs.values():
+                actor.actions['fargodeep'].update(active=False,phase='target_death_observed')
+                original=actor.world
+                def missing(params,original=original):
+                    value=original(params);value.pop('requestedCreature',None);value['nearbyCreatures']=[];return value
+                actor.world=missing
+            if resumed:
+                row['phase']='unconfirmed'
+                # One actual participant's retained receipt is sufficient;
+                # other participants need not retain a matching death phase.
+                p.rpcs[1].actions['fargodeep']['phase']='target_position_unavailable_or_outside_range'
+                p.rpcs[5].actions['fargodeep']['phase']='navigation_step_failed'
+                w=p.worker(stored=copy.deepcopy(w.data));row=w.data['encounters'][0]
+            p.events=[];w.tick()
+            self.assertTrue(row['deadObserved']);self.assertEqual(row['phase'],'loot')
+            self.assertEqual(row['deathObservation']['source'],'actions_retained_bound_death')
+            self.assertEqual(row['deathObservation']['targetGuid'],str(TARGET))
+            self.assertFalse(w.done);self.assertEqual(p.events,[])
+            p.time+=3;w.tick()
+            self.assertEqual(row['phase'],'settled');self.assertFalse(w.done)
+            self.assertTrue(all(not r['quest47Complete'] and not r['quest60Complete'] and r['goldDust']==r['largeCandles']==0 for r in w.status['characters']))
+            self.assertEqual(set(row['requests']),set(old_requests));self.assertEqual(p.events,[])
+
+    def test_retained_death_requires_exact_target_engager_and_same_body(self):
+        for mode in ('wrong_target','wrong_engager','not_death','still_active','body_changed'):
+            p=Party();w=p.worker();w.tick();row=w.data['encounters'][0]
+            for actor in p.rpcs.values():
+                actor.actions['fargodeep'].update(active=False,phase='target_death_observed')
+                if mode=='wrong_target':actor.actions['fargodeep']['targetGuid']=str(TARGET+1)
+                if mode=='wrong_engager':actor.actions['fargodeep']['engagerGuid']='5'
+                if mode=='not_death':actor.actions['fargodeep']['phase']='navigation_unavailable'
+                if mode=='still_active':actor.actions['fargodeep']['active']=True
+                original=actor.world
+                def missing(params,original=original):
+                    value=original(params);value.pop('requestedCreature',None);value['nearbyCreatures']=[];return value
+                actor.world=missing
+            p.events=[]
+            if mode=='body_changed':
+                p.rpcs[4].session='replacement-body'
+                with self.assertRaises(cave.Error):w.tick()
+            else:w.tick()
+            self.assertFalse(row['deadObserved'],mode)
+            self.assertNotIn('deathObservation',row)
+            self.assertFalse(any(request['enabled'] for _,request in p.events),mode)
+
     def test_human_control_change_or_death_yields_without_reenable(self):
         for mode in ('follow','assist','loot','dead'):
             p=Party();w=p.worker();w.tick();p.events=[]

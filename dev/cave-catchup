@@ -444,11 +444,22 @@ class Catchup:
             if row: self.cleanup(row)
             self.done = True; self.status['phase'] = 'yielded_to_normal_death_recovery'; return
         if row:
-            for scene in scenes.values():
+            for guid, scene in scenes.items():
                 target = scene['world'].get('requestedCreature')
-                if (isinstance(target, dict) and number(target.get('guid', 0)) == row['target'] and target.get('present') is True
-                        and target.get('aliveKnown') is True and target.get('alive') is False and target.get('healthKnown') is True and number(target.get('health', 0)) == 0):
-                    row['deadObserved'] = True; self.persist()
+                world_dead = (isinstance(target, dict) and number(target.get('guid', 0)) == row['target'] and target.get('present') is True
+                        and target.get('aliveKnown') is True and target.get('alive') is False and target.get('healthKnown') is True and number(target.get('health', 0)) == 0)
+                terminal = scene['actions'].get('fargodeep') or {}
+                retained_dead = (self.scope(scene['actions'], row) and terminal.get('active') is not True
+                    and terminal.get('phase') == 'target_death_observed')
+                if not row['deadObserved'] and (world_dead or retained_dead):
+                    row['deadObserved'] = True
+                    row['deathObservation'] = {'source': 'world_current_corpse' if world_dead else 'actions_retained_bound_death',
+                        'observerGuid': guid, 'sessionId': self.sessions[str(guid)], 'targetGuid': str(row['target']), 'engagerGuid': row['engager']}
+                    self.persist()
+            # A positive bound receipt resolves only the death observation.
+            # It never re-arms the old GUID or supplies item/quest progress.
+            if row['deadObserved'] and row['phase'] in ('arming', 'unconfirmed'):
+                row['phase'] = 'active'; self.persist()
             if row['phase'] == 'unconfirmed':
                 self.cleanup(row); self.done = True; self.status['phase'] = 'encounter_outcome_unconfirmed_no_replay'; return
             if row['phase'] in ('arming', 'active'):
