@@ -1187,7 +1187,7 @@ class RPC:
                           "buddy-party.state", "buddy-party.accept",
                           "buddy-world.snapshot",
                           "buddy-quests.discover", "buddy-quests.state", "buddy-quests.offer", "buddy-quests.accept",
-                          "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward",
+                          "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward", "buddy-quests.accept_shared",
                           "buddy-loot.state", "buddy-loot.enable",
                           "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
                           "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
@@ -2106,6 +2106,82 @@ class Conversation:
         self.replies = 0
         self.initialized = False
         self.stopped = stopped
+        self.shared_quest_attempts = set()
+
+    def poll_shared_quest(self):
+        # The standing three-character worker owns main-party shares. Nix's
+        # normal brain handles only his own actual Joel share, before the LLM.
+        if self.character_guid != 8 or self.player_guid != 3 or self.character_class != "warlock":
+            return
+        def own_log(state):
+            rows = state.get("questLog", [])
+            if state.get("questLogKnown") is not True or not isinstance(rows, list) or len(rows) != 25:
+                raise ConversationError("Complete own shared-quest log unavailable")
+            slots, quests = set(), set()
+            for row in rows:
+                if not isinstance(row, dict): raise ConversationError("Own shared-quest log invalid")
+                slot, qid = integer(row.get("slot", 0)), integer(row.get("questId", 0))
+                if slot >= 25 or slot in slots or qid >= 2**32 or qid and qid in quests:
+                    raise ConversationError("Own shared-quest log invalid")
+                slots.add(slot)
+                if qid: quests.add(qid)
+            return quests
+        try:
+            party = self.rpc.call("buddy-party.state", {})
+            state = self.rpc.call("buddy-quests.state", {})
+            session = state.get("sessionId")
+            if (not isinstance(session, str) or not 1 <= len(session) <= 128
+                    or party.get("sessionId") != session or not owner_party_known(party.get("group"), 8)):
+                raise ConversationError("Current Nix and Joel party unavailable")
+            if state.get("sharedQuestsEnabled") is not True: return
+            share = state.get("pendingShare", {})
+            if not isinstance(share, dict) or not share: return
+            quest = share.get("quest", {})
+            if not isinstance(quest, dict): return
+            qid, seq = integer(quest.get("questId", 0)), integer(share.get("sequence", 0))
+            if (not 0 < qid < 2**32 or not seq or integer(share.get("sharerGuid", 0)) != 3
+                    or share.get("kind") not in ("SHARED_DETAILS", "PARTY_CONFIRM", "SHARED_AUTOCOMPLETE", 1, 2, 3)):
+                return
+            self.status(sharedQuestId=qid, sharedQuestSequence=str(seq), sharedQuestBodySessionId=session)
+            own = own_log(state)
+            acceptance = state.get("lastSharedAcceptance", {})
+            if (isinstance(acceptance, dict) and acceptance.get("status") in ("CONFIRMED_IN_LOG", 2)
+                    and integer(acceptance.get("shareSequence", 0)) == seq
+                    and integer(acceptance.get("sharerGuid", 0)) == 3
+                    and integer(acceptance.get("questId", 0)) == qid and qid in own
+                    and integer(state.get("questLogRevision", 0)) >= integer(acceptance.get("confirmedLogRevision", 0))
+                    > integer(acceptance.get("baselineLogRevision", 0))):
+                self.status(sharedQuestPhase="confirmed_in_own_quest_log")
+                return
+            if qid in own:
+                self.status(sharedQuestPhase="already_in_own_quest_log")
+                return
+            key = (session, seq)
+            if share.get("acceptRequested") is True or key in self.shared_quest_attempts:
+                self.status(sharedQuestPhase="waiting_for_server_quest_log")
+                return
+            if (state.get("actionInFlight") is True or quest.get("available") is not True
+                    or integer(share.get("expiresInMs", 0)) == 0):
+                self.status(sharedQuestPhase="waiting_for_available_quest_operation")
+                return
+            final = self.rpc.call("buddy-party.state", {})
+            if final.get("sessionId") != session or final.get("group") != party.get("group"):
+                raise ConversationError("Shared-quest party changed")
+            if self.stopped(): raise Stopped("Conversation stop requested")
+            if len(self.shared_quest_attempts) >= 128:
+                self.status(sharedQuestPhase="shared_quest_attempt_capacity_reached")
+                return
+            # Reserve before transport. Backend also consumes the exact pending
+            # sequence before its write, including across this brain's restart.
+            self.shared_quest_attempts.add(key)
+            self.status(sharedQuestPhase="accepting_joels_shared_quest")
+            self.rpc.call("buddy-quests.accept_shared", {"sessionId": session,
+                "shareSequence": str(seq), "sharerGuid": "3", "questId": qid})
+            self.status(sharedQuestPhase="waiting_for_server_quest_log")
+        except Stopped:
+            raise
+        except ConversationError:
+            self.status(sharedQuestPhase="reconciling_shared_quest_request")
 
     def baseline(self):
         result = self.rpc.call("buddy-chat.poll", {"afterSequence": "0", "limit": 256})
@@ -2142,6 +2218,7 @@ class Conversation:
     def tick(self):
         if self.controls:
             self.controls.refresh()
+        self.poll_shared_quest()
         if not self.initialized:
             self.baseline()
             return

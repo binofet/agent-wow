@@ -1763,5 +1763,111 @@ class BoundaryTests(unittest.TestCase):
                     self.assertTrue(converse.is_locked(second))
 
 
+class NixSharedQuestTests(unittest.TestCase):
+    def rig(self, **kwargs):
+        state = dict(sessionId="aw-current-nix", sharedQuestsEnabled=True, questLogKnown=True,
+            questLogRevision="7", questLog=[dict(slot=i, questId=218 if i == 0 else 2160 if i == 1 else 0) for i in range(25)],
+            pendingShare=dict(sequence="1", sharerGuid="3", kind="SHARED_DETAILS", expiresInMs="30000",
+                quest=dict(questId=9, title="The Killing Fields", available=True)))
+        party = dict(sessionId="aw-current-nix", group=dict(known=True, inGroup=True, leaderGuid="3",
+            members=[dict(guid=str(g), self=g == 8, online=True, name="Joel" if g == 3 else "Nixwick" if g == 8 else "Peer") for g in (1,3,4,5,8)]))
+        class RPC:
+            def __init__(self): self.calls=[]; self.state=state; self.party=party; self.timeout=False; self.tail=None
+            def call(self, method, params):
+                self.calls.append((method, copy.deepcopy(params)))
+                if method == "buddy-party.state":
+                    out = copy.deepcopy(self.party)
+                    if self.tail and sum(m == method for m,p in self.calls) % 2 == 0: self.tail(out)
+                    return out
+                if method == "buddy-quests.state": return copy.deepcopy(self.state)
+                if method == "buddy-chat.poll": return poll(sessionId="SeparateChatEpoch123")
+                if method == "buddy-quests.accept_shared":
+                    if self.timeout: raise converse.ConversationError("Response unavailable")
+                    self.state["pendingShare"]["acceptRequested"] = True
+                    self.state["lastSharedAcceptance"] = dict(shareSequence="1", sharerGuid="3", questId=9,
+                        status="REQUESTED", baselineLogRevision="7", transportWritten=True)
+                    return dict(transportWritten=True, state=copy.deepcopy(self.state))
+                raise AssertionError(method)
+        rpc=RPC(); events=[]; brain=FakeBrain()
+        loop=converse.Conversation(rpc,brain,character_guid=8,character_name="Nixwick",character_class="warlock",
+            status=lambda **fields:events.append(fields),**kwargs)
+        return loop,rpc,events,brain
+
+    def test_real_nix_share9_is_accepted_once_before_llm_with_distinct_core_chat_sessions(self):
+        loop,rpc,events,brain=self.rig();loop.tick();loop.tick()
+        writes=[p for m,p in rpc.calls if m=="buddy-quests.accept_shared"]
+        self.assertEqual(writes,[dict(sessionId="aw-current-nix",shareSequence="1",sharerGuid="3",questId=9)])
+        self.assertLess(next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-quests.accept_shared"),
+                        next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-chat.poll"))
+        self.assertEqual(loop.session_id,"SeparateChatEpoch123")
+        self.assertFalse(any(e.get("sharedQuestPhase")=="confirmed_in_own_quest_log" for e in events))
+        rpc.state["questLog"][2]["questId"]=9;rpc.state["questLogRevision"]="8"
+        rpc.state["lastSharedAcceptance"].update(status="CONFIRMED_IN_LOG",confirmedLogRevision="8")
+        loop.tick()
+        self.assertTrue(any(e.get("sharedQuestPhase")=="confirmed_in_own_quest_log" for e in events))
+        self.assertEqual(len([m for m,p in rpc.calls if m=="buddy-quests.accept_shared"]),1)
+        self.assertEqual(brain.histories,[]);self.assertFalse(any(m in ("buddy-chat.send","buddy-chat.emote") for m,p in rpc.calls))
+
+    def test_ambiguous_accept_is_reserved_locally_and_backend_consumption_survives_brain_restart(self):
+        loop,rpc,events,_=self.rig();rpc.timeout=True;loop.tick();loop.tick()
+        self.assertEqual(len([m for m,p in rpc.calls if m=="buddy-quests.accept_shared"]),1)
+        self.assertFalse(any(e.get("sharedQuestPhase")=="confirmed_in_own_quest_log" for e in events))
+        rpc.state["pendingShare"]["acceptRequested"]=True
+        replacement=converse.Conversation(rpc,FakeBrain(),character_guid=8,character_class="warlock")
+        replacement.tick()
+        self.assertEqual(len([m for m,p in rpc.calls if m=="buddy-quests.accept_shared"]),1)
+
+    def test_foreign_disabled_busy_expired_unknown_log_and_body_changes_do_not_accept(self):
+        changes=[lambda r:r.state.update(sharedQuestsEnabled=False),lambda r:r.state.update(actionInFlight=True),
+            lambda r:r.state.update(questLogKnown=False),lambda r:r.state.update(questLog=r.state['questLog'][:2]),
+            lambda r:r.state['questLog'][2].update(slot=1),lambda r:r.state['pendingShare'].update(sharerGuid="5"),
+            lambda r:r.state['pendingShare'].update(sequence="0"),lambda r:r.state['pendingShare'].update(expiresInMs="0"),
+            lambda r:r.state['pendingShare'].update(kind="SHARED_KIND_NONE"),lambda r:r.state['pendingShare']['quest'].update(available=False),
+            lambda r:r.party.update(sessionId="aw-replacement"),lambda r:r.party['group']['members'][1].update(online=False),
+            lambda r:setattr(r,'tail',lambda p:p.update(sessionId="aw-replaced-during-read"))]
+        for change in changes:
+            with self.subTest(change=change):
+                loop,rpc,_,_=self.rig();change(rpc);loop.tick()
+                self.assertFalse(any(m=="buddy-quests.accept_shared" for m,p in rpc.calls))
+
+    def test_transport_or_wrong_receipt_never_claims_confirmed_own_log(self):
+        for change in (lambda s:s['lastSharedAcceptance'].update(status='REQUESTED'),lambda s:s['lastSharedAcceptance'].update(questId=10),
+                       lambda s:s['lastSharedAcceptance'].update(shareSequence="2"),
+                       lambda s:s['lastSharedAcceptance'].update(confirmedLogRevision="7")):
+            loop,rpc,events,_=self.rig();loop.tick()
+            rpc.state['questLog'][2]['questId']=9;rpc.state['questLogRevision']="8"
+            rpc.state['lastSharedAcceptance'].update(status="CONFIRMED_IN_LOG",confirmedLogRevision="8")
+            change(rpc.state)
+            loop.tick()
+            self.assertFalse(any(e.get('sharedQuestPhase')=='confirmed_in_own_quest_log' for e in events))
+
+    def test_main_three_and_other_owner_profiles_keep_existing_chat_poll_only(self):
+        for guid,owner,role in ((1,3,'priest'),(4,3,'mage'),(5,3,'rogue'),(8,7,'warlock'),(8,3,'mage')):
+            rpc=FakeRPC([poll()]);loop=converse.Conversation(rpc,FakeBrain(),character_guid=guid,player_guid=owner,character_class=role)
+            loop.tick();self.assertEqual([m for m,p in rpc.calls],['buddy-chat.poll'])
+
+    def test_stop_before_accept_and_attempt_capacity_do_not_dispatch(self):
+        for stop,capacity in ((True,0),(False,128)):
+            loop,rpc,_,_=self.rig(stopped=lambda:stop)
+            loop.shared_quest_attempts={("aw-previous",i) for i in range(capacity)}
+            if stop:
+                with self.assertRaises(converse.Stopped):loop.tick()
+            else:loop.tick()
+            self.assertFalse(any(m=="buddy-quests.accept_shared" for m,p in rpc.calls))
+
+    def test_normal_rpc_whitelist_accepts_exact_shared_request_without_a_model_action(self):
+        rpc=converse.RPC('http://127.0.0.1:8402/rpc');seen=[]
+        class Reply:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,limit):return json.dumps(dict(jsonrpc='2.0',id=rpc.request_id,result=dict(transportWritten=True))).encode()
+        def open_reply(request,timeout):seen.append(json.loads(request.data));return Reply()
+        params=dict(sessionId='aw-current-nix',shareSequence='1',sharerGuid='3',questId=9)
+        with patch.object(rpc,'opener',types.SimpleNamespace(open=open_reply)):
+            self.assertTrue(rpc.call('buddy-quests.accept_shared',params)['transportWritten'])
+        self.assertEqual(seen[0]['method'],'buddy-quests.accept_shared');self.assertEqual(seen[0]['params'],params)
+        self.assertNotIn('ACCEPT_SHARED',converse.ACTIONS)
+
+
 if __name__ == "__main__":
     unittest.main()
