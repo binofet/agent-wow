@@ -17,6 +17,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -643,9 +644,9 @@ func safePlayers(snapshot *worldv1.SnapshotResponse, selfGUID uint64) string {
 	if !a.MovementFlagsKnown || !b.MovementFlagsKnown {
 		return "movement_flags_unknown"
 	}
-	// Only ordinary ground movement and walking are supported. Transports,
-	// swimming, falling, flying, spline movement and extra flags stop this slice.
-	if (a.MovementFlags|b.MovementFlags)&^uint32(0x1ff) != 0 || a.ExtraMovementFlags != 0 || b.ExtraMovementFlags != 0 {
+	// Passive water-walk/slow-fall/hover status is compatible with ground
+	// movement. Actual transports, swimming, falling and flight remain excluded.
+	if !movementflags.GroundCompatible(a.MovementFlags, a.ExtraMovementFlags) || !movementflags.GroundCompatible(b.MovementFlags, b.ExtraMovementFlags) {
 		return "unsupported_movement_state"
 	}
 	if b.MovementFlags&0xff != 0 && b.PositionAgeMs > 2000 {
@@ -806,8 +807,19 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 			return false
 		}
 	}
+	if moving && !s.recoveryOwnsLocked() && (!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags)) {
+		s.state.Reason = "movement_current_ground_mode_unsupported"
+		return false
+	}
 	follow, heal, assist := s.state.Following, s.state.Healing, s.state.Assisting
 	payload := movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)
+	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {
+		// These actual passive status bits add no optional MovementInfo tail.
+		// Retain them rather than pretending the ordinary move removed an aura.
+		at := len(packedGUID(s.selfGUID))
+		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&movementflags.PassiveModifiers
+		binary.LittleEndian.PutUint32(payload[at:], flags)
+	}
 	if snapshotErr == nil && w.Self.AliveKnown && !w.Self.Alive && w.Self.PlayerFlags&ghostFlag != 0 {
 		if moving && (!s.recoveryOwnsLocked() || !ghostSelf(w, s.selfGUID)) {
 			s.state.Reason = "ghost_movement_requires_recovery_custody"

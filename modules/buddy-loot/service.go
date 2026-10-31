@@ -14,6 +14,7 @@ import (
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -323,7 +324,7 @@ func safeOwnQuestLootContext(world *worldv1.SnapshotResponse, p *actionsv1.Clien
 		return false
 	}
 	self := world.Self
-	if !self.Present || !self.AliveKnown || !self.Alive || !self.HealthKnown || self.Health == 0 || !self.MapKnown || self.MapId != 0 || !self.PositionKnown || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !self.MovementFlagsKnown || self.MovementFlags&^uint32(0x1ff) != 0 || self.ExtraMovementFlags != 0 || !self.SpeedsKnown || math.IsNaN(float64(self.RunSpeed)) || math.IsInf(float64(self.RunSpeed), 0) || math.Abs(float64(self.RunSpeed)-7) > 0.01 {
+	if !self.Present || !self.AliveKnown || !self.Alive || !self.HealthKnown || self.Health == 0 || !self.MapKnown || self.MapId != 0 || !self.PositionKnown || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !self.MovementFlagsKnown || !movementflags.GroundCompatible(self.MovementFlags, self.ExtraMovementFlags) || !self.SpeedsKnown || math.IsNaN(float64(self.RunSpeed)) || math.IsInf(float64(self.RunSpeed), 0) || math.Abs(float64(self.RunSpeed)-7) > 0.01 {
 		return false
 	}
 	if !p.Known || !p.MapKnown || p.MapId != 0 {

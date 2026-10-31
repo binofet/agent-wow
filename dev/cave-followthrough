@@ -296,7 +296,7 @@ class Actor:
                     or any(row.get(k) is not True for k in ("present", "mapKnown", "positionKnown", "aliveKnown", "alive"))
                     or integer(row.get("mapId", 0)) != 0 or integer(row.get("npcFlags", 0)) & 2 == 0
                     or integer(row.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000)
-                    or integer(row.get("movementFlags", 0)) != 0):
+                    or integer(row.get("movementFlags", 0)) & ~0x70000000):
                 continue
             trajectory = row.get("trajectory", {})
             if trajectory.get("known") is True and (trajectory.get("stopped") is not True or trajectory.get("transportRelative") is True):

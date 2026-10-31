@@ -86,7 +86,7 @@ def distance(a, b): return math.dist(tuple(a[k] for k in ('x', 'y', 'z')), tuple
 
 
 def ordinary_patrol(row):
-    if not point(row) or number(row.get('movementFlags', 0)) & ~0x080001ff: return False
+    if not point(row) or number(row.get('movementFlags', 0)) & ~0x780001ff: return False
     t = row.get('trajectory')
     if (not isinstance(t, dict) or t.get('known') is not True or t.get('stopped') is True
             or t.get('cyclic') is True or t.get('transportRelative') is True or t.get('destinationKnown') is not True
@@ -98,7 +98,7 @@ def ordinary_patrol(row):
 
 def creature_position(row):
     """Actual fresh patrol header or bounded elapsed endpoint, never interpolation."""
-    if not point(row) or number(row.get('movementFlags', 0)) & ~0x080001ff: return None
+    if not point(row) or number(row.get('movementFlags', 0)) & ~0x780001ff: return None
     t = row.get('trajectory') or {}
     if not isinstance(t, dict): return None
     if t.get('known') is True:
@@ -407,7 +407,7 @@ class Catchup:
             if ((scene['world'].get('owner') or {}).get('present') is True
                     or own.get('movementFlagsKnown') is not True
                     or number(own.get('unitFlags', 0)) & (0x1|0x4|0x40000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
-                    or number(own.get('movementFlags', 0)) & ~0x1ff or number(own.get('extraMovementFlags', 0))
+                    or number(own.get('movementFlags', 0)) & ~0x700001ff or number(own.get('extraMovementFlags', 0))
                     or a.get('autoAttacking') is True or a.get('autoAttackRequested') is True
                     or a.get('fargodeep', {}).get('active') is True): return False
             for creature in scene['world'].get('nearbyCreatures', []):

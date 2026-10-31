@@ -11,6 +11,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -97,7 +98,7 @@ func explorationScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint
 	p := w.Self
 	const unsafe = uint32(0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
 	if !p.Present || !p.MapKnown || p.MapId != 0 || !p.PositionKnown || !p.AliveKnown || !p.Alive ||
-		!p.MovementFlagsKnown || p.MovementFlags & ^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 ||
+		!p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) ||
 		!p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 {
 		return status.Error(codes.FailedPrecondition, "exploration requires a safely observed alive ground character on map0")
 	}

@@ -6,6 +6,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -28,7 +29,7 @@ func giverEnds(guid uint64, quest uint32) bool {
 }
 
 func objectInteraction(w *worldv1.SnapshotResponse, a *actionsv1.State, o *worldv1.GameObjectState, self uint64) (string, float64, bool) {
-	if self == 0 || w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.Present || !w.Self.MapKnown || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || w.Self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !w.Self.MovementFlagsKnown || w.Self.MovementFlags & ^uint32(0x1ff) != 0 || w.Self.ExtraMovementFlags != 0 {
+	if self == 0 || w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.Present || !w.Self.MapKnown || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || w.Self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) {
 		return "character_not_observed_safe_for_quest_object", 0, false
 	}
 	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != w.Self.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) {

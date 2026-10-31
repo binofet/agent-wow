@@ -9,6 +9,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -77,7 +78,7 @@ func (r harvestRecipe) context(w *worldv1.SnapshotResponse, a *actionsv1.State, 
 		return false
 	}
 	p, pos := w.Self, a.Position
-	if !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.MapKnown || p.MapId != 0 || !p.UnitFlagsKnown || p.UnitFlags&(0x1|0x4|0x2000|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !p.MovementFlagsKnown || p.MovementFlags&^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 {
+	if !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.MapKnown || p.MapId != 0 || !p.UnitFlagsKnown || p.UnitFlags&(0x1|0x4|0x2000|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return false
 	}
 	if !pos.Known || !pos.MapKnown || pos.MapId != p.MapId {

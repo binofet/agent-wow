@@ -1560,7 +1560,7 @@ class BuddyControls:
                        or abs(value) >= 40000 for value in coordinates):
                     continue
                 flags = integer(creature.get("movementFlags", "0"))
-                if flags & ~0x1ff or flags & 0xff and integer(creature.get("positionAgeMs", "0")) > 1500:
+                if flags & ~0x700001ff or flags & 0xff and integer(creature.get("positionAgeMs", "0")) > 1500:
                     continue
                 pos = actions["position"]
                 distance = math.sqrt(sum((creature.get(k, 0) - pos.get(k, 0)) ** 2 for k in ("x", "y", "z")))
@@ -1579,7 +1579,7 @@ class BuddyControls:
         if (integer(own.get("guid", "0")) != character_guid
                 or any(own.get(k) is not True for k in ("present", "mapKnown", "aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
                 or integer(own.get("unitFlags", "0")) & (0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
-                or integer(own.get("movementFlags", "0")) & ~0x1ff
+                or integer(own.get("movementFlags", "0")) & ~0x700001ff
                 or integer(own.get("extraMovementFlags", "0")) != 0
                 or any(actions.get(k) is True for k in ("castPending", "motionUnconfirmed", "autoAttackUnconfirmed", "autoAttacking", "autoAttackRequested"))
                 or pos.get("known") is not True or pos.get("mapKnown") is not True

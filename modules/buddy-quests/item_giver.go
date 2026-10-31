@@ -5,6 +5,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -90,7 +91,7 @@ func ownedDeed(w *worldv1.SnapshotResponse, guid uint64) (itemGiverBinding, erro
 func itemGiverScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64) bool {
 	if w == nil || w.Self == nil || w.Self.Guid != self || self == 0 || !w.Self.Present || !w.Self.LevelKnown || w.Self.Level < 8 || !w.Self.AliveKnown || !w.Self.Alive ||
 		!w.Self.UnitFlagsKnown || w.Self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 ||
-		!w.Self.MovementFlagsKnown || w.Self.MovementFlags & ^uint32(0x1ff) != 0 || w.Self.ExtraMovementFlags != 0 {
+		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) {
 		return false
 	}
 	return a != nil && !a.Moving && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackUnconfirmed && !a.Traveling && !a.Practicing && questPositionBound(w, a, self)

@@ -250,7 +250,7 @@ class Worker:
         if any(n.get('present') is True and n.get('alive') is True and n.get('attackVictimKnown') is True and integer(n.get('attackVictimGuid',0)) in protected and integer(n.get('attackAgeMs',0))<=5000 for n in creatures):
             raise Error('Harvest yields to an actual current attacker')
         owner=w.get('owner') or {}
-        if owner.get('present') is not True or not point(owner) or integer(owner.get('guid',0))!=3 or owner.get('movementFlagsKnown') is not True or integer(owner.get('movementFlags',0))&~0x1ff or integer(owner.get('mapId',0))!=integer(own.get('mapId',0)):
+        if owner.get('present') is not True or not point(owner) or integer(owner.get('guid',0))!=3 or owner.get('movementFlagsKnown') is not True or integer(owner.get('movementFlags',0))&~0x700001ff or integer(owner.get('mapId',0))!=integer(own.get('mapId',0)):
             raise Error('Harvest waits for the observed owner to stop')
         if integer(owner.get('movementFlags',0))&0xff and integer(owner.get('positionAgeMs',0))>2000:
             raise Error('Harvest waits for the observed owner to stop')

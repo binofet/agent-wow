@@ -271,7 +271,7 @@ class Learner:
             if (not position(npc) or any(npc.get(key) is not True for key in ("present", "aliveKnown", "alive"))
                     or integer(npc.get("mapId", 0)) != integer(pos.get("mapId", 0))
                     or integer(npc.get("npcFlags", 0)) & 0x50 != 0x50
-                    or integer(npc.get("movementFlags", 0)) != 0
+                    or integer(npc.get("movementFlags", 0)) & ~0x70000000
                     or integer(npc.get("unitFlags", 0)) & 0x80000):
                 continue
             guid, entry = integer(npc.get("guid", 0)), integer(npc.get("entry", 0))

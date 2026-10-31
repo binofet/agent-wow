@@ -7,6 +7,7 @@ import (
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -27,7 +28,7 @@ func safeHealingPlayer(p *worldv1.PlayerState, mapID uint32) bool {
 	if p == nil || p.Guid == 0 || p.Guid>>48 != 0 || !p.Present || !p.MapKnown || p.MapId != mapID || !p.PositionKnown || !finite(playerPosition(p)) || !p.AliveKnown || !p.Alive || !p.UnitFlagsKnown || p.PlayerFlags&0x10 != 0 || p.DynamicFlags&0x20 != 0 {
 		return false
 	}
-	if !p.MovementFlagsKnown || p.MovementFlags&^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 || p.MovementFlags&0xff != 0 && p.PositionAgeMs > 2000 {
+	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || p.MovementFlags&0xff != 0 && p.PositionAgeMs > 2000 {
 		return false
 	}
 	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)

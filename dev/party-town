@@ -179,7 +179,7 @@ class Supervisor:
         pos = a.get("position", {})
         if (any(p.get(k) is not True for k in ("present", "mapKnown", "aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
                 or integer(p.get("unitFlags", 0)) & (1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
-                or integer(p.get("movementFlags", 0)) & ~0x1ff or integer(p.get("extraMovementFlags", 0))
+                or integer(p.get("movementFlags", 0)) & ~0x700001ff or integer(p.get("extraMovementFlags", 0))
                 or not point(pos, "known") or integer(pos.get("mapId", 0)) != integer(p.get("mapId", 0))):
             raise Error("Town needs a safe known living character")
         if any(a.get(k) is True for k in ("motionUnconfirmed", "castPending", "practicing", "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed")):

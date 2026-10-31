@@ -80,7 +80,7 @@ class AreaSweep(party.PartyQuestSync):
                     or self.anchor is None or self.anchor.get("mapKnown") is not True
                     or integer(creature.get("mapId", 0)) != integer(self.anchor.get("mapId", 0))
                     or integer(creature.get("npcFlags", 0)) & 2 == 0
-                    or integer(creature.get("movementFlags", 0)) != 0
+                    or integer(creature.get("movementFlags", 0)) & ~0x70000000
                     or integer(creature.get("unitFlags", 0)) & (0x1 | 0x4 | 0x80000 | 0x100000 | 0x2000000)
                     or party.distance(self.anchor, creature) > 120):
                 continue

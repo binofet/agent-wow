@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 )
 
 func playerGUID(g uint64) bool { return g != 0 && g>>48 == 0 }
@@ -28,7 +29,7 @@ func WorldReason(w *worldv1.SnapshotResponse, self uint64, protected []uint64) s
 	if w == nil || w.Self == nil || !playerGUID(self) || w.Self.Guid != self || !w.Self.Present || !w.Self.MapKnown || !w.Self.PositionKnown || !finite(w.Self) || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.HealthKnown || w.Self.Health == 0 || w.Self.MaxHealth == 0 || w.Self.Health > w.Self.MaxHealth || !w.Self.UnitFlagsKnown || w.Self.PlayerFlags&0x10 != 0 || w.Self.DynamicFlags&0x20 != 0 {
 		return "harvest_own_living_combat_observation_required"
 	}
-	if !w.Self.MovementFlagsKnown || w.Self.MovementFlags&^uint32(0x1ff) != 0 || w.Self.ExtraMovementFlags != 0 {
+	if !w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) {
 		return "harvest_own_ordinary_ground_movement_required"
 	}
 	const unsafeSelf = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
@@ -87,7 +88,7 @@ func WorldReason(w *worldv1.SnapshotResponse, self uint64, protected []uint64) s
 		// fresh moving pose; AFK/stale moving actors grant no healing proof.
 		const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
 		if p.HealthKnown && p.MaxHealth > 0 && p.Health > 0 && p.Health <= p.MaxHealth && p.AliveKnown && p.Alive && uint64(p.Health)*100 < uint64(p.MaxHealth)*85 && p.PositionKnown && finite(p) && p.PlayerFlags&(0x10|2) == 0 && p.DynamicFlags&0x20 == 0 && p.UnitFlags&unsafe == 0 {
-			if p.Guid == self || p.MovementFlagsKnown && p.ExtraMovementFlags == 0 && p.MovementFlags&^uint32(0x1ff) == 0 && (p.MovementFlags&0xff == 0 || p.PositionAgeMs <= 2000) {
+			if p.Guid == self || p.MovementFlagsKnown && movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) && (p.MovementFlags&0xff == 0 || p.PositionAgeMs <= 2000) {
 				return "harvest_observed_healing_need_takes_priority"
 			}
 		}

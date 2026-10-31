@@ -7,6 +7,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -77,7 +78,7 @@ func fargodeepLootContext(w *worldv1.SnapshotResponse, a *actionsv1.State, self,
 	for _, guid := range []uint64{1, 4, 5} {
 		p := players[guid]
 		const unsafe = uint32(0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
-		if p == nil || !p.Present || !p.MapKnown || p.MapId != 0 || !p.PositionKnown || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || p.MaxHealth == 0 || p.Health > p.MaxHealth || uint64(p.Health)*100 < uint64(p.MaxHealth)*85 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || p.PlayerFlags&2 != 0 || !p.MovementFlagsKnown || p.ExtraMovementFlags != 0 || p.MovementFlags&^uint32(0x1ff) != 0 || guid != self && p.MovementFlags&0x1ff != 0 {
+		if p == nil || !p.Present || !p.MapKnown || p.MapId != 0 || !p.PositionKnown || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || p.MaxHealth == 0 || p.Health > p.MaxHealth || uint64(p.Health)*100 < uint64(p.MaxHealth)*85 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || p.PlayerFlags&2 != 0 || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || guid != self && p.MovementFlags&0x1ff != 0 {
 			return false
 		}
 		x, y, z := p.X, p.Y, p.Z

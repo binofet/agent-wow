@@ -7,6 +7,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	qv1 "github.com/agent-wow/agent-wow/modules/buddy-quest-items/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 )
 
 type view struct {
@@ -134,7 +135,7 @@ func safe(v view) string {
 	if !p.UnitFlagsKnown || p.UnitFlags&(1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000) != 0 || p.DynamicFlags&0x20 != 0 {
 		return "own_combat_or_unsafe_state"
 	}
-	if !p.MovementFlagsKnown || p.MovementFlags&^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 {
+	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "own_unsupported_movement_state"
 	}
 	if a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Traveling || a.Practicing {

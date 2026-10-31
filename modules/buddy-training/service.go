@@ -13,6 +13,7 @@ import (
 	trainingv1 "github.com/agent-wow/agent-wow/modules/buddy-training/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -161,7 +162,7 @@ func typedTrainerGate(w *worldv1.SnapshotResponse, a *actionsv1.State, c *worldv
 	if p == nil || !p.Present || !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&0x80000 != 0 || !p.ClassKnown || !p.LevelKnown {
 		return "own_alive_out_of_combat_class_and_level_required"
 	}
-	if !p.MapKnown || !p.MovementFlagsKnown || p.MovementFlags&^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 {
+	if !p.MapKnown || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) {
 		return "ordinary_ground_observation_required"
 	}
 	if !positionValid(a.Position) || a.Position.MapId != p.MapId || a.MotionUnconfirmed || a.AutoAttackUnconfirmed || a.AutoAttacking || a.CastPending || a.Moving {

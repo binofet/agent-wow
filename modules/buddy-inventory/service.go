@@ -10,6 +10,7 @@ import (
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -257,7 +258,7 @@ func (s *Service) idleLocked(leased bool) string {
 		return "observed_owner_combat_has_priority"
 	}
 	const unsafe = uint32(1 | 4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
-	if !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || !p.MapKnown || !p.PositionKnown || !finite(p.X) || !finite(p.Y) || !finite(p.Z) || !p.MovementFlagsKnown || p.MovementFlags&^uint32(0x1ff) != 0 || p.ExtraMovementFlags != 0 || !p.ChannelObjectKnown || p.ChannelObjectGuid != 0 || !p.ChannelSpellKnown || p.ChannelSpellId != 0 {
+	if !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || !p.MapKnown || !p.PositionKnown || !finite(p.X) || !finite(p.Y) || !finite(p.Z) || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || !p.ChannelObjectKnown || p.ChannelObjectGuid != 0 || !p.ChannelSpellKnown || p.ChannelSpellId != 0 {
 		return "alive_safe_ground_nonchanneling_character_required"
 	}
 	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) || a.Moving || a.Traveling || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Following || a.Healing || a.Assisting || a.Practicing {

@@ -191,7 +191,7 @@ class CharacterSync:
                     or integer(c.get("entry", 0)) not in (196, 197, 823)
                     or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
                     or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
-                    or integer(c.get("movementFlags", 0)) & ~0x100):
+                    or integer(c.get("movementFlags", 0)) & ~0x70000100):
                 continue
             bounds = (("x", -9050, -8650), ("y", -500, 200), ("z", 40, 180))
             if any(type(c.get(key)) not in (int, float) or not math.isfinite(c[key]) or not lower <= c[key] <= upper
@@ -335,7 +335,7 @@ class CharacterSync:
                     or integer(c.get("guid", 0)) >> 48 not in (0xf130, 0xf150)
                     or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
                     or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
-                    or integer(c.get("movementFlags", 0)) & ~0x100):
+                    or integer(c.get("movementFlags", 0)) & ~0x70000100):
                 continue
             if any(type(c.get(key, 0)) not in (int, float) or not math.isfinite(c.get(key, 0)) for key in ("x", "y", "z")):
                 continue
