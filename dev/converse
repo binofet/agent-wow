@@ -521,7 +521,8 @@ def party_quest_sync_snapshot(character_guid, stop=False):
 
 
 def area_quest_identity(character_guid):
-    row = next((row for row in QUEST_SYNC_IDENTITY["characters"] if row["guid"] == character_guid), None)
+    profiles = (*QUEST_SYNC_IDENTITY["characters"], {"name": "Nixwick", "guid": 8, "port": 8402})
+    row = next((row for row in profiles if row["guid"] == character_guid), None)
     if row is None:
         raise ConversationError("No matching area quest character profile")
     return {"version": 1, "mode": "area_quests", **row}

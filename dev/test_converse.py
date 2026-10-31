@@ -1203,6 +1203,26 @@ class AreaQuestControlsTests(unittest.TestCase):
         self.assertIn("AREA_QUESTS",converse.REPLY_SCHEMA["properties"]["action"]["enum"])
         self.assertIn("STOP_AREA_QUESTS",converse.REPLY_SCHEMA["properties"]["action"]["enum"])
 
+    def test_nixwick_sweep_uses_own_profile_and_rejects_wrong_character_or_port(self):
+        class RPC:
+            url="http://127.0.0.1:8402/rpc"
+            guid="8"
+            def call(self,method,params):
+                return {"self":{"guid":self.guid}}
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,"ROOT",Path(temporary)),\
+                patch.object(converse.subprocess,"Popen") as launch:
+            rpc=RPC()
+            controls=converse.BuddyControls(rpc,character_class="warlock",character_guid=8)
+            controls.actions_available=controls.quests_available=True
+            self.assertEqual(converse.area_quest_identity(8)["name"],"Nixwick")
+            self.assertIn("starting",controls.execute("AREA_QUESTS"))
+            self.assertEqual(launch.call_args.args[0][-2:],["--character-guid","8"])
+            rpc.guid="1"
+            self.assertIn("couldn't confirm",controls.execute("AREA_QUESTS"))
+            rpc.url="http://127.0.0.1:8086/rpc"
+            self.assertIn("doesn't match",controls.execute("AREA_QUESTS"))
+            self.assertEqual(launch.call_count,1)
+
 
 class OwnerFeedTests(unittest.TestCase):
     def feed(self):
