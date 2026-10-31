@@ -60,7 +60,7 @@ func (s *Service) coldridgeNavigationPath(ctx context.Context, from, to position
 
 func (s *Service) coldridgeGoalNavigationPath(ctx context.Context, goal coldridgePracticeGoal, from, to position) ([]position, error) {
 	plan := s.planColdridgePath
-	if goal.questID == 182 {
+	if goal.usesTrollRegion() {
 		plan = s.planColdridge182Path
 	}
 	if s.navDataDir == "" || plan == nil || !goal.contains(from) || !goal.contains(to) {
@@ -110,7 +110,7 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 	if !incomplete || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !goal.baselineContains(playerPosition(w.Self)) || !s.state.KnownShadowBolt {
 		return nil, status.Error(codes.FailedPrecondition, "Coldridge practice requires actual level1..5 warlock (quest182 level4..6), knownShadowBolt and own supported incompletequest179,170,183 or182")
 	}
-	if goal.questID == 182 && (!s.refreshPositionLocked(w) || !goal.contains(s.pos)) {
+	if goal.usesTrollRegion() && (!s.refreshPositionLocked(w) || !goal.contains(s.pos)) {
 		return nil, status.Error(codes.FailedPrecondition, "quest182 practice requires a stopped client position in its verified troll area")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
@@ -135,11 +135,24 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) {
 	self := w.Self
 	goal := &s.coldridgeGoal
+	if goal.leveling {
+		s.observeColdridgeLevelingLevelLocked(w)
+	}
 	// A new authoritative baseline invalidates any route and pull selected from
 	// the old client estimate. Rebase before stopping so STOP cannot undo it.
 	if s.posKnown && self.PositionRevision != s.positionRevision {
 		s.refreshPositionLocked(w)
 		s.stopPracticeLocked(ctx, "coldridge_authoritative_position_changed")
+		return
+	}
+	if goal.leveling && !s.coldridgeLevelingRunValidLocked() {
+		s.stopPracticeLocked(ctx, "coldridge_leveling_run_invalid_or_expired")
+		return
+	}
+	// Rebase a correction before STOP, even when that same observation reaches
+	// the level cap. No owned-fight exemption permits further leveling offense.
+	if goal.leveling && self.Guid == s.selfGUID && self.Present && self.LevelKnown && self.Level >= 5 {
+		s.stopPracticeLocked(ctx, "coldridge_leveling_level_cap_reached")
 		return
 	}
 	if safePracticeCharacter(w, s.selfGUID) != "" || !self.ClassKnown || self.ClassId != 9 || !self.LevelKnown || self.Level < 1 || !self.HealthKnown || !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || !goal.baselineContains(playerPosition(self)) || !s.refreshPositionLocked(w) || !goal.contains(s.pos) || s.state.MotionUnconfirmed || self.UnitFlags&0x2000 != 0 || !s.state.KnownShadowBolt {
@@ -149,10 +162,12 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	target := practiceTargetObservation(w, s.practiceTarget)
 	active, needed := goal.observe(w, s.selfGUID)
 	selectedObjectiveComplete := target != nil && !goal.targetNeeded(target.Entry)
-	finishing := active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
+	finishing := !goal.leveling && active && (!needed || selectedObjectiveComplete) && s.practicePullStarted && self.UnitFlags&0x80000 != 0 && goal.eligible(target, self) && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 	if !needed && !finishing {
 		why := "quest_179_complete_absent_or_level_limit"
-		if goal.questID == 170 {
+		if goal.leveling {
+			why = "coldridge_leveling_context_absent_or_invalid"
+		} else if goal.questID == 170 {
 			why = "quest_170_complete_absent_or_invalid"
 		} else if goal.questID == 183 {
 			why = "quest_183_complete_absent_or_invalid"
@@ -189,6 +204,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 	}
 	if target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {
+		if goal.leveling {
+			s.stopPracticeLocked(ctx, "coldridge_leveling_target_death_observed")
+			return
+		}
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
@@ -227,7 +246,9 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		}
 		if target == nil {
 			s.state.PracticePhase = "waiting_for_observed_level_one_ragged_young_wolf"
-			if goal.questID == 170 {
+			if goal.leveling {
+				s.state.PracticePhase = "waiting_for_observed_coldridge_leveling_target"
+			} else if goal.questID == 170 {
 				s.state.PracticePhase = "waiting_for_observed_required_quest_170_target"
 			} else if goal.questID == 183 {
 				s.state.PracticePhase = "waiting_for_observed_required_quest_183_target"
@@ -247,7 +268,9 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 	if !known || !goal.contains(p) || !goal.positionEvidenceWithin(target) {
 		s.stopLocked(ctx)
 		s.state.PracticePhase = "waiting_for_observed_wolf_position"
-		if goal.questID == 170 {
+		if goal.leveling {
+			s.state.PracticePhase = "waiting_for_observed_coldridge_leveling_target_position"
+		} else if goal.questID == 170 {
 			s.state.PracticePhase = "waiting_for_observed_quest_170_target_position"
 		} else if goal.questID == 183 {
 			s.state.PracticePhase = "waiting_for_observed_quest_183_target_position"
@@ -290,7 +313,9 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			return
 		}
 		s.state.PracticePhase = "approaching_observed_coldridge_wolf_on_navmesh"
-		if goal.questID == 170 {
+		if goal.leveling {
+			s.state.PracticePhase = "approaching_observed_coldridge_leveling_target_on_navmesh"
+		} else if goal.questID == 170 {
 			s.state.PracticePhase = "approaching_observed_quest_170_target_on_navmesh"
 		} else if goal.questID == 183 {
 			s.state.PracticePhase = "approaching_observed_quest_183_target_on_navmesh"
@@ -314,20 +339,32 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		s.stopPracticeLocked(ctx, "required_spell_unknown")
 		return
 	}
-	if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) && s.faceEnemyLocked(ctx, p) {
-		if !s.coldridgeCastReadyLocked(ctx, w, p, rank) {
-			return
+	if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) {
+		if !s.faceEnemyLocked(ctx, p) {
+			if goal.leveling {
+				s.stopPracticeLocked(ctx, "coldridge_leveling_facing_unconfirmed_or_unsafe")
+				return
+			}
+		} else {
+			if !s.coldridgeCastReadyLocked(ctx, w, p, rank) {
+				return
+			}
+			if !s.practicePullStarted {
+				// Only dispatching the first cast reserves an owned pull. Waiting
+				// for cooldown, mana or facing cannot waive fresh claim checks.
+				s.practicePullStarted, s.practiceRoute = true, nil
+				s.state.PracticePulls++
+			}
+			if !s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second) && goal.leveling {
+				s.stopPracticeLocked(ctx, "coldridge_leveling_cast_unconfirmed")
+				return
+			}
 		}
-		if !s.practicePullStarted {
-			// Only dispatching the first cast reserves an owned pull. Waiting
-			// for cooldown, mana or facing cannot waive fresh claim checks.
-			s.practicePullStarted, s.practiceRoute = true, nil
-			s.state.PracticePulls++
-		}
-		s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second)
 	}
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
-	if goal.questID == 170 {
+	if goal.leveling {
+		s.state.PracticePhase = "fighting_observed_coldridge_leveling_target"
+	} else if goal.questID == 170 {
 		s.state.PracticePhase = "fighting_observed_quest_170_target"
 	} else if goal.questID == 183 {
 		s.state.PracticePhase = "fighting_observed_quest_183_target"
@@ -353,6 +390,18 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 	}
 	self := w.Self
 	goal := &s.coldridgeGoal
+	if goal.leveling {
+		s.observeColdridgeLevelingLevelLocked(w)
+		if !s.coldridgeLevelingRunValidLocked() {
+			return reject("leveling_run_invalid_or_expired")
+		}
+		if !self.LevelKnown || self.Level >= 5 {
+			return reject("leveling_level_cap_or_unknown")
+		}
+		if !s.now().Before(s.practiceUntil) {
+			return reject("leveling_deadline_expired")
+		}
+	}
 	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision || !goal.baselineContains(playerPosition(self)) || !goal.contains(s.pos) || s.state.MotionUnconfirmed {
 		return reject("physical_baseline_changed")
 	}
@@ -391,6 +440,11 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 		s.practiceRoute = nil
 		s.state.PracticePhase = "waiting_for_fresh_coldridge_target_position"
 		return false
+	}
+	// Reserve the single pull from this last post-facing snapshot, before the
+	// caller reserves its first cast. An uncertain write must consume the pull.
+	if goal.leveling && !s.practicePullStarted && !s.reserveColdridgeLevelingPullLocked(w, target.Guid) {
+		return reject("leveling_pull_unavailable")
 	}
 	return true
 }

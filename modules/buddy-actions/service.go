@@ -87,6 +87,8 @@ type Service struct {
 	practiceKillCredited                                     bool
 	practiceQuestGoal                                        bool
 	coldridgeGoal                                            coldridgePracticeGoal
+	coldridgeLeveling                                        coldridgeLevelingRun
+	coldridgeLevelingRequests                                map[string]struct{}
 	formation                                                followFormation
 	followNav                                                followNavigation
 	meleeNav                                                 followNavigation
@@ -114,6 +116,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
+	out.ColdridgeLeveling = s.coldridgeLevelingSnapshotLocked()
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -647,6 +650,10 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
 		return false
 	}
+	if op == opcode.CMSGCastSpell && s.coldridgeGoal.leveling && !s.coldridgeLevelingCastAllowedLocked() {
+		s.state.Reason = "coldridge_leveling_cast_boundary_expired_or_unavailable"
+		return false
+	}
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
 		s.state.Healing = false
@@ -737,6 +744,10 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		at := len(packedGUID(s.selfGUID))
 		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
 		binary.LittleEndian.PutUint32(payload[at:], flags)
+	}
+	if op != opcode.MSGMoveStop && !s.coldridgeLevelingMovementAllowedLocked(w, p) {
+		s.state.Reason = "coldridge_leveling_movement_boundary_expired_or_unavailable"
+		return false
 	}
 	if !s.sendLocked(ctx, op, payload) {
 		if s.state.InteractionHarvest {

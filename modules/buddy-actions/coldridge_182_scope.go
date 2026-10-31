@@ -5,12 +5,20 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 )
 
+func (g coldridgePracticeGoal) usesTrollRegion() bool {
+	return g.leveling && g.questID == 0 || !g.leveling && g.questID == 182
+}
+
 func (g coldridgePracticeGoal) contains(p position) bool {
+	if g.usesTrollRegion() {
+		return finite(p) && buddynav.RegionColdridgeTrollCave.Contains(buddynav.Point{X: p.x, Y: p.y, Z: p.z})
+	}
+	if g.leveling {
+		return false
+	}
 	switch g.questID {
 	case 179, 170, 183:
 		return coldridge(p)
-	case 182:
-		return finite(p) && buddynav.RegionColdridgeTrollCave.Contains(buddynav.Point{X: p.x, Y: p.y, Z: p.z})
 	default:
 		return false
 	}
@@ -20,11 +28,11 @@ func (g coldridgePracticeGoal) contains(p position) bool {
 // while ordinary travel advances the client estimate. It grants no route or
 // target authority outside the quest's separate combat region.
 func (g coldridgePracticeGoal) baselineContains(p position) bool {
-	return g.contains(p) || g.questID == 182 && coldridge(p)
+	return g.contains(p) || g.usesTrollRegion() && coldridge(p)
 }
 
 func (g coldridgePracticeGoal) positionEvidenceWithin(c *worldv1.CreatureState) bool {
-	if g.questID != 182 {
+	if !g.usesTrollRegion() {
 		return true
 	}
 	if c == nil || !c.PositionKnown || !g.contains(position{x: c.X, y: c.Y, z: c.Z}) {

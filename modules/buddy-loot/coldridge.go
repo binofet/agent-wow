@@ -1,6 +1,8 @@
 package buddyloot
 
 import (
+	"time"
+
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
@@ -25,6 +27,10 @@ type coldridgeLootGoal struct {
 	corpseGUID       uint64
 	positionRevision uint64
 	counts           [2]uint32
+	levelingRequest  string
+	levelingLevel    uint32
+	levelingMaxHP    uint32
+	levelingUntil    time.Time
 }
 
 func coldridgeLootQuest(w *worldv1.SnapshotResponse, self uint64, questID uint32) (*worldv1.QuestLogEntry, bool) {
@@ -169,6 +175,13 @@ func (g coldridgeLootGoal) matchesCorpse(c *worldv1.CreatureState) bool {
 	if g.questID == 179 {
 		return coldridgeCorpse(c)
 	}
+	if g.levelingRequest != "" {
+		if !coldridge182CorpseProfile(c) || c.Level != g.levelingLevel || c.MaxHealth != g.levelingMaxHP || !coldridge182PositionEvidenceWithin(c) {
+			return false
+		}
+		x, y, z, known := corpsePosition(c)
+		return known && g.containsPoint(x, y, z)
+	}
 	switch g.questID {
 	case 170:
 		if c.Entry != 707 && c.Entry != 724 || c.Level != 2 || c.MaxHealth != 55 || c.FactionTemplate != 36 {
@@ -200,6 +213,9 @@ func coldridge182CorpseProfile(c *worldv1.CreatureState) bool {
 }
 
 func (g coldridgeLootGoal) containsPoint(x, y, z float32) bool {
+	if g.levelingRequest != "" {
+		return coldridge182Point(x, y, z)
+	}
 	switch g.questID {
 	case 179, 170, 183:
 		return coldridgePoint(x, y, z)
@@ -210,7 +226,7 @@ func (g coldridgeLootGoal) containsPoint(x, y, z float32) bool {
 }
 
 func (g coldridgeLootGoal) baselineContainsPoint(x, y, z float32) bool {
-	return g.questID == 182 && coldridgePoint(x, y, z) || g.containsPoint(x, y, z)
+	return (g.questID == 182 || g.levelingRequest != "") && coldridgePoint(x, y, z) || g.containsPoint(x, y, z)
 }
 
 func coldridgePoint(x, y, z float32) bool {

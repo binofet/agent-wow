@@ -21,25 +21,26 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Healing_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
-	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
-	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
-	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
-	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
-	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
-	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
-	BuddyActions_ApproachQuest_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
-	BuddyActions_TravelQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
-	BuddyActions_TravelTrainer_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
-	BuddyActions_TravelVendor_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
-	BuddyActions_TravelTo_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
-	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
-	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
-	BuddyActions_FargodeepEncounter_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
-	BuddyActions_Recovery_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
-	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
-	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_Follow_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
+	BuddyActions_Healing_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
+	BuddyActions_Assist_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_HealOnce_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
+	BuddyActions_Status_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_AcquireInteraction_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
+	BuddyActions_ReleaseInteraction_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_ApproachLoot_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
+	BuddyActions_ApproachQuest_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
+	BuddyActions_TravelQuest_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_TravelTrainer_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
+	BuddyActions_TravelVendor_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
+	BuddyActions_TravelTo_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
+	BuddyActions_ExitCrypt_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
+	BuddyActions_Practice_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
+	BuddyActions_FargodeepEncounter_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
+	BuddyActions_StartColdridgeLeveling_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/StartColdridgeLeveling"
+	BuddyActions_Recovery_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
+	BuddyActions_OnPacket_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
+	BuddyActions_BeforeLogout_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -63,6 +64,7 @@ type BuddyActionsClient interface {
 	ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error)
 	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	FargodeepEncounter(ctx context.Context, in *FargodeepEncounterRequest, opts ...grpc.CallOption) (*State, error)
+	StartColdridgeLeveling(ctx context.Context, in *ColdridgeLevelingRequest, opts ...grpc.CallOption) (*State, error)
 	// Normal release, validated same-map ghost route, and corpse reclamation.
 	Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -237,6 +239,16 @@ func (c *buddyActionsClient) FargodeepEncounter(ctx context.Context, in *Fargode
 	return out, nil
 }
 
+func (c *buddyActionsClient) StartColdridgeLeveling(ctx context.Context, in *ColdridgeLevelingRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_StartColdridgeLeveling_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -288,6 +300,7 @@ type BuddyActionsServer interface {
 	ExitCrypt(context.Context, *ExitCryptRequest) (*State, error)
 	Practice(context.Context, *ToggleRequest) (*State, error)
 	FargodeepEncounter(context.Context, *FargodeepEncounterRequest) (*State, error)
+	StartColdridgeLeveling(context.Context, *ColdridgeLevelingRequest) (*State, error)
 	// Normal release, validated same-map ghost route, and corpse reclamation.
 	Recovery(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
@@ -349,6 +362,9 @@ func (UnimplementedBuddyActionsServer) Practice(context.Context, *ToggleRequest)
 }
 func (UnimplementedBuddyActionsServer) FargodeepEncounter(context.Context, *FargodeepEncounterRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FargodeepEncounter not implemented")
+}
+func (UnimplementedBuddyActionsServer) StartColdridgeLeveling(context.Context, *ColdridgeLevelingRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartColdridgeLeveling not implemented")
 }
 func (UnimplementedBuddyActionsServer) Recovery(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Recovery not implemented")
@@ -668,6 +684,24 @@ func _BuddyActions_FargodeepEncounter_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_StartColdridgeLeveling_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ColdridgeLevelingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).StartColdridgeLeveling(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_StartColdridgeLeveling_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).StartColdridgeLeveling(ctx, req.(*ColdridgeLevelingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_Recovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ToggleRequest)
 	if err := dec(in); err != nil {
@@ -792,6 +826,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FargodeepEncounter",
 			Handler:    _BuddyActions_FargodeepEncounter_Handler,
+		},
+		{
+			MethodName: "StartColdridgeLeveling",
+			Handler:    _BuddyActions_StartColdridgeLeveling_Handler,
 		},
 		{
 			MethodName: "Recovery",

@@ -96,7 +96,7 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 	}
 	// Retain progress already seen by this operation before a later response can
 	// regress it. This is pure validation against the same bound quest and GUID.
-	if s.questColdridge && !s.coldridgeGoal.context(baseline, preliminary.Position, s.selfGUID, s.pendingGUID()) {
+	if s.questColdridge && !s.coldridgeGoal.contextWithActions(baseline, preliminary, s.selfGUID, s.pendingGUID()) {
 		s.state.Reason = "coldridge_loot_scope_changed_before_final_observation"
 		s.finish(ctx)
 		return nil
@@ -150,7 +150,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 		}
 		return false
 	}
-	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
+	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.contextWithActions(w, a, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
 	if s.questFargodeep && !fargodeepLootContext(w, a, s.selfGUID, s.pendingGUID()) {

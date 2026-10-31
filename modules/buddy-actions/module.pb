@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Á9
+ä>
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -49,7 +49,25 @@ session_id (	R	sessionId"®
 targetGuid!
 engager_guid (RengagerGuid
 phase (	Rphase!
-remaining_ms (RremainingMs"÷
+remaining_ms (RremainingMs"9
+ColdridgeLevelingRequest
+
+request_id (	R	requestId"•
+ColdridgeLevelingState
+
+request_id (	R	requestId
+goal (	Rgoal!
+target_level (RtargetLevel
+	max_pulls (RmaxPulls
+source_guid (R
+sourceGuid+
+position_revision (RpositionRevision#
+pull_reserved (RpullReserved!
+remaining_ms (RremainingMs%
+observed_level	 (RobservedLevel.
+level_five_observed
+ (RlevelFiveObserved
+	self_guid (RselfGuid"÷
 ClientPosition
 known (Rknown
 	map_known (RmapKnown
@@ -115,7 +133,7 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"á
+verified_legs (RverifiedLegs"Â
 State
 	following (R	following
 healing (Rhealing
@@ -194,7 +212,8 @@ practicing%
 interaction_harvestB (RinteractionHarvest.
 harvest_guard_guidsC (RharvestGuardGuidsC
 recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryO
-	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeep2œ
+	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeep_
+coldridge_levelingF (20.warcraftbuddy.actions.v1.ColdridgeLevelingStateRcoldridgeLeveling2‹
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -211,7 +230,8 @@ practicing%
 TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.StateX
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
 Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.Statej
-FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
+FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.Statem
+StartColdridgeLeveling2.warcraftbuddy.actions.v1.ColdridgeLevelingRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
