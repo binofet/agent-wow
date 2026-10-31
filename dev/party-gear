@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Equip finite, actual conservative armor upgrades; keep displaced equipment."""
+"""Equip finite, actual conservative gear upgrades; keep displaced equipment."""
 import argparse
 import copy
 import importlib.machinery
@@ -22,7 +22,7 @@ ROOT=Path(__file__).resolve().parent.parent
 ROSTER={1:8086,4:8087,5:8088}
 TERMINAL={'confirmed','blocked','server_rejected'}
 PHASES=TERMINAL|{'reserved','requested','unconfirmed','new_session_requires_review'}
-ARMOR_SLOTS={0,2,4,5,6,7,8,9,14}
+GEAR_SLOTS={0,2,4,5,6,7,8,9,14,15}
 PENDING_METADATA={'complete_owned_item_metadata_pending','actual_class_race_level_required',
     'complete_own_skill_baseline_required','complete_own_equipment_baseline_required',
     'displaced_owned_item_metadata_required','displaced_item_template_pending','enhancement_context_pending'}
@@ -69,7 +69,7 @@ def candidates(state):
         if (not isinstance(row,dict) or row.get('metadataKnown') is not True or row.get('gearEquipEligible') is not True
                 or row.get('conservativeUpgrade') is not True):continue
         source=town.ref(row.get('item'));slot=number(row.get('gearEquipmentSlot',0),18)
-        if slot not in ARMOR_SLOTS:raise Error('unsupported_automatic_armor_slot')
+        if slot not in GEAR_SLOTS:raise Error('unsupported_automatic_gear_slot')
         actual=slots.get((source['bag'],source['slot']))
         old=town.item_guid(row.get('expectedEquippedItemGuid',0),allow_empty=True)
         if actual is None or actual.get('metadataKnown') is not True or town.ref(actual)!=source or source['stackCount']!=1:
@@ -97,7 +97,7 @@ class Journal(town.base.Journal):
             token(req['sessionId']);rid=token(req['requestId'])
             if rid in seen or req['requireConservativeUpgrade'] is not True:raise Error('invalid_gear_request')
             seen.add(rid);town.ref(req['source']);number(req['equipmentSlot'],18)
-            if req['equipmentSlot'] not in ARMOR_SLOTS or req['source']['stackCount']!=1:raise Error('unsupported_automatic_armor_slot')
+            if req['equipmentSlot'] not in GEAR_SLOTS or req['source']['stackCount']!=1:raise Error('unsupported_automatic_gear_slot')
             for field in ('expectedRevision','expectedInventoryRevision','expectedEquipmentRevision'):positive(req[field])
             town.item_guid(req['expectedEquippedItemGuid'],allow_empty=True)
             if row['phase'] in TERMINAL:

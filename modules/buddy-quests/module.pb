@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-åQ
+¾W
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"­
 PlayerState
 guid (Rguid
@@ -157,7 +157,29 @@ durability%
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
 game_object_entry (RgameObjectEntry:
-include_gathering_objects (RincludeGatheringObjects"Ý
+include_gathering_objects (RincludeGatheringObjects"ƒ
+ClientMovementRequest
+	self_guid (RselfGuid
+map_id (RmapId8
+server_position_revision (RserverPositionRevision
+sequence (Rsequence
+valid (Rvalid
+x (Rx
+y (Ry
+z (Rz 
+orientation	 (Rorientation"œ
+DiscoveryAnchor
+	self_guid (RselfGuid
+map_id (RmapId8
+server_position_revision (RserverPositionRevision
+sequence (Rsequence
+x (Rx
+y (Ry
+z (Rz 
+orientation (Rorientation
+	estimated	 (R	estimated
+age_ms
+ (RageMs"Ý
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -296,7 +318,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"þ
+permanent_bonus (RpermanentBonus"Ò
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -346,12 +368,14 @@ selfSkills@
 self_equipment_revision* (RselfEquipmentRevisionQ
 self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipmentB
 
-own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpse2°
+own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
+discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchor2
 
 BuddyWorld]
-Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
+Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
+ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-ÒG
+œH
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"›
 Quest
 quest_id (RquestId
@@ -375,13 +399,15 @@ repeatable)
 quests (2.warcraftbuddy.quests.v1.QuestRquests
 greeting (	Rgreeting
 source (	Rsource"
-expires_in_ms (RexpiresInMs"Ý
+expires_in_ms (RexpiresInMs"§
 NearbyGiverA
 creature (2%.warcraftbuddy.world.v1.CreatureStateRcreature%
 distance_known (RdistanceKnown
 distance (Rdistance!
 can_interact (RcanInteract%
-blocked_reason (	RblockedReason"‚
+blocked_reason (	RblockedReasonH
+game_object (2'.warcraftbuddy.world.v1.GameObjectStateR
+gameObject"‚
 
 Acceptance
 npc_guid (RnpcGuid

@@ -469,6 +469,8 @@ type NearbyGiver struct {
 	Distance      float64                `protobuf:"fixed64,3,opt,name=distance,proto3" json:"distance,omitempty"`
 	CanInteract   bool                   `protobuf:"varint,4,opt,name=can_interact,json=canInteract,proto3" json:"can_interact,omitempty"`
 	BlockedReason string                 `protobuf:"bytes,5,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
+	// Only actual observed lost-guard questgiver objects55/56; no fabricated NPC.
+	GameObject    *api.GameObjectState `protobuf:"bytes,6,opt,name=game_object,json=gameObject,proto3" json:"game_object,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -536,6 +538,13 @@ func (x *NearbyGiver) GetBlockedReason() string {
 		return x.BlockedReason
 	}
 	return ""
+}
+
+func (x *NearbyGiver) GetGameObject() *api.GameObjectState {
+	if x != nil {
+		return x.GameObject
+	}
+	return nil
 }
 
 type Acceptance struct {
@@ -878,7 +887,7 @@ func (x *StateResponse) GetLastExploration() *ExplorationReceipt {
 	return nil
 }
 
-// The first supported normal client area trigger is Fargodeep quest62/trigger88.
+// Fixed client area triggers: Fargodeep quest62/88 and Jasperlode quest76/87.
 // Callers select neither a raw trigger nor coordinates.
 type ExploreRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -2497,13 +2506,15 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x06quests\x18\x03 \x03(\v2\x1e.warcraftbuddy.quests.v1.QuestR\x06quests\x12\x1a\n" +
 	"\bgreeting\x18\x04 \x01(\tR\bgreeting\x12\x16\n" +
 	"\x06source\x18\x05 \x01(\tR\x06source\x12\"\n" +
-	"\rexpires_in_ms\x18\x06 \x01(\x04R\vexpiresInMs\"\xdd\x01\n" +
+	"\rexpires_in_ms\x18\x06 \x01(\x04R\vexpiresInMs\"\xa7\x02\n" +
 	"\vNearbyGiver\x12A\n" +
 	"\bcreature\x18\x01 \x01(\v2%.warcraftbuddy.world.v1.CreatureStateR\bcreature\x12%\n" +
 	"\x0edistance_known\x18\x02 \x01(\bR\rdistanceKnown\x12\x1a\n" +
 	"\bdistance\x18\x03 \x01(\x01R\bdistance\x12!\n" +
 	"\fcan_interact\x18\x04 \x01(\bR\vcanInteract\x12%\n" +
-	"\x0eblocked_reason\x18\x05 \x01(\tR\rblockedReason\"\x82\x03\n" +
+	"\x0eblocked_reason\x18\x05 \x01(\tR\rblockedReason\x12H\n" +
+	"\vgame_object\x18\x06 \x01(\v2'.warcraftbuddy.world.v1.GameObjectStateR\n" +
+	"gameObject\"\x82\x03\n" +
 	"\n" +
 	"Acceptance\x12\x19\n" +
 	"\bnpc_guid\x18\x01 \x01(\x04R\anpcGuid\x12\x19\n" +
@@ -2787,63 +2798,65 @@ var file_modules_buddy_quests_quests_proto_goTypes = []any{
 	(*QuestRequest)(nil),          // 25: warcraftbuddy.quests.v1.QuestRequest
 	(*OperationResult)(nil),       // 26: warcraftbuddy.quests.v1.OperationResult
 	(*api.CreatureState)(nil),     // 27: warcraftbuddy.world.v1.CreatureState
-	(*api.QuestLogEntry)(nil),     // 28: warcraftbuddy.world.v1.QuestLogEntry
-	(*emptypb.Empty)(nil),         // 29: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),        // 30: agentwow.module.v1.WorldPacket
+	(*api.GameObjectState)(nil),   // 28: warcraftbuddy.world.v1.GameObjectState
+	(*api.QuestLogEntry)(nil),     // 29: warcraftbuddy.world.v1.QuestLogEntry
+	(*emptypb.Empty)(nil),         // 30: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),        // 31: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_quests_quests_proto_depIdxs = []int32{
 	4,  // 0: warcraftbuddy.quests.v1.Offer.quests:type_name -> warcraftbuddy.quests.v1.Quest
 	27, // 1: warcraftbuddy.quests.v1.NearbyGiver.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	0,  // 2: warcraftbuddy.quests.v1.Acceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
-	5,  // 3: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
-	6,  // 4: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
-	7,  // 5: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
-	8,  // 6: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
-	28, // 7: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	20, // 8: warcraftbuddy.quests.v1.StateResponse.turn_in_offer:type_name -> warcraftbuddy.quests.v1.TurnInOffer
-	21, // 9: warcraftbuddy.quests.v1.StateResponse.last_reward:type_name -> warcraftbuddy.quests.v1.RewardReceipt
-	12, // 10: warcraftbuddy.quests.v1.StateResponse.pending_share:type_name -> warcraftbuddy.quests.v1.SharedQuestOffer
-	13, // 11: warcraftbuddy.quests.v1.StateResponse.last_shared_acceptance:type_name -> warcraftbuddy.quests.v1.SharedQuestAcceptance
-	11, // 12: warcraftbuddy.quests.v1.StateResponse.last_exploration:type_name -> warcraftbuddy.quests.v1.ExplorationReceipt
-	1,  // 13: warcraftbuddy.quests.v1.ExplorationReceipt.status:type_name -> warcraftbuddy.quests.v1.ExplorationStatus
-	4,  // 14: warcraftbuddy.quests.v1.SharedQuestOffer.quest:type_name -> warcraftbuddy.quests.v1.Quest
-	2,  // 15: warcraftbuddy.quests.v1.SharedQuestOffer.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
-	2,  // 16: warcraftbuddy.quests.v1.SharedQuestAcceptance.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
-	0,  // 17: warcraftbuddy.quests.v1.SharedQuestAcceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
-	15, // 18: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
-	16, // 19: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
-	19, // 20: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
-	19, // 21: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
-	19, // 22: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
-	3,  // 23: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
-	9,  // 24: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
-	29, // 25: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
-	29, // 26: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
-	24, // 27: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
-	25, // 28: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	25, // 29: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	14, // 30: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
-	17, // 31: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
-	22, // 32: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
-	23, // 33: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
-	10, // 34: warcraftbuddy.quests.v1.BuddyQuests.Explore:input_type -> warcraftbuddy.quests.v1.ExploreRequest
-	30, // 35: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	9,  // 36: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
-	9,  // 37: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
-	26, // 38: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 39: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 40: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 41: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
-	18, // 42: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
-	26, // 43: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 44: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 45: warcraftbuddy.quests.v1.BuddyQuests.Explore:output_type -> warcraftbuddy.quests.v1.OperationResult
-	29, // 46: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
-	36, // [36:47] is the sub-list for method output_type
-	25, // [25:36] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	28, // 2: warcraftbuddy.quests.v1.NearbyGiver.game_object:type_name -> warcraftbuddy.world.v1.GameObjectState
+	0,  // 3: warcraftbuddy.quests.v1.Acceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
+	5,  // 4: warcraftbuddy.quests.v1.StateResponse.offer:type_name -> warcraftbuddy.quests.v1.Offer
+	6,  // 5: warcraftbuddy.quests.v1.StateResponse.nearby:type_name -> warcraftbuddy.quests.v1.NearbyGiver
+	7,  // 6: warcraftbuddy.quests.v1.StateResponse.last_acceptance:type_name -> warcraftbuddy.quests.v1.Acceptance
+	8,  // 7: warcraftbuddy.quests.v1.StateResponse.giver_status:type_name -> warcraftbuddy.quests.v1.GiverStatus
+	29, // 8: warcraftbuddy.quests.v1.StateResponse.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	20, // 9: warcraftbuddy.quests.v1.StateResponse.turn_in_offer:type_name -> warcraftbuddy.quests.v1.TurnInOffer
+	21, // 10: warcraftbuddy.quests.v1.StateResponse.last_reward:type_name -> warcraftbuddy.quests.v1.RewardReceipt
+	12, // 11: warcraftbuddy.quests.v1.StateResponse.pending_share:type_name -> warcraftbuddy.quests.v1.SharedQuestOffer
+	13, // 12: warcraftbuddy.quests.v1.StateResponse.last_shared_acceptance:type_name -> warcraftbuddy.quests.v1.SharedQuestAcceptance
+	11, // 13: warcraftbuddy.quests.v1.StateResponse.last_exploration:type_name -> warcraftbuddy.quests.v1.ExplorationReceipt
+	1,  // 14: warcraftbuddy.quests.v1.ExplorationReceipt.status:type_name -> warcraftbuddy.quests.v1.ExplorationStatus
+	4,  // 15: warcraftbuddy.quests.v1.SharedQuestOffer.quest:type_name -> warcraftbuddy.quests.v1.Quest
+	2,  // 16: warcraftbuddy.quests.v1.SharedQuestOffer.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
+	2,  // 17: warcraftbuddy.quests.v1.SharedQuestAcceptance.kind:type_name -> warcraftbuddy.quests.v1.SharedQuestKind
+	0,  // 18: warcraftbuddy.quests.v1.SharedQuestAcceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
+	15, // 19: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
+	16, // 20: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
+	19, // 21: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 22: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 23: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
+	3,  // 24: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
+	9,  // 25: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
+	30, // 26: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
+	30, // 27: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
+	24, // 28: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
+	25, // 29: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	25, // 30: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	14, // 31: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
+	17, // 32: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
+	22, // 33: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
+	23, // 34: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
+	10, // 35: warcraftbuddy.quests.v1.BuddyQuests.Explore:input_type -> warcraftbuddy.quests.v1.ExploreRequest
+	31, // 36: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 37: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
+	9,  // 38: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
+	26, // 39: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 40: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 41: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 42: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
+	18, // 43: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
+	26, // 44: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 45: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 46: warcraftbuddy.quests.v1.BuddyQuests.Explore:output_type -> warcraftbuddy.quests.v1.OperationResult
+	30, // 47: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
+	37, // [37:48] is the sub-list for method output_type
+	26, // [26:37] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_quests_quests_proto_init() }

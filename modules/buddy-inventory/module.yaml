@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Exact owned armor equipment, empty-slot moves and bags, and server-confirmed safe junk sales
+description: Exact owned ordinary armor, mainhand daggers and empty-offhand staves, empty-slot moves and bags, and server-confirmed safe junk sales
 requires: [buddy-world, buddy-actions, buddy-trade, buddy-loot, buddy-professions]
 compose:
   file: compose.yaml

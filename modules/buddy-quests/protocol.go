@@ -153,7 +153,7 @@ func decodeList(payload []byte, gossip bool) (*questsv1.Offer, error) {
 		r.u32()
 		offer.Quests = menuQuests(&r, r.u8())
 	}
-	if !creatureGUID(offer.NpcGuid) {
+	if !questGiverGUID(offer.NpcGuid) {
 		r.err = malformed
 	}
 	return offer, r.done()
@@ -161,14 +161,14 @@ func decodeList(payload []byte, gossip bool) (*questsv1.Offer, error) {
 
 func decodeDetails(payload []byte) (*questsv1.Offer, error) {
 	offer, divider, err := decodeDetailsFields(payload)
-	if err != nil || !creatureGUID(offer.GetNpcGuid()) || divider != 0 {
+	if err != nil || !questGiverGUID(offer.GetNpcGuid()) || divider != 0 {
 		return nil, malformed
 	}
 	return offer, nil
 }
 
 // NPC and manual party shares use the same full details frame, but different
-// first GUID/divider identities. Keep the NPC wrapper strictly creature-only.
+// first GUID/divider identities. Keep the ordinary giver wrapper separate from player shares.
 func decodeDetailsFields(payload []byte) (*questsv1.Offer, uint64, error) {
 	if len(payload) > 65536 {
 		return nil, 0, malformed

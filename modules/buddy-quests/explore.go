@@ -3,6 +3,7 @@ package buddyquests
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"regexp"
 	"time"
@@ -18,33 +19,78 @@ import (
 
 var explorationID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-// Installed build12340 AreaTrigger.dbc:88, map0, spherical radius10. The
-// conservative9yd gate does not depend on combat-target or NPC visibility.
+// Installed build12340 AreaTrigger.dbc, spherical triggers on map0.
 const scoutX, scoutY, scoutZ = -9843.5400390625, 127.5250015258789, 5.369800090789795
 
-func (s *Service) scoutCompleteLocked() bool {
+type explorationSpec struct {
+	trigger         uint32
+	x, y, z, radius float64
+}
+type explorationRecord struct {
+	request *questsv1.ExploreRequest
+	receipt *questsv1.ExplorationReceipt
+}
+
+func fixedExploration(id uint32) (explorationSpec, bool) {
+	switch id {
+	case 62:
+		return explorationSpec{88, scoutX, scoutY, scoutZ, 9}, true
+	case 76:
+		return explorationSpec{87, -9077.33984375, -552.9249877929688, 60.347599029541016, 29}, true
+	}
+	return explorationSpec{}, false
+}
+func (s *Service) explorationCompleteLocked(id uint32) bool {
 	if !s.state.QuestLogKnown {
 		return false
 	}
 	for _, q := range s.state.QuestLog {
-		if q.QuestId == 62 {
+		if q.QuestId == id {
 			return q.Complete && !q.Failed
 		}
 	}
 	return false
 }
-
+func (s *Service) scoutCompleteLocked() bool { return s.explorationCompleteLocked(62) }
 func (s *Service) applyExplorationLocked() {
-	r := s.state.LastExploration
-	if r != nil && r.Status != questsv1.ExplorationStatus_EXPLORATION_ALREADY_COMPLETE &&
-		s.state.QuestLogRevision > r.BaselineLogRevision && s.scoutCompleteLocked() {
-		r.Status = questsv1.ExplorationStatus_EXPLORATION_CONFIRMED
-		r.ConfirmedLogRevision = s.state.QuestLogRevision
-		r.Failure = ""
+	for _, record := range s.explorations {
+		r := record.receipt
+		if r.Status != questsv1.ExplorationStatus_EXPLORATION_ALREADY_COMPLETE && s.state.QuestLogRevision > r.BaselineLogRevision && s.explorationCompleteLocked(r.QuestId) {
+			r.Status = questsv1.ExplorationStatus_EXPLORATION_CONFIRMED
+			r.ConfirmedLogRevision = s.state.QuestLogRevision
+			r.Failure = ""
+		}
 	}
+}
+func (s *Service) explorationReplayLocked(r *questsv1.ExploreRequest) (*questsv1.OperationResult, error) {
+	old := s.explorations[r.QuestId]
+	if old == nil {
+		return nil, nil
+	}
+	if !proto.Equal(old.request, r) {
+		return nil, status.Error(codes.AlreadyExists, "an exploration request is already reserved for this body and quest; inspect actual state")
+	}
+	state := s.snapshotLocked()
+	state.LastExploration = proto.Clone(old.receipt).(*questsv1.ExplorationReceipt)
+	return &questsv1.OperationResult{State: state, TransportWritten: old.receipt.TransportWritten, ServerResponseReceived: old.receipt.Status == questsv1.ExplorationStatus_EXPLORATION_CONFIRMED}, nil
+}
+func (s *Service) reserveExplorationLocked(r *questsv1.ExploreRequest, receipt *questsv1.ExplorationReceipt) {
+	if s.explorations == nil {
+		s.explorations = map[uint32]*explorationRecord{}
+	}
+	s.explorations[r.QuestId] = &explorationRecord{r, receipt}
+	s.explorationRequest = r
+	s.state.LastExploration = receipt
 }
 
 func scoutScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64) error {
+	return explorationScene(w, a, self, 62)
+}
+func explorationScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64, id uint32) error {
+	spec, ok := fixedExploration(id)
+	if !ok {
+		return status.Error(codes.InvalidArgument, "unsupported exploration quest")
+	}
 	if w == nil || w.Self == nil || w.Self.Guid != self || self == 0 {
 		return status.Error(codes.FailedPrecondition, "actual exploration character identity unavailable")
 	}
@@ -60,34 +106,36 @@ func scoutScene(w *worldv1.SnapshotResponse, a *actionsv1.State, self uint64) er
 		a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) {
 		return status.Error(codes.FailedPrecondition, "exploration motion, cast or current position unconfirmed")
 	}
+	if !questPositionBound(w, a, self) {
+		return status.Error(codes.FailedPrecondition, "exploration character pose binding changed")
+	}
 	pos := a.Position
-	if math.Sqrt(math.Pow(float64(pos.X)-scoutX, 2)+math.Pow(float64(pos.Y)-scoutY, 2)+math.Pow(float64(pos.Z)-scoutZ, 2)) > 9 {
-		return status.Error(codes.FailedPrecondition, "character is outside actual Fargodeep trigger88 conservative radius")
+	if math.Sqrt(math.Pow(float64(pos.X)-spec.x, 2)+math.Pow(float64(pos.Y)-spec.y, 2)+math.Pow(float64(pos.Z)-spec.z, 2)) > spec.radius {
+		return status.Error(codes.FailedPrecondition, fmt.Sprintf("character is outside fixed quest%d trigger%d conservative radius", id, spec.trigger))
 	}
 	return nil
 }
 
-// Explore sends only the normal client trigger88 after the character has
+// Explore sends only fixed normal client triggers after the character has
 // physically entered its client-data sphere. A write does not prove credit.
-// One reserved request per body is retained, even when its write is ambiguous.
+// One reserved request per body and quest is retained, even for ambiguous writes.
 func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (out *questsv1.OperationResult, err error) {
-	if input == nil || input.QuestId != 62 || !explorationID.MatchString(input.RequestId) {
-		return nil, status.Error(codes.InvalidArgument, "only quest62 with a bounded request_id is supported")
+	if input == nil || !explorationID.MatchString(input.RequestId) {
+		return nil, status.Error(codes.InvalidArgument, "a fixed exploration quest and bounded request_id are required")
 	}
 	r := proto.Clone(input).(*questsv1.ExploreRequest)
+	spec, supported := fixedExploration(r.QuestId)
+	if !supported {
+		return nil, status.Error(codes.InvalidArgument, "only exploration quests62 and76 are supported")
+	}
 	s.mu.Lock()
 	if r.SessionId == "" || r.SessionId != s.state.SessionId {
 		s.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "exploration body session changed")
 	}
-	if old := s.explorationRequest; old != nil {
-		if !proto.Equal(old, r) {
-			s.mu.Unlock()
-			return nil, status.Error(codes.AlreadyExists, "an exploration request is already reserved for this body; inspect actual state")
-		}
-		out = &questsv1.OperationResult{State: s.snapshotLocked(), TransportWritten: s.state.LastExploration.TransportWritten}
+	if out, replayErr := s.explorationReplayLocked(r); out != nil || replayErr != nil {
 		s.mu.Unlock()
-		return out, nil
+		return out, replayErr
 	}
 	s.mu.Unlock()
 	call, cancel := context.WithTimeout(ctx, operationTimeout)
@@ -99,14 +147,9 @@ func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (
 	// A previous caller may have finished between the early idempotency read
 	// and reservation. Never consume another request after that race.
 	s.mu.Lock()
-	if s.explorationRequest != nil {
-		match := proto.Equal(s.explorationRequest, r)
-		out = &questsv1.OperationResult{State: s.snapshotLocked(), TransportWritten: s.state.LastExploration.TransportWritten}
+	if out, replayErr := s.explorationReplayLocked(r); out != nil || replayErr != nil {
 		s.mu.Unlock()
-		if !match {
-			return nil, status.Error(codes.AlreadyExists, "an exploration request is already reserved for this body")
-		}
-		return out, nil
+		return out, replayErr
 	}
 	s.mu.Unlock()
 	if _, err := s.world(call); err != nil {
@@ -115,12 +158,12 @@ func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (
 	guard := func() error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if !s.state.QuestLogKnown || s.state.QuestLogRevision != r.QuestLogRevision || !s.inLogLocked(62) {
-			return status.Error(codes.FailedPrecondition, "actual own quest62 log or revision changed")
+		if !s.state.QuestLogKnown || s.state.QuestLogRevision != r.QuestLogRevision || !s.inLogLocked(r.QuestId) {
+			return status.Error(codes.FailedPrecondition, "actual own exploration quest log or revision changed")
 		}
 		for _, q := range s.state.QuestLog {
-			if q.QuestId == 62 && q.Failed {
-				return status.Error(codes.FailedPrecondition, "actual quest62 failed")
+			if q.QuestId == r.QuestId && q.Failed {
+				return status.Error(codes.FailedPrecondition, "actual exploration quest failed")
 			}
 		}
 		return nil
@@ -129,11 +172,10 @@ func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (
 		return nil, err
 	}
 	s.mu.Lock()
-	already := s.scoutCompleteLocked()
+	already := s.explorationCompleteLocked(r.QuestId)
 	if already {
-		s.explorationRequest = r
-		s.state.LastExploration = &questsv1.ExplorationReceipt{RequestId: r.RequestId, QuestId: 62, TriggerId: 88,
-			Status: questsv1.ExplorationStatus_EXPLORATION_ALREADY_COMPLETE, BaselineLogRevision: r.QuestLogRevision}
+		s.reserveExplorationLocked(r, &questsv1.ExplorationReceipt{RequestId: r.RequestId, QuestId: r.QuestId, TriggerId: spec.trigger,
+			Status: questsv1.ExplorationStatus_EXPLORATION_ALREADY_COMPLETE, BaselineLogRevision: r.QuestLogRevision})
 		out = &questsv1.OperationResult{State: s.snapshotLocked()}
 		out.State.ActionInFlight = false
 	}
@@ -161,15 +203,15 @@ func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (
 			out.State.ActionInFlight = false
 		}
 	}()
-	w, err := s.world(call)
-	if err != nil {
-		return nil, err
-	}
 	a, err := s.actions(call)
 	if err != nil {
 		return nil, err
 	}
-	if err := scoutScene(w, a, s.selfGUID); err != nil {
+	w, err := s.world(call)
+	if err != nil {
+		return nil, err
+	}
+	if err := explorationScene(w, a, s.selfGUID, r.QuestId); err != nil {
 		return nil, err
 	}
 	if a.InteractionOwner != "quests" || a.InteractionLeaseRemainingMs < 1000 {
@@ -182,12 +224,11 @@ func (s *Service) Explore(ctx context.Context, input *questsv1.ExploreRequest) (
 		return nil, status.FromContextError(err).Err()
 	}
 	s.mu.Lock()
-	s.explorationRequest = r
-	s.state.LastExploration = &questsv1.ExplorationReceipt{RequestId: r.RequestId, QuestId: 62, TriggerId: 88,
-		Status: questsv1.ExplorationStatus_EXPLORATION_REQUESTED, BaselineLogRevision: r.QuestLogRevision}
+	s.reserveExplorationLocked(r, &questsv1.ExplorationReceipt{RequestId: r.RequestId, QuestId: r.QuestId, TriggerId: spec.trigger,
+		Status: questsv1.ExplorationStatus_EXPLORATION_REQUESTED, BaselineLogRevision: r.QuestLogRevision})
 	s.state.Revision++
 	s.mu.Unlock()
-	writeErr := s.send(call, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, 88))
+	writeErr := s.send(call, opcode.CMSGAreatrigger, binary.LittleEndian.AppendUint32(nil, spec.trigger))
 	s.mu.Lock()
 	receipt := s.state.LastExploration
 	if writeErr == nil {
@@ -219,7 +260,7 @@ wait:
 	}
 	s.mu.Lock()
 	if receipt.Status == questsv1.ExplorationStatus_EXPLORATION_REQUESTED {
-		receipt.Status, receipt.Failure = questsv1.ExplorationStatus_EXPLORATION_UNCONFIRMED, "no_newer_actual_quest62_completion"
+		receipt.Status, receipt.Failure = questsv1.ExplorationStatus_EXPLORATION_UNCONFIRMED, "no_newer_actual_exploration_completion"
 	}
 	out = &questsv1.OperationResult{TransportWritten: receipt.TransportWritten,
 		ServerResponseReceived: receipt.Status == questsv1.ExplorationStatus_EXPLORATION_CONFIRMED, State: s.snapshotLocked()}

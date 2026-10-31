@@ -40,7 +40,7 @@ func waitTurnIn(ctx context.Context, ch chan struct{}) {
 }
 
 func (s *Service) TurnIn(ctx context.Context, r *questsv1.TurnInRequest) (*questsv1.OperationResult, error) {
-	if r == nil || r.QuestId == 0 || !creatureGUID(r.NpcGuid) {
+	if r == nil || r.QuestId == 0 || !giverEnds(r.NpcGuid, r.QuestId) {
 		return nil, status.Error(codes.InvalidArgument, "observed NPC and active quest are required")
 	}
 	call, cancel := context.WithTimeout(ctx, operationTimeout)
@@ -111,7 +111,7 @@ func (s *Service) TurnIn(ctx context.Context, r *questsv1.TurnInRequest) (*quest
 
 func (s *Service) validateRewardLocked(r *questsv1.RewardRequest) (*questsv1.TurnInOffer, uint32, error) {
 	o := s.state.TurnInOffer
-	if r == nil || r.SessionId != s.state.SessionId || o == nil || r.QuestId == 0 || o.QuestId != r.QuestId || o.NpcGuid != r.NpcGuid || o.Revision != r.OfferRevision || !s.now().Before(s.turnIn.offerUntil) || o.Source != "reward_offer" || !o.CanComplete || o.RewardRequested {
+	if r == nil || r.SessionId != s.state.SessionId || o == nil || r.QuestId == 0 || !giverEnds(r.NpcGuid, r.QuestId) || o.QuestId != r.QuestId || o.NpcGuid != r.NpcGuid || o.Revision != r.OfferRevision || !s.now().Before(s.turnIn.offerUntil) || o.Source != "reward_offer" || !o.CanComplete || o.RewardRequested {
 		return nil, 0, status.Error(codes.FailedPrecondition, "reward offer changed, expired or was consumed")
 	}
 	if len(o.Choices) == 0 {

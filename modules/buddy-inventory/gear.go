@@ -11,9 +11,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Ordinary armor has a single unambiguous equipment destination. Weapons,
-// shields, jewelry, tools, unique/set/scaling items and item-use effects need
-// additional rules and are deliberately absent from this capability.
+// Ordinary armor has a single unambiguous equipment destination. The separately
+// bounded weapon policy only adds mainhand daggers and empty-offhand staves.
 func armorSlot(m itemMetadata) (uint32, bool) {
 	switch m.inventoryType {
 	case 1:
@@ -123,6 +122,11 @@ func armorUsability(w *worldv1.SnapshotResponse, m itemMetadata) string {
 	if !m.ordinaryArmor() {
 		return "only_ordinary_single_slot_armor_supported"
 	}
+	// SharedDefines.h / Item::GetSkill: cloth415, leather414, mail413, plate293.
+	return gearUsability(w, m, [5]uint32{0, 415, 414, 413, 293}[m.subclass])
+}
+
+func gearUsability(w *worldv1.SnapshotResponse, m itemMetadata, proficiency uint32) string {
 	p := w.GetSelf()
 	if p == nil || !p.ClassKnown || p.ClassId == 0 || p.ClassId > 11 || !p.RaceKnown || p.RaceId == 0 || p.RaceId > 11 || !p.LevelKnown || p.Level == 0 {
 		return "actual_class_race_level_required"
@@ -140,9 +144,10 @@ func armorUsability(w *worldv1.SnapshotResponse, m itemMetadata) string {
 	if !ok {
 		return "complete_own_skill_baseline_required"
 	}
-	// SharedDefines.h / Item::GetSkill: cloth415, leather414, mail413, plate293.
-	proficiency := [5]uint32{0, 415, 414, 413, 293}[m.subclass]
 	if skills[proficiency] == 0 {
+		if m.class == 2 {
+			return "actual_weapon_proficiency_required"
+		}
 		return "actual_armor_proficiency_required"
 	}
 	if m.requiredSkill != 0 && (skills[m.requiredSkill] == 0 || skills[m.requiredSkill] < m.requiredSkillRank) {
@@ -154,13 +159,23 @@ func armorUsability(w *worldv1.SnapshotResponse, m itemMetadata) string {
 func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64, bool, string) {
 	m := s.metadata[i.Entry]
 	slot, supported := armorSlot(m)
+	weapon := m.ordinaryMainhandWeapon()
+	if weapon {
+		slot, supported = 15, true
+	}
 	if !i.MetadataKnown || !m.known {
 		return 0, 0, false, "complete_owned_item_metadata_pending"
 	}
 	if !supported || i.StackCount != 1 {
 		return 0, 0, false, "only_ordinary_single_slot_armor_supported"
 	}
-	if reason := armorUsability(s.view.w, m); reason != "" {
+	var reason string
+	if weapon {
+		reason = gearUsability(s.view.w, m, m.weaponProficiency())
+	} else {
+		reason = armorUsability(s.view.w, m)
+	}
+	if reason != "" {
 		return slot, 0, false, reason
 	}
 	if m.maxDurability != 0 && (!i.DurabilityKnown || i.MaxDurability != m.maxDurability || i.Durability == 0 || i.Durability > i.MaxDurability) {
@@ -169,6 +184,9 @@ func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64
 	equipment, known := equipmentView(s.view)
 	if !known {
 		return slot, 0, false, "complete_own_equipment_baseline_required"
+	}
+	if weapon && m.inventoryType == 17 && equipment[16].ItemGuid != 0 {
+		return slot, equipment[15].ItemGuid, false, "two_hand_weapon_requires_known_empty_offhand"
 	}
 	current := equipment[slot]
 	if current.ItemGuid != 0 && (!current.MetadataKnown || current.StackCount != 1) {
@@ -179,6 +197,9 @@ func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64
 	}
 	if !i.EnhancementsKnown || current.ItemGuid != 0 && !current.EnhancementsKnown {
 		return slot, current.ItemGuid, false, "enhancement_context_pending"
+	}
+	if weapon {
+		return slot, current.ItemGuid, conservativeWeaponUpgrade(m, i, s.metadata[current.Entry], current), ""
 	}
 	return slot, current.ItemGuid, conservativeArmorUpgrade(m, i, s.metadata[current.Entry], current), ""
 }
@@ -200,7 +221,7 @@ func conservativeArmorUpgrade(candidate itemMetadata, carried *worldv1.BackpackS
 	if equipped.ItemGuid == 0 {
 		return true
 	}
-	if !equipped.EnhancementsKnown || equipped.HasEnhancements || !current.ordinaryArmor() {
+	if !equipped.EnhancementsKnown || equipped.HasEnhancements || !comparableArmorBaseline(current) {
 		return false
 	}
 	a, aok := armorSlot(candidate)
@@ -245,20 +266,21 @@ func knownUpgradeStat(kind uint32) bool {
 
 // ItemPackets::AutoEquipItemSlot carries a raw item GUID followed by one slot.
 // ItemHandler routes it through Player::SwapItem, returning displaced armor to
-// the exact vacated source slot. No guessed destination or automatic retry.
+// the exact vacated source slot. Two-handed weapons require an empty offhand,
+// so this packet never relies on automatic stowage of a second displaced item.
 func equipGearPacket(g uint64, slot uint32) []byte {
 	if !itemGUID(g) {
 		return nil
 	}
 	switch slot {
-	case 0, 2, 4, 5, 6, 7, 8, 9, 14:
+	case 0, 2, 4, 5, 6, 7, 8, 9, 14, 15:
 		return append(binary.LittleEndian.AppendUint64(nil, g), byte(slot))
 	}
 	return nil
 }
 func (s *Service) EquipGear(ctx context.Context, r *inventoryv1.EquipGearRequest) (*inventoryv1.State, error) {
 	if r == nil || r.Source == nil || r.ExpectedEquipmentRevision == 0 || len(equipGearPacket(r.Source.ItemGuid, r.EquipmentSlot)) != 9 {
-		return nil, status.Error(codes.InvalidArgument, "exact_owned_armor_and_equipment_binding_required")
+		return nil, status.Error(codes.InvalidArgument, "exact_owned_gear_and_equipment_binding_required")
 	}
 	return s.submit(ctx, "equip_gear", r.RequestId, r.SessionId, r.ExpectedRevision, r.ExpectedInventoryRevision, r, &inventoryv1.Operation{Source: proto.Clone(r.Source).(*inventoryv1.ItemRef), EquipmentSlot: r.EquipmentSlot, BaselineEquipmentRevision: r.ExpectedEquipmentRevision, DisplacedItemGuid: r.ExpectedEquippedItemGuid})
 }

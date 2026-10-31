@@ -36,7 +36,7 @@ func rewardItems(r *reader, limit uint32) []*questsv1.RewardItem {
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Creature/GossipDef.cpp
 func decodeTurnIn(payload []byte, reward bool) (*questsv1.TurnInOffer, error) {
 	o, err := decodeTurnInFields(payload, reward)
-	if err != nil || !creatureGUID(o.GetNpcGuid()) {
+	if err != nil || !giverEnds(o.GetNpcGuid(), o.GetQuestId()) {
 		return nil, malformed
 	}
 	return o, nil

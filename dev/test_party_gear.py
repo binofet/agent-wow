@@ -1,4 +1,4 @@
-"""Exact normal armor swaps, simulated RPC and private journals only."""
+"""Exact normal gear swaps, simulated RPC and private journals only."""
 import copy
 import importlib.machinery
 import importlib.util
@@ -39,8 +39,10 @@ class RPC:
         self.current['operation']=op
         if self.mode=='blocked':op.update(status='BLOCKED',leaseReleased=True,transportAttempted=False)
         if self.mode in ('confirmed','lost_reply','wrong_displaced','no_lease','wrong_receipt','no_equipment_proof','false_transport'):
-            self.current['inventoryBags'][0]['slots'][2].update(itemGuid=str(OLD),entry=139)
-            self.current['equipment'][6].update(itemGuid=str(NEW),entry=2962)
+            equipped=self.current['equipment'][req['equipmentSlot']]
+            old_entry=equipped['entry']
+            self.current['inventoryBags'][0]['slots'][2].update(itemGuid=str(OLD),entry=old_entry)
+            equipped.update(itemGuid=str(NEW),entry=req['source']['entry'])
             self.current['inventoryRevision']='12';self.current['equipmentRevision']='4';self.current['revision']='5'
             self.current['items']=[]
             op.update(status='CONFIRMED',inventoryConfirmed=True,equipmentConfirmed=True,leaseReleased=True,
@@ -159,5 +161,37 @@ class GearTests(unittest.TestCase):
             worker=m.Worker(self.rpc,5,j,guard=guard,now=lambda:clock[0])
             self.assertEqual(worker.run()['phase'],'blocked')
             self.assertFalse(self.writes());self.assertFalse(j.data['attempts'])
+
+    def test_backend_qualified_mainhand_uses_same_exact_swap_and_durable_protection(self):
+        s=self.rpc.current
+        s['equipment'][6]=dict(slot=6,slotKnown=True)
+        s['equipment'][15]=dict(slot=15,slotKnown=True,itemGuid=str(OLD),entry=2092,stackCount=1,metadataKnown=True)
+        s['equipment'][16]=dict(slot=16,slotKnown=True,itemGuid=str(OLD+1),entry=50055,stackCount=1,metadataKnown=True)
+        s['inventoryBags'][0]['slots'][2]['entry']=2224
+        row=s['items'][0];row.update(name='Militia Dagger',gearEquipmentSlot=15,safeJunkSaleEligible=False)
+        row['item']['entry']=2224
+        other_hand=copy.deepcopy(s['equipment'][16])
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            result=self.worker(j).run()
+            self.assertEqual(result['newConfirmedOperations'],1)
+            self.assertEqual(result['equippedItems'][0]['name'],'Militia Dagger')
+            self.assertEqual(self.writes()[0]['equipmentSlot'],15)
+            self.assertEqual(s['equipment'][15]['itemGuid'],str(NEW))
+            self.assertEqual(s['inventoryBags'][0]['slots'][2]['itemGuid'],str(OLD))
+            self.assertEqual(s['equipment'][16],other_hand)
+        with m.Journal(self.path,self.rpc.url,5) as j:
+            self.worker(j).run();self.assertEqual(len(self.writes()),1)
+
+    def test_mainhand_requires_backend_upgrade_and_unsupported_offhand_is_never_dispatched(self):
+        for mode in ('ineligible','not_upgrade','offhand'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
+                self.rpc=RPC();row=self.rpc.current['items'][0]
+                row['gearEquipmentSlot']=16 if mode=='offhand' else 15
+                if mode=='ineligible':row['gearEquipEligible']=False
+                if mode=='not_upgrade':row['conservativeUpgrade']=False
+                with m.Journal(Path(temp).resolve()/'gear.json',self.rpc.url,5) as j:
+                    try:self.worker(j).run()
+                    except m.Error:pass
+                self.assertFalse(self.writes())
 
 if __name__=='__main__':unittest.main()

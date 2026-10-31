@@ -43,6 +43,7 @@ type Service struct {
 	journal                             journalRuntime
 	shares                              sharedQuestRuntime
 	explorationRequest                  *questsv1.ExploreRequest
+	explorations                        map[uint32]*explorationRecord
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -183,13 +184,20 @@ func (s *Service) Discover(ctx context.Context, _ *emptypb.Empty) (*questsv1.Sta
 	if err != nil {
 		return nil, err
 	}
-	nearby := make([]*questsv1.NearbyGiver, 0, min(64, len(w.QuestGivers)))
+	nearby := make([]*questsv1.NearbyGiver, 0, 96)
 	for _, npc := range w.QuestGivers[:min(64, len(w.QuestGivers))] {
 		if npc == nil {
 			continue
 		}
 		reason, d, known := interaction(w, a, npc, s.selfGUID)
 		nearby = append(nearby, &questsv1.NearbyGiver{Creature: proto.Clone(npc).(*worldv1.CreatureState), DistanceKnown: known, Distance: d, CanInteract: reason == "", BlockedReason: reason})
+	}
+	for _, object := range w.QuestObjects[:min(32, len(w.QuestObjects))] {
+		if object == nil || !lostGuardObjectGUID(object.Guid) {
+			continue
+		}
+		reason, d, known := objectInteraction(w, a, object, s.selfGUID)
+		nearby = append(nearby, &questsv1.NearbyGiver{GameObject: proto.Clone(object).(*worldv1.GameObjectState), DistanceKnown: known, Distance: d, CanInteract: reason == "", BlockedReason: reason})
 	}
 	sort.SliceStable(nearby, func(i, j int) bool {
 		if nearby[i].DistanceKnown != nearby[j].DistanceKnown {
@@ -199,7 +207,7 @@ func (s *Service) Discover(ctx context.Context, _ *emptypb.Empty) (*questsv1.Sta
 	})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.Nearby = nearby
+	s.state.Nearby = nearby[:min(64, len(nearby))]
 	return s.snapshotLocked(), nil
 }
 
@@ -236,6 +244,9 @@ func interaction(w *worldv1.SnapshotResponse, a *actionsv1.State, npc *worldv1.C
 	return "", d, true
 }
 func (s *Service) gate(ctx context.Context, npcGUID uint64) (*worldv1.SnapshotResponse, error) {
+	if lostGuardObjectGUID(npcGUID) {
+		return s.objectGate(ctx, npcGUID)
+	}
 	w, err := s.world(ctx)
 	if err != nil {
 		return nil, err
@@ -290,7 +301,7 @@ func (s *Service) send(ctx context.Context, op uint32, payload []byte) error {
 }
 func (s *Service) validateQuestLocked(r *questsv1.QuestRequest) (*questsv1.Quest, error) {
 	o := s.state.Offer
-	if r == nil || r.QuestId == 0 || o == nil || r.SessionId != s.state.SessionId || r.OfferRevision != o.Revision || r.NpcGuid != o.NpcGuid || !s.now().Before(s.offerUntil) {
+	if r == nil || r.QuestId == 0 || !giverStarts(r.NpcGuid, r.QuestId) || o == nil || r.SessionId != s.state.SessionId || r.OfferRevision != o.Revision || r.NpcGuid != o.NpcGuid || !s.now().Before(s.offerUntil) {
 		return nil, status.Error(codes.FailedPrecondition, "quest offer no longer matches this session, revision, NPC and quest")
 	}
 	for _, q := range o.Quests {
@@ -305,8 +316,8 @@ func (s *Service) validateQuestLocked(r *questsv1.QuestRequest) (*questsv1.Quest
 }
 
 func (s *Service) Offer(ctx context.Context, r *questsv1.OfferRequest) (*questsv1.OperationResult, error) {
-	if r == nil || !creatureGUID(r.NpcGuid) {
-		return nil, status.Error(codes.InvalidArgument, "observed creature npc_guid is required")
+	if r == nil || !questGiverGUID(r.NpcGuid) {
+		return nil, status.Error(codes.InvalidArgument, "observed questgiver GUID is required")
 	}
 	return s.query(ctx, r.SessionId, r.NpcGuid, nil)
 }
@@ -371,10 +382,14 @@ func (s *Service) query(ctx context.Context, sessionID string, npcGUID uint64, d
 	s.state.Revision++
 	s.mu.Unlock()
 	if detail == nil {
-		if err := s.send(call, opcode.CMSGQuestgiverStatusQuery, npcPacket(npcGUID)); err != nil {
-			return nil, err
+		if lostGuardObjectGUID(npcGUID) {
+			err = s.send(call, opcode.CMSGGameobjUse, npcPacket(npcGUID))
+		} else {
+			if err := s.send(call, opcode.CMSGQuestgiverStatusQuery, npcPacket(npcGUID)); err != nil {
+				return nil, err
+			}
+			err = s.send(call, opcode.CMSGQuestgiverHello, npcPacket(npcGUID))
 		}
-		err = s.send(call, opcode.CMSGQuestgiverHello, npcPacket(npcGUID))
 	} else {
 		err = s.send(call, opcode.CMSGQuestgiverQueryQuest, questPacket(npcGUID, detail.QuestId, false))
 	}
@@ -521,7 +536,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		r := reader{data: packet.Payload}
 		giver = &questsv1.GiverStatus{NpcGuid: r.u64(), Status: r.u8()}
 		err = r.done()
-		if !creatureGUID(giver.NpcGuid) || giver.Status > 10 {
+		if !questGiverGUID(giver.NpcGuid) || giver.Status > 10 {
 			err = malformed
 		}
 	case opcode.SMSGQuestgiverQuestInvalid:

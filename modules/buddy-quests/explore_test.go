@@ -64,7 +64,7 @@ func TestExplorationNormalPacketRequiresActualNewerOwnLogAndReleases(t *testing.
 func TestExplorationStrictCharacterMapRadiusRevisionAndRequestGuards(t *testing.T) {
 	cases := map[string]func(*fakeSession, *questsv1.ExploreRequest){
 		"foreign session":             func(_ *fakeSession, r *questsv1.ExploreRequest) { r.SessionId = "another-body" },
-		"unsupported quest":           func(_ *fakeSession, r *questsv1.ExploreRequest) { r.QuestId = 76 },
+		"unsupported quest":           func(_ *fakeSession, r *questsv1.ExploreRequest) { r.QuestId = 77 },
 		"raw trigger impossible":      func(_ *fakeSession, r *questsv1.ExploreRequest) { r.RequestId = "bad\n" },
 		"stale own log":               func(_ *fakeSession, r *questsv1.ExploreRequest) { r.QuestLogRevision++ },
 		"unknown own log":             func(f *fakeSession, _ *questsv1.ExploreRequest) { f.world.SelfQuestLogKnown = false },

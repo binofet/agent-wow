@@ -21,6 +21,12 @@ type itemMetadata struct {
 	statCount                                                                                             uint32
 	resistances                                                                                           [6]uint32
 	specialArmor                                                                                          bool
+	damages                                                                                               [2]itemDamage
+	delay                                                                                                 uint32
+}
+type itemDamage struct {
+	minimum, maximum float32
+	school           uint32
 }
 type itemStat struct {
 	kind  uint32
@@ -135,7 +141,7 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 	}
 	m.scalingDistribution, _ = read()
 	m.scalingValue, _ = read()
-	for range 2 {
+	for i := range m.damages {
 		a, _ := read()
 		b, _ := read()
 		school, _ := read()
@@ -143,12 +149,13 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 		if math.IsNaN(float64(minimum)) || math.IsInf(float64(minimum), 0) || math.IsNaN(float64(maximum)) || math.IsInf(float64(maximum), 0) || minimum < 0 || maximum < minimum || school > 6 {
 			return m, malformed
 		}
+		m.damages[i] = itemDamage{minimum, maximum, school}
 	}
 	m.armor, _ = read()
 	for i := range m.resistances {
 		m.resistances[i], _ = read()
 	}
-	_, _ = read()
+	m.delay, _ = read()
 	_, _ = read()
 	rangeBits, _ := read()
 	rangeModifier := math.Float32frombits(rangeBits)

@@ -31,6 +31,8 @@ message NearbyGiver {
   double distance = 3;
   bool can_interact = 4;
   string blocked_reason = 5;
+  // Only actual observed lost-guard questgiver objects55/56; no fabricated NPC.
+  warcraftbuddy.world.v1.GameObjectState game_object = 6;
 }
 enum AcceptanceStatus {
   NONE = 0;
@@ -76,7 +78,7 @@ message StateResponse {
   bool shared_quests_enabled = 17;
   ExplorationReceipt last_exploration = 18;
 }
-// The first supported normal client area trigger is Fargodeep quest62/trigger88.
+// Fixed client area triggers: Fargodeep quest62/88 and Jasperlode quest76/87.
 // Callers select neither a raw trigger nor coordinates.
 message ExploreRequest {
   string session_id = 1;
