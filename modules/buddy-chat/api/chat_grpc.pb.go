@@ -21,11 +21,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyChat_Send_FullMethodName      = "/warcraftbuddy.chat.v1.BuddyChat/Send"
-	BuddyChat_Emote_FullMethodName     = "/warcraftbuddy.chat.v1.BuddyChat/Emote"
-	BuddyChat_Poll_FullMethodName      = "/warcraftbuddy.chat.v1.BuddyChat/Poll"
-	BuddyChat_OwnerFeed_FullMethodName = "/warcraftbuddy.chat.v1.BuddyChat/OwnerFeed"
-	BuddyChat_OnPacket_FullMethodName  = "/warcraftbuddy.chat.v1.BuddyChat/OnPacket"
+	BuddyChat_Send_FullMethodName               = "/warcraftbuddy.chat.v1.BuddyChat/Send"
+	BuddyChat_Emote_FullMethodName              = "/warcraftbuddy.chat.v1.BuddyChat/Emote"
+	BuddyChat_Poll_FullMethodName               = "/warcraftbuddy.chat.v1.BuddyChat/Poll"
+	BuddyChat_OwnerFeed_FullMethodName          = "/warcraftbuddy.chat.v1.BuddyChat/OwnerFeed"
+	BuddyChat_ManagementRequests_FullMethodName = "/warcraftbuddy.chat.v1.BuddyChat/ManagementRequests"
+	BuddyChat_PublishTeamStatus_FullMethodName  = "/warcraftbuddy.chat.v1.BuddyChat/PublishTeamStatus"
+	BuddyChat_OnPacket_FullMethodName           = "/warcraftbuddy.chat.v1.BuddyChat/OnPacket"
 )
 
 // BuddyChatClient is the client API for BuddyChat service.
@@ -36,6 +38,8 @@ type BuddyChatClient interface {
 	Emote(ctx context.Context, in *EmoteRequest, opts ...grpc.CallOption) (*SendResponse, error)
 	Poll(ctx context.Context, in *PollRequest, opts ...grpc.CallOption) (*PollResponse, error)
 	OwnerFeed(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OwnerFeedResponse, error)
+	ManagementRequests(ctx context.Context, in *ManagementRequestsRequest, opts ...grpc.CallOption) (*ManagementRequestsResponse, error)
+	PublishTeamStatus(ctx context.Context, in *TeamStatusRequest, opts ...grpc.CallOption) (*TeamStatusResponse, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -87,6 +91,26 @@ func (c *buddyChatClient) OwnerFeed(ctx context.Context, in *emptypb.Empty, opts
 	return out, nil
 }
 
+func (c *buddyChatClient) ManagementRequests(ctx context.Context, in *ManagementRequestsRequest, opts ...grpc.CallOption) (*ManagementRequestsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ManagementRequestsResponse)
+	err := c.cc.Invoke(ctx, BuddyChat_ManagementRequests_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyChatClient) PublishTeamStatus(ctx context.Context, in *TeamStatusRequest, opts ...grpc.CallOption) (*TeamStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TeamStatusResponse)
+	err := c.cc.Invoke(ctx, BuddyChat_PublishTeamStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyChatClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -105,6 +129,8 @@ type BuddyChatServer interface {
 	Emote(context.Context, *EmoteRequest) (*SendResponse, error)
 	Poll(context.Context, *PollRequest) (*PollResponse, error)
 	OwnerFeed(context.Context, *emptypb.Empty) (*OwnerFeedResponse, error)
+	ManagementRequests(context.Context, *ManagementRequestsRequest) (*ManagementRequestsResponse, error)
+	PublishTeamStatus(context.Context, *TeamStatusRequest) (*TeamStatusResponse, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyChatServer()
 }
@@ -127,6 +153,12 @@ func (UnimplementedBuddyChatServer) Poll(context.Context, *PollRequest) (*PollRe
 }
 func (UnimplementedBuddyChatServer) OwnerFeed(context.Context, *emptypb.Empty) (*OwnerFeedResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OwnerFeed not implemented")
+}
+func (UnimplementedBuddyChatServer) ManagementRequests(context.Context, *ManagementRequestsRequest) (*ManagementRequestsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ManagementRequests not implemented")
+}
+func (UnimplementedBuddyChatServer) PublishTeamStatus(context.Context, *TeamStatusRequest) (*TeamStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PublishTeamStatus not implemented")
 }
 func (UnimplementedBuddyChatServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -224,6 +256,42 @@ func _BuddyChat_OwnerFeed_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyChat_ManagementRequests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ManagementRequestsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyChatServer).ManagementRequests(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyChat_ManagementRequests_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyChatServer).ManagementRequests(ctx, req.(*ManagementRequestsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyChat_PublishTeamStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TeamStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyChatServer).PublishTeamStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyChat_PublishTeamStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyChatServer).PublishTeamStatus(ctx, req.(*TeamStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyChat_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -264,6 +332,14 @@ var BuddyChat_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OwnerFeed",
 			Handler:    _BuddyChat_OwnerFeed_Handler,
+		},
+		{
+			MethodName: "ManagementRequests",
+			Handler:    _BuddyChat_ManagementRequests_Handler,
+		},
+		{
+			MethodName: "PublishTeamStatus",
+			Handler:    _BuddyChat_PublishTeamStatus_Handler,
 		},
 		{
 			MethodName: "OnPacket",

@@ -34,6 +34,7 @@ CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
             ("healing", "buddy-actions.healing", "healing", "actions"),
             ("buffs", "buddy-actions.buffs", "buffing", "actions"),
             ("follow", "buddy-actions.follow", "following", "actions"))
+TASK_PRIORITY = ['combat_or_recovery', 'existing_game_operation', 'usable_gear', 'bag_space_or_service', 'idle_gathering_quests_or_training']
 
 def identity(guid):
     if guid not in ROSTER:
@@ -141,6 +142,8 @@ class Supervisor:
         self.release_uncertain, self.worker = False, worker or self.run_worker
         self.held_controls, self.controls_paused, self.pause_uncertain, self.worker_uncertain = {}, False, False, False
         self.gear_protected=set()
+        self.gear_scope, self.gear_group = False, None
+        self.status.update(taskQueue=list(TASK_PRIORITY), selectedTask='none', blockedReason='', gearCandidateCount=0)
         self.disenchant_running=False
         self.disenchant_scanner=disenchant.Scanner() if guid==4 else None
         self.disenchant_next_query=0
@@ -158,11 +161,12 @@ class Supervisor:
 
     def read(self):
         inv = town.checked_state(self.rpc.call("buddy-inventory.state", {}), self.guid)
-        world = self.rpc.call("buddy-world.snapshot", {})
+        party = self.rpc.call('buddy-party.state', {}) if self.gear_scope else None
         actions = self.rpc.call("buddy-actions.status", {})
         trade = self.rpc.call("buddy-trade.state", {})
         quests = self.rpc.call("buddy-quests.state", {})
         loot = self.rpc.call("buddy-loot.state", {})
+        world = self.rpc.call("buddy-world.snapshot", {})
         player = world.get("self", {})
         if integer(player.get("guid", 0)) != self.guid: raise Error("Town actor identity changed")
         if self.session is not None and inv["sessionId"] != self.session:
@@ -172,7 +176,59 @@ class Supervisor:
                 self.status.update(disenchantPhase='waiting_for_party_comparison',disenchantedItems=[])
         for state in (trade, quests, loot):
             if state.get("sessionId") != inv["sessionId"]: raise Error("Town module body is unconfirmed")
-        return dict(inv=inv, world=world, actions=actions, self=player, trade=trade, quests=quests, loot=loot)
+        return dict(inv=inv, world=world, actions=actions, self=player, trade=trade, quests=quests, loot=loot, party=party)
+
+    def block(self, reason, message):
+        self.status['blockedReason'] = reason
+        raise Error(message)
+
+    def gear_party_safe(self, context):
+        party, p, a = context.get('party'), context['self'], context['actions']
+        if a.get('sessionId') != context['inv']['sessionId'] or integer(a.get('selfGuid', 0)) != self.guid:
+            self.block('gear_waits_for_current_body', 'Gear actions body is unconfirmed')
+        group = party.get('group', {}) if isinstance(party, dict) else {}
+        members = group.get('members', [])
+        if (not isinstance(party, dict) or party.get('sessionId') != context['inv']['sessionId']
+                or group.get('known') is not True or group.get('inGroup') is not True
+                or not integer(group.get('groupGuid', 0)) or integer(group.get('leaderGuid', 0)) != 3
+                or not isinstance(members, list) or not 2 <= len(members) <= 5):
+            self.block('gear_waits_for_current_party', 'Gear needs the actual current party')
+        roster = []
+        for member in members:
+            guid = integer(member.get('guid', 0)) if isinstance(member, dict) else 0
+            if guid not in (1, 3, 4, 5, 8) or guid in [g for g, _ in roster] or type(member.get('online', False)) is not bool:
+                self.block('gear_waits_for_current_party', 'Gear party membership is unconfirmed')
+            roster.append((guid, member.get('online', False)))
+        signature = (integer(group['groupGuid']), tuple(sorted(roster)))
+        if self.guid not in dict(roster) or not dict(roster)[self.guid] or 3 not in dict(roster):
+            self.block('gear_waits_for_current_party', 'Gear party identity is unconfirmed')
+        if self.gear_group is None: self.gear_group = signature
+        elif self.gear_group != signature:
+            self.block('gear_party_changed', 'Gear party changed during upkeep')
+        players = context['world'].get('nearbyPlayers', [])
+        if not isinstance(players, list) or len(players) > 64:
+            self.block('gear_waits_for_safe_party', 'Gear player observations are unconfirmed')
+        views = [p, context['world'].get('owner', {})] + players
+        for guid, online in roster:
+            if not online: continue
+            matches = [v for v in views if isinstance(v, dict) and integer(v.get('guid', 0)) == guid]
+            if len(matches) != 1:
+                self.block('gear_waits_for_safe_party', 'Gear waits for observed party health')
+            player = matches[0]
+            if (any(player.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown', 'movementFlagsKnown'))
+                    or not 0 < integer(player.get('health', 0)) <= integer(player.get('maxHealth', 0))
+                    or integer(player['health'])*100 < integer(player['maxHealth'])*85
+                    or integer(player.get('unitFlags', 0)) & (1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
+                    or integer(player.get('movementFlags', 0)) & ~0x700001ff or integer(player.get('extraMovementFlags', 0))
+                    or not point(player) or integer(player.get('mapId', 0)) != integer(p.get('mapId', 0))):
+                self.block('gear_waits_for_safe_party', 'Gear waits for healthy out-of-combat party members')
+            # Own raw pose can be old; the separately guarded client position is
+            # the current own movement estimate, never a replacement raw pose.
+            if guid != self.guid:
+                if integer(player.get('movementFlags', 0)) & 0xff and integer(player.get('positionAgeMs', 0)) > 2000:
+                    self.block('gear_waits_for_fresh_moving_party', 'Gear waits for fresh moving party positions')
+                if distance(a['position'], player) > 60:
+                    self.block('gear_waits_for_party_leash', 'Gear waits for the nearby party')
 
     def safe(self, context, traveling=False, own_worker=False):
         p, a, inv = context["self"], context["actions"], context["inv"]
@@ -181,39 +237,45 @@ class Supervisor:
                 or integer(p.get("unitFlags", 0)) & (1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
                 or integer(p.get("movementFlags", 0)) & ~0x700001ff or integer(p.get("extraMovementFlags", 0))
                 or not point(pos, "known") or integer(pos.get("mapId", 0)) != integer(p.get("mapId", 0))):
-            raise Error("Town needs a safe known living character")
-        if any(a.get(k) is True for k in ("motionUnconfirmed", "castPending", "practicing", "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed")):
-            raise Error("Town waits for other game actions")
-        if not traveling and (a.get("moving") is True or a.get("traveling") is True): raise Error("Town waits for idle movement")
+            self.block('waiting_for_safe_known_living_character', 'Town needs a safe known living character')
+        if (any(a.get(k) is True for k in ("motionUnconfirmed", "castPending", "practicing", "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed"))
+                or a.get('recovery', {}).get('active') is True):
+            self.block('combat_recovery_or_action_has_priority', 'Town waits for other game actions')
+        follow_handoff = (self.gear_scope and not self.controls_paused and a.get('following') is True
+                          and integer(a.get('followLeaseRemainingMs', 0)) > 1000 and a.get('traveling') is not True
+                          and integer(pos.get('ageMs', 0)) <= 2000)
+        if not traveling and (a.get("traveling") is True or a.get("moving") is True and not follow_handoff):
+            self.block('waiting_for_idle_movement', 'Town waits for idle movement')
         owner = a.get("interactionOwner", "")
         if owner and not (traveling and owner == "trade" or own_worker and self.disenchant_running and owner == 'professions'):
-            raise Error("Town waits for another interaction")
-        if self.activities(): raise Error("Town defers to a requested routine")
+            self.block('existing_interaction_has_custody', 'Town waits for another interaction')
+        if self.activities(): self.block('requested_routine_has_custody', 'Town defers to a requested routine')
         if (context["quests"].get("actionInFlight") is True or integer(context["loot"].get("pendingCorpseGuid", 0))
                 or integer(context["loot"].get("pendingGameObjectGuid", 0))):
-            raise Error("Town defers to quest or loot interaction")
+            self.block('quest_or_loot_receipt_has_priority', 'Town defers to quest or loot interaction')
         if not c.trade_idle(context['trade']):
-            raise Error("Town defers to trading")
+            self.block('trade_receipt_has_priority', 'Town defers to trading')
         if inv.get("active") is True or inv.get("closing") is True or inv.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
-            if not own_worker: raise Error("Town waits for inventory receipt")
+            if not own_worker: self.block('inventory_receipt_has_priority', 'Town waits for inventory receipt')
         town.layout(inv)
         if self.controls_paused and any(context[group].get(field,False) is not False for _,_,field,group in CONTROLS):
-            raise Error("Town controls changed after the verified hold")
+            self.block('control_intent_changed', 'Town controls changed after the verified hold')
+        if self.gear_scope: self.gear_party_safe(context)
         owner = context["world"].get("owner", {})
         if not isinstance(owner,dict): raise Error("Owner observation is invalid")
         if owner.get("present") is True:
             if (integer(owner.get("guid", 0)) != 3 or any(owner.get(k) is not True for k in ("aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
-                    or integer(owner.get("unitFlags", 0)) & 0x80000 or integer(owner.get("movementFlags", 0)) & 0x1ff
+                    or integer(owner.get("unitFlags", 0)) & 0x80000 or not self.gear_scope and integer(owner.get("movementFlags", 0)) & 0x1ff
                     or not point(owner)):
-                raise Error("Town waits for Joel to stop safely")
+                self.block('waiting_for_joel_to_stop_safely', 'Town waits for Joel to stop safely')
             return {"mapId": integer(owner.get("mapId", 0)), **{k: owner[k] for k in ("x", "y", "z")}}
         return None
 
     def guard(self, traveling=False):
-        if self.stopped() or self.revoked() or self.controls_revoked(): raise Error("Town activity stop requested")
+        if self.stopped() or self.revoked() or self.controls_revoked(): self.block('control_stop_requested', 'Town activity stop requested')
         context = self.read()
         owner = self.safe(context, traveling=traveling, own_worker=not traveling)
-        if ((owner is None) != (self.owner_anchor is None) or owner is not None and
+        if not self.gear_scope and ((owner is None) != (self.owner_anchor is None) or owner is not None and
                 (owner["mapId"] != self.owner_anchor["mapId"] or distance(owner, self.owner_anchor) > .35)):
             raise Error("Joel moved or returned during town upkeep")
         return context
@@ -238,6 +300,8 @@ class Supervisor:
                 reply=self.rpc.call(method,dict(enabled=False))
                 if reply.get(field,False) is not False:
                     raise Error("Town control pause receipt is unconfirmed")
+                if self.gear_scope and name == 'follow' and any(reply.get(k) is True for k in ('moving','traveling','motionUnconfirmed')):
+                    raise Error('Gear follow stop is unconfirmed')
             except Error:
                 self.pause_uncertain=True
                 raise
@@ -370,28 +434,39 @@ class Supervisor:
                 return result
 
     def tick(self):
-        self.status.update(observationsCurrent=False, busy=False)
+        self.gear_scope, self.gear_group = False, None
+        self.status.update(observationsCurrent=False, busy=False, selectedTask='none', blockedReason='', gearCandidateCount=0)
         if self.stopped(): return
         context = self.read()
+        pending,self.gear_protected=gear.ledger_facts(self.guid)
+        pending_disenchant=self.guid==4 and disenchant.pending()
+        choices = gear.candidates(context['inv']) if context['inv'].get('equipmentKnown') is True else []
+        self.status.update(gearCandidateCount=len(choices), selectedTask='gear' if pending or choices else 'none')
+        if not pending_disenchant and (pending or choices):
+            self.gear_scope = True
+            context = self.read()
+            choices = gear.candidates(context['inv']) if context['inv'].get('equipmentKnown') is True else []
+            self.status['gearCandidateCount'] = len(choices)
+            if not pending and not choices:
+                self.status.update(phase='waiting_for_fresh_gear_candidate', blockedReason='gear_candidate_changed_before_hold')
+                return
         owner = self.safe(context)
         self.release_uncertain = False  # Fresh idle state proves no old movement lease remains.
         if self.session is None: self.session = context["inv"]["sessionId"]
-        if owner != self.steady_owner:
+        if not self.gear_scope and owner != self.steady_owner:
             self.steady_owner, self.owner_since = owner, self.now()
             if owner is not None:
-                self.status["phase"] = "waiting_for_joel_to_remain_stationary"; return
-        if owner is not None and self.now()-self.owner_since < 2:
-            self.status["phase"] = "waiting_for_joel_to_remain_stationary"; return
+                self.status.update(phase='waiting_for_joel_to_remain_stationary', blockedReason='waiting_for_joel_to_remain_stationary'); return
+        if not self.gear_scope and owner is not None and self.now()-self.owner_since < 2:
+            self.status.update(phase='waiting_for_joel_to_remain_stationary', blockedReason='waiting_for_joel_to_remain_stationary'); return
         self.owner_anchor = owner
         inv = context["inv"]
-        pending,self.gear_protected=gear.ledger_facts(self.guid)
         summary = c.inventory_context(inv, self.guid)
         self.status.update(observationsCurrent=True, freeSlots=summary["freeSlots"], totalSlots=summary["totalSlots"], bodySessionId=self.session)
         bags, slots = town.layout(inv)
         empty = any(not integer(bags[b].get("containerGuid", 0)) for b in range(1,5))
         carried = any(i.get("metadataKnown") is True and integer(i.get("entry", 0)) == 41599 for i in slots.values())
         kind, target, mode = "", 0, "local"
-        pending_disenchant=self.guid==4 and disenchant.pending()
         if pending_disenchant:
             kind='disenchant'
             self.status['disenchantPhase']='reconciling_previous_attempt'
@@ -457,14 +532,15 @@ class Supervisor:
                     kind,target="sell",vendors[0][1]
                     mode="travel" if vendors[0][0] > 4.5 else "local"
         if not kind:
-            self.status["phase"]="idle_no_qualified_town_upkeep"; return
+            self.status.update(phase='idle_no_qualified_town_upkeep', blockedReason='no_verified_conservative_upgrade_or_service'); return
+        self.status['selectedTask'] = kind
         key = f"{self.session}/{integer(inv['inventoryRevision'])}/{kind}/{target}/{mode}"
         if kind == "gear": key += f"/module/{integer(inv['revision'])}"
         existing=next((row for row in self.data['attempts'] if row['key']==key),None)
         if existing is not None and not pending_disenchant:
-            self.status["phase"]="unchanged_town_attempt_not_repeated"; return
+            self.status.update(phase='unchanged_town_attempt_not_repeated', blockedReason='unchanged_attempt_not_repeated'); return
         if existing is None and len(self.data["attempts"]) >= 128:
-            self.status["phase"]="finite_town_attempt_limit"; return
+            self.status.update(phase='finite_town_attempt_limit', blockedReason='finite_attempt_limit'); return
         row=existing or dict(key=key, sessionId=self.session, phase="reserved")
         if existing is None:self.data['attempts'].append(row)
         self.persist()

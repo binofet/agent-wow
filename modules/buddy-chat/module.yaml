@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Explicit SAY/PARTY/WHISPER chat, WAVE/BOW/CHEER emotes and session-bound player chat polling; no automatic replies
+description: Explicit chat/emotes, session-bound chat and owner feeds, authenticated fixed team requests and structured host status; no automatic replies or backend lifecycle operations
 compose:
   file: compose.yaml
   service: module
@@ -11,5 +11,7 @@ rpc:
   emote: /warcraftbuddy.chat.v1.BuddyChat/Emote
   poll: /warcraftbuddy.chat.v1.BuddyChat/Poll
   owner_feed: /warcraftbuddy.chat.v1.BuddyChat/OwnerFeed
+  management_requests: /warcraftbuddy.chat.v1.BuddyChat/ManagementRequests
+  publish_team_status: /warcraftbuddy.chat.v1.BuddyChat/PublishTeamStatus
 packets:
   SMSG_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket

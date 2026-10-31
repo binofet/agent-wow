@@ -12,7 +12,7 @@ import (
 )
 
 // Ordinary armor has a single unambiguous equipment destination. The separately
-// bounded weapon policy only adds mainhand daggers and empty-offhand staves.
+// bounded weapon policy adds mainhand daggers/maces and empty-offhand staves.
 func armorSlot(m itemMetadata) (uint32, bool) {
 	switch m.inventoryType {
 	case 1:
@@ -185,10 +185,10 @@ func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64
 	if !known {
 		return slot, 0, false, "complete_own_equipment_baseline_required"
 	}
-	if weapon && m.inventoryType == 17 && equipment[16].ItemGuid != 0 {
+	current := equipment[slot]
+	if weapon && equipment[16].ItemGuid != 0 && (m.inventoryType == 17 || current.ItemGuid != 0 && s.metadata[current.Entry].inventoryType == 17) {
 		return slot, equipment[15].ItemGuid, false, "two_hand_weapon_requires_known_empty_offhand"
 	}
-	current := equipment[slot]
 	if current.ItemGuid != 0 && (!current.MetadataKnown || current.StackCount != 1) {
 		return slot, current.ItemGuid, false, "displaced_owned_item_metadata_required"
 	}

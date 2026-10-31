@@ -6,10 +6,13 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
 
-// These two ordinary weapon families have one supported destination: mainhand.
+// These ordinary weapon families have one supported destination: mainhand.
 // Staff eligibility additionally requires the actual offhand to be empty, so
 // the existing single displaced-item receipt remains complete.
 func (m itemMetadata) weaponProficiency() uint32 {
+	if m.class == 2 && m.subclass == 4 && (m.inventoryType == 13 || m.inventoryType == 21) {
+		return 54 // Item::GetSkill / SharedDefines: one-handed maces.
+	}
 	if m.class == 2 && m.subclass == 15 && (m.inventoryType == 13 || m.inventoryType == 21) {
 		return 173 // Item::GetSkill / SharedDefines: daggers.
 	}

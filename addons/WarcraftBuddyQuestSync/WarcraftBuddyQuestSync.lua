@@ -331,6 +331,10 @@ end
 frame:SetScript("OnEvent", function(_, event, ...)
     if event == "CHAT_MSG_ADDON" then
         if WarcraftBuddyInventory then WarcraftBuddyInventory.Receive(...) end
+        if WarcraftBuddyTeam then
+            local ok,message=pcall(WarcraftBuddyTeam.Receive,...)
+            if not ok then reportError("readErrors","Team panel: "..tostring(message)) end
+        end
         return
     end
     if event=="PLAYER_EQUIPMENT_CHANGED" or event=="UPDATE_INVENTORY_DURABILITY" or event=="SPELLS_CHANGED" or event=="PLAYER_LEVEL_UP" then gearDue=true end
@@ -374,6 +378,10 @@ hooksecurefunc("AbandonQuest", function()
 end)
 frame:SetScript("OnUpdate", function()
     if WarcraftBuddyInventory then WarcraftBuddyInventory.Tick() end
+    if WarcraftBuddyTeam then
+        local ok,message=pcall(WarcraftBuddyTeam.Tick)
+        if not ok then reportError("publishErrors","Team panel: "..tostring(message)) end
+    end
     diagnostics.ticks = diagnostics.ticks + 1
     lastUpdate = GetTime()
     if GetTime() - lastSent >= 5 or due > 0 and GetTime() >= due and GetTime() - lastSent >= 1 then
@@ -646,4 +654,168 @@ function I.Tick()
 end
 SlashCmdList["WBINV"] = function() I.Open() end
 SLASH_WBINV1 = "/wbinv"
+end
+
+-- Team controls send requests only. The host owns safe stopping, normal
+-- recovery and receipt checks; neither a click nor an activity implies success.
+do
+local T={rows={},relays={},pending={},ack={},sequence=0}
+WarcraftBuddyTeam=T
+local roster={{name="Arlen",guid="1",hex="0000000000000001"},{name="Mira",guid="4",hex="0000000000000004"},
+    {name="Rook",guid="5",hex="0000000000000005"},{name="Nixwick",guid="8",hex="0000000000000008"}}
+local byGuid={};for _,row in ipairs(roster) do byGuid[row.guid]=row end
+local labels={ONLINE="Online",OFFLINE="Offline",FOLLOWING="Following",FIGHTING="Fighting",HEALING="Healing",
+    BUFFING="Buffing",LOOTING="Looting",GATHERING="Gathering",MANAGING_SKILLS="Managing skills",
+    MANAGING_GEAR="Managing gear",SELLING_TRASH="Selling trash",MAIL="Collecting mail",BUSY="Busy",
+    REQUESTED="Request queued",DEFERRED_COMBAT="Waiting for combat to end",STOPPING="Stopping safely",
+    STARTING="Restarting",READY="Ready",UNSTUCK_ROUTING="Taking a safe recovery route",
+    NEEDS_GM_HELP="Needs help: no safe route",FAILED="Request failed",OUTCOME_UNCONFIRMED="Outcome unconfirmed",
+    COMPLETE="Request completed"}
+local window,entry,render,lastTick=nil,nil,function() end,-1
+local function integer(text,low,high)
+    if type(text)~="string" or not text:match("^%d+$") or #text>10 then return end
+    local value=tonumber(text)
+    if value and value>=low and value<=high and tostring(value)==text then return value end
+end
+local function hex(text) return type(text)=="string" and #text==12 and not text:find("[^0-9a-f]") end
+local function member(subject)
+    local expected=byGuid[subject]
+    if not expected then return end
+    for i=1,GetNumPartyMembers() do
+        local unit="party"..i;local guid=UnitGUID(unit)
+        if UnitName(unit)==expected.name and type(guid)=="string"
+            and guid:lower():gsub("^0x","")==expected.hex then return unit end
+    end
+end
+local function connected(subject)
+    local unit=member(subject)
+    if not unit then return false,"Not in party" end
+    if type(UnitIsConnected)~="function" then return false,"Connection unknown" end
+    local online=UnitIsConnected(unit)
+    return online==true or online==1, (online==true or online==1) and "Online" or "Offline"
+end
+local function relay()
+    local selected
+    for _,row in ipairs(roster) do
+        local current=T.relays[row.guid]
+        if current and GetTime()>=current.at and GetTime()-current.at<=current.ttl and connected(row.guid)
+            and (not selected or current.at>selected.at) then selected=current end
+    end
+    return selected
+end
+function T.Request(subject,kind)
+    subject=tostring(subject)
+    if not isJoel() or not byGuid[subject] or (kind~="RESET" and kind~="UNSTUCK") or T.pending[subject] then return false end
+    local current=relay()
+    if not current or T.sequence>=2147483647 then return false end
+    T.sequence=T.sequence+1
+    local pending={nonce=nonce,sequence=T.sequence,kind=kind,at=GetTime(),phase="REQUESTED"}
+    T.pending[subject]=pending;T.ack[subject]=nil -- Reserve before the possibly ambiguous send call.
+    local payload=table.concat({"R",current.epoch,nonce,T.sequence,subject,kind},"|")
+    local ok=pcall(SendAddonMessage,"WBTEAM1",payload,"PARTY")
+    if not ok then pending.phase="OUTCOME_UNCONFIRMED" end
+    render();return ok
+end
+function T.Receive(prefix,message,channel,sender)
+    if prefix~="WBTEAM1" or channel~="PARTY" or not isJoel() or type(message)~="string"
+        or #message>248 or message:find("[%c]") then return false end
+    local senderGuid
+    for _,row in ipairs(roster) do if sender==row.name and member(row.guid) then senderGuid=row.guid end end
+    if not senderGuid then return false end
+    local fields={};for value in (message.."|"):gmatch("(.-)|") do fields[#fields+1]=value end
+    local epoch,seq,subject,phase,request,requestSeq,ttl=fields[2],integer(fields[3],1,2147483647),fields[4],fields[5],fields[6],integer(fields[7],0,2147483647),integer(fields[8],1,15)
+    if #fields~=8 or fields[1]~="S" or type(epoch)~="string" or #epoch<12 or #epoch>64 or epoch:find("[^A-Za-z0-9]")
+        or not seq or not byGuid[subject] or not labels[phase] or not requestSeq or not ttl
+        or not (request=="-" and requestSeq==0 or hex(request) and requestSeq>0) then return false end
+    local previous=T.relays[senderGuid]
+    local retired=previous and previous.retired or {}
+    for _,old in ipairs(retired) do if epoch==old then return false end end
+    local sequences=previous and previous.epoch==epoch and previous.sequences or {}
+    if seq<=(sequences[subject] or 0) then return false end
+    if previous and previous.epoch~=epoch then
+        if #retired>=8 then return false end -- Never forget a retired body to admit another.
+        retired[#retired+1]=previous.epoch
+    end
+    sequences[subject]=seq
+    T.relays[senderGuid]={epoch=epoch,at=GetTime(),ttl=ttl,retired=retired,sequences=sequences}
+    T.rows[subject]={phase=phase,at=GetTime(),ttl=ttl,relay=senderGuid,epoch=epoch,sequence=seq}
+    local pending=T.pending[subject]
+    if pending and request==pending.nonce and requestSeq==pending.sequence then
+        pending.phase=phase
+        if phase=="COMPLETE" or phase=="FAILED" or phase=="NEEDS_GM_HELP" then
+            T.ack[subject]={phase=phase,kind=pending.kind,at=GetTime()};T.pending[subject]=nil
+        end
+    end
+    render();return true
+end
+function T.View(subject)
+    subject=tostring(subject)
+    local online,connection=connected(subject)
+    local row,pending,ack=T.rows[subject],T.pending[subject],T.ack[subject]
+    local age=row and math.max(0,math.floor(GetTime()-row.at)) or nil
+    local fresh=row and GetTime()>=row.at and GetTime()-row.at<=row.ttl
+    local activity=fresh and labels[row.phase] or row and ("Stale: "..labels[row.phase]) or "No host status"
+    local request=""
+    if pending then
+        request=(pending.kind=="RESET" and "Reset: " or "Unstuck: ")..labels[pending.phase]
+        if GetTime()-pending.at>15 and pending.phase=="REQUESTED" then request=request.." — awaiting reply" end
+    elseif ack then request=(ack.kind=="RESET" and "Reset: " or "Unstuck: ")..labels[ack.phase] end
+    return {name=byGuid[subject].name,online=online,connection=connection,activity=activity,age=age,request=request,
+        canRequest=isJoel() and not pending and relay()~=nil and T.sequence<2147483647}
+end
+local function makeWindow()
+    if window then return end
+    window=CreateFrame("Frame","WarcraftBuddyTeamFrame",UIParent)
+    window:SetWidth(590);window:SetHeight(330);window:SetPoint("CENTER");window:SetFrameStrata("DIALOG")
+    window:EnableMouse(true);window:SetMovable(true);window:RegisterForDrag("LeftButton")
+    window:SetScript("OnDragStart",window.StartMoving);window:SetScript("OnDragStop",window.StopMovingOrSizing)
+    window:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border",tile=true,tileSize=32,edgeSize=32,insets={left=10,right=10,top=10,bottom=10}})
+    local function text(parent,x,y,width,style)
+        local value=parent:CreateFontString(nil,"OVERLAY",style or "GameFontHighlightSmall")
+        value:SetPoint("TOPLEFT",x,y);value:SetWidth(width);value:SetJustifyH("LEFT");return value
+    end
+    text(window,22,-20,500,"GameFontNormalLarge"):SetText("Companions")
+    text(window,22,-46,540):SetText("Reset restarts a companion safely. Unstuck requests normal recovery.")
+    local close=CreateFrame("Button",nil,window,"UIPanelCloseButton");close:SetPoint("TOPRIGHT",-5,-5)
+    local widgets={}
+    for i,person in ipairs(roster) do
+        local subject,y=person.guid,-76-(i-1)*54
+        local row={name=text(window,22,y,80,"GameFontNormal"),connection=text(window,105,y,95),activity=text(window,205,y,205),
+            request=text(window,105,y-19,340),age=text(window,410,y,45)}
+        for n,kind in ipairs({"RESET","UNSTUCK"}) do
+            local action=kind;local button=CreateFrame("Button",nil,window,"UIPanelButtonTemplate")
+            button:SetWidth(75);button:SetHeight(23);button:SetPoint("TOPLEFT",465,y-(n-1)*25)
+            button:SetText(action=="RESET" and "Reset" or "Unstuck");button:SetScript("OnClick",function() T.Request(subject,action) end)
+            row[action]=button
+        end
+        widgets[subject]=row
+    end
+    text(window,22,-301,540):SetText("Stale or offline status is shown as observed. A queued request is not success.")
+    render=function()
+        for _,person in ipairs(roster) do
+            local view,row=T.View(person.guid),widgets[person.guid]
+            row.name:SetText(view.name);row.connection:SetText(view.connection);row.activity:SetText(view.activity)
+            row.age:SetText(view.age and (view.age.."s") or "—");row.request:SetText(view.request)
+            for _,kind in ipairs({"RESET","UNSTUCK"}) do if view.canRequest then row[kind]:Enable() else row[kind]:Disable() end end
+        end
+    end
+    window:Hide();render()
+end
+function T.Init()
+    if entry or not UIParent or not isJoel() then return end
+    entry=CreateFrame("Button","WarcraftBuddyTeamButton",UIParent,"UIPanelButtonTemplate")
+    entry:SetWidth(60);entry:SetHeight(22);entry:SetPoint("TOPRIGHT",UIParent,"TOPRIGHT",-16,-190)
+    entry:SetText("Team");entry:SetScript("OnClick",function() T.Open() end)
+end
+function T.Open()
+    if not UIParent then return false end
+    makeWindow();if window:IsShown() then window:Hide() else window:Show();render() end
+    return true
+end
+function T.Tick()
+    T.Init()
+    if GetTime()-lastTick>=1 then lastTick=GetTime();render() end
+end
+SlashCmdList.WBTEAM=function() T.Open() end
+SLASH_WBTEAM1="/wbteam"
 end

@@ -1,0 +1,764 @@
+#!/usr/bin/env python3
+"""Fixed-roster host supervisor for authenticated addon requests and public status."""
+import sys
+sys.dont_write_bytecode = True
+import argparse
+import concurrent.futures
+import copy
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shlex
+import signal
+import subprocess
+import threading
+import time
+import urllib.request
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+_loader = importlib.machinery.SourceFileLoader('team_control_converse', str(ROOT/'dev/converse'))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+c = importlib.util.module_from_spec(_spec); _loader.exec_module(c)
+Error = c.ConversationError
+class NoRoute(Error): pass
+ROSTER = {1: ('Arlen', 8086, 'default', 'priest'), 4: ('Mira', 8087, 'mira', 'mage'),
+          5: ('Rook', 8088, 'rook', 'rogue'), 8: ('Nixwick', 8402, 'nixwick', 'warlock')}
+IDENTITY = {'version': 1, 'ownerGuid': 3, 'subjects': [1, 4, 5, 8], 'mode': 'authenticated_team_control'}
+READS = ('actions', 'loot', 'professions', 'inventory', 'trade', 'quests', 'training', 'quest-items', 'mail')
+CONTROLS = (('assist', 'buddy-actions.assist', 'assisting'), ('heal', 'buddy-actions.healing', 'healing'),
+            ('buff', 'buddy-actions.buffs', 'buffing'), ('loot', 'buddy-loot.enable', 'enabled'),
+            ('recovery', 'buddy-actions.recovery', 'enabled'), ('follow', 'buddy-actions.follow', 'following'))
+TERMINAL = {'COMPLETE', 'FAILED', 'OUTCOME_UNCONFIRMED', 'NEEDS_GM_HELP'}
+SSH = ['ssh', '-i', str(Path.home()/'.ssh/id_ed5519_quasar'), '-o', 'IdentitiesOnly=yes',
+       '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', 'quasar']
+MAIN_ADAPTER = '/home/jmax/dev/warcraft_buddy/dev/team-body'
+NIX_ADAPTER_SHA = 'f67e83f9f2a0f1230de74525f7c04e0bf3d985023c9410b3b9ced365ed266896'
+NIX_ADAPTER = '/home/jmax/dev/warcraft_buddy/config/autonomy/uther-roster/account02/versioned-launcher/team-control-adapters/'+NIX_ADAPTER_SHA+'/adapter.py'
+NIX_CORE = 'f674abe268d2ec0c83a704243415fc1cf111a6b8c65ae96d04339bb28cb89be3'
+NIX_LAUNCHER = '54a498f4b94d5c9b2fb1b0bf9b91d19aecdd6914036301a14141d0fe7ae2ca33'
+NIX_KEYS = {'guid', 'rpcPort', 'online', 'ownedProfile', 'pid', 'startTicks', 'exeDevice', 'exeInode',
+            'logDevice', 'logInode', 'logOffset', 'coreSha256', 'launcherSha256', 'sessionId'}
+METHODS = {f'buddy-{x}.state' for x in READS if x != 'actions'} | {
+    'buddy-actions.status', 'buddy-party.state', 'buddy-world.snapshot', 'buddy-chat.management_requests',
+    'buddy-chat.publish_team_status', 'buddy-chat.poll', 'buddy-actions.acquire_interaction',
+    'buddy-actions.release_interaction', 'buddy-actions.travel_to', *(v[1] for v in CONTROLS)}
+
+
+def check(value, reason):
+    if not value: raise Error(reason)
+
+
+def number(value):
+    if type(value) is int and value >= 0: return value
+    if isinstance(value, str) and re.fullmatch('[0-9]{1,20}', value): return int(value)
+    raise Error('Invalid bounded public number')
+
+
+def token(value):
+    check(isinstance(value, str) and re.fullmatch('[A-Za-z0-9_.-]{1,128}', value), 'Invalid body or operation binding')
+    return value
+
+
+def trusted_interpreter(path):
+    if not isinstance(path, str) or not Path(path).is_absolute(): return False
+    candidates = [Path(sys.executable)]
+    # Homebrew's framework launcher and its actual macOS application binary
+    # are distinct inodes. Both paths come from THIS running interpreter's
+    # trusted installation, never from controller status or an addon request.
+    if sys.platform == 'darwin':
+        candidates.append(Path(sys.exec_prefix)/'Resources/Python.app/Contents/MacOS/Python')
+    return any(candidate.is_file() and os.path.samefile(path, candidate) for candidate in candidates)
+
+
+def load_json(path, limit=524288):
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY), 'rb') as stream: raw = stream.read(limit+1)
+    except FileNotFoundError: return {}
+    check(len(raw) <= limit, 'Private record exceeds bound')
+    value = json.loads(raw); check(isinstance(value, dict), 'Private object required'); return value
+
+
+def save_json(path, value):
+    raw = json.dumps(value, allow_nan=False, sort_keys=True).encode()
+    check(len(raw) <= 524288, 'Team ledger full; no old request tombstones are discarded')
+    temporary = path.with_name('.team-'+uuid.uuid4().hex)
+    try:
+        with os.fdopen(c.private_open(temporary, os.O_CREAT|os.O_EXCL|os.O_WRONLY), 'wb') as stream:
+            stream.write(raw+b'\n'); stream.flush(); os.fsync(stream.fileno())
+        check(not path.is_symlink(), 'Private ledger cannot be a symlink')
+        os.replace(temporary, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try: os.fsync(descriptor)
+        finally: os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class RPC:
+    def __init__(self, guid):
+        check(guid in ROSTER, 'Fixed subject required')
+        self.url = f'http://127.0.0.1:{ROSTER[guid][1]}/rpc'
+        # Reuse the maintained loopback validation/no-proxy/no-redirect opener.
+        self.opener = c.RPC(self.url, timeout=2).opener
+    def call(self, method, params, timeout=2):
+        check(method in METHODS, 'Unrecognized team RPC')
+        request_id = uuid.uuid4().hex
+        request = urllib.request.Request(self.url, data=json.dumps(dict(jsonrpc='2.0', id=request_id,
+            method=method, params=params), allow_nan=False).encode(), headers={'Content-Type': 'application/json'})
+        try:
+            with self.opener.open(request, timeout=timeout) as reply: raw = reply.read(262145)
+            check(len(raw) <= 262144, 'Response too large')
+            value = json.loads(raw)
+            check(value.get('jsonrpc') == '2.0' and value.get('id') == request_id and 'error' not in value
+                  and isinstance(value.get('result'), dict), 'Matching result unavailable')
+            return value['result']
+        except (OSError, ValueError, Error):
+            # Do not retain arbitrary response text, command arguments or secrets.
+            raise Error('Public '+method+' result unavailable; mutation outcomes are never retried') from None
+
+
+def scene(rpc, guid):
+    start = time.monotonic(); party = rpc.call('buddy-party.state', {})
+    sid = token(party.get('sessionId'))
+    def read(name): return rpc.call('buddy-actions.status' if name == 'actions' else f'buddy-{name}.state', {})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(READS)) as pool:
+        values = dict(zip(READS, pool.map(read, READS)))
+    world = rpc.call('buddy-world.snapshot', {})
+    final = rpc.call('buddy-party.state', {})
+    check(time.monotonic()-start <= 8 and final.get('sessionId') == sid, 'Fresh body frame unavailable')
+    own = world.get('self', {}); actions = values['actions']
+    check(number(own.get('guid', 0)) == guid and actions.get('sessionId') == sid
+          and number(actions.get('selfGuid', 0)) == guid, 'Current body identity mismatch')
+    for name in ('professions', 'inventory', 'quests', 'training', 'quest-items', 'mail', 'loot', 'trade'):
+        check(values[name].get('sessionId') == sid, 'Module body changed: '+name)
+    check(party.get('group') == final.get('group'), 'Party changed during observation')
+    return dict(values, world=world, party=final, sessionId=sid, observedAt=time.monotonic())
+
+
+def intents(s):
+    a = s['actions']
+    return {'assist': a.get('assisting', False), 'heal': a.get('healing', False), 'buff': a.get('buffing', False),
+            'loot': s['loot'].get('enabled', False), 'recovery': a.get('recovery', {}).get('enabled', False),
+            'follow': a.get('following', False)}
+
+
+def progress(s):
+    inv, quests = s['inventory'], s['quests']
+    check(inv.get('inventoryKnown') is True and inv.get('equipmentKnown') is True and quests.get('questLogKnown') is True,
+          'Full carried inventory, equipment and own quest baseline required')
+    bags, gear, log = inv.get('inventoryBags', []), inv.get('equipment', []), quests.get('questLog', [])
+    check(len(bags) == 5 and {number(b.get('bag', 0)) for b in bags} == set(range(5))
+          and len(gear) == 19 and {number(e.get('slot', 0)) for e in gear} == set(range(19))
+          and len(log) == 25 and {number(q.get('slot', 0)) for q in log} == set(range(25)), 'Complete private vectors required')
+    items = []
+    for b in bags:
+        check(b.get('slotKnown') is True and b.get('contentsKnown') is True and len(b.get('slots', [])) == number(b.get('slotCount', 0)), 'Bag contents unknown')
+        items.append(('bag', number(b.get('bag', 0)), number(b.get('containerGuid', 0))))
+        for item in b.get('slots', []):
+            check(not number(item.get('itemGuid', 0)) or item.get('metadataKnown') is True, 'Owned item metadata unknown')
+            items.append(('item', number(b.get('bag', 0)), number(item.get('slot', 0)), number(item.get('itemGuid', 0)),
+                          number(item.get('entry', 0)), number(item.get('stackCount', 0))))
+    for item in gear:
+        check(item.get('slotKnown') is True and (not number(item.get('itemGuid', 0)) or item.get('metadataKnown') is True), 'Equipment metadata unknown')
+        items.append(('gear', number(item.get('slot', 0)), number(item.get('itemGuid', 0)), number(item.get('entry', 0)), number(item.get('stackCount', 0))))
+    value = dict(items=sorted(items), quests=sorted((number(q.get('slot', 0)), number(q.get('questId', 0)),
+        number(q.get('state', 0)), tuple(q.get('objectiveCounts', []))) for q in log))
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def combat(s):
+    return s['world'].get('self', {}).get('unitFlagsKnown') is True and number(s['world']['self'].get('unitFlags', 0)) & 0x80000 != 0
+
+
+def reset_admission(s, guid):
+    """A normal logout may retire sticky latches; it never confirms their ACKs."""
+    actual = s['actions']; own = s['world'].get('self', {})
+    check(own.get('movementFlagsKnown') is True and number(own.get('movementFlags', 0)) & 0xff == 0
+          and not actual.get('moving') and not actual.get('autoAttackRequested'), 'Reset waits for actual stationary out-of-combat state')
+    admitted = copy.deepcopy(s)
+    admitted['actions']['motionUnconfirmed'] = False
+    admitted['actions']['autoAttackUnconfirmed'] = False
+    if actual.get('autoAttackUnconfirmed') is True:
+        # Retained AutoAttacking can belong to the same missing STOP receipt.
+        # Only the new normal LogoutComplete/PID exit can retire this body.
+        admitted['actions']['autoAttacking'] = False
+    safe(admitted, guid)
+    return s
+
+
+def safe(s, guid, moving=False, restoring=False):
+    own, a = s['world'].get('self', {}), s['actions']
+    check(time.monotonic()-s['observedAt'] <= 5, 'Observation expired')
+    guard_actions = dict(a)
+    if restoring:
+        # Restoring a toggle/local process is not a new cast. A freshly enabled
+        # ordinary buff/heal may already be using the common cast reservation.
+        guard_actions['castPending'] = False
+    check(c.BuddyControls.quest_scene_safe(guard_actions, s['world'], guid), 'Own combat, cast, attack, or movement uncertainty')
+    check(own.get('healthKnown') is True and 0 < number(own.get('health', 0)) <= number(own.get('maxHealth', 0))
+          and number(own['health'])/number(own['maxHealth']) >= .85, 'Own health unsafe or unknown')
+    group = s['party'].get('group', {})
+    members = group.get('members', [])
+    check(group.get('known') is True and group.get('inGroup') is True and isinstance(members, list) and len(members) <= 40
+          and any(number(m.get('guid', 0)) == guid and m.get('self') is True and m.get('online') is True for m in members), 'Actual current party required')
+    check(not a.get('practicing') and not a.get('fargodeep', {}).get('active') and not a.get('recovery', {}).get('active'), 'Finite combat or recovery active')
+    if not moving:
+        check(not a.get('moving') and not a.get('traveling') and number(own.get('movementFlags', 0)) & 0xff == 0, 'Actual movement must settle')
+    check(not a.get('interactionOwner'), 'Interaction lease busy')
+    owner = s['world'].get('owner', {})
+    if owner.get('present') is True:
+        check(number(owner.get('guid', 0)) == 3 and owner.get('unitFlagsKnown') is True and owner.get('movementFlagsKnown') is True
+              and number(owner.get('unitFlags', 0)) & 0x80000 == 0, 'Observed owner fighting or unknown')
+    check(c.trade_idle(s['trade']), 'Trade or disposal unsettled')
+    for name in ('professions', 'inventory', 'quest-items'):
+        row = s[name]; op = row.get('operation') or {}
+        check(not row.get('active') and not row.get('closing') and not op.get('cleanupUnconfirmed')
+              and (not op or op.get('status') in ('COMPLETED', 'CONFIRMED', 'SERVER_REJECTED', 'CANCELLED', 'BLOCKED', 'NO_CREDIT_OBSERVED')), name+' operation unsettled')
+        if op:
+            never_written = op.get('status') in ('BLOCKED', 'CANCELLED') and not any(op.get(k) for k in
+                ('transportAttempted', 'transportWritten', 'castTransportWritten', 'writeUnconfirmed', 'ownStartObserved',
+                 'ownGoObserved', 'ownCastStartObserved', 'ownCastGoObserved', 'lootWindowObserved', 'inputConsumedObserved'))
+            check(op.get('leaseReleased') is True or never_written, name+' lease cleanup unconfirmed')
+    check(not s['quests'].get('actionInFlight') and not s['training'].get('actionInFlight')
+          and not s['mail'].get('operationInFlight'), 'Quest, training or mail active')
+    check(not number(s['loot'].get('pendingCorpseGuid', 0)) and not number(s['loot'].get('pendingGameObjectGuid', 0)), 'Loot pending')
+    for name, field in (('training', 'lastPurchase'), ('mail', 'lastClaim'), ('mail', 'lastBagClaim'),
+                        ('quests', 'lastAcceptance'), ('quests', 'lastSharedAcceptance'), ('quests', 'lastReward'), ('quests', 'lastExploration')):
+        op = s[name].get(field) or {}
+        check(op.get('status') not in ('REQUESTED', 'TRAINER_SUCCEEDED', 'UNCONFIRMED_TIMEOUT', 'WRITE_UNCONFIRMED',
+              'OUTCOME_UNCONFIRMED', 'CLAIM_REQUESTED', 'CLAIM_UNCONFIRMED', 'CLAIM_WRITE_UNCONFIRMED',
+              'BAG_CLAIM_REQUESTED', 'BAG_CLAIM_UNCONFIRMED', 'BAG_CLAIM_WRITE_UNCONFIRMED',
+              'REWARD_REQUESTED', 'REWARD_UNCONFIRMED', 'REWARD_WRITE_UNCONFIRMED',
+              'EXPLORATION_REQUESTED', 'EXPLORATION_UNCONFIRMED', 'EXPLORATION_WRITE_UNCONFIRMED'), name+' outcome unsettled')
+    claims = s['mail'].get('bagClaims', [])
+    check(isinstance(claims, list) and len(claims) <= 32 and all(r.get('status') not in
+          ('BAG_CLAIM_REQUESTED', 'BAG_CLAIM_UNCONFIRMED', 'BAG_CLAIM_WRITE_UNCONFIRMED') for r in claims), 'Earlier mail mutation unsettled')
+    return s
+
+
+def activity(s):
+    a = s['actions']
+    if s['world'].get('self', {}).get('alive') is not True: return 'BUSY'
+    if combat(s): return 'FIGHTING'
+    if a.get('castPending'):
+        buff = a.get('lastBuff', {})
+        if (buff.get('phase') == 'waiting_server' and buff.get('transportWritten') is True
+                and number(buff.get('spellId', 0)) == number(a.get('lastCastSpellId', 0))
+                and number(buff.get('targetGuid', 0)) == number(a.get('lastCastTargetGuid', 0))): return 'BUFFING'
+        if number(a.get('lastCastSpellId', 0)) in {2050, 2052, 2053, 2061, 9472, 9473, 9474}: return 'HEALING'
+        return 'BUSY'
+    if s['professions'].get('active'):
+        return 'MANAGING_GEAR' if number(s['professions'].get('operation', {}).get('skillId', 0)) == 333 else 'GATHERING'
+    if s['training'].get('actionInFlight'): return 'MANAGING_SKILLS'
+    if s['inventory'].get('active'):
+        return 'SELLING_TRASH' if s['inventory'].get('operation', {}).get('kind') == 'sell' else 'MANAGING_GEAR'
+    if s['mail'].get('operationInFlight'): return 'MAIL'
+    if number(s['loot'].get('pendingCorpseGuid', 0)) or number(s['loot'].get('pendingGameObjectGuid', 0)): return 'LOOTING'
+    if a.get('moving') and a.get('following') and not a.get('traveling') and not a.get('interactionOwner'): return 'FOLLOWING'
+    if a.get('interactionOwner') or a.get('recovery', {}).get('active'): return 'BUSY'
+    return 'ONLINE'
+
+
+class Adapter:
+    """Only a fixed, reviewed remote adapter receives bounded JSON; never addon argv."""
+    def __init__(self, nix_path=NIX_ADAPTER):
+        check(nix_path == NIX_ADAPTER, 'Only the reviewed fixed Nix adapter is supported')
+        self.nix_path = nix_path
+    @staticmethod
+    def nix_status(reply):
+        check(NIX_KEYS <= set(reply) and set(reply) <= NIX_KEYS | {'stopReceiptRef', 'lifecycleOperation'}, 'Nix status tuple changed')
+        raw = {k: reply[k] for k in NIX_KEYS}
+        check(raw['guid'] == 8 and raw['rpcPort'] == 8402 and raw['ownedProfile'] is True
+              and type(raw['online']) is bool and raw['coreSha256'] == NIX_CORE and raw['launcherSha256'] == NIX_LAUNCHER,
+              'Nix fixed owned profile attestation failed')
+        if raw['online']:
+            token(raw['sessionId'])
+            check(all(type(raw[k]) is int and raw[k] > 0 for k in ('pid', 'startTicks', 'exeDevice', 'exeInode', 'logDevice', 'logInode'))
+                  and raw['pid'] > 1 and type(raw['logOffset']) is int and raw['logOffset'] >= 0, 'Nix actual process tuple invalid')
+        # Uther's reviewed snapshot requires matching ready log, exact /proc
+        # process/executable and current world/party/module bindings when online.
+        out = dict(raw, state='trackedReady' if raw['online'] else 'notTracked', ready=raw['online'], adapterExpected=raw,
+                   fingerprint=hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(',', ':')).encode()).hexdigest())
+        if 'lifecycleOperation' in reply: out['lifecycleOperation'] = reply['lifecycleOperation']
+        return out
+    def call(self, guid, operation, params):
+        check(guid in ROSTER and operation in ('status', 'stop', 'start'), 'Fixed lifecycle operation required')
+        path = MAIN_ADAPTER if guid != 8 else self.nix_path
+        check(path is not None and re.fullmatch('/home/jmax/dev/warcraft_buddy/[A-Za-z0-9_./-]+', path)
+              and '..' not in Path(path).parts, 'Nix maintained adapter is not bound')
+        # Fixed local configuration path, never a field from the addon request.
+        body = params
+        if guid == 8:
+            if operation == 'stop':
+                expected = params.get('expected')
+                check(isinstance(expected, dict) and set(expected) == NIX_KEYS, 'Exact Nix original status tuple required')
+                check(self.nix_status(expected)['fingerprint'] == params.get('expectedFingerprint'), 'Nix opaque fingerprint changed')
+                body = dict(requestId=params['operationId'], expected=expected)
+            elif operation == 'start': body = dict(requestId=params['operationId'], stopReceiptRef=params['stopReceiptRef'])
+            source = ('import hashlib,os,sys; p='+repr(path)+'; f=os.open(p,os.O_RDONLY|os.O_NOFOLLOW); '
+                      's=os.fdopen(f,"rb"); b=s.read(65537); s.close(); '
+                      'assert len(b)<=65536 and hashlib.sha256(b).hexdigest()=='+repr(NIX_ADAPTER_SHA)+'; '
+                      'sys.argv=[p,'+repr(operation)+']; exec(compile(b,p,"exec"),{"__name__":"__main__","__file__":p})')
+            command = shlex.join(['python3', '-B', '-c', source])
+        else: command = shlex.join(['python3', '-B', path, operation, '--guid', str(guid)])
+        result = subprocess.run(SSH+[command], input=json.dumps(body, allow_nan=False),
+            capture_output=True, text=True, timeout=350 if operation == 'start' else 55 if operation == 'stop' else 12)
+        check(result.returncode == 0 and len(result.stdout) <= 65536, 'Lifecycle adapter result unconfirmed')
+        reply = json.loads(result.stdout); check(isinstance(reply, dict), 'Adapter object required')
+        if guid == 8:
+            if operation == 'stop':
+                check(reply.get('expected') == body['expected'] and reply.get('stopReceiptRef') == body['requestId'], 'Nix positive stop binding changed')
+                return dict(reply, guid=8, outcome='stopped')
+            if operation == 'start': check(reply.get('stopReceiptRef') == body['requestId'], 'Nix start receipt changed')
+            return self.nix_status(reply)
+        check(number(reply.get('guid', 0)) == guid, 'Adapter identity mismatch')
+        return reply
+
+
+class Controllers:
+    """Capture exact current local processes, cooperatively stop, restore only ours."""
+    def __init__(self): self.rows = []
+    @staticmethod
+    def folders(guid):
+        if guid == 8: return [(ROOT/'data/converse/nixwick', 'converse', guid)]
+        profile = ROSTER[guid][2]
+        return [(ROOT/'data/converse'/profile if guid != 1 else ROOT/'data/converse', 'converse', guid),
+                (ROOT/'data/party-town'/str(guid), 'party-town', guid),
+                (ROOT/'data/party-maintenance', 'party-maintenance', None), (ROOT/'data/party-quests', 'party-quests', None)]
+    @staticmethod
+    def command(pid):
+        return subprocess.run(['ps', '-ww', '-p', str(pid), '-o', 'command='], capture_output=True, text=True, timeout=2, check=True).stdout.strip()
+    @staticmethod
+    def alive(pid):
+        try: os.kill(pid, 0); return True
+        except ProcessLookupError: return False
+    @staticmethod
+    def held(folder):
+        try:
+            with os.fdopen(c.private_open(folder/'lock', os.O_RDONLY), 'r') as f: return c.is_locked(f)
+        except FileNotFoundError: return False
+    def capture(self, guid):
+        rows = []
+        for folder, script, subject in self.folders(guid):
+            if not self.held(folder): continue
+            value = load_json(folder/'status.json'); pid = value.get('pid'); key = 'character_identity' if script == 'converse' else 'identity'
+            check(type(pid) is int and pid > 1 and re.fullmatch('[a-f0-9]{32}', value.get('instance', ''))
+                  and self.alive(pid) and time.time()-value.get('updated', value.get('updatedAt', 0)) <= 15, 'Current local controller not attested')
+            identity = value.get(key); check(isinstance(identity, dict), 'Controller identity absent')
+            if script == 'converse':
+                name, port, profile, role = ROSTER[guid]
+                check(identity == dict(profile=profile, name=name, guid=guid, owner_guid=3, rpc_url=f'http://127.0.0.1:{port}/rpc', **{'class': role}), 'Brain profile mismatch')
+            elif script == 'party-town':
+                check(identity == dict(version=1, mode='party_town', characterGuid=guid,
+                      rpcUrl=f'http://127.0.0.1:{ROSTER[guid][1]}/rpc') and value.get('own', {}).get('busy') is False
+                      and not value.get('activityId'), 'Town busy, holding controls or identity mismatch')
+            else:
+                check(identity == (c.PARTY_MAINTENANCE_IDENTITY if script == 'party-maintenance' else c.PARTY_QUEST_IDENTITY), 'Shared controller identity mismatch')
+                check(not any(row.get('busy') or row.get('phase', '').startswith(('traveling', 'waiting_for_training_confirmation', 'claiming', 'accepting', 'rewarding')) for row in value.get('characters', [])), 'Shared controller active')
+            argv = shlex.split(self.command(pid))
+            check(len(argv) >= 4 and trusted_interpreter(argv[0]) and argv[1] == '-B'
+                  and Path(argv[2]).resolve() == ROOT/'dev'/script and argv[3] == 'run', 'Exact maintained controller argv required')
+            check(argv.count('--state-dir') <= 1 and ('--state-dir' not in argv or
+                  Path(argv[argv.index('--state-dir')+1]).resolve() == folder), 'Controller state-dir argv mismatch')
+            if script == 'converse':
+                for flag, expected in (('--profile', ROSTER[guid][2]), ('--character-guid', str(guid)),
+                                       ('--rpc-url', f'http://127.0.0.1:{ROSTER[guid][1]}/rpc')):
+                    check(argv.count(flag) <= 1 and (flag not in argv or argv[argv.index(flag)+1] == expected), 'Brain argv identity mismatch')
+            # The maintained stop parser validates the remaining fixed profile arguments.
+            rows.append(dict(folder=str(folder), script=script, pid=pid, instance=value['instance'], key=key, identity=identity, argv=argv))
+        return rows
+    def stop(self, rows, reserve, check_guard):
+        for row in rows:
+            check_guard(); folder = Path(row['folder']); current = load_json(folder/'status.json')
+            check(current.get('pid') == row['pid'] and current.get('instance') == row['instance']
+                  and current.get(row['key']) == row['identity'] and self.command(row['pid']) == ' '.join(row['argv']), 'Controller changed before stop')
+            reserve('controller_stop', {'folder': row['folder'], 'pid': row['pid'], 'instance': row['instance']})
+            check_guard()
+            # This is the maintained CLI's cooperative request format, with
+            # the captured instance preserved rather than rereading a new one.
+            request = {'instance': row['instance']}
+            if row['key'] == 'identity': request['identity'] = row['identity']
+            save_json(folder/'stop.json', request)
+        deadline = time.monotonic()+130
+        while any(self.alive(row['pid']) or self.held(Path(row['folder'])) for row in rows):
+            check(time.monotonic() < deadline, 'Controller cleanup timed out; no force kill')
+            time.sleep(.2)
+        for row in rows:
+            value = load_json(Path(row['folder'])/'status.json')
+            check(value.get('pid') == row['pid'] and value.get('instance') == row['instance'] and value.get(row['key']) == row['identity']
+                  and (value.get('routineActive') is False if row['script'] == 'party-town' else value.get('phase') == 'stopped'), 'Exact controller stop proof absent')
+    def restore(self, rows, reserve, check_guard):
+        for row in rows:
+            check_guard(); folder = Path(row['folder']); current = load_json(folder/'status.json')
+            check(not self.held(folder) and not self.alive(row['pid']) and current.get('instance') == row['instance'], 'Controller replacement prevents restore')
+            reserve('controller_start', {'folder': row['folder'], 'priorInstance': row['instance']})
+            check_guard()
+            log = ROOT/'data/team-control'/('controller-'+row['script']+'-'+str(row['pid'])+'.log')
+            with os.fdopen(c.private_open(log, os.O_CREAT|os.O_APPEND|os.O_WRONLY), 'ab', buffering=0) as stream:
+                spawned = time.time()
+                process = subprocess.Popen(row['argv'], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+            deadline = time.monotonic()+135
+            while True:
+                value = load_json(folder/'status.json')
+                if self.ready(row, value, process.pid, spawned) and self.held(folder):
+                    check(self.command(process.pid) == ' '.join(row['argv']), 'New controller argv mismatch'); break
+                check(process.poll() is None and time.monotonic() < deadline, 'New controller readiness unconfirmed; no duplicate spawn')
+                time.sleep(.2)
+    @staticmethod
+    def ready(row, value, pid, spawned):
+        return (value.get('pid') == pid and isinstance(value.get('instance'), str)
+            and re.fullmatch('[a-f0-9]{32}', value['instance']) is not None and value['instance'] != row['instance']
+            and value.get(row['key']) == row['identity'] and value.get('updated', value.get('updatedAt', 0)) >= spawned
+            and (value.get('routineActive') is True if row['script'] == 'party-town' else value.get('phase') ==
+                 ('listening' if row['script'] == 'converse' else 'running')))
+
+
+class Supervisor:
+    def __init__(self, data=None, save=lambda value: None, rpcs=None, adapter=None, controllers=None, reader=scene, now=time.monotonic):
+        self.data = data or dict(identity=IDENTITY, requests={}, relays={}, ownerNonce='', lastOwnerSeq=0, retiredNonces=[])
+        check(self.data.get('identity') == IDENTITY and isinstance(self.data.get('requests'), dict)
+              and len(self.data['requests']) <= 256 and isinstance(self.data.get('relays'), dict), 'Team ledger identity or bounds changed')
+        self.save, self.rpcs, self.adapter, self.controllers = save, rpcs or {g: RPC(g) for g in ROSTER}, adapter or Adapter(), controllers or Controllers()
+        self.reader, self.now, self.lock = reader, now, threading.RLock()
+        self.owner_generation, self.halt, self.worker = 0, False, None
+        check(isinstance(self.data.get('retiredNonces'), list) and len(self.data['retiredNonces']) <= 16
+              and all(isinstance(n, str) and re.fullmatch('[0-9a-f]{12}', n) for n in self.data['retiredNonces']), 'Retired owner nonce bound changed')
+        # A prior in-flight reservation is never resumed across host restart.
+        for key, row in self.data['requests'].items():
+            check(isinstance(row, dict) and row.get('guid') in ROSTER and row.get('action') in ('RESET', 'UNSTUCK')
+                  and key == row.get('requestId') and key == f"{row.get('nonce')}.{row.get('sequence')}"
+                  and isinstance(row.get('writes'), list) and len(row['writes']) <= 40, 'Saved request binding invalid')
+            check(str(uuid.UUID(row.get('lifecycleOperationId', ''))) == row['lifecycleOperationId'], 'Saved lifecycle UUID invalid')
+            if row.get('phase') not in TERMINAL: row.update(phase='OUTCOME_UNCONFIRMED', reason='Host restarted with reserved work; no replay')
+        self.persist()
+    def persist(self):
+        with self.lock: self.save(copy.deepcopy(self.data))
+    def mark(self, row, phase, reason=''):
+        with self.lock: row.update(phase=phase, reason=reason, updatedAt=time.time()); self.persist()
+    def reserve(self, row, kind, details=None):
+        if not row['writes']:
+            check(time.time() < row['expiresAt'], 'Owner request expired before first mutation')
+            response = self.rpcs[row['relayGuid']].call('buddy-chat.management_requests',
+                {'sessionId': row['chatSessionId'], 'afterSequence': 0, 'limit': 64})
+            check(response.get('sessionId') == row['chatSessionId'] and number(response.get('selfGuid', 0)) == row['relayGuid']
+                  and any(r.get('requestId') == row['requestId'] and r.get('addonSession') == row['nonce']
+                          and number(r.get('requestSequence', 0)) == row['sequence'] and number(r.get('subjectGuid', 0)) == row['guid']
+                          and r.get('action') == row['action'] and r.get('available') is True and number(r.get('ageMs', 30000)) < 30000
+                          for r in response.get('requests', [])), 'Fresh exact owner request or relay epoch unavailable')
+            check(time.time() < row['expiresAt'], 'Owner request expired during final observation')
+        with self.lock:
+            check(len(row['writes']) < 40, 'Finite operation write bound reached')
+            row['writes'].append(dict(kind=kind, details=details or {}, reservedAt=time.time())); self.persist()
+    def accept(self, request, relay, epoch):
+        nonce, seq = request.get('addonSession'), number(request.get('requestSequence', 0))
+        check(isinstance(nonce, str) and re.fullmatch('[0-9a-f]{12}', nonce) and 0 < seq < 2**31, 'Malformed owner request')
+        guid, action = number(request.get('subjectGuid', 0)), request.get('action')
+        check(guid in ROSTER and action in ('RESET', 'UNSTUCK') and request.get('requestId') == f'{nonce}.{seq}', 'Unrecognized owner request')
+        key = f'{nonce}.{seq}'
+        with self.lock:
+            if key in self.data['requests']:
+                old = self.data['requests'][key]
+                check((old['guid'], old['action']) == (guid, action), 'Replayed nonce/sequence changed subject or action')
+                return None
+            check(len(self.data['requests']) < 256, 'Request tombstone bound full; operator rotation required')
+            stale_nonce = nonce in self.data['retiredNonces'] or nonce == self.data['ownerNonce'] and seq <= self.data['lastOwnerSeq']
+            if not stale_nonce:
+                if nonce != self.data['ownerNonce']:
+                    if self.data['ownerNonce']:
+                        check(len(self.data['retiredNonces']) < 16, 'Owner nonce tombstones full; no eviction or replay')
+                        self.data['retiredNonces'].append(self.data['ownerNonce'])
+                    self.data['ownerNonce'] = nonce
+                self.data['lastOwnerSeq'] = seq
+            row = dict(guid=guid, action=action, nonce=nonce, sequence=seq, requestId=key, relayGuid=relay,
+                       chatSessionId=epoch, receivedAt=time.time(), expiresAt=time.time()+(30000-number(request.get('ageMs', 30000)))/1000,
+                       lifecycleOperationId=str(uuid.uuid4()), writes=[], phase='REQUESTED', updatedAt=time.time())
+            if stale_nonce or request.get('available') is not True or not 0 <= number(request.get('ageMs', 30000)) < 30000:
+                row.update(phase='FAILED', reason='Stale or unavailable request; never acted upon')
+            self.data['requests'][key] = row; self.persist(); return row
+    def read(self, guid, sid=None, guard=True):
+        s = self.reader(self.rpcs[guid], guid)
+        if sid is not None: check(s['sessionId'] == sid, 'Body changed; no stale operation')
+        if guard: safe(s, guid)
+        return s
+    def intent_guard(self, generation):
+        check(not self.halt and generation == self.owner_generation, 'New human message or supervisor stop revoked operation')
+    def reset(self, row):
+        g = row['guid']; initial = reset_admission(self.read(g, guard=False), g)
+        sid = initial['sessionId']; controls = intents(initial)
+        generation = self.owner_generation
+        def guard(sid=sid):
+            self.intent_guard(generation)
+            current = reset_admission(self.read(g, sid, guard=False), g)
+            self.intent_guard(generation); return current
+        old = self.adapter.call(g, 'status', {})
+        check(old.get('state') == 'trackedReady' and old.get('sessionId') == sid and old.get('ownedProfile') is True
+              and re.fullmatch('[0-9a-f]{64}', old.get('fingerprint', '')) is not None, 'Normal tracked ready body required')
+        pending = old.get('lifecycleOperation') or {}
+        check(not pending or pending.get('phase') in ('complete', 'START_CONFIRMED'), 'Prior lifecycle reservation remains unresolved')
+        rows = self.controllers.capture(g)
+        if g != 8 and any(r.get('script') in ('party-maintenance', 'party-quests') for r in rows):
+            for peer in (1, 4, 5):
+                actual = self.read(peer, guard=False)
+                if peer == g: reset_admission(actual, peer)
+                else: safe(actual, peer, moving=actual['actions'].get('following') is True)
+        row.update(oldBody=old, controls=controls, controllers=rows,
+                   oldBodyLatches={k: initial['actions'].get(k, False) for k in ('autoAttackUnconfirmed', 'motionUnconfirmed')}); self.persist()
+        self.mark(row, 'STOPPING')
+        self.controllers.stop(rows, lambda kind, d=None: self.reserve(row, kind, d), guard)
+        final_old = guard()
+        check(intents(final_old) == controls, 'Control intent changed before logout')
+        row['progressDigest'] = progress(final_old); self.persist()
+        self.reserve(row, 'normal_stop', {'fingerprint': old['fingerprint']})
+        self.intent_guard(generation)
+        stop_args = dict(operationId=row['lifecycleOperationId'], expectedFingerprint=old['fingerprint'])
+        if g == 8: stop_args['expected'] = old['adapterExpected']
+        stopped = self.adapter.call(g, 'stop', stop_args)
+        row['stopReceipt'] = stopped; self.persist()
+        check(stopped.get('outcome') == 'stopped' and all(stopped.get(k) is True for k in
+            ('normalLogoutObserved', 'oldPidGone', 'rpcClosed', 'sessionContainersGone'))
+            and stopped.get('stopReceiptRef') == row['lifecycleOperationId'], 'Positive normal logout and exact retirement required')
+        row['oldBodyRetiredByNormalLogout'] = True; self.persist()
+        self.intent_guard(generation); self.mark(row, 'STARTING')
+        self.reserve(row, 'normal_start', {'stopReceiptRef': stopped['stopReceiptRef']})
+        self.intent_guard(generation)
+        new = self.adapter.call(g, 'start', dict(operationId=row['lifecycleOperationId'], stopReceiptRef=stopped['stopReceiptRef']))
+        row['newBody'] = new; self.persist()
+        check(new.get('state') == 'trackedReady' and new.get('ready') is True and new.get('sessionId') != sid
+              and new.get('pid') != old.get('pid') and new.get('startTicks') != old.get('startTicks')
+              and new.get('ownedProfile') is True and new.get('coreSha256') == old.get('coreSha256'), 'Fresh owned body readiness not proven')
+        new_sid = token(new.get('sessionId'))
+        def new_guard():
+            self.intent_guard(generation)
+            current = self.read(g, new_sid, guard=False)
+            safe(current, g, moving=current['actions'].get('following') is True and controls['follow'], restoring=True)
+            self.intent_guard(generation); return current
+        check(progress(new_guard()) == row['progressDigest'], 'New body inventory/equipment/quest progress differs; inspect before restore')
+        self.mark(row, 'READY')
+        for key, method, field in CONTROLS:
+            new_guard(); self.reserve(row, 'restore_'+key, {'enabled': controls[key], 'sessionId': new_sid})
+            self.intent_guard(generation)
+            result = self.rpcs[g].call(method, {'enabled': controls[key]})
+            actual = result.get('recovery', {}).get('enabled', False) if key == 'recovery' else result.get(field, False)
+            check(actual is controls[key], 'Control restoration acknowledgement missing')
+        check(intents(new_guard()) == controls, 'Fresh control readback mismatch')
+        self.controllers.restore(rows, lambda kind, d=None: self.reserve(row, kind, d), new_guard)
+        new_guard(); self.mark(row, 'COMPLETE', 'Normal logout, exact old exit, new ready body and prior controllers/intents confirmed')
+    def unstuck(self, row):
+        g = row['guid']; initial = self.read(g, guard=False)
+        allow_follow_stop = initial['actions'].get('following') is True and not initial['actions'].get('traveling')
+        safe(initial, g, moving=allow_follow_stop)
+        sid = initial['sessionId']; generation = self.owner_generation
+        original_controls = intents(initial)
+        owner = initial['world'].get('owner', {}); own = initial['actions']['position']
+        check(owner.get('present') is True and number(owner.get('guid', 0)) == 3 and owner.get('positionKnown') is True
+              and owner.get('mapKnown') is True and number(owner.get('movementFlags', 0)) & 0xff == 0
+              and number(owner.get('mapId', 0)) == number(own.get('mapId', 0)), 'No safe actual stationary owner destination')
+        goal = {key: owner.get(key) for key in ('x', 'y', 'z')}
+        original_map = number(own['mapId'])
+        def bound_map(s):
+            raw, pos, observed_owner = s['world'].get('self', {}), s['actions'].get('position', {}), s['world'].get('owner', {})
+            check(raw.get('mapKnown') is True and number(raw.get('mapId', 0)) == original_map
+                  and pos.get('known') is True and pos.get('mapKnown') is True and number(pos.get('mapId', 0)) == original_map
+                  and observed_owner.get('present') is True and observed_owner.get('positionKnown') is True
+                  and observed_owner.get('mapKnown') is True and number(observed_owner.get('mapId', 0)) == original_map,
+                  'Captured Unstuck map or observed owner changed')
+        check(all(type(v) in (int, float) and math.isfinite(v) for v in goal.values())
+              and math.dist(tuple(goal.values()), tuple(own[k] for k in goal)) <= 200, 'Observed owner outside bounded navigation range')
+        lease = None; returned = False; cleanup = False; arrived = False
+        ended, cleanup_lock = threading.Event(), threading.Lock()
+        cleanup_claimed = False
+        self.mark(row, 'UNSTUCK_ROUTING')
+        self.intent_guard(generation)
+        safe(self.read(g, sid, guard=False), g, moving=allow_follow_stop)
+        self.reserve(row, 'acquire_exploration')
+        result = self.rpcs[g].call('buddy-actions.acquire_interaction', {'owner': 'exploration', 'leaseMs': 30000, 'harvest': True})
+        lease = token(result.get('token')); row['token'] = lease; self.persist()
+        def release():
+            nonlocal cleanup, cleanup_claimed
+            with cleanup_lock:
+                if cleanup_claimed: return
+                cleanup_claimed = True
+            try:
+                binding = self.rpcs[g].call('buddy-party.state', {})
+                check(binding.get('sessionId') == sid, 'Body changed before exact cleanup')
+                self.reserve(row, 'release_exploration', {'token': lease})
+                released = self.rpcs[g].call('buddy-actions.release_interaction', {'owner': 'exploration', 'token': lease})
+                cleanup = not released.get('interactionOwner') and not released.get('moving') and not released.get('motionUnconfirmed')
+            except Error: cleanup = False
+            row['cleanupConfirmed'] = cleanup; self.persist()
+        def watch():
+            while not ended.wait(.5):
+                try:
+                    self.intent_guard(generation)
+                    s = self.read(g, sid, guard=False)
+                    bound_map(s)
+                    guarded = copy.deepcopy(s); guarded['actions']['interactionOwner'] = ''
+                    safe(guarded, g, moving=True)
+                    check(intents(s) == original_controls, 'Human or controller intent changed during Unstuck')
+                    live_owner = s['world'].get('owner', {})
+                    check(live_owner.get('present') is True and live_owner.get('positionKnown') is True
+                          and number(live_owner.get('movementFlags', 0)) & 0xff == 0
+                          and math.dist(tuple(live_owner.get(k, math.inf) for k in goal), tuple(goal.values())) <= 2,
+                          'Owner moved or observation disappeared during Unstuck')
+                except Error:
+                    row['watchdogStopped'] = True; self.persist(); release(); return
+        watcher = threading.Thread(target=watch, daemon=True)
+        # The finite Go controller owns strict NAV and all last-write movement gates.
+        try:
+            granted = result.get('state', {})
+            check(granted.get('interactionOwner') == 'exploration' and not granted.get('moving')
+                  and not granted.get('traveling') and not granted.get('motionUnconfirmed'), 'Exploration stopped custody unconfirmed')
+            self.intent_guard(generation)
+            current = self.read(g, sid, guard=False)
+            bound_map(current)
+            check(not combat(current) and current['actions'].get('interactionOwner') == 'exploration'
+                  and number(current['actions'].get('interactionLeaseRemainingMs', 0)) > 1000, 'Current exact exploration custody unavailable')
+            guarded = copy.deepcopy(current); guarded['actions']['interactionOwner'] = ''
+            safe(guarded, g)
+            check(intents(current) == original_controls, 'Control intent changed before Unstuck travel')
+            self.reserve(row, 'normal_travel', {'sessionId': sid, 'goal': goal})
+            watcher.start()
+            response = self.rpcs[g].call('buddy-actions.travel_to', dict(token=lease, mapId=number(own['mapId']), arrivalDistance=3, **goal), timeout=35)
+            row['travelReply'] = {k: response.get(k) for k in ('reason', 'moving', 'traveling', 'motionUnconfirmed', 'position')}; self.persist(); returned = True
+            held = self.read(g, sid, guard=False)
+            bound_map(held)
+            position = held['actions']['position']
+            arrived = (held['actions'].get('interactionOwner') == 'exploration' and not held['actions'].get('moving')
+                and not held['actions'].get('motionUnconfirmed') and not held['actions'].get('traveling')
+                and math.dist(tuple(goal.values()), tuple(position[k] for k in goal)) <= 3.1)
+            row['arrivalObservedUnderLease'] = arrived; self.persist()
+        finally:
+            # Release is a distinct exact-token cleanup, never a movement retry.
+            ended.set(); release()
+            if watcher.ident is not None: watcher.join(10)
+        check(returned and cleanup, 'Travel or cleanup outcome unconfirmed')
+        check(not row.get('watchdogStopped'), 'Unstuck stopped after fresh safety or human intent change')
+        fresh = self.read(g, sid, guard=False)
+        bound_map(fresh)
+        safe(fresh, g, moving=fresh['actions'].get('following') is True)
+        if not arrived:
+            if response.get('reason') in ('exploration_navigation_unavailable', 'exploration_navigation_endpoint_outside_arrival_distance'):
+                raise NoRoute('Normal NAV found no safe route to the observed owner; no warp was attempted')
+            raise Error('Normal NAV did not prove arrival; inspect the exact stopped route receipt')
+        self.mark(row, 'COMPLETE', 'Normal verified NAV reached observed owner; exact custody released and stopped')
+    def execute(self, row):
+        try:
+            self.reset(row) if row['action'] == 'RESET' else self.unstuck(row)
+        except Exception as exc:
+            # Once a mutation is reserved, no automated catch/retry can reissue it.
+            phase = 'NEEDS_GM_HELP' if isinstance(exc, NoRoute) else 'OUTCOME_UNCONFIRMED' if row['writes'] else 'NEEDS_GM_HELP' if row['action'] == 'UNSTUCK' else 'FAILED'
+            self.mark(row, phase, str(exc)[:180] if isinstance(exc, Error) else 'Host adapter unavailable; inspect reserved receipt')
+    def poll_relay(self, guid):
+        rpc = self.rpcs[guid]; old = self.data['relays'].get(str(guid), {})
+        bootstrap = rpc.call('buddy-chat.management_requests', {'afterSequence': 0, 'limit': 1})
+        epoch = token(bootstrap.get('sessionId')); check(number(bootstrap.get('selfGuid', 0)) == guid, 'Relay GUID mismatch')
+        reply = rpc.call('buddy-chat.management_requests', {'sessionId': epoch,
+            'afterSequence': old.get('cursor', 0) if old.get('epoch') == epoch else 0, 'limit': 64})
+        check(reply.get('sessionId') == epoch and number(reply.get('selfGuid', 0)) == guid, 'Relay restarted during request read')
+        check(reply.get('cursorLost') is not True, 'Request cursor lost; no guessed missed action')
+        chat = rpc.call('buddy-chat.poll', {'sessionId': epoch, 'afterSequence': old.get('chatCursor', 0) if old.get('epoch') == epoch else 0, 'limit': 256})
+        check(chat.get('sessionId') == epoch and not chat.get('cursorLost'), 'Chat intent cursor unavailable')
+        return old, epoch, reply, chat
+    def poll(self):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            pending = {pool.submit(self.poll_relay, guid): guid for guid in self.rpcs}
+            for future in concurrent.futures.as_completed(pending):
+                guid = pending[future]
+                try:
+                    old, epoch, reply, chat = future.result()
+                    if old.get('epoch') == epoch and any(number(m.get('senderGuid', 0)) == 3 for m in chat.get('messages', [])): self.owner_generation += 1
+                    for request in reply.get('requests', []): self.accept(request, guid, epoch)
+                    self.data['relays'][str(guid)] = dict(epoch=epoch, cursor=reply.get('nextSequence', 0), chatCursor=chat.get('nextSequence', 0)); self.persist()
+                except (Error, OSError, ValueError): continue
+        if self.worker is None or not self.worker.is_alive():
+            candidates = [r for r in self.data['requests'].values() if r['phase'] in ('REQUESTED', 'DEFERRED_COMBAT')]
+            for row in candidates:
+                if time.time() >= row.get('expiresAt', 0):
+                    self.mark(row, 'FAILED', 'Request expired while waiting; send a fresh explicit request'); continue
+                if any(other is not row and other['guid'] == row['guid'] and other['phase'] == 'OUTCOME_UNCONFIRMED' and other['writes']
+                       for other in self.data['requests'].values()):
+                    self.mark(row, 'FAILED', 'Prior reserved operation remains unconfirmed; no new lifecycle or movement'); continue
+                try:
+                    s = self.read(row['guid'], guard=False)
+                    if combat(s): self.mark(row, 'DEFERRED_COMBAT'); continue
+                    if row['action'] == 'RESET': reset_admission(s, row['guid'])
+                    else: safe(s, row['guid'], moving=s['actions'].get('following') is True and not s['actions'].get('traveling'))
+                except Error as exc:
+                    row['reason'] = str(exc)[:180]; self.persist(); continue
+                self.worker = threading.Thread(target=self.execute, args=(row,), daemon=True); self.worker.start(); break
+        self.publish()
+    def publish(self):
+        # Independent endpoints are observed/published together so an offline
+        # peer cannot hold every other UI row behind its read timeout.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(self.publish_subject, ROSTER))
+    def publish_subject(self, guid):
+        with self.lock:
+            rows = [copy.deepcopy(r) for r in self.data['requests'].values() if r['guid'] == guid]
+        request = rows[-1] if rows else None
+        if request and request['phase'] in TERMINAL and time.time()-request.get('updatedAt', 0) > 15:
+            request = None
+        try:
+            s = self.read(guid, guard=False); phase = activity(s); age = int((self.now()-s['observedAt'])*1000)
+            if request: phase = request['phase']
+        except Error:
+            phase, age = 'BUSY', 0
+            if request: phase = request['phase']
+            else:
+                try:
+                    actual = self.adapter.call(guid, 'status', {})
+                    phase = 'OFFLINE' if actual.get('state') == 'notTracked' else 'BUSY'
+                except (Error, OSError, ValueError, subprocess.SubprocessError): pass
+        for relay, binding in list(self.data['relays'].items()):
+            try:
+                params = dict(sessionId=binding['epoch'], subjectGuid=guid, phase=phase, observationAgeMs=max(0, min(age, 5000)))
+                if request: params.update(requestAddonSession=request['nonce'], requestSequence=request['sequence'])
+                self.rpcs[int(relay)].call('buddy-chat.publish_team_status', params); break
+            except Error: continue
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('run', 'status', 'stop'))
+    parser.add_argument('--state-dir', type=Path, default=ROOT/'data/team-control')
+    parser.add_argument('--max-hours', type=float, default=8)
+    parser.add_argument('--nix-adapter', default=NIX_ADAPTER, help='Exact reviewed Uther JSON adapter path')
+    args = parser.parse_args(argv); check(0 < args.max_hours <= 8, 'Finite eight-hour limit required')
+    check(args.state_dir.resolve() == (ROOT/'data/team-control').resolve(), 'Fixed roster requires its single canonical host lock')
+    folder = c.ensure_state(args.state_dir)
+    with os.fdopen(c.private_open(folder/'lock', os.O_CREAT|os.O_RDWR), 'r+') as lock:
+        status = load_json(folder/'status.json')
+        if args.command != 'run':
+            running = c.is_locked(lock)
+            check(not status or status.get('identity') == IDENTITY, 'Another controller identity owns state')
+            if args.command == 'stop' and running: save_json(folder/'stop.json', {'instance': status.get('instance')})
+            else: print(json.dumps(dict(status, running=running)))
+            return
+        fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+        record = dict(identity=IDENTITY, instance=uuid.uuid4().hex, pid=os.getpid(), phase='running', startedAt=time.time())
+        supervisor = Supervisor(load_json(folder/'operations.json') or None, save=lambda value: save_json(folder/'operations.json', value), adapter=Adapter(args.nix_adapter))
+        def halt(*_): supervisor.halt = True
+        signal.signal(signal.SIGINT, halt); signal.signal(signal.SIGTERM, halt)
+        deadline = time.monotonic()+args.max_hours*3600
+        try:
+            while not supervisor.halt and time.monotonic() < deadline and load_json(folder/'stop.json').get('instance') != record['instance']:
+                supervisor.poll(); record.update(updatedAt=time.time(), requests=len(supervisor.data['requests']))
+                save_json(folder/'status.json', record); time.sleep(.5)
+        finally:
+            supervisor.halt = True
+            # No force-kill of an in-progress maintained lifecycle command.
+            if supervisor.worker: supervisor.worker.join(400)
+            record.update(phase='stopped' if not supervisor.worker or not supervisor.worker.is_alive() else 'outcome_unconfirmed', updatedAt=time.time())
+            save_json(folder/'status.json', record)
+
+
+if __name__ == '__main__':
+    try: main()
+    except (Error, OSError, ValueError, subprocess.SubprocessError) as exc: raise SystemExit('Team control: '+str(exc))

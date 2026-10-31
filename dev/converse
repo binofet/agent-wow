@@ -212,7 +212,14 @@ controls and honors new human commands. equippedItems lists only confirmed
 equipment swaps with newer carried/equipment observations and released leases;
 use actual names there. Displaced equipment stays in carried bags and is
 protected from automatic sale. A comparison-pending or unconfirmed phase is a
-wait, never an equipped result. The routine requires no model equip action. For Mira, town_upkeep.disenchant
+wait, never an equipped result. The routine requires no model equip action. town_upkeep.taskQueue and
+selectedTask show actual scheduling; blockedReason explains a wait.
+inventory.gear.candidates reports actual own carried-item comparisons. A
+conservativeUpgrade is a queued eligible comparison, not an equip receipt.
+A gearBlockedReason explains unsupported or unproven items; do not describe an
+unsupported item as unusable or a worse item. When Joel asks you to equip an
+upgrade, explain the automatic queue and its observed result or wait, rather
+than saying equipment controls are absent. For Mira, town_upkeep.disenchant
 reports automatic disenchanting after the party gear checks. Unknown item,
 quest, proficiency or party equipment facts cause a KEEP. A confirmed receipt
 requires an observed own cast, exact input consumption and received materials;
@@ -633,6 +640,18 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
                             or not 0 < integer(row.get("entry", 0)) < 2**32): continue
                     de["lastConfirmedItem"] = {"entry": integer(row["entry"]), "name": plain_text(row.get("name"),120), "status": "COMPLETED"}
             result["disenchant"] = de
+        queue = ["combat_or_recovery", "existing_game_operation", "usable_gear", "bag_space_or_service", "idle_gathering_quests_or_training"]
+        if own.get("taskQueue") == queue:
+            result["taskQueue"] = queue
+            result["observationsCurrent"] = active and own.get("observationsCurrent") is True and body_session is not None and own.get("bodySessionId") == body_session
+            if own.get("selectedTask") in ("none", "gear", "bags", "sell", "disenchant"):
+                result["selectedTask"] = own["selectedTask"]
+            reason = own.get("blockedReason", "")
+            if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,100}", reason):
+                result["blockedReason"] = reason
+            count = own.get("gearCandidateCount")
+            if type(count) is int and 0 <= count <= 160:
+                result["gearCandidateCount"] = count
         confirmed = integer(own.get("confirmedOperations", 0))
         if confirmed <= 168:
             result["confirmedOperations"] = confirmed
@@ -722,6 +741,26 @@ def inventory_context(state, character_guid, names=None):
         raise ConversationError("Inventory capacity exceeds its bound")
     result.update(totalSlots=total, freeSlots=free, occupiedSlots=total-free, bags=bag_entries,
                   items=sorted(items, key=lambda row: (row["bag"], row["slot"]))[:48], itemsTruncated=len(items) > 48)
+    candidates = state.get("items", [])
+    if isinstance(candidates, list) and len(candidates) <= 160:
+        carried = {row["itemGuid"]: row for row in items}
+        clean = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("item"), dict): continue
+            ref = candidate["item"]; guid = str(integer(ref.get("itemGuid", 0)))
+            owned = carried.get(guid)
+            if (not owned or owned.get("metadataKnown") is not True
+                    or candidate.get("metadataKnown") is not True
+                    or any(integer(ref.get(k, 0)) != owned.get(v) for k,v in (("bag","bag"),("slot","slot"),("entry","entry"),("stackCount","count")))): continue
+            row = {"entry": owned["entry"], "gearEquipEligible": candidate.get("gearEquipEligible") is True,
+                   "conservativeUpgrade": candidate.get("conservativeUpgrade") is True}
+            if candidate.get("name"):
+                row["name"] = plain_text(candidate["name"],120)
+            reason = candidate.get("gearBlockedReason", "")
+            if isinstance(reason, str) and re.fullmatch(r"[a-z0-9_]{1,120}", reason):row["gearBlockedReason"] = reason
+            clean.append(row)
+        result["gear"] = {"equipmentKnown": state.get("equipmentKnown") is True,
+                          "candidates": clean[:48], "candidatesTruncated": len(clean)>48}
     return result
 
 

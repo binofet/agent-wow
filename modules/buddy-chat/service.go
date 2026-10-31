@@ -40,6 +40,7 @@ type Service struct {
 	ownerFeed          ownerFeedState
 	ownerGear          ownerFeedState
 	ownerGearUnsettled bool
+	team               managementState
 }
 
 func NewService(session packetSender, selfGUID uint64) *Service {
@@ -97,7 +98,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) && (s.ingestOwnerFeedLocked(packet.Payload) || s.ingestOwnerGearLocked(packet.Payload)) {
+	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) && (s.ingestTeamRequestLocked(packet.Payload) || s.ingestOwnerFeedLocked(packet.Payload) || s.ingestOwnerGearLocked(packet.Payload)) {
 		return &emptypb.Empty{}, nil
 	}
 	if err != nil {

@@ -35,10 +35,12 @@ class RPC:
         self.mail=dict(sessionId="body1",listKnown=True,listCurrent=True,bagMails=[dict(mailId=7,
             attachments=[dict(attachmentIndex=0,itemGuidLow=123,entry=41599,count=1)])])
         self.before_acquire=None
+        self.follow_lease=60000
+        self.extra_players=[]
     def fork(self):return self
     def player(self,guid,x):
         return dict(guid=str(guid),present=True,mapKnown=True,mapId=0,positionKnown=True,x=x,y=0.,z=0.,
-            aliveKnown=True,alive=True,healthKnown=True,health=100,unitFlagsKnown=True,unitFlags=0,
+            aliveKnown=True,alive=True,healthKnown=True,health=100,maxHealth=100,unitFlagsKnown=True,unitFlags=0,
             movementFlagsKnown=True,movementFlags=0,playerFlags=0x20 if self.resting else 0)
     def vendor(self):
         return dict(self.player(VENDOR,self.vendor_x),entry=VENDOR>>24&0xffffff,npcFlags=128)
@@ -51,15 +53,21 @@ class RPC:
                                                        movementFlags=1 if self.owner_moving else 0)
             boxes=[dict(guid=str(MAILBOX),entry=MAILBOX>>24&0xffffff,present=True,typeKnown=True,gameObjectType=19,
                         mapKnown=True,mapId=0,positionKnown=True,x=2.,y=0.,z=0.)] if self.box else []
-            return dict(self=own,owner=owner,mailboxes=boxes)
-        if method=="buddy-actions.status":return dict(following=self.following,healing=self.healing,assisting=self.assisting,buffing=self.buffing,moving=self.moving,interactionOwner=self.interaction,
-            position=dict(known=True,mapKnown=True,mapId=0,x=self.x,y=0.,z=0.))
+            return dict(self=own,owner=owner,mailboxes=boxes,nearbyPlayers=copy.deepcopy(self.extra_players))
+        if method=='buddy-party.state':return dict(sessionId=self.inv['sessionId'],group=dict(known=True,inGroup=True,groupGuid='7',leaderGuid='3',
+            members=[dict(guid=self.inv['selfGuid'],self=True,online=True),dict(guid='3',online=self.owner_present)]+
+                [dict(guid=p['guid'],online=True) for p in self.extra_players]))
+        if method=="buddy-actions.status":return dict(sessionId=self.inv['sessionId'],selfGuid=self.inv['selfGuid'],following=self.following,healing=self.healing,assisting=self.assisting,buffing=self.buffing,moving=self.moving,interactionOwner=self.interaction,
+            followLeaseRemainingMs=self.follow_lease,position=dict(known=True,mapKnown=True,mapId=0,x=self.x,y=0.,z=0.))
         if method=="buddy-trade.state":return dict(sessionId=self.inv["sessionId"],phase=self.trade)
         if method=="buddy-quests.state":return dict(sessionId=self.inv["sessionId"])
         if method=="buddy-loot.state":return dict(sessionId=self.inv["sessionId"],enabled=self.looting)
         if method=="buddy-inventory.discover":return dict(state=copy.deepcopy(self.inv),nearby=[dict(creature=self.vendor())] if self.vendor_present else [])
         if method=="buddy-mail.list":return copy.deepcopy(self.mail)
-        if method=="buddy-actions.follow":self.following=params["enabled"];return dict(following=self.following)
+        if method=="buddy-actions.follow":
+            self.following=params['enabled']
+            if not self.following:self.moving=False
+            return dict(following=self.following,moving=self.moving)
         if method=="buddy-actions.assist":self.assisting=params["enabled"];return dict(assisting=self.assisting)
         if method=="buddy-actions.healing":self.healing=params["enabled"];return dict(healing=self.healing)
         if method=="buddy-actions.buffs":self.buffing=params['enabled'];return dict(buffing=self.buffing)
@@ -96,6 +104,133 @@ class TownTests(unittest.TestCase):
         self.assertEqual(actor.status['lastKind'],'gear')
         self.assertNotIn('buddy-actions.travel_vendor',[name for name,_ in rpc.calls])
         self.assertTrue(rpc.following)
+
+    def gear_rig(self):
+        fakes=load('town_follow_gear_fakes','test_party_gear.py')
+        actor,rpc,clock,saved,calls=self.rig()
+        rpc.inv=fakes.initial();rpc.inv['selfGuid']='1'
+        rpc.moving=rpc.owner_moving=True;rpc.resting=False;rpc.vendor_present=False
+        return actor,rpc,clock,saved,calls
+
+    def test_leased_normal_follow_handoff_equips_while_joel_walks_before_bags_or_services(self):
+        actor,rpc,clock,saved,calls=self.gear_rig()
+        rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
+        # A carried bag is independently eligible, but the verified upgrade
+        # has priority and never requires a merchant or a town/rest flag.
+        original=actor.worker
+        def work(kind,target):
+            self.assertFalse(rpc.moving)
+            self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+            rpc.owner_x+=4
+            actor.guard()  # Ordinary leader motion cannot starve own equipment.
+            return original(kind,target)
+        actor.worker=work
+        self.run_tick(actor,clock)
+        self.assertEqual(calls,[('gear',0)])
+        self.assertEqual(actor.status['selectedTask'],'gear')
+        self.assertEqual(actor.status['gearCandidateCount'],1)
+        self.assertEqual(actor.status['taskQueue'],m.TASK_PRIORITY)
+        self.assertEqual(actor.status['blockedReason'],'')
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+        self.assertFalse(any(name in ('buddy-actions.acquire_interaction','buddy-actions.travel_vendor','buddy-mail.list') for name,_ in rpc.calls))
+        self.assertEqual(saved[-1]['attempts'][0]['phase'],'complete')
+
+    def test_gear_follow_exception_keeps_combat_unknown_leases_and_human_intent_gates(self):
+        for mode in ('not_follow','no_lease','travel','motion_unknown','cast','recovery','interaction',
+                     'self_combat','owner_combat','peer_combat','peer_hurt','peer_unknown','peer_far','peer_stale_moving',
+                     'owner_far','owner_stale_moving','self_stale_estimate','bad_party','wrong_body','requested','revoked'):
+            with self.subTest(mode=mode):
+                actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call
+                if mode=='not_follow':rpc.following=False
+                elif mode=='no_lease':rpc.follow_lease=0
+                elif mode=='interaction':rpc.interaction='quests'
+                elif mode=='self_combat':rpc.combat=True
+                elif mode=='owner_combat':rpc.owner_combat=True
+                elif mode=='owner_far':rpc.owner_x=61
+                elif mode.startswith('peer_'):
+                    p=rpc.player(4,5)
+                    if mode=='peer_combat':p['unitFlags']=0x80000
+                    elif mode=='peer_hurt':p['health']=84
+                    elif mode=='peer_unknown':p['unitFlagsKnown']=False
+                    elif mode=='peer_stale_moving':p.update(movementFlags=1,positionAgeMs='2001')
+                    else:p['x']=61.
+                    rpc.extra_players=[p]
+                if mode=='revoked':actor.revoked=lambda:True
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-actions.status':
+                        if mode=='travel':value['traveling']=True
+                        if mode=='motion_unknown':value['motionUnconfirmed']=True
+                        if mode=='cast':value['castPending']=True
+                        if mode=='recovery':value['recovery']={'active':True}
+                        if mode=='wrong_body':value['sessionId']='another-body'
+                        if mode=='self_stale_estimate':value['position']['ageMs']='2001'
+                    if method=='buddy-world.snapshot' and mode=='owner_stale_moving':value['owner']['positionAgeMs']='2001'
+                    if method=='buddy-party.state' and mode=='bad_party':value['group']['known']=False
+                    return value
+                rpc.call=call
+                with patch.object(m.c,'quest_task_snapshot',return_value={'active':mode=='requested'}):
+                    try:self.run_tick(actor,clock)
+                    except m.Error:pass
+                self.assertFalse(calls)
+                self.assertFalse(any(name=='buddy-actions.follow' for name,_ in rpc.calls))
+                self.assertTrue(actor.status['blockedReason'])
+
+    def test_gear_stop_failure_never_dispatches_or_blindly_restores(self):
+        for mode in ('still_moving','motion_unknown','lost'):
+            with self.subTest(mode=mode):
+                actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-actions.follow' and not params['enabled']:
+                        if mode=='lost':raise m.Error('lost stop receipt')
+                        value['moving' if mode=='still_moving' else 'motionUnconfirmed']=True
+                    return value
+                rpc.call=call;self.run_tick(actor,clock)
+                self.assertFalse(calls);self.assertFalse(rpc.following)
+                self.assertEqual(actor.status['controlsRestore'],'unconfirmed_no_automatic_control_restore')
+
+    def test_stationary_walking_mode_is_not_stale_actual_motion(self):
+        actor,rpc,clock,_,calls=self.gear_rig();rpc.owner_moving=False
+        rpc.extra_players=[dict(rpc.player(4,5),movementFlags=0x100,positionAgeMs='90000')]
+        original=rpc.call
+        def call(method,params):
+            value=original(method,params)
+            if method=='buddy-world.snapshot':value['owner'].update(movementFlags=0x100,positionAgeMs='90000')
+            return value
+        rpc.call=call;self.run_tick(actor,clock)
+        self.assertEqual(calls,[('gear',0)])
+
+    def test_gear_final_guard_rejects_new_party_combat_or_new_group_or_revocation(self):
+        for mode in ('combat','group','revoked'):
+            with self.subTest(mode=mode):
+                actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call;changed=[False]
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-party.state' and changed[0] and mode=='group':value['group']['groupGuid']='8'
+                    return value
+                rpc.call=call
+                def work(kind,target):
+                    changed[0]=True
+                    if mode=='combat':rpc.owner_combat=True
+                    if mode=='revoked':actor.revoked=lambda:True
+                    actor.guard()
+                    calls.append((kind,target));return dict(phase='complete')
+                actor.worker=work;self.run_tick(actor,clock)
+                self.assertFalse(calls)
+
+    def test_disappearing_gear_candidate_never_lends_follow_exception_to_services(self):
+        actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call;reads=[0]
+        def call(method,params):
+            if method=='buddy-inventory.state':
+                reads[0]+=1
+                if reads[0]>1:
+                    for row in rpc.inv['items']:row['conservativeUpgrade']=False
+            return original(method,params)
+        rpc.call=call;self.run_tick(actor,clock)
+        self.assertFalse(calls)
+        self.assertEqual(actor.status['blockedReason'],'gear_candidate_changed_before_hold')
+        self.assertFalse(any(name in {row[1] for row in m.CONTROLS} for name,_ in rpc.calls))
 
     def mira(self,result=None):
         rpc=RPC();rpc.url='http://127.0.0.1:8087/rpc';rpc.inv['selfGuid']='4'
@@ -206,7 +341,7 @@ class TownTests(unittest.TestCase):
                         return copy.deepcopy(rpc.inv)
                 self_test=self
                 with patch.object(m,'ROOT',root),patch.object(m.gear,'ROOT',root),patch.object(m.gear,'RPC',return_value=Client()):
-                    self.run_tick(actor,clock);self.run_tick(actor,clock)
+                    self.run_tick(actor,clock)
                 self.assertFalse(late_guards)
                 rows=m.gear.json.loads(path.read_text())['attempts'] if path.exists() else []
                 if mode=='metadata_changed':
@@ -241,7 +376,7 @@ class TownTests(unittest.TestCase):
                         return copy.deepcopy(rpc.inv)
                 self_test=self;inventory_revision=rpc.inv['inventoryRevision']
                 with patch.object(m,'ROOT',root),patch.object(m.gear,'ROOT',root),patch.object(m.gear,'RPC',return_value=Client()):
-                    self.run_tick(actor,clock);self.run_tick(actor,clock)
+                    self.run_tick(actor,clock)
                     self.assertEqual(len(workers),1);self.assertFalse(writes)
                     first=copy.deepcopy(saved[-1]['attempts'][0]);self.assertEqual(first['phase'],'blocked')
                     self.assertTrue(rpc.following)

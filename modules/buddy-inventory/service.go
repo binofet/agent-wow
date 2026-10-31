@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and bag41599 equipment; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
+const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers/maces and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and bag41599 equipment; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 

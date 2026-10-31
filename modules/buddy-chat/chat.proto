@@ -162,10 +162,93 @@ message OwnerFeedResponse {
   OwnerGear owner_gear = 16;
 }
 
+enum TeamAction {
+  TEAM_ACTION_UNSPECIFIED = 0;
+  RESET = 1;
+  UNSTUCK = 2;
+}
+
+// Fixed host observations, never arbitrary UI text or a command interpreter.
+enum TeamPhase {
+  TEAM_PHASE_UNSPECIFIED = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  FOLLOWING = 3;
+  FIGHTING = 4;
+  HEALING = 5;
+  BUFFING = 6;
+  LOOTING = 7;
+  GATHERING = 8;
+  MANAGING_SKILLS = 9;
+  MANAGING_GEAR = 10;
+  SELLING_TRASH = 11;
+  MAIL = 12;
+  BUSY = 13;
+  REQUESTED = 14;
+  DEFERRED_COMBAT = 15;
+  STOPPING = 16;
+  STARTING = 17;
+  READY = 18;
+  UNSTUCK_ROUTING = 19;
+  NEEDS_GM_HELP = 20;
+  FAILED = 21;
+  OUTCOME_UNCONFIRMED = 22;
+  COMPLETE = 23;
+}
+
+message ManagementRequestsRequest {
+  // Chat-module epoch, distinct from the core body SID. Empty only to discover.
+  string session_id = 1;
+  uint64 after_sequence = 2;
+  uint32 limit = 3; // 0 means32; at most64. Reading never consumes a request.
+}
+message ManagementRequest {
+  uint64 sequence = 1;
+  // Stable across relays: owner addon nonce + "." + owner request sequence.
+  string request_id = 2;
+  string addon_session = 3;
+  uint32 request_sequence = 4;
+  uint64 subject_guid = 5;
+  TeamAction action = 6;
+  uint64 age_ms = 7;
+  bool available = 8; // Only while age<30seconds in this receiving epoch.
+}
+message ManagementRequestsResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  repeated ManagementRequest requests = 3;
+  uint64 next_sequence = 4;
+  uint64 oldest_sequence = 5;
+  uint64 latest_sequence = 6;
+  bool cursor_lost = 7;
+  uint64 received_packets = 8;
+  uint64 ignored_packets = 9;
+  uint64 malformed_packets = 10;
+}
+message TeamStatusRequest {
+  string session_id = 1; // Exact receiving chat-module epoch.
+  uint64 subject_guid = 2; // Fixed1/4/5/8, including an offline peer.
+  TeamPhase phase = 3;
+  // Optional exact request reference. A generic activity never settles a request.
+  string request_addon_session = 4;
+  uint32 request_sequence = 5;
+  uint32 observation_age_ms = 6; // At most5000; reduces fixed15second UI TTL.
+}
+message TeamStatusResponse {
+  bool transport_written = 1; // Neither addon delivery nor lifecycle completion.
+  uint32 sequence = 2;
+  uint32 ttl_seconds = 3;
+  string session_id = 4;
+  uint64 subject_guid = 5;
+  TeamPhase phase = 6;
+}
+
 service BuddyChat {
   rpc Send(SendRequest) returns (SendResponse);
   rpc Emote(EmoteRequest) returns (SendResponse);
   rpc Poll(PollRequest) returns (PollResponse);
   rpc OwnerFeed(google.protobuf.Empty) returns (OwnerFeedResponse);
+  rpc ManagementRequests(ManagementRequestsRequest) returns (ManagementRequestsResponse);
+  rpc PublishTeamStatus(TeamStatusRequest) returns (TeamStatusResponse);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

@@ -1521,6 +1521,39 @@ class TradeIdleProofTests(unittest.TestCase):
 
 
 class GearContextTests(unittest.TestCase):
+    def test_inventory_comparison_context_requires_exact_actual_carried_item(self):
+        item_guid=str(0x4000000000000001)
+        slots=[dict(bag=0,slot=i) for i in range(16)]
+        slots[0].update(itemGuid=item_guid,entry=1158,stackCount=1,metadataKnown=True)
+        bags=[dict(bag=0,slotCount=16,slotKnown=True,contentsKnown=True,slots=slots)]
+        bags += [dict(bag=i,slotCount=0,slotKnown=True,contentsKnown=True,slots=[]) for i in range(1,5)]
+        candidate=dict(item=dict(bag=0,slot=0,itemGuid=item_guid,entry=1158,stackCount=1),metadataKnown=True,
+            name='Solid Metal Club',gearEquipEligible=True,conservativeUpgrade=True)
+        state=dict(selfGuid='1',sessionId='aw-body',inventoryKnown=True,inventoryBags=bags,equipmentKnown=True,items=[candidate])
+        result=converse.inventory_context(state,1)
+        self.assertEqual(result['gear']['candidates'],[dict(entry=1158,name='Solid Metal Club',gearEquipEligible=True,conservativeUpgrade=True)])
+        candidate['item']['entry']=999
+        self.assertEqual(converse.inventory_context(state,1)['gear']['candidates'],[])
+        candidate['item']['entry']=1158;candidate['metadataKnown']=False
+        self.assertEqual(converse.inventory_context(state,1)['gear']['candidates'],[])
+
+    def test_town_queue_is_bounded_and_current_body_is_explicit(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
+            folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'1')
+            queue=['combat_or_recovery','existing_game_operation','usable_gear','bag_space_or_service','idle_gathering_quests_or_training']
+            record=dict(identity=dict(version=1,mode='party_town',characterGuid=1,rpcUrl='http://127.0.0.1:8086/rpc'),
+                instance='a'*32,routineActive=True,own=dict(bodySessionId='aw-body',observationsCurrent=True,taskQueue=queue,selectedTask='gear',gearCandidateCount=2,blockedReason='gear_waits_for_safe_party'))
+            with os.fdopen(converse.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX);converse.write_json(folder/'status.json',record)
+                actual=converse.party_town_snapshot(1,body_session='aw-body')
+                self.assertEqual(actual['taskQueue'],queue);self.assertEqual(actual['selectedTask'],'gear')
+                self.assertTrue(actual['observationsCurrent'])
+                self.assertFalse(converse.party_town_snapshot(1,body_session='aw-other')['observationsCurrent'])
+                record['own']['observationsCurrent']=False;converse.write_json(folder/'status.json',record)
+                self.assertFalse(converse.party_town_snapshot(1,body_session='aw-body')['observationsCurrent'])
+                record['own']['taskQueue']=['run arbitrary command'];converse.write_json(folder/'status.json',record)
+                self.assertNotIn('taskQueue',converse.party_town_snapshot(1,body_session='aw-body'))
+
     def test_disenchant_context_requires_current_body_and_full_material_receipt(self):
         with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
             folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'4')
