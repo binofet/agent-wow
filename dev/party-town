@@ -212,6 +212,14 @@ class Supervisor:
         for guid, online in roster:
             if not online: continue
             matches = [v for v in views if isinstance(v, dict) and integer(v.get('guid', 0)) == guid]
+            if guid != self.guid:
+                # Changing owned gear needs no remote-party health inference.
+                # Only actual nearby party observations can defer it for
+                # healing/assist priority; distant or absent peers stay unknown.
+                near = [v for v in matches if v.get('present') is True and point(v)
+                        and integer(v.get('mapId', 0)) == integer(p.get('mapId', 0))
+                        and distance(a['position'], v) <= 60]
+                if not near: continue
             if len(matches) != 1:
                 self.block('gear_waits_for_safe_party', 'Gear waits for observed party health')
             player = matches[0]
@@ -227,8 +235,6 @@ class Supervisor:
             if guid != self.guid:
                 if integer(player.get('movementFlags', 0)) & 0xff and integer(player.get('positionAgeMs', 0)) > 2000:
                     self.block('gear_waits_for_fresh_moving_party', 'Gear waits for fresh moving party positions')
-                if distance(a['position'], player) > 60:
-                    self.block('gear_waits_for_party_leash', 'Gear waits for the nearby party')
 
     def safe(self, context, traveling=False, own_worker=False):
         p, a, inv = context["self"], context["actions"], context["inv"]
@@ -260,7 +266,9 @@ class Supervisor:
         town.layout(inv)
         if self.controls_paused and any(context[group].get(field,False) is not False for _,_,field,group in CONTROLS):
             self.block('control_intent_changed', 'Town controls changed after the verified hold')
-        if self.gear_scope: self.gear_party_safe(context)
+        if self.gear_scope:
+            self.gear_party_safe(context)
+            return None  # The stationary owner anchor belongs to service trips.
         owner = context["world"].get("owner", {})
         if not isinstance(owner,dict): raise Error("Owner observation is invalid")
         if owner.get("present") is True:

@@ -137,8 +137,8 @@ class TownTests(unittest.TestCase):
 
     def test_gear_follow_exception_keeps_combat_unknown_leases_and_human_intent_gates(self):
         for mode in ('not_follow','no_lease','travel','motion_unknown','cast','recovery','interaction',
-                     'self_combat','owner_combat','peer_combat','peer_hurt','peer_unknown','peer_far','peer_stale_moving',
-                     'owner_far','owner_stale_moving','self_stale_estimate','bad_party','wrong_body','requested','revoked'):
+                     'self_combat','owner_combat','peer_combat','peer_hurt','peer_unknown','peer_stale_moving',
+                     'owner_stale_moving','self_stale_estimate','bad_party','wrong_body','requested','revoked'):
             with self.subTest(mode=mode):
                 actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call
                 if mode=='not_follow':rpc.following=False
@@ -146,7 +146,6 @@ class TownTests(unittest.TestCase):
                 elif mode=='interaction':rpc.interaction='quests'
                 elif mode=='self_combat':rpc.combat=True
                 elif mode=='owner_combat':rpc.owner_combat=True
-                elif mode=='owner_far':rpc.owner_x=61
                 elif mode.startswith('peer_'):
                     p=rpc.player(4,5)
                     if mode=='peer_combat':p['unitFlags']=0x80000
@@ -175,6 +174,78 @@ class TownTests(unittest.TestCase):
                 self.assertFalse(calls)
                 self.assertFalse(any(name=='buddy-actions.follow' for name,_ in rpc.calls))
                 self.assertTrue(actor.status['blockedReason'])
+
+    def test_actual_arlen_with_near_nix_and_far_or_unobserved_mira_rook_can_equip_own_gear(self):
+        for mode in ('unobserved','far','different_map'):
+            with self.subTest(mode=mode):
+                actor,rpc,clock,_,calls=self.gear_rig();rpc.owner_present=False
+                rpc.extra_players=[rpc.player(8,5)]
+                if mode!='unobserved':
+                    # No assertion that these remote peers are healthy: their
+                    # unsafe/unknown facts are outside this local inventory task.
+                    rpc.extra_players += [dict(rpc.player(g,163),unitFlags=0x80000,healthKnown=False,
+                        mapId=1 if mode=='different_map' else 0) for g in (4,5)]
+                original=rpc.call
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-party.state' and mode=='unobserved':
+                        value['group']['members'] += [dict(guid=str(g),online=True) for g in (4,5)]
+                    return value
+                rpc.call=call;self.run_tick(actor,clock)
+                self.assertEqual(calls,[('gear',0)])
+                self.assertEqual(actor.status['blockedReason'],'')
+                self.assertTrue(rpc.following)
+
+    def test_nearby_party_danger_including_joel_still_has_priority_over_gear(self):
+        for guid in (3,4,5,8):
+            for change in ({'health':84},{'unitFlags':0x80000},{'healthKnown':False}):
+                with self.subTest(guid=guid,change=change):
+                    actor,rpc,clock,_,calls=self.gear_rig();original=rpc.call
+                    if guid!=3:rpc.extra_players=[dict(rpc.player(guid,5),**change)]
+                    def call(method,params):
+                        value=original(method,params)
+                        if method=='buddy-world.snapshot' and guid==3:value['owner'].update(change)
+                        return value
+                    rpc.call=call
+                    with self.assertRaises(m.Error):self.run_tick(actor,clock)
+                    self.assertFalse(calls)
+                    self.assertEqual(actor.status['blockedReason'],'gear_waits_for_safe_party')
+
+    def test_far_owner_does_not_block_local_gear_but_service_owner_policy_is_unchanged(self):
+        actor,rpc,clock,_,calls=self.gear_rig();rpc.owner_x=163;rpc.owner_combat=True
+        self.run_tick(actor,clock);self.assertEqual(calls,[('gear',0)])
+        actor,rpc,clock,_,calls=self.rig();rpc.owner_x=163;rpc.owner_combat=True
+        with self.assertRaises(m.Error):self.run_tick(actor,clock)
+        self.assertFalse(calls)
+
+    def test_duplicate_near_party_views_remain_ambiguous_but_remote_views_are_not_health_proof(self):
+        for near in (True,False):
+            with self.subTest(near=near):
+                actor,rpc,clock,_,calls=self.gear_rig();rpc.owner_present=False
+                rpc.extra_players=[rpc.player(8,5 if near else 163),rpc.player(8,180)]
+                original=rpc.call
+                def call(method,params):
+                    value=original(method,params)
+                    if method=='buddy-party.state':
+                        value['group']['members']=[dict(guid='1',self=True,online=True),dict(guid='3'),dict(guid='8',online=True)]
+                    return value
+                rpc.call=call
+                if near:
+                    with self.assertRaises(m.Error):self.run_tick(actor,clock)
+                    self.assertFalse(calls)
+                else:
+                    self.run_tick(actor,clock);self.assertEqual(calls,[('gear',0)])
+
+    def test_self_health_and_pose_never_borrow_remote_peer_exception(self):
+        for change in ({'health':84},{'healthKnown':False},{'positionKnown':False}):
+            actor,rpc,clock,_,calls=self.gear_rig();rpc.owner_present=False;original=rpc.call
+            def call(method,params):
+                value=original(method,params)
+                if method=='buddy-world.snapshot':value['self'].update(change)
+                return value
+            rpc.call=call
+            with self.assertRaises(m.Error):self.run_tick(actor,clock)
+            self.assertFalse(calls)
 
     def test_gear_stop_failure_never_dispatches_or_blindly_restores(self):
         for mode in ('still_moving','motion_unknown','lost'):
