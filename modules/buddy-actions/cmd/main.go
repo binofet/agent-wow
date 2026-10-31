@@ -30,8 +30,9 @@ func main() {
 
 func run() error {
 	moduleSocket, sessionSocket := os.Getenv("AGENT_WOW_MODULE_SOCKET"), os.Getenv("AGENT_WOW_SESSION_SOCKET")
-	if moduleSocket == "" || sessionSocket == "" {
-		return errors.New("session-owned module/session sockets are required")
+	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
+	if moduleSocket == "" || sessionSocket == "" || sessionID == "" || len(sessionID) > 128 {
+		return errors.New("session-owned module/session sockets and bounded session ID are required")
 	}
 	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
 	if err != nil {
@@ -52,9 +53,9 @@ func run() error {
 		return err
 	}
 	defer connection.Close()
-	service := buddyactions.NewService(modv1.NewSessionClient(connection), identity.SelfGUID)
+	service := buddyactions.NewService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	if identity.Independent() {
-		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID)
+		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	}
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	server := grpc.NewServer()

@@ -1521,6 +1521,27 @@ class TradeIdleProofTests(unittest.TestCase):
 
 
 class GearContextTests(unittest.TestCase):
+    def test_disenchant_context_requires_current_body_and_full_material_receipt(self):
+        with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
+            folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'4')
+            receipt=dict(entry=100,name='Old cloth',bodySessionId='actual_body',status='COMPLETED',
+                ownGoObserved=True,inputConsumedObserved=True,outputInventoryObserved=True,lootReleaseObserved=True,
+                leaseReleased=True,baselineInventoryRevision='3',observedInventoryRevision='4',privateToken='secret')
+            record=dict(identity=dict(version=1,mode='party_town',characterGuid=4,rpcUrl='http://127.0.0.1:8087/rpc'),
+                instance='a'*32,routineActive=True,own=dict(bodySessionId='actual_body',disenchantConfigured=True,
+                disenchantPhase='completed',disenchantedItems=[receipt]))
+            with os.fdopen(converse.private_open(folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                converse.fcntl.flock(lock,converse.fcntl.LOCK_EX)
+                converse.write_json(folder/'status.json',record)
+                result=converse.party_town_snapshot(4,body_session='actual_body')['disenchant']
+                self.assertTrue(result['observationsCurrent']);self.assertEqual(result['lastConfirmedItem']['entry'],100)
+                self.assertNotIn('private',json.dumps(result));self.assertNotIn('secret',json.dumps(result))
+                self.assertNotIn('lastConfirmedItem',converse.party_town_snapshot(4,body_session='new_body')['disenchant'])
+                receipt['cleanupUnconfirmed']=True;converse.write_json(folder/'status.json',record)
+                self.assertNotIn('lastConfirmedItem',converse.party_town_snapshot(4,body_session='actual_body')['disenchant'])
+                receipt['cleanupUnconfirmed']=False;receipt['outputInventoryObserved']=False;converse.write_json(folder/'status.json',record)
+                self.assertNotIn('lastConfirmedItem',converse.party_town_snapshot(4,body_session='actual_body')['disenchant'])
+
     def test_only_bound_confirmed_gear_facts_are_exposed_from_owned_town_status(self):
         with tempfile.TemporaryDirectory() as temp,patch.object(converse,'ROOT',Path(temp)):
             folder=converse.ensure_state(converse.ensure_state(Path(temp)/'data/party-town')/'5')
@@ -1546,6 +1567,51 @@ class GearContextTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_new_buff_and_profession_reads_pass_real_rpc_allowlist(self):
+        rpc = converse.RPC('http://127.0.0.1:8086/rpc')
+        import io
+        methods = ('buddy-actions.buffs', 'buddy-actions.spell_toolkit', 'buddy-professions.state')
+        for method in methods:
+            with patch.object(rpc.opener, 'open', return_value=io.BytesIO(json.dumps({
+                    'jsonrpc': '2.0', 'id': rpc.request_id+1, 'result': {}}).encode())) as transport:
+                rpc.call(method, {'enabled': True} if method.endswith('.buffs') else {})
+                self.assertEqual(json.loads(transport.call_args.args[0].data)['method'], method)
+        for method in ('buddy-actions.cast', 'buddy-professions.attempt', 'session.logout'):
+            with self.assertRaises(converse.ConversationError): rpc.call(method, {})
+
+    def test_spell_context_is_bound_unknown_preserving_and_buff_control_is_fixed(self):
+        raw = {'sessionId': 'aw-body', 'selfGuid': '4', 'spellbookKnown': True,
+               'spellbookRevision': '2', 'spells': [
+                   {'spellId': 7300, 'metadataKnown': True, 'name': 'Frost Armor', 'rank': 2, 'automaticBuffSupported': True},
+                   {'spellId': 999, 'metadataKnown': False, 'name': 'invented', 'automaticBuffSupported': True}],
+               'lastBuff': {'phase': 'waiting_aura', 'spellId': 7300, 'targetGuid': '4', 'serverCastGo': True}}
+        actions = {'sessionId': 'aw-body', 'selfGuid': '4'}
+        context = converse.spell_toolkit_context(raw, actions, 4)
+        self.assertTrue(context['available'])
+        self.assertNotIn('name', next(r for r in context['spells'] if r['spellId']==999))
+        self.assertFalse(context['lastBuff']['auraConfirmed'])
+        self.assertEqual(converse.spell_toolkit_context(raw, dict(actions,sessionId='new-body'),4), {'available':False})
+        class BuffRPC:
+            def __init__(self): self.calls=[]
+            def call(self,method,params):
+                self.calls.append((method,params));return {'buffing':params['enabled']}
+        rpc=BuffRPC();controls=converse.BuddyControls(rpc,character_class='mage',character_guid=4)
+        controls.actions_available=True
+        self.assertIn('supported learned buff', controls.execute('ENABLE_BUFFS'))
+        self.assertEqual(rpc.calls,[])
+        controls.spell_toolkit=context
+        controls.execute('ENABLE_BUFFS');controls.execute('DISABLE_BUFFS')
+        self.assertEqual(rpc.calls,[('buddy-actions.buffs',{'enabled':True}),('buddy-actions.buffs',{'enabled':False})])
+
+    def test_profession_context_does_not_mix_bodies_or_promote_unknown_skills(self):
+        raw={'sessionId':'aw-body','selfGuid':'4','skillsKnown':False,
+             'skills':[{'skillId':333,'rank':1,'maximum':75}],
+             'spellsKnown':True,'recipes':[{'spellId':13262,'skillId':333,'known':True}]}
+        self.assertEqual(converse.professions_context(raw,4,'another-body'),{'available':False})
+        context=converse.professions_context(raw,4,'aw-body')
+        self.assertFalse(context['skillsKnown']);self.assertEqual(context['skills'],[])
+        self.assertTrue(context['recipes'][0]['known'])
+
     def test_numeric_action_schema_is_required_bounded_and_legacy_compatible(self):
         for key in converse.NUMERIC_ARGS:
             self.assertIn(key, converse.REPLY_SCHEMA["required"])

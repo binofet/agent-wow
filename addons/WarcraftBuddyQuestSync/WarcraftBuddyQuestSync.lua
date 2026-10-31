@@ -4,6 +4,7 @@ local PREFIX = "WBQUEST1"
 local frame = CreateFrame("Frame")
 local nonce = string.format("%08x%04x", time() % 4294967296, math.random(0, 65535))
 local revision, due, lastSent, suppressUntil = 0, 0, -10, 0
+local gearRevision, gearLastSent, gearDue = 0, -10, true
 local snapshotting, dialog, pendingAccept = false, nil, nil
 local pendingRewards, previous, completed, db = {}, {}, {}, nil
 local diagnostics = {ticks = 0, attempts = 0, snapshots = 0, sendCalls = 0, readErrors = 0,
@@ -37,6 +38,90 @@ end
 local function queue()
     local at = GetTime() + 0.5
     if due == 0 or at < due then due = at end
+end
+
+-- Equipment is comparison evidence only: the3.3 UI has no complete item GUID
+-- API. A separate bounded stream leaves the existing quest feed unchanged.
+local gearClasses = {WARRIOR=1,PALADIN=2,HUNTER=3,ROGUE=4,PRIEST=5,DEATHKNIGHT=6,SHAMAN=7,MAGE=8,WARLOCK=9,DRUID=11}
+local gearRaces = {Human=1,Orc=2,Dwarf=3,NightElf=4,Scourge=5,Tauren=6,Gnome=7,Troll=8,BloodElf=10,Draenei=11}
+local gearProficiencies = {{43,201},{44,196},{45,264},{46,266},{54,198},{55,202},{136,227},{160,199},{172,197},{173,1180},
+    {176,2567},{226,5011},{228,5009},{229,200},{293,750},{413,8737},{414,9077},{415,9078},{433,9116},{473,15590}}
+local function gearInteger(value, maximum)
+    return type(value)=="number" and value>=0 and value<=maximum and value==math.floor(value)
+end
+local function ownerGearTokens()
+    if type(GetInventoryItemLink)~="function" or type(GetInventoryItemTexture)~="function"
+        or type(GetItemInfo)~="function" or type(UnitClass)~="function" or type(UnitRace)~="function" then return end
+    local _, class = UnitClass("player")
+    local _, race = UnitRace("player")
+    local level = UnitLevel("player")
+    if not gearClasses[class] or not gearRaces[race] or not gearInteger(level,80) or level<1 then return end
+    local tokens, complete = {}, true
+    for slot=1,19 do
+        local link, texture = GetInventoryItemLink("player",slot), GetInventoryItemTexture("player",slot)
+        local known, entry, metadata, enhancementKnown, enhanced, durabilityKnown, durability, maximum = 0,0,0,0,0,0,0,0
+        if not link and not texture then known,metadata,enhancementKnown,durabilityKnown=1,1,1,1
+        elseif type(link)=="string" then
+            local body = link:match("item:([^|]+)")
+            local fields = {}
+            if body then for value in (body..":"):gmatch("(.-):") do fields[#fields+1]=value end end
+            local id = tonumber(fields[1])
+            if validID(id) then
+                known,entry=1,id
+                metadata=GetItemInfo(link) and 1 or 0
+                if #fields>=7 then
+                    enhancementKnown=1
+                    for i=2,7 do
+                        local value=fields[i]=="" and 0 or tonumber(fields[i])
+                        if type(value)~="number" or value~=math.floor(value) or math.abs(value)>2147483647 then enhancementKnown=0;enhanced=0;break end
+                        if value~=0 then enhanced=1 end
+                    end
+                end
+                if type(GetInventoryItemDurability)=="function" then
+                    local current,max=GetInventoryItemDurability(slot)
+                    if current==nil and max==nil then durabilityKnown=1
+                    elseif gearInteger(current,1000000) and gearInteger(max,1000000) and current<=max then
+                        durabilityKnown,durability,maximum=1,current,max
+                    end
+                end
+            end
+        end
+        if known~=1 or metadata~=1 or enhancementKnown~=1 or durabilityKnown~=1 then complete=false end
+        tokens[#tokens+1]=table.concat({"E="..(slot-1),known,entry,metadata,enhancementKnown,enhanced,durabilityKnown,durability,maximum},",")
+    end
+    local proficiencyTokens, proficiencyKnown={},type(IsSpellKnown)=="function"
+    if proficiencyKnown then
+        for _, pair in ipairs(gearProficiencies) do
+            local ok, known=pcall(IsSpellKnown,pair[2])
+            if not ok or type(known)~="boolean" then proficiencyKnown=false;break end
+            proficiencyTokens[#proficiencyTokens+1]="P="..pair[1]..","..(known and 1 or 0)
+        end
+    end
+    if proficiencyKnown then for _, token in ipairs(proficiencyTokens) do tokens[#tokens+1]=token end end
+    table.insert(tokens,1,table.concat({"G="..gearClasses[class],gearRaces[race],level,complete and 1 or 0,proficiencyKnown and 1 or 0},","))
+    return tokens
+end
+local function publishOwnerGear()
+    if not db or not isJoel() or GetNumPartyMembers()<1 then return end
+    local now=GetTime()
+    if now-gearLastSent<5 and not (gearDue and now-gearLastSent>=1) then return end
+    gearLastSent=now
+    local tokens=ownerGearTokens()
+    if not tokens then return end
+    local parts,current={},""
+    for _, token in ipairs(tokens) do
+        if #current+#token+1>140 then parts[#parts+1],current=current,"" end
+        current=current=="" and token or current..";"..token
+    end
+    if current~="" then parts[#parts+1]=current end
+    if #parts>12 then error("owner gear exceeds bounded part count") end
+    gearRevision=gearRevision%2147483647+1
+    for i,part in ipairs(parts) do
+        local payload="1|"..nonce.."|"..gearRevision.."|"..i.."|"..#parts.."|19|"..part
+        if #payload>200 then error("owner gear exceeds payload bound") end
+        SendAddonMessage("WBGEAR1",payload,"PARTY")
+    end
+    gearDue=false
 end
 
 local function readLog()
@@ -248,6 +333,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if WarcraftBuddyInventory then WarcraftBuddyInventory.Receive(...) end
         return
     end
+    if event=="PLAYER_EQUIPMENT_CHANGED" or event=="UPDATE_INVENTORY_DURABILITY" or event=="SPELLS_CHANGED" or event=="PLAYER_LEVEL_UP" then gearDue=true end
     if event == "PLAYER_LOGIN" then
         WarcraftBuddyQuestSyncDB = type(WarcraftBuddyQuestSyncDB) == "table" and WarcraftBuddyQuestSyncDB or {}
         db = WarcraftBuddyQuestSyncDB
@@ -271,7 +357,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
     if not snapshotting and GetTime() >= suppressUntil then queue() end
 end)
-for _, event in ipairs({"PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_QUERY_COMPLETE", "QUEST_DETAIL", "QUEST_COMPLETE", "QUEST_FINISHED", "PARTY_MEMBERS_CHANGED", "PLAYER_LEVEL_UP", "CHAT_MSG_ADDON"}) do
+for _, event in ipairs({"PLAYER_LOGIN", "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_QUERY_COMPLETE", "QUEST_DETAIL", "QUEST_COMPLETE", "QUEST_FINISHED", "PARTY_MEMBERS_CHANGED", "PLAYER_LEVEL_UP", "CHAT_MSG_ADDON", "PLAYER_EQUIPMENT_CHANGED", "UPDATE_INVENTORY_DURABILITY", "SPELLS_CHANGED"}) do
     frame:RegisterEvent(event)
 end
 hooksecurefunc("GetQuestReward", function()
@@ -298,6 +384,8 @@ frame:SetScript("OnUpdate", function()
             reportError("publishErrors", message)
         end
     end
+    local gearOK, gearError=pcall(publishOwnerGear)
+    if not gearOK then reportError("publishErrors",gearError) end
 end)
 
 -- Companion inventory: owner-requested snapshots and explicitly selected actions.

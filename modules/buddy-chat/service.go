@@ -27,17 +27,19 @@ type packetSender interface {
 // message, retries a write, resolves player names, or reads authentication data.
 type Service struct {
 	chatv1.UnimplementedBuddyChatServer
-	session     packetSender
-	selfGUID    uint64
-	independent bool
-	sessionID   string
-	mu          sync.Mutex
-	messages    [messageCapacity]*chatv1.Message
-	latest      uint64
-	ignored     uint64
-	malformed   uint64
-	now         func() time.Time
-	ownerFeed   ownerFeedState
+	session            packetSender
+	selfGUID           uint64
+	independent        bool
+	sessionID          string
+	mu                 sync.Mutex
+	messages           [messageCapacity]*chatv1.Message
+	latest             uint64
+	ignored            uint64
+	malformed          uint64
+	now                func() time.Time
+	ownerFeed          ownerFeedState
+	ownerGear          ownerFeedState
+	ownerGearUnsettled bool
 }
 
 func NewService(session packetSender, selfGUID uint64) *Service {
@@ -95,7 +97,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) && s.ingestOwnerFeedLocked(packet.Payload) {
+	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) && (s.ingestOwnerFeedLocked(packet.Payload) || s.ingestOwnerGearLocked(packet.Payload)) {
 		return &emptypb.Empty{}, nil
 	}
 	if err != nil {

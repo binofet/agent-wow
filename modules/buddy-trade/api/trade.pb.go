@@ -906,8 +906,11 @@ type ItemDetails struct {
 	RequiredReputationRank    uint32                 `protobuf:"varint,27,opt,name=required_reputation_rank,json=requiredReputationRank,proto3" json:"required_reputation_rank,omitempty"`
 	RequiredHonorRank         uint32                 `protobuf:"varint,28,opt,name=required_honor_rank,json=requiredHonorRank,proto3" json:"required_honor_rank,omitempty"`
 	RequiredCityRank          uint32                 `protobuf:"varint,29,opt,name=required_city_rank,json=requiredCityRank,proto3" json:"required_city_rank,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// Full normal query proves otherwise unrepresented armor properties empty.
+	// False is unknown/unsupported, never a zero-resistance comparison claim.
+	ArmorComparisonKnown bool `protobuf:"varint,30,opt,name=armor_comparison_known,json=armorComparisonKnown,proto3" json:"armor_comparison_known,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ItemDetails) Reset() {
@@ -1143,6 +1146,13 @@ func (x *ItemDetails) GetRequiredCityRank() uint32 {
 	return 0
 }
 
+func (x *ItemDetails) GetArmorComparisonKnown() bool {
+	if x != nil {
+		return x.ArmorComparisonKnown
+	}
+	return false
+}
+
 type LookupItemsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ItemIds       []uint32               `protobuf:"varint,1,rep,packed,name=item_ids,json=itemIds,proto3" json:"item_ids,omitempty"`
@@ -1325,7 +1335,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\fWeaponDamage\x12\x18\n" +
 	"\aminimum\x18\x01 \x01(\x02R\aminimum\x12\x18\n" +
 	"\amaximum\x18\x02 \x01(\x02R\amaximum\x12\x16\n" +
-	"\x06school\x18\x03 \x01(\rR\x06school\"\xa2\b\n" +
+	"\x06school\x18\x03 \x01(\rR\x06school\"\xd8\b\n" +
 	"\vItemDetails\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x1c\n" +
 	"\tavailable\x18\x02 \x01(\bR\tavailable\x12\x18\n" +
@@ -1359,7 +1369,8 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x1brequired_reputation_faction\x18\x1a \x01(\rR\x19requiredReputationFaction\x128\n" +
 	"\x18required_reputation_rank\x18\x1b \x01(\rR\x16requiredReputationRank\x12.\n" +
 	"\x13required_honor_rank\x18\x1c \x01(\rR\x11requiredHonorRank\x12,\n" +
-	"\x12required_city_rank\x18\x1d \x01(\rR\x10requiredCityRank\"/\n" +
+	"\x12required_city_rank\x18\x1d \x01(\rR\x10requiredCityRank\x124\n" +
+	"\x16armor_comparison_known\x18\x1e \x01(\bR\x14armorComparisonKnown\"/\n" +
 	"\x12LookupItemsRequest\x12\x19\n" +
 	"\bitem_ids\x18\x01 \x03(\rR\aitemIds\"o\n" +
 	"\x13LookupItemsResponse\x12\x1d\n" +

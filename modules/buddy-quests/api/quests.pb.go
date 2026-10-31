@@ -1445,8 +1445,11 @@ type QuestJournalEntry struct {
 	ExpireTime             uint32                 `protobuf:"varint,15,opt,name=expire_time,json=expireTime,proto3" json:"expire_time,omitempty"`
 	ObservedQuestgiverGuid uint64                 `protobuf:"varint,16,opt,name=observed_questgiver_guid,json=observedQuestgiverGuid,proto3" json:"observed_questgiver_guid,omitempty"`
 	ObservedRewardNpcGuid  uint64                 `protobuf:"varint,17,opt,name=observed_reward_npc_guid,json=observedRewardNpcGuid,proto3" json:"observed_reward_npc_guid,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Complete ordinary template includes required, provided and dropped items.
+	// SOURCE_ITEM targets protect gear; they never claim objective progress.
+	ItemProtectionKnown bool `protobuf:"varint,18,opt,name=item_protection_known,json=itemProtectionKnown,proto3" json:"item_protection_known,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *QuestJournalEntry) Reset() {
@@ -1598,11 +1601,20 @@ func (x *QuestJournalEntry) GetObservedRewardNpcGuid() uint64 {
 	return 0
 }
 
+func (x *QuestJournalEntry) GetItemProtectionKnown() bool {
+	if x != nil {
+		return x.ItemProtectionKnown
+	}
+	return false
+}
+
 type JournalRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Refresh       bool                   `protobuf:"varint,1,opt,name=refresh,proto3" json:"refresh,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Refresh bool                   `protobuf:"varint,1,opt,name=refresh,proto3" json:"refresh,omitempty"`
+	// At most25 unique normal static template queries, separate from own log.
+	RequestedQuestIds []uint32 `protobuf:"varint,2,rep,packed,name=requested_quest_ids,json=requestedQuestIds,proto3" json:"requested_quest_ids,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *JournalRequest) Reset() {
@@ -1642,13 +1654,22 @@ func (x *JournalRequest) GetRefresh() bool {
 	return false
 }
 
+func (x *JournalRequest) GetRequestedQuestIds() []uint32 {
+	if x != nil {
+		return x.RequestedQuestIds
+	}
+	return nil
+}
+
 type JournalResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	QuestLogRevision uint64                 `protobuf:"varint,2,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
 	Entries          []*QuestJournalEntry   `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// No own-log or acceptance authority for these read-only static templates.
+	RequestedTemplates []*QuestJournalEntry `protobuf:"bytes,4,rep,name=requested_templates,json=requestedTemplates,proto3" json:"requested_templates,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *JournalResponse) Reset() {
@@ -1698,6 +1719,13 @@ func (x *JournalResponse) GetQuestLogRevision() uint64 {
 func (x *JournalResponse) GetEntries() []*QuestJournalEntry {
 	if x != nil {
 		return x.Entries
+	}
+	return nil
+}
+
+func (x *JournalResponse) GetRequestedTemplates() []*QuestJournalEntry {
+	if x != nil {
+		return x.RequestedTemplates
 	}
 	return nil
 }
@@ -2605,7 +2633,7 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\x0erequired_count\x18\x04 \x01(\rR\rrequiredCount\x12\x12\n" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x12#\n" +
 	"\rcurrent_known\x18\x06 \x01(\bR\fcurrentKnown\x12#\n" +
-	"\rcurrent_count\x18\a \x01(\rR\fcurrentCount\"\xf9\x04\n" +
+	"\rcurrent_count\x18\a \x01(\rR\fcurrentCount\"\xad\x05\n" +
 	"\x11QuestJournalEntry\x12\x19\n" +
 	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x12\n" +
 	"\x04slot\x18\x02 \x01(\rR\x04slot\x12\x14\n" +
@@ -2627,14 +2655,17 @@ const file_modules_buddy_quests_quests_proto_rawDesc = "" +
 	"\vexpire_time\x18\x0f \x01(\rR\n" +
 	"expireTime\x128\n" +
 	"\x18observed_questgiver_guid\x18\x10 \x01(\x04R\x16observedQuestgiverGuid\x127\n" +
-	"\x18observed_reward_npc_guid\x18\x11 \x01(\x04R\x15observedRewardNpcGuid\"*\n" +
+	"\x18observed_reward_npc_guid\x18\x11 \x01(\x04R\x15observedRewardNpcGuid\x122\n" +
+	"\x15item_protection_known\x18\x12 \x01(\bR\x13itemProtectionKnown\"Z\n" +
 	"\x0eJournalRequest\x12\x18\n" +
-	"\arefresh\x18\x01 \x01(\bR\arefresh\"\xa4\x01\n" +
+	"\arefresh\x18\x01 \x01(\bR\arefresh\x12.\n" +
+	"\x13requested_quest_ids\x18\x02 \x03(\rR\x11requestedQuestIds\"\x81\x02\n" +
 	"\x0fJournalResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12,\n" +
 	"\x12quest_log_revision\x18\x02 \x01(\x04R\x10questLogRevision\x12D\n" +
-	"\aentries\x18\x03 \x03(\v2*.warcraftbuddy.quests.v1.QuestJournalEntryR\aentries\"p\n" +
+	"\aentries\x18\x03 \x03(\v2*.warcraftbuddy.quests.v1.QuestJournalEntryR\aentries\x12[\n" +
+	"\x13requested_templates\x18\x04 \x03(\v2*.warcraftbuddy.quests.v1.QuestJournalEntryR\x12requestedTemplates\"p\n" +
 	"\n" +
 	"RewardItem\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\rR\x05index\x12\x17\n" +
@@ -2825,38 +2856,39 @@ var file_modules_buddy_quests_quests_proto_depIdxs = []int32{
 	0,  // 18: warcraftbuddy.quests.v1.SharedQuestAcceptance.status:type_name -> warcraftbuddy.quests.v1.AcceptanceStatus
 	15, // 19: warcraftbuddy.quests.v1.QuestJournalEntry.targets:type_name -> warcraftbuddy.quests.v1.QuestObjective
 	16, // 20: warcraftbuddy.quests.v1.JournalResponse.entries:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
-	19, // 21: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
-	19, // 22: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
-	19, // 23: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
-	3,  // 24: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
-	9,  // 25: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
-	30, // 26: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
-	30, // 27: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
-	24, // 28: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
-	25, // 29: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	25, // 30: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
-	14, // 31: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
-	17, // 32: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
-	22, // 33: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
-	23, // 34: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
-	10, // 35: warcraftbuddy.quests.v1.BuddyQuests.Explore:input_type -> warcraftbuddy.quests.v1.ExploreRequest
-	31, // 36: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	9,  // 37: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
-	9,  // 38: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
-	26, // 39: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 40: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 41: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 42: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
-	18, // 43: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
-	26, // 44: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 45: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
-	26, // 46: warcraftbuddy.quests.v1.BuddyQuests.Explore:output_type -> warcraftbuddy.quests.v1.OperationResult
-	30, // 47: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
-	37, // [37:48] is the sub-list for method output_type
-	26, // [26:37] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	16, // 21: warcraftbuddy.quests.v1.JournalResponse.requested_templates:type_name -> warcraftbuddy.quests.v1.QuestJournalEntry
+	19, // 22: warcraftbuddy.quests.v1.TurnInOffer.choices:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 23: warcraftbuddy.quests.v1.TurnInOffer.rewards:type_name -> warcraftbuddy.quests.v1.RewardItem
+	19, // 24: warcraftbuddy.quests.v1.TurnInOffer.required_items:type_name -> warcraftbuddy.quests.v1.RewardItem
+	3,  // 25: warcraftbuddy.quests.v1.RewardReceipt.status:type_name -> warcraftbuddy.quests.v1.RewardStatus
+	9,  // 26: warcraftbuddy.quests.v1.OperationResult.state:type_name -> warcraftbuddy.quests.v1.StateResponse
+	30, // 27: warcraftbuddy.quests.v1.BuddyQuests.Discover:input_type -> google.protobuf.Empty
+	30, // 28: warcraftbuddy.quests.v1.BuddyQuests.State:input_type -> google.protobuf.Empty
+	24, // 29: warcraftbuddy.quests.v1.BuddyQuests.Offer:input_type -> warcraftbuddy.quests.v1.OfferRequest
+	25, // 30: warcraftbuddy.quests.v1.BuddyQuests.Details:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	25, // 31: warcraftbuddy.quests.v1.BuddyQuests.Accept:input_type -> warcraftbuddy.quests.v1.QuestRequest
+	14, // 32: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:input_type -> warcraftbuddy.quests.v1.SharedQuestRequest
+	17, // 33: warcraftbuddy.quests.v1.BuddyQuests.Journal:input_type -> warcraftbuddy.quests.v1.JournalRequest
+	22, // 34: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:input_type -> warcraftbuddy.quests.v1.TurnInRequest
+	23, // 35: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:input_type -> warcraftbuddy.quests.v1.RewardRequest
+	10, // 36: warcraftbuddy.quests.v1.BuddyQuests.Explore:input_type -> warcraftbuddy.quests.v1.ExploreRequest
+	31, // 37: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 38: warcraftbuddy.quests.v1.BuddyQuests.Discover:output_type -> warcraftbuddy.quests.v1.StateResponse
+	9,  // 39: warcraftbuddy.quests.v1.BuddyQuests.State:output_type -> warcraftbuddy.quests.v1.StateResponse
+	26, // 40: warcraftbuddy.quests.v1.BuddyQuests.Offer:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 41: warcraftbuddy.quests.v1.BuddyQuests.Details:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 42: warcraftbuddy.quests.v1.BuddyQuests.Accept:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 43: warcraftbuddy.quests.v1.BuddyQuests.AcceptShared:output_type -> warcraftbuddy.quests.v1.OperationResult
+	18, // 44: warcraftbuddy.quests.v1.BuddyQuests.Journal:output_type -> warcraftbuddy.quests.v1.JournalResponse
+	26, // 45: warcraftbuddy.quests.v1.BuddyQuests.TurnIn:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 46: warcraftbuddy.quests.v1.BuddyQuests.ClaimReward:output_type -> warcraftbuddy.quests.v1.OperationResult
+	26, // 47: warcraftbuddy.quests.v1.BuddyQuests.Explore:output_type -> warcraftbuddy.quests.v1.OperationResult
+	30, // 48: warcraftbuddy.quests.v1.BuddyQuests.OnPacket:output_type -> google.protobuf.Empty
+	38, // [38:49] is the sub-list for method output_type
+	27, // [27:38] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_quests_quests_proto_init() }

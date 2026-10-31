@@ -124,9 +124,9 @@ class FakeRPC:
             result.update(copy.deepcopy(self.inventory_changes))
             return result
         if method == "buddy-actions.acquire_interaction":
-            assert params == dict(owner="exploration", leaseMs=8000, harvest=True) and self.token is None
+            assert params == dict(owner="exploration", leaseMs=15000, harvest=True) and self.token is None
             self.token = "owned-harvest-route-token"
-            self.actions.update(interactionOwner="exploration", interactionHarvest=True)
+            self.actions.update(interactionOwner="exploration", interactionHarvest=True,moving=False)
             return dict(token=self.token, state=copy.deepcopy(self.actions))
         if method == "buddy-actions.travel_to":
             assert params == dict(token=self.token, mapId=0, x=self.target["x"], y=0., z=0., arrivalDistance=2.5)
@@ -273,7 +273,7 @@ class HarvestTests(unittest.TestCase):
                                                  for method, _ in rpc.calls))
 
     def test_read_blocks_actual_danger_missing_learning_knife_and_inventory(self):
-        for mode in ("combat", "owner_combat", "healing", "attacker", "quest", "loot", "trade", "skill", "spell", "knife", "unknown_bag", "unknown_item", "partial_bag", "no_capacity", "other_profession", "owner_moving"):
+        for mode in ("combat", "owner_combat", "healing", "attacker", "quest", "loot", "trade", "skill", "spell", "knife", "unknown_bag", "unknown_item", "partial_bag", "no_capacity", "other_profession", "owner_falling"):
             with self.subTest(mode=mode):
                 worker, rpc, _ = self.rig()
                 if mode == "combat": rpc.own["unitFlags"] = 0x80000
@@ -292,7 +292,7 @@ class HarvestTests(unittest.TestCase):
                 elif mode == "no_capacity":
                     for i, row in enumerate(rpc.bags[0]["slots"]): row.update(itemGuid=str(0x4000000000000100+i), entry=7005 if i == 0 else 7070, stackCount=1, metadataKnown=True)
                 elif mode == "other_profession": rpc.active = True
-                elif mode == "owner_moving": rpc.owner["movementFlags"] = 1
+                elif mode == "owner_falling": rpc.owner["movementFlags"] = 0x1000
                 worker.deadline = 120
                 with self.assertRaises((m.Error, m.prof.Error)): worker.read()
                 self.assertFalse(any(method in ("buddy-professions.attempt", "buddy-actions.acquire_interaction") for method, _ in rpc.calls))
@@ -304,7 +304,7 @@ class HarvestTests(unittest.TestCase):
                 if mode == "not_approachable": rpc.approachable = False
                 elif mode == "not_fully_looted": rpc.fully_looted = False
                 elif mode == "metadata": rpc.metadata = False
-                elif mode == "far": rpc.target["x"] = 20.01
+                elif mode == "far": rpc.target["x"] = 40.01
                 elif mode == "vertical": rpc.target["z"] = 1.51
                 elif mode == "unknown_pose": rpc.target["positionKnown"] = False
                 worker.tick()
@@ -318,10 +318,56 @@ class HarvestTests(unittest.TestCase):
         self.assertEqual(names.count("buddy-actions.travel_to"), 1)
         self.assertLess(names.index("buddy-actions.release_interaction"), names.index("buddy-professions.attempt"))
         self.assertEqual(worker.data["attempts"][0]["phase"], "completed")
+
+    def test_normal_moving_leader_allows_observed_forty_yard_detour_and_receipt(self):
+        for guid in (1,5):
+            with self.subTest(guid=guid):
+                worker,rpc,clock=self.rig(guid=guid,x=40.)
+                actor=types.SimpleNamespace(status={'phase':'waiting_for_idle_companion'},data={})
+                self.assertTrue(m.maintenance_idle(actor))
+                rpc.owner['movementFlags']=1
+                rpc.actions['moving']=True
+                def moved():
+                    rpc.owner.update(x=45.,positionRevision='8')
+                rpc.after_travel=moved
+                worker.tick()
+                names=[name for name,_ in rpc.calls]
+                self.assertIn('buddy-actions.travel_to',names)
+                self.assertLess(names.index('buddy-actions.release_interaction'),names.index('buddy-professions.attempt'))
+                self.assertEqual(worker.data['attempts'][0]['phase'],'completed')
+                self.assertTrue(all(rpc.actions[k] for k in ('following','healing','assisting')))
+                self.assertIsNone(rpc.token)
+
+    def test_detour_admission_does_not_allow_unowned_motion_travel_or_stale_moving_leader(self):
+        for mode in ('unowned_motion','travel','motion_unknown','stale_owner'):
+            worker,rpc,clock=self.rig(x=35.);rpc.actions['moving']=True
+            if mode=='unowned_motion':rpc.actions['following']=False
+            elif mode=='travel':rpc.actions['traveling']=True
+            elif mode=='motion_unknown':rpc.actions['motionUnconfirmed']=True
+            elif mode=='stale_owner':rpc.owner.update(movementFlags=1,positionAgeMs='2001')
+            with self.assertRaises((m.Error,m.prof.Error)):worker.tick()
+            self.assertFalse(any(name in ('buddy-actions.acquire_interaction','buddy-professions.attempt') for name,_ in rpc.calls))
+
+    def test_moving_leader_detour_aborts_on_lost_owner_leash_any_health_drop_or_fifteen_seconds(self):
+        for mode in ('gone','leash','health_drop','time','route_failure'):
+            with self.subTest(mode=mode):
+                worker,rpc,clock=self.rig(x=35.)
+                rpc.owner['movementFlags']=1
+                def changed():
+                    if mode=='gone':rpc.owner['present']=False
+                    elif mode=='leash':rpc.owner['x']=100.
+                    elif mode=='health_drop':rpc.owner['health']=99
+                    elif mode=='time':clock.value=116.
+                rpc.after_travel=changed
+                if mode=='route_failure':rpc.route_reason='exploration_navigation_unavailable'
+                worker.tick()
+                self.assertFalse(any(name=='buddy-professions.attempt' for name,_ in rpc.calls))
+                self.assertIsNone(rpc.token)
+                self.assertEqual(sum(name=='buddy-actions.travel_to' for name,_ in rpc.calls),1)
         self.assertIsNone(rpc.token)
 
     def test_route_yields_to_combat_owner_control_target_or_priority_changes(self):
-        for mode in ("combat", "owner", "control", "target", "priority"):
+        for mode in ("combat", "owner", "control", "buff_control", "target", "priority"):
             with self.subTest(mode=mode):
                 priority = [False]
                 worker, rpc, _ = self.rig(x=10., priority=lambda: priority[0])
@@ -329,7 +375,8 @@ class HarvestTests(unittest.TestCase):
                 def change(method, params):
                     if not rpc.route_started.is_set() or method != "buddy-actions.status": return
                     if mode == "combat": rpc.own["unitFlags"] = 0x80000
-                    elif mode == "owner": rpc.owner["x"] += 1
+                    elif mode == "owner": rpc.owner["x"] += 61
+                    elif mode == "buff_control":rpc.actions['buffing']=True
                     elif mode == "control": rpc.actions["following"] = False
                     elif mode == "target": rpc.target["positionRevision"] = "10"
                     else: priority[0] = True

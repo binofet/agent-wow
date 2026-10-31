@@ -55,13 +55,18 @@ func disenchantBehaviorFixture(t *testing.T) (*Service, *professionSessionFixtur
 	w := f.world
 	w.Self.PositionRevision = 11
 	w.Self.ChannelObjectKnown, w.Self.ChannelSpellKnown = true, true
+	w.SelfEquipmentKnown, w.SelfEquipmentRevision = true, 1
+	for slot := range 19 {
+		w.SelfEquipment = append(w.SelfEquipment, &worldv1.EquipmentSlotState{Slot: uint32(slot), SlotKnown: true})
+	}
+	f.loot.SessionId = "body"
 	w.SelfSkills[1] = &worldv1.SkillState{Slot: 1, SkillId: 333, Value: 75, MaxValue: 75, Step: 1}
 	b := w.InventoryBags[1]
 	b.ContainerGuid, b.Entry, b.MetadataKnown, b.SlotCount = 0x4000000000000066, 41599, true, 20
 	for slot := range 20 {
 		b.Slots = append(b.Slots, &worldv1.BackpackSlot{Bag: 1, Slot: uint32(slot)})
 	}
-	b.Slots[0] = &worldv1.BackpackSlot{Bag: 1, Slot: 0, ItemGuid: disenchantBehaviorTarget, Entry: 1001, StackCount: 1, MetadataKnown: true}
+	b.Slots[0] = &worldv1.BackpackSlot{Bag: 1, Slot: 0, ItemGuid: disenchantBehaviorTarget, Entry: 1001, StackCount: 1, MetadataKnown: true, EnhancementsKnown: true}
 	f.mu.Unlock()
 	professionPacket(t, s, opcode.SMSGInitialSpells, professionInitialFixture(3275, 2538, 2540, 7620, 8613, 2366, 13262))
 	s.mu.Lock()

@@ -103,6 +103,9 @@ message ItemDetails {
   uint32 required_reputation_rank = 27;
   uint32 required_honor_rank = 28;
   uint32 required_city_rank = 29;
+  // Full normal query proves otherwise unrepresented armor properties empty.
+  // False is unknown/unsupported, never a zero-resistance comparison claim.
+  bool armor_comparison_known = 30;
 }
 message LookupItemsRequest { repeated uint32 item_ids = 1; }
 message LookupItemsResponse { string session_id = 1; repeated ItemDetails items = 2; }

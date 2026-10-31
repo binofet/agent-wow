@@ -143,6 +143,8 @@ class MaintenanceTests(unittest.TestCase):
         for name in ('quest_task_snapshot','area_quest_snapshot','party_town_snapshot'):
             mock=patch.object(m.c,name,return_value={'active':False});mock.start();self.addCleanup(mock.stop)
         mock=patch.object(m,'profession_active',return_value=False);mock.start();self.addCleanup(mock.stop)
+        # Unit scenes must not inherit a real standing town controller's lock.
+        mock=patch.object(m.harvest,'routine_locked',return_value=False);mock.start();self.addCleanup(mock.stop)
         self.agent=m.Maintenance('Arlen',1,self.rpc,lambda d:self.saved.append(copy.deepcopy(d)),now=lambda:self.now[0])
     def tick(self):self.agent.tick();self.now[0]+=11
     def methods(self):return [x[0] for x in self.rpc.calls]
@@ -431,6 +433,13 @@ class MaintenanceTests(unittest.TestCase):
         self.agent.data['mail']={'status':'reserved'}
         self.assertFalse(m.harvest.maintenance_idle(self.agent))
 
+    def test_unavailable_town_status_with_positive_owned_lock_still_defers(self):
+        with patch.object(m.harvest,'routine_locked',return_value=True) as locked:
+            self.tick()
+        locked.assert_called_once_with(m.ROOT/'data/party-town/1/lock')
+        self.assertEqual(self.methods(),[])
+        self.assertEqual(self.agent.status['phase'],'waiting_for_requested_routine')
+
     def test_travel_requires_stationary_safe_owner_and_positive_actual_wallet(self):
         for mode in ('owner_moving','owner_unknown_movement','owner_map','own_unknown_level','wallet_unknown','no_money','too_far'):
             with self.subTest(mode=mode):
@@ -448,12 +457,13 @@ class MaintenanceTests(unittest.TestCase):
                 self.assertNotIn('buddy-training.buy',self.methods())
 
     def test_changed_body_or_owner_after_acquire_never_moves_or_buys(self):
-        for mode in ('body','owner','intent'):
+        for mode in ('body','owner','intent','buff_intent'):
             with self.subTest(mode=mode):
                 self.setUp();self.travel_rig()
                 def change(r):
                     if mode=='body':r.training['sessionId']='replacement'
                     elif mode=='owner':r.world['owner']['x']=1.
+                    elif mode=='buff_intent':r.actions['buffing']=True
                     else:r.actions['following']=True
                 self.rpc.before_acquire=change
                 with self.assertRaises(m.Error):self.tick()

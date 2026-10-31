@@ -62,6 +62,17 @@ class GearTests(unittest.TestCase):
         self.rpc.journal=journal
         return m.Worker(self.rpc,5,journal,guard=lambda:None,**kw)
     def writes(self):return [r for method,r in self.rpc.calls if method=='buddy-inventory.equip_gear']
+    def test_direct_gear_requires_buff_control_hold_too(self):
+        original=self.rpc.call
+        def call(method,params):
+            if method=='buddy-world.snapshot':return {'self':dict(guid='5',present=True,mapKnown=True,aliveKnown=True,alive=True,
+                unitFlagsKnown=True,movementFlagsKnown=True)}
+            if method=='buddy-actions.status':return dict(buffing=True,position=dict(known=True,mapKnown=True,x=0.,y=0.,z=0.))
+            return original(method,params)
+        self.rpc.call=call
+        with m.Journal(self.path,self.rpc.url,5) as journal:
+            with self.assertRaises(m.Error):self.worker(journal).safe()
+        self.assertFalse(self.writes())
     def review_fixture(self,journal):
         old=journal.data['attempts'][0]['request']['sessionId'];new='reviewed-new-body';now=m.time.time()
         baseline=initial();baseline['sessionId']=old

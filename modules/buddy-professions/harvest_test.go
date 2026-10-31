@@ -54,7 +54,7 @@ func TestSkinHarvestApproachableDoesNotRelaxReadyOrProof(t *testing.T) {
 			s.loot = &lootv1.State{SessionId: "body", Enabled: true, Phase: "idle"}
 			switch mode {
 			case "outside":
-				c.X = s.actions.Position.X + 20.01
+				c.X = s.actions.Position.X + 40.01
 			case "height":
 				c.Z = s.actions.Position.Z + 1.51
 			case "party_tap":
@@ -97,7 +97,7 @@ func TestHerbHarvestDiscoveryNeedsFullTemplateAndRangeEligibility(t *testing.T) 
 			s.actions.Following, s.actions.Healing, s.actions.Assisting = true, true, true
 			switch mode {
 			case "outside":
-				g.X = s.actions.Position.X + 20.01
+				g.X = s.actions.Position.X + 40.01
 			case "height":
 				g.Z = s.actions.Position.Z + 1.51
 			case "template":
@@ -138,9 +138,9 @@ func TestHerbApproachUsesCurrentClientPoseBeyondLastServerPosition(t *testing.T)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.view.self.X, s.view.self.Y, s.view.self.Z = 0, 0, 0
-	s.actions.Position.X, s.actions.Position.Y, s.actions.Position.Z = 20, 0, 0
+	s.actions.Position.X, s.actions.Position.Y, s.actions.Position.Z = 40, 0, 0
 	g := s.view.raw.RequestedGameObjects[0]
-	g.X, g.Y, g.Z = 30, 0, 0
+	g.X, g.Y, g.Z = 50, 0, 0
 	s.view.raw.RequestedGameObjects = nil
 	s.view.raw.NearbyGatheringObjects = []*worldv1.GameObjectState{g}
 	rows := s.herbTargetsLocked()
@@ -150,7 +150,7 @@ func TestHerbApproachUsesCurrentClientPoseBeyondLastServerPosition(t *testing.T)
 	s.actions.Position.X = 9
 	rows = s.herbTargetsLocked()
 	if len(rows) != 1 || rows[0].Approachable || rows[0].Ready {
-		t.Fatal("current21yd distance exceeded approach bound", rows)
+		t.Fatal("current41yd distance exceeded approach bound", rows)
 	}
 }
 

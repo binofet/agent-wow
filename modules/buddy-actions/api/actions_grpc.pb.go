@@ -26,6 +26,8 @@ const (
 	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
 	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
 	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_Buffs_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
+	BuddyActions_SpellToolkit_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
 	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
 	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
 	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
@@ -51,6 +53,8 @@ type BuddyActionsClient interface {
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	HealOnce(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
+	Buffs(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
+	SpellToolkit(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SpellToolkitState, error)
 	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
 	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
 	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
@@ -121,6 +125,26 @@ func (c *buddyActionsClient) Status(ctx context.Context, in *emptypb.Empty, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Buffs(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Buffs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SpellToolkit(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SpellToolkitState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SpellToolkitState)
+	err := c.cc.Invoke(ctx, BuddyActions_SpellToolkit_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +300,8 @@ type BuddyActionsServer interface {
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	HealOnce(context.Context, *emptypb.Empty) (*State, error)
 	Status(context.Context, *emptypb.Empty) (*State, error)
+	Buffs(context.Context, *ToggleRequest) (*State, error)
+	SpellToolkit(context.Context, *emptypb.Empty) (*SpellToolkitState, error)
 	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
 	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
 	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
@@ -316,6 +342,12 @@ func (UnimplementedBuddyActionsServer) HealOnce(context.Context, *emptypb.Empty)
 }
 func (UnimplementedBuddyActionsServer) Status(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedBuddyActionsServer) Buffs(context.Context, *ToggleRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Buffs not implemented")
+}
+func (UnimplementedBuddyActionsServer) SpellToolkit(context.Context, *emptypb.Empty) (*SpellToolkitState, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SpellToolkit not implemented")
 }
 func (UnimplementedBuddyActionsServer) AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcquireInteraction not implemented")
@@ -466,6 +498,42 @@ func _BuddyActions_Status_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).Status(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Buffs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ToggleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Buffs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Buffs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Buffs(ctx, req.(*ToggleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SpellToolkit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SpellToolkit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SpellToolkit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SpellToolkit(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -748,6 +816,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Status",
 			Handler:    _BuddyActions_Status_Handler,
+		},
+		{
+			MethodName: "Buffs",
+			Handler:    _BuddyActions_Buffs_Handler,
+		},
+		{
+			MethodName: "SpellToolkit",
+			Handler:    _BuddyActions_SpellToolkit_Handler,
 		},
 		{
 			MethodName: "AcquireInteraction",

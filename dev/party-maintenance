@@ -505,7 +505,7 @@ class Maintenance:
                 or not integer(creature.get('health',0)) or integer(creature.get('npcFlags',0))&0x30!=0x30
                 or integer(creature.get('movementFlags',0))&0x080000ff or integer(creature.get('unitFlags',0))&0x80000
                 or not self.trainer_exhausted(body,npc,world,state)):return
-        controls={k:actions.get(k,False) for k in ('following','healing','assisting')}
+        controls={k:actions.get(k,False) for k in ('following','healing','assisting','buffing')}
         def still_exhausted(state,world):
             if self.exhausted_trainers.get(npc) is not cached or not self.trainer_exhausted(body,npc,world,state):
                 raise Error('Inn return no longer has a current exhausted class offer')
@@ -537,7 +537,7 @@ class Maintenance:
                 or key not in self.travel_attempts and len(self.travel_attempts)>=128):
             self.status['phase']='class_trainer_outside_local_travel_or_attempt_limit'
             return None
-        controls={k:actions.get(k,False) for k in ('following','healing','assisting')}
+        controls={k:actions.get(k,False) for k in ('following','healing','assisting','buffing')}
         route=self.inn_route(creature,world['self'],pos)
         deadline=time.monotonic()+(75 if route else 36)
         if route and not self.travel_inn(body,creature,owner,controls,key,route,deadline):

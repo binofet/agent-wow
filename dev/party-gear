@@ -242,7 +242,7 @@ class Worker:
         world=self.rpc.call('buddy-world.snapshot',{});actions=self.rpc.call('buddy-actions.status',{})
         if not c.BuddyControls.quest_scene_safe(actions,world,self.guid):raise Error('gear_waits_for_safe_own_state')
         if actions.get('interactionOwner') or any(actions.get(k) is True for k in ('moving','traveling','castPending','autoAttacking',
-                'autoAttackRequested','autoAttackUnconfirmed','practicing','following','healing','assisting')):raise Error('gear_requires_confirmed_control_hold')
+                'autoAttackRequested','autoAttackUnconfirmed','practicing','following','healing','assisting','buffing')):raise Error('gear_requires_confirmed_control_hold')
         for method in ('buddy-loot.state','buddy-trade.state','buddy-quests.state'):
             state=self.rpc.call(method,{})
             if state.get('sessionId')!=self.current_session:raise Error('gear_body_changed')

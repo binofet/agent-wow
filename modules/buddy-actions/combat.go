@@ -60,15 +60,21 @@ func manaBudget(p *worldv1.PlayerState, percent uint64) uint64 {
 }
 
 func (s *Service) setKnownSpell(spell uint32, known bool) {
+	if spell == 0 || spell > 0x7fffffff || known && !s.knownSpells[spell] && len(s.knownSpells) >= 4096 {
+		return
+	}
+	if s.knownSpells == nil {
+		s.knownSpells = make(map[uint32]bool)
+	}
+	if s.knownSpells[spell] != known {
+		s.spellbookRevision++
+	}
+	if known {
+		s.knownSpells[spell] = true
+	} else {
+		delete(s.knownSpells, spell)
+	}
 	if r := spellRankFor(spell); r.id != 0 {
-		if s.knownSpells == nil {
-			s.knownSpells = make(map[uint32]bool)
-		}
-		if known {
-			s.knownSpells[spell] = true
-		} else {
-			delete(s.knownSpells, spell)
-		}
 		found := highestKnownSpell(s.knownSpells, r.family).id != 0
 		switch r.family {
 		case lesserHeal:

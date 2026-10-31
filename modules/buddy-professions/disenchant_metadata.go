@@ -9,11 +9,14 @@ import (
 )
 
 type disenchantTemplate struct {
-	known                                bool
-	entry, class, quality, requiredSkill uint32
-	containerSlots                       uint32
-	name                                 string
-	tail                                 [29]uint32
+	known                                 bool
+	entry, class, quality, requiredSkill  uint32
+	containerSlots                        uint32
+	flags, flags2, inventoryType, bonding uint32
+	hasSpell                              bool
+	scaling                               bool
+	name                                  string
+	tail                                  [29]uint32
 }
 
 // A complete ordinary ItemHandler::HandleItemQuerySingleOpcode response is
@@ -72,13 +75,14 @@ func decodeDisenchantTemplate(p []byte) (disenchantTemplate, error) {
 	for i := range prefix {
 		prefix[i] = r.u32()
 	}
-	m.quality, m.containerSlots = prefix[1], prefix[20]
+	m.quality, m.flags, m.flags2, m.inventoryType, m.containerSlots = prefix[1], prefix[2], prefix[3], prefix[6], prefix[20]
 	stats := prefix[21]
 	if m.class > 16 || m.quality > 7 || stats > 10 {
 		return m, bad
 	}
 	r.take(int(stats) * 8)
-	r.take(8) // Scaling distribution/value.
+	distribution, scaling := r.u32(), r.u32()
+	m.scaling = distribution != 0 || scaling != 0
 	for range 2 {
 		minimum, maximum, school := math.Float32frombits(r.u32()), math.Float32frombits(r.u32()), r.u32()
 		if math.IsNaN(float64(minimum)) || math.IsInf(float64(minimum), 0) || math.IsNaN(float64(maximum)) || math.IsInf(float64(maximum), 0) || minimum < 0 || maximum < minimum || school > 6 {
@@ -91,8 +95,13 @@ func decodeDisenchantTemplate(p []byte) (disenchantTemplate, error) {
 	if math.IsNaN(float64(rangeModifier)) || math.IsInf(float64(rangeModifier), 0) {
 		return m, bad
 	}
-	r.take(5 * 24) // Complete five spell records, not only their IDs.
-	if bonding := r.u32(); bonding > 5 {
+	for range 5 {
+		spell := r.u32()
+		m.hasSpell = m.hasSpell || spell != 0
+		r.take(20) // Complete remaining fields, including signed cooldowns.
+	}
+	m.bonding = r.u32()
+	if m.bonding > 5 {
 		return m, bad
 	}
 	if _, ok = str(4096); !ok {
@@ -111,4 +120,22 @@ func decodeDisenchantTemplate(p []byte) (disenchantTemplate, error) {
 	m.requiredSkill = m.tail[24]
 	m.known = true
 	return m, nil
+}
+
+// This is client protection policy for selected item loss, separate from the
+// server's DisenchantID/rank decision. Ordinary BOE/BOP gear may be unused;
+// quest, account-bound, functional and special items stay protected.
+func (m disenchantTemplate) protected() bool {
+	if !m.known || m.flags != 0 || m.flags2 != 0 || m.bonding > 3 || m.scaling ||
+		m.inventoryType == 0 || m.inventoryType > 28 || m.inventoryType == 18 || m.inventoryType == 24 || m.inventoryType == 27 ||
+		m.containerSlots != 0 || m.hasSpell || m.tail[0] != 0 || m.tail[3] != 0 ||
+		m.tail[4] != 0 || m.tail[14] != 0 || m.tail[26] != 0 {
+		return true
+	}
+	for _, field := range []int{7, 8, 10, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 27, 28} {
+		if m.tail[field] != 0 {
+			return true
+		}
+	}
+	return math.Float32frombits(m.tail[25]) != 0
 }

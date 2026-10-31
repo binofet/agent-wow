@@ -738,6 +738,333 @@ func (x *OwnerQuestEvent) GetAgeMs() uint64 {
 	return 0
 }
 
+// Read-only normal UI comparison evidence. The legacy UI exposes item links,
+// not full owned item GUIDs; these slots never authorize moving owner's items.
+type OwnerEquipmentSlot struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Slot              uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	SlotKnown         bool                   `protobuf:"varint,2,opt,name=slot_known,json=slotKnown,proto3" json:"slot_known,omitempty"`
+	Entry             uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	MetadataKnown     bool                   `protobuf:"varint,4,opt,name=metadata_known,json=metadataKnown,proto3" json:"metadata_known,omitempty"`
+	EnhancementsKnown bool                   `protobuf:"varint,5,opt,name=enhancements_known,json=enhancementsKnown,proto3" json:"enhancements_known,omitempty"`
+	HasEnhancements   bool                   `protobuf:"varint,6,opt,name=has_enhancements,json=hasEnhancements,proto3" json:"has_enhancements,omitempty"`
+	DurabilityKnown   bool                   `protobuf:"varint,7,opt,name=durability_known,json=durabilityKnown,proto3" json:"durability_known,omitempty"`
+	Durability        uint32                 `protobuf:"varint,8,opt,name=durability,proto3" json:"durability,omitempty"`
+	MaxDurability     uint32                 `protobuf:"varint,9,opt,name=max_durability,json=maxDurability,proto3" json:"max_durability,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *OwnerEquipmentSlot) Reset() {
+	*x = OwnerEquipmentSlot{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerEquipmentSlot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerEquipmentSlot) ProtoMessage() {}
+
+func (x *OwnerEquipmentSlot) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerEquipmentSlot.ProtoReflect.Descriptor instead.
+func (*OwnerEquipmentSlot) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *OwnerEquipmentSlot) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *OwnerEquipmentSlot) GetSlotKnown() bool {
+	if x != nil {
+		return x.SlotKnown
+	}
+	return false
+}
+
+func (x *OwnerEquipmentSlot) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *OwnerEquipmentSlot) GetMetadataKnown() bool {
+	if x != nil {
+		return x.MetadataKnown
+	}
+	return false
+}
+
+func (x *OwnerEquipmentSlot) GetEnhancementsKnown() bool {
+	if x != nil {
+		return x.EnhancementsKnown
+	}
+	return false
+}
+
+func (x *OwnerEquipmentSlot) GetHasEnhancements() bool {
+	if x != nil {
+		return x.HasEnhancements
+	}
+	return false
+}
+
+func (x *OwnerEquipmentSlot) GetDurabilityKnown() bool {
+	if x != nil {
+		return x.DurabilityKnown
+	}
+	return false
+}
+
+func (x *OwnerEquipmentSlot) GetDurability() uint32 {
+	if x != nil {
+		return x.Durability
+	}
+	return 0
+}
+
+func (x *OwnerEquipmentSlot) GetMaxDurability() uint32 {
+	if x != nil {
+		return x.MaxDurability
+	}
+	return 0
+}
+
+type OwnerProficiency struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SkillId       uint32                 `protobuf:"varint,1,opt,name=skill_id,json=skillId,proto3" json:"skill_id,omitempty"`
+	Known         bool                   `protobuf:"varint,2,opt,name=known,proto3" json:"known,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OwnerProficiency) Reset() {
+	*x = OwnerProficiency{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerProficiency) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerProficiency) ProtoMessage() {}
+
+func (x *OwnerProficiency) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerProficiency.ProtoReflect.Descriptor instead.
+func (*OwnerProficiency) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *OwnerProficiency) GetSkillId() uint32 {
+	if x != nil {
+		return x.SkillId
+	}
+	return 0
+}
+
+func (x *OwnerProficiency) GetKnown() bool {
+	if x != nil {
+		return x.Known
+	}
+	return false
+}
+
+type OwnerGear struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Available          bool                   `protobuf:"varint,1,opt,name=available,proto3" json:"available,omitempty"`
+	AddonSession       string                 `protobuf:"bytes,2,opt,name=addon_session,json=addonSession,proto3" json:"addon_session,omitempty"`
+	Revision           uint32                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	AgeMs              uint64                 `protobuf:"varint,4,opt,name=age_ms,json=ageMs,proto3" json:"age_ms,omitempty"`
+	GearKnown          bool                   `protobuf:"varint,5,opt,name=gear_known,json=gearKnown,proto3" json:"gear_known,omitempty"`
+	EquipmentRevision  uint32                 `protobuf:"varint,6,opt,name=equipment_revision,json=equipmentRevision,proto3" json:"equipment_revision,omitempty"`
+	ClassKnown         bool                   `protobuf:"varint,7,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
+	ClassId            uint32                 `protobuf:"varint,8,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
+	RaceKnown          bool                   `protobuf:"varint,9,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId             uint32                 `protobuf:"varint,10,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
+	LevelKnown         bool                   `protobuf:"varint,11,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
+	Level              uint32                 `protobuf:"varint,12,opt,name=level,proto3" json:"level,omitempty"`
+	Slots              []*OwnerEquipmentSlot  `protobuf:"bytes,13,rep,name=slots,proto3" json:"slots,omitempty"`
+	ProficienciesKnown bool                   `protobuf:"varint,14,opt,name=proficiencies_known,json=proficienciesKnown,proto3" json:"proficiencies_known,omitempty"`
+	Proficiencies      []*OwnerProficiency    `protobuf:"bytes,15,rep,name=proficiencies,proto3" json:"proficiencies,omitempty"`
+	// Weapon/armor proficiency evidence does not assert profession skill ranks.
+	SkillsKnown   bool `protobuf:"varint,16,opt,name=skills_known,json=skillsKnown,proto3" json:"skills_known,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OwnerGear) Reset() {
+	*x = OwnerGear{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OwnerGear) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OwnerGear) ProtoMessage() {}
+
+func (x *OwnerGear) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OwnerGear.ProtoReflect.Descriptor instead.
+func (*OwnerGear) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *OwnerGear) GetAvailable() bool {
+	if x != nil {
+		return x.Available
+	}
+	return false
+}
+
+func (x *OwnerGear) GetAddonSession() string {
+	if x != nil {
+		return x.AddonSession
+	}
+	return ""
+}
+
+func (x *OwnerGear) GetRevision() uint32 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetAgeMs() uint64 {
+	if x != nil {
+		return x.AgeMs
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetGearKnown() bool {
+	if x != nil {
+		return x.GearKnown
+	}
+	return false
+}
+
+func (x *OwnerGear) GetEquipmentRevision() uint32 {
+	if x != nil {
+		return x.EquipmentRevision
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetClassKnown() bool {
+	if x != nil {
+		return x.ClassKnown
+	}
+	return false
+}
+
+func (x *OwnerGear) GetClassId() uint32 {
+	if x != nil {
+		return x.ClassId
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetRaceKnown() bool {
+	if x != nil {
+		return x.RaceKnown
+	}
+	return false
+}
+
+func (x *OwnerGear) GetRaceId() uint32 {
+	if x != nil {
+		return x.RaceId
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetLevelKnown() bool {
+	if x != nil {
+		return x.LevelKnown
+	}
+	return false
+}
+
+func (x *OwnerGear) GetLevel() uint32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+func (x *OwnerGear) GetSlots() []*OwnerEquipmentSlot {
+	if x != nil {
+		return x.Slots
+	}
+	return nil
+}
+
+func (x *OwnerGear) GetProficienciesKnown() bool {
+	if x != nil {
+		return x.ProficienciesKnown
+	}
+	return false
+}
+
+func (x *OwnerGear) GetProficiencies() []*OwnerProficiency {
+	if x != nil {
+		return x.Proficiencies
+	}
+	return nil
+}
+
+func (x *OwnerGear) GetSkillsKnown() bool {
+	if x != nil {
+		return x.SkillsKnown
+	}
+	return false
+}
+
 type OwnerFeedResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// A complete, validated snapshot has arrived. Callers must check age_ms.
@@ -757,14 +1084,15 @@ type OwnerFeedResponse struct {
 	Assembling        bool               `protobuf:"varint,14,opt,name=assembling,proto3" json:"assembling,omitempty"`
 	// Positive IDs from the normal client's completed-query cache, at most64.
 	// Omission from this bounded report does not prove a quest uncompleted.
-	CompletedQuestIds []uint32 `protobuf:"varint,15,rep,packed,name=completed_quest_ids,json=completedQuestIds,proto3" json:"completed_quest_ids,omitempty"`
+	CompletedQuestIds []uint32   `protobuf:"varint,15,rep,packed,name=completed_quest_ids,json=completedQuestIds,proto3" json:"completed_quest_ids,omitempty"`
+	OwnerGear         *OwnerGear `protobuf:"bytes,16,opt,name=owner_gear,json=ownerGear,proto3" json:"owner_gear,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *OwnerFeedResponse) Reset() {
 	*x = OwnerFeedResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -776,7 +1104,7 @@ func (x *OwnerFeedResponse) String() string {
 func (*OwnerFeedResponse) ProtoMessage() {}
 
 func (x *OwnerFeedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -789,7 +1117,7 @@ func (x *OwnerFeedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerFeedResponse.ProtoReflect.Descriptor instead.
 func (*OwnerFeedResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *OwnerFeedResponse) GetAvailable() bool {
@@ -897,6 +1225,13 @@ func (x *OwnerFeedResponse) GetCompletedQuestIds() []uint32 {
 	return nil
 }
 
+func (x *OwnerFeedResponse) GetOwnerGear() *OwnerGear {
+	if x != nil {
+		return x.OwnerGear
+	}
+	return nil
+}
+
 var File_modules_buddy_chat_chat_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_chat_chat_proto_rawDesc = "" +
@@ -945,7 +1280,45 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\x0fOwnerQuestEvent\x12\x19\n" +
 	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x19\n" +
 	"\bnpc_guid\x18\x02 \x01(\x04R\anpcGuid\x12\x15\n" +
-	"\x06age_ms\x18\x03 \x01(\x04R\x05ageMs\"\x8f\x05\n" +
+	"\x06age_ms\x18\x03 \x01(\x04R\x05ageMs\"\xd0\x02\n" +
+	"\x12OwnerEquipmentSlot\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x1d\n" +
+	"\n" +
+	"slot_known\x18\x02 \x01(\bR\tslotKnown\x12\x14\n" +
+	"\x05entry\x18\x03 \x01(\rR\x05entry\x12%\n" +
+	"\x0emetadata_known\x18\x04 \x01(\bR\rmetadataKnown\x12-\n" +
+	"\x12enhancements_known\x18\x05 \x01(\bR\x11enhancementsKnown\x12)\n" +
+	"\x10has_enhancements\x18\x06 \x01(\bR\x0fhasEnhancements\x12)\n" +
+	"\x10durability_known\x18\a \x01(\bR\x0fdurabilityKnown\x12\x1e\n" +
+	"\n" +
+	"durability\x18\b \x01(\rR\n" +
+	"durability\x12%\n" +
+	"\x0emax_durability\x18\t \x01(\rR\rmaxDurability\"C\n" +
+	"\x10OwnerProficiency\x12\x19\n" +
+	"\bskill_id\x18\x01 \x01(\rR\askillId\x12\x14\n" +
+	"\x05known\x18\x02 \x01(\bR\x05known\"\xde\x04\n" +
+	"\tOwnerGear\x12\x1c\n" +
+	"\tavailable\x18\x01 \x01(\bR\tavailable\x12#\n" +
+	"\raddon_session\x18\x02 \x01(\tR\faddonSession\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\rR\brevision\x12\x15\n" +
+	"\x06age_ms\x18\x04 \x01(\x04R\x05ageMs\x12\x1d\n" +
+	"\n" +
+	"gear_known\x18\x05 \x01(\bR\tgearKnown\x12-\n" +
+	"\x12equipment_revision\x18\x06 \x01(\rR\x11equipmentRevision\x12\x1f\n" +
+	"\vclass_known\x18\a \x01(\bR\n" +
+	"classKnown\x12\x19\n" +
+	"\bclass_id\x18\b \x01(\rR\aclassId\x12\x1d\n" +
+	"\n" +
+	"race_known\x18\t \x01(\bR\traceKnown\x12\x17\n" +
+	"\arace_id\x18\n" +
+	" \x01(\rR\x06raceId\x12\x1f\n" +
+	"\vlevel_known\x18\v \x01(\bR\n" +
+	"levelKnown\x12\x14\n" +
+	"\x05level\x18\f \x01(\rR\x05level\x12?\n" +
+	"\x05slots\x18\r \x03(\v2).warcraftbuddy.chat.v1.OwnerEquipmentSlotR\x05slots\x12/\n" +
+	"\x13proficiencies_known\x18\x0e \x01(\bR\x12proficienciesKnown\x12M\n" +
+	"\rproficiencies\x18\x0f \x03(\v2'.warcraftbuddy.chat.v1.OwnerProficiencyR\rproficiencies\x12!\n" +
+	"\fskills_known\x18\x10 \x01(\bR\vskillsKnown\"\xd0\x05\n" +
 	"\x11OwnerFeedResponse\x12\x1c\n" +
 	"\tavailable\x18\x01 \x01(\bR\tavailable\x12&\n" +
 	"\x0fbody_session_id\x18\x02 \x01(\tR\rbodySessionId\x12#\n" +
@@ -964,7 +1337,9 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\n" +
 	"assembling\x18\x0e \x01(\bR\n" +
 	"assembling\x12.\n" +
-	"\x13completed_quest_ids\x18\x0f \x03(\rR\x11completedQuestIds*i\n" +
+	"\x13completed_quest_ids\x18\x0f \x03(\rR\x11completedQuestIds\x12?\n" +
+	"\n" +
+	"owner_gear\x18\x10 \x01(\v2 .warcraftbuddy.chat.v1.OwnerGearR\townerGear*i\n" +
 	"\aChannel\x12\x17\n" +
 	"\x13CHANNEL_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03SAY\x10\x01\x12\t\n" +
@@ -1003,22 +1378,25 @@ func file_modules_buddy_chat_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_chat_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_modules_buddy_chat_chat_proto_goTypes = []any{
-	(Channel)(0),              // 0: warcraftbuddy.chat.v1.Channel
-	(Language)(0),             // 1: warcraftbuddy.chat.v1.Language
-	(Emote)(0),                // 2: warcraftbuddy.chat.v1.Emote
-	(*EmoteRequest)(nil),      // 3: warcraftbuddy.chat.v1.EmoteRequest
-	(*SendRequest)(nil),       // 4: warcraftbuddy.chat.v1.SendRequest
-	(*SendResponse)(nil),      // 5: warcraftbuddy.chat.v1.SendResponse
-	(*PollRequest)(nil),       // 6: warcraftbuddy.chat.v1.PollRequest
-	(*Message)(nil),           // 7: warcraftbuddy.chat.v1.Message
-	(*PollResponse)(nil),      // 8: warcraftbuddy.chat.v1.PollResponse
-	(*OwnerQuestState)(nil),   // 9: warcraftbuddy.chat.v1.OwnerQuestState
-	(*OwnerQuestEvent)(nil),   // 10: warcraftbuddy.chat.v1.OwnerQuestEvent
-	(*OwnerFeedResponse)(nil), // 11: warcraftbuddy.chat.v1.OwnerFeedResponse
-	(*emptypb.Empty)(nil),     // 12: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),    // 13: agentwow.module.v1.WorldPacket
+	(Channel)(0),               // 0: warcraftbuddy.chat.v1.Channel
+	(Language)(0),              // 1: warcraftbuddy.chat.v1.Language
+	(Emote)(0),                 // 2: warcraftbuddy.chat.v1.Emote
+	(*EmoteRequest)(nil),       // 3: warcraftbuddy.chat.v1.EmoteRequest
+	(*SendRequest)(nil),        // 4: warcraftbuddy.chat.v1.SendRequest
+	(*SendResponse)(nil),       // 5: warcraftbuddy.chat.v1.SendResponse
+	(*PollRequest)(nil),        // 6: warcraftbuddy.chat.v1.PollRequest
+	(*Message)(nil),            // 7: warcraftbuddy.chat.v1.Message
+	(*PollResponse)(nil),       // 8: warcraftbuddy.chat.v1.PollResponse
+	(*OwnerQuestState)(nil),    // 9: warcraftbuddy.chat.v1.OwnerQuestState
+	(*OwnerQuestEvent)(nil),    // 10: warcraftbuddy.chat.v1.OwnerQuestEvent
+	(*OwnerEquipmentSlot)(nil), // 11: warcraftbuddy.chat.v1.OwnerEquipmentSlot
+	(*OwnerProficiency)(nil),   // 12: warcraftbuddy.chat.v1.OwnerProficiency
+	(*OwnerGear)(nil),          // 13: warcraftbuddy.chat.v1.OwnerGear
+	(*OwnerFeedResponse)(nil),  // 14: warcraftbuddy.chat.v1.OwnerFeedResponse
+	(*emptypb.Empty)(nil),      // 15: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),     // 16: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_chat_chat_proto_depIdxs = []int32{
 	2,  // 0: warcraftbuddy.chat.v1.EmoteRequest.emote:type_name -> warcraftbuddy.chat.v1.Emote
@@ -1026,24 +1404,27 @@ var file_modules_buddy_chat_chat_proto_depIdxs = []int32{
 	1,  // 2: warcraftbuddy.chat.v1.SendRequest.language:type_name -> warcraftbuddy.chat.v1.Language
 	0,  // 3: warcraftbuddy.chat.v1.Message.channel:type_name -> warcraftbuddy.chat.v1.Channel
 	7,  // 4: warcraftbuddy.chat.v1.PollResponse.messages:type_name -> warcraftbuddy.chat.v1.Message
-	9,  // 5: warcraftbuddy.chat.v1.OwnerFeedResponse.quests:type_name -> warcraftbuddy.chat.v1.OwnerQuestState
-	10, // 6: warcraftbuddy.chat.v1.OwnerFeedResponse.rewarded:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
-	10, // 7: warcraftbuddy.chat.v1.OwnerFeedResponse.accepted:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
-	4,  // 8: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
-	3,  // 9: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
-	6,  // 10: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
-	12, // 11: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:input_type -> google.protobuf.Empty
-	13, // 12: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5,  // 13: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
-	5,  // 14: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
-	8,  // 15: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
-	11, // 16: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:output_type -> warcraftbuddy.chat.v1.OwnerFeedResponse
-	12, // 17: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
-	13, // [13:18] is the sub-list for method output_type
-	8,  // [8:13] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	11, // 5: warcraftbuddy.chat.v1.OwnerGear.slots:type_name -> warcraftbuddy.chat.v1.OwnerEquipmentSlot
+	12, // 6: warcraftbuddy.chat.v1.OwnerGear.proficiencies:type_name -> warcraftbuddy.chat.v1.OwnerProficiency
+	9,  // 7: warcraftbuddy.chat.v1.OwnerFeedResponse.quests:type_name -> warcraftbuddy.chat.v1.OwnerQuestState
+	10, // 8: warcraftbuddy.chat.v1.OwnerFeedResponse.rewarded:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	10, // 9: warcraftbuddy.chat.v1.OwnerFeedResponse.accepted:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	13, // 10: warcraftbuddy.chat.v1.OwnerFeedResponse.owner_gear:type_name -> warcraftbuddy.chat.v1.OwnerGear
+	4,  // 11: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
+	3,  // 12: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
+	6,  // 13: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
+	15, // 14: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:input_type -> google.protobuf.Empty
+	16, // 15: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	5,  // 16: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
+	5,  // 17: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
+	8,  // 18: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
+	14, // 19: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:output_type -> warcraftbuddy.chat.v1.OwnerFeedResponse
+	15, // 20: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
+	16, // [16:21] is the sub-list for method output_type
+	11, // [11:16] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_chat_chat_proto_init() }
@@ -1057,7 +1438,7 @@ func file_modules_buddy_chat_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_chat_chat_proto_rawDesc), len(file_modules_buddy_chat_chat_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

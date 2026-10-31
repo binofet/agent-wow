@@ -41,6 +41,7 @@ type Service struct {
 	actionsv1.UnimplementedBuddyActionsServer
 	mu                                                       sync.Mutex
 	session                                                  sessionAPI
+	sessionID                                                string
 	selfGUID                                                 uint64
 	independent                                              bool
 	now                                                      func() time.Time
@@ -97,16 +98,27 @@ type Service struct {
 	recovery                                                 deathRecovery
 	fargodeep                                                fargodeepEncounter
 	fargodeepSeen                                            map[uint64]bool
+	spellbookKnown                                           bool
+	spellbookRevision                                        uint64
+	buffUntil, nextBuff                                      time.Time
+	buffAuras                                                map[uint64]*buffAuraSet
+	buffAuraRevision, buffSequence                           uint64
+	buffBindings                                             map[buffKey]*buffBinding
+	buffOp                                                   *buffAttempt
 }
 
-func NewService(session sessionAPI, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
+	s := &Service{session: session, selfGUID: selfGUID, now: time.Now, state: actionsv1.State{Reason: "disabled", Limitation: limitation}, weaponQueries: make(map[uint32]bool), weapons: make(map[uint32]weaponProof), approachDelay: waitApproach, planPath: planNavigation, planMapPath: planMapNavigation, planRecoveryPath: planRecoveryNavigation, planColdridgePath: planColdridgeNavigation, planColdridge182Path: planColdridge182Navigation}
+	if len(sessionID) == 1 && len(sessionID[0]) <= 128 {
+		s.sessionID = sessionID[0]
+	}
+	return s
 }
 
 // NewIndependentService keeps self-scoped actions available without granting
 // authority to the companion controllers or a nearby owner's observations.
-func NewIndependentService(session sessionAPI, selfGUID uint64) *Service {
-	s := NewService(session, selfGUID)
+func NewIndependentService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
+	s := NewService(session, selfGUID, sessionID...)
 	s.independent = true
 	s.state.Limitation += " Independent mode disables owner follow, healing and assistance; own quest travel and practice retain their existing safety bounds."
 	return s
@@ -115,9 +127,17 @@ func NewIndependentService(session sessionAPI, selfGUID uint64) *Service {
 func (s *Service) stateLocked() *actionsv1.State {
 	s.expireInteractionLocked()
 	s.updateClassLocked()
+	s.buffTimeoutLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
+	out.SessionId, out.SelfGuid = s.sessionID, s.selfGUID
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
+	out.Buffing = s.state.Buffing
+	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
+	out.BuffReason = s.state.BuffReason
+	if s.buffOp != nil {
+		out.LastBuff = proto.Clone(&s.buffOp.view).(*actionsv1.BuffOperation)
+	}
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
@@ -213,8 +233,11 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	var harvestWorld *worldv1.SnapshotResponse
 	var harvestGuids []uint64
+	// Only this guarded route may yield confirmed ordinary following. It must
+	// complete the same normal STOP before a token can authorize any detour.
+	harvestFollowHandoff := r.Harvest && r.Owner == "exploration" && s.state.Moving && s.state.Following && s.now().Before(s.followUntil)
 	if r.Harvest {
-		if s.state.Moving || s.state.AutoAttacking || s.state.AutoAttackRequested || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.Practicing || s.state.Traveling {
+		if s.state.Moving && !harvestFollowHandoff || s.state.AutoAttacking || s.state.AutoAttackRequested || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.state.Practicing || s.state.Traveling || s.recovery.state.Active {
 			return nil, status.Error(codes.FailedPrecondition, "harvest_defense_or_other_action_pending")
 		}
 		var reason string
@@ -222,7 +245,7 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 		if reason != "" {
 			return nil, status.Error(codes.FailedPrecondition, reason)
 		}
-		if harvestWorld.Self.MovementFlags&0xff != 0 {
+		if harvestWorld.Self.MovementFlags&0xff != 0 && !harvestFollowHandoff {
 			return nil, status.Error(codes.FailedPrecondition, "harvest_initial_stationary_observation_required")
 		}
 	}
@@ -252,10 +275,33 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 		return nil, status.Error(codes.FailedPrecondition, "movement stop could not be written")
 	}
 	if r.Harvest {
+		if harvestFollowHandoff {
+			// STOP itself crosses clock/transport callbacks. Rebind the party
+			// before the LAST world read so a changed roster cannot inherit
+			// custody from the earlier following context.
+			fresh, guids, reason := s.harvestContextLocked(ctx)
+			if reason != "" {
+				return nil, status.Error(codes.FailedPrecondition, reason)
+			}
+			if len(guids) != len(harvestGuids) {
+				return nil, status.Error(codes.FailedPrecondition, "harvest_follow_handoff_party_changed")
+			}
+			for i := range guids {
+				if guids[i] != harvestGuids[i] {
+					return nil, status.Error(codes.FailedPrecondition, "harvest_follow_handoff_party_changed")
+				}
+			}
+			if fresh.Self.MapId != harvestWorld.Self.MapId || fresh.Self.PositionRevision != harvestWorld.Self.PositionRevision {
+				return nil, status.Error(codes.FailedPrecondition, "harvest_follow_handoff_baseline_changed")
+			}
+		}
 		// STOP obtains its own final world snapshot. A fresh attacker arriving
 		// there must not be hidden by granting the lease from the earlier view.
 		if reason := harvestguard.WorldReason(s.lastWorld, s.selfGUID, harvestGuids); reason != "" {
 			return nil, status.Error(codes.FailedPrecondition, reason)
+		}
+		if harvestFollowHandoff && (s.lastWorld.Self.MapId != harvestWorld.Self.MapId || s.lastWorld.Self.PositionRevision != harvestWorld.Self.PositionRevision) {
+			return nil, status.Error(codes.FailedPrecondition, "harvest_follow_handoff_baseline_changed")
 		}
 	}
 	var token [16]byte
@@ -499,6 +545,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.state.Buffing = false
+	s.buffUnconfirmedLocked("logout_buff_outcome_unconfirmed")
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
 	s.stopAutoAttackLocked(ctx)
@@ -835,6 +883,7 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.buffTimeoutLocked()
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
@@ -886,7 +935,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
@@ -936,7 +985,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.pendingTarget = 0
 		s.state.Reason = "cast_result_timeout_no_retry"
 	}
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.CastPending {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -968,6 +1017,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.partyDefenseLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
+	if s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1118,6 +1171,18 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	p := packet.Payload
 	malformed := false
+	if handled, err := s.auraPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
+	if handled, err := s.buffCastPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	if handled, err := s.recoveryPacketLocked(packet.Opcode, p); handled {
 		if err != nil {
 			s.state.MalformedPackets++
@@ -1202,18 +1267,17 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			s.offensiveDamageLocked(spell, damage)
 		}
 	case opcode.SMSGInitialSpells:
-		_, err := initialSpellKnown(p, lesserHeal)
+		known, err := completeSpellbook(p)
 		if err != nil {
 			malformed = true
 		} else {
-			for _, spell := range trackedSpellIDs() {
-				known, _ := initialSpellKnown(p, spell)
-				s.setKnownSpell(spell, known)
-			}
+			s.applySpellbookLocked(known)
 		}
 	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell, opcode.SMSGSupercededSpell:
 		remove, add, err := spellKnowledgePacket(packet.Opcode, p)
 		if err != nil {
+			malformed = true
+		} else if add != 0 && !s.knownSpells[add] && len(s.knownSpells) >= 4096 && (remove == 0 || !s.knownSpells[remove]) {
 			malformed = true
 		} else {
 			if remove != 0 {

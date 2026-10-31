@@ -91,6 +91,53 @@ message RecoveryState {
   bool movement_unconfirmed = 21;
   uint32 verified_legs = 22;
 }
+// Only actual server spellbook IDs are returned. Unknown metadata stays unknown.
+message KnownSpell {
+  uint32 spell_id = 1;
+  bool metadata_known = 2;
+  string name = 3;
+  uint32 family_id = 4;
+  uint32 rank = 5;
+  uint32 mana_percent = 6;
+  float range_yards = 7;
+  bool self_only = 8;
+  bool automatic_buff_supported = 9;
+}
+message ObservedAura {
+  uint32 slot = 1;
+  uint32 spell_id = 2;
+  uint64 caster_guid = 3;
+  bool positive = 4;
+  bool duration_known = 5;
+  uint32 remaining_ms = 6;
+  uint64 revision = 7;
+}
+message PlayerAuras {
+  uint64 target_guid = 1;
+  // Only a full SMSG_AURA_UPDATE_ALL establishes a complete baseline.
+  bool complete = 2;
+  uint64 revision = 3;
+  repeated ObservedAura auras = 4;
+}
+message BuffOperation {
+  uint64 sequence = 1;
+  uint32 spell_id = 2;
+  uint64 target_guid = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  bool server_cast_go = 6;
+  bool aura_confirmed = 7;
+  uint64 aura_revision = 8;
+}
+message SpellToolkitState {
+  bool spellbook_known = 1;
+  uint64 spellbook_revision = 2;
+  repeated KnownSpell spells = 3;
+  repeated PlayerAuras player_auras = 4;
+  BuffOperation last_buff = 5;
+  string session_id = 6;
+  uint64 self_guid = 7;
+}
 message State {
   bool following = 1;
   bool healing = 2;
@@ -172,6 +219,14 @@ message State {
   // Tag70 is reserved for the separately developed Coldridge leveling status.
   bool client_movement_observation_confirmed = 71;
   uint64 client_movement_observation_failures = 72;
+  bool buffing = 73;
+  uint64 buff_lease_remaining_ms = 74;
+  string buff_reason = 75;
+  uint64 buff_attempts = 76;
+  uint64 buffs_confirmed = 77;
+  BuffOperation last_buff = 78;
+  string session_id = 79;
+  uint64 self_guid = 80;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -179,6 +234,8 @@ service BuddyActions {
   rpc Assist(ToggleRequest) returns (State);
   rpc HealOnce(google.protobuf.Empty) returns (State);
   rpc Status(google.protobuf.Empty) returns (State);
+  rpc Buffs(ToggleRequest) returns (State);
+  rpc SpellToolkit(google.protobuf.Empty) returns (SpellToolkitState);
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);

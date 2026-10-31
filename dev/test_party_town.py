@@ -28,7 +28,7 @@ class RPC:
         self.inv["inventoryBags"][0]["slots"][2]={"slot":2}
         self.inv["items"]=[item for item in self.inv["items"] if item["item"]["slot"] != 2]
         self.calls,self.x,self.following,self.owner_x=[],0.,True,10.
-        self.assisting,self.healing,self.looting=False,False,False
+        self.assisting,self.healing,self.looting,self.buffing=False,False,False,False
         self.owner_present,self.combat,self.owner_combat,self.moving,self.resting=True,False,False,False,True
         self.owner_moving,self.trade,self.interaction,self.lease=False,"IDLE","",None
         self.vendor_x,self.vendor_present,self.box,self.block=20.,True,False,None
@@ -52,7 +52,7 @@ class RPC:
             boxes=[dict(guid=str(MAILBOX),entry=MAILBOX>>24&0xffffff,present=True,typeKnown=True,gameObjectType=19,
                         mapKnown=True,mapId=0,positionKnown=True,x=2.,y=0.,z=0.)] if self.box else []
             return dict(self=own,owner=owner,mailboxes=boxes)
-        if method=="buddy-actions.status":return dict(following=self.following,healing=self.healing,assisting=self.assisting,moving=self.moving,interactionOwner=self.interaction,
+        if method=="buddy-actions.status":return dict(following=self.following,healing=self.healing,assisting=self.assisting,buffing=self.buffing,moving=self.moving,interactionOwner=self.interaction,
             position=dict(known=True,mapKnown=True,mapId=0,x=self.x,y=0.,z=0.))
         if method=="buddy-trade.state":return dict(sessionId=self.inv["sessionId"],phase=self.trade)
         if method=="buddy-quests.state":return dict(sessionId=self.inv["sessionId"])
@@ -62,6 +62,7 @@ class RPC:
         if method=="buddy-actions.follow":self.following=params["enabled"];return dict(following=self.following)
         if method=="buddy-actions.assist":self.assisting=params["enabled"];return dict(assisting=self.assisting)
         if method=="buddy-actions.healing":self.healing=params["enabled"];return dict(healing=self.healing)
+        if method=="buddy-actions.buffs":self.buffing=params['enabled'];return dict(buffing=self.buffing)
         if method=="buddy-loot.enable":self.looting=params["enabled"];return dict(enabled=self.looting)
         if method=="buddy-actions.acquire_interaction":
             self.lease="exact-owned-trade-token";self.interaction="trade"
@@ -95,6 +96,64 @@ class TownTests(unittest.TestCase):
         self.assertEqual(actor.status['lastKind'],'gear')
         self.assertNotIn('buddy-actions.travel_vendor',[name for name,_ in rpc.calls])
         self.assertTrue(rpc.following)
+
+    def mira(self,result=None):
+        rpc=RPC();rpc.url='http://127.0.0.1:8087/rpc';rpc.inv['selfGuid']='4'
+        original=rpc.call
+        def call(method,params):
+            value=original(method,params)
+            if method=='buddy-world.snapshot':value['self']['guid']='4'
+            return value
+        rpc.call=call
+        clock,saved,calls=[100.],[],[]
+        def work(kind,target):
+            self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+            self.assertIsNone(rpc.lease);calls.append((kind,target))
+            return result or dict(phase='complete',newConfirmedOperations=1)
+        actor=m.Supervisor(4,rpc,save=lambda value:saved.append(copy.deepcopy(value)),now=lambda:clock[0],worker=work)
+        source=dict(itemGuid=str(0x4000000000001234),entry=5000)
+        class Scanner:
+            def scan(self,*args,**kwargs):return source,'',{}
+        actor.disenchant_scanner=Scanner()
+        return actor,rpc,clock,saved,calls
+
+    def test_mira_party_unused_gear_precedes_sale_under_existing_control_custody(self):
+        with patch.object(m.disenchant,'pending',return_value=False):
+            actor,rpc,clock,_,calls=self.mira()
+            rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('disenchant',0x4000000000001234)])
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+        self.assertFalse(any(name=='buddy-actions.travel_vendor' for name,_ in rpc.calls))
+
+    def test_mira_unknown_disposition_keeps_gear_but_does_not_block_gray_sale(self):
+        with patch.object(m.disenchant,'pending',return_value=False):
+            actor,rpc,clock,_,calls=self.mira()
+            actor.disenchant_scanner.scan=lambda *a,**kw:(None,'owner_gear_comparison_unavailable',None)
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('sell',VENDOR)])
+        self.assertEqual(actor.status['disenchantReason'],'owner_gear_comparison_unavailable')
+
+    def test_mira_unconfirmed_destruction_never_restores_controls_or_starts_sale(self):
+        with patch.object(m.disenchant,'pending',return_value=True):
+            actor,rpc,clock,_,calls=self.mira(dict(phase='unconfirmed',reason='actual_materials_pending'))
+            rpc.assisting=rpc.healing=rpc.looting=True
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+        self.assertEqual(calls,[('disenchant',0)])
+        self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+        self.assertEqual(actor.status['controlsRestore'],'unconfirmed_no_automatic_control_restore')
+
+    def test_mira_own_upgrade_and_existing_profession_work_keep_priority(self):
+        gear_fakes=load('mira_upgrade_before_de','test_party_gear.py')
+        with patch.object(m.disenchant,'pending',return_value=False):
+            actor,rpc,clock,_,calls=self.mira()
+            rpc.inv=gear_fakes.initial();rpc.inv['selfGuid']='4'
+            self.run_tick(actor,clock);self.run_tick(actor,clock)
+            self.assertEqual(calls,[('gear',0)])
+            actor,rpc,clock,_,calls=self.mira()
+            with patch.object(m,'profession_active',return_value=True):
+                with self.assertRaises(m.Error):self.run_tick(actor,clock)
+            self.assertFalse(calls)
 
     def test_gear_comparison_pending_and_retained_displaced_item_are_not_sold(self):
         for reason in ('displaced_item_template_pending','enhancement_context_pending'):
@@ -423,9 +482,9 @@ class TownTests(unittest.TestCase):
         self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
         self.assertFalse(any(method in {row[1] for row in m.CONTROLS} for method,_ in rpc.calls))
     def test_new_explicit_control_commands_win_and_unrelated_held_controls_restore(self):
-        for control,attribute in (("assist","assisting"),("healing","healing"),("loot","looting"),("follow","following")):
+        for control,attribute in (("assist","assisting"),("healing","healing"),("loot","looting"),("follow","following"),('buffs','buffing')):
             for new_value in (False,True):
-                actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.healing=rpc.looting=True
+                actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
                 revoked=set();actor.revoked_controls=lambda:revoked
                 def worker(kind,target):
                     revoked.add(control);setattr(rpc,attribute,new_value)
@@ -434,7 +493,7 @@ class TownTests(unittest.TestCase):
                 self.run_tick(actor,clock);self.run_tick(actor,clock)
                 self.assertEqual(getattr(rpc,attribute),new_value,(control,new_value))
                 for other,_,field,_ in m.CONTROLS:
-                    name={"enabled":"looting","assisting":"assisting","following":"following","healing":"healing"}[field]
+                    name={"enabled":"looting","assisting":"assisting","following":"following","healing":"healing",'buffing':'buffing'}[field]
                     if other!=control:self.assertTrue(getattr(rpc,name),(control,other))
     def test_uncertain_pause_or_worker_outcome_never_automatically_restores_controls(self):
         for mode in ("pause_lost","pause_refused","worker_lost","worker_exception","body_changed"):

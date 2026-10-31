@@ -160,12 +160,21 @@ message QuestJournalEntry {
   uint32 expire_time = 15;
   uint64 observed_questgiver_guid = 16;
   uint64 observed_reward_npc_guid = 17;
+  // Complete ordinary template includes required, provided and dropped items.
+  // SOURCE_ITEM targets protect gear; they never claim objective progress.
+  bool item_protection_known = 18;
 }
-message JournalRequest { bool refresh = 1; }
+message JournalRequest {
+  bool refresh = 1;
+  // At most25 unique normal static template queries, separate from own log.
+  repeated uint32 requested_quest_ids = 2;
+}
 message JournalResponse {
   string session_id = 1;
   uint64 quest_log_revision = 2;
   repeated QuestJournalEntry entries = 3;
+  // No own-log or acceptance authority for these read-only static templates.
+  repeated QuestJournalEntry requested_templates = 4;
 }
 message RewardItem {
   uint32 index = 1;

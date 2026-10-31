@@ -290,6 +290,13 @@ func (s *Service) reasonLocked(recipe recipeSpec) string {
 	return s.readinessLocked(recipe, nil)
 }
 func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
+	return s.readinessForApproachLocked(recipe, own, false)
+}
+
+// Approach qualification is advisory only. Actual profession attempts and every
+// cast/store keep the stationary path above; only the selected harvest route
+// may yield normal following or remain visible under its guarded route lease.
+func (s *Service) readinessForApproachLocked(recipe recipeSpec, own *operation, approach bool) string {
 	if s.closed {
 		return "session_closing"
 	}
@@ -321,7 +328,14 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 	if !s.ordinaryLootIdleLocked(recipe.skill) {
 		return "loot_controller_or_window_active"
 	}
-	if s.actions == nil || s.actions.Moving || s.actions.Traveling || s.actions.Practicing || s.actions.CastPending || s.actions.MotionUnconfirmed || s.actions.AutoAttacking || s.actions.AutoAttackRequested || s.actions.AutoAttackUnconfirmed || (s.actions.InteractionOwner != "" && !(own != nil && s.actions.InteractionOwner == "professions")) {
+	a := s.actions
+	controllerReady := a != nil && !a.Moving && !a.Traveling && !a.Practicing && !a.CastPending && !a.MotionUnconfirmed && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && (a.InteractionOwner == "" || own != nil && a.InteractionOwner == "professions")
+	if approach && own == nil && (recipe.skill == 393 || recipe.skill == 182) && a != nil {
+		guardedRoute := a.InteractionOwner == "exploration" && a.InteractionLeaseRemainingMs >= 2000 && validHarvestLease(a, s.selfGUID)
+		ordinaryFollow := a.InteractionOwner == "" && !a.Traveling && (!a.Moving || a.Following && a.FollowLeaseRemainingMs > 0)
+		controllerReady = (guardedRoute || ordinaryFollow) && !a.Practicing && !a.CastPending && !a.MotionUnconfirmed && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && !a.GetRecovery().GetActive()
+	}
+	if !controllerReady {
 		return "controller_not_idle"
 	}
 	if owner := s.view.raw.Owner; owner != nil && owner.Present && owner.UnitFlagsKnown && owner.UnitFlags&0x80000 != 0 {
@@ -342,11 +356,11 @@ func (s *Service) readinessLocked(recipe recipeSpec, own *operation) string {
 		if s.state.StopPrepared {
 			return "normal_stop_prepared_no_new_disenchant_this_session"
 		}
-		if s.actions.Following || s.actions.Healing || s.actions.Assisting || s.actions.FollowLeaseRemainingMs != 0 || s.actions.HealingLeaseRemainingMs != 0 || s.actions.AssistLeaseRemainingMs != 0 {
-			return "disable_follow_heal_and_assist_before_selected_item_disenchanting"
+		if s.actions.Following || s.actions.Healing || s.actions.Assisting || s.actions.Buffing || s.actions.FollowLeaseRemainingMs != 0 || s.actions.HealingLeaseRemainingMs != 0 || s.actions.AssistLeaseRemainingMs != 0 || s.actions.BuffLeaseRemainingMs != 0 {
+			return "disable_follow_heal_assist_and_buff_before_selected_item_disenchanting"
 		}
 		t := s.deTrade
-		if t == nil || t.SessionId != s.state.SessionId || t.Phase != "IDLE" || t.PartnerGuid != 0 || t.PartnerAccepted || t.AcceptTransportWritten || t.JunkDisposalEnabled || t.LastJunkDisposal != nil && t.LastJunkDisposal.Status != "SERVER_SLOT_REMOVAL_CONFIRMED" {
+		if !settledDisenchantTrade(t, s.state.SessionId) {
 			return "actual_idle_trade_and_junk_state_required_for_disenchanting"
 		}
 	}

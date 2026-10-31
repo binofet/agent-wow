@@ -13,6 +13,8 @@ rpc:
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
+  buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
+  spell_toolkit: /warcraftbuddy.actions.v1.BuddyActions/SpellToolkit
   acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
   release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
@@ -26,6 +28,10 @@ rpc:
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
+  SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   MSG_CORPSE_QUERY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CORPSE_RECLAIM_DELAY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_DEATH_RELEASE_LOC: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

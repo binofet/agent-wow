@@ -188,8 +188,8 @@ func skinSourceRange(v worldView, a *actionsv1.State, guid, revision uint64, max
 	p := a.Position
 	dx, dy, dz := float64(c.X-p.X), float64(c.Y-p.Y), float64(c.Z-p.Z)
 	if math.IsNaN(dx+dy+dz) || math.IsInf(dx+dy+dz, 0) || dx*dx+dy*dy+dz*dz > maxDistance*maxDistance || math.Abs(dz) > 1.5 {
-		if maxDistance == 20 {
-			return nil, "selected_corpse_outside_twenty_yard_approach_bound"
+		if maxDistance == 40 {
+			return nil, "selected_corpse_outside_forty_yard_approach_bound"
 		}
 		return nil, "selected_corpse_must_already_be_within_three_yards"
 	}
@@ -219,7 +219,7 @@ func (s *Service) skinningTargetRangeLocked(guid, revision uint64, own *operatio
 		return nil, "actual_own_observations_required"
 	}
 	spec, _ := recipeForSpell(skinSpell)
-	if reason := s.readinessLocked(spec, own); reason != "" {
+	if reason := s.readinessForApproachLocked(spec, own, maxDistance == 40); reason != "" {
 		return nil, reason
 	}
 	c, reason := skinSourceRange(s.view, s.actions, guid, revision, maxDistance)
@@ -261,7 +261,7 @@ func (s *Service) skinningTargetsLocked() []*professionsv1.SkinningTarget {
 			continue
 		}
 		_, reason := s.skinningTargetLocked(c.Guid, c.PositionRevision, nil)
-		_, approachReason := s.skinningTargetRangeLocked(c.Guid, c.PositionRevision, nil, 20)
+		_, approachReason := s.skinningTargetRangeLocked(c.Guid, c.PositionRevision, nil, 40)
 		out = append(out, &professionsv1.SkinningTarget{Creature: proto.Clone(c).(*worldv1.CreatureState), FullyLootedObserved: partyClearedSkinningCorpse(c), Ready: reason == "", Reason: reason, RequiredSkill: skinRequiredSkill(c.Level), Approachable: approachReason == "", ApproachReason: approachReason})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Creature.Guid < out[j].Creature.Guid })

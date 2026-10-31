@@ -972,6 +972,468 @@ func (x *RecoveryState) GetVerifiedLegs() uint32 {
 	return 0
 }
 
+// Only actual server spellbook IDs are returned. Unknown metadata stays unknown.
+type KnownSpell struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	SpellId                uint32                 `protobuf:"varint,1,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	MetadataKnown          bool                   `protobuf:"varint,2,opt,name=metadata_known,json=metadataKnown,proto3" json:"metadata_known,omitempty"`
+	Name                   string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	FamilyId               uint32                 `protobuf:"varint,4,opt,name=family_id,json=familyId,proto3" json:"family_id,omitempty"`
+	Rank                   uint32                 `protobuf:"varint,5,opt,name=rank,proto3" json:"rank,omitempty"`
+	ManaPercent            uint32                 `protobuf:"varint,6,opt,name=mana_percent,json=manaPercent,proto3" json:"mana_percent,omitempty"`
+	RangeYards             float32                `protobuf:"fixed32,7,opt,name=range_yards,json=rangeYards,proto3" json:"range_yards,omitempty"`
+	SelfOnly               bool                   `protobuf:"varint,8,opt,name=self_only,json=selfOnly,proto3" json:"self_only,omitempty"`
+	AutomaticBuffSupported bool                   `protobuf:"varint,9,opt,name=automatic_buff_supported,json=automaticBuffSupported,proto3" json:"automatic_buff_supported,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *KnownSpell) Reset() {
+	*x = KnownSpell{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KnownSpell) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KnownSpell) ProtoMessage() {}
+
+func (x *KnownSpell) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KnownSpell.ProtoReflect.Descriptor instead.
+func (*KnownSpell) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *KnownSpell) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
+func (x *KnownSpell) GetMetadataKnown() bool {
+	if x != nil {
+		return x.MetadataKnown
+	}
+	return false
+}
+
+func (x *KnownSpell) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *KnownSpell) GetFamilyId() uint32 {
+	if x != nil {
+		return x.FamilyId
+	}
+	return 0
+}
+
+func (x *KnownSpell) GetRank() uint32 {
+	if x != nil {
+		return x.Rank
+	}
+	return 0
+}
+
+func (x *KnownSpell) GetManaPercent() uint32 {
+	if x != nil {
+		return x.ManaPercent
+	}
+	return 0
+}
+
+func (x *KnownSpell) GetRangeYards() float32 {
+	if x != nil {
+		return x.RangeYards
+	}
+	return 0
+}
+
+func (x *KnownSpell) GetSelfOnly() bool {
+	if x != nil {
+		return x.SelfOnly
+	}
+	return false
+}
+
+func (x *KnownSpell) GetAutomaticBuffSupported() bool {
+	if x != nil {
+		return x.AutomaticBuffSupported
+	}
+	return false
+}
+
+type ObservedAura struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Slot          uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	SpellId       uint32                 `protobuf:"varint,2,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	CasterGuid    uint64                 `protobuf:"varint,3,opt,name=caster_guid,json=casterGuid,proto3" json:"caster_guid,omitempty"`
+	Positive      bool                   `protobuf:"varint,4,opt,name=positive,proto3" json:"positive,omitempty"`
+	DurationKnown bool                   `protobuf:"varint,5,opt,name=duration_known,json=durationKnown,proto3" json:"duration_known,omitempty"`
+	RemainingMs   uint32                 `protobuf:"varint,6,opt,name=remaining_ms,json=remainingMs,proto3" json:"remaining_ms,omitempty"`
+	Revision      uint64                 `protobuf:"varint,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObservedAura) Reset() {
+	*x = ObservedAura{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObservedAura) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObservedAura) ProtoMessage() {}
+
+func (x *ObservedAura) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObservedAura.ProtoReflect.Descriptor instead.
+func (*ObservedAura) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ObservedAura) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *ObservedAura) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
+func (x *ObservedAura) GetCasterGuid() uint64 {
+	if x != nil {
+		return x.CasterGuid
+	}
+	return 0
+}
+
+func (x *ObservedAura) GetPositive() bool {
+	if x != nil {
+		return x.Positive
+	}
+	return false
+}
+
+func (x *ObservedAura) GetDurationKnown() bool {
+	if x != nil {
+		return x.DurationKnown
+	}
+	return false
+}
+
+func (x *ObservedAura) GetRemainingMs() uint32 {
+	if x != nil {
+		return x.RemainingMs
+	}
+	return 0
+}
+
+func (x *ObservedAura) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+type PlayerAuras struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TargetGuid uint64                 `protobuf:"varint,1,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	// Only a full SMSG_AURA_UPDATE_ALL establishes a complete baseline.
+	Complete      bool            `protobuf:"varint,2,opt,name=complete,proto3" json:"complete,omitempty"`
+	Revision      uint64          `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	Auras         []*ObservedAura `protobuf:"bytes,4,rep,name=auras,proto3" json:"auras,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlayerAuras) Reset() {
+	*x = PlayerAuras{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlayerAuras) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlayerAuras) ProtoMessage() {}
+
+func (x *PlayerAuras) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlayerAuras.ProtoReflect.Descriptor instead.
+func (*PlayerAuras) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PlayerAuras) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *PlayerAuras) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *PlayerAuras) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *PlayerAuras) GetAuras() []*ObservedAura {
+	if x != nil {
+		return x.Auras
+	}
+	return nil
+}
+
+type BuffOperation struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Sequence         uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	SpellId          uint32                 `protobuf:"varint,2,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	TargetGuid       uint64                 `protobuf:"varint,3,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	Phase            string                 `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
+	TransportWritten bool                   `protobuf:"varint,5,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	ServerCastGo     bool                   `protobuf:"varint,6,opt,name=server_cast_go,json=serverCastGo,proto3" json:"server_cast_go,omitempty"`
+	AuraConfirmed    bool                   `protobuf:"varint,7,opt,name=aura_confirmed,json=auraConfirmed,proto3" json:"aura_confirmed,omitempty"`
+	AuraRevision     uint64                 `protobuf:"varint,8,opt,name=aura_revision,json=auraRevision,proto3" json:"aura_revision,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *BuffOperation) Reset() {
+	*x = BuffOperation{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuffOperation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuffOperation) ProtoMessage() {}
+
+func (x *BuffOperation) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuffOperation.ProtoReflect.Descriptor instead.
+func (*BuffOperation) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *BuffOperation) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *BuffOperation) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
+func (x *BuffOperation) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *BuffOperation) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *BuffOperation) GetTransportWritten() bool {
+	if x != nil {
+		return x.TransportWritten
+	}
+	return false
+}
+
+func (x *BuffOperation) GetServerCastGo() bool {
+	if x != nil {
+		return x.ServerCastGo
+	}
+	return false
+}
+
+func (x *BuffOperation) GetAuraConfirmed() bool {
+	if x != nil {
+		return x.AuraConfirmed
+	}
+	return false
+}
+
+func (x *BuffOperation) GetAuraRevision() uint64 {
+	if x != nil {
+		return x.AuraRevision
+	}
+	return 0
+}
+
+type SpellToolkitState struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SpellbookKnown    bool                   `protobuf:"varint,1,opt,name=spellbook_known,json=spellbookKnown,proto3" json:"spellbook_known,omitempty"`
+	SpellbookRevision uint64                 `protobuf:"varint,2,opt,name=spellbook_revision,json=spellbookRevision,proto3" json:"spellbook_revision,omitempty"`
+	Spells            []*KnownSpell          `protobuf:"bytes,3,rep,name=spells,proto3" json:"spells,omitempty"`
+	PlayerAuras       []*PlayerAuras         `protobuf:"bytes,4,rep,name=player_auras,json=playerAuras,proto3" json:"player_auras,omitempty"`
+	LastBuff          *BuffOperation         `protobuf:"bytes,5,opt,name=last_buff,json=lastBuff,proto3" json:"last_buff,omitempty"`
+	SessionId         string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid          uint64                 `protobuf:"varint,7,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *SpellToolkitState) Reset() {
+	*x = SpellToolkitState{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpellToolkitState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpellToolkitState) ProtoMessage() {}
+
+func (x *SpellToolkitState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpellToolkitState.ProtoReflect.Descriptor instead.
+func (*SpellToolkitState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SpellToolkitState) GetSpellbookKnown() bool {
+	if x != nil {
+		return x.SpellbookKnown
+	}
+	return false
+}
+
+func (x *SpellToolkitState) GetSpellbookRevision() uint64 {
+	if x != nil {
+		return x.SpellbookRevision
+	}
+	return 0
+}
+
+func (x *SpellToolkitState) GetSpells() []*KnownSpell {
+	if x != nil {
+		return x.Spells
+	}
+	return nil
+}
+
+func (x *SpellToolkitState) GetPlayerAuras() []*PlayerAuras {
+	if x != nil {
+		return x.PlayerAuras
+	}
+	return nil
+}
+
+func (x *SpellToolkitState) GetLastBuff() *BuffOperation {
+	if x != nil {
+		return x.LastBuff
+	}
+	return nil
+}
+
+func (x *SpellToolkitState) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SpellToolkitState) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
 type State struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Following       bool                   `protobuf:"varint,1,opt,name=following,proto3" json:"following,omitempty"`
@@ -1052,15 +1514,23 @@ type State struct {
 	Fargodeep         *FargodeepEncounterState `protobuf:"bytes,69,opt,name=fargodeep,proto3" json:"fargodeep,omitempty"`
 	// Observation RPC acknowledgement, separate from actual movement transport.
 	// Tag70 is reserved for the separately developed Coldridge leveling status.
-	ClientMovementObservationConfirmed bool   `protobuf:"varint,71,opt,name=client_movement_observation_confirmed,json=clientMovementObservationConfirmed,proto3" json:"client_movement_observation_confirmed,omitempty"`
-	ClientMovementObservationFailures  uint64 `protobuf:"varint,72,opt,name=client_movement_observation_failures,json=clientMovementObservationFailures,proto3" json:"client_movement_observation_failures,omitempty"`
+	ClientMovementObservationConfirmed bool           `protobuf:"varint,71,opt,name=client_movement_observation_confirmed,json=clientMovementObservationConfirmed,proto3" json:"client_movement_observation_confirmed,omitempty"`
+	ClientMovementObservationFailures  uint64         `protobuf:"varint,72,opt,name=client_movement_observation_failures,json=clientMovementObservationFailures,proto3" json:"client_movement_observation_failures,omitempty"`
+	Buffing                            bool           `protobuf:"varint,73,opt,name=buffing,proto3" json:"buffing,omitempty"`
+	BuffLeaseRemainingMs               uint64         `protobuf:"varint,74,opt,name=buff_lease_remaining_ms,json=buffLeaseRemainingMs,proto3" json:"buff_lease_remaining_ms,omitempty"`
+	BuffReason                         string         `protobuf:"bytes,75,opt,name=buff_reason,json=buffReason,proto3" json:"buff_reason,omitempty"`
+	BuffAttempts                       uint64         `protobuf:"varint,76,opt,name=buff_attempts,json=buffAttempts,proto3" json:"buff_attempts,omitempty"`
+	BuffsConfirmed                     uint64         `protobuf:"varint,77,opt,name=buffs_confirmed,json=buffsConfirmed,proto3" json:"buffs_confirmed,omitempty"`
+	LastBuff                           *BuffOperation `protobuf:"bytes,78,opt,name=last_buff,json=lastBuff,proto3" json:"last_buff,omitempty"`
+	SessionId                          string         `protobuf:"bytes,79,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid                           uint64         `protobuf:"varint,80,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
 	unknownFields                      protoimpl.UnknownFields
 	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
 	*x = State{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[12]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1072,7 +1542,7 @@ func (x *State) String() string {
 func (*State) ProtoMessage() {}
 
 func (x *State) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[12]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1085,7 +1555,7 @@ func (x *State) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use State.ProtoReflect.Descriptor instead.
 func (*State) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *State) GetFollowing() bool {
@@ -1585,6 +2055,62 @@ func (x *State) GetClientMovementObservationFailures() uint64 {
 	return 0
 }
 
+func (x *State) GetBuffing() bool {
+	if x != nil {
+		return x.Buffing
+	}
+	return false
+}
+
+func (x *State) GetBuffLeaseRemainingMs() uint64 {
+	if x != nil {
+		return x.BuffLeaseRemainingMs
+	}
+	return 0
+}
+
+func (x *State) GetBuffReason() string {
+	if x != nil {
+		return x.BuffReason
+	}
+	return ""
+}
+
+func (x *State) GetBuffAttempts() uint64 {
+	if x != nil {
+		return x.BuffAttempts
+	}
+	return 0
+}
+
+func (x *State) GetBuffsConfirmed() uint64 {
+	if x != nil {
+		return x.BuffsConfirmed
+	}
+	return 0
+}
+
+func (x *State) GetLastBuff() *BuffOperation {
+	if x != nil {
+		return x.LastBuff
+	}
+	return nil
+}
+
+func (x *State) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *State) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
 var File_modules_buddy_actions_actions_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_actions_actions_proto_rawDesc = "" +
@@ -1672,7 +2198,53 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0ealive_observed\x18\x13 \x01(\bR\raliveObserved\x12\x16\n" +
 	"\x06rested\x18\x14 \x01(\bR\x06rested\x121\n" +
 	"\x14movement_unconfirmed\x18\x15 \x01(\bR\x13movementUnconfirmed\x12#\n" +
-	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\x85\x1a\n" +
+	"\rverified_legs\x18\x16 \x01(\rR\fverifiedLegs\"\xae\x02\n" +
+	"\n" +
+	"KnownSpell\x12\x19\n" +
+	"\bspell_id\x18\x01 \x01(\rR\aspellId\x12%\n" +
+	"\x0emetadata_known\x18\x02 \x01(\bR\rmetadataKnown\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1b\n" +
+	"\tfamily_id\x18\x04 \x01(\rR\bfamilyId\x12\x12\n" +
+	"\x04rank\x18\x05 \x01(\rR\x04rank\x12!\n" +
+	"\fmana_percent\x18\x06 \x01(\rR\vmanaPercent\x12\x1f\n" +
+	"\vrange_yards\x18\a \x01(\x02R\n" +
+	"rangeYards\x12\x1b\n" +
+	"\tself_only\x18\b \x01(\bR\bselfOnly\x128\n" +
+	"\x18automatic_buff_supported\x18\t \x01(\bR\x16automaticBuffSupported\"\xe0\x01\n" +
+	"\fObservedAura\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x19\n" +
+	"\bspell_id\x18\x02 \x01(\rR\aspellId\x12\x1f\n" +
+	"\vcaster_guid\x18\x03 \x01(\x04R\n" +
+	"casterGuid\x12\x1a\n" +
+	"\bpositive\x18\x04 \x01(\bR\bpositive\x12%\n" +
+	"\x0eduration_known\x18\x05 \x01(\bR\rdurationKnown\x12!\n" +
+	"\fremaining_ms\x18\x06 \x01(\rR\vremainingMs\x12\x1a\n" +
+	"\brevision\x18\a \x01(\x04R\brevision\"\xa4\x01\n" +
+	"\vPlayerAuras\x12\x1f\n" +
+	"\vtarget_guid\x18\x01 \x01(\x04R\n" +
+	"targetGuid\x12\x1a\n" +
+	"\bcomplete\x18\x02 \x01(\bR\bcomplete\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\x12<\n" +
+	"\x05auras\x18\x04 \x03(\v2&.warcraftbuddy.actions.v1.ObservedAuraR\x05auras\"\x9c\x02\n" +
+	"\rBuffOperation\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x19\n" +
+	"\bspell_id\x18\x02 \x01(\rR\aspellId\x12\x1f\n" +
+	"\vtarget_guid\x18\x03 \x01(\x04R\n" +
+	"targetGuid\x12\x14\n" +
+	"\x05phase\x18\x04 \x01(\tR\x05phase\x12+\n" +
+	"\x11transport_written\x18\x05 \x01(\bR\x10transportWritten\x12$\n" +
+	"\x0eserver_cast_go\x18\x06 \x01(\bR\fserverCastGo\x12%\n" +
+	"\x0eaura_confirmed\x18\a \x01(\bR\rauraConfirmed\x12#\n" +
+	"\raura_revision\x18\b \x01(\x04R\fauraRevision\"\xf5\x02\n" +
+	"\x11SpellToolkitState\x12'\n" +
+	"\x0fspellbook_known\x18\x01 \x01(\bR\x0espellbookKnown\x12-\n" +
+	"\x12spellbook_revision\x18\x02 \x01(\x04R\x11spellbookRevision\x12<\n" +
+	"\x06spells\x18\x03 \x03(\v2$.warcraftbuddy.actions.v1.KnownSpellR\x06spells\x12H\n" +
+	"\fplayer_auras\x18\x04 \x03(\v2%.warcraftbuddy.actions.v1.PlayerAurasR\vplayerAuras\x12D\n" +
+	"\tlast_buff\x18\x05 \x01(\v2'.warcraftbuddy.actions.v1.BuffOperationR\blastBuff\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\a \x01(\x04R\bselfGuid\"\xc7\x1c\n" +
 	"\x05State\x12\x1c\n" +
 	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
 	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
@@ -1753,13 +2325,25 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\brecovery\x18D \x01(\v2'.warcraftbuddy.actions.v1.RecoveryStateR\brecovery\x12O\n" +
 	"\tfargodeep\x18E \x01(\v21.warcraftbuddy.actions.v1.FargodeepEncounterStateR\tfargodeep\x12Q\n" +
 	"%client_movement_observation_confirmed\x18G \x01(\bR\"clientMovementObservationConfirmed\x12O\n" +
-	"$client_movement_observation_failures\x18H \x01(\x04R!clientMovementObservationFailures2\x9c\r\n" +
+	"$client_movement_observation_failures\x18H \x01(\x04R!clientMovementObservationFailures\x12\x18\n" +
+	"\abuffing\x18I \x01(\bR\abuffing\x125\n" +
+	"\x17buff_lease_remaining_ms\x18J \x01(\x04R\x14buffLeaseRemainingMs\x12\x1f\n" +
+	"\vbuff_reason\x18K \x01(\tR\n" +
+	"buffReason\x12#\n" +
+	"\rbuff_attempts\x18L \x01(\x04R\fbuffAttempts\x12'\n" +
+	"\x0fbuffs_confirmed\x18M \x01(\x04R\x0ebuffsConfirmed\x12D\n" +
+	"\tlast_buff\x18N \x01(\v2'.warcraftbuddy.actions.v1.BuffOperationR\blastBuff\x12\x1d\n" +
+	"\n" +
+	"session_id\x18O \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18P \x01(\x04R\bselfGuid2\xc4\x0e\n" +
 	"\fBuddyActions\x12R\n" +
 	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
 	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +
 	"\x06Assist\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12C\n" +
 	"\bHealOnce\x12\x16.google.protobuf.Empty\x1a\x1f.warcraftbuddy.actions.v1.State\x12A\n" +
-	"\x06Status\x12\x16.google.protobuf.Empty\x1a\x1f.warcraftbuddy.actions.v1.State\x12n\n" +
+	"\x06Status\x12\x16.google.protobuf.Empty\x1a\x1f.warcraftbuddy.actions.v1.State\x12Q\n" +
+	"\x05Buffs\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
+	"\fSpellToolkit\x12\x16.google.protobuf.Empty\x1a+.warcraftbuddy.actions.v1.SpellToolkitState\x12n\n" +
 	"\x12AcquireInteraction\x12,.warcraftbuddy.actions.v1.InteractionRequest\x1a*.warcraftbuddy.actions.v1.InteractionLease\x12c\n" +
 	"\x12ReleaseInteraction\x12,.warcraftbuddy.actions.v1.InteractionRelease\x1a\x1f.warcraftbuddy.actions.v1.State\x12^\n" +
 	"\fApproachLoot\x12-.warcraftbuddy.actions.v1.ApproachLootRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12`\n" +
@@ -1787,7 +2371,7 @@ func file_modules_buddy_actions_actions_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_actions_actions_proto_rawDescData
 }
 
-var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*ToggleRequest)(nil),             // 0: warcraftbuddy.actions.v1.ToggleRequest
 	(*FargodeepEncounterRequest)(nil), // 1: warcraftbuddy.actions.v1.FargodeepEncounterRequest
@@ -1801,60 +2385,74 @@ var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*ExitCryptRequest)(nil),          // 9: warcraftbuddy.actions.v1.ExitCryptRequest
 	(*InteractionLease)(nil),          // 10: warcraftbuddy.actions.v1.InteractionLease
 	(*RecoveryState)(nil),             // 11: warcraftbuddy.actions.v1.RecoveryState
-	(*State)(nil),                     // 12: warcraftbuddy.actions.v1.State
-	(*emptypb.Empty)(nil),             // 13: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),            // 14: agentwow.module.v1.WorldPacket
+	(*KnownSpell)(nil),                // 12: warcraftbuddy.actions.v1.KnownSpell
+	(*ObservedAura)(nil),              // 13: warcraftbuddy.actions.v1.ObservedAura
+	(*PlayerAuras)(nil),               // 14: warcraftbuddy.actions.v1.PlayerAuras
+	(*BuffOperation)(nil),             // 15: warcraftbuddy.actions.v1.BuffOperation
+	(*SpellToolkitState)(nil),         // 16: warcraftbuddy.actions.v1.SpellToolkitState
+	(*State)(nil),                     // 17: warcraftbuddy.actions.v1.State
+	(*emptypb.Empty)(nil),             // 18: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),            // 19: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
-	12, // 0: warcraftbuddy.actions.v1.InteractionLease.state:type_name -> warcraftbuddy.actions.v1.State
+	17, // 0: warcraftbuddy.actions.v1.InteractionLease.state:type_name -> warcraftbuddy.actions.v1.State
 	3,  // 1: warcraftbuddy.actions.v1.RecoveryState.corpse_location:type_name -> warcraftbuddy.actions.v1.ClientPosition
 	3,  // 2: warcraftbuddy.actions.v1.RecoveryState.graveyard_location:type_name -> warcraftbuddy.actions.v1.ClientPosition
-	3,  // 3: warcraftbuddy.actions.v1.State.position:type_name -> warcraftbuddy.actions.v1.ClientPosition
-	11, // 4: warcraftbuddy.actions.v1.State.recovery:type_name -> warcraftbuddy.actions.v1.RecoveryState
-	2,  // 5: warcraftbuddy.actions.v1.State.fargodeep:type_name -> warcraftbuddy.actions.v1.FargodeepEncounterState
-	0,  // 6: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 7: warcraftbuddy.actions.v1.BuddyActions.Healing:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 8: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	13, // 9: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
-	13, // 10: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
-	4,  // 11: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
-	5,  // 12: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
-	6,  // 13: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
-	7,  // 14: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	7,  // 15: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	7,  // 16: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	7,  // 17: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	8,  // 18: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
-	9,  // 19: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	0,  // 20: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	1,  // 21: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
-	0,  // 22: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	14, // 23: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	13, // 24: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	12, // 25: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	12, // 26: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
-	12, // 27: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	12, // 28: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	12, // 29: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	10, // 30: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	12, // 31: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	12, // 32: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	12, // 33: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	12, // 34: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	12, // 35: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
-	12, // 36: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
-	12, // 37: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
-	12, // 38: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	12, // 39: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	12, // 40: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
-	12, // 41: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
-	13, // 42: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	13, // 43: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	25, // [25:44] is the sub-list for method output_type
-	6,  // [6:25] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	13, // 3: warcraftbuddy.actions.v1.PlayerAuras.auras:type_name -> warcraftbuddy.actions.v1.ObservedAura
+	12, // 4: warcraftbuddy.actions.v1.SpellToolkitState.spells:type_name -> warcraftbuddy.actions.v1.KnownSpell
+	14, // 5: warcraftbuddy.actions.v1.SpellToolkitState.player_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
+	15, // 6: warcraftbuddy.actions.v1.SpellToolkitState.last_buff:type_name -> warcraftbuddy.actions.v1.BuffOperation
+	3,  // 7: warcraftbuddy.actions.v1.State.position:type_name -> warcraftbuddy.actions.v1.ClientPosition
+	11, // 8: warcraftbuddy.actions.v1.State.recovery:type_name -> warcraftbuddy.actions.v1.RecoveryState
+	2,  // 9: warcraftbuddy.actions.v1.State.fargodeep:type_name -> warcraftbuddy.actions.v1.FargodeepEncounterState
+	15, // 10: warcraftbuddy.actions.v1.State.last_buff:type_name -> warcraftbuddy.actions.v1.BuffOperation
+	0,  // 11: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	0,  // 12: warcraftbuddy.actions.v1.BuddyActions.Healing:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	0,  // 13: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	18, // 14: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
+	18, // 15: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
+	0,  // 16: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	18, // 17: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
+	4,  // 18: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
+	5,  // 19: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
+	6,  // 20: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
+	7,  // 21: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	7,  // 22: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	7,  // 23: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	7,  // 24: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	8,  // 25: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
+	9,  // 26: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	0,  // 27: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	1,  // 28: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
+	0,  // 29: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	19, // 30: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	18, // 31: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	17, // 32: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	17, // 33: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
+	17, // 34: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	17, // 35: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	17, // 36: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	17, // 37: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
+	16, // 38: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
+	10, // 39: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	17, // 40: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	17, // 41: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	17, // 42: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	17, // 43: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	17, // 44: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	17, // 45: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
+	17, // 46: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
+	17, // 47: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	17, // 48: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	17, // 49: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
+	17, // 50: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
+	18, // 51: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	18, // 52: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	32, // [32:53] is the sub-list for method output_type
+	11, // [11:32] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_actions_actions_proto_init() }
@@ -1868,7 +2466,7 @@ func file_modules_buddy_actions_actions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_actions_actions_proto_rawDesc), len(file_modules_buddy_actions_actions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

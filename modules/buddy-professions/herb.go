@@ -94,8 +94,8 @@ func herbSourceRange(v worldView, a *actionsv1.State, guid, revision uint64, max
 	}
 	dx, dy, dz := float64(g.X-p.X), float64(g.Y-p.Y), float64(g.Z-p.Z)
 	if dx*dx+dy*dy+dz*dz > maxDistance*maxDistance || math.Abs(dz) > 1.5 {
-		if maxDistance == 20 {
-			return nil, "selected_herb_outside_twenty_yard_approach_bound"
+		if maxDistance == 40 {
+			return nil, "selected_herb_outside_forty_yard_approach_bound"
 		}
 		return nil, "selected_herb_must_already_be_within_three_yards"
 	}
@@ -111,7 +111,7 @@ func (s *Service) herbalismTargetRangeLocked(guid, revision uint64, own *operati
 		return nil, "actual_own_observations_required"
 	}
 	spec, _ := recipeForSpell(herbSpell)
-	if reason := s.readinessLocked(spec, own); reason != "" {
+	if reason := s.readinessForApproachLocked(spec, own, maxDistance == 40); reason != "" {
 		return nil, reason
 	}
 	g, reason := herbSourceRange(s.view, s.actions, guid, revision, maxDistance)
@@ -153,7 +153,7 @@ func (s *Service) herbTargetsLocked() []*professionsv1.HerbTarget {
 			continue
 		}
 		_, reason := s.herbalismTargetLocked(g.Guid, g.PositionRevision, nil)
-		_, approachReason := s.herbalismTargetRangeLocked(g.Guid, g.PositionRevision, nil, 20)
+		_, approachReason := s.herbalismTargetRangeLocked(g.Guid, g.PositionRevision, nil, 40)
 		m := s.herbTemplates[g.Entry]
 		out = append(out, &professionsv1.HerbTarget{Object: proto.Clone(g).(*worldv1.GameObjectState), Ready: reason == "", Reason: reason, RequiredSkill: m.requiredSkill, LockId: m.lockID, Approachable: approachReason == "", ApproachReason: approachReason})
 	}

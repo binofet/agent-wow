@@ -375,7 +375,7 @@ BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
 ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
-úH
+›I
 !modules/buddy-quests/quests.protowarcraftbuddy.quests.v1api/module/v1/session.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"õ
 Quest
 quest_id (RquestId
@@ -498,7 +498,7 @@ sharerGuid
 required_count (RrequiredCount
 text (	Rtext#
 current_known (RcurrentKnown#
-current_count (RcurrentCount"˘
+current_count (RcurrentCount"≠
 QuestJournalEntry
 quest_id (RquestId
 slot (Rslot
@@ -520,14 +520,17 @@ objectives)
 expire_time (R
 expireTime8
 observed_questgiver_guid (RobservedQuestgiverGuid7
-observed_reward_npc_guid (RobservedRewardNpcGuid"*
+observed_reward_npc_guid (RobservedRewardNpcGuid2
+item_protection_known (RitemProtectionKnown"Z
 JournalRequest
-refresh (Rrefresh"§
+refresh (Rrefresh.
+requested_quest_ids (RrequestedQuestIds"Å
 JournalResponse
 
 session_id (	R	sessionId,
 quest_log_revision (RquestLogRevisionD
-entries (2*.warcraftbuddy.quests.v1.QuestJournalEntryRentries"p
+entries (2*.warcraftbuddy.quests.v1.QuestJournalEntryRentries[
+requested_templates (2*.warcraftbuddy.quests.v1.QuestJournalEntryRrequestedTemplates"p
 
 RewardItem
 index (Rindex

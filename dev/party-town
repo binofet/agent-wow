@@ -25,12 +25,14 @@ def load(name, filename):
 
 c, town = load("party_town_converse", "converse"), load("party_town_finite", "town-maintenance")
 gear = load('party_town_gear', 'party-gear')
+disenchant = load('party_town_disenchant', 'party-disenchant')
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
 ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088)}
 MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.equip_gear", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
 CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
             ("assist", "buddy-actions.assist", "assisting", "actions"),
             ("healing", "buddy-actions.healing", "healing", "actions"),
+            ("buffs", "buddy-actions.buffs", "buffing", "actions"),
             ("follow", "buddy-actions.follow", "following", "actions"))
 
 def identity(guid):
@@ -139,6 +141,10 @@ class Supervisor:
         self.release_uncertain, self.worker = False, worker or self.run_worker
         self.held_controls, self.controls_paused, self.pause_uncertain, self.worker_uncertain = {}, False, False, False
         self.gear_protected=set()
+        self.disenchant_running=False
+        self.disenchant_scanner=disenchant.Scanner() if guid==4 else None
+        self.disenchant_next_query=0
+        self.status.update(disenchantConfigured=guid==4,disenchantPhase='waiting_for_party_comparison' if guid==4 else 'not_configured')
 
     def persist(self): self.save(copy.deepcopy(self.data))
     def controls_revoked(self):
@@ -147,7 +153,8 @@ class Supervisor:
         return {row[0] for row in CONTROLS} if self.revoked() else set()
     def activities(self):
         return (c.quest_task_snapshot(self.guid).get("active") is True
-                or c.area_quest_snapshot(self.guid).get("active") is True or profession_active(self.guid))
+                or c.area_quest_snapshot(self.guid).get("active") is True
+                or not self.disenchant_running and profession_active(self.guid))
 
     def read(self):
         inv = town.checked_state(self.rpc.call("buddy-inventory.state", {}), self.guid)
@@ -161,6 +168,8 @@ class Supervisor:
         if self.session is not None and inv["sessionId"] != self.session:
             if self.status.get("busy") is True: raise Error("Town body changed")
             self.session, self.steady_owner = inv["sessionId"], None
+            if self.guid==4:
+                self.status.update(disenchantPhase='waiting_for_party_comparison',disenchantedItems=[])
         for state in (trade, quests, loot):
             if state.get("sessionId") != inv["sessionId"]: raise Error("Town module body is unconfirmed")
         return dict(inv=inv, world=world, actions=actions, self=player, trade=trade, quests=quests, loot=loot)
@@ -177,7 +186,7 @@ class Supervisor:
             raise Error("Town waits for other game actions")
         if not traveling and (a.get("moving") is True or a.get("traveling") is True): raise Error("Town waits for idle movement")
         owner = a.get("interactionOwner", "")
-        if owner and not (traveling and owner == "trade"):
+        if owner and not (traveling and owner == "trade" or own_worker and self.disenchant_running and owner == 'professions'):
             raise Error("Town waits for another interaction")
         if self.activities(): raise Error("Town defers to a requested routine")
         if (context["quests"].get("actionInFlight") is True or integer(context["loot"].get("pendingCorpseGuid", 0))
@@ -339,6 +348,17 @@ class Supervisor:
                         guard=self.guard,stopped=self.stopped).run()
                 if any(row['phase'] not in gear.TERMINAL for row in gear_journal.data['attempts']):
                     raise Error('Existing gear swap has an unresolved receipt')
+            if kind=='disenchant':
+                profession_folder=c.ensure_state(ROOT/'data/professions'/str(self.guid))
+                with os.fdopen(c.private_open(profession_folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    except BlockingIOError:raise Error('Existing profession worker owns the character') from None
+                    self.disenchant_running=True
+                    try:
+                        with disenchant.Journal(folder/'disenchant.json',self.rpc.url,self.guid) as journal:
+                            return disenchant.Worker(disenchant.RPC(self.rpc.url),journal,self.disenchant_scanner,
+                                guard=self.guard,stopped=lambda:self.stopped() or self.revoked() or bool(self.controls_revoked())).run(protected=self.gear_protected)
+                    finally:self.disenchant_running=False
             path = folder / ("supervisor-"+hashlib.sha256(self.session.encode()).hexdigest()[:24]+".json")
             with town.Journal(path, self.rpc.url, self.guid) as journal:
                 worker = GuardedWorker(self, town.RPC(self.rpc.url), journal)
@@ -371,7 +391,11 @@ class Supervisor:
         empty = any(not integer(bags[b].get("containerGuid", 0)) for b in range(1,5))
         carried = any(i.get("metadataKnown") is True and integer(i.get("entry", 0)) == 41599 for i in slots.values())
         kind, target, mode = "", 0, "local"
-        if pending or inv.get('equipmentKnown') is True and gear.candidates(inv):
+        pending_disenchant=self.guid==4 and disenchant.pending()
+        if pending_disenchant:
+            kind='disenchant'
+            self.status['disenchantPhase']='reconciling_previous_attempt'
+        elif pending or inv.get('equipmentKnown') is True and gear.candidates(inv):
             kind='gear'
         elif empty and carried:
             kind = "bags"
@@ -402,6 +426,17 @@ class Supervisor:
                 if (valid and mail.get("sessionId") == self.session and mail.get("listKnown") is True and mail.get("listCurrent") is True
                         and not mail.get("operationInFlight")):
                     kind,target="bags",integer(mailbox["guid"])
+        if not kind and self.guid==4:
+            if self.now()>=self.disenchant_next_query:
+                self.disenchant_next_query=self.now()+30
+                try:
+                    candidate,reason,_=self.disenchant_scanner.scan(inv,self.gear_protected)
+                    self.status['disenchantReason']=reason
+                    self.status['disenchantPhase']='waiting_for_party_comparison' if candidate is None else 'ready_for_unused_gear'
+                    if candidate is not None:kind='disenchant';target=integer(candidate['itemGuid'])
+                except (Error,disenchant.Error,disenchant.c.ConversationError,c.ConversationError,OSError,ValueError,KeyError,TypeError):
+                    self.status['disenchantReason']='party_comparison_unavailable_keep_gear'
+                    self.status['disenchantPhase']='waiting_for_party_comparison'
         if not kind:
             if any(row.get('safeJunkSaleEligible') is True and row.get('gearBlockedReason') in gear.PENDING_METADATA for row in inv.get('items',[]) if isinstance(row,dict)):
                 self.status['phase']='waiting_for_gear_comparison_metadata';return
@@ -425,12 +460,14 @@ class Supervisor:
             self.status["phase"]="idle_no_qualified_town_upkeep"; return
         key = f"{self.session}/{integer(inv['inventoryRevision'])}/{kind}/{target}/{mode}"
         if kind == "gear": key += f"/module/{integer(inv['revision'])}"
-        if any(row["key"] == key for row in self.data["attempts"]):
+        existing=next((row for row in self.data['attempts'] if row['key']==key),None)
+        if existing is not None and not pending_disenchant:
             self.status["phase"]="unchanged_town_attempt_not_repeated"; return
-        if len(self.data["attempts"]) >= 128:
+        if existing is None and len(self.data["attempts"]) >= 128:
             self.status["phase"]="finite_town_attempt_limit"; return
-        row=dict(key=key, sessionId=self.session, phase="reserved")
-        self.data["attempts"].append(row); self.persist()
+        row=existing or dict(key=key, sessionId=self.session, phase="reserved")
+        if existing is None:self.data['attempts'].append(row)
+        self.persist()
         self.activity_id, self.held, self.original_follow = uuid.uuid4().hex, False, context["actions"].get("following") is True
         self.status.update(busy=True,lastKind=kind,confirmedOperations=0,phase="holding_follow_for_town_upkeep"); self.notify()
         try:
@@ -439,7 +476,9 @@ class Supervisor:
             if mode == "travel":
                 self.status["phase"]="traveling_to_observed_vendor"; self.notify(); self.travel(target)
             self.guard()
-            self.status["phase"]="finite_town_worker_running"; self.notify()
+            self.status["phase"]="finite_town_worker_running"
+            if kind=='disenchant':self.status['disenchantPhase']='waiting_for_normal_receipt'
+            self.notify()
             self.worker_uncertain=True
             result=self.worker(kind,target)
             phase=result.get("phase")
@@ -447,9 +486,14 @@ class Supervisor:
             row["phase"]="complete" if phase == "complete" else "blocked" if phase == "blocked" else "unconfirmed"
             self.status.update(phase="town_upkeep_"+row["phase"], confirmedOperations=result.get("newConfirmedOperations",0))
             if kind=='gear':self.status['equippedItems']=result.get('equippedItems',[])
-        except (Error,town.Error,gear.Error,OSError,ValueError,KeyError,TypeError):
+            if kind=='disenchant':
+                self.status['disenchantReason']=result.get('reason','')[:160]
+                self.status['disenchantedItems']=result.get('disenchantedItems',[])
+                self.status['disenchantPhase']='completed' if phase=='complete' and result.get('newConfirmedOperations') else 'blocked' if phase in ('complete','blocked','server_rejected') else 'outcome_unconfirmed'
+        except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError,ValueError,KeyError,TypeError):
             row["phase"]="unconfirmed"
             self.status["phase"]="town_upkeep_stopped_or_unconfirmed"
+            if kind=='disenchant':self.status['disenchantPhase']='outcome_unconfirmed'
         finally:
             self.release(); self.persist()
             self.restore_controls()
@@ -505,7 +549,7 @@ def main(argv=None):
         try:
             while not stopped():
                 try: actor.tick()
-                except (Error,town.Error,gear.Error,OSError,KeyError,ValueError,TypeError):
+                except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError,KeyError,ValueError,TypeError):
                     actor.status.update(phase="waiting_for_safe_known_town_state",observationsCurrent=False)
                 status()
                 until=time.monotonic()+5
@@ -516,4 +560,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     try: sys.exit(main())
-    except (Error,town.Error,gear.Error,OSError) as error: print("Party town: "+str(error),file=sys.stderr);sys.exit(1)
+    except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError) as error: print("Party town: "+str(error),file=sys.stderr);sys.exit(1)

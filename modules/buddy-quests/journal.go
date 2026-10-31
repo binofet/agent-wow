@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"sort"
 	"time"
 
 	questsv1 "github.com/agent-wow/agent-wow/modules/buddy-quests/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,8 +21,11 @@ type journalQuery struct {
 	received bool
 }
 type journalRuntime struct {
-	templates map[uint32]*questsv1.QuestJournalEntry
-	queries   map[uint32]journalQuery
+	templates   map[uint32]*questsv1.QuestJournalEntry
+	queries     map[uint32]journalQuery
+	requested   map[uint32]bool
+	queryWindow time.Time
+	queryCount  uint32
 }
 
 // Quest::InitializeQueryData in AzerothCore Quests/QuestDef.cpp is the packet
@@ -52,11 +58,25 @@ func decodeQuestTemplate(data []byte) (*questsv1.QuestJournalEntry, error) {
 		return nil, malformed
 	}
 	entry := &questsv1.QuestJournalEntry{QuestId: id, Title: r.text(512), Objectives: r.text(8192), Details: r.text(16384), AreaDescription: r.text(8192), TemplateKnown: true}
+	// QuestDef.cpp InitializeQueryData emits GetSrcItemId as header word19;
+	// each objective emits ItemDrop[i] as its third word and a literal zero
+	// source count. Count0 here is unknown, not invented objective progress.
+	if source := header[19]; source != 0 {
+		if source > math.MaxInt32 {
+			r.err = malformed
+		} else {
+			entry.Targets = append(entry.Targets, &questsv1.QuestObjective{Kind: "SOURCE_ITEM", Index: 4, TargetId: int32(source)})
+		}
+	}
 	r.text(8192) // completed description; not a server completion receipt
 	for i := uint32(0); i < 4; i++ {
 		target, count := r.u32(), r.u32()
-		r.u32()
-		r.u32() // dropped source item and unused source count
+		source, sourceCount := r.u32(), r.u32()
+		if source > math.MaxInt32 {
+			r.err = malformed
+		} else if source != 0 {
+			entry.Targets = append(entry.Targets, &questsv1.QuestObjective{Kind: "SOURCE_ITEM", Index: i, TargetId: int32(source), RequiredCount: sourceCount})
+		}
 		if target == 0 && count != 0 {
 			r.err = malformed
 		}
@@ -108,7 +128,11 @@ func decodeQuestTemplate(data []byte) (*questsv1.QuestJournalEntry, error) {
 	if entry.Title == "" {
 		r.err = malformed
 	}
-	return entry, r.done()
+	if err := r.done(); err != nil {
+		return nil, err
+	}
+	entry.ItemProtectionKnown = true
+	return entry, nil
 }
 
 func (s *Service) handleJournalPacket(packet *modv1.WorldPacket) bool {
@@ -177,7 +201,7 @@ func (s *Service) journalSnapshotLocked(w *worldv1.SnapshotResponse) *questsv1.J
 			}
 			// Collection objectives cannot be counted from the backpack alone:
 			// equipped bag contents are outside the current inventory scope.
-			if slot.Complete {
+			if slot.Complete && goal.Kind != "SOURCE_ITEM" {
 				goal.CurrentKnown = true
 				goal.CurrentCount = goal.RequiredCount
 			}
@@ -188,6 +212,18 @@ func (s *Service) journalSnapshotLocked(w *worldv1.SnapshotResponse) *questsv1.J
 }
 
 func (s *Service) Journal(ctx context.Context, r *questsv1.JournalRequest) (*questsv1.JournalResponse, error) {
+	requested := map[uint32]bool{}
+	if r != nil {
+		if len(r.RequestedQuestIds) > 25 {
+			return nil, status.Error(codes.InvalidArgument, "at most25 unique static quest templates")
+		}
+		for _, id := range r.RequestedQuestIds {
+			if id == 0 || id > math.MaxInt32 || requested[id] {
+				return nil, status.Error(codes.InvalidArgument, "unique positive static quest IDs required")
+			}
+			requested[id] = true
+		}
+	}
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	w, err := s.world(call)
@@ -201,6 +237,9 @@ func (s *Service) Journal(ctx context.Context, r *questsv1.JournalRequest) (*que
 	if s.journal.templates == nil {
 		s.journal.templates = map[uint32]*questsv1.QuestJournalEntry{}
 	}
+	if len(requested) > 0 {
+		s.journal.requested = requested
+	}
 	active := map[uint32]bool{}
 	if w.SelfQuestLogKnown && len(w.SelfQuestLog) == 25 {
 		for _, slot := range w.SelfQuestLog {
@@ -209,22 +248,39 @@ func (s *Service) Journal(ctx context.Context, r *questsv1.JournalRequest) (*que
 			}
 		}
 	}
-	// Keep only own active quest templates. A log mutation never authorizes a
-	// model-supplied arbitrary query or an unbounded historical cache.
+	// Keep own active templates plus the latest bounded static lookup set.
+	// Ordinary journal polling must not erase an in-flight owner's lookup.
 	for id := range s.journal.queries {
-		if !active[id] {
+		if !active[id] && !s.journal.requested[id] {
 			delete(s.journal.queries, id)
 			delete(s.journal.templates, id)
 		}
 	}
-	queries := []uint32{}
+	lookup := map[uint32]bool{}
 	for id := range active {
+		lookup[id] = true
+	}
+	for id := range s.journal.requested {
+		lookup[id] = true
+	}
+	ids := make([]uint32, 0, len(lookup))
+	for id := range lookup {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	if s.journal.queryWindow.IsZero() || s.now().Sub(s.journal.queryWindow) >= time.Second {
+		s.journal.queryWindow = s.now()
+		s.journal.queryCount = 0
+	}
+	queries := []uint32{}
+	for _, id := range ids {
 		q, queried := s.journal.queries[id]
 		if !queried || (r != nil && r.Refresh && !q.received && s.now().Sub(q.at) >= 5*time.Second) {
-			if len(queries) >= 8 {
+			if s.journal.queryCount >= 8 {
 				break
 			}
 			s.journal.queries[id] = journalQuery{at: s.now()}
+			s.journal.queryCount++
 			queries = append(queries, id)
 		}
 	}
@@ -239,5 +295,16 @@ func (s *Service) Journal(ctx context.Context, r *questsv1.JournalRequest) (*que
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.journalSnapshotLocked(w), nil
+	result := s.journalSnapshotLocked(w)
+	for _, id := range ids {
+		if !requested[id] {
+			continue
+		}
+		entry := s.journal.templates[id]
+		if entry == nil {
+			entry = &questsv1.QuestJournalEntry{QuestId: id, Failure: "template_not_received"}
+		}
+		result.RequestedTemplates = append(result.RequestedTemplates, proto.Clone(entry).(*questsv1.QuestJournalEntry))
+	}
+	return result, nil
 }

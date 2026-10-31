@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-å:
+¡I
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -115,7 +115,53 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"…
+verified_legs (RverifiedLegs"®
+
+KnownSpell
+spell_id (RspellId%
+metadata_known (RmetadataKnown
+name (	Rname
+	family_id (RfamilyId
+rank (Rrank!
+mana_percent (RmanaPercent
+range_yards (R
+rangeYards
+	self_only (RselfOnly8
+automatic_buff_supported	 (RautomaticBuffSupported"à
+ObservedAura
+slot (Rslot
+spell_id (RspellId
+caster_guid (R
+casterGuid
+positive (Rpositive%
+duration_known (RdurationKnown!
+remaining_ms (RremainingMs
+revision (Rrevision"¤
+PlayerAuras
+target_guid (R
+targetGuid
+complete (Rcomplete
+revision (Rrevision<
+auras (2&.warcraftbuddy.actions.v1.ObservedAuraRauras"œ
+BuffOperation
+sequence (Rsequence
+spell_id (RspellId
+target_guid (R
+targetGuid
+phase (	Rphase+
+transport_written (RtransportWritten$
+server_cast_go (RserverCastGo%
+aura_confirmed (RauraConfirmed#
+aura_revision (RauraRevision"õ
+SpellToolkitState'
+spellbook_known (RspellbookKnown-
+spellbook_revision (RspellbookRevision<
+spells (2$.warcraftbuddy.actions.v1.KnownSpellRspellsH
+player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAurasD
+	last_buff (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
+
+session_id (	R	sessionId
+	self_guid (RselfGuid"Ç
 State
 	following (R	following
 healing (Rhealing
@@ -196,13 +242,25 @@ practicing%
 recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryO
 	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeepQ
 %client_movement_observation_confirmedG (R"clientMovementObservationConfirmedO
-$client_movement_observation_failuresH (R!clientMovementObservationFailures2œ
+$client_movement_observation_failuresH (R!clientMovementObservationFailures
+buffingI (Rbuffing5
+buff_lease_remaining_msJ (RbuffLeaseRemainingMs
+buff_reasonK (	R
+buffReason#
+buff_attemptsL (RbuffAttempts'
+buffs_confirmedM (RbuffsConfirmedD
+	last_buffN (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
+
+session_idO (	R	sessionId
+	self_guidP (RselfGuid2Ä
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 HealOnce.google.protobuf.Empty.warcraftbuddy.actions.v1.StateA
-Status.google.protobuf.Empty.warcraftbuddy.actions.v1.Staten
+Status.google.protobuf.Empty.warcraftbuddy.actions.v1.StateQ
+Buffs'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
+SpellToolkit.google.protobuf.Empty+.warcraftbuddy.actions.v1.SpellToolkitStaten
 AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
 ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
 ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`

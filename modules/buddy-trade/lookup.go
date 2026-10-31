@@ -1,6 +1,7 @@
 package buddytrade
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"math"
@@ -156,7 +157,8 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 	for range prefix[21] {
 		item.Stats = append(item.Stats, &tradev1.ItemStat{Type: read(), Value: int32(read())})
 	}
-	at += 8 // ScalingStatDistribution, ScalingStatValue; no guessed scaling.
+	scalingDistribution, scalingValue := read(), read()
+	comparisonKnown := meta.class == 4 && meta.containerSlots == 0 && scalingDistribution == 0 && scalingValue == 0
 	for range 2 {
 		minimum, maximum, school := math.Float32frombits(read()), math.Float32frombits(read()), read()
 		if math.IsNaN(float64(minimum)) || math.IsInf(float64(minimum), 0) || math.IsNaN(float64(maximum)) || math.IsInf(float64(maximum), 0) || minimum < 0 || maximum < minimum || school > 6 {
@@ -165,7 +167,27 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		item.Damages = append(item.Damages, &tradev1.WeaponDamage{Minimum: minimum, Maximum: maximum, School: school})
 	}
 	item.Armor = read()
-	at += 6 * 4 // Remaining resistances are not an armor score.
+	for range 6 {
+		resistance := read()
+		comparisonKnown = comparisonKnown && resistance == 0
+	}
 	item.DelayMs = read()
+	ammo, rangeModifier := read(), read()
+	comparisonKnown = comparisonKnown && ammo == 0 && rangeModifier == 0
+	// The full metadata decoder already validated these exact fields. Preserve
+	// ordinary BOE/BOP and durability, but do not compare hidden set/scaling,
+	// random-affix/socket/block/zone/temporary/quest or armor-modifier benefits.
+	at += 5 * 24
+	bonding := read()
+	end := bytes.IndexByte(data[at:], 0)
+	at += end + 1
+	var tail [29]uint32
+	for i := range tail {
+		tail[i] = read()
+	}
+	for _, i := range []int{0, 1, 2, 3, 4, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28} {
+		comparisonKnown = comparisonKnown && tail[i] == 0
+	}
+	item.ArmorComparisonKnown = comparisonKnown && bonding <= 2 && prefix[18] == 0 && prefix[19] == 1
 	return item, nil
 }

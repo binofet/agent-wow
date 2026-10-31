@@ -137,3 +137,43 @@ assert(queryCount==queries+1, "explicit refresh uses normal completed-query API"
 update(1)
 assert(WarcraftBuddyQuestSyncStatus().snapshotAge==0)
 print("Addon Lua5.1 behavior checks passed")
+
+-- Equipment telemetry uses a separate authenticated PARTY stream, preserves
+-- unknown facts, and never invents item GUIDs or profession skill ranks.
+reset()
+local gearSent={}
+local questSender=SendAddonMessage
+function SendAddonMessage(prefix,payload,channel)
+    if prefix=="WBGEAR1" then
+        assert(channel=="PARTY" and #payload<=200)
+        gearSent[#gearSent+1]=payload
+    else questSender(prefix,payload,channel) end
+end
+function UnitClass() return "Warrior","WARRIOR" end
+function UnitRace() return "Human","Human" end
+local equipment={ [7]="|cff1eff00|Hitem:100:0:0:0:0:0:0:0:10|h[Pants]|h|r" }
+function GetInventoryItemLink(_,slot) return equipment[slot] end
+function GetInventoryItemTexture(_,slot) return equipment[slot] and "texture" end
+function GetItemInfo(link) return "Pants" end
+function GetInventoryItemDurability(slot) if slot==7 then return 5,10 end end
+function IsSpellKnown(id) return id==201 or id==9078 or id==9116 end
+local function gearBody()
+    local out={}
+    for _,packet in ipairs(gearSent) do out[#out+1]=packet:match("^[^|]+|[^|]+|[^|]+|[^|]+|[^|]+|[^|]+|(.+)$") end
+    return table.concat(out,";")
+end
+event("PLAYER_LOGIN");update()
+assert(gearBody():find("G=1,1,3,1,1",1,true))
+assert(gearBody():find("E=6,1,100,1,1,0,1,5,10",1,true))
+assert(gearBody():find("E=18,1,0,1,1,0,1,0,0",1,true))
+assert(gearBody():find("P=43,1",1,true) and gearBody():find("P=44,0",1,true))
+local initial=#gearSent;update(0.1);assert(#gearSent==initial,"no gear heartbeat flood")
+gearSent={};equipment[7]="|cff1eff00|Hitem:100:5:0:0:0:0:0:0:10|h[Pants]|h|r"
+event("PLAYER_EQUIPMENT_CHANGED");update(1)
+assert(gearBody():find("E=6,1,100,1,1,1,1,5,10",1,true),"enchant preserved")
+gearSent={};GetItemInfo=function() return nil end;update(5)
+assert(gearBody():find("G=1,1,3,0,1",1,true) and gearBody():find("E=6,1,100,0,1,1",1,true),"uncached metadata unknown")
+gearSent={};IsSpellKnown=function() return nil end;update(5)
+assert(gearBody():find("G=1,1,3,0,0",1,true) and not gearBody():find("P=",1,true),"unknown proficiency not false absence")
+gearSent={};owner="Mira";update(5);assert(#gearSent==0,"no peer equipment authority")
+print("Owner equipment Lua5.1 checks passed")

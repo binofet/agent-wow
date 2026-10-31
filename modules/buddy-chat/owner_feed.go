@@ -55,15 +55,19 @@ func ownerFeedNumber(text string, min, max uint32) (uint32, error) {
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Chat/Chat.cpp
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Handlers/ChatHandler.cpp
 func decodeOwnerFeedPart(p []byte) (*ownerFeedPart, bool, error) {
-	if len(p) < 29+len(ownerFeedPrefix) || p[0] != byte(chatv1.Channel_PARTY) || int32(binary.LittleEndian.Uint32(p[1:5])) != -1 || binary.LittleEndian.Uint64(p[5:13]) != 3 || !bytes.HasPrefix(p[29:], []byte(ownerFeedPrefix)) {
+	return decodeOwnerSnapshotPart(p, ownerFeedPrefix, 25)
+}
+
+func decodeOwnerSnapshotPart(p []byte, prefix string, activeMax uint32) (*ownerFeedPart, bool, error) {
+	if len(p) < 29+len(prefix) || p[0] != byte(chatv1.Channel_PARTY) || int32(binary.LittleEndian.Uint32(p[1:5])) != -1 || binary.LittleEndian.Uint64(p[5:13]) != 3 || !bytes.HasPrefix(p[29:], []byte(prefix)) {
 		return nil, false, nil
 	}
 	bad := errors.New("invalid owner quest addon packet")
 	length := binary.LittleEndian.Uint32(p[25:29])
-	if binary.LittleEndian.Uint32(p[13:17]) != 0 || binary.LittleEndian.Uint64(p[17:25]) != 0 || length < uint32(len(ownerFeedPrefix)+2) || length > maxTextBytes+1 || len(p) != 29+int(length)+1 || p[29+int(length)-1] != 0 {
+	if binary.LittleEndian.Uint32(p[13:17]) != 0 || binary.LittleEndian.Uint64(p[17:25]) != 0 || length < uint32(len(prefix)+2) || length > maxTextBytes+1 || len(p) != 29+int(length)+1 || p[29+int(length)-1] != 0 {
 		return nil, true, bad
 	}
-	body := p[29+len(ownerFeedPrefix) : 29+int(length)-1]
+	body := p[29+len(prefix) : 29+int(length)-1]
 	if len(body) == 0 || len(body) > 240 {
 		return nil, true, bad
 	}
@@ -84,7 +88,7 @@ func decodeOwnerFeedPart(p []byte) (*ownerFeedPart, bool, error) {
 	revision, e1 := ownerFeedNumber(fields[2], 1, 0x7fffffff)
 	part, e2 := ownerFeedNumber(fields[3], 1, 12)
 	parts, e3 := ownerFeedNumber(fields[4], 1, 12)
-	active, e4 := ownerFeedNumber(fields[5], 0, 25)
+	active, e4 := ownerFeedNumber(fields[5], 0, activeMax)
 	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || part > parts {
 		return nil, true, bad
 	}
@@ -185,11 +189,15 @@ func (s *Service) ingestOwnerFeedLocked(payload []byte) bool {
 	if !handled {
 		return false
 	}
+	return s.ingestOwnerSnapshotLocked(part, err, &s.ownerFeed, decodeOwnerFeedSnapshot)
+}
+
+func (s *Service) ingestOwnerSnapshotLocked(part *ownerFeedPart, err error, f *ownerFeedState, decode func(*ownerFeedAssembly) (*chatv1.OwnerFeedResponse, error)) bool {
 	if s.independent {
 		s.ignored++
 		return true
 	}
-	f, now := &s.ownerFeed, s.now()
+	now := s.now()
 	f.expire(now)
 	f.received++
 	if err != nil {
@@ -239,7 +247,7 @@ func (s *Service) ingestOwnerFeedLocked(payload []byte) bool {
 	if a.count != int(a.parts) {
 		return true
 	}
-	complete, err := decodeOwnerFeedSnapshot(a)
+	complete, err := decode(a)
 	f.pending = nil
 	if err != nil {
 		f.malformed++
@@ -284,5 +292,16 @@ func (s *Service) OwnerFeed(ctx context.Context, _ *emptypb.Empty) (*chatv1.Owne
 	out.BodySessionId = s.sessionID
 	out.ReceivedPackets, out.MalformedPackets, out.IgnoredPackets, out.IncompleteBatches = f.received, f.malformed, f.ignored, f.incomplete
 	out.Assembling = f.pending != nil
+	g := &s.ownerGear
+	g.expire(now)
+	if g.current != nil && g.current.OwnerGear != nil {
+		out.OwnerGear = proto.Clone(g.current.OwnerGear).(*chatv1.OwnerGear)
+		elapsed := now.Sub(g.updated).Milliseconds()
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		out.OwnerGear.AgeMs = uint64(elapsed)
+		out.OwnerGear.Available = !s.ownerGearUnsettled && !now.Before(g.updated) && now.Sub(g.updated) < ownerFeedTTL
+	}
 	return out, nil
 }

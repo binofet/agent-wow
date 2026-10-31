@@ -7,10 +7,13 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	professionsv1 "github.com/agent-wow/agent-wow/modules/buddy-professions/api"
+	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const disenchantLimitation = "Explicit selected carried item only; disenchant permanently consumes it. The public item template omits DisenchantID, so the server decides that final eligibility. No equipment selection, loot-open, loot-release or automatic recovery. Unconfirmed or partial material retrieval remains pending for operator follow-up; logout cannot safely be vetoed by this module."
@@ -23,6 +26,9 @@ func disenchantSource(v worldView, guid uint64) (*worldv1.BackpackSlot, string) 
 	// when it is used by read-only selection or late reconciliation, too.
 	if _, _, err := carriedInventory(v.raw); err != nil {
 		return nil, "complete_private_five_bag_source_observation_required"
+	}
+	if _, reason := disenchantEquipment(v.raw); reason != "" {
+		return nil, reason
 	}
 	var selected *worldv1.BackpackSlot
 	for _, bag := range v.raw.InventoryBags {
@@ -40,6 +46,9 @@ func disenchantSource(v worldView, guid uint64) (*worldv1.BackpackSlot, string) 
 	}
 	if selected == nil || selected.Entry == 0 || !selected.MetadataKnown || selected.StackCount != 1 {
 		return nil, "exact_selected_carried_single_item_required"
+	}
+	if !selected.EnhancementsKnown || selected.HasEnhancements {
+		return nil, "selected_item_dynamic_enhancements_unknown_or_protected"
 	}
 	if v.self != nil {
 		for _, hand := range []*worldv1.EquippedWeapon{v.self.Mainhand, v.self.Offhand} {
@@ -105,15 +114,15 @@ func (s *Service) onDisenchantTemplatePacketLocked(p *modv1.WorldPacket) bool {
 
 func (s *Service) disenchantControllersLocked() string {
 	a := s.actions
-	if a == nil || a.Following || a.Healing || a.Assisting || a.FollowLeaseRemainingMs != 0 || a.HealingLeaseRemainingMs != 0 || a.AssistLeaseRemainingMs != 0 {
-		return "follow_heal_assist_toggles_and_leases_must_be_off_for_selected_item_loss"
+	if a == nil || a.Following || a.Healing || a.Assisting || a.Buffing || a.FollowLeaseRemainingMs != 0 || a.HealingLeaseRemainingMs != 0 || a.AssistLeaseRemainingMs != 0 || a.BuffLeaseRemainingMs != 0 {
+		return "follow_heal_assist_buff_toggles_and_leases_must_be_off_for_selected_item_loss"
+	}
+	if s.loot == nil || s.loot.SessionId != s.state.SessionId || !s.ordinaryLootIdleLocked(disenchantSkill) {
+		return "actual_same_session_ordinary_loot_must_be_idle_and_disabled"
 	}
 	t := s.deTrade
-	if t == nil || t.SessionId != s.state.SessionId || t.Phase != "IDLE" || t.PartnerGuid != 0 || t.PartnerAccepted || t.AcceptTransportWritten || len(t.OwnRequestedItems) != 0 || len(t.PartnerItems) != 0 || t.OwnRequestedCopper != 0 || t.PartnerCopper != 0 || t.JunkDisposalEnabled {
+	if !settledDisenchantTrade(t, s.state.SessionId) {
 		return "actual_same_session_trade_and_junk_controller_must_be_idle"
-	}
-	if t.LastJunkDisposal != nil && t.LastJunkDisposal.Status != "SERVER_SLOT_REMOVAL_CONFIRMED" {
-		return "previous_junk_disposal_not_confirmed"
 	}
 	return ""
 }
@@ -139,6 +148,9 @@ func (s *Service) disenchantTargetLocked(guid uint64, own *operation) (*worldv1.
 	}
 	if m.class != 2 && m.class != 4 || m.quality < 2 || m.quality > 4 || m.containerSlots != 0 || m.requiredSkill == ^uint32(0) {
 		return nil, "selected_item_not_supported_weapon_or_armor_quality_two_to_four"
+	}
+	if m.protected() {
+		return nil, "selected_item_has_protected_or_special_template"
 	}
 	if rank, ok := s.view.skills[disenchantSkill]; !ok || rank.value < m.requiredSkill {
 		return nil, "observed_pure_enchanting_below_actual_disenchant_requirement"
@@ -188,6 +200,18 @@ func (s *Service) disenchantWrite(ctx context.Context, op *operation, code uint3
 	case <-call.Done():
 		return false, call.Err()
 	}
+	// Refresh other item writers before the exact lease and LAST world proof.
+	// These observations never grant authority to an unknown/changed source.
+	t, l := &tradev1.State{}, &lootv1.State{}
+	if err := s.invoke(call, "buddy-trade", "state", &emptypb.Empty{}, t); err != nil {
+		return false, err
+	}
+	if err := s.invoke(call, "buddy-loot", "state", &emptypb.Empty{}, l); err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	s.deTrade, s.loot = t, l
+	s.mu.Unlock()
 	if err := s.renew(call, op); err != nil {
 		return false, err
 	}
@@ -389,7 +413,14 @@ func (s *Service) reconcileDisenchantLocked(op *operation) {
 	if _, _, err := carriedInventory(s.view.raw); err != nil {
 		return
 	}
+	equipped, reason := disenchantEquipment(s.view.raw)
+	if reason != "" {
+		return
+	}
 	absent := true
+	if equipped[op.request.TargetGuid] {
+		absent = false
+	}
 	for _, bag := range s.view.raw.InventoryBags {
 		if bag.ContainerGuid == op.request.TargetGuid {
 			absent = false

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Á#
+÷#
 modules/buddy-trade/trade.protowarcraftbuddy.trade.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ž
 Item
 slot (Rslot
@@ -114,7 +114,7 @@ session_id (	R	sessionId
 WeaponDamage
 minimum (Rminimum
 maximum (Rmaximum
-school (Rschool"¢
+school (Rschool"Ø
 ItemDetails
 item_id (RitemId
 	available (R	available
@@ -148,7 +148,8 @@ sell_price (R	sellPrice'
 required_reputation_faction (RrequiredReputationFaction8
 required_reputation_rank (RrequiredReputationRank.
 required_honor_rank (RrequiredHonorRank,
-required_city_rank (RrequiredCityRank"/
+required_city_rank (RrequiredCityRank4
+armor_comparison_known (RarmorComparisonKnown"/
 LookupItemsRequest
 item_ids (RitemIds"o
 LookupItemsResponse

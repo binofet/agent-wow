@@ -103,6 +103,43 @@ message OwnerQuestEvent {
   uint64 age_ms = 3;
 }
 
+// Read-only normal UI comparison evidence. The legacy UI exposes item links,
+// not full owned item GUIDs; these slots never authorize moving owner's items.
+message OwnerEquipmentSlot {
+  uint32 slot = 1;
+  bool slot_known = 2;
+  uint32 entry = 3;
+  bool metadata_known = 4;
+  bool enhancements_known = 5;
+  bool has_enhancements = 6;
+  bool durability_known = 7;
+  uint32 durability = 8;
+  uint32 max_durability = 9;
+}
+message OwnerProficiency {
+  uint32 skill_id = 1;
+  bool known = 2;
+}
+message OwnerGear {
+  bool available = 1;
+  string addon_session = 2;
+  uint32 revision = 3;
+  uint64 age_ms = 4;
+  bool gear_known = 5;
+  uint32 equipment_revision = 6;
+  bool class_known = 7;
+  uint32 class_id = 8;
+  bool race_known = 9;
+  uint32 race_id = 10;
+  bool level_known = 11;
+  uint32 level = 12;
+  repeated OwnerEquipmentSlot slots = 13;
+  bool proficiencies_known = 14;
+  repeated OwnerProficiency proficiencies = 15;
+  // Weapon/armor proficiency evidence does not assert profession skill ranks.
+  bool skills_known = 16;
+}
+
 message OwnerFeedResponse {
   // A complete, validated snapshot has arrived. Callers must check age_ms.
   bool available = 1;
@@ -122,6 +159,7 @@ message OwnerFeedResponse {
   // Positive IDs from the normal client's completed-query cache, at most64.
   // Omission from this bounded report does not prove a quest uncompleted.
   repeated uint32 completed_quest_ids = 15;
+  OwnerGear owner_gear = 16;
 }
 
 service BuddyChat {

@@ -45,7 +45,7 @@ DISABLED_FEATURES = (
 ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
            "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
-           "ENABLE_ASSIST", "DISABLE_ASSIST", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
+           "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
            "EXECUTE_QUEST", "STOP_QUEST")
 QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 3903],
                        "prerequisiteQuestIds": [783, 5261, 33],
@@ -91,6 +91,15 @@ it offers one whole stack, never equipment or bag contents. OFFER_TRADE_GOLD
 uses an exact gold_copper amount explicitly stated by Joel (1gold=10000copper,
 1silver=100copper); never invent an amount. ENABLE_ASSIST/DISABLE_ASSIST toggles
 assistance on Joel's observed hostile combat target, with healing taking priority.
+ENABLE_BUFFS/DISABLE_BUFFS controls automatic supported buffs. spell_toolkit
+contains the actually learned spell IDs, with names only for verified metadata.
+Automatic buffs use the highest supported known rank on eligible party members,
+with healing/combat taking priority. A request or cast GO is not a confirmed buff;
+only lastBuff.auraConfirmed confirms its target aura. Unknown spell metadata does
+not mean a spell is unlearned, and a known spell does not mean a usable control.
+professions contains the actual learned skill ranks and known recipe IDs. Use
+those facts and the reported automatic gathering/disenchanting state; do not
+claim a control is absent merely because it is not a model action.
 Be honest about these limits;
 never claim to see or do an action absent from the supplied observations. Choose
 an action only for a clear current request from Joel addressed to you or the whole party, never hypothetical examples
@@ -164,7 +173,7 @@ server positively marks them skinnable, including after Joel loots them.
 Arlen gathers eligible observed herbs. This is installed automatic
 behavior, not a chat action, and ordinary looting is a separate capability.
 Use its reported reason to explain waits for combat, healing, movement, bag
-space or other work. It stays near stationary Joel and yields to party safety.
+space or other work. It stays near Joel, can briefly approach an eligible observed target while he walks, and yields to party safety.
 Do not say automatic skinning is unavailable when this configured routine is
 reported. configured does not prove a learned skill, knife or suitable target;
 the controller checks those actual facts before each attempt. A COMPLETED
@@ -203,12 +212,80 @@ controls and honors new human commands. equippedItems lists only confirmed
 equipment swaps with newer carried/equipment observations and released leases;
 use actual names there. Displaced equipment stays in carried bags and is
 protected from automatic sale. A comparison-pending or unconfirmed phase is a
-wait, never an equipped result. The routine requires no model equip action.
+wait, never an equipped result. The routine requires no model equip action. For Mira, town_upkeep.disenchant
+reports automatic disenchanting after the party gear checks. Unknown item,
+quest, proficiency or party equipment facts cause a KEEP. A confirmed receipt
+requires an observed own cast, exact input consumption and received materials;
+never claim disenchanting succeeded from a request or pending phase.
 """
 
 
 CLASS_IDS = {"warrior": 1, "paladin": 2, "hunter": 3, "rogue": 4, "priest": 5,
              "deathknight": 6, "shaman": 7, "mage": 8, "warlock": 9, "druid": 11}
+
+
+def spell_toolkit_context(raw, actions, guid):
+    """Read only actual same-body learned spells, never model-selected casts."""
+    unknown = {"available": False}
+    if (not isinstance(raw, dict) or not isinstance(raw.get("sessionId"), str)
+            or not 1 <= len(raw["sessionId"]) <= 128
+            or raw["sessionId"] != actions.get("sessionId")
+            or integer(raw.get("selfGuid", 0)) != guid
+            or integer(actions.get("selfGuid", 0)) != guid
+            or raw.get("spellbookKnown") is not True):
+        return unknown
+    rows = raw.get("spells", [])
+    if not isinstance(rows, list) or len(rows) > 4096:
+        return unknown
+    clean, seen = [], set()
+    for row in rows:
+        if not isinstance(row, dict): return unknown
+        spell = integer(row.get("spellId", 0))
+        if not 0 < spell < 2**31 or spell in seen: return unknown
+        seen.add(spell)
+        item = {"spellId": spell, "metadataKnown": row.get("metadataKnown") is True}
+        if item["metadataKnown"]:
+            item.update(name=plain_text(row.get("name"), 100),
+                        rank=integer(row.get("rank", 0)),
+                        selfOnly=row.get("selfOnly") is True,
+                        automaticBuffSupported=row.get("automaticBuffSupported") is True)
+        clean.append(item)
+    # Keep all supported named controls even for an unusually large spellbook.
+    clean.sort(key=lambda row: (not row.get("automaticBuffSupported", False), row["spellId"]))
+    result = {"available": True, "spellbookRevision": str(integer(raw.get("spellbookRevision", 0))),
+              "spells": clean[:128], "spellsTruncated": len(clean) > 128}
+    last = raw.get("lastBuff", {})
+    if isinstance(last, dict) and re.fullmatch(r"[a-z_]{1,100}", str(last.get("phase", ""))):
+        result["lastBuff"] = {"phase": last["phase"], "spellId": integer(last.get("spellId", 0)),
+                              "targetGuid": str(integer(last.get("targetGuid", 0))),
+                              "serverCastGo": last.get("serverCastGo") is True,
+                              "auraConfirmed": last.get("auraConfirmed") is True}
+    return result
+
+
+def professions_context(raw, guid, session):
+    if (not isinstance(raw, dict) or not isinstance(raw.get("sessionId"), str)
+            or not 1 <= len(raw["sessionId"]) <= 128 or raw["sessionId"] != session or integer(raw.get("selfGuid", 0)) != guid):
+        return {"available": False}
+    skills, recipes = raw.get("skills", []), raw.get("recipes", [])
+    if not isinstance(skills, list) or len(skills) > 128 or not isinstance(recipes, list) or len(recipes) > 4096:
+        return {"available": False}
+    out = {"available": True, "skillsKnown": raw.get("skillsKnown") is True,
+           "spellsKnown": raw.get("spellsKnown") is True, "active": raw.get("active") is True,
+           "skills": [], "recipes": []}
+    if out["skillsKnown"]:
+        for row in skills:
+            if not isinstance(row, dict): return {"available": False}
+            skill, rank, maximum = (integer(row.get(k, 0)) for k in ("skillId", "rank", "maximum"))
+            if not 0 < skill < 2**32 or not 0 < rank <= maximum <= 450: return {"available": False}
+            out["skills"].append({"skillId": skill, "rank": rank, "maximum": maximum})
+    if out["spellsKnown"]:
+        for row in recipes[:128]:
+            if not isinstance(row, dict): return {"available": False}
+            out["recipes"].append({"known": row.get("known") is True, "spellId": integer(row.get("spellId", 0)),
+                                   "skillId": integer(row.get("skillId", 0))})
+        out["recipesTruncated"] = len(recipes) > 128
+    return out
 
 
 def reward_metadata_snapshot(response):
@@ -500,7 +577,7 @@ def quest_task_identity(character_guid, rpc_url, quest_id):
             "rpcUrl": rpc_url, "questId": quest_id}
 
 
-def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None):
+def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None, body_session=None):
     unknown = {"active": False, "busy": False}
     try:
         ports = {1: 8086, 4: 8087, 5: 8088}
@@ -540,6 +617,22 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
                 except ConversationError:pass
                 clean.append(item)
             if clean:result['equippedItems']=clean
+        if guid == 4 and own.get("disenchantConfigured") is True:
+            de = {"configured": True, "observationsCurrent": active and body_session is not None and own.get("bodySessionId") == body_session}
+            phase = own.get("disenchantPhase", "")
+            if phase in ("waiting_for_party_comparison", "reconciling_previous_attempt", "ready_for_unused_gear",
+                         "waiting_for_normal_receipt", "completed", "blocked", "outcome_unconfirmed"):
+                de["phase"] = phase
+            rows = own.get("disenchantedItems", [])
+            if de["observationsCurrent"] and isinstance(rows, list) and len(rows) <= 1:
+                for row in rows:
+                    if (not isinstance(row, dict) or row.get("bodySessionId") != body_session or row.get("status") != "COMPLETED"
+                            or row.get("cleanupUnconfirmed") is True
+                            or any(row.get(k) is not True for k in ("ownGoObserved", "inputConsumedObserved", "outputInventoryObserved", "lootReleaseObserved", "leaseReleased"))
+                            or not 0 < integer(row.get("baselineInventoryRevision", 0)) < integer(row.get("observedInventoryRevision", 0)) < 2**64
+                            or not 0 < integer(row.get("entry", 0)) < 2**32): continue
+                    de["lastConfirmedItem"] = {"entry": integer(row["entry"]), "name": plain_text(row.get("name"),120), "status": "COMPLETED"}
+            result["disenchant"] = de
         confirmed = integer(own.get("confirmedOperations", 0))
         if confirmed <= 168:
             result["confirmedOperations"] = confirmed
@@ -547,7 +640,7 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
         if isinstance(phase, str) and re.fullmatch(r"[a-z0-9_]{1,120}", phase):
             result["phase"] = phase
         control = "follow" if revoke_follow else revoke_control
-        if control is not None and control not in ("follow", "healing", "assist", "loot"):
+        if control is not None and control not in ("follow", "healing", "assist", "loot", "buffs"):
             raise ConversationError("Town control revocation is invalid")
         if control is not None and result["busy"]:
             activity = record.get("activityId", "")
@@ -556,8 +649,8 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
                 prior = read_json(folder / "follow-revoked.json")
                 controls = set()
                 if all(prior.get(key) == value for key,value in marker.items()):
-                    previous = prior.get("controls", ["follow", "healing", "assist", "loot"])
-                    if not isinstance(previous,list) or any(name not in ("follow","healing","assist","loot") for name in previous):
+                    previous = prior.get("controls", ["follow", "healing", "assist", "loot", "buffs"])
+                    if not isinstance(previous,list) or any(name not in ("follow","healing","assist","loot","buffs") for name in previous):
                         raise ConversationError("Town control marker is invalid")
                     controls.update(previous)
                 controls.add(control)
@@ -712,7 +805,7 @@ HARVEST_REASONS = {
     'learning_unknown':'Waiting for the actual learned skill and spell.',
     'combat_or_healing':'Waiting while an observed party member is fighting or needs healing.',
     'active_attacker':'Waiting while an observed creature attacks the party.',
-    'owner_not_stopped':'Waiting for Joel to be observed standing still.',
+    'owner_not_stopped':'Waiting for a fresh, safe observation of Joel’s movement.',
     'owner_too_far':'Waiting to remain near Joel.',
     'control_intent_changed':'Waiting because Joel moved or control intentions changed.',
     'observation_or_cleanup_unavailable':'Waiting for confirmed observations or cleanup.',
@@ -1062,7 +1155,8 @@ class RPC:
                           "buddy-quest-items.state",
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
-                          "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist"):
+                          "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist",
+                          "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state"):
             raise ConversationError("Unsupported chat method")
         self.request_id += 1
         body = json.dumps({"jsonrpc": "2.0", "id": self.request_id,
@@ -1237,6 +1331,7 @@ class BuddyControls:
         self.reward_items = {"available": False, "items": []}
         self.quest_items, self.quest_items_available = {}, False
         self.inventory, self.inventory_names, self.inventory_session = {"available": False}, {}, ""
+        self.spell_toolkit, self.professions = {"available": False}, {"available": False}
 
     def refresh(self):
         try:
@@ -1277,6 +1372,18 @@ class BuddyControls:
             self.actions_available = True
         except ConversationError:
             self.actions_available = False
+        self.spell_toolkit, self.professions = {"available": False}, {"available": False}
+        if self.actions_available:
+            try:
+                raw = self.rpc.call("buddy-actions.spell_toolkit", {})
+                self.spell_toolkit = spell_toolkit_context(raw, self.actions, self.character_guid)
+            except ConversationError:
+                pass
+        try:
+            raw = self.rpc.call("buddy-professions.state", {})
+            self.professions = professions_context(raw, self.character_guid, self.actions.get("sessionId") if self.actions_available else None)
+        except ConversationError:
+            pass
         for name, method in (("quests", "buddy-quests.state"), ("loot", "buddy-loot.state"),
                              ("trade", "buddy-trade.state"), ("journal", "buddy-quests.journal"),
                              ("quest_items", "buddy-quest-items.state")):
@@ -1342,6 +1449,8 @@ class BuddyControls:
             task["observationsCurrent"] = False
         state = {"abilities": {"following": self.actions_available,
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
+                              "buffing": self.actions_available and self.spell_toolkit.get("available") is True
+                              and any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", [])),
                               "quests": self.quests_available, "looting": self.loot_available,
                               "trading": self.trade_available,
                               "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack","warlock":"knownShadowBolt"}.get(self.character_class,"unsupported")) is True,
@@ -1356,7 +1465,9 @@ class BuddyControls:
                  "quest_task": task,
                  "quest_execution": self.quest_items if self.quest_items_available else {"available": False},
                  "inventory": self.inventory,
-                 "town_upkeep": party_town_snapshot(self.character_guid),
+                 "spell_toolkit": self.spell_toolkit,
+                 "professions": self.professions,
+                 "town_upkeep": party_town_snapshot(self.character_guid, body_session=self.inventory.get("sessionId")),
                  "party_maintenance": party_maintenance_snapshot(self.character_guid,self.quests.get('sessionId') if self.quests_available else None),
                  "controls": self.actions if self.actions_available else {},
                  "party": self.party.get("group", {}) if self.party_available else {},
@@ -1883,6 +1994,9 @@ class BuddyControls:
             return "That ability isn't ready yet."
         if action in ("ENABLE_HEALING", "HEAL_ONCE") and self.character_class != "priest":
             return "I don't have a healing ability available."
+        if action == "ENABLE_BUFFS" and (self.spell_toolkit.get("available") is not True
+                or not any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", []))):
+            return "I don't have a supported learned buff ready yet."
         commands = {
             "FOLLOW": ("buddy-actions.follow", {"enabled": True}, "I'll follow you across nearby open ground."),
             "STOP_FOLLOWING": ("buddy-actions.follow", {"enabled": False}, "I've turned following off."),
@@ -1891,10 +2005,12 @@ class BuddyControls:
             "HEAL_ONCE": ("buddy-actions.heal_once", {}, "I'm trying Lesser Heal now."),
             "ENABLE_ASSIST": ("buddy-actions.assist", {"enabled": True}, "I'll assist your observed combat target when it's safe."),
             "DISABLE_ASSIST": ("buddy-actions.assist", {"enabled": False}, "Combat assistance is off."),
+            "ENABLE_BUFFS": ("buddy-actions.buffs", {"enabled": True}, "I'll maintain my supported buffs when it's safe."),
+            "DISABLE_BUFFS": ("buddy-actions.buffs", {"enabled": False}, "Automatic buffing is off."),
         }
         method, params, acknowledgement = commands[action]
-        if action in ("ENABLE_HEALING", "DISABLE_HEALING", "ENABLE_ASSIST", "DISABLE_ASSIST"):
-            party_town_snapshot(self.character_guid, revoke_control="healing" if "HEALING" in action else "assist")
+        if action in ("ENABLE_HEALING", "DISABLE_HEALING", "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS"):
+            party_town_snapshot(self.character_guid, revoke_control="healing" if "HEALING" in action else "buffs" if "BUFFS" in action else "assist")
         try:
             self.actions = self.rpc.call(method, params)
         except ConversationError:
@@ -1910,6 +2026,10 @@ class BuddyControls:
             return "I couldn't enable automatic healing yet."
         if action == "ENABLE_ASSIST" and self.actions.get("assisting") is not True:
             return "I couldn't enable combat assistance yet."
+        if action == "ENABLE_BUFFS" and self.actions.get("buffing") is not True:
+            return "I couldn't enable automatic buffing yet."
+        if action == "DISABLE_BUFFS" and self.actions.get("buffing", False) is not False:
+            return "I couldn't confirm automatic buffing is off yet."
         if action == "HEAL_ONCE":
             reason = self.actions.get("reason", "")
             if reason == "heal_transport_written_waiting_for_server":

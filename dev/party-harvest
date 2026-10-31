@@ -24,7 +24,8 @@ def load(name, filename):
 c, prof = load('harvest_converse', 'converse'), load('harvest_professions', 'secondary-professions')
 Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
 ROLES = {1: ('Arlen', 8086, 182, 2366), 5: ('Rook', 8088, 393, 8613)}
-IDLE_PHASES = frozenset(('waiting_near_class_trainer_or_mailbox', 'no_affordable_unattempted_class_training', 'training_budget_reserved'))
+IDLE_PHASES = frozenset(('waiting_near_class_trainer_or_mailbox', 'no_affordable_unattempted_class_training',
+    'training_budget_reserved', 'waiting_for_idle_companion'))
 PASSIVE_QUEST_PHASES = frozenset(('following_joels_quest_changes', 'waiting_for_own_quest_objectives',
     'waiting_for_joel_at_followup_giver_or_server_offer'))
 METHODS = frozenset(('buddy-world.snapshot', 'buddy-actions.status', 'buddy-party.state', 'buddy-quests.state',
@@ -90,6 +91,8 @@ def higher_priority(guid):
     return False
 
 def maintenance_idle(actor):
+    # A moving follow can yield to a guarded detour. This only admits the
+    # independent fresh worker check; cast/combat/unknown movement still fail it.
     return (actor.status.get('phase') in IDLE_PHASES
         and not any(row.get('status')=='reserved' for row in actor.data.get('training',[]))
         and (actor.data.get('mail') or {}).get('status')!='reserved')
@@ -168,6 +171,7 @@ class Worker:
         self.priority=priority or (lambda:higher_priority(guid))
         self.status={'guid':guid,'skillId':self.skill,'spellId':self.spell,'phase':'starting','reason':'starting','busy':False}
         self.probe,self.next_query,self.session,self.token,self.controls,self.anchor=0,0,None,None,None,None
+        self.party_health=None
 
     def persist(self): self.save(copy.deepcopy(self.data))
     def report_wait(self, exc):
@@ -182,7 +186,7 @@ class Worker:
         self.status['bodySessionId']=state['sessionId']
         return state
 
-    def read(self,traveling=False):
+    def read(self,traveling=False,allow_follow_motion=False):
         if self.stopped() or self.priority() or self.now()>=self.deadline: raise Error('Harvest yields to stop or higher-priority work')
         p=self.state()
         if self.session is not None and p['sessionId']!=self.session: raise Error('Harvest body changed')
@@ -199,7 +203,9 @@ class Worker:
         if not c.BuddyControls.quest_scene_safe(a,w,self.guid): raise Error('Harvest yields to character danger')
         if any(a.get(k) is True for k in ('practicing','castPending','autoAttacking','autoAttackRequested','autoAttackUnconfirmed')):
             raise Error('Harvest yields to active actions')
-        if not traveling and any(a.get(k) is True for k in ('moving','traveling')): raise Error('Harvest waits for stopped movement')
+        if (not traveling and (a.get('traveling') is True
+                or a.get('moving') is True and not (allow_follow_motion and a.get('following') is True))):
+            raise Error('Harvest waits for stopped movement')
         owner=a.get('interactionOwner','')
         if owner and not (traveling and owner=='exploration' and a.get('interactionHarvest') is True): raise Error('Harvest yields to another lease')
         if q.get('actionInFlight') is True or loot.get('phase') not in ('idle','disabled') or integer(loot.get('pendingCorpseGuid',0)) or integer(loot.get('pendingGameObjectGuid',0)):
@@ -226,6 +232,7 @@ class Worker:
             raise Error('Harvest needs actual learned skill and known fixed spell')
         protected={integer(m['guid']) for m in group['group']['members'] if m.get('online') is True}
         players=[own,w.get('owner') or {}]+w.get('nearbyPlayers',[])
+        health={}
         for player in players:
             if player.get('present') is True and integer(player.get('guid',0)) in protected:
                 if (player.get('unitFlagsKnown') is not True or integer(player.get('unitFlags',0))&0x80000
@@ -234,16 +241,22 @@ class Worker:
                         or integer(player.get('health',0))>integer(player.get('maxHealth',0))
                         or integer(player.get('health',0))*100<integer(player.get('maxHealth',0))*85):
                     raise Error('Harvest yields to observed party combat or healing')
+                health[integer(player['guid'])]=integer(player.get('health',0))
+        if self.party_health is not None and any(guid not in health or health[guid]<hp for guid,hp in self.party_health.items()):
+            raise Error('Harvest yields to observed party combat or healing')
+        if self.party_health is None:self.party_health=health
         creatures=w.get('nearbyCreatures',[])
         if not isinstance(creatures,list) or len(creatures)>32: raise Error('Harvest threat observation exceeds its bound')
         if any(n.get('present') is True and n.get('alive') is True and n.get('attackVictimKnown') is True and integer(n.get('attackVictimGuid',0)) in protected and integer(n.get('attackAgeMs',0))<=5000 for n in creatures):
             raise Error('Harvest yields to an actual current attacker')
         owner=w.get('owner') or {}
-        if owner.get('present') is not True or not point(owner) or integer(owner.get('guid',0))!=3 or owner.get('movementFlagsKnown') is not True or integer(owner.get('movementFlags',0)) or integer(owner.get('mapId',0))!=integer(own.get('mapId',0)):
+        if owner.get('present') is not True or not point(owner) or integer(owner.get('guid',0))!=3 or owner.get('movementFlagsKnown') is not True or integer(owner.get('movementFlags',0))&~0x1ff or integer(owner.get('mapId',0))!=integer(own.get('mapId',0)):
             raise Error('Harvest waits for the observed owner to stop')
-        if distance(owner,a['position'])>30:raise Error('Harvest stays near the observed owner')
-        anchor=tuple(owner.get(k,0) for k in ('mapId','x','y','z','positionRevision'))
-        controls=tuple(a.get(k,False) for k in ('following','healing','assisting'))+(loot.get('enabled',False),)
+        if integer(owner.get('movementFlags',0))&0xff and integer(owner.get('positionAgeMs',0))>2000:
+            raise Error('Harvest waits for the observed owner to stop')
+        if distance(owner,a['position'])>60:raise Error('Harvest stays near the observed owner')
+        anchor=tuple(owner.get(k,0) for k in ('guid','mapId'))
+        controls=tuple(a.get(k,False) for k in ('following','healing','assisting','buffing'))+(loot.get('enabled',False),)
         if self.anchor is not None and anchor!=self.anchor or self.controls is not None and controls!=self.controls:
             raise Error('Owner or human control intent changed during harvest')
         return p,w,a,anchor,controls
@@ -279,11 +292,11 @@ class Worker:
         attempted={(r['session'],integer(r['guid'])) for r in self.data['attempts']}
         choices=[self.target(r) for r in rows]
         choices=[t for t in choices if t is not None and (p['sessionId'],integer(t['guid'])) not in attempted
-            and integer(t.get('mapId',0))==integer(a['position'].get('mapId',0)) and distance(t,a['position'])<=20 and distance(t,w['owner'])<=30 and abs(t['z']-a['position']['z'])<=1.5]
+            and integer(t.get('mapId',0))==integer(a['position'].get('mapId',0)) and distance(t,a['position'])<=40 and distance(t,w['owner'])<=60 and abs(t['z']-a['position']['z'])<=1.5]
         if not choices and self.skill==393:
             nearby=[r for r in rows if isinstance(r,dict) and point(r.get('creature'))
                 and r['creature'].get('present') is True and integer(r['creature'].get('mapId',0))==integer(a['position'].get('mapId',0))
-                and distance(r['creature'],a['position'])<=20]
+                and distance(r['creature'],a['position'])<=40]
             if nearby:
                 nearest=min(nearby,key=lambda r:distance(r['creature'],a['position']))
                 self.status['reason']=TARGET_REASONS.get(nearest.get('approachReason') or nearest.get('reason'),'no_verified_target')
@@ -300,6 +313,7 @@ class Worker:
         current=matches[0]
         target=current.get('creature' if self.skill==393 else 'object',{})
         if (binding(target)!=binding(row['target']) or not point(target) or target.get('present') is not True
+                or distance(target,w['owner'])>60
                 or self.skill==393 and current.get('fullyLootedObserved') is not True
                 or not traveling and self.target(current) is None):raise Error('Actual harvest target changed')
         return p,matches[0]
@@ -316,11 +330,11 @@ class Worker:
         return clean
 
     def approach(self,row):
-        lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'exploration','leaseMs':8000,'harvest':True})
+        lease=self.rpc.call('buddy-actions.acquire_interaction',{'owner':'exploration','leaseMs':15000,'harvest':True})
         self.token=lease.get('token')
         if not isinstance(self.token,str) or not 1<=len(self.token)<=128 or lease.get('state',{}).get('interactionHarvest') is not True:
             raise Error('Guarded harvest approach lease is unconfirmed')
-        limit=min(self.deadline,self.now()+6)
+        limit=min(self.deadline-2,self.now()+12)
         if isinstance(self.rpc,RPC):self.rpc.deadline=limit
         result,done=queue.Queue(maxsize=1),threading.Event()
         traveler=self.rpc.fork(limit) if isinstance(self.rpc,RPC) else self.rpc
@@ -405,7 +419,7 @@ class Worker:
 
     def tick(self):
         self.status.update(updatedAt=time.time(),reason='')
-        self.deadline=self.now()+20
+        self.deadline=self.now()+15
         if isinstance(self.rpc,RPC):self.rpc.deadline=self.deadline;self.rpc.calls=0
         pending=next((r for r in self.data['attempts'] if r['phase'] in ('approaching','attempt_reserved','unconfirmed')),None)
         if pending is not None:
@@ -418,8 +432,8 @@ class Worker:
         if self.now()<self.next_query:return self.status
         self.next_query=self.now()+2
         if len(self.data['attempts'])>=128:self.status.update(phase='harvest_reservation_bound',reason='reservation_bound');return self.status
-        self.session,self.anchor,self.controls=None,None,None
-        scene=self.read();self.session=scene[0]['sessionId'];self.anchor,self.controls=scene[3:]
+        self.session,self.anchor,self.controls,self.party_health=None,None,None,None
+        scene=self.read(allow_follow_motion=True);self.session=scene[0]['sessionId'];self.anchor,self.controls=scene[3:]
         target=self.candidates(scene)
         if target is None:self.status.update(phase='no_verified_harvest_opportunity',reason=self.status['reason'] or 'no_verified_target');return self.status
         row={'session':self.session,'guid':integer(target['guid']),'target':copy.deepcopy(target),'request':'harvest_'+uuid.uuid4().hex,'phase':'approaching','attempted':False}
@@ -431,8 +445,8 @@ class Worker:
             self.data['attempts'].append(row);self.persist()
             sent=False
             try:
-                current=self.read();self.exact_target(current,row)
-                if distance(target,current[2]['position'])>3:self.approach(row)
+                current=self.read(allow_follow_motion=True);self.exact_target(current,row)
+                if distance(target,current[2]['position'])>3 or current[2].get('moving') is True:self.approach(row)
                 state,ready=self.exact_target(self.read(),row)
                 if ready.get('ready') is not True:raise Error('Harvest cast target is not ready')
                 row.update(phase='attempt_reserved',attempted=True,inventory=integer(state.get('inventoryRevision',0)),skills=integer(state.get('skillsRevision',0)))
