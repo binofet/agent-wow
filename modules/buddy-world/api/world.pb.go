@@ -87,10 +87,12 @@ type PlayerState struct {
 	Offhand         *EquippedWeapon `protobuf:"bytes,55,opt,name=offhand,proto3" json:"offhand,omitempty"`
 	OffhandRevision uint64          `protobuf:"varint,56,opt,name=offhand_revision,json=offhandRevision,proto3" json:"offhand_revision,omitempty"`
 	// Observed public UNIT_FIELD_BYTES_0 race byte, not an inferred race.
-	RaceKnown     bool   `protobuf:"varint,57,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
-	RaceId        uint32 `protobuf:"varint,58,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RaceKnown      bool   `protobuf:"varint,57,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId         uint32 `protobuf:"varint,58,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
+	AuraStateKnown bool   `protobuf:"varint,59,opt,name=aura_state_known,json=auraStateKnown,proto3" json:"aura_state_known,omitempty"`
+	AuraState      uint32 `protobuf:"varint,60,opt,name=aura_state,json=auraState,proto3" json:"aura_state,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PlayerState) Reset() {
@@ -525,6 +527,20 @@ func (x *PlayerState) GetRaceKnown() bool {
 func (x *PlayerState) GetRaceId() uint32 {
 	if x != nil {
 		return x.RaceId
+	}
+	return 0
+}
+
+func (x *PlayerState) GetAuraStateKnown() bool {
+	if x != nil {
+		return x.AuraStateKnown
+	}
+	return false
+}
+
+func (x *PlayerState) GetAuraState() uint32 {
+	if x != nil {
+		return x.AuraState
 	}
 	return 0
 }
@@ -2452,8 +2468,11 @@ type SnapshotResponse struct {
 	// Client-written estimate used only to rank/cache observations. Raw Self and
 	// observed distance fields remain server-only and retain their original ages.
 	DiscoveryAnchor *DiscoveryAnchor `protobuf:"bytes,45,opt,name=discovery_anchor,json=discoveryAnchor,proto3" json:"discovery_anchor,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Actual same-map non-bones corpses, bounded by the existing 32-entry cache.
+	// Consumers must establish current group membership before targeting one.
+	PlayerCorpses []*CorpseState `protobuf:"bytes,46,rep,name=player_corpses,json=playerCorpses,proto3" json:"player_corpses,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SnapshotResponse) Reset() {
@@ -2801,11 +2820,18 @@ func (x *SnapshotResponse) GetDiscoveryAnchor() *DiscoveryAnchor {
 	return nil
 }
 
+func (x *SnapshotResponse) GetPlayerCorpses() []*CorpseState {
+	if x != nil {
+		return x.PlayerCorpses
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
-	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xad\x10\n" +
+	"\x1fmodules/buddy-world/world.proto\x12\x16warcraftbuddy.world.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\"\xf6\x10\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -2876,7 +2902,10 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x10offhand_revision\x188 \x01(\x04R\x0foffhandRevision\x12\x1d\n" +
 	"\n" +
 	"race_known\x189 \x01(\bR\traceKnown\x12\x17\n" +
-	"\arace_id\x18: \x01(\rR\x06raceId\"\x8e\x03\n" +
+	"\arace_id\x18: \x01(\rR\x06raceId\x12(\n" +
+	"\x10aura_state_known\x18; \x01(\bR\x0eauraStateKnown\x12\x1d\n" +
+	"\n" +
+	"aura_state\x18< \x01(\rR\tauraState\"\x8e\x03\n" +
 	"\x12EquipmentSlotState\x12\x12\n" +
 	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x1d\n" +
 	"\n" +
@@ -3092,7 +3121,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xd2\x16\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x9e\x17\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -3143,7 +3172,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0eself_equipment\x18+ \x03(\v2*.warcraftbuddy.world.v1.EquipmentSlotStateR\rselfEquipment\x12B\n" +
 	"\n" +
 	"own_corpse\x18, \x01(\v2#.warcraftbuddy.world.v1.CorpseStateR\townCorpse\x12R\n" +
-	"\x10discovery_anchor\x18- \x01(\v2'.warcraftbuddy.world.v1.DiscoveryAnchorR\x0fdiscoveryAnchor2\x90\x02\n" +
+	"\x10discovery_anchor\x18- \x01(\v2'.warcraftbuddy.world.v1.DiscoveryAnchorR\x0fdiscoveryAnchor\x12J\n" +
+	"\x0eplayer_corpses\x18. \x03(\v2#.warcraftbuddy.world.v1.CorpseStateR\rplayerCorpses2\x90\x02\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12^\n" +
@@ -3211,17 +3241,18 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	1,  // 25: warcraftbuddy.world.v1.SnapshotResponse.self_equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
 	2,  // 26: warcraftbuddy.world.v1.SnapshotResponse.own_corpse:type_name -> warcraftbuddy.world.v1.CorpseState
 	6,  // 27: warcraftbuddy.world.v1.SnapshotResponse.discovery_anchor:type_name -> warcraftbuddy.world.v1.DiscoveryAnchor
-	4,  // 28: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	5,  // 29: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
-	15, // 30: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	14, // 31: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	16, // 32: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
-	16, // 33: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	31, // [31:34] is the sub-list for method output_type
-	28, // [28:31] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	2,  // 28: warcraftbuddy.world.v1.SnapshotResponse.player_corpses:type_name -> warcraftbuddy.world.v1.CorpseState
+	4,  // 29: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	5,  // 30: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
+	15, // 31: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	14, // 32: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	16, // 33: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
+	16, // 34: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	32, // [32:35] is the sub-list for method output_type
+	29, // [29:32] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }

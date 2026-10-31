@@ -34,7 +34,16 @@ func selfDefenseRig(t *testing.T, class uint32) (*Service, *fakeSession, *worldv
 	target.LevelKnown, target.Level = true, 5
 	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, 100
 	f.world.NearbyCreatures = []*worldv1.CreatureState{target}
-	learnSpells(s, lesserHeal, smite, fireball, shadowBolt, sinisterStrike, autoAttack)
+	switch class {
+	case 5:
+		learnSpells(s, lesserHeal, smite)
+	case 8:
+		learnSpells(s, fireball)
+	case 9:
+		learnSpells(s, shadowBolt)
+	case 4:
+		learnSpells(s, sinisterStrike, autoAttack)
+	}
 	return s, f, target, advance
 }
 

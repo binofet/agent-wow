@@ -96,6 +96,9 @@ uses an exact gold_copper amount explicitly stated by Joel (1gold=10000copper,
 assistance on Joel's observed hostile combat target, with healing taking priority.
 ENABLE_BUFFS/DISABLE_BUFFS controls automatic supported buffs. spell_toolkit
 contains the actually learned spell IDs, with names only for verified metadata.
+Their mechanic contracts include targeting, costs, casting time, equipment and
+stealth/behind requirements. A blockedReason names an unsupported mechanic;
+report that exact reason instead of claiming that the learned spell is absent.
 Automatic buffs use the highest supported known rank on eligible party members,
 with healing/combat taking priority. A request or cast GO is not a confirmed buff;
 only lastBuff.auraConfirmed confirms its target aura. Unknown spell metadata does
@@ -259,6 +262,13 @@ def spell_toolkit_context(raw, actions, guid):
                         rank=integer(row.get("rank", 0)),
                         selfOnly=row.get("selfOnly") is True,
                         automaticBuffSupported=row.get("automaticBuffSupported") is True)
+            # Declarative mechanics and prerequisites from the actual spellbook.
+            for key in ("capability","targetRule","blockedReason"):
+                value=row.get(key,"")
+                if isinstance(value,str) and re.fullmatch(r"[a-z_0-9]{0,100}",value):item[key]=value
+            for key in ("castTimeMs","flatCost","requiredSubclassMask"):
+                item[key]=integer(row.get(key,0))
+            item.update(requiresStealth=row.get("requiresStealth") is True,requiresBehind=row.get("requiresBehind") is True)
         clean.append(item)
     # Keep all supported named controls even for an unusually large spellbook.
     clean.sort(key=lambda row: (not row.get("automaticBuffSupported", False), row["spellId"]))

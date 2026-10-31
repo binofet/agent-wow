@@ -47,9 +47,8 @@ func (s *Service) applySpellbookLocked(known map[uint32]bool) {
 		}
 	}
 	s.knownSpells = make(map[uint32]bool, len(known))
-	for _, id := range trackedSpellIDs() {
-		s.setKnownSpell(id, false)
-	}
+	s.state.KnownLesserHeal, s.state.KnownSmite, s.state.KnownFireball, s.state.KnownShadowBolt, s.state.KnownSinisterStrike = false, false, false, false, false
+	s.state.KnownAutoAttack, s.improvedSinister1, s.improvedSinister2 = false, false, false
 	for id := range known {
 		s.setKnownSpell(id, true)
 	}
@@ -77,6 +76,31 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
 		v := &actionsv1.KnownSpell{SpellId: id}
+		if r, ok := s.learnedContractsLocked()[id]; ok {
+			cap := r.Capability()
+			v.MetadataKnown = true
+			v.Name = r.Name
+			v.FamilyId = r.Family
+			v.Rank = r.Rank
+			v.ManaPercent = r.CostPercent
+			v.FlatCost = r.Cost
+			v.PowerType = r.Power
+			v.CastTimeMs = r.CastMs
+			v.Capability = string(cap.Kind)
+			v.TargetRule = cap.Target
+			v.BlockedReason = cap.Blocked
+			v.SelfOnly = cap.Target == "self"
+			v.RangeYards = float32(r.MaxHostile)
+			if cap.Target == "ally" || cap.Target == "dead_ally" {
+				v.RangeYards = float32(r.MaxFriendly)
+			}
+			v.RequiredItemClass = r.ItemClass
+			v.RequiredSubclassMask = r.SubclassMask
+			v.RequiresStealth = r.Attrs[0]&0x20000 != 0
+			v.RequiresBehind = r.Behind
+		} else {
+			v.BlockedReason = "metadata_unknown"
+		}
 		if r := buffMetadata(id); r.id != 0 {
 			v.MetadataKnown = true
 			v.Name = r.name
@@ -84,7 +108,7 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.Rank = r.rank
 			v.ManaPercent = r.manaPercent
 			v.SelfOnly = !r.party
-			v.AutomaticBuffSupported = err == nil && w.Self != nil && w.Self.Guid == s.selfGUID && w.Self.Present && w.Self.ClassKnown && w.Self.ClassId == r.class
+			v.AutomaticBuffSupported = err == nil && w.Self != nil && w.Self.Guid == s.selfGUID && w.Self.Present && w.Self.ClassKnown
 			if r.party {
 				v.RangeYards = 30
 			}

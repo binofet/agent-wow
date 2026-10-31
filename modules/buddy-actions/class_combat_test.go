@@ -57,11 +57,11 @@ func TestMageUsesActualClassKnownFireballAndBaseManaWithoutHealReserve(t *testin
 		t.Fatal("transport claimed damage")
 	}
 }
-func TestClassUnknownOrWrongKnownSpellNeverFallsBackToAnotherClass(t *testing.T) {
+func TestClassUnknownOrAbsentLearnedDamageCannotCast(t *testing.T) {
 	for _, change := range []func(*Service, *fakeSession){
 		func(s *Service, f *fakeSession) { f.world.Self.ClassKnown = false },
-		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 8; learnSpells(s, smite, lesserHeal) },
-		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 5; learnSpells(s, fireball) },
+		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 8; learnSpells(s, lesserHeal) },
+		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 5; learnSpells(s, lesserHeal) },
 	} {
 		s, f, _ := assistRig(t)
 		change(s, f)
@@ -71,12 +71,13 @@ func TestClassUnknownOrWrongKnownSpellNeverFallsBackToAnotherClass(t *testing.T)
 		}
 	}
 }
-func TestNonPriestCannotHealEvenIfUnexpectedHealSpellAppearsKnown(t *testing.T) {
+func TestActuallyLearnedHealDoesNotRequirePriestClassWhitelist(t *testing.T) {
 	s, f, _ := assistRig(t)
 	f.world.Self.ClassId = 8
 	learnSpells(s, fireball, lesserHeal)
+	f.world.Owner.Health = 40
 	r, err := s.HealOnce(context.Background(), &emptypb.Empty{})
-	if err != nil || r.HealAttempts != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 {
+	if err != nil || r.HealAttempts != 1 || lastCast(f) != lesserHeal {
 		t.Fatal(r, err)
 	}
 }

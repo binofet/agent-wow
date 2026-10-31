@@ -36,12 +36,15 @@ func TestWarlockShadowBoltUsesVerifiedRankManaAndActualClass(t *testing.T) {
 }
 
 func TestShadowBoltRejectsUnknownHigherRankWrongClassManaAndRange(t *testing.T) {
-	for _, mode := range []string{"unknown", "higher_rank", "wrong_class", "class_unknown", "mana", "range", "silenced"} {
+	for _, mode := range []string{"unknown", "higher_rank", "class_unknown", "mana", "range", "silenced"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := assistRig(t)
 			f.world.Self.ClassId, f.world.Self.BaseManaKnown, f.world.Self.BaseMana, f.world.Self.Power = 9, true, 100, 10
 			if mode != "unknown" && mode != "higher_rank" {
 				learnSpells(s, shadowBolt)
+			}
+			if mode == "unknown" {
+				learnSpells(s)
 			}
 			switch mode {
 			case "higher_rank":

@@ -1,0 +1,20 @@
+{
+  "build": 12340,
+  "records": 49839,
+  "sourceCommit": "49bdb66ce2fe00771c9e27a9859afd344b7b1344",
+  "rankSource": {
+    "url": "https://raw.githubusercontent.com/azerothcore/azerothcore-wotlk/49bdb66ce2fe00771c9e27a9859afd344b7b1344/data/sql/base/db_world/spell_ranks.sql",
+    "sha256": "1b94535b3e05912b08b2dfc219ab047ef6698bc04c3b49241d95fab41050cd04",
+    "bytes": 58147
+  },
+  "customAttributesSource": {
+    "url": "https://raw.githubusercontent.com/azerothcore/azerothcore-wotlk/49bdb66ce2fe00771c9e27a9859afd344b7b1344/data/sql/base/db_world/spell_custom_attr.sql",
+    "bytes": 8329,
+    "sha256": "88ec6b136abec0c333cf36bdf92e1278abdc4932223668ab04e1a89e7cf60140"
+  },
+  "dbcSHA256": {
+    "Spell.dbc": "d5cce1a83550dcfa9eb2f0251dbb11fd24c272534b2b1a9b230924a44d817ab3",
+    "SpellCastTimes.dbc": "919ca9b65cb144a3a9cf0ce10d2a25fcc7cdccf33c752ed376e086ff62f8ccec",
+    "SpellRange.dbc": "82d261be5e42d90f62a13642a3fd8f421fe1b0056ad8ed7dea73cdf4f8c8cb7f"
+  }
+}

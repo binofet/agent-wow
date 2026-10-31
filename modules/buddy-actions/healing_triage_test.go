@@ -213,6 +213,7 @@ func TestHealingTriageAutomaticThresholdManualInjuryAndActualRankCost(t *testing
 				f.world.Owner = nil
 				rankLearn(s, 2052)
 				f.world.Self.Power = 20
+				want = true
 				if mode == "rank_exact" {
 					f.world.Self.Power, want = 21, true
 				}
@@ -227,6 +228,9 @@ func TestHealingTriageAutomaticThresholdManualInjuryAndActualRankCost(t *testing
 			}
 			if mode == "rank_exact" && (lastCast(f) != 2052 || healingCastTarget(f) != 1) {
 				t.Fatal("actual rank/self binding lost", state(t, s))
+			}
+			if mode == "rank_short" && lastCast(f) != 2050 {
+				t.Fatal("did not select affordable learned lower rank")
 			}
 		})
 	}

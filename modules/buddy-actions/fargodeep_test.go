@@ -145,7 +145,7 @@ func TestFargodeepHealsPartyBeforeOffenseAndPreservesHealReserve(t *testing.T) {
 	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, 5, 100
 	f.world.Self.Power = 20
 	s.Tick(context.Background())
-	if got := state(t, s); got.AssistAttempts != 0 || got.Reason != "assist_mana_reserved_for_healing" {
+	if got := state(t, s); got.AssistAttempts != 0 || got.Reason != "no_affordable_learned_damage_spell_in_range" {
 		t.Fatal(got)
 	}
 }

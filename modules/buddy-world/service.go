@@ -103,6 +103,7 @@ func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 		TargetKnown: p.known[0x12] && p.known[0x13], TargetGuid: uint64(p.fields[0x12]) | uint64(p.fields[0x13])<<32, FactionTemplate: p.fields[0x37], UnitFlags_2: p.fields[0x3c],
 		VitalsAgeMs: age(now, p.vitalsAt), ObservationAgeMs: age(now, p.observedAt),
 		SpeedsKnown: p.speedsKnown, WalkSpeed: p.walkSpeed, RunSpeed: p.runSpeed,
+		AuraStateKnown: p.known[0x3d], AuraState: p.fields[0x3d],
 	}
 	r.HealthKnown = p.known[unitHealth] && p.known[unitMaxHealth] && r.MaxHealth > 0 && r.Health <= r.MaxHealth
 	r.PowerType = p.fields[unitBytes0] >> 24
@@ -152,6 +153,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	}
 	s.state.appendSnapshot(r, now)
 	r.DiscoveryAnchor = s.state.discoverySnapshot(now)
+	s.state.appendPlayerCorpses(r, now)
 	s.state.appendRequested(r, now, request.GetCreatureEntry(), request.GetGameObjectEntry(), request.GetCreatureFactionTemplate())
 	if request.GetIncludeGatheringObjects() {
 		s.state.appendGatheringObjects(r, now)

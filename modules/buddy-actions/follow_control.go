@@ -2,7 +2,6 @@ package buddyactions
 
 import (
 	"context"
-	"math"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -24,7 +23,7 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 		pause("formation_owner_outside_supported_range")
 		return
 	}
-	if !world.Self.SpeedsKnown || math.IsNaN(float64(world.Self.RunSpeed)) || math.Abs(float64(world.Self.RunSpeed)-7) > 0.01 {
+	if observedRunSpeed(world.Self) == 0 {
 		pause("normal_run_speed_unknown")
 		return
 	}

@@ -28,6 +28,7 @@ rpc:
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
+  SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

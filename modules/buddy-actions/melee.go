@@ -55,6 +55,9 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 	}
 	gameRange := math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)
 	d := distance(s.pos, targetPosition)
+	if d > gameRange-0.5 && s.stealthApproachLocked(ctx, w, target.Guid) {
+		return true
+	}
 	if d > gameRange-0.5 {
 		if !s.stopAutoAttackLocked(ctx) {
 			return true
@@ -83,6 +86,10 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 		s.stopAutoAttackLocked(ctx)
 		return true
 	}
+	if r := s.weaponStrikeLocked(self, targetPosition); r.ID != 0 && r.Attrs[0]&0x20000 != 0 && s.stealthedLocked() {
+		s.castOffenseLocked(ctx, r.ID, target.Guid, time.Second)
+		return true
+	}
 	if s.autoTarget == 0 {
 		s.autoTarget = target.Guid
 		s.state.AutoAttackRequested = true
@@ -104,7 +111,10 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 		s.state.Reason = "rogue_auto_attack_waiting_for_energy"
 		return true
 	}
-	s.castOffenseLocked(ctx, s.selectedSpellLocked(sinisterStrike).id, target.Guid, time.Second)
+	r := s.weaponStrikeLocked(self, targetPosition)
+	if r.ID != 0 {
+		s.castOffenseLocked(ctx, r.ID, target.Guid, time.Second)
+	}
 	return true
 }
 
@@ -112,7 +122,7 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 // autonomous pull or a general navigator. Normal server range checks still run.
 func (s *Service) approachMeleeLocked(ctx context.Context, w *worldv1.SnapshotResponse, target position, d, stopDistance float64) bool {
 	{
-		if d > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 || !w.Self.SpeedsKnown || math.Abs(float64(w.Self.RunSpeed)-7) > 0.01 {
+		if d > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 || observedRunSpeed(w.Self) == 0 {
 			s.state.Reason = "rogue_target_outside_bounded_ground_approach"
 			s.stopLocked(ctx)
 			return false

@@ -8,6 +8,7 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
 
 // The class and learned-spell gates select a known rank of one offensive ability.
@@ -145,19 +146,9 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
 	}
-	rank, maxRange := s.selectedSpellLocked(smite), float64(28)
-	if self.ClassId == 8 {
-		rank, maxRange = s.selectedSpellLocked(fireball), 33
-		if !s.state.KnownFireball {
-			return fail("fireball_not_in_known_spells")
-		}
-	} else if self.ClassId == 9 {
-		rank, maxRange = s.selectedSpellLocked(shadowBolt), 28
-		if !s.state.KnownShadowBolt {
-			return fail("shadow_bolt_not_in_known_spells")
-		}
-	} else if !s.state.KnownSmite {
-		return fail("smite_not_in_known_spells")
+	r := s.bestDamageLocked(self, targetPosition)
+	if r.ID == 0 {
+		return fail("no_affordable_learned_damage_spell_in_range")
 	}
 	if self.UnitFlags&0x2000 != 0 {
 		return fail("caster_silenced")
@@ -166,17 +157,10 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 		s.state.Reason = "assist_throttled_or_pending"
 		return false
 	}
-	if distance(s.pos, targetPosition) > maxRange {
+	if distance(s.pos, targetPosition) > r.MaxHostile-2 {
 		return fail("assist_target_outside_conservative_range")
 	}
-	cost, reserve := manaBudget(self, uint64(rank.manaPercent)), uint64(0)
-	if self.ClassId == 5 {
-		percent := uint64(s.selectedSpellLocked(lesserHeal).manaPercent)
-		if percent == 0 {
-			percent = 16
-		} // Preserve the existing reserve when healing knowledge is absent.
-		reserve = manaBudget(self, percent)
-	}
+	cost, reserve := spellCost(r, self), s.healingReserveLocked(self)
 	if !self.PowerKnown || self.PowerType != 0 || cost == 0 || uint64(self.Power) < cost+reserve {
 		return fail("assist_mana_reserved_for_healing")
 	}
@@ -188,7 +172,7 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if !s.faceEnemyLocked(ctx, targetPosition) {
 		return false
 	}
-	return s.castOffenseLocked(ctx, rank.id, target.Guid, 3*time.Second)
+	return s.castOffenseLocked(ctx, r.ID, target.Guid, max(1500*time.Millisecond, time.Duration(r.GcdMs)*time.Millisecond))
 }
 
 func (s *Service) faceEnemyLocked(ctx context.Context, target position) bool {
@@ -228,6 +212,9 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 		}
 	}
 	now := s.now()
+	if r, ok := s.learnedContractsLocked()[spell]; ok {
+		s.reserveSpellCooldownLocked(r)
+	}
 	s.castCount++
 	s.nextAssist = now.Add(throttle)
 	s.nextHeal = now.Add(1500 * time.Millisecond)
@@ -292,7 +279,7 @@ func creaturePosition(c *worldv1.CreatureState) (position, bool, bool) {
 func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.LastCastFailure = code
 	s.state.CastPending = false
-	if !spellFamily(s.pendingSpell, lesserHeal) {
+	if s.spellKindLocked(s.pendingSpell) != spellcatalog.Heal {
 		s.failedAssistTarget = s.pendingTarget
 		s.failedAssistCastTarget = s.pendingTarget
 		s.nextAssist = s.now().Add(5 * time.Second)

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-­I
+ŠO
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"×
@@ -115,7 +115,7 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"®
+verified_legs (RverifiedLegs"®
 
 KnownSpell
 spell_id (RspellId%
@@ -127,7 +127,34 @@ KnownSpell
 range_yards (R
 rangeYards
 	self_only (RselfOnly8
-automatic_buff_supported	 (RautomaticBuffSupported"à
+automatic_buff_supported	 (RautomaticBuffSupported
+
+capability
+ (	R
+capability
+target_rule (	R
+targetRule%
+blocked_reason (	RblockedReason 
+cast_time_ms (R
+castTimeMs
+	flat_cost (RflatCost
+
+power_type (R	powerType.
+required_item_class (RrequiredItemClass4
+required_subclass_mask (RrequiredSubclassMask)
+requires_stealth (RrequiresStealth'
+requires_behind (RrequiresBehind"þ
+SpellOperation
+spell_id (RspellId
+target_guid (R
+targetGuid
+
+capability (	R
+capability
+phase (	Rphase+
+transport_written (RtransportWritten$
+server_cast_go (RserverCastGo'
+effect_observed (ReffectObserved"à
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -161,7 +188,7 @@ targetGuid
 	last_buff (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
 
 session_id (	R	sessionId
-	self_guid (RselfGuid"Ó
+	self_guid (RselfGuid"¯
 State
 	following (R	following
 healing (Rhealing
@@ -252,7 +279,8 @@ buffReason#
 	last_buffi (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
 
 session_idj (	R	sessionId
-	self_guidk (RselfGuidJFGJId2Ä
+	self_guidk (RselfGuidZ
+last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationJFGJId2Ä
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

@@ -102,6 +102,25 @@ message KnownSpell {
   float range_yards = 7;
   bool self_only = 8;
   bool automatic_buff_supported = 9;
+  string capability = 10;
+  string target_rule = 11;
+  string blocked_reason = 12;
+  uint32 cast_time_ms = 13;
+  uint32 flat_cost = 14;
+  int32 power_type = 15;
+  int32 required_item_class = 16;
+  uint32 required_subclass_mask = 17;
+  bool requires_stealth = 18;
+  bool requires_behind = 19;
+}
+message SpellOperation {
+  uint32 spell_id = 1;
+  uint64 target_guid = 2;
+  string capability = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  bool server_cast_go = 6;
+  bool effect_observed = 7;
 }
 message ObservedAura {
   uint32 slot = 1;
@@ -229,6 +248,7 @@ message State {
   BuffOperation last_buff = 105;
   string session_id = 106;
   uint64 self_guid = 107;
+  SpellOperation last_spell_operation = 108;
 }
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);

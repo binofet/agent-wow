@@ -136,7 +136,7 @@ func (s *Service) buffCastPacketLocked(code uint32, p []byte) (bool, error) {
 		if guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
 		}
-		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid) {
+		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, s.implicitSelfSpellLocked(op.view.SpellId, op.view.TargetGuid)) {
 			return true, bad
 		}
 		if code == opcode.SMSGSpellGo {
@@ -190,7 +190,7 @@ func (s *Service) buffContextLocked(w *worldv1.SnapshotResponse, members map[uin
 	return true
 }
 func (s *Service) buffTargetLocked(w *worldv1.SnapshotResponse, members map[uint64]bool, r buffSpell, guid uint64) bool {
-	if !s.knownSpells[r.id] || w.Self.ClassId != r.class || guid != s.selfGUID && (!r.party || !members[guid] || s.independent) {
+	if !s.knownSpells[r.id] || guid != s.selfGUID && (!r.party || !members[guid] || s.independent) {
 		return false
 	}
 	target := observedHealingPlayer(w, guid)
@@ -198,7 +198,7 @@ func (s *Service) buffTargetLocked(w *worldv1.SnapshotResponse, members map[uint
 		return false
 	}
 	// Intellect is useful for observed mana users; no class inference is needed.
-	if r.family == 1459 && (!target.PowerKnown || target.PowerType != 0) {
+	if intellectBuff(r.id) && (!target.PowerKnown || target.PowerType != 0) {
 		return false
 	}
 	if s.hasBuffLocked(guid, r) {
@@ -253,10 +253,27 @@ func (s *Service) buffTickLocked(ctx context.Context, w *worldv1.SnapshotRespons
 		}
 	}
 	sort.Slice(targets[1:], func(i, j int) bool { return targets[i+1] < targets[j+1] })
-	families := []uint32{588, 168, 687, 1243, 1459}
+	families := []uint32{}
+	seenFamilies := map[uint32]bool{}
+	for id, known := range s.knownSpells {
+		if known {
+			r := buffMetadata(id)
+			if r.id != 0 && !seenFamilies[r.family] {
+				seenFamilies[r.family] = true
+				families = append(families, r.family)
+			}
+		}
+	}
+	sort.Slice(families, func(i, j int) bool {
+		a, b := buffMetadata(families[i]), buffMetadata(families[j])
+		if a.party != b.party {
+			return !a.party
+		}
+		return families[i] < families[j]
+	})
 	for _, family := range families {
 		r := highestBuff(s.knownSpells, family)
-		if r.id == 0 || r.class != w.Self.ClassId {
+		if r.id == 0 {
 			continue
 		}
 		for _, target := range targets {
@@ -272,7 +289,7 @@ func (s *Service) buffTickLocked(ctx context.Context, w *worldv1.SnapshotRespons
 				}
 			}
 			fresh, err := s.snapshot(ctx)
-			if err != nil || !s.buffContextLocked(fresh, freshMembers) || !s.refreshPositionLocked(fresh) || !s.buffTargetLocked(fresh, freshMembers, r, target) {
+			if err != nil || fresh.Self == nil || fresh.Self.ClassId != w.Self.ClassId || !s.buffContextLocked(fresh, freshMembers) || !s.refreshPositionLocked(fresh) || !s.buffTargetLocked(fresh, freshMembers, r, target) {
 				s.state.BuffReason = "buff_context_changed_before_cast"
 				return false
 			}

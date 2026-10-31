@@ -109,7 +109,7 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	player := func(guid uint64, x float32) *worldv1.PlayerState {
-		return &worldv1.PlayerState{Guid: guid, ClassKnown: true, ClassId: 5, Present: true, MapKnown: true, PositionKnown: true, X: x, PositionRevision: 1, MovementFlagsKnown: true, HealthKnown: true, Health: 50, MaxHealth: 100, PowerKnown: true, Power: 128, MaxPower: 128, PowerType: 0, UnitFlagsKnown: true, AliveKnown: true, Alive: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7}
+		return &worldv1.PlayerState{Guid: guid, ShapeshiftFormKnown: true, AuraStateKnown: true, ClassKnown: true, ClassId: 5, Present: true, MapKnown: true, PositionKnown: true, X: x, PositionRevision: 1, MovementFlagsKnown: true, HealthKnown: true, Health: 50, MaxHealth: 100, PowerKnown: true, Power: 128, MaxPower: 128, PowerType: 0, UnitFlagsKnown: true, AliveKnown: true, Alive: true, SpeedsKnown: true, WalkSpeed: 2.5, RunSpeed: 7}
 	}
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: player(1, 0), Owner: player(3, 10)}}
 	f.world.Self.Health = 100
@@ -193,7 +193,7 @@ func TestFollowRefusesUnknownStaleUnsafeRangeMapAndSpeed(t *testing.T) {
 		func(w *worldv1.SnapshotResponse) { w.Owner.MovementFlags = 1; w.Owner.PositionAgeMs = 3000 },
 		func(w *worldv1.SnapshotResponse) { w.Self.MovementFlags = 0x200000 }, func(w *worldv1.SnapshotResponse) { w.Owner.Alive = false },
 		func(w *worldv1.SnapshotResponse) { w.Owner.X = 40 }, func(w *worldv1.SnapshotResponse) { w.Owner.Z = 3 },
-		func(w *worldv1.SnapshotResponse) { w.Self.RunSpeed = 14 }, func(w *worldv1.SnapshotResponse) { w.Self.SpeedsKnown = false },
+		func(w *worldv1.SnapshotResponse) { w.Self.RunSpeed = 14.1 }, func(w *worldv1.SnapshotResponse) { w.Self.SpeedsKnown = false },
 		func(w *worldv1.SnapshotResponse) { w.Self.MapKnown = false }, func(w *worldv1.SnapshotResponse) { w.Owner.Guid = 4 },
 		func(w *worldv1.SnapshotResponse) { w.Self.UnitFlags = 0x40000 },
 	} {
@@ -258,7 +258,7 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 
 func TestHealKnownSpellHealthManaRangeAndStaleGates(t *testing.T) {
 	for _, change := range []func(*Service, *fakeSession){
-		func(s *Service, f *fakeSession) { s.state.KnownLesserHeal = false },
+		func(s *Service, f *fakeSession) { s.setKnownSpell(2050, false) },
 		func(s *Service, f *fakeSession) { f.world.Owner.Health = 100 }, func(s *Service, f *fakeSession) { f.world.Owner.HealthKnown = false },
 		func(s *Service, f *fakeSession) { f.world.Self.Power = 20 }, func(s *Service, f *fakeSession) { f.world.Self.PowerType = 1 },
 		func(s *Service, f *fakeSession) { f.world.Owner.X = 36 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },

@@ -87,9 +87,12 @@ func (s *Service) setKnownSpell(spell uint32, known bool) {
 			s.state.KnownShadowBolt = found
 		case sinisterStrike:
 			s.state.KnownSinisterStrike = found
+		default:
+			goto special
 		}
 		return
 	}
+special:
 	switch spell {
 	case autoAttack:
 		s.state.KnownAutoAttack = known
@@ -121,7 +124,10 @@ func (s *Service) offensiveDamageLocked(spell, damage uint32) {
 		s.state.SinisterStrikeDamageEvents++
 		s.state.SinisterStrikeDamageTotal += uint64(damage)
 	default:
-		return
+		kind := s.spellKindLocked(spell)
+		if kind != "damage" && kind != "weapon_strike" {
+			return
+		}
 	}
 	s.state.AssistDamageEvents++
 	s.state.AssistDamageTotal += uint64(damage)

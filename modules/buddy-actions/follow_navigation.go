@@ -308,8 +308,12 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if elapsed < 0.15 {
 		return true
 	}
-	p, index, ok := followPathStep(s.pos, f.path, f.index, 7*elapsed)
-	if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+0.01 {
+	speed := observedRunSpeed(s.lastWorld.GetSelf())
+	if speed == 0 {
+		return fail("follow_speed_unknown", errors.New("current observed run speed is unavailable"))
+	}
+	p, index, ok := followPathStep(s.pos, f.path, f.index, speed*elapsed)
+	if !ok || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > speed*elapsed+0.01 {
 		return fail("follow_navigation_invalid_step", errors.New("formation movement exceeded a verified ground segment"))
 	}
 	if !s.movementLocked(ctx, opcode.MSGMoveHeartbeat, p, true) {

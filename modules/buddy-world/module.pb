@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-˙W
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"≠
+èY
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ˆ
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -103,7 +103,10 @@ levelKnown
 offhand_revision8 (RoffhandRevision
 
 race_known9 (R	raceKnown
-race_id: (RraceId"é
+race_id: (RraceId(
+aura_state_known; (RauraStateKnown
+
+aura_state< (R	auraState"é
 EquipmentSlotState
 slot (Rslot
 
@@ -319,7 +322,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"“
+permanent_bonus (RpermanentBonus"û
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -370,7 +373,8 @@ selfSkills@
 self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipmentB
 
 own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
-discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchor2ê
+discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchorJ
+player_corpses. (2#.warcraftbuddy.world.v1.CorpseStateRplayerCorpses2ê
 
 BuddyWorld]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^

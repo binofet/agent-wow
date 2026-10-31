@@ -71,6 +71,8 @@ message PlayerState {
   // Observed public UNIT_FIELD_BYTES_0 race byte, not an inferred race.
   bool race_known = 57;
   uint32 race_id = 58;
+  bool aura_state_known = 59;
+  uint32 aura_state = 60;
 }
 
 // Private own equipment slots0..18; bags and bank slots are excluded.
@@ -390,6 +392,9 @@ message SnapshotResponse {
   // Client-written estimate used only to rank/cache observations. Raw Self and
   // observed distance fields remain server-only and retain their original ages.
   DiscoveryAnchor discovery_anchor = 45;
+  // Actual same-map non-bones corpses, bounded by the existing 32-entry cache.
+  // Consumers must establish current group membership before targeting one.
+  repeated CorpseState player_corpses = 46;
 }
 
 service BuddyWorld {

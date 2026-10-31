@@ -1,10 +1,26 @@
 package buddyworld
 
 import (
+	"sort"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
+
+func (s *observations) appendPlayerCorpses(r *worldv1.SnapshotResponse, now time.Time) {
+	self := s.players[0]
+	if !self.present || !self.mapKnown {
+		return
+	}
+	for _, p := range s.corpses {
+		owner := uint64(p.fields[corpseOwner]) | uint64(p.fields[corpseOwner+1])<<32
+		if owner == 0 || owner>>48 != 0 || !ownReclaimableCorpse(p, owner) || !p.mapKnown || p.mapID != self.mapID {
+			continue
+		}
+		r.PlayerCorpses = append(r.PlayerCorpses, &worldv1.CorpseState{Guid: p.guid, OwnerGuid: owner, Present: true, MapKnown: true, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision, FlagsKnown: true, Flags: p.fields[corpseFlags], ObservationAgeMs: age(now, p.observedAt)})
+	}
+	sort.Slice(r.PlayerCorpses, func(i, j int) bool { return r.PlayerCorpses[i].Guid < r.PlayerCorpses[j].Guid })
+}
 
 // Build12340 UpdateFields.h + Corpse.h: OWNER6/7, FLAGS6+0x1b,
 // DYNAMIC_FLAGS6+0x1c, CORPSE_FLAG_BONES1. Corpse::Create sets actual owner

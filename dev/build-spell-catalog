@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Build ID-indexed spell contracts from client DBCs and pinned public ranks."""
+import argparse,hashlib,importlib.machinery,importlib.util,json,struct
+from pathlib import Path
+
+loader=importlib.machinery.SourceFileLoader('content_sql',str(Path(__file__).with_name('build-game-catalog')))
+spec=importlib.util.spec_from_loader(loader.name,loader);sql=importlib.util.module_from_spec(spec);loader.exec_module(sql)
+
+def dbc(path, fields):
+    data=path.read_bytes();magic,count,width,size,strings=struct.unpack_from('<4sIIII',data)
+    if magic!=b'WDBC' or width!=fields or size!=4*fields or len(data)!=20+count*size+strings:raise ValueError('Unexpected DBC: '+path.name)
+    return [struct.unpack_from('<'+str(fields)+'I',data,20+i*size) for i in range(count)],data[20+count*size:]
+
+def signed(n):return n if n<0x80000000 else n-0x100000000
+def floating(n):return struct.unpack('<f',struct.pack('<I',n))[0]
+
+def build(folder,ranks):
+    rows,strings=dbc(folder/'Spell.dbc',234)
+    casts={r[0]:r for r in dbc(folder/'SpellCastTimes.dbc',4)[0]}
+    ranges={r[0]:r for r in dbc(folder/'SpellRange.dbc',40)[0]}
+    chains={r['spell_id']:(r['first_spell_id'],r['rank']) for r in sql.sql_rows(ranks)}
+    custom={r['spell_id']:r['attributes'] for r in sql.sql_rows(ranks.with_name('spell_custom_attr.sql'))}
+    def string(at):return strings[at:strings.index(0,at)].decode('utf-8')
+    for r in sorted(rows,key=lambda r:r[0]):
+        chain,rank=chains.get(r[0],(r[0],1));cast=casts.get(r[28]);reach=ranges.get(r[46])
+        value=dict(id=r[0],name=string(r[136]),family=chain,rank=rank,level=r[39],behind=bool(custom.get(r[0],0)&0x20000),
+            attrs=list(r[4:12]),stances=r[12],stancesNot=r[14],targetMask=r[16],
+            focus=r[18],facing=r[19],conditions=list(r[20:28]),familySet=r[208],familyFlags=list(r[209:212]),power=signed(r[41]),cost=r[42],costPerLevel=r[43],
+            costPercent=r[204],perSecond=r[44],castMs=max(0,signed(cast[1])) if cast else 0,
+            castPerLevel=signed(cast[2]) if cast else 0,castMinMs=max(0,signed(cast[3])) if cast else 0,
+            timingKnown=cast is not None,rangeKnown=reach is not None,
+            minHostile=floating(reach[1]) if reach else 0,minFriendly=floating(reach[2]) if reach else 0,
+            maxHostile=floating(reach[3]) if reach else 0,maxFriendly=floating(reach[4]) if reach else 0,
+            cooldownMs=r[29],category=r[1],categoryCooldownMs=r[30],gcdMs=r[206],durationIndex=r[40],
+            itemClass=signed(r[68]),subclassMask=r[69],inventoryMask=r[70],runeCost=r[226],
+            reagents=[dict(id=r[52+i],count=r[60+i]) for i in range(8) if r[52+i] and r[60+i]],
+            totems=[v for v in r[50:52] if v],effects=[dict(kind=r[71+i],a=r[86+i],b=r[89+i],aura=r[95+i],
+                points=signed(r[80+i])+1,dice=signed(r[74+i]),perLevel=floating(r[77+i]),misc=signed(r[110+i]),
+                trigger=r[116+i],periodMs=r[98+i],chain=r[104+i],radius=r[92+i]) for i in range(3) if r[71+i]])
+        # Keep false/zero defaults implicit; retain arrays to make constraints explicit.
+        yield {k:v for k,v in value.items() if v or k in ('id','itemClass')}
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--dbc-dir',type=Path,required=True);p.add_argument('--source',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+    manifest=json.loads((a.source/'manifest.json').read_text());rank=a.source/'spell_ranks.sql'
+    for name in ('spell_ranks','spell_custom_attr'):
+        if hashlib.sha256((a.source/(name+'.sql')).read_bytes()).hexdigest()!=manifest['files'][name]['sha256']:raise ValueError(name+' source checksum mismatch')
+    a.output.mkdir(parents=True,exist_ok=True);count=0
+    with (a.output/'spells.jsonl').open('w') as out:
+        for value in build(a.dbc_dir,rank):out.write(json.dumps(value,ensure_ascii=False,separators=(',',':'))+'\n');count+=1
+    proof=dict(build=12340,records=count,sourceCommit=manifest['commit'],rankSource=manifest['files']['spell_ranks'],customAttributesSource=manifest['files']['spell_custom_attr'],
+        dbcSHA256={name:hashlib.sha256((a.dbc_dir/name).read_bytes()).hexdigest() for name in ('Spell.dbc','SpellCastTimes.dbc','SpellRange.dbc')})
+    (a.output/'provenance.json').write_text(json.dumps(proof,indent=2)+'\n');print(json.dumps(dict(records=count,bytes=(a.output/'spells.jsonl').stat().st_size)))
+
+if __name__=='__main__':main()

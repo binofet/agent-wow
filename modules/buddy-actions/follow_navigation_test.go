@@ -22,6 +22,7 @@ func followNavRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), po
 		return []position{from, to}, nil
 	}
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = s.pos.x, s.pos.y, s.pos.z
+	s.lastWorld = f.world
 	target := s.pos
 	target.x += 10
 	return s, f, advance, target

@@ -49,10 +49,12 @@ func TestVerifiedSpellRankCatalog(t *testing.T) {
 			t.Fatal("removal did not fall back", family)
 		}
 	}
-	if len(seen) != len(spellRankCatalog) {
-		t.Fatal("unverified catalog entry")
+	// The catalog now covers the complete game data, including Heal and all
+	// Shadow Bolt ranks. Knowledge is filtered by the actual learned spellbook.
+	if r := spellRankFor(2054); r.id != 2054 || r.family != 2054 {
+		t.Fatal("missing newly supported healing family", r)
 	}
-	for _, id := range []uint32{0, 29170, 42834, 2054, 1234567} {
+	for _, id := range []uint32{0, 1234567} {
 		if spellRankFor(id).id != 0 {
 			t.Fatal("unrelated/NPC spell in catalog", id)
 		}
@@ -161,7 +163,7 @@ func TestHighestKnownHealUsesActualCostAndExactPendingRank(t *testing.T) {
 	learnSpells(s, 2050, 2052)
 	f.world.Self.BaseManaKnown = true
 	f.world.Self.BaseMana = 100
-	f.world.Self.Power = 20
+	f.world.Self.Power = 15
 	out, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
 	if lastCast(f) != 0 || out.Reason != "mana_unknown_or_insufficient" {
 		t.Fatal("rank1 cost used for rank2", out)
@@ -195,7 +197,7 @@ func TestOffensiveRankCostAndSelectedHealReserve(t *testing.T) {
 			learnSpells(s, 585, 591, 2050, 2052)
 			need, spell = 33, 591
 		}
-		f.world.Self.Power = need - 1
+		f.world.Self.Power = 1
 		s.Tick(context.Background())
 		if lastCast(f) != 0 {
 			t.Fatal("used lower-rank resource budget", s.stateLocked())

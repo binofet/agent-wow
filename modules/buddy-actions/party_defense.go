@@ -163,36 +163,26 @@ func (s *Service) defenseOffenseAllowedLocked(w *worldv1.SnapshotResponse, targe
 		}
 		limit = math.Max(5, float64(self.CombatReach+c.CombatReach)+4.0/3.0) - 0.5
 		if spell != 0 {
-			if !spellFamily(spell, sinisterStrike) {
+			r, ok := s.learnedContractsLocked()[spell]
+			if !ok || r.Capability().Kind != "weapon_strike" || !s.casterRequirementsLocked(r) || r.Behind && !behindEnemy(s.pos, p) || r.Attrs[0]&0x20000 != 0 && !s.stealthedLocked() {
 				return false
 			}
-			if !self.PowerKnown || self.PowerType != 3 || self.Power < s.state.SinisterStrikeEnergyCost {
+			cost := spellCost(r, self)
+			if r.Family == sinisterStrike {
+				cost = uint64(s.state.SinisterStrikeEnergyCost)
+			}
+			if !self.PowerKnown || self.PowerType != 3 || uint64(self.Power) < cost {
 				s.state.Reason = "party_defense_resources_changed_before_cast"
 				return false
 			}
 		}
 	} else {
-		family := uint32(0)
-		switch self.ClassId {
-		case 5:
-			family = smite
-		case 8:
-			family = fireball
-		case 9:
-			family = shadowBolt
-		}
-		if family == 0 || !spellFamily(spell, family) || self.UnitFlags&0x2000 != 0 || !self.PowerKnown || self.PowerType != 0 {
+		r, ok := s.learnedContractsLocked()[spell]
+		if !ok || r.Capability().Kind != "damage" || !s.casterRequirementsLocked(r) || self.UnitFlags&0x2000 != 0 || !self.PowerKnown || self.PowerType != 0 {
 			return false
 		}
-		rank := spellRankFor(spell)
-		cost, reserve := manaBudget(self, uint64(rank.manaPercent)), uint64(0)
-		if self.ClassId == 5 {
-			percent := uint64(s.selectedSpellLocked(lesserHeal).manaPercent)
-			if percent == 0 {
-				percent = 16
-			}
-			reserve = manaBudget(self, percent)
-		}
+		limit = r.MaxHostile - 2
+		cost, reserve := spellCost(r, self), s.healingReserveLocked(self)
 		if cost == 0 || uint64(self.Power) < cost+reserve {
 			s.state.Reason = "party_defense_resources_changed_before_cast"
 			return false

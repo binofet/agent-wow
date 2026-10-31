@@ -80,6 +80,7 @@ func nearbyPlayerSnapshot(p observed, now time.Time) *worldv1.PlayerState {
 		AliveKnown: v.AliveKnown, Alive: v.Alive, VitalsAgeMs: v.VitalsAgeMs,
 		ClassKnown: v.ClassKnown, ClassId: v.ClassId, LevelKnown: v.LevelKnown, Level: v.Level,
 		RaceKnown: v.RaceKnown, RaceId: v.RaceId,
+		AuraStateKnown: v.AuraStateKnown, AuraState: v.AuraState,
 		ObservationAgeMs: v.ObservationAgeMs,
 	}
 }

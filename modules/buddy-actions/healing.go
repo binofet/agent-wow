@@ -9,6 +9,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -173,10 +174,6 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = reason
 		return false
 	}
-	if !w.Self.ClassKnown || w.Self.ClassId != 5 {
-		s.state.Reason = "healing_unavailable_for_class"
-		return false
-	}
 	if w.Self.MaxHealth == 0 || w.Self.Health > w.Self.MaxHealth {
 		s.state.Reason = "healing_caster_health_unconfirmed"
 		return false
@@ -189,8 +186,8 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "heal_throttled_or_pending"
 		return false
 	}
-	if !s.state.KnownLesserHeal {
-		s.state.Reason = "lesser_heal_not_in_known_spells"
+	if len(s.candidatesLocked(spellcatalog.Heal)) == 0 {
+		s.state.Reason = "no_known_healing_effect"
 		return false
 	}
 	if w.Self.UnitFlags&0x2000 != 0 {
@@ -202,9 +199,9 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "no_observed_injured_party_member_in_range"
 		return false
 	}
-	heal := s.selectedSpellLocked(lesserHeal)
-	budget := manaBudget(w.Self, uint64(heal.manaPercent))
-	if heal.id == 0 || !w.Self.PowerKnown || w.Self.PowerType != 0 || budget == 0 || uint64(w.Self.Power) < budget {
+	heal := s.bestHealLocked(w.Self, target)
+	budget := spellCost(heal, w.Self)
+	if heal.ID == 0 || !w.Self.PowerKnown || w.Self.PowerType != 0 || uint64(w.Self.Power) < budget {
 		s.state.Reason = "mana_unknown_or_insufficient"
 		return false
 	}
@@ -224,8 +221,8 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_observations_changed_before_cast"
 		return false
 	}
-	freshBudget := manaBudget(fresh.Self, uint64(heal.manaPercent))
-	if fresh.Self.ClassId != 5 || !fresh.Self.ClassKnown || fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
+	freshBudget := spellCost(heal, fresh.Self)
+	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
 		s.state.Reason = "healing_caster_changed_before_cast"
 		return false
 	}
@@ -244,17 +241,23 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_target_no_longer_in_current_party"
 		return false
 	}
+	heal = s.bestHealLocked(fresh.Self, target)
+	if heal.ID == 0 {
+		s.state.Reason = "healing_spell_or_resources_changed_before_cast"
+		return false
+	}
 	now := s.now()
 	s.castCount++
+	s.reserveSpellCooldownLocked(heal)
 	s.nextHeal = now.Add(3 * time.Second)
-	s.castUntil = now.Add(max(5*time.Second, heal.castTime+1500*time.Millisecond))
+	s.castUntil = now.Add(max(5*time.Second, (time.Duration(heal.CastMs)*time.Millisecond)+1500*time.Millisecond))
 	s.state.CastPending = true
 	s.state.HealAttempts++
-	s.pendingSpell, s.pendingTarget = heal.id, target.Guid
+	s.pendingSpell, s.pendingTarget = heal.ID, target.Guid
 	s.nextAssist = now.Add(3 * time.Second)
-	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.id, target.Guid
+	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.ID, target.Guid
 	s.state.LastCastFailure = 0
-	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.id, target.Guid)) {
+	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.ID, target.Guid)) {
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0
 		return false

@@ -115,6 +115,15 @@ func TestOwnCorpseRequiresActualTypeOwnerAndUnambiguousNonBones(t *testing.T) {
 	}
 }
 
+func TestPlayerCorpseExportRetainsActualOwnerAndExcludesBones(t *testing.T) {
+	s:=NewService(1)
+	packet(t,s,opcode.SMSGLoginVerifyWorld,login())
+	r:=packet(t,s,opcode.SMSGUpdateObject,corpseFixture(ownCorpseGUID,4,0))
+	if len(r.PlayerCorpses)!=1 || r.PlayerCorpses[0].OwnerGuid!=4 || r.OwnCorpse!=nil {t.Fatal("foreign party corpse was guessed or hidden",r.PlayerCorpses)}
+	r=packet(t,s,opcode.SMSGUpdateObject,deltaFixture(ownCorpseGUID,map[int]uint32{0x21:1}))
+	if len(r.PlayerCorpses)!=0 {t.Fatal("bones exported as resurrectable corpse")}
+}
+
 func TestOwnCorpseMalformedWholePacketRollsBack(t *testing.T) {
 	s := NewService(1)
 	s.now = func() time.Time { return time.Unix(1000, 0) }

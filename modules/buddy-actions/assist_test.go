@@ -64,7 +64,7 @@ func TestSmiteFacesObservedEnemyAndWaitsForMatchingServerCast(t *testing.T) {
 }
 func TestSmiteRequiresCombatProofHealthyOwnerManaAndAttackableTarget(t *testing.T) {
 	for name, change := range map[string]func(*Service, *fakeSession){
-		"no spell":       func(s *Service, f *fakeSession) { s.state.KnownSmite = false },
+		"no spell":       func(s *Service, f *fakeSession) { s.setKnownSpell(smite, false) },
 		"low health":     func(s *Service, f *fakeSession) { f.world.Owner.Health = 84 },
 		"unknown health": func(s *Service, f *fakeSession) { f.world.Owner.HealthKnown = false },
 		"reserve":        func(s *Service, f *fakeSession) { f.world.Self.Power = 32 }, // ceil9%128+ceil16%128=33

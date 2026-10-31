@@ -19,6 +19,7 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -71,41 +72,49 @@ type Service struct {
 	weapons                                                  map[uint32]weaponProof
 	weaponOrder                                              []uint32
 	knownSpells                                              map[uint32]bool
-	improvedSinister1, improvedSinister2                     bool
-	autoTarget                                               uint64
-	autoStopping                                             bool
-	questApproaching                                         bool
-	lootApproachGuard                                        func(context.Context, *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool)
-	approachDelay                                            func(context.Context, time.Duration) error
-	navDataDir                                               string
-	planPath                                                 func(context.Context, string, position, position) ([]position, error)
-	planMapPath                                              func(context.Context, string, uint32, position, position) ([]position, error)
-	planRecoveryPath                                         func(context.Context, string, uint32, position, position) ([]position, error)
-	planColdridgePath                                        func(context.Context, string, position, position) ([]position, error)
-	planColdridge182Path                                     func(context.Context, string, position, position) ([]position, error)
-	practiceUntil                                            time.Time
-	practiceRoute                                            []position
-	practiceRouteIndex                                       int
-	practiceTarget                                           uint64
-	practicePullStarted                                      bool
-	practiceRouteTarget                                      position
-	practiceReplans                                          int
-	practiceKillCredited                                     bool
-	practiceQuestGoal                                        bool
-	coldridgeGoal                                            coldridgePracticeGoal
-	formation                                                followFormation
-	followNav                                                followNavigation
-	meleeNav                                                 followNavigation
-	recovery                                                 deathRecovery
-	fargodeep                                                fargodeepEncounter
-	fargodeepSeen                                            map[uint64]bool
-	spellbookKnown                                           bool
-	spellbookRevision                                        uint64
-	buffUntil, nextBuff                                      time.Time
-	buffAuras                                                map[uint64]*buffAuraSet
-	buffAuraRevision, buffSequence                           uint64
-	buffBindings                                             map[buffKey]*buffBinding
-	buffOp                                                   *buffAttempt
+	spellData, capabilityCatalog                             *spellcatalog.Catalog
+	capabilities                                             map[uint32]spellcatalog.Spell
+	capabilityRevision                                       uint64
+	spellReady                                               map[uint32]time.Time
+	supportOp                                                *supportAttempt
+	resurrectionBindings                                     map[uint64]bool
+	resurrectionOffer                                        *resurrectionOffer
+
+	improvedSinister1, improvedSinister2 bool
+	autoTarget                           uint64
+	autoStopping                         bool
+	questApproaching                     bool
+	lootApproachGuard                    func(context.Context, *worldv1.SnapshotResponse) (*worldv1.SnapshotResponse, bool)
+	approachDelay                        func(context.Context, time.Duration) error
+	navDataDir                           string
+	planPath                             func(context.Context, string, position, position) ([]position, error)
+	planMapPath                          func(context.Context, string, uint32, position, position) ([]position, error)
+	planRecoveryPath                     func(context.Context, string, uint32, position, position) ([]position, error)
+	planColdridgePath                    func(context.Context, string, position, position) ([]position, error)
+	planColdridge182Path                 func(context.Context, string, position, position) ([]position, error)
+	practiceUntil                        time.Time
+	practiceRoute                        []position
+	practiceRouteIndex                   int
+	practiceTarget                       uint64
+	practicePullStarted                  bool
+	practiceRouteTarget                  position
+	practiceReplans                      int
+	practiceKillCredited                 bool
+	practiceQuestGoal                    bool
+	coldridgeGoal                        coldridgePracticeGoal
+	formation                            followFormation
+	followNav                            followNavigation
+	meleeNav                             followNavigation
+	recovery                             deathRecovery
+	fargodeep                            fargodeepEncounter
+	fargodeepSeen                        map[uint64]bool
+	spellbookKnown                       bool
+	spellbookRevision                    uint64
+	buffUntil, nextBuff                  time.Time
+	buffAuras                            map[uint64]*buffAuraSet
+	buffAuraRevision, buffSequence       uint64
+	buffBindings                         map[buffKey]*buffBinding
+	buffOp                               *buffAttempt
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -135,6 +144,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
+	if s.supportOp != nil {
+		out.LastSpellOperation = proto.Clone(&s.supportOp.view).(*actionsv1.SpellOperation)
+	}
 	out.BuffReason = s.state.BuffReason
 	if s.buffOp != nil {
 		out.LastBuff = proto.Clone(&s.buffOp.view).(*actionsv1.BuffOperation)
@@ -896,6 +908,17 @@ func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.buffTimeoutLocked()
+	if !s.closed && s.acceptResurrectionLocked(ctx) {
+		return
+	}
+	if op := s.supportOp; op != nil && op.view.Phase == "waiting_server" && !s.now().Before(op.until) {
+		op.view.Phase = "outcome_unconfirmed_no_retry"
+		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
+			s.state.CastPending = false
+			s.pendingSpell = 0
+			s.pendingTarget = 0
+		}
+	}
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
@@ -1017,6 +1040,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.state.Healing && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
+		s.lastStep = now
+		return
+	}
+	if s.resurrectionTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1183,6 +1210,12 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	p := packet.Payload
 	malformed := false
+	if handled, err := s.supportPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	if handled, err := s.auraPacketLocked(packet.Opcode, p); handled {
 		if err != nil {
 			s.state.MalformedPackets++
@@ -1310,17 +1343,17 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		if err != nil {
 			malformed = true
 		} else if s.state.CastPending && guid == s.selfGUID && spell == s.pendingSpell && count == s.castCount {
-			if !validCastTargetBody(p, offset, packet.Opcode == opcode.SMSGSpellGo, s.pendingTarget) {
+			if !validCastTargetBody(p, offset, packet.Opcode == opcode.SMSGSpellGo, s.pendingTarget, s.implicitSelfSpellLocked(spell, s.pendingTarget)) {
 				malformed = true
 			} else if packet.Opcode == opcode.SMSGSpellStart {
-				if spellFamily(spell, lesserHeal) {
+				if s.spellKindLocked(spell) == spellcatalog.Heal {
 					s.state.ServerCastStarts++
 				} else {
 					s.state.ServerAssistStarts++
 				}
 				s.state.Reason = "server_cast_started"
 			} else {
-				if spellFamily(spell, lesserHeal) {
+				if s.spellKindLocked(spell) == spellcatalog.Heal {
 					s.state.ServerCastGo++
 					s.state.Reason = "server_spell_go_health_effect_unverified"
 				} else {
