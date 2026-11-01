@@ -166,7 +166,11 @@ class ClaimsTests(unittest.TestCase):
         self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
         for name in ('claims.json', 'lock'):
             target = folder / name; saved = target.read_bytes(); target.unlink(); target.symlink_to(outside)
-            with self.assertRaises((m.Error, OSError)): self.inspect()
+            if name=='lock':
+                self.assertEqual(self.inspect()[0]['id'],result['claim']['id'])
+                with self.assertRaises((m.Error,OSError)):self.claim(self.b,'other',['dev/other'])
+            else:
+                with self.assertRaises((m.Error,OSError)):self.inspect()
             target.unlink(); target.write_bytes(saved); target.chmod(0o600)
         folder.chmod(0o755)
         with self.assertRaisesRegex(m.Error, 'private_claim_directory'): self.inspect()
@@ -175,6 +179,21 @@ class ClaimsTests(unittest.TestCase):
         self.assertEqual(outside.read_text(), 'untouched')
         self.registry.chmod(0o644)
         with self.assertRaisesRegex(m.Error, 'private_owned_regular'): m.context(self.workspaces[0], 1)
+
+    def test_inspect_never_creates_store_or_opens_write_lock_and_permission_errors_have_safe_hints(self):
+        self.assertEqual(self.inspect(),[]);self.assertFalse((self.root/'data/task-claims').exists())
+        first=self.claim();folder=self.root/'data/task-claims';before={p.name:p.read_bytes() for p in folder.iterdir()}
+        original=m.os.open
+        def refuse_lock(path,*args,**kwargs):
+            if Path(path)==folder/'lock':raise PermissionError(13,'denied')
+            return original(path,*args,**kwargs)
+        with patch.object(m.os,'open',side_effect=refuse_lock):
+            self.assertEqual(self.inspect()[0]['id'],first['claim']['id'])
+            with patch.object(m.Path,'cwd',return_value=self.workspaces[0]),contextlib.redirect_stdout(io.StringIO()) as output:
+                code=m.main(['claim','--guid','1','--task','another','--file','dev/another','--ttl-seconds','20'])
+            error=json.loads(output.getvalue());self.assertEqual(code,1);self.assertEqual(error['errno'],13)
+            self.assertEqual(error['operation'],'claim');self.assertEqual(error['hint'],'check_shared_project_write_access')
+        self.assertEqual({p.name:p.read_bytes() for p in folder.iterdir()},before)
 
     def test_atomic_write_failure_preserves_original_claim_and_cleans_temporary(self):
         first = self.claim(); folder = self.root / 'data/task-claims'; before = (folder / 'claims.json').read_bytes()

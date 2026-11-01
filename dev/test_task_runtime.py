@@ -153,6 +153,53 @@ class RuntimeTests(unittest.TestCase):
         runner.persist()
         runner.stopped = lambda: m.stop_requested(store, runner.data)
 
+    def audit(self,runner,count):
+        import hashlib
+        for index in range(count):
+            params=dict(quantity=index,note='observed audit evidence '*10)
+            row=dict(id='audit-'+str(index),method='vendor.buy',params=params,effect='mutation',
+                     requestSHA256=hashlib.sha256(m.packed(dict(method='vendor.buy',params=params))).hexdigest(),
+                     reservedAt=100.0,sourceRevision='a'*64,outcome='rpc_result')
+            runner.data['attempts'].append(row)
+        return runner.data['attempts']
+
+    def test_controller_audit_above_64k_resumes_all_165_rows_without_lua_frame_growth_or_replay(self):
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);rows=self.audit(runner,165)
+            rows[-1]['outcome']='pending';runner.data['pending']=[rows[-1]];runner.persist()
+            self.assertGreater((self.folder/'state.json').stat().st_size,m.MAX_POLICY_STATE)
+            before=copy.deepcopy(rows);resumed=self.runner(store);resumed.tick()
+            self.assertEqual(resumed.data['attempts'],before);self.assertEqual(resumed.data['pending'],[before[-1]])
+            self.assertNotIn('attempts',self.bridge.inputs[-1]);m.packed(self.bridge.inputs[-1],m.MAX_INPUT)
+            with self.assertRaisesRegex(m.Error,'already_attempted'):
+                resumed.request(dict(id=rows[-1]['id'],method='vendor.buy',params=rows[-1]['params']))
+            with self.assertRaisesRegex(m.Error,'pending_outcome_blocks_mutation'):
+                resumed.request(dict(id='new-id',method='vendor.buy',params=rows[-1]['params']))
+            self.assertEqual(self.purchases(),[]);self.assertEqual(m.MAX_POLICY_STATE,65536)
+            with self.assertRaisesRegex(m.Error,'json_size_bound'):m.packed({'large':'x'*65536})
+
+    def test_storage_headroom_and_independent_terminal_record_retire_failed_initial_save_preserving_audit(self):
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.audit(runner,360)
+            runner.data['run']=dict(instance='a'*32,pid=os.getpid(),active=True)
+            runner.persist();before=copy.deepcopy(runner.data['attempts'])
+        goal=self.root/'goal.json';goal.write_text(json.dumps(self.goal));original=m.Store.save
+        def save(store,value,lifecycle=False):
+            if lifecycle:raise m.Error('controller_storage_budget_reached')
+            return original(store,value,lifecycle=lifecycle)
+        with patch.object(m,'Bridge',return_value=self.bridge),patch.object(m,'RPC',return_value=self.rpc),\
+                patch.object(m.signal,'signal'),patch.object(m.Store,'save',save):
+            with self.assertRaisesRegex(m.Error,'controller_storage_budget_reached'):
+                m.main(['run','--guid','87','--session-id','aw-test','--rpc-url',self.rpc.url,
+                        '--goal',str(goal),'--source',str(self.source),'--state-dir',str(self.folder),
+                        '--controller-state-bytes',str(256*1024)])
+        data=m.Store(self.folder).load()
+        self.assertFalse(data['run']['active']);self.assertNotEqual(data['run']['instance'],'a'*32)
+        self.assertEqual(data['hostError'],'controller_storage_budget_reached')
+        self.assertEqual(data['attempts'],before);self.assertEqual(self.purchases(),[])
+        self.assertLess((self.folder/'run-status.json').stat().st_size,16384)
+        self.assertFalse(m.Store(self.folder).held())
+
     def test_stop_marker_binds_exact_body_instance_and_preserves_all_history(self):
         self.bridge.decide = lambda _: self.buy()
         self.rpc.hook = lambda method, _: (_ for _ in ()).throw(m.Error('lost')) if method == 'vendor.buy' else None

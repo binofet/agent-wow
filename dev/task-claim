@@ -211,6 +211,18 @@ def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, tok
     require(stamp(now), 'current_time_invalid')
     require(command in ('inspect', 'claim', 'resume-own', 'renew', 'release'), 'unknown_claim_command')
     if command != 'inspect': require('actor' in ctx, 'registered_actor_worktree_required')
+    if command == 'inspect':
+        # Writers publish complete snapshots by atomic replace. Reading does
+        # not create a directory, open the RW lock, or mutate the shared store.
+        folder=ctx['root']/'data/task-claims';no_links(ctx['root'],folder)
+        try: info=folder.lstat()
+        except FileNotFoundError: return dict(ok=True,root=str(ctx['root']),claims=[])
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid==os.geteuid() and not info.st_mode & 0o077,
+                'private_claim_directory_required')
+        try: data=read_private(folder/'claims.json')
+        except FileNotFoundError: data=dict(version=1,claims=[])
+        validate(data)
+        return dict(ok=True,root=str(ctx['root']),claims=[summary(r,now) for r in data['claims']])
     if command in ('claim', 'resume-own', 'renew'): require(type(ttl) is int and 1 <= ttl <= MAX_TTL, 'explicit_ttl_one_to_28800_seconds_required')
     if command in ('claim', 'resume-own'):
         task, files = task_key(task), file_paths(files)
@@ -221,7 +233,6 @@ def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, tok
         try: data = read_private(folder / 'claims.json')
         except FileNotFoundError: data = dict(version=1, claims=[])
         validate(data)
-        if command == 'inspect': return dict(ok=True, root=str(ctx['root']), claims=[summary(r, now) for r in data['claims']])
         require(all(now >= r['updatedAt'] for r in data['claims']), 'clock_precedes_persisted_claim')
         if command in ('claim', 'resume-own'):
             conflicts = [r for r in data['claims'] if r['releasedAt'] is None and r['expiresAt'] > now
@@ -275,6 +286,9 @@ def main(argv=None):
     except (Error, OSError) as exc:
         result = dict(ok=False, error=str(exc) if isinstance(exc, Error) else 'claim_filesystem_unavailable')
         if isinstance(exc, Error) and exc.conflicts: result['conflicts'] = exc.conflicts
+        if isinstance(exc,OSError):
+            result.update(errno=exc.errno if type(exc.errno) is int else None,operation=args.command,
+                hint='check_shared_claim_snapshot_read_access' if args.command=='inspect' else 'check_shared_project_write_access')
         print(json.dumps(result, sort_keys=True)); return 1
     print(json.dumps(result, sort_keys=True)); return 0
 

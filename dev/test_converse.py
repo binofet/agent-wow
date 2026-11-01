@@ -1765,6 +1765,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn("--ignore-rules", command)
         self.assertFalse(any("dangerously" in arg for arg in command))
         self.assertNotIn("--model", command)
+        self.assertNotIn("--add-dir",command)
 
     def test_tool_error_and_incomplete_events_rejected(self):
         for item in ({"type": "command_execution", "command": "pwd"},
@@ -1986,6 +1987,10 @@ class DeveloperBrainTests(unittest.TestCase):
     def test_developer_flags_enable_coding_without_sandbox_or_other_agents(self):
         command=converse.codex_command('codex','repo','schema','output',developer=True)
         self.assertIn('--approve-for-me',command);self.assertNotIn('--sandbox',command)
+        self.assertEqual(command.count('--add-dir'),1)
+        self.assertEqual(command[command.index('--add-dir')+1],str(converse.ROOT.resolve()))
+        self.assertEqual(command[command.index('--cd')+1],'repo')
+        self.assertIn('no extra server, secret, model, or actor-control authority',converse.DEVELOPER_PERMISSIONS)
         self.assertIn('sandbox_workspace_write.network_access=true',command)
         disabled=[command[i+1] for i,v in enumerate(command[:-1]) if v=='--disable']
         enabled=[command[i+1] for i,v in enumerate(command[:-1]) if v=='--enable']
@@ -2118,6 +2123,8 @@ class MissionRuntimeContextTests(unittest.TestCase):
             last={'response':{'private':'omit'}})
 
     def install(self, repo, kind, data):
+        (repo/'dev').mkdir(exist_ok=True)
+        (repo/'dev/task-runtime').write_bytes(Path(__file__).with_name('task-runtime').read_bytes())
         folder=repo/'data/tasks'/kind/'1/runtime';folder.mkdir(parents=True,mode=0o700,exist_ok=True)
         path=folder/'state.json';path.write_text(json.dumps(data));path.chmod(0o600);return path
 
@@ -2142,6 +2149,37 @@ class MissionRuntimeContextTests(unittest.TestCase):
             self.assertEqual(before,path.read_bytes())
             data['phase']='complete';data['memory']['stack']=[];data['pending']=[];path.write_text(json.dumps(data))
             self.assertEqual(self.read()['expedition']['phase'],'complete')
+
+    def test_large_controller_metadata_uses_terminal_status_and_never_calls_crashed_hosts_active(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);data=self.fixture()
+            data['run']=dict(instance='a'*32,pid=os.getpid(),active=True)
+            data['attempts']=[dict(id='audit-'+str(i),private='retained audit '*40) for i in range(165)]
+            path=self.install(repo,'expedition',data);before=path.read_bytes()
+            self.assertGreater(len(before),65536)
+            runtime=converse.task_runtime_module();store=runtime.Store(path.parent)
+            with store:
+                row=self.read()['expedition'];self.assertTrue(row['available']);self.assertTrue(row['active'])
+                self.assertNotIn('audit-',json.dumps(row));self.assertEqual(row['pendingCount'],1)
+            crashed=self.read()['expedition']
+            self.assertFalse(crashed['active']);self.assertTrue(crashed['exitUnconfirmed']);self.assertFalse(crashed['stopped'])
+            terminal=copy.deepcopy(data);terminal['run'].update(instance='b'*32,previousInstance='a'*32,active=False,stoppedAt=time.time())
+            terminal.update(hostError='controller_storage_budget_reached',hostErrorInstance='b'*32)
+            store.save_run_status(terminal)
+            row=self.read()['expedition'];self.assertTrue(row['available']);self.assertFalse(row['active'])
+            self.assertTrue(row['stopped']);self.assertFalse(row['exitUnconfirmed']);self.assertEqual(row['pendingCount'],1)
+            self.assertEqual(converse.mission_control_snapshot(1,'aw-current','http://127.0.0.1:8086/rpc')['runtimes']['expedition']['stopped'],True)
+            faults=converse.mission_faults(1,'aw-current','http://127.0.0.1:8086/rpc')
+            self.assertEqual([(r['instance'],r['field']) for r in faults],[('b'*32,'hostError')])
+            self.assertEqual(path.read_bytes(),before)  # Metadata/terminal overlay never rewrites audit or pending.
+            # Storage exhaustion may leave an older full snapshot and a fresh, exact terminal record.
+            old=json.loads(before);old['updatedAt']=time.time()-60;path.write_text(json.dumps(old))
+            row=self.read()['expedition'];self.assertTrue(row['available']);self.assertTrue(row['stopped'])
+            self.assertEqual(row['updatedAt'],terminal['run']['stoppedAt'])
+            self.assertEqual(converse.mission_faults(1,'aw-current','http://127.0.0.1:8086/rpc')[0]['field'],'hostError')
+            path.write_bytes(before)
+            terminal['identity']['sessionId']='aw-foreign';store.save_run_status(terminal)
+            row=self.read()['expedition'];self.assertFalse(row['stopped']);self.assertTrue(row['exitUnconfirmed'])
 
     def test_actual_run_source_path_is_developer_metadata_only_and_root_bounded(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):

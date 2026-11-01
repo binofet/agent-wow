@@ -19,7 +19,10 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
-MAX_INPUT, MAX_STATE, MAX_ACTIONS = 32768, 65536, 256
+MAX_INPUT, MAX_POLICY_STATE, MAX_ACTIONS = 32768, 65536, 100000
+MAX_STATE = MAX_POLICY_STATE  # Compatibility: policy/value budget, never audit storage.
+MAX_CONTROLLER_STATE, MAX_CONTROLLER_LIMIT = 16*1024*1024, 256*1024*1024
+LIFECYCLE_HEADROOM = 128*1024
 MAX_SOURCE = 128 * 1024
 ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
 
@@ -85,7 +88,11 @@ def read_file(path, limit, private=False):
 
 
 class Store:
-    def __init__(self, folder): self.folder, self.lock = Path(folder).absolute(), None
+    def __init__(self, folder, max_bytes=None):
+        self.max_bytes = MAX_CONTROLLER_STATE if max_bytes is None else max_bytes
+        require(type(self.max_bytes) is int and 2*LIFECYCLE_HEADROOM <= self.max_bytes <= MAX_CONTROLLER_LIMIT,
+                'controller_storage_budget_invalid')
+        self.folder, self.lock = Path(folder).absolute(), None
 
     def __enter__(self):
         require(self.folder.resolve() == self.folder, 'state_directory_symlink_refused')
@@ -116,8 +123,27 @@ class Store:
             info = self.folder.lstat()
             require(self.folder == self.folder.resolve() and stat.S_ISDIR(info.st_mode)
                     and info.st_uid == os.geteuid() and not info.st_mode & 0o077, 'private_owned_state_directory_required')
-        try: return decoded(read_file(self.folder / 'state.json', MAX_STATE, True))
+        try: data=decoded(read_file(self.folder/'state.json',self.max_bytes,True))
         except FileNotFoundError: return None
+        try: terminal=decoded(read_file(self.folder/'run-status.json',16384,True))
+        except FileNotFoundError: return data
+        require(isinstance(terminal,dict) and terminal.get('version')==1 and terminal.get('active') is False
+                and isinstance(terminal.get('instance'),str) and re.fullmatch('[a-f0-9]{32}',terminal['instance'])
+                and type(terminal.get('stoppedAt')) in (int,float) and math.isfinite(terminal['stoppedAt'])
+                and terminal['stoppedAt']>0 and isinstance(terminal.get('hostError'),str)
+                and len(terminal['hostError'])<=384, 'terminal_run_status_invalid')
+        run=terminal.get('run',{})
+        require(isinstance(run,dict) and run.get('instance')==terminal['instance'] and run.get('active') is False
+                and run.get('stoppedAt')==terminal['stoppedAt'] and type(run.get('pid')) is int and run['pid']>1,
+                'terminal_run_status_invalid')
+        previous=terminal.get('previousInstance')
+        require(previous is None or isinstance(previous,str) and re.fullmatch('[a-f0-9]{32}',previous),
+                'terminal_run_status_invalid')
+        if data.get('identity')==terminal.get('identity') and data.get('run',{}).get('instance') in (terminal['instance'],previous):
+            data['run']=copy.deepcopy(run)
+            if terminal['hostError']:
+                data.update(hostError=terminal['hostError'],hostErrorInstance=terminal['instance'])
+        return data
 
     def write(self, name, raw, limit=MAX_STATE):
         require(isinstance(raw,bytes) and len(raw)<=limit, 'file_size_bound')
@@ -134,9 +160,23 @@ class Store:
         finally:
             if os.path.exists(temporary): os.unlink(temporary)
 
-    def save(self, value):
+    def save(self, value, lifecycle=False):
         value['updatedAt'] = time.time()
-        self.write('state.json', packed(value))
+        limit=self.max_bytes if lifecycle else self.max_bytes-LIFECYCLE_HEADROOM
+        try: raw=packed(value,limit)
+        except Error as error:
+            if str(error)=='json_size_bound': raise Error('controller_storage_budget_reached') from None
+            raise
+        self.write('state.json',raw,self.max_bytes)
+
+    def save_run_status(self,value):
+        run=run_binding(value)
+        terminal=dict(version=1,identity=value['identity'],instance=run['instance'],active=False,
+                      stoppedAt=run['stoppedAt'],hostError=(str(value.get('hostError',''))[:384]
+                          if value.get('hostErrorInstance')==run['instance'] else ''),
+                      pendingCount=len(value.get('pending',[])),run=copy.deepcopy(run),
+                      previousInstance=run.get('previousInstance'))
+        self.write('run-status.json',packed(terminal,16384),16384)
 
     def held(self):
         try:
@@ -405,7 +445,7 @@ class Runner:
                 and len({r['id'] for r in self.data['pending']}) == len(self.data['pending'])
                 and {r['id'] for r in self.data['pending']} == {r['id'] for r in attempts if r['outcome'] == 'pending'}
                 and not (self.data['done'] and self.data['pending']), 'saved_task_pending_invalid')
-        packed(self.data)
+        packed(self.data,self.store.max_bytes)
         require(self.data.get('goalId', goal['id']) == goal['id'], 'saved_goal_identity_changed')
         self.data['goalId'] = goal['id']
 
@@ -450,7 +490,11 @@ class Runner:
             row = dict(id=request_id, method=method, params=params, effect=effect, requestSHA256=fingerprint,
                        reservedAt=time.time(), sourceRevision=self.data['goodRevision'], outcome='pending')
             self.data['attempts'].append(row); self.data['pending'].append(row)
-            self.persist()  # No query/mutation is invoked before this durable reservation.
+            try: self.persist()  # No query/mutation precedes this durable reservation.
+            except (Error,OSError):
+                row.update(outcome='not_dispatched',error='reservation_storage_failed')
+                self.data['pending']=[r for r in self.data['pending'] if r['id']!=request_id]
+                raise
         issued = [False]
         try:
             # Reservation fsync can yield while a loopback port is rebound.
@@ -478,7 +522,7 @@ class Runner:
         if row is not None:
             next_data['pending'] = [r for r in next_data['pending'] if r['id'] != request_id]
             next(r for r in next_data['attempts'] if r['id'] == request_id).update(outcome='rpc_result', respondedAt=time.time())
-        packed(next_data)
+        packed(next_data,self.store.max_bytes)
         self.store.save(next_data); self.data = next_data
         return response
 
@@ -634,52 +678,59 @@ class Runner:
 def status(data):
     if data is None: return dict(phase='absent')
     return {k: data.get(k) for k in ('identity', 'goalId', 'updatedAt', 'phase', 'done', 'tick', 'goodRevision',
-        'policyError', 'observationErrors', 'observationError', 'observationErrorInstance', 'pending', 'last', 'run')}
+        'policyError', 'hostError', 'hostErrorInstance', 'observationErrors', 'observationError', 'observationErrorInstance', 'pending', 'last', 'run')}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     inspect = commands.add_parser('status'); inspect.add_argument('--state-dir', type=Path, required=True)
+    inspect.add_argument('--controller-state-bytes',type=int,default=MAX_CONTROLLER_STATE)
     stop_command = commands.add_parser('stop')
     for name in ('guid', 'rpc-url', 'session-id', 'state-dir'): stop_command.add_argument('--'+name, required=True)
+    stop_command.add_argument('--controller-state-bytes',type=int,default=MAX_CONTROLLER_STATE)
     run = commands.add_parser('run')
     for name in ('guid', 'rpc-url', 'session-id', 'goal', 'source', 'state-dir'): run.add_argument('--' + name, required=True)
     run.add_argument('--max-seconds', type=int, default=600)
     run.add_argument('--interval-seconds', type=float, default=1)
     run.add_argument('--rpc-timeout-seconds', type=float, default=5)
+    run.add_argument('--controller-state-bytes',type=int,default=MAX_CONTROLLER_STATE)
     run.add_argument('--policy-binary', type=Path, default=ROOT / 'data/bin/luapolicy')
     args = parser.parse_args(argv)
     if args.command == 'status':
-        print(json.dumps(status(Store(args.state_dir).load()), sort_keys=True)); return 0
+        print(json.dumps(status(Store(args.state_dir,args.controller_state_bytes).load()), sort_keys=True)); return 0
     if args.command == 'stop':
         RPC(args.rpc_url)  # Validate only; this command makes no RPC.
-        print(json.dumps(request_stop(Store(args.state_dir), int(args.guid), args.session_id, args.rpc_url), sort_keys=True)); return 0
+        print(json.dumps(request_stop(Store(args.state_dir,args.controller_state_bytes), int(args.guid), args.session_id, args.rpc_url), sort_keys=True)); return 0
     require(1 <= args.max_seconds <= 28800 and math.isfinite(args.interval_seconds)
             and .05 <= args.interval_seconds <= 60, 'finite_runtime_bounds_required')
     stopped = [False]
     def stop(*_): stopped[0] = True
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
     deadline = time.monotonic() + args.max_seconds
-    with Store(args.state_dir) as store:
+    with Store(args.state_dir,args.controller_state_bytes) as store:
         runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules'), RPC(args.rpc_url), int(args.guid),
             args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
             deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds)
         runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True,
-                                  sourcePath=str(runner.source.absolute()))
-        runner.persist()
+                                  sourcePath=str(runner.source.absolute()),
+                                  previousInstance=runner.data.get('run',{}).get('instance'))
         try:
+            runner.persist()
             while not runner.stopped() and time.monotonic() < deadline:
                 runner.tick()
                 if runner.data['done']: break
                 time.sleep(min(args.interval_seconds, max(0, deadline - time.monotonic())))
-        except Error as error:
-            runner.data['hostError'] = str(error)
-            runner.data['hostErrorInstance'] = runner.data['run']['instance']; runner.persist()
+        except (Error,OSError) as error:
+            runner.data['hostError'] = str(error)[:384]
+            runner.data['hostErrorInstance'] = runner.data['run']['instance']
             if str(error) != 'task_stopped_or_deadline': raise
         finally:
             runner.data['run'].update(active=False, stoppedAt=time.time())
-            runner.persist()  # Preserve every pending action and receipt; host exit is not native cleanup.
+            # The full audit is retained; this separate bounded record can
+            # truthfully retire lifecycle even if its byte budget is exhausted.
+            try: store.save(runner.data,lifecycle=True)
+            finally: store.save_run_status(runner.data)
         print(json.dumps(status(runner.data), sort_keys=True))
     return 0
 

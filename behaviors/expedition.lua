@@ -397,6 +397,14 @@ handlers.followup=function(context,frame)
         if query then return query end
         frame.stage="accept"
     end
+    if log[tostring(frame.data.questId)] and not frame.binding then
+        tasks.pop(context,{status="already_in_own_log",taskKind=frame.kind,data=frame.data});return
+    end
+    local near=giver(context,frame.data.npcEntry)
+    if not near or not near.canInteract or not near.distanceKnown or not equal(near.creature.guid,frame.guid)
+       or not position(context) or distance(position(context),near.creature)>4 then
+        return defer_child(context,frame,"acceptance_giver_binding_changed")
+    end
     local offer=q.offer or {}
     if not equal(offer.npcGuid,frame.guid) or number(offer.expiresInMs)<=0 or number(offer.revision)<=0 then
         return defer_child(context,frame,"fresh_followup_offer_required")
@@ -405,12 +413,47 @@ handlers.followup=function(context,frame)
     for _,row in ipairs(offer.quests or {}) do
         if equal(row.questId,frame.data.questId) and row.available and not row.acceptRequested then available=true end
     end
-    if not available then tasks.pop(context,{status="followup_not_offered",taskKind=frame.kind,data=frame.data});return end
+    if not available then
+        if frame.kind=="pickup" then return defer_child(context,frame,"pickup_not_offered") end
+        tasks.pop(context,{status="followup_not_offered",taskKind=frame.kind,data=frame.data});return
+    end
     frame.binding=frame.binding or {offerRevision=offer.revision,baselineLogRevision=q.questLogRevision}
     local _,out=tasks.call(context,frame,"buddy-quests.accept",{sessionId=context.state.body.sessionId,npcGuid=frame.guid,
         questId=frame.data.questId,offerRevision=offer.revision},"accepting_actual_followup_offer")
     if out then return out end
     frame.stage="receipt";return tasks.await(context,"waiting_for_acceptance_in_own_log")
+end
+
+handlers.pickup=handlers.followup
+
+local function rendezvous(context,frame,target,cooling)
+    local memory=context.memory
+    if not target or not target.known then
+        return tasks.await(context,cooling and "waiting_for_deferred_quests" or "remaining_objectives_rendezvous_unknown")
+    end
+    local valid=type(target.mapId or 0)=="number" and number(target.mapId)>=0 and number(target.mapId)%1==0
+    for _,axis in ipairs({"x","y","z"}) do
+        if type(target[axis])~="number" or target[axis]~=target[axis] or math.abs(target[axis])>40000 then valid=false end
+    end
+    if not valid then return tasks.await(context,"rendezvous_reference_invalid") end
+    local p=position(context)
+    if not quiet(context,false) then return tasks.await(context,"rendezvous_waiting_for_safe_idle") end
+    if not equal(p.mapId or 0,target.mapId or 0) then return tasks.await(context,"rendezvous_map_change_required") end
+    if distance(p,target)<=3 then
+        memory.rendezvous={status="arrived",sessionId=context.state.body.sessionId,selfGuid=context.state.body.selfGuid,
+            mapId=p.mapId or 0,x=number(p.x),y=number(p.y),z=number(p.z),positionRevision=p.revision,
+            estimated=p.estimated or false,observedAt=context.state.now}
+        if cooling then return tasks.await(context,"waiting_for_deferred_quests") end
+        return tasks.await(context,memory.journalSync.targetIdsPresent and "journal_ids_present_rendezvous_arrived"
+            or "rendezvous_arrived_missing_target_ids")
+    end
+    local previous=memory.rendezvous or {}
+    if previous.status=="blocked" and number(context.state.now)<number(previous.retryAfter) then
+        return tasks.await(context,"rendezvous_blocked")
+    end
+    frame.rendezvousPending=true
+    memory.rendezvous={status="traveling",target={mapId=target.mapId or 0,x=target.x,y=target.y,z=target.z}}
+    tasks.push(context,"travel",{mapId=target.mapId or 0,x=target.x,y=target.y,z=target.z})
 end
 
 handlers.journal_sync=function(context,frame)
@@ -422,6 +465,11 @@ handlers.journal_sync=function(context,frame)
     assert(type(cooldown)=="number" and cooldown>=5 and cooldown<=300,"bounded blocked-child cooldown required")
     if frame.child then
         local child=frame.child;frame.child=nil
+        if frame.rendezvousPending then
+            frame.rendezvousPending=nil
+            context.memory.rendezvous={status=child.status=="blocked" and "blocked" or "arrival_unconfirmed",
+                reason=child.reason,retryAfter=number(context.state.now)+cooldown}
+        end
         if child.status=="blocked" and child.data and number(child.data.questId)>0 then
             context.memory.deferredQuests=context.memory.deferredQuests or {}
             local key=child.taskKind..":"..tostring(child.data.questId)
@@ -458,14 +506,27 @@ handlers.journal_sync=function(context,frame)
             else tasks.push(context,"followup",row.data);return end
         end
     end
+    local pickups=params.pickups or {}
+    assert(type(pickups)=="table" and #pickups<=64,"bounded configured pickups required")
+    for _,row in ipairs(pickups) do
+        assert(type(row)=="table" and type(row.questId)=="number" and row.questId>0 and row.questId%1==0
+            and type(row.npcEntry)=="number" and row.npcEntry>0 and row.npcEntry%1==0,"configured quest/giver required")
+        if contains(params.targetQuestIds,row.questId) and not log[tostring(row.questId)] then
+            if deferred(context,"pickup",row.questId) or deferred(context,"followup",row.questId) then cooling=true
+            else tasks.push(context,"pickup",row);return end
+        end
+    end
     context.memory.remaining={}
+    local sync={targetIdsPresent=true,missingQuestIds={},unfinishedQuestIds={},completeQuestIds={},questLogRevision=q.questLogRevision}
     for _,id in ipairs(params.targetQuestIds or {}) do
         local own=log[tostring(id)]
         context.memory.remaining[#context.memory.remaining+1]={questId=id,inLog=own~=nil,complete=own and own.complete==true or false}
+        if not own then sync.targetIdsPresent=false;sync.missingQuestIds[#sync.missingQuestIds+1]=id
+        elseif own.complete and not own.failed then sync.completeQuestIds[#sync.completeQuestIds+1]=id
+        else sync.unfinishedQuestIds[#sync.unfinishedQuestIds+1]=id end
     end
-    if cooling then return tasks.await(context,"waiting_for_deferred_quests") end
-    if not (params.rendezvous or {}).known then return tasks.await(context,"remaining_objectives_rendezvous_unknown") end
-    return tasks.await(context,"remaining_objectives_require_behavior")
+    context.memory.journalSync=sync
+    return rendezvous(context,frame,params.rendezvous,cooling)
 end
 
 local policy={handlers=handlers}
@@ -494,6 +555,27 @@ local function released_custody_revision(context,frame,row)
     return p.revision
 end
 
+-- Losing the old token prevents a delayed native TravelTo from writing.
+-- This abandons only the obsolete reservation, without accepting its route.
+local function abandoned_navigation_revision(context,frame,row)
+    if #(context.state.pending or {})~=1 or frame.kind~="travel" or frame.stage~="move"
+       or frame.waiting.method~="buddy-actions.travel_to" or row.effect~="mutation"
+       or row.outcome~="pending" or type(row.error)~="string" or row.error==""
+       or type(frame.token)~="string" or frame.token=="" or type(frame.destination)~="table" then return nil end
+    local params=row.params or {};local to=frame.destination
+    if params.token~=frame.token or not equal(params.mapId or 0,to.mapId or 0) then return nil end
+    for _,axis in ipairs({"x","y","z"}) do
+        if params[axis]~=nil and type(params[axis])~="number" then return nil end
+        if number(params[axis])~=number(to[axis]) then return nil end
+    end
+    local a=context.observations.actions or {};local p=a.position or {}
+    if type(a.reason)~="string" or a.reason=="" or #a.reason>128
+       or not quiet(context,false) or (a.interactionOwner or "")~=""
+       or number(a.interactionLeaseRemainingMs)~=0 or a.moving or a.traveling or a.motionUnconfirmed
+       or not geometry(p,to.mapId) or number(p.revision)<=0 then return nil end
+    return p.revision
+end
+
 local function decide(state)
     if #(state.pending or {})>0 then
         local memory=state.memory or {}
@@ -504,6 +586,11 @@ local function decide(state)
             if frame and frame.waiting and candidate.id==frame.waiting.id and candidate.method==frame.waiting.method then reserved=true;row=candidate end
         end
         if reserved then
+            local abandoned=abandoned_navigation_revision(context,frame,row)
+            if abandoned then
+                frame.stage="release";frame.blocked="unknown_travel_abandoned";frame.partialReplyKnown=nil
+                return tasks.resolve(context,frame,"actions","position.revision",abandoned,"navigation_abandoned_custody_absent_no_arrival")
+            end
             local revision=released_custody_revision(context,frame,row)
             if revision then
                 return tasks.resolve(context,frame,"actions","position.revision",revision,"custody_absent_observed_no_transport_ack")
@@ -513,7 +600,7 @@ local function decide(state)
                 frame.stage="receipt"
                 return tasks.resolve(context,frame,"quests","lastReward.confirmedLogRevision",receipt.confirmedLogRevision,"reward_and_log_removal_observed")
             end
-            receipt=frame.kind=="followup" and frame.waiting.method=="buddy-quests.accept" and acceptance_proof(context,frame)
+            receipt=(frame.kind=="followup" or frame.kind=="pickup") and frame.waiting.method=="buddy-quests.accept" and acceptance_proof(context,frame)
             if receipt then
                 frame.stage="receipt"
                 return tasks.resolve(context,frame,"quests","lastAcceptance.confirmedLogRevision",receipt.confirmedLogRevision,"acceptance_in_own_log_observed")
@@ -564,7 +651,15 @@ local function progress(state,out)
         end
     end
     p.blockedReason=type(reason)=="string" and #reason>0 and #reason<=128 and reason or "mission_waiting"
-    if not out.done and now-number(p.since)>=30 then
+    -- A newly dispatched native travel RPC has its own bounded wait. Do not
+    -- count its reservation as progress or inherit a sibling's expired clock.
+    local travelWaiting=out.action and out.action.method=="buddy-actions.travel_to"
+    for _,pending in ipairs(state.pending or {}) do
+        if pending.method=="buddy-actions.travel_to" and pending.outcome=="pending"
+           and number(pending.reservedAt)>0 and now>=number(pending.reservedAt)
+           and now-number(pending.reservedAt)<40 then travelWaiting=true end
+    end
+    if not out.done and not travelWaiting and now-number(p.since)>=30 then
         memory.health={code="stalled",phase=p.blockedReason,since=now,noProgressSince=p.since}
     else memory.health=nil end
     return out
