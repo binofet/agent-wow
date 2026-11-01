@@ -106,6 +106,7 @@ class WorkshopTests(unittest.TestCase):
         self.assertIn('multi_agent',command)
         edit=w.coding_command(Path('/tmp/worktree'),Path('/tmp/schema'),Path('/tmp/answer'))
         self.assertIn('--approve-for-me',edit)
+        self.assertNotIn('--sandbox',edit)
         self.assertNotIn('--dangerously-bypass-approvals-and-sandbox',edit)
 
     def test_failed_or_incomplete_ci_cannot_integrate_or_apply(self):

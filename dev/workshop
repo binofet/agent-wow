@@ -100,7 +100,8 @@ def run(command,cwd=ROOT,timeout=120,env=None):
 
 def coding_command(worktree,schema,answer,review=False):
     command=[CODEX,'exec','--ephemeral','--ignore-user-config','--skip-git-repo-check','--color','never','--json','--cd',str(worktree),'--output-schema',str(schema),'--output-last-message',str(answer)]
-    command+=['--sandbox','read-only'] if review else ['--sandbox','workspace-write','--approve-for-me']
+    # approve-for-me already selects workspace-write and conflicts with --sandbox.
+    command+=['--sandbox','read-only'] if review else ['--approve-for-me']
     for feature in ('multi_agent','multi_agent_v2','apps','plugins','hooks','browser_use','computer_use'):command+=['--disable',feature]
     return command+['-']
 
