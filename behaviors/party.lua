@@ -4,7 +4,9 @@ return {
     if state.kind == "heal_target" then
       local best = nil
       for _, player in ipairs(state.targets) do
-        if best == nil or player.health * best.maxHealth < best.health * player.maxHealth then
+        if best == nil or player.health * best.maxHealth < best.health * player.maxHealth
+          or (player.health * best.maxHealth == best.health * player.maxHealth
+            and player.guid == state.defaultTargetGuid) then
           best = player
         end
       end

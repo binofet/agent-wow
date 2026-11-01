@@ -109,3 +109,44 @@ func TestShippedLuaPolicyUsesGeneratedContractForActualSpellChoices(t *testing.T
 		t.Fatalf("script failed: %s", state.LastError)
 	}
 }
+
+func TestShippedLuaPolicyPreservesNativeHealTargetTie(t *testing.T) {
+	s, f, _ := rig(t)
+	enableTriage(t, s)
+	f.world.Self.Health = 60
+	f.world.Owner.Health = 120
+	f.world.Owner.MaxHealth = 200
+	mira := triagePlayer(f, 4, 180)
+	mira.MaxHealth = 300
+	f.world.NearbyPlayers = []*worldv1.PlayerState{mira}
+	triageMember(f, mira.Guid)
+	if p := s.healingTargetLocked(context.Background(), f.world, true, false); p == nil || p.Guid != f.world.Owner.Guid {
+		t.Fatalf("native tie should select Joel, got %v", p)
+	}
+	source, err := os.ReadFile("../../behaviors/party.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadBehavior(t, s, string(source))
+	for _, tc := range []struct {
+		name             string
+		self, joel, mira uint32
+		want             uint64
+	}{
+		{"equal ratios preserve Joel", 60, 120, 180, 3},
+		{"lower self", 50, 120, 180, 1},
+		{"lower Joel", 60, 100, 180, 3},
+		{"lower Mira", 60, 120, 150, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.world.Self.Health, f.world.Owner.Health, mira.Health = tc.self, tc.joel, tc.mira
+			if p := s.healingTargetLocked(context.Background(), f.world, true, false); p == nil || p.Guid != tc.want {
+				t.Fatalf("want target %d, got %v", tc.want, p)
+			}
+			state, _ := s.Behavior(context.Background(), &emptypb.Empty{})
+			if state.Failures != 0 {
+				t.Fatalf("script failed: %s", state.LastError)
+			}
+		})
+	}
+}
