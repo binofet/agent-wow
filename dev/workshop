@@ -155,6 +155,8 @@ def integrate_lua(report):
     ci=json.loads(run(['gh','run','view',str(runs[0]['databaseId']),'--repo',REPO,'--json','headSha,conclusion,jobs']))
     jobs=[j for j in ci['jobs'] if j['name']=='Check and build']
     if ci['headSha']!=report['head'] or len(jobs)!=1 or jobs[0]['conclusion']!='success' or not all(any(s['name']==name and s['conclusion']=='success' for s in jobs[0]['steps']) for name in ('Vet','Test','Build')):raise Error('Required CI stages are not successful')
+    pr=json.loads(run(['gh','pr','view',report['pr'],'--repo',REPO,'--json','headRefOid,headRefName,baseRefName,state,isDraft']))
+    if pr['headRefOid']!=report['head'] or pr['headRefName']!=report['branch'] or pr['baseRefName']!=TARGET or pr['state']!='OPEN' or pr['isDraft']:raise Error('Reviewed pull request changed; no integration')
     if run(['git','rev-parse',report['head']+'^{tree}'])!=report['candidateTree']:raise Error('Reviewed head changed')
     if run(['git','symbolic-ref','--short','HEAD'])!=TARGET or run(['git','rev-parse','HEAD'])!=report['base'] or run(['git','diff','HEAD','--name-only']):raise Error('Target changed while checking CI')
     run(['git','merge','--ff-only',report['head']])
@@ -197,6 +199,7 @@ def process(report,publish=False,auto_lua=False):
             if result.returncode:raise Error(label+' failed; no publication or restart')
         unchanged(worktree,base,tree)
         peer=next(name for guid,name in ROSTER.items() if guid!=report['guid'])
+        report.update(phase='reviewing',peerReviewer=peer,updatedAt=time.time());save(path,report)
         review=generate(AUTHORITY+'\nYou are '+peer+', independently reviewing '+report['reporter']+"'s staged patch. Read git diff --cached and the changed files. Check the actual bug, authority/target binding, tests, concurrency and regressions. Do not edit. ready=true only if no material issue remains.\nOriginal evidence:\n"+json.dumps(report,ensure_ascii=False),worktree,job,review=True,timeout=240)
         if not review['ready']:raise Error('Peer review requires changes: '+review['summary'][:1000])
         unchanged(worktree,base,tree)

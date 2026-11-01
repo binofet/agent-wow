@@ -132,5 +132,21 @@ class WorkshopTests(unittest.TestCase):
         with patch.object(w,'run',return_value='modules/buddy-actions/service.go'):
             with self.assertRaisesRegex(w.Error,'native client release'):w.integrate_lua(report)
 
+    def test_new_pull_request_head_invalidates_old_review_even_with_green_ci(self):
+        calls=[]
+        def command(command,**kwargs):
+            calls.append(command)
+            if command[:3]==['git','diff','--name-only']:return 'behaviors/party.lua'
+            if command[:3]==['git','rev-parse','HEAD']:return 'base'
+            if command[:2]==['git','diff']:return ''
+            if command[:2]==['gh','api']:return json.dumps({'object':{'sha':'base'}})
+            if command[:3]==['gh','run','list']:return json.dumps([dict(event='push',headSha='head',status='completed',conclusion='success',databaseId=1)])
+            if command[:3]==['gh','run','view']:return json.dumps(dict(headSha='head',jobs=[dict(name='Check and build',conclusion='success',steps=[dict(name=n,conclusion='success') for n in ('Vet','Test','Build')])]))
+            if command[:3]==['gh','pr','view']:return json.dumps(dict(headRefOid='unreviewed',headRefName='branch',baseRefName=w.TARGET,state='OPEN',isDraft=False))
+            raise AssertionError(command)
+        with patch.object(w,'run',side_effect=command):
+            with self.assertRaisesRegex(w.Error,'pull request changed'):w.integrate_lua(dict(base='base',head='head',branch='branch',pr='pr',files=['behaviors/party.lua']))
+        self.assertFalse(any(c[:2] in (['git','merge'],['git','push']) for c in calls))
+
 
 if __name__=='__main__':unittest.main()
