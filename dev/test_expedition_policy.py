@@ -135,6 +135,46 @@ class ExpeditionTests(unittest.TestCase):
             if predicate(): return
         self.fail(str(host.status(runner.data)))
 
+    def test_progress_health_short_wait_is_quiet_then_stable_stall_is_fresh_and_observed_progress_clears(self):
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        state=dict(body=dict(sessionId=self.rpc.sid,selfGuid='87'),goal=copy.deepcopy(self.goal),memory={},pending=[],now=100,
+                   observations=dict(actions=self.rpc.actions(),world=self.rpc.call('buddy-world.snapshot',{}),
+                                     quests=copy.deepcopy(self.rpc.quest)))
+        state['observations']['quests']['questLog']=[{} for _ in range(25)]
+        def evaluate(now):
+            state['now']=now;out=self.bridge.evaluate(source,state);state['memory']=out['memory'];return out
+        for now in (100,110,129):
+            out=evaluate(now);self.assertNotIn('health',out['memory']);self.assertNotIn('action',out)
+        stalled=evaluate(130)['memory']['health']
+        again=evaluate(140)['memory']['health']
+        self.assertEqual((stalled['code'],stalled['phase']),(again['code'],again['phase']))
+        self.assertEqual(stalled['noProgressSince'],100);self.assertEqual(again['since'],140)
+        state['observations']['quests']['questLogRevision']='2'  # New actual own-log observation.
+        self.assertNotIn('health',evaluate(141)['memory'])
+        self.assertNotIn('health',evaluate(170)['memory'])
+        self.assertEqual(evaluate(171)['memory']['health']['noProgressSince'],141)
+
+    def test_route_read_failure_stall_exposes_concrete_deferral_without_retry_and_receipt_clears(self):
+        self.rpc.giver_x=310;self.rpc.discover();self.rpc.plan_error='actual_native_no_physical_route'
+        self.goal['params']['handIns'][0]['x']=310
+        clock=[1000.0]
+        with patch.object(host.time,'time',side_effect=lambda:clock[0]),host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+            self.assertNotIn('health',runner.data['memory']);self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
+            clock[0]+=31;runner.tick();health=copy.deepcopy(runner.data['memory']['health'])
+            self.assertEqual(health['phase'],'travel_route_plan_unavailable');self.assertEqual(health['code'],'stalled')
+            clock[0]+=5;runner.tick()
+            self.assertEqual(runner.data['memory']['health']['phase'],health['phase'])
+            self.assertEqual(runner.data['memory']['health']['since'],clock[0])
+            self.assertEqual(self.count('buddy-actions.plan_route_leg'),1);self.assertFalse(runner.data['pending'])
+            # A correlated positive normal arrival is progress, never a new dispatch or quest reward.
+            runner.data['last']=dict(id='generic-expedition:arrival-proof',method='buddy-actions.travel_to',effect='mutation',
+                                    response=dict(self.rpc.actions(),reason='exploration_within_distance'))
+            clock[0]+=1;runner.tick()
+            self.assertNotIn('health',runner.data['memory']);self.assertFalse(runner.data['pending'])
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+            self.assertEqual(self.count('buddy-actions.travel_to'),0)
+
     def test_native_curved_leg_endpoints_replan_full_goal_with_fresh_pose_before_each_lease(self):
         self.rpc.giver_x=310;self.rpc.discover()
         self.goal['params']['handIns'][0]['x']=310

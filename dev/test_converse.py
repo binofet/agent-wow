@@ -2143,6 +2143,23 @@ class MissionRuntimeContextTests(unittest.TestCase):
             data['phase']='complete';data['memory']['stack']=[];data['pending']=[];path.write_text(json.dumps(data))
             self.assertEqual(self.read()['expedition']['phase'],'complete')
 
+    def test_actual_run_source_path_is_developer_metadata_only_and_root_bounded(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);data=self.fixture();source=repo/'data/tasks/expedition/1/policy.lua'
+            data['run']=dict(instance='a'*32,pid=os.getpid(),active=True,sourcePath=str(source))
+            self.install(repo,'expedition',data);source.write_text('return {}')
+            self.assertEqual(self.read()['expedition']['sourcePath'],str(source))
+            for bad in ('relative.lua','/private/tmp/unrelated.lua',str(repo/'data/../outside.lua')):
+                data['run']['sourcePath']=bad;self.install(repo,'expedition',data)
+                self.assertNotIn('sourcePath',self.read()['expedition'])
+            source.unlink();source.symlink_to(repo/'behaviors/expedition.lua')
+            data['run']['sourcePath']=str(source);self.install(repo,'expedition',data)
+            self.assertNotIn('sourcePath',self.read()['expedition'])
+            self.assertIn('actual shared_tasks.<kind>.sourcePath',converse.DEVELOPER_PERMISSIONS)
+            self.assertIn('host hot reloads this path on its next tick',converse.DEVELOPER_PERMISSIONS)
+            self.assertIn('last-good source',converse.DEVELOPER_PERMISSIONS)
+            self.assertNotIn('sourcePath',converse.CHAT_PERMISSIONS)
+
     def test_wrong_body_malformed_and_stale_metadata_remain_unavailable(self):
         changes=[lambda d:d['identity'].update(guid='4'),lambda d:d['identity'].update(sessionId='aw-old'),
             lambda d:d['identity'].update(rpcUrl='http://127.0.0.1:8087/rpc'),lambda d:d.update(version=True),
@@ -2280,7 +2297,7 @@ class MissionHandoffTests(unittest.TestCase):
     def test_ordinary_context_is_sanitized_current_metadata_and_crash_is_not_stopped(self):
         result=converse.mission_chat_context(1,'aw-current',self.rpc.url)
         row=result['runtimes']['expedition'];self.assertTrue(row['active']);self.assertEqual(row['goalId'],'mission')
-        for private in ('statePath','goalPath','runtimeCLI','instance','pid','secret','private'):
+        for private in ('sourcePath','statePath','goalPath','runtimeCLI','instance','pid','secret','private'):
             self.assertNotIn(private,json.dumps(result))
         state=self.controls.context();self.assertTrue(state['abilities']['mission_stop'])
         self.assertTrue(state['missions']['runtimes']['expedition']['active'])

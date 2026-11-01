@@ -167,6 +167,7 @@ class RuntimeTests(unittest.TestCase):
                 '--goal',str(goal),'--source',str(self.source),'--state-dir',str(self.folder)]),0)
         data=m.Store(self.folder).load()
         self.assertFalse(data['run']['active']);self.assertGreater(data['run']['stoppedAt'],0)
+        self.assertEqual(data['run']['sourcePath'],str(self.source.absolute()))
         self.assertEqual(data['pending'][0]['id'],'buy-1');self.assertEqual(len(self.purchases()),1)
         self.assertFalse(m.Store(self.folder).held())
 

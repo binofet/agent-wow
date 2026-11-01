@@ -623,7 +623,8 @@ def main(argv=None):
         runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules'), RPC(args.rpc_url), int(args.guid),
             args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
             deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds)
-        runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True)
+        runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True,
+                                  sourcePath=str(runner.source.absolute()))
         runner.persist()
         try:
             while not runner.stopped() and time.monotonic() < deadline:

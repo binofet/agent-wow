@@ -432,7 +432,7 @@ function policy.attach(child)
     end
     return policy
 end
-policy.decide=function(state)
+local function decide(state)
     if #(state.pending or {})>0 then
         local memory=state.memory or {}
         local frame=(memory.stack or {})[#(memory.stack or {})]
@@ -457,4 +457,49 @@ policy.decide=function(state)
     end
     return tasks.run(state,handlers,state.goal.kind)
 end
+
+-- Metadata only: reservations, retries and cooldown clocks are not progress.
+-- A persistent fault keeps one phase/key while its freshness is renewed, so
+-- the existing brain's durable dedup governs repair rather than every tick.
+local function progress(state,out)
+    local memory,now=out.memory,number(state.now)
+    local p=memory.progress or {since=now,seen={},count=0}
+    memory.progress=p
+    local advanced=false
+    for _,frame in ipairs(memory.stack or {}) do
+        local key=tostring(frame.kind)..":"..tostring((frame.data or {}).questId or "")..":"..tostring(frame.stage)
+        if not p.seen[key] and number(p.count)<64 then
+            p.seen[key]=true;p.count=number(p.count)+1;advanced=true
+        end
+    end
+    local context={state=state,memory=memory,observations=state.observations or {}}
+    local q=journal(context)
+    if q and number(q.questLogRevision)>number(p.questRevision) then
+        p.questRevision=q.questLogRevision;advanced=true
+    end
+    local pose=position(context)
+    if pose and not pose.estimated then
+        if not p.pose or not equal(p.pose.mapId or 0,pose.mapId or 0) or distance(p.pose,pose)>=1 then
+            p.pose={mapId=pose.mapId or 0,x=number(pose.x),y=number(pose.y),z=number(pose.z)};advanced=true
+        end
+    end
+    local last=state.last or {};local reply=last.response or {}
+    if last.id~=p.arrival and last.method=="buddy-actions.travel_to" and not last.error
+       and equal(reply.sessionId,state.body.sessionId) and equal(reply.selfGuid,state.body.selfGuid)
+       and reply.reason=="exploration_within_distance" and not reply.motionUnconfirmed and not reply.moving
+       and not reply.traveling and geometry(reply.position,(reply.position or {}).mapId) then
+        p.arrival=last.id;advanced=true
+    end
+    if advanced or now<number(p.since) then p.since=now end
+    local reason,key=out.phase,nil
+    for id,row in pairs(memory.deferredQuests or {}) do
+        if type(row.reason)=="string" and (not key or id<key) then key=id;reason=row.reason end
+    end
+    p.blockedReason=type(reason)=="string" and #reason>0 and #reason<=128 and reason or "mission_waiting"
+    if not out.done and now-number(p.since)>=30 then
+        memory.health={code="stalled",phase=p.blockedReason,since=now,noProgressSince=p.since}
+    else memory.health=nil end
+    return out
+end
+policy.decide=function(state) return progress(state,decide(state)) end
 return policy
