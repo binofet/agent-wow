@@ -12,6 +12,34 @@ import (
 
 const goodPolicy = `return {decide=function(state) return {action="hold", health=state.health or 0} end}`
 
+func TestComposedPolicySourceAboveJSONFrameLimit(t *testing.T) {
+	// Three independently closed-over modules model real source composition;
+	// their retained constants are never smuggled into the JSON frame.
+	var source strings.Builder
+	for i := 1; i <= 3; i++ {
+		fmt.Fprintf(&source, `local m%d=(function() local data="%s"; return {size=function() return #data end, step=function(v) return v+%d end} end)();`, i, strings.Repeat("x", 12000), i)
+	}
+	source.WriteString(`return {decide=function(s) return {value=m3.step(m2.step(m1.step(s.value))), sourceDataBytes=m1.size()+m2.size()+m3.size()} end}`)
+	if source.Len() <= 32*1024 {
+		t.Fatal("fixture does not exercise source composition above the former limit")
+	}
+	r := New()
+	revision := load(t, r, source.String())
+	out, err := r.Evaluate(map[string]any{"value": 7})
+	if err != nil || out["value"] != float64(13) || out["sourceDataBytes"] != float64(36000) {
+		t.Fatal(out, err)
+	}
+	if _, err := r.Reload(source.String()+strings.Repeat(" ", MaxSourceBytes), revision); err == nil || r.Status().Revision != revision {
+		t.Fatal("oversize source replaced the working modules", err, r.Status())
+	}
+	if _, err := r.Evaluate(map[string]any{"value": 7, "oversize": strings.Repeat("x", 32*1024)}); err == nil || r.Status().Revision != revision {
+		t.Fatal("larger source widened the JSON input frame", err, r.Status())
+	}
+	if MaxJSONBytes != 32*1024 || EvaluationLimit != 5*time.Millisecond {
+		t.Fatal("source-only change widened execution authority")
+	}
+}
+
 func load(t *testing.T, r *Runtime, source string) string {
 	t.Helper()
 	rev, err := r.Reload(source, r.Status().Revision)

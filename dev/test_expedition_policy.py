@@ -2,10 +2,12 @@
 import copy
 import importlib.machinery
 import importlib.util
+import math
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 loader = importlib.machinery.SourceFileLoader('expedition_host_tested', str(ROOT / 'dev/task-runtime'))
@@ -24,6 +26,11 @@ class Endpoint:
         self.quest = dict(sessionId=self.sid, questLogKnown=True, questLogRevision='1', questLog=[dict(questId=701, complete=True)] + [{} for _ in range(24)])
         self.choices, self.nav_reason, self.fail_claim, self.foreign_receipt = [], 'exploration_within_distance', False, False
         self.accept_requested = False
+        self.active_quest = 701
+        self.active_baseline = '1'
+        self.choices_by_quest = {}
+        self.no_reward_offer = set()
+        self.giver_x,self.plan_endpoints,self.plan_error=10,[],''
 
     def actions(self):
         return dict(sessionId=self.sid, selfGuid=self.guid, position=copy.deepcopy(self.pose),
@@ -31,8 +38,8 @@ class Endpoint:
 
     def discover(self):
         self.quest['nearby'] = [dict(creature=dict(guid=self.npc, entry=1234, present=True, aliveKnown=True, alive=True,
-            mapKnown=True, mapId=0, positionKnown=True, x=10, y=0, z=5, positionRevision='6', unitFlagsKnown=True, npcFlags=2),
-            distanceKnown=True, distance=abs(self.pose['x'] - 10), canInteract=abs(self.pose['x'] - 10) <= 4)]
+            mapKnown=True, mapId=0, positionKnown=True, x=self.giver_x, y=0, z=5, positionRevision='6', unitFlagsKnown=True, npcFlags=2),
+            distanceKnown=True, distance=abs(self.pose['x'] - self.giver_x), canInteract=abs(self.pose['x'] - self.giver_x) <= 4)]
 
     def call(self, method, params, timeout=5):
         self.calls.append((method, copy.deepcopy(params)))
@@ -43,6 +50,15 @@ class Endpoint:
                 positionKnown=True, x=-9000, y=90, z=60, classId=2)}
         if method == 'buddy-quests.state': return copy.deepcopy(self.quest)
         if method == 'buddy-quests.discover': self.discover(); return copy.deepcopy(self.quest)
+        if method == 'buddy-actions.plan_route_leg':
+            assert not self.lease and params['sessionId']==self.sid and params['selfGuid']==self.guid
+            assert params['expectedPositionRevision']==self.pose['revision']
+            if self.plan_error:raise host.Error(self.plan_error)
+            endpoint=self.plan_endpoints.pop(0) if self.plan_endpoints else {key:params.get(key,0) for key in ('x','y','z')}
+            length=math.sqrt(sum((self.pose.get(key,0)-endpoint.get(key,0))**2 for key in ('x','y','z')))
+            return dict(sessionId=self.sid,selfGuid=self.guid,start=copy.deepcopy(self.pose),
+                endpoint=dict(known=True,mapKnown=True,**endpoint),pathLength=length,pointCount=math.ceil(length/2)+1,
+                goalReached=not self.plan_endpoints,serverPositionRevision='9')
         if method == 'buddy-actions.acquire_interaction':
             assert not self.lease and params == {'owner': 'exploration', 'leaseMs': 30000}
             self.lease = 'actual-private-token'; return dict(token=self.lease, state=self.actions())
@@ -56,11 +72,13 @@ class Endpoint:
             assert params == {'owner': 'exploration', 'token': self.lease}
             self.lease = ''; return self.actions()
         if method == 'buddy-quests.turn_in':
-            assert params['npcGuid'] == self.npc and params['questId'] == 701 and params['questLogRevision'] == self.quest['questLogRevision']
-            self.quest['turnInOffer'] = dict(revision='3', questId=701, npcGuid=self.npc, source='reward_offer',
-                canComplete=True, expiresInMs='10000', choices=self.choices)
+            assert params['npcGuid'] == self.npc and params['questId'] in (701,703) and params['questLogRevision'] == self.quest['questLogRevision']
+            self.active_quest = params['questId']
+            self.active_baseline = self.quest['questLogRevision']
+            self.quest['turnInOffer'] = {} if self.active_quest in self.no_reward_offer else dict(revision='3', questId=self.active_quest, npcGuid=self.npc, source='reward_offer',
+                canComplete=True, expiresInMs='10000', choices=self.choices_by_quest.get(self.active_quest,self.choices))
         elif method == 'buddy-quests.claim_reward':
-            assert params['npcGuid'] == self.npc and params['questId'] == 701 and params['offerRevision'] == '3'
+            assert params['npcGuid'] == self.npc and params['questId'] == self.active_quest and params['offerRevision'] == '3'
             self.quest['turnInOffer']['rewardRequested'] = True
             if self.fail_claim: raise host.Error('rpc_result_unconfirmed')
         elif method == 'buddy-quests.offer':
@@ -73,9 +91,10 @@ class Endpoint:
         return dict(transportWritten=True, serverResponseReceived=True, state=copy.deepcopy(self.quest))
 
     def confirm_reward(self):
-        self.quest['questLog'] = [{} for _ in range(25)]; self.quest['questLogRevision'] = '2'
-        self.quest['lastReward'] = dict(questId=701, npcGuid=self.npc, offerRevision='3', status='REWARD_CONFIRMED',
-            baselineLogRevision='1', confirmedLogRevision='2', serverRewardObserved=True, logRemovalConfirmed=True)
+        self.quest['questLog'] = [row if row.get('questId')!=self.active_quest else {} for row in self.quest['questLog']]
+        self.quest['questLogRevision'] = str(int(self.quest['questLogRevision'])+1)
+        self.quest['lastReward'] = dict(questId=self.active_quest, npcGuid=self.npc, offerRevision='3', status='REWARD_CONFIRMED',
+            baselineLogRevision=self.active_baseline, confirmedLogRevision=self.quest['questLogRevision'], serverRewardObserved=True, logRemovalConfirmed=True)
 
     def confirm_acceptance(self):
         self.quest['questLog'][0] = dict(questId=702)
@@ -91,6 +110,7 @@ class ExpeditionTests(unittest.TestCase):
         self.folder = Path(temporary.name) / 'state'
         self.rpc = Endpoint(); self.rpc.discover()
         self.bridge = host.Bridge(BINARY, ROOT / 'modules')
+        self.source = ROOT / 'behaviors/expedition.lua'
         self.goal = dict(id='generic-expedition', kind='journal_sync', params=dict(targetQuestIds=[702],
             initialHandInQuestIds=[701], handIns=[dict(questId=701, npcEntry=1234, mapId=0, x=10, y=0, z=5, followupQuestId=702)],
             rendezvous={'known': False}), allow=['buddy-actions.status', 'buddy-world.snapshot', 'buddy-quests.state',
@@ -101,9 +121,10 @@ class ExpeditionTests(unittest.TestCase):
                     'interactionOwner', 'interactionLeaseRemainingMs', 'moving', 'traveling', 'motionUnconfirmed']),
                 quests=dict(method='buddy-quests.state', params={}, select=['sessionId', 'questLogKnown', 'questLogRevision',
                     'questLog', 'nearby', 'turnInOffer', 'lastReward', 'offer', 'lastAcceptance', 'actionInFlight'])))
+        self.goal['allow'].append('buddy-actions.plan_route_leg')
 
     def runner(self, store):
-        return host.Runner(store, self.bridge, self.rpc, 87, self.rpc.sid, self.goal, ROOT / 'behaviors/expedition.lua',
+        return host.Runner(store, self.bridge, self.rpc, 87, self.rpc.sid, self.goal, self.source,
                            ROOT / 'behaviors/task-stack.lua', rpc_timeout=35)
 
     def count(self, method): return sum(name == method for name, _ in self.rpc.calls)
@@ -113,6 +134,117 @@ class ExpeditionTests(unittest.TestCase):
             runner.tick()
             if predicate(): return
         self.fail(str(host.status(runner.data)))
+
+    def test_native_curved_leg_endpoints_replan_full_goal_with_fresh_pose_before_each_lease(self):
+        self.rpc.giver_x=310;self.rpc.discover()
+        self.goal['params']['handIns'][0]['x']=310
+        endpoints=[dict(x=50,y=80,z=5),dict(x=180,y=80,z=5),dict(x=310,y=0,z=5)]
+        self.rpc.plan_endpoints=copy.deepcopy(endpoints)
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=32)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            travels=[p for name,p in self.rpc.calls if name=='buddy-actions.travel_to']
+            self.assertEqual([p['x'] for p in plans],[310,310,310])
+            self.assertEqual([p['expectedPositionRevision'] for p in plans],['5','6','7'])
+            self.assertEqual([{key:p.get(key,0) for key in ('x','y','z')} for p in travels],endpoints)
+            self.assertTrue(all(p['arrivalDistance']==.75 for p in travels))
+            effects=[name for name,_ in self.rpc.calls if name in ('buddy-actions.plan_route_leg',
+                'buddy-actions.acquire_interaction','buddy-actions.travel_to','buddy-actions.release_interaction')]
+            self.assertEqual(effects,['buddy-actions.plan_route_leg','buddy-actions.acquire_interaction',
+                'buddy-actions.travel_to','buddy-actions.release_interaction']*3)
+            self.assertFalse(self.rpc.lease);self.assertEqual(store.load()['pending'],[])
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_definite_read_failure_or_stale_foreign_plan_blocks_before_lease_and_cools_down(self):
+        for mode in ('read_failure','foreign_body','pose_changed'):
+            self.rpc=Endpoint();self.rpc.giver_x=310;self.rpc.discover()
+            self.goal['params']['handIns'][0]['x']=310
+            if mode=='read_failure':self.rpc.plan_error='actual_native_no_physical_route'
+            original=self.rpc.call
+            def call(method,params,timeout=5):
+                value=original(method,params,timeout)
+                if method=='buddy-actions.plan_route_leg':
+                    if mode=='foreign_body':value['sessionId']='foreign'
+                    if mode=='pose_changed':self.rpc.pose['revision']='6'
+                return value
+            self.rpc.call=call
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+                for _ in range(2):runner.tick()
+                self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
+                self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
+                self.assertEqual(self.count('buddy-actions.travel_to'),0);self.assertFalse(store.load()['pending'])
+                self.assertIn('hand_in:701',runner.data['memory']['deferredQuests'])
+                if mode=='read_failure':
+                    self.assertEqual(store.load()['last']['effect'],'read')
+                    self.assertEqual(runner.data['memory']['lastRoutePlanError']['error'],'actual_native_no_physical_route')
+
+    def test_plan_success_does_not_relax_unknown_travel_write_or_cleanup(self):
+        self.rpc.pose['x']=-20;self.rpc.discover();original=self.rpc.call
+        def call(method,params,timeout=5):
+            if method=='buddy-actions.travel_to':
+                self.rpc.calls.append((method,copy.deepcopy(params)));raise host.Error('rpc_result_unconfirmed')
+            return original(method,params,timeout)
+        self.rpc.call=call
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:bool(runner.data['pending']))
+            for _ in range(3):runner.tick()
+            self.assertEqual(runner.data['phase'],'blocked_on_ambiguous_call')
+            self.assertEqual(store.load()['last']['effect'],'mutation')
+            self.assertEqual(self.count('buddy-actions.travel_to'),1)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),0)
+            self.assertEqual(self.count('buddy-quests.claim_reward'),0)
+
+    def test_goal_configured_child_module_returns_to_same_guarded_parent_and_respects_run_bound(self):
+        code=self.source.read_text();self.source=self.folder.parent/'composed.lua'
+        self.source.write_text('local mission=(function()\n'+code+'\nend)()\n'+'''
+mission.attach({handlers={resource_child=function(c,f)
+    assert(f.data.marker=="from_goal")
+    c.memory.childRuns=(c.memory.childRuns or 0)+1
+    tasks.pop(c,{status="no_opportunity",confirmed=0})
+end}})
+return mission
+''')
+        self.goal['params']['opportunities']=[dict(kind='resource_child',params=dict(marker='from_goal'),maxRuns=1,cooldownSeconds=60)]
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            self.assertEqual(runner.data['memory']['childRuns'],1)
+            self.assertEqual(runner.data['memory']['opportunityTasks']['resource_child']['status'],'no_opportunity')
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+            self.assertEqual(self.count('buddy-quests.claim_reward'),1)
+        # Complete modules exceed the JSON frame budget, but use the distinct
+        # bounded source budget rather than trimming reviewed implementation.
+        raw=code+(ROOT/'behaviors/gathering.lua').read_text()+(ROOT/'behaviors/task-stack.lua').read_text()
+        self.assertGreater(len(raw.encode()),host.MAX_INPUT)
+        self.assertLess(len(raw.encode()),host.MAX_SOURCE)
+
+    def test_full_reviewed_gathering_module_confirms_materials_then_resumes_parent_handin(self):
+        from test_gathering_policy import Endpoint as ResourceEndpoint
+        resource=ResourceEndpoint();resource.sid=self.rpc.sid;resource.pose=self.rpc.pose;resource.target['x']=12
+        original=self.rpc.call
+        def call(method,params,timeout=5):
+            if method.startswith('buddy-professions.'):
+                self.rpc.calls.append((method,copy.deepcopy(params)));return resource.call(method,params,timeout)
+            return original(method,params,timeout)
+        self.rpc.call=call
+        self.goal['allow']+=['buddy-professions.state','buddy-professions.attempt']
+        self.goal['observations']['professions']=dict(method='buddy-professions.state',params={},select=['sessionId','selfGuid',
+            'revision','skillsKnown','spellsKnown','skillsRevision','skills','inventoryKnown','inventoryRevision','active',
+            'closing','operation','recipes','herbTargets','skinningTargets'])
+        self.goal['params']['opportunities']=[dict(kind='gathering',maxRuns=1,cooldownSeconds=60,params=dict(
+            resources=[dict(skillId=resource.skill,spellId=resource.spell,targetKind=resource.kind)],maxAttempts=1,
+            approachDistance=40,requestPrefix='nested_fixture'))]
+        code=self.source.read_text();self.source=self.folder.parent/'full-modules.lua'
+        self.source.write_text('local mission=(function()\n'+code+'\nend)()\nlocal child=(function()\n'+
+            (ROOT/'behaviors/gathering.lua').read_text()+'\nend)()\nreturn mission.attach(child)\n')
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=20)
+            self.assertEqual(self.count('buddy-professions.attempt'),1)
+            self.assertEqual(runner.data['memory']['gatheringAttempts'][0]['phase'],'completed')
+            self.assertEqual(runner.data['memory']['opportunityTasks']['gathering']['confirmed'],1)
+            self.assertEqual(runner.data['memory']['opportunityTasks']['gathering']['status'],'gathered')
+            self.assertEqual(self.count('buddy-quests.claim_reward'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
 
     def test_actual_descriptor_zero_choice_handin_receipt_followup_and_resume(self):
         with host.Store(self.folder) as store:
@@ -148,7 +280,8 @@ class ExpeditionTests(unittest.TestCase):
         self.rpc = Endpoint(); self.rpc.discover(); self.rpc.choices = [dict(itemId=1), dict(index=1, itemId=2)]
         with host.Store(self.folder.parent / 'multiple') as store:
             runner = self.runner(store)
-            self.until(runner, lambda: runner.data['phase'] == 'reward_choice_requires_selection')
+            self.until(runner, lambda: runner.data['phase'] == 'waiting_for_deferred_quests')
+            self.assertEqual(runner.data['memory']['deferredQuests']['hand_in:701']['reason'],'reward_choice_requires_selection')
             self.assertEqual(self.count('buddy-quests.claim_reward'), 0)
 
     def test_travel_normal_token_route_cleanup_then_fresh_giver(self):
@@ -169,12 +302,130 @@ class ExpeditionTests(unittest.TestCase):
         self.rpc.nav_reason = 'exploration_navigation_unavailable'
         with host.Store(self.folder) as store:
             runner = self.runner(store)
-            self.until(runner, lambda: runner.data['phase'].startswith('travel_stopped_'))
+            self.until(runner, lambda: runner.data['phase'] == 'waiting_for_deferred_quests')
             for _ in range(3): runner.tick()
             self.assertEqual(self.rpc.lease, '')
             self.assertEqual(self.count('buddy-actions.travel_to'), 1)
             self.assertEqual(self.count('buddy-actions.release_interaction'), 1)
             self.assertEqual(self.count('buddy-quests.turn_in'), 0)
+
+    def two_handins(self, first_entry=1234, first_x=10):
+        self.rpc.quest['questLog'][1]=dict(questId=703,complete=True)
+        first=self.goal['params']['handIns'][0]
+        first.update(npcEntry=first_entry,x=first_x,followupQuestId=0)
+        self.goal['params']['handIns'].append(dict(questId=703,npcEntry=1234,mapId=0,x=10,y=0,z=5))
+        self.goal['params']['initialHandInQuestIds']=[701,703]
+
+    def test_clean_blocked_route_defers_only_its_quest_and_other_handin_progresses_then_cooldown_survives_restart(self):
+        self.two_handins(first_entry=9999,first_x=-20)
+        self.rpc.nav_reason='exploration_navigation_unavailable'
+        clock=1700000000.
+        with patch.object(host.time,'time',side_effect=lambda:clock):
+            with host.Store(self.folder) as store:
+                runner=self.runner(store)
+                self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=20)
+                claim=next(p for name,p in self.rpc.calls if name=='buddy-quests.claim_reward')
+                self.assertEqual(claim['questId'],703);self.assertFalse(self.rpc.lease)
+                deferred=runner.data['memory']['deferredQuests']['hand_in:701']
+                self.assertEqual(deferred['retryAfter'],clock+60)
+                self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+                self.rpc.confirm_reward();runner.tick()
+                self.assertEqual(runner.data['phase'],'waiting_for_deferred_quests')
+            clock+=59
+            with host.Store(self.folder) as store:
+                runner=self.runner(store)
+                for _ in range(3):runner.tick()
+                self.assertEqual(self.count('buddy-actions.travel_to'),1)
+                self.assertTrue(self.rpc.quest['questLog'][0]['complete'])
+                clock+=1
+                self.until(runner,lambda:self.count('buddy-actions.travel_to')==2)
+                self.assertEqual(self.count('buddy-quests.claim_reward'),1)
+
+    def test_missing_giver_or_unusable_reward_offer_does_not_starve_second_ready_handin(self):
+        for mode in ('missing_giver','multiple_choices','no_reward_offer','giver_disappears_after_query'):
+            with self.subTest(mode=mode):
+                self.rpc=Endpoint();self.rpc.discover()
+                self.goal['params']['handIns']=self.goal['params']['handIns'][:1]
+                self.two_handins(first_entry=9999 if mode=='missing_giver' else 1234)
+                if mode=='multiple_choices': self.rpc.choices_by_quest[701]=[dict(itemId=1),dict(index=1,itemId=2)]
+                if mode=='no_reward_offer': self.rpc.no_reward_offer.add(701)
+                if mode=='giver_disappears_after_query':
+                    original=self.rpc.call
+                    def call(method,params,timeout=5):
+                        value=original(method,params,timeout)
+                        if method=='buddy-quests.turn_in' and params['questId']==701:self.rpc.quest['nearby']=[]
+                        return value
+                    self.rpc.call=call
+                with host.Store(self.folder.parent/mode) as store:
+                    runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=20)
+                    self.assertEqual(next(p for name,p in self.rpc.calls if name=='buddy-quests.claim_reward')['questId'],703)
+                    self.assertIn('hand_in:701',runner.data['memory']['deferredQuests'])
+                    self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_ambiguous_route_or_cleanup_never_skips_to_another_quest(self):
+        for method in ('buddy-actions.travel_to','buddy-actions.release_interaction'):
+            with self.subTest(method=method):
+                self.rpc=Endpoint();self.rpc.discover();self.rpc.nav_reason='exploration_navigation_unavailable'
+                self.goal['params']['handIns']=self.goal['params']['handIns'][:1]
+                self.two_handins(first_entry=9999,first_x=-20)
+                original=self.rpc.call
+                def fail(name,params,timeout=5):
+                    if name==method:
+                        self.rpc.calls.append((name,copy.deepcopy(params)));raise host.Error('rpc_result_unconfirmed')
+                    return original(name,params,timeout)
+                self.rpc.call=fail
+                with host.Store(self.folder.parent/method) as store:
+                    runner=self.runner(store);self.until(runner,lambda:bool(runner.data['pending']))
+                    for _ in range(3):runner.tick()
+                    self.assertEqual(runner.data['phase'],'blocked_on_ambiguous_call')
+                    self.assertEqual(self.count(method),1);self.assertEqual(self.count('buddy-quests.turn_in'),0)
+                    self.assertFalse(runner.data['memory'].get('deferredQuests'))
+
+    def test_blocked_followup_yields_to_ready_handin_and_not_offered_retry_is_not_a_loop(self):
+        self.two_handins();self.goal['params']['handIns'][0]['followupQuestId']=702
+        clock=1700000000.;original=self.rpc.call;hide_next_discovery=False
+        def call(method,params,timeout=5):
+            nonlocal hide_next_discovery
+            value=original(method,params,timeout)
+            if method=='buddy-quests.discover' and hide_next_discovery:
+                self.rpc.quest['nearby']=[];hide_next_discovery=False
+            if method=='buddy-quests.offer':self.rpc.quest['offer']['quests']=[]
+            return value
+        self.rpc.call=call
+        with patch.object(host.time,'time',side_effect=lambda:clock):
+            with host.Store(self.folder) as store:
+                runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+                self.rpc.confirm_reward();hide_next_discovery=True
+                self.until(runner,lambda:self.count('buddy-quests.claim_reward')==2,limit=20)
+                self.assertIn('followup:702',runner.data['memory']['deferredQuests'])
+                self.assertEqual(next(p for name,p in reversed(self.rpc.calls) if name=='buddy-quests.claim_reward')['questId'],703)
+                self.rpc.confirm_reward();runner.tick();clock+=60
+                self.until(runner,lambda:self.count('buddy-quests.offer')==1)
+                for _ in range(4):runner.tick()
+                self.assertEqual(self.count('buddy-quests.offer'),1);self.assertEqual(self.count('buddy-quests.accept'),0)
+                self.assertNotIn('followup:702',runner.data['memory']['deferredQuests'])
+                self.assertEqual(runner.data['phase'],'remaining_objectives_rendezvous_unknown')
+
+    def test_exported_handlers_allow_a_nested_child_and_resume_the_same_guarded_handin(self):
+        code=self.source.read_text();self.source=self.folder.parent/'derived.lua'
+        self.source.write_text('local mission=(function()\n'+code+'\nend)()\n'+'''
+local parent=mission.handlers.journal_sync
+mission.handlers.example_child=function(c,f) tasks.pop(c,{status="child_done"}) end
+mission.handlers.journal_sync=function(c,f)
+    if not f.childDone then
+        if f.child and f.child.status=="child_done" then
+            f.child=nil;f.childDone=true;c.memory.nestedChildResumed=true
+        else tasks.push(c,"example_child",{});return end
+    end
+    return parent(c,f)
+end
+return mission
+''')
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            self.assertTrue(runner.data['memory']['nestedChildResumed'])
+            self.assertEqual(next(p for name,p in self.rpc.calls if name=='buddy-quests.claim_reward')['questId'],701)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
 
     def test_lost_claim_reply_stays_pending_until_exact_fresh_reward_receipt(self):
         self.rpc.fail_claim = True

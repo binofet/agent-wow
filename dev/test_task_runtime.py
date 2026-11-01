@@ -3,6 +3,7 @@ import copy
 import concurrent.futures
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -75,6 +76,117 @@ class RuntimeTests(unittest.TestCase):
         return dict(memory={'attempted': True}, phase='buying', action=dict(id=request, method='vendor.buy', params={'quantity': 1}))
 
     def purchases(self): return [v for v in self.rpc.calls if v[0] == 'vendor.buy']
+
+    def enable_run(self, runner, store):
+        runner.data['run'] = dict(instance='a'*32, pid=os.getpid(), active=True)
+        runner.persist()
+        runner.stopped = lambda: m.stop_requested(store, runner.data)
+
+    def test_stop_marker_binds_exact_body_instance_and_preserves_all_history(self):
+        self.bridge.decide = lambda _: self.buy()
+        self.rpc.hook = lambda method, _: (_ for _ in ()).throw(m.Error('lost')) if method == 'vendor.buy' else None
+        with m.Store(self.folder) as store:
+            runner = self.runner(store); self.enable_run(runner, store); runner.tick()
+            before = store.load()
+            self.assertTrue(m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)['stopRequested'])
+            self.assertTrue(m.stop_requested(store, runner.data))
+            self.assertEqual(store.load(), before)
+            with self.assertRaisesRegex(m.Error,'stopped_or_deadline'): runner.tick()
+            for guid,sid,url in ((8,'aw-test',self.rpc.url),(87,'aw-other',self.rpc.url),(87,'aw-test',self.rpc.url+'x')):
+                with self.assertRaisesRegex(m.Error,'stop_body_binding'): m.request_stop(store,guid,sid,url)
+            runner.data['run']['instance']='b'*32;runner.persist()
+            self.assertFalse(m.stop_requested(store,runner.data))
+            self.assertEqual(len(self.purchases()),1)
+        self.assertFalse(m.Store(self.folder).held())
+
+    def test_stop_during_returned_call_keeps_authenticated_reply_and_never_replays(self):
+        self.bridge.decide = lambda _: self.buy()
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.enable_run(runner,store)
+            def stop(method,_):
+                if method=='vendor.buy':m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)
+            self.rpc.hook=stop;runner.tick()
+            self.assertEqual(runner.data['last']['response']['receipt'],'owned-1')
+            self.assertEqual(runner.data['pending'],[])
+            self.assertEqual(runner.data['attempts'][0]['outcome'],'rpc_result')
+            with self.assertRaisesRegex(m.Error,'stopped_or_deadline'):runner.tick()
+            self.assertEqual(len(self.purchases()),1)
+
+    def test_stop_during_lost_reply_keeps_issued_mutation_pending(self):
+        self.bridge.decide=lambda _:self.buy()
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.enable_run(runner,store)
+            def lost(method,_):
+                if method=='vendor.buy':
+                    m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)
+                    raise m.Error('rpc_result_unconfirmed')
+            self.rpc.hook=lost;runner.tick()
+            self.assertEqual(runner.data['pending'][0]['id'],'buy-1')
+            self.assertEqual(runner.data['attempts'][0]['outcome'],'pending')
+            self.assertNotIn('response',runner.data['last'])
+            with self.assertRaisesRegex(m.Error,'stopped_or_deadline'):runner.tick()
+            self.assertEqual(len(self.purchases()),1)
+
+    def test_stop_after_reservation_prevents_write_and_records_no_dispatch_not_success(self):
+        self.bridge.decide=lambda _:self.buy()
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.enable_run(runner,store);save=store.save
+            def save_and_stop(data):
+                save(data)
+                if data['pending']:m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)
+            with patch.object(store,'save',side_effect=save_and_stop):runner.tick()
+            self.assertEqual(self.purchases(),[])
+            self.assertEqual(store.load()['pending'],[])
+            self.assertEqual(store.load()['attempts'][0]['id'],'buy-1')
+            self.assertEqual(store.load()['attempts'][0]['outcome'],'not_dispatched')
+            self.assertNotIn('response',store.load()['last'])
+            self.runner(store)  # The durable terminal row remains a valid, non-replayable history.
+
+    def test_private_stop_marker_and_crashed_or_inactive_host_cannot_claim_cleanup(self):
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.enable_run(runner,store)
+            target=self.folder/('stop-'+'a'*32+'.json')
+            outside=self.root/'outside';outside.write_text('{}');outside.chmod(0o600);target.symlink_to(outside)
+            with self.assertRaises(OSError):m.request_stop(store,87,'aw-test',self.rpc.url)
+            target.unlink();target.write_text('{}');target.chmod(0o600)
+            with self.assertRaisesRegex(m.Error,'stop_request_binding'):m.stop_requested(store,runner.data)
+            target.unlink();runner.data['run']['active']=False;runner.persist()
+            self.assertFalse(m.request_stop(store,87,'aw-test',self.rpc.url)['stopRequested'])
+        # An abandoned active flag without a live lock is not a live stop request.
+        data=m.Store(self.folder).load();data['run']['active']=True;m.Store(self.folder).save(data)
+        self.assertFalse(m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)['stopRequested'])
+
+    def test_cli_cooperative_exit_releases_lock_without_clearing_pending(self):
+        self.bridge.decide=lambda _:self.buy()
+        self.rpc.hook=lambda method,_:(_ for _ in ()).throw(m.Error('lost')) if method=='vendor.buy' else None
+        goal=self.root/'goal.json';goal.write_text(json.dumps(self.goal))
+        def stop(_):m.request_stop(m.Store(self.folder),87,'aw-test',self.rpc.url)
+        with patch.object(m,'Bridge',return_value=self.bridge),patch.object(m,'RPC',return_value=self.rpc),\
+                patch.object(m.signal,'signal'),patch.object(m.time,'sleep',side_effect=stop),patch('sys.stdout',new=io.StringIO()):
+            self.assertEqual(m.main(['run','--guid','87','--session-id','aw-test','--rpc-url',self.rpc.url,
+                '--goal',str(goal),'--source',str(self.source),'--state-dir',str(self.folder)]),0)
+        data=m.Store(self.folder).load()
+        self.assertFalse(data['run']['active']);self.assertGreater(data['run']['stoppedAt'],0)
+        self.assertEqual(data['pending'][0]['id'],'buy-1');self.assertEqual(len(self.purchases()),1)
+        self.assertFalse(m.Store(self.folder).held())
+
+    def test_cli_error_stamps_actual_run_and_normal_restart_retains_old_error_provenance(self):
+        self.source.write_text('BROKEN');goal=self.root/'goal.json';goal.write_text(json.dumps(self.goal))
+        argv=['run','--guid','87','--session-id','aw-test','--rpc-url',self.rpc.url,
+            '--goal',str(goal),'--source',str(self.source),'--state-dir',str(self.folder)]
+        with patch.object(m,'Bridge',return_value=self.bridge),patch.object(m,'RPC',return_value=self.rpc),\
+                patch.object(m.signal,'signal'),patch('sys.stdout',new=io.StringIO()):
+            with self.assertRaisesRegex(m.Error,'no_valid_policy'):m.main(argv)
+            failed=m.Store(self.folder).load();old=failed['run']['instance']
+            self.assertFalse(failed['run']['active'])
+            self.assertEqual(failed['hostErrorInstance'],old);self.assertEqual(failed['policyErrorInstance'],old)
+            self.source.write_text('return {} --GOOD')
+            self.bridge.decide=lambda value:dict(memory=value['memory'],phase='complete',done=True)
+            self.assertEqual(m.main(argv),0)
+        current=m.Store(self.folder).load()
+        self.assertNotEqual(current['run']['instance'],old);self.assertFalse(current['run']['active'])
+        self.assertEqual(current['hostError'],failed['hostError']);self.assertEqual(current['hostErrorInstance'],old)
+        self.assertEqual(current['policyError'],'')
 
     def test_receipt_survives_observation_reads_and_completed_restart(self):
         def decide(value):
@@ -313,6 +425,92 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(m.lookup(value, ['rows', '0', 'missing']), (False, None))
         self.assertNotIn('extra', json.dumps(value))
 
+    def test_actual_large_read_and_query_observation_are_projected_before_policy_receipt_bound(self):
+        raw=dict(count=7,items=[dict(entry=4498)],unselected='x'*56091)
+        original=self.rpc.call
+        def call(method,params,timeout=5):
+            if method in ('vendor.state','vendor.list'):
+                self.rpc.calls.append((method,params));return copy.deepcopy(raw)
+            return original(method,params,timeout)
+        self.rpc.call=call
+        for method in ('vendor.state','vendor.list'):
+            with self.subTest(method=method),m.Store(self.folder/method) as store:
+                self.goal['observations']['stock']['method']=method
+                runner=self.runner(store);runner.tick()
+                self.assertEqual(self.bridge.inputs[-1]['observations']['stock'],dict(count=7,items=[dict(entry=4498)]))
+                self.assertEqual(store.load()['observationErrors'],{})
+                self.assertEqual(store.load()['pending'],[]);self.assertIsNone(store.load()['last'])
+                self.assertNotIn('unselected',(store.folder/'state.json').read_text())
+                if method=='vendor.list':self.assertEqual(store.load()['attempts'][0]['outcome'],'rpc_result')
+                else:self.assertEqual(store.load()['attempts'],[])
+
+    def test_observation_failures_are_specific_current_run_evidence_then_clear_on_positive_read(self):
+        original=self.rpc.call
+        def oversized(method,params,timeout=5):
+            if method=='vendor.state':return dict(count=7,items=[dict(entry='x'*m.MAX_INPUT)])
+            return original(method,params,timeout)
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);self.enable_run(runner,store)
+            self.rpc.call=oversized;runner.tick()
+            self.assertNotIn('stock',self.bridge.inputs[-1]['observations'])
+            self.assertEqual(store.load()['observationErrors']['stock'],dict(method='vendor.state',error='json_size_bound'))
+            self.assertEqual(store.load()['observationErrorInstance'],'a'*32)
+            self.assertIn('stock:json_size_bound',m.status(store.load())['observationError'])
+            self.rpc.call=original
+            self.rpc.hook=lambda method,_:(_ for _ in ()).throw(m.Error('rpc_result_unconfirmed')) if method=='vendor.state' else None
+            runner.tick();self.assertIn('rpc_result_unconfirmed',store.load()['observationError'])
+            self.rpc.hook=lambda *_:None;runner.tick()
+            self.assertEqual(store.load()['observationErrors'],{});self.assertEqual(store.load()['observationError'],'')
+            self.assertIn('stock',self.bridge.inputs[-1]['observations']);self.assertEqual(self.purchases(),[])
+
+    def test_projection_exemption_does_not_relax_direct_query_mutation_receipts_or_transport_cap(self):
+        original=self.rpc.call
+        def large(method,params,timeout=5):
+            if method in ('vendor.list','vendor.buy'):
+                self.rpc.calls.append((method,params));return dict(payload='x'*m.MAX_INPUT)
+            return original(method,params,timeout)
+        self.rpc.call=large
+        for method in ('vendor.list','vendor.buy'):
+            with self.subTest(method=method),m.Store(self.folder/method) as store:
+                runner=self.runner(store)
+                self.assertIsNone(runner.request(dict(id='issued',method=method,params={})))
+                self.assertEqual(store.load()['pending'][0]['outcome'],'pending')
+                self.assertEqual(store.load()['last']['error'],'json_size_bound')
+                with self.assertRaisesRegex(m.Error,'already_attempted'):
+                    runner.request(dict(id='issued',method=method,params={}))
+        rpc=m.RPC(self.rpc.url)
+        raw=json.dumps(dict(jsonrpc='2.0',id=1,result=dict(payload='x'*1048576))).encode()
+        with patch.object(rpc.opener,'open',return_value=io.BytesIO(raw)):
+            with self.assertRaisesRegex(m.Error,'rpc_response_size_bound'):rpc.call('vendor.state',{})
+
+    def test_last_effect_is_catalog_derived_for_read_query_and_mutation_errors_and_success(self):
+        for method,effect in (('vendor.state','read'),('vendor.list','query'),('vendor.buy','mutation')):
+            with self.subTest(method=method),m.Store(self.folder/method) as store:
+                runner=self.runner(store)
+                runner.request(dict(id='first',method=method,params={}))
+                self.assertEqual(store.load()['last']['effect'],effect)
+                self.rpc.hook=lambda name,_:(_ for _ in ()).throw(m.Error('lost')) if name==method else None
+                runner.request(dict(id='second',method=method,params={}))
+                self.assertEqual(store.load()['last']['effect'],effect)
+                self.assertEqual(store.load()['last']['error'],'lost')
+                self.assertEqual(len(store.load()['pending']),0 if effect=='read' else 1)
+                self.rpc.hook=lambda *_:None
+
+    def test_bounded_module_source_and_retained_fallback_are_separate_from_json_frame_bound(self):
+        self.source.write_text('return {} --GOOD\n'+' '*(70*1024))
+        with m.Store(self.folder) as store:
+            runner=self.runner(store);runner.tick();runner.tick()
+            revision=runner.data['goodRevision'];cached=store.folder/('policy-'+revision+'.lua')
+            self.assertGreater(cached.stat().st_size,m.MAX_STATE)
+            self.assertLess(cached.stat().st_size,m.MAX_SOURCE)
+            self.source.write_text('BROKEN');runner.tick()
+            self.assertEqual(runner.data['goodRevision'],revision)
+            self.assertTrue(runner.data['policyError'])
+            with self.assertRaisesRegex(m.Error,'json_size_bound'):m.packed({'large':'x'*m.MAX_INPUT},m.MAX_INPUT)
+        self.source.write_text('x'*(m.MAX_SOURCE+1))
+        with m.Store(self.folder/'oversize') as store:
+            with self.assertRaisesRegex(m.Error,'no_valid_policy'):self.runner(store).tick()
+
     def shared_claim(self):
         return dict(key='first-qualified', evidence=[
             dict(observation='stock', path='items.0.entry', operator='equals', value=4498),
@@ -326,6 +524,7 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(m.Error, 'predicate_not_observed'): runner.tick()
             self.assertFalse(self.shared.folder.exists())
             self.rpc.count = 10; runner.tick()
+            self.assertEqual(self.bridge.inputs[-1]['goal']['sharedKeys'], ['first-qualified'])
             record = self.shared.read('first-qualified')
             self.assertEqual(record['winnerGuid'], '87'); self.assertEqual(record['sessionId'], 'aw-test')
             self.assertEqual(record['goalId'], 'supplies')

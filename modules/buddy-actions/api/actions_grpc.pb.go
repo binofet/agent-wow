@@ -38,6 +38,7 @@ const (
 	BuddyActions_TravelTrainer_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
 	BuddyActions_TravelVendor_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
 	BuddyActions_TravelTo_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
+	BuddyActions_PlanRouteLeg_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
 	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
 	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
 	BuddyActions_FargodeepEncounter_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
@@ -68,6 +69,7 @@ type BuddyActionsClient interface {
 	// Movement only under an owned trade lease to an actual observed vendor.
 	TravelVendor(ctx context.Context, in *ApproachQuestRequest, opts ...grpc.CallOption) (*State, error)
 	TravelTo(ctx context.Context, in *TravelToRequest, opts ...grpc.CallOption) (*State, error)
+	PlanRouteLeg(ctx context.Context, in *PlanRouteLegRequest, opts ...grpc.CallOption) (*RouteLeg, error)
 	ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error)
 	Practice(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	FargodeepEncounter(ctx context.Context, in *FargodeepEncounterRequest, opts ...grpc.CallOption) (*State, error)
@@ -255,6 +257,16 @@ func (c *buddyActionsClient) TravelTo(ctx context.Context, in *TravelToRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) PlanRouteLeg(ctx context.Context, in *PlanRouteLegRequest, opts ...grpc.CallOption) (*RouteLeg, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RouteLeg)
+	err := c.cc.Invoke(ctx, BuddyActions_PlanRouteLeg_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) ExitCrypt(ctx context.Context, in *ExitCryptRequest, opts ...grpc.CallOption) (*State, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
@@ -337,6 +349,7 @@ type BuddyActionsServer interface {
 	// Movement only under an owned trade lease to an actual observed vendor.
 	TravelVendor(context.Context, *ApproachQuestRequest) (*State, error)
 	TravelTo(context.Context, *TravelToRequest) (*State, error)
+	PlanRouteLeg(context.Context, *PlanRouteLegRequest) (*RouteLeg, error)
 	ExitCrypt(context.Context, *ExitCryptRequest) (*State, error)
 	Practice(context.Context, *ToggleRequest) (*State, error)
 	FargodeepEncounter(context.Context, *FargodeepEncounterRequest) (*State, error)
@@ -404,6 +417,9 @@ func (UnimplementedBuddyActionsServer) TravelVendor(context.Context, *ApproachQu
 }
 func (UnimplementedBuddyActionsServer) TravelTo(context.Context, *TravelToRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TravelTo not implemented")
+}
+func (UnimplementedBuddyActionsServer) PlanRouteLeg(context.Context, *PlanRouteLegRequest) (*RouteLeg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PlanRouteLeg not implemented")
 }
 func (UnimplementedBuddyActionsServer) ExitCrypt(context.Context, *ExitCryptRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExitCrypt not implemented")
@@ -750,6 +766,24 @@ func _BuddyActions_TravelTo_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_PlanRouteLeg_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PlanRouteLegRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).PlanRouteLeg(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_PlanRouteLeg_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).PlanRouteLeg(ctx, req.(*PlanRouteLegRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_ExitCrypt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExitCryptRequest)
 	if err := dec(in); err != nil {
@@ -932,6 +966,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TravelTo",
 			Handler:    _BuddyActions_TravelTo_Handler,
+		},
+		{
+			MethodName: "PlanRouteLeg",
+			Handler:    _BuddyActions_PlanRouteLeg_Handler,
 		},
 		{
 			MethodName: "ExitCrypt",

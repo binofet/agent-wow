@@ -83,6 +83,30 @@ message TravelToRequest {
   // route endpoint to fit this radius; it grants no floor/layer tolerance.
   float arrival_distance = 6;
 }
+// Read-only guidance. TravelTo independently replans the returned endpoint
+// under its normal movement custody and physical checks.
+message PlanRouteLegRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 expected_position_revision = 3;
+  uint32 map_id = 4;
+  float x = 5;
+  float y = 6;
+  float z = 7;
+}
+message RouteLeg {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint32 map_id = 3;
+  ClientPosition start = 4;
+  // Planned geometry only, not an observed player pose or movement receipt.
+  // Age and position revision are deliberately unset.
+  ClientPosition endpoint = 5;
+  float path_length = 6;
+  uint32 point_count = 7;
+  bool goal_reached = 8;
+  uint64 server_position_revision = 9;
+}
 // An owned quests lease permits only the fixed, measured crypt exit route.
 message ExitCryptRequest { string token = 1; }
 message InteractionLease { string token = 1; State state = 2; }
@@ -288,6 +312,7 @@ service BuddyActions {
   // Movement only under an owned trade lease to an actual observed vendor.
   rpc TravelVendor(ApproachQuestRequest) returns (State);
   rpc TravelTo(TravelToRequest) returns (State);
+  rpc PlanRouteLeg(PlanRouteLegRequest) returns (RouteLeg);
   rpc ExitCrypt(ExitCryptRequest) returns (State);
   rpc Practice(ToggleRequest) returns (State);
   rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);

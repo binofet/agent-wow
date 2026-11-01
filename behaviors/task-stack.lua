@@ -25,8 +25,20 @@ function tasks.call(context, frame, method, params, phase)
         if not last or last.id ~= frame.waiting.id then
             return nil, tasks.await(context, "waiting_for_call_result")
         end
-        if last.error then return nil, tasks.await(context, "blocked_on_ambiguous_call") end
-        assert(last.method == frame.waiting.method and type(last.response) == "table", "call reply mismatch")
+        assert(last.method == frame.waiting.method, "call reply mismatch")
+        if last.error then
+            -- Only the host's descriptor-derived read effect proves that a
+            -- failed call cannot have issued an uncertain gameplay mutation.
+            if last.effect == "read" then
+                assert(type(last.error) == "string", "invalid read error")
+                local reason = last.error
+                if #reason == 0 or #reason > 256 then reason = "read_error_detail_unavailable" end
+                frame.waiting = nil
+                return {readError=reason}, nil
+            end
+            return nil, tasks.await(context, "blocked_on_ambiguous_call")
+        end
+        assert(type(last.response) == "table", "call reply mismatch")
         frame.waiting = nil
         return last.response, nil
     end

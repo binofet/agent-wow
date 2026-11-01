@@ -25,6 +25,7 @@ rpc:
   travel_trainer: /warcraftbuddy.actions.v1.BuddyActions/TravelTrainer
   travel_vendor: /warcraftbuddy.actions.v1.BuddyActions/TravelVendor
   travel_to: /warcraftbuddy.actions.v1.BuddyActions/TravelTo
+  plan_route_leg: /warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg
   exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
@@ -57,6 +58,7 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
   behavior: {effect: read}
   spell_toolkit: {effect: read}

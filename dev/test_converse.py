@@ -2173,6 +2173,267 @@ class MissionRuntimeContextTests(unittest.TestCase):
             self.assertFalse(self.read()['expedition']['available'])
 
 
+class MissionHandoffTests(unittest.TestCase):
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory(dir='/private/tmp');self.addCleanup(temporary.cleanup)
+        self.repo=Path(temporary.name);(self.repo/'dev').mkdir()
+        source=Path(__file__).with_name('task-runtime').read_bytes()
+        (self.repo/'dev/task-runtime').write_bytes(source)
+        loader=importlib.machinery.SourceFileLoader('handoff_host',str(self.repo/'dev/task-runtime'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        self.host=importlib.util.module_from_spec(spec);loader.exec_module(self.host)
+        self.folder=self.repo/'data/tasks/expedition/1/runtime'
+        self.store=self.host.Store(self.folder).__enter__();self.addCleanup(self.store.__exit__)
+        self.data=dict(version=1,identity=dict(guid='1',sessionId='aw-current',rpcUrl='http://127.0.0.1:8086/rpc'),
+            run=dict(instance='a'*32,pid=os.getpid(),active=True),goalId='mission',phase='walking',goodRevision='b'*64,
+            memory=dict(stack=[dict(kind='walk',stage='waiting',private='omit')]),pending=[],last={'secret':'omit'})
+        self.store.save(self.data)
+        patcher=patch.object(converse,'ROOT',self.repo);patcher.start();self.addCleanup(patcher.stop)
+        case=self
+        class RPC:
+            url='http://127.0.0.1:8086/rpc'
+            def __init__(self):self.calls=[];self.hook=lambda _:None
+            def call(self,method,params):
+                self.calls.append((method,params));self.hook(method)
+                if method=='buddy-party.state':return dict(sessionId='aw-current')
+                if method=='buddy-professions.state':return copy.deepcopy(case.professions)
+                if method=='buddy-actions.status':return copy.deepcopy(case.actions)
+                if method=='buddy-actions.follow':return dict(case.actions,following=params['enabled'])
+                return {}
+        self.actions=dict(sessionId='aw-current',selfGuid='1',following=False,healing=True,assisting=True,buffing=True,
+            healingLeaseRemainingMs='14400000',assistLeaseRemainingMs='14400000',buffLeaseRemainingMs='14400000')
+        self.professions=dict(sessionId='aw-current')
+        self.rpc=RPC();self.controls=converse.BuddyControls(self.rpc)
+        self.controls.actions_available=True;self.controls.actions=self.actions
+
+    def stopped(self):
+        self.data['run']['active']=False;self.store.save(self.data);self.store.__exit__()
+
+    def test_stop_mission_writes_only_exact_marker_preserving_native_and_chat_history(self):
+        before=(self.folder/'state.json').read_bytes()
+        self.assertIn('requested',self.controls.execute('STOP_MISSION'))
+        self.assertTrue(self.host.stop_requested(self.store,self.data))
+        self.assertEqual((self.folder/'state.json').read_bytes(),before);self.assertEqual(self.rpc.calls,[])
+        self.assertTrue(converse.mission_chat_context(1,'aw-current',self.rpc.url)['runtimes']['expedition']['stopRequested'])
+        self.assertIn('STOP_MISSION',converse.ACTIONS)
+        # A separate brain can continue serving chat while the task lock remains held.
+        brain=FakeBrain();chat=FakeRPC([poll(),poll([message(1,'How is the mission?')])])
+        loop=converse.Conversation(chat,brain);loop.tick();loop.tick()
+        self.assertEqual(len(brain.histories),1);self.assertTrue(self.store.held())
+
+    def test_follow_waits_for_exact_cooperative_exit_then_passive_intents_do_not_block(self):
+        for command in ('FOLLOW','STOP_FOLLOWING'):
+            self.data['run']['active']=True;self.store.save(self.data)
+            if self.store.lock.closed:self.store=self.host.Store(self.folder).__enter__()
+            def finish(_):
+                self.assertTrue(self.host.stop_requested(self.store,self.data));self.stopped()
+            with patch.object(converse.time,'sleep',side_effect=finish),\
+                    patch.object(converse,'party_town_snapshot',return_value={}) as town,\
+                    patch.object(converse,'area_quest_snapshot',return_value={}),\
+                    patch.object(converse,'quest_task_snapshot',return_value={}):
+                result=self.controls.execute(command)
+            self.assertIn('follow',result);self.assertEqual(self.rpc.calls[-1],('buddy-actions.follow',{'enabled':command=='FOLLOW'}))
+            town.assert_called_once();self.rpc.calls=[]
+
+    def test_pending_uncertain_state_never_follows_or_revokes_another_controller(self):
+        self.data['pending']=[dict(outcome='pending',effect='mutation')];self.store.save(self.data)
+        with patch.object(converse,'party_town_snapshot') as town:
+            self.assertIn('uncertain',self.controls.execute('FOLLOW'))
+        town.assert_not_called();self.assertEqual(self.rpc.calls,[])
+        self.assertEqual(self.store.load()['pending'],self.data['pending'])
+
+    def test_active_recovery_cast_cleanup_or_changed_body_refuses_follow(self):
+        self.stopped()
+        for mutation in (lambda:self.actions.update(recovery={'active':True}),lambda:self.actions.update(castPending=True),
+                lambda:self.actions.update(interactionLeaseRemainingMs='1000'),
+                lambda:self.professions.update(operation={'status':'OUTCOME_UNCONFIRMED','leaseReleased':True}),
+                lambda:self.professions.update(operation=[]),lambda:self.actions.update(sessionId='aw-replacement')):
+            base=copy.deepcopy(self.actions);self.professions=dict(sessionId='aw-current');mutation()
+            self.assertIsNotNone(self.controls.mission_handoff(follow=True,wait_seconds=0))
+            self.assertFalse(any(m=='buddy-actions.follow' for m,_ in self.rpc.calls));self.rpc.calls=[];self.actions=base
+
+    def test_replacement_instance_during_final_native_reads_never_gets_follow(self):
+        self.stopped()
+        def replace(method):
+            if method=='buddy-actions.status':
+                self.data['run']['instance']='c'*32;self.store.save(self.data)
+        self.rpc.hook=replace
+        self.assertIn('instance changed',self.controls.mission_handoff(follow=True,wait_seconds=0))
+        self.assertFalse(any(m=='buddy-actions.follow' for m,_ in self.rpc.calls))
+
+    def test_controller_stop_callbacks_cannot_replace_mission_or_body_before_follow_write(self):
+        self.stopped()
+        for changed in ('body','instance','cast'):
+            self.actions.update(sessionId='aw-current',castPending=False);self.data['run']['instance']='a'*32;self.store.save(self.data)
+            def replace(*_,**__):
+                if changed=='body':self.actions['sessionId']='aw-new'
+                elif changed=='cast':self.actions['castPending']=True
+                else:self.data['run']['instance']='c'*32;self.store.save(self.data)
+                return {}
+            self.rpc.calls=[]
+            with patch.object(converse,'party_town_snapshot',side_effect=replace),\
+                    patch.object(converse,'area_quest_snapshot',return_value={}),\
+                    patch.object(converse,'quest_task_snapshot',return_value={}):
+                self.assertIn('unchanged',self.controls.execute('FOLLOW'))
+            self.assertFalse(any(m=='buddy-actions.follow' for m,_ in self.rpc.calls))
+
+    def test_ordinary_context_is_sanitized_current_metadata_and_crash_is_not_stopped(self):
+        result=converse.mission_chat_context(1,'aw-current',self.rpc.url)
+        row=result['runtimes']['expedition'];self.assertTrue(row['active']);self.assertEqual(row['goalId'],'mission')
+        for private in ('statePath','goalPath','runtimeCLI','instance','pid','secret','private'):
+            self.assertNotIn(private,json.dumps(result))
+        state=self.controls.context();self.assertTrue(state['abilities']['mission_stop'])
+        self.assertTrue(state['missions']['runtimes']['expedition']['active'])
+        self.store.__exit__()  # A released lock without a cooperative inactive record is a crash/unknown.
+        self.assertIn("couldn't confirm",self.controls.execute('STOP_MISSION'))
+        self.assertIsNotNone(self.controls.mission_handoff(follow=True,wait_seconds=0))
+        self.data['identity']['sessionId']='aw-old';self.store.save(self.data)
+        self.assertFalse(converse.mission_chat_context(1,'aw-current',self.rpc.url)['runtimes']['expedition']['available'])
+
+
+class MissionFaultRepairTests(unittest.TestCase):
+    def setUp(self):
+        MissionHandoffTests.setUp(self)
+        self.data.update(policyError='typed_bridge_rejected',policyErrorInstance='a'*32,rejectedRevision='c'*64,hostError='')
+        self.store.save(self.data)
+        self.controls.party_available=True;self.controls.party_session='aw-current'
+        self.controls.refresh=lambda:None
+        self.controls.execute=lambda action,**kw:self.assertEqual(action,'NONE')
+        self.brain=FakeBrain(dict(text='I checked the source; installation remains unconfirmed.',emote='WAVE',action='FOLLOW'))
+        self.brain.developer_workspace=self.repo;self.brain.state_dir=self.repo/'brain';self.brain.state_dir.mkdir(mode=0o700)
+        self.brain.states=[];generate=self.brain.generate
+        def record(history,state=None):self.brain.states.append(state);return generate(history,state)
+        self.brain.generate=record
+        self.statuses=[]
+        self.loop=self.new_loop()
+        call=self.rpc.call;self.polls=[]
+        def rpc(method,params):
+            if method=='buddy-chat.poll':
+                self.rpc.calls.append((method,params))
+                return self.polls.pop(0) if self.polls else poll(sessionId='chat-current')
+            if method=='buddy-chat.send':self.rpc.calls.append((method,params));return dict(transportWritten=True)
+            return call(method,params)
+        self.rpc.call=rpc
+
+    def new_loop(self):
+        loop=converse.Conversation(self.rpc,self.brain,controls=self.controls,status=lambda **kw:self.statuses.append(kw))
+        loop.initialized=True;loop.session_id='chat-current';return loop
+
+    def test_fresh_fault_runs_same_brain_once_across_restart_preserving_unknowns_no_game_writes(self):
+        self.data['pending']=[dict(outcome='pending',effect='mutation',id='issued-1')]
+        self.data.update(hostError='no_valid_policy',hostErrorInstance='a'*32,policyError='')
+        self.data['run'].update(active=False,stoppedAt=time.time());self.store.save(self.data);self.store.__exit__()
+        before=(self.folder/'state.json').read_bytes()
+        self.loop.tick();self.new_loop().tick()
+        self.assertEqual(len(self.brain.histories),1)
+        request=self.brain.states[0]['current_request'];self.assertIs(type(request),converse._MissionFaultRequest)
+        self.assertEqual(request['source'],'mission_fault');self.assertFalse(request['controls_allowed'])
+        self.assertEqual(self.brain.states[0]['development']['sessionId'],'aw-current')
+        self.assertEqual((self.folder/'state.json').read_bytes(),before)
+        self.assertFalse(any(m in ('buddy-chat.send','buddy-chat.emote','buddy-actions.follow') for m,_ in self.rpc.calls))
+        self.assertTrue(any(s.get('missionRepairPhase')=='developer_turn_completed' for s in self.statuses))
+        self.assertNotIn('installed',self.statuses[-1]['missionRepairPhase'])
+
+    def test_only_actual_fresh_errors_or_explicit_fresh_stall_are_faults(self):
+        baseline=copy.deepcopy(self.data)
+        for mutation in (lambda d:d.update(updatedAt=time.time()-16),lambda d:d['identity'].update(sessionId='aw-old'),
+                lambda d:d.update(policyError='',phase='waiting_for_server_receipt'),
+                lambda d:d.update(policyError='',hostError='task_stopped_or_deadline'),lambda d:d.update(version=2),
+                lambda d:d.update(policyError='',hostError='historical_prior_run_error'),
+                lambda d:(d.update(policyError='',hostError='old_error',hostErrorInstance='a'*32),
+                    d['run'].update(instance='b'*32,active=False,stoppedAt=time.time())),
+                lambda d:d['run'].update(instance='b'*32,active=False,stoppedAt=time.time()),
+                lambda d:d.update(policyErrorInstance=''),
+                lambda d:(d.update(policyError='',hostError='old_stop'),d['run'].update(active=False,stoppedAt=time.time()-16)),
+                lambda d:d.update(policyError='',memory=dict(health=dict(code='stalled',phase='cast',since=time.time()-16),stack=[]))):
+            data=copy.deepcopy(baseline);mutation(data);self.store.write('state.json',json.dumps(data).encode())
+            self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+        data=copy.deepcopy(baseline);data.update(policyError='',memory=dict(health=dict(code='stalled',phase='cast',since=time.time()),stack=[]))
+        self.store.save(data);self.loop.tick()
+        self.assertEqual(self.brain.states[0]['mission_fault']['field'],'health')
+        self.assertEqual(len(self.brain.histories),1)
+
+    def test_new_rejected_candidate_same_fallback_and_error_is_a_distinct_bounded_fault(self):
+        self.loop.tick()
+        with patch.object(self.controls,'context',side_effect=AssertionError('reserved fault must stay cheap')) as context:
+            self.loop.tick()
+        context.assert_not_called()
+        self.assertEqual(len(self.brain.histories),1)
+        self.data['rejectedRevision']='d'*64;self.store.save(self.data);self.loop.tick()
+        self.assertEqual(len(self.brain.histories),2)
+        self.assertNotEqual(self.brain.states[0]['mission_fault']['key'],self.brain.states[1]['mission_fault']['key'])
+        self.assertEqual(self.brain.states[1]['mission_fault']['rejectedSourceRevision'],'d'*64)
+
+    def test_current_observation_error_wakes_fault_turn_and_recovered_or_wrong_run_error_does_not(self):
+        self.data.update(policyError='',observationError='world:rpc_result_unconfirmed',observationErrorInstance='a'*32)
+        self.store.save(self.data);self.loop.tick()
+        self.assertEqual(self.brain.states[0]['mission_fault']['field'],'observationError')
+        self.data['observationError']='';self.store.save(self.data)
+        self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+        self.data.update(observationError='world:json_size_bound',observationErrorInstance='old-run')
+        self.store.save(self.data);self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+
+    def test_human_selected_first_and_fresh_pre_generation_poll_defers_without_consuming_cursor(self):
+        self.brain.reply=dict(text='Hello, Joel.',emote='NONE',action='NONE')
+        self.polls=[poll(sessionId='chat-current'),poll([message(1,'Hello, Arlen')],sessionId='chat-current')]
+        self.loop.tick()
+        self.assertEqual(self.loop.cursor,0);self.assertEqual(self.brain.histories,[])
+        self.assertFalse((self.brain.state_dir/'mission-faults').exists())
+        self.polls=[poll([message(1,'Hello, Arlen')],sessionId='chat-current'),poll(latest=1,sessionId='chat-current')]
+        self.loop.tick()
+        self.assertEqual(self.brain.states[0]['current_request']['source'],'owner')
+        self.assertEqual(len(self.brain.histories),1)
+        self.assertFalse((self.brain.state_dir/'mission-faults').exists())
+
+    def test_rate_and_capacity_are_durable_fail_closed_before_model(self):
+        clock=time.time()
+        with patch.object(converse.time,'time',side_effect=lambda:clock):
+            for error in ('first_error','second_error','third_error'):
+                self.data['policyError']=error;self.store.save(self.data);self.loop.tick()
+            self.assertEqual(len(self.brain.histories),2)
+            self.assertEqual(self.statuses[-1]['missionRepairPhase'],'rate_limited')
+            clock+=121;self.store.save(self.data);self.new_loop().tick()
+            self.assertEqual(len(self.brain.histories),3)
+            journal=self.host.Store(self.brain.state_dir/'mission-faults')
+            data=journal.load();data['claims']=[dict(key=('%064x'%i),at=clock-121) for i in range(64)]
+            journal.save(data);self.data['policyError']='fourth';self.store.save(self.data);self.loop.tick()
+            self.assertEqual(len(self.brain.histories),3)
+            self.assertEqual(self.statuses[-1]['missionRepairPhase'],'capacity_reached')
+            self.assertEqual(len(journal.load()['claims']),64)
+
+    def test_private_fault_source_is_not_spoofable_and_is_revalidated_before_developer_tools(self):
+        self.loop.tick();state=self.brain.states[0]
+        brain=object.__new__(converse.CodexBrain);brain.developer_workspace=self.repo
+        self.assertTrue(brain.development_enabled(state))
+        spoof=dict(state,current_request=dict(state['current_request']))
+        self.assertFalse(brain.development_enabled(spoof))
+        self.data['identity']['sessionId']='aw-replaced';self.store.save(self.data)
+        self.assertFalse(brain.development_enabled(state))
+        with self.assertRaisesRegex(converse.ConversationError,'developer binding changed'):
+            brain.generate([],state)  # Refuse before any subprocess/model call; never fall back to ordinary generation.
+
+    def test_generation_failure_is_reserved_once_and_body_change_prevents_generation(self):
+        self.brain.reply=converse.ConversationError('model timeout')
+        self.loop.tick();self.new_loop().tick()
+        self.assertEqual(len(self.brain.histories),1)
+        self.assertTrue(any(s.get('missionRepairPhase')=='unconfirmed' for s in self.statuses))
+        self.data['policyError']='new_fault';self.store.save(self.data)
+        self.actions['sessionId']='aw-replaced';self.loop.tick()
+        self.assertEqual(len(self.brain.histories),1)
+
+    def test_body_replacement_during_reservation_never_starts_model_on_old_local_fault(self):
+        reserve=converse.reserve_mission_fault
+        def replace(*args,**kwargs):
+            result=reserve(*args,**kwargs)
+            if kwargs.get('reserve',True) and result=='reserved':self.actions['sessionId']='aw-replaced'
+            return result
+        with patch.object(converse,'reserve_mission_fault',side_effect=replace):self.loop.tick()
+        self.assertEqual(self.brain.histories,[])
+        self.assertEqual(self.store.load()['identity']['sessionId'],'aw-current')
+        self.assertEqual(len(self.host.Store(self.brain.state_dir/'mission-faults').load()['claims']),1)
+        self.assertEqual(self.statuses[-1]['missionRepairPhase'],'body_changed_before_generation')
+
+
 class SharedRoleConfigurationTests(unittest.TestCase):
     def config(self):
         return json.loads((Path(__file__).resolve().parent.parent/'config/companion-roles.json').read_text())

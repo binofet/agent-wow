@@ -16,9 +16,11 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_INPUT, MAX_STATE, MAX_ACTIONS = 32768, 65536, 256
+MAX_SOURCE = 128 * 1024
 ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
 
 
@@ -96,9 +98,10 @@ class Store:
         try: return decoded(read_file(self.folder / 'state.json', MAX_STATE, True))
         except FileNotFoundError: return None
 
-    def write(self, name, raw):
+    def write(self, name, raw, limit=MAX_STATE):
+        require(isinstance(raw,bytes) and len(raw)<=limit, 'file_size_bound')
         target = self.folder / name
-        if target.exists() or target.is_symlink(): read_file(target, MAX_STATE, True)
+        if target.exists() or target.is_symlink(): read_file(target, limit, True)
         fd, temporary = tempfile.mkstemp(prefix='.task-', dir=self.folder)
         try:
             with os.fdopen(fd, 'wb') as output:
@@ -113,6 +116,54 @@ class Store:
     def save(self, value):
         value['updatedAt'] = time.time()
         self.write('state.json', packed(value))
+
+    def held(self):
+        try:
+            with os.fdopen(os.open(self.folder/'lock', os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK), 'r') as stream:
+                info = os.fstat(stream.fileno())
+                require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and info.st_nlink == 1
+                        and not info.st_mode & 0o077, 'private_owned_lock_required')
+                try: fcntl.flock(stream.fileno(), fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError: return True
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                return False
+        except FileNotFoundError: return False
+
+
+def run_binding(data):
+    run = data.get('run') if isinstance(data, dict) else None
+    require(isinstance(data,dict) and type(data.get('version')) is int and data['version']==1
+            and isinstance(run, dict) and isinstance(run.get('instance'), str)
+            and re.fullmatch('[a-f0-9]{32}', run['instance']) and type(run.get('pid')) is int
+            and run['pid'] > 1 and type(run.get('active')) is bool, 'runtime_instance_unavailable')
+    return run
+
+
+def request_stop(store, guid, sid, url):
+    """Cooperative local request, never a signal or a game/cleanup receipt."""
+    data = store.load()
+    if data is None: return dict(phase='absent', stopRequested=False)
+    identity = data.get('identity', {})
+    require(type(guid) is int and 0 < guid < 2**48 and isinstance(identity, dict)
+            and identity.get('guid') == str(guid) and identity.get('sessionId') == sid
+            and identity.get('rpcUrl') == url, 'stop_body_binding_changed')
+    run = run_binding(data)
+    if not run['active'] or not store.held(): return dict(phase='inactive', stopRequested=False)
+    marker = dict(version=1, instance=run['instance'], identity=identity)
+    # Per-instance names cannot overwrite a replacement instance's request.
+    store.write('stop-'+run['instance']+'.json', packed(marker, 4096))
+    return dict(phase='stop_requested', stopRequested=True, instance=run['instance'])
+
+
+def stop_requested(store, data):
+    run = run_binding(data)
+    try: marker = decoded(read_file(store.folder/('stop-'+run['instance']+'.json'), 4096, True))
+    except FileNotFoundError: return False
+    require(isinstance(marker, dict) and set(marker) == {'version', 'instance', 'identity'}
+            and type(marker['version']) is int and marker['version'] == 1
+            and marker['instance'] == run['instance'] and marker['identity'] == data['identity'],
+            'stop_request_binding_invalid')
+    return True
 
 
 class RPC:
@@ -321,7 +372,7 @@ class Runner:
                     and isinstance(row.get('params'), dict) and isinstance(row.get('requestSHA256'), str)
                     and row['requestSHA256'] == hashlib.sha256(packed(dict(method=row['method'], params=row['params']))).hexdigest()
                     and type(row.get('reservedAt')) in (float, int) and math.isfinite(row['reservedAt']) and row['reservedAt'] > 0
-                    and row.get('outcome') in ('pending', 'rpc_result', 'policy_observation_resolution'), 'saved_attempt_invalid')
+                    and row.get('outcome') in ('pending', 'rpc_result', 'policy_observation_resolution', 'not_dispatched'), 'saved_attempt_invalid')
         require(len({r['id'] for r in attempts}) == len(attempts)
                 and all(r in attempts and r.get('outcome') == 'pending' for r in self.data['pending'])
                 and len({r['id'] for r in self.data['pending']}) == len(self.data['pending'])
@@ -342,18 +393,20 @@ class Runner:
 
     def persist(self): self.store.save(self.data)
 
-    def call(self, method, params):
-        self.active()
+    def call(self, method, params, finishing=False, issued=None):
+        if not finishing: self.active()
         timeout = self.rpc_timeout if self.deadline is None else min(self.rpc_timeout, max(.001, self.deadline - time.monotonic()))
+        if issued is not None: issued[0] = True
         return self.rpc.call(method, params, timeout=timeout)
 
-    def bind(self):
+    def bind(self, finishing=False):
         params = self.bridge.validate('buddy-actions.status', {})
-        value = self.call('buddy-actions.status', params)
+        value = self.call('buddy-actions.status', params, finishing=finishing)
         require(value.get('sessionId') == self.sid and str(value.get('selfGuid', '')) == str(self.guid), 'body_changed')
         return dict(sessionId=self.sid, selfGuid=str(self.guid))
 
-    def request(self, action, observation=False):
+    def request(self, action, observation=False, select=None):
+        require(not observation or isinstance(select,list) and 1<=len(select)<=32, 'observation_projection_required')
         method, params, request_id = action['method'], action['params'], action['id']
         effect = self.admit(method, *('read', 'query') if observation else ())
         require(not any(r['id'] == request_id for r in self.data['attempts']), 'action_id_already_attempted')
@@ -371,19 +424,26 @@ class Runner:
                        reservedAt=time.time(), sourceRevision=self.data['goodRevision'], outcome='pending')
             self.data['attempts'].append(row); self.data['pending'].append(row)
             self.persist()  # No query/mutation is invoked before this durable reservation.
+        issued = [False]
         try:
             # Reservation fsync can yield while a loopback port is rebound.
             # Check again after it, and never authenticate a reply on a new body.
             self.bind()
-            response = self.call(method, params)
-            self.bind()
-            last = dict(id=request_id, method=method, response=response)
+            response = self.call(method, params, issued=issued)
+            self.bind(finishing=True)  # Authenticate an already-returned reply even during cooperative stop.
+            if observation: response = project(response, select)
+            last = dict(id=request_id, method=method, effect=effect, response=response)
             packed(last, MAX_INPUT)
         except Error as error:
-            if not observation: self.data['last'] = dict(id=request_id, method=method, error=str(error))
-            if row is not None: row['error'] = str(error)
+            if not observation: self.data['last'] = dict(id=request_id, method=method, effect=effect, error=str(error))
+            if row is not None:
+                row['error'] = str(error)
+                if not issued[0] and str(error) == 'task_stopped_or_deadline':
+                    row.update(outcome='not_dispatched', stoppedAt=time.time())
+                    self.data['pending'] = [r for r in self.data['pending'] if r['id'] != request_id]
+                    if not observation: self.data['last'].update(outcome='not_dispatched')
             self.persist()
-            if str(error) == 'body_changed': raise
+            if observation or str(error) == 'body_changed': raise
             return None
         # Construct and size-check the next record before replacing uncertain evidence.
         next_data = copy.deepcopy(self.data)
@@ -447,21 +507,23 @@ class Runner:
     def evaluate(self, value):
         error = ''
         try:
-            code = 'local tasks=(function()\n' + read_file(self.library, MAX_INPUT).decode() + '\nend)()\n' + read_file(self.source, MAX_INPUT).decode()
-            require(0 < len(code.encode()) <= MAX_INPUT, 'combined_source_size_bound')
+            code = 'local tasks=(function()\n' + read_file(self.library, MAX_SOURCE).decode() + '\nend)()\n' + read_file(self.source, MAX_SOURCE).decode()
+            require(0 < len(code.encode()) <= MAX_SOURCE, 'combined_source_size_bound')
             revision = hashlib.sha256(code.encode()).hexdigest()
             require(revision != self.data['rejectedRevision'], 'candidate_quarantined')
             result = self.output(self.bridge.evaluate(code, value))
-            self.store.write('policy-' + revision + '.lua', code.encode())
+            self.store.write('policy-' + revision + '.lua', code.encode(), MAX_SOURCE)
             self.data.update(goodRevision=revision, rejectedRevision='', policyError='')
             return result
         except (Error, OSError, UnicodeError) as failure:
             error = str(failure)
             if 'revision' in locals(): self.data['rejectedRevision'] = revision
         self.data['policyError'] = error[:256]
+        if isinstance(self.data.get('run'),dict) and isinstance(self.data['run'].get('instance'),str):
+            self.data['policyErrorInstance'] = self.data['run']['instance']
         revision = self.data['goodRevision']
         require(re.fullmatch('[a-f0-9]{64}', revision or ''), 'no_valid_policy')
-        code = read_file(self.store.folder / ('policy-' + revision + '.lua'), MAX_INPUT, True)
+        code = read_file(self.store.folder / ('policy-' + revision + '.lua'), MAX_SOURCE, True)
         require(hashlib.sha256(code).hexdigest() == revision, 'retained_policy_hash_changed')
         return self.output(self.bridge.evaluate(code.decode(), value))
 
@@ -471,17 +533,23 @@ class Runner:
         if self.data['done']: return self.data
         self.data['tick'] += 1
         self.persist()
-        observations = {}
+        observations, errors = {}, {}
         for name, observation in self.goal['observations'].items():
             try:
                 response = self.request(dict(id='observation:' + str(self.data['tick']) + ':' + name,
-                    method=observation['method'], params=observation['params']), observation=True)
-                if response is not None: observations[name] = project(response, observation['select'])
+                    method=observation['method'], params=observation['params']), observation=True, select=observation['select'])
+                if response is not None: observations[name] = response
             except Error as error:
                 if str(error) in ('body_changed', 'task_stopped_or_deadline'): raise
-                # Failed reads recover next tick. An unsettled query remains reserved.
-        value = dict(goal={k: self.goal[k] for k in ('id', 'kind', 'params')}, memory=self.data['memory'], body=body,
-                     observations=observations, last=self.data['last'], pending=self.data['pending'], now=time.time(),
+                errors[name] = dict(method=observation['method'], error=str(error)[:192])
+                # Failed pure reads recover next tick. An unsettled query remains reserved.
+        self.data['observationErrors'] = errors
+        self.data['observationError'] = ';'.join(name+':'+row['error'] for name,row in sorted(errors.items()))[:256]
+        if isinstance(self.data.get('run'),dict):
+            self.data['observationErrorInstance'] = self.data['run'].get('instance','')
+        self.persist()  # Actual read failures remain visible even when Lua safely waits for missing evidence.
+        value = dict(goal={k: self.goal[k] for k in ('id', 'kind', 'params', 'sharedKeys') if k in self.goal}, memory=self.data['memory'], body=body,
+                     observations=observations, observationErrors=errors, last=self.data['last'], pending=self.data['pending'], now=time.time(),
                      shared={k: record for k in self.goal.get('sharedKeys', []) if (record := self.shared.read(k)) is not None})
         packed(value, MAX_INPUT)
         result = self.evaluate(value)
@@ -523,13 +591,16 @@ class Runner:
 
 def status(data):
     if data is None: return dict(phase='absent')
-    return {k: data.get(k) for k in ('identity', 'goalId', 'updatedAt', 'phase', 'done', 'tick', 'goodRevision', 'policyError', 'pending', 'last')}
+    return {k: data.get(k) for k in ('identity', 'goalId', 'updatedAt', 'phase', 'done', 'tick', 'goodRevision',
+        'policyError', 'observationErrors', 'observationError', 'observationErrorInstance', 'pending', 'last', 'run')}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     inspect = commands.add_parser('status'); inspect.add_argument('--state-dir', type=Path, required=True)
+    stop_command = commands.add_parser('stop')
+    for name in ('guid', 'rpc-url', 'session-id', 'state-dir'): stop_command.add_argument('--'+name, required=True)
     run = commands.add_parser('run')
     for name in ('guid', 'rpc-url', 'session-id', 'goal', 'source', 'state-dir'): run.add_argument('--' + name, required=True)
     run.add_argument('--max-seconds', type=int, default=600)
@@ -539,6 +610,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == 'status':
         print(json.dumps(status(Store(args.state_dir).load()), sort_keys=True)); return 0
+    if args.command == 'stop':
+        RPC(args.rpc_url)  # Validate only; this command makes no RPC.
+        print(json.dumps(request_stop(Store(args.state_dir), int(args.guid), args.session_id, args.rpc_url), sort_keys=True)); return 0
     require(1 <= args.max_seconds <= 28800 and math.isfinite(args.interval_seconds)
             and .05 <= args.interval_seconds <= 60, 'finite_runtime_bounds_required')
     stopped = [False]
@@ -548,15 +622,21 @@ def main(argv=None):
     with Store(args.state_dir) as store:
         runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules'), RPC(args.rpc_url), int(args.guid),
             args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
-            deadline, lambda: stopped[0], args.rpc_timeout_seconds)
+            deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds)
+        runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True)
+        runner.persist()
         try:
-            while not stopped[0] and time.monotonic() < deadline:
+            while not runner.stopped() and time.monotonic() < deadline:
                 runner.tick()
                 if runner.data['done']: break
                 time.sleep(min(args.interval_seconds, max(0, deadline - time.monotonic())))
         except Error as error:
-            runner.data['hostError'] = str(error); runner.persist()
-            raise
+            runner.data['hostError'] = str(error)
+            runner.data['hostErrorInstance'] = runner.data['run']['instance']; runner.persist()
+            if str(error) != 'task_stopped_or_deadline': raise
+        finally:
+            runner.data['run'].update(active=False, stoppedAt=time.time())
+            runner.persist()  # Preserve every pending action and receipt; host exit is not native cleanup.
         print(json.dumps(status(runner.data), sort_keys=True))
     return 0
 

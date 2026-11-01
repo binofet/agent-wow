@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	MaxSourceBytes  = 32 * 1024
+	MaxSourceBytes  = 128 * 1024
 	MaxJSONBytes    = 32 * 1024
 	MaxDepth        = 16
 	MaxNodes        = 2048

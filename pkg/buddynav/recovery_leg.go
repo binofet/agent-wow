@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	RecoveryMaxTargetDistance = 1200.0
-	RecoveryMaxLegLength      = 180.0
+	LegMaxTargetDistance      = 1200.0
+	LegMaxLength              = 180.0
+	RecoveryMaxTargetDistance = LegMaxTargetDistance
+	RecoveryMaxLegLength      = LegMaxLength
 	recoveryCorridorLength    = 2400.0
 	recoveryCorridorNodes     = 16384
 )
@@ -27,6 +29,14 @@ const (
 // is available when the complete corridor, local assets or physical proof fail.
 // All corridor/leg attempts share one second and the same nine-tile/24MiB cache.
 func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, start, corpse Point) (points []Point, err error) {
+	return PlanLegContext(ctx, dataDir, mapID, start, corpse)
+}
+
+// PlanLegContext returns one short, physically verified leg toward a finite
+// same-map destination. The complete long corridor supplies guidance only;
+// every returned segment still passes the normal floor, obstacle, water and
+// step checks. It grants no movement or interaction authority.
+func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point) (points []Point, err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	defer func() {
@@ -34,7 +44,7 @@ func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, s
 			points, err = nil, errors.New("invalid recovery navigation data or query")
 		}
 	}()
-	w, err := newRecoveryWindow(mapID, start, corpse)
+	w, err := newRecoveryWindow(mapID, start, destination)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +75,7 @@ func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, s
 	}
 	p.query = guide
 	defer func() { p.query = normal }()
-	return recoveryLeg(ctx, p, w, start, corpse, func(goal Point) ([]Point, error) {
+	return recoveryLeg(ctx, p, w, start, destination, func(goal Point) ([]Point, error) {
 		p.query = normal
 		defer func() { p.query = guide }()
 		return rerouteBounded(ctx, p, func() ([]Point, error) {

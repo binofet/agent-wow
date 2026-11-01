@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-àT
+›Z
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"¹
@@ -104,7 +104,29 @@ corpseGuid(
 x (Rx
 y (Ry
 z (Rz)
-arrival_distance (RarrivalDistance"(
+arrival_distance (RarrivalDistance"Ð
+PlanRouteLegRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid<
+expected_position_revision (RexpectedPositionRevision
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz"‚
+RouteLeg
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+map_id (RmapId>
+start (2(.warcraftbuddy.actions.v1.ClientPositionRstartD
+endpoint (2(.warcraftbuddy.actions.v1.ClientPositionRendpoint
+path_length (R
+pathLength
+point_count (R
+pointCount!
+goal_reached (RgoalReached8
+server_position_revision	 (RserverPositionRevision"(
 ExitCryptRequest
 token (	Rtoken"_
 InteractionLease
@@ -300,7 +322,7 @@ buffReason#
 
 session_idj (	R	sessionId
 	self_guidk (RselfGuidZ
-last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationJFGJId2ÿ
+last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationJFGJId2â
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -318,7 +340,8 @@ session_idj (	R	sessionId
 TravelQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State`
 TravelTrainer..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State_
 TravelVendor..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateV
-TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.StateX
+TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.Statea
+PlanRouteLeg-.warcraftbuddy.actions.v1.PlanRouteLegRequest".warcraftbuddy.actions.v1.RouteLegX
 	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
 Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.Statej
 FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
