@@ -38,3 +38,7 @@ packets:
   SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.professions.v1.BuddyProfessions/OnPacket
 lifecycle:
   before_logout: /warcraftbuddy.professions.v1.BuddyProfessions/BeforeLogout
+
+script_api:
+  state: {effect: query}
+  attempt: {effect: mutation}

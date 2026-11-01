@@ -54,3 +54,6 @@ packets:
   MSG_MOVE_START_ASCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_STOP_ASCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_START_DESCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+
+script_api:
+  snapshot: {effect: read}

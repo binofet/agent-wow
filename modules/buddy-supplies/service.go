@@ -162,7 +162,7 @@ func (s *Service) observe(ctx context.Context) error {
 	ids := map[uint32]bool{}
 	if e == nil {
 		for _, b := range v.bag {
-			if _, ok := catalogLookup(b.Entry); ok {
+			if b.ItemGuid != 0 {
 				ids[b.Entry] = true
 			}
 		}
@@ -448,9 +448,7 @@ func (s *Service) reserve(id, kind, session string, revision uint64, request pro
 		op.receipt.OriginalWeaponGuid = r.OriginalWeaponGuid
 		op.receipt.Count = 1
 		op.receipt.BaselineBackpackRevision = r.ExpectedBackpackRevision
-		if kind == "equip" {
-			op.receipt.ItemId = 6256
-		} else {
+		if kind == "restore" {
 			op.receipt.ItemId = s.state.OriginalWeaponEntry
 		}
 		op.receipt.OriginalWeaponEntry = s.state.OriginalWeaponEntry
@@ -543,9 +541,6 @@ func (s *Service) buyGateLocked(r *suppliesv1.BuyRequest, leased bool) string {
 	if !ok {
 		return "item_outside_fixed_catalog"
 	}
-	if _, ok := s.view.skills[spec.skillID]; !ok {
-		return "catalog_profession_not_learned"
-	}
 	if r.Count != 1 || r.MaxSpendCopper == 0 || r.MaxSpendCopper > 10000 {
 		return "bounded_units_and_budget_required"
 	}
@@ -628,7 +623,7 @@ func (s *Service) equipment(ctx context.Context, r *suppliesv1.EquipmentRequest,
 		op.receipt.Count = 1
 		op.receipt.OriginalWeaponGuid = r.OriginalWeaponGuid
 		op.receipt.OriginalWeaponEntry = s.view.self.Mainhand.Entry
-		if restore {
+		if restore || s.state.RestoreRequired {
 			op.receipt.OriginalWeaponEntry = s.state.OriginalWeaponEntry
 		}
 		op.receipt.BaselineBackpackRevision = s.view.backpackRevision
@@ -666,22 +661,35 @@ func (s *Service) equipmentGateLocked(r *suppliesv1.EquipmentRequest, restore, l
 		return "exact_owned_item_and_original_mainhand_required"
 	}
 	if restore {
-		if !s.state.RestoreRequired || s.state.OriginalWeaponGuid == 0 || s.state.EquippedPoleGuid == 0 || h.ItemGuid != s.state.EquippedPoleGuid || h.Entry != 6256 || r.OriginalWeaponGuid != s.state.OriginalWeaponGuid || r.ItemGuid != s.state.OriginalWeaponGuid || b.Entry != s.state.OriginalWeaponEntry {
+		if !s.state.RestoreRequired || s.state.OriginalWeaponGuid == 0 || s.state.EquippedPoleGuid == 0 || h.ItemGuid != s.state.EquippedPoleGuid || !fishingPole(s.metadata[h.Entry]) || r.OriginalWeaponGuid != s.state.OriginalWeaponGuid || r.ItemGuid != s.state.OriginalWeaponGuid || b.Entry != s.state.OriginalWeaponEntry {
 			return "remembered_original_weapon_and_current_pole_required"
 		}
 	} else {
-		if s.state.RestoreRequired || b.Entry != 6256 || h.Entry == 6256 || r.OriginalWeaponGuid != h.ItemGuid {
+		if !fishingPole(s.metadata[b.Entry]) {
+			return "complete_actual_fishing_pole_metadata_required"
+		}
+		if s.state.RestoreRequired {
+			// A pole upgrade displaces only the old pole; preserve the exact
+			// original weapon and require it still actually owned in the backpack.
+			originalOwned := false
+			for _, item := range s.view.bag {
+				if item.ItemGuid == s.state.OriginalWeaponGuid && item.Entry == s.state.OriginalWeaponEntry && item.MetadataKnown && item.StackCount == 1 {
+					originalOwned = true
+				}
+			}
+			if !originalOwned || s.state.OriginalWeaponGuid == 0 || h.ItemGuid != s.state.EquippedPoleGuid || !fishingPole(s.metadata[h.Entry]) || r.OriginalWeaponGuid != s.state.OriginalWeaponGuid {
+				return "remembered_original_weapon_and_current_pole_required"
+			}
+		} else if fishingPole(s.metadata[h.Entry]) || r.OriginalWeaponGuid != h.ItemGuid {
 			return "fresh_owned_pole_and_exact_original_required"
-		}
-		spec, _ := catalogLookup(6256)
-		if reason := validateCatalogMetadata(s.metadata[6256], spec); reason != "" {
-			return reason
-		}
-		if _, ok := s.view.skills[356]; !ok {
-			return "fishing_skill_not_learned"
 		}
 	}
 	for _, entry := range []uint32{b.Entry, h.Entry} {
+		// Restoring removes the current pole; its former skill/level
+		// requirements cannot prevent equipping an eligible original weapon.
+		if restore && entry == h.Entry && entry != b.Entry {
+			continue
+		}
 		if reason := itemRequirements(s.view, s.metadata[entry]); reason != "" {
 			return reason
 		}
@@ -810,17 +818,15 @@ func (s *Service) evidenceLocked(v worldView) {
 		}
 	} else {
 		beforeHand := op.baseline.self.Mainhand
-		entry := uint32(6256)
-		if r.Kind == "restore" {
-			entry = s.state.OriginalWeaponEntry
-		}
-		r.EquipmentConfirmed = exactEquipmentSwap(op.baseline, v, op.slot, r.ItemGuid, beforeHand.ItemGuid, entry, beforeHand.Entry)
+		r.EquipmentConfirmed = exactEquipmentSwap(op.baseline, v, op.slot, r.ItemGuid, beforeHand.ItemGuid, r.ItemId, beforeHand.Entry)
 		if r.EquipmentConfirmed {
 			r.Status = "CONFIRMED"
 			r.Reason = "actual_mainhand_and_exact_backpack_swap_confirmed"
 			if r.Kind == "equip" {
-				s.state.OriginalWeaponGuid = beforeHand.ItemGuid
-				s.state.OriginalWeaponEntry = beforeHand.Entry
+				if !s.state.RestoreRequired {
+					s.state.OriginalWeaponGuid = beforeHand.ItemGuid
+					s.state.OriginalWeaponEntry = beforeHand.Entry
+				}
 				s.state.EquippedPoleGuid = r.ItemGuid
 				s.state.RestoreRequired = true
 			} else {

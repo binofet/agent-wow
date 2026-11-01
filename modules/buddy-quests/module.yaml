@@ -32,3 +32,15 @@ packets:
   SMSG_QUESTGIVER_REQUEST_ITEMS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_QUESTGIVER_OFFER_REWARD: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
   SMSG_QUESTGIVER_QUEST_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+
+script_api:
+  state: {effect: read}
+  discover: {effect: query}
+  journal: {effect: query}
+  offer: {effect: query}
+  details: {effect: query}
+  accept: {effect: mutation}
+  accept_shared: {effect: mutation}
+  turn_in: {effect: query}
+  claim_reward: {effect: mutation}
+  explore: {effect: mutation}

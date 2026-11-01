@@ -1,0 +1,566 @@
+#!/usr/bin/env python3
+"""Run bounded pure-Lua task decisions against explicitly admitted public RPCs."""
+import argparse
+import copy
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import signal
+import stat
+import subprocess
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parent.parent
+MAX_INPUT, MAX_STATE, MAX_ACTIONS = 32768, 65536, 256
+ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
+
+
+class Error(Exception): pass
+
+
+def require(value, reason):
+    if not value: raise Error(reason)
+
+
+def packed(value, limit=MAX_STATE):
+    try: raw = json.dumps(value, allow_nan=False, separators=(',', ':'), sort_keys=True).encode()
+    except (ValueError, TypeError, RecursionError): raise Error('invalid_bounded_json') from None
+    require(len(raw) <= limit, 'json_size_bound')
+    return raw
+
+
+def decoded(raw):
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            require(key not in result, 'duplicate_json_key')
+            result[key] = value
+        return result
+    try:
+        return json.loads(raw, object_pairs_hook=pairs,
+            parse_constant=lambda _: (_ for _ in ()).throw(Error('nonfinite_json')))
+    except (ValueError, UnicodeError, RecursionError): raise Error('invalid_json') from None
+
+
+def read_file(path, limit, private=False):
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= limit, 'bounded_regular_file_required')
+        if private:
+            require(info.st_uid == os.geteuid() and info.st_nlink == 1 and not info.st_mode & 0o077,
+                    'private_owned_file_required')
+        result = stream.read(limit + 1)
+    require(len(result) <= limit, 'file_size_bound')
+    return result
+
+
+class Store:
+    def __init__(self, folder): self.folder, self.lock = Path(folder).absolute(), None
+
+    def __enter__(self):
+        require(self.folder.resolve() == self.folder, 'state_directory_symlink_refused')
+        self.folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        require(self.folder.resolve() == self.folder, 'state_directory_symlink_refused')
+        info = self.folder.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o077,
+                'private_owned_state_directory_required')
+        fd = os.open(self.folder / 'lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        self.lock = os.fdopen(fd, 'r+')
+        try:
+            info = os.fstat(fd)
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and info.st_nlink == 1
+                    and not info.st_mode & 0o077, 'private_owned_lock_required')
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: raise Error('task_already_running') from None
+            require((self.folder / 'lock').lstat().st_ino == info.st_ino, 'task_lock_replaced')
+        except BaseException:
+            self.lock.close(); self.lock = None
+            raise
+        return self
+
+    def __exit__(self, *_):
+        if self.lock: self.lock.close()
+
+    def load(self):
+        if self.folder.exists():
+            info = self.folder.lstat()
+            require(self.folder == self.folder.resolve() and stat.S_ISDIR(info.st_mode)
+                    and info.st_uid == os.geteuid() and not info.st_mode & 0o077, 'private_owned_state_directory_required')
+        try: return decoded(read_file(self.folder / 'state.json', MAX_STATE, True))
+        except FileNotFoundError: return None
+
+    def write(self, name, raw):
+        target = self.folder / name
+        if target.exists() or target.is_symlink(): read_file(target, MAX_STATE, True)
+        fd, temporary = tempfile.mkstemp(prefix='.task-', dir=self.folder)
+        try:
+            with os.fdopen(fd, 'wb') as output:
+                output.write(raw); output.flush(); os.fsync(output.fileno())
+            os.replace(temporary, target)
+            directory = os.open(self.folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try: os.fsync(directory)
+            finally: os.close(directory)
+        finally:
+            if os.path.exists(temporary): os.unlink(temporary)
+
+    def save(self, value):
+        value['updatedAt'] = time.time()
+        self.write('state.json', packed(value))
+
+
+class RPC:
+    def __init__(self, url):
+        parsed = urllib.parse.urlsplit(url)
+        try: port = parsed.port
+        except ValueError: raise Error('explicit_loopback_rpc_required') from None
+        require(parsed.scheme == 'http' and parsed.hostname == '127.0.0.1' and port is not None and port > 0
+                and parsed.path == '/rpc' and not (parsed.username or parsed.password or parsed.query or parsed.fragment),
+                'explicit_loopback_rpc_required')
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *_): return None
+        self.url, self.sequence = url, 0
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    def call(self, method, params, timeout=5):
+        self.sequence += 1
+        request = urllib.request.Request(self.url, data=packed(dict(jsonrpc='2.0', id=self.sequence,
+            method=method, params=params), MAX_INPUT), headers={'Content-Type': 'application/json'})
+        try:
+            with self.opener.open(request, timeout=timeout) as response: raw = response.read(1048577)
+            require(len(raw) <= 1048576, 'rpc_response_size_bound')
+            value = decoded(raw)
+            require(isinstance(value, dict) and value.get('jsonrpc') == '2.0'
+                    and type(value.get('id')) is int and value['id'] == self.sequence
+                    and 'error' not in value and isinstance(value.get('result'), dict), 'rpc_result_unconfirmed')
+            return value['result']
+        except (OSError, ValueError): raise Error('rpc_result_unconfirmed') from None
+
+
+class Bridge:
+    def __init__(self, binary, modules): self.binary, self.modules = str(binary), str(modules)
+
+    def call(self, mode, value=None, method=None, source=None):
+        command = [self.binary, '--mode', mode, '--modules', self.modules]
+        if method is not None: command += ['--method', method]
+        with tempfile.TemporaryDirectory(prefix='buddy-task-policy-') as folder:
+            if source is not None:
+                path = Path(folder) / 'policy.lua'; path.write_text(source); path.chmod(0o600)
+                command += ['--source', str(path)]
+            try:
+                result = subprocess.run(command, input=packed(value, MAX_INPUT) if value is not None else b'',
+                                        capture_output=True, timeout=6, check=False)
+            except (OSError, subprocess.SubprocessError): raise Error('typed_bridge_unavailable') from None
+        require(result.returncode == 0, 'typed_bridge_rejected')
+        require(len(result.stdout) <= (2097152 if mode == 'describe' else MAX_INPUT), 'typed_bridge_output_bound')
+        return decoded(result.stdout)
+
+    def describe(self): return self.call('describe')
+    def validate(self, method, params): return self.call('validate', params, method=method)
+    def evaluate(self, source, value): return self.call('evaluate', value, source=source)
+
+
+def path_parts(path):
+    require(isinstance(path, str) and 1 <= len(path) <= 160, 'bounded_projection_path_required')
+    parts = path.split('.')
+    require(len(parts) <= 16 and all(p == '*' or re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*|[0-9]+', p) for p in parts),
+            'invalid_projection_path')
+    return parts
+
+
+def project(value, paths):
+    tree = {}
+    for path in paths:
+        branch = tree
+        for part in path_parts(path): branch = branch.setdefault(part, {})
+        branch[None] = True
+    def pick(item, branch):
+        if None in branch: return copy.deepcopy(item)
+        if isinstance(item, dict): return {k: pick(item[k], b) for k, b in branch.items() if k in item}
+        if isinstance(item, list) and '*' in branch: return [pick(v, branch['*']) for v in item]
+        return None
+    return pick(value, tree)
+
+
+def lookup(value, parts):
+    if not parts: return True, value
+    key, tail = parts[0], parts[1:]
+    if isinstance(value, dict) and key in value: return lookup(value[key], tail)
+    if isinstance(value, list):
+        if key == '*':
+            results = [lookup(v, tail) for v in value]
+            return all(found for found, _ in results), [v for _, v in results]
+        if key.isdecimal() and int(key) < len(value): return lookup(value[int(key)], tail)
+    return False, None
+
+
+def checked_goal(value):
+    require(isinstance(value, dict) and {'id', 'kind', 'params', 'observations', 'allow'} <= set(value)
+            and set(value) <= {'id', 'kind', 'params', 'observations', 'allow', 'sharedKeys'}, 'goal_shape_invalid')
+    for key in ('id', 'kind'):
+        require(isinstance(value[key], str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,96}', value[key]), 'goal_identity_invalid')
+    require(isinstance(value['params'], dict) and isinstance(value['observations'], dict)
+            and len(value['observations']) <= 16 and isinstance(value['allow'], list)
+            and len(value['allow']) <= 64 and all(isinstance(v, str) and ALIAS.fullmatch(v) for v in value['allow'])
+            and len(set(value['allow'])) == len(value['allow']), 'goal_bounds_invalid')
+    for name, observation in value['observations'].items():
+        require(isinstance(name, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,47}', name)
+                and isinstance(observation, dict) and set(observation) == {'method', 'params', 'select'}
+                and observation['method'] in value['allow'] and isinstance(observation['params'], dict)
+                and isinstance(observation['select'], list) and 1 <= len(observation['select']) <= 32, 'observation_shape_invalid')
+        for path in observation['select']: path_parts(path)
+    keys = value.get('sharedKeys', [])
+    require(isinstance(keys, list) and len(keys) <= 4
+            and all(isinstance(k, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', k) for k in keys)
+            and len(set(keys)) == len(keys), 'shared_keys_invalid')
+    packed(value, MAX_INPUT)
+    return value
+
+
+class SharedBoard:
+    def __init__(self, folder): self.folder = Path(folder).absolute()
+
+    def read(self, key):
+        require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}', key), 'shared_key_invalid')
+        if not self.folder.exists():
+            require(not self.folder.is_symlink(), 'private_shared_directory_required')
+            return None
+        info = self.folder.lstat()
+        require(self.folder == self.folder.resolve() and stat.S_ISDIR(info.st_mode)
+                and info.st_uid == os.geteuid() and not info.st_mode & 0o077, 'private_shared_directory_required')
+        try: record = decoded(read_file(self.folder / (key + '.json'), 8192, True))
+        except FileNotFoundError: return None
+        require(isinstance(record, dict) and set(record) == {'version', 'key', 'winnerGuid', 'sessionId', 'goalId',
+                    'timestamp', 'evidence', 'observationSHA256'} and type(record.get('version')) is int
+                and record['version'] == 1 and record.get('key') == key
+                and isinstance(record.get('winnerGuid'), str) and re.fullmatch(r'[1-9][0-9]{0,14}', record['winnerGuid'])
+                and 0 < int(record['winnerGuid']) < 2**48 and isinstance(record.get('sessionId'), str)
+                and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', record['sessionId'])
+                and isinstance(record.get('goalId'), str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,96}', record['goalId'])
+                and type(record.get('timestamp')) in (int, float) and math.isfinite(record['timestamp'])
+                and record['timestamp'] > 0 and isinstance(record.get('evidence'), list)
+                and 1 <= len(record['evidence']) <= 8 and isinstance(record.get('observationSHA256'), dict)
+                and 1 <= len(record['observationSHA256']) <= 8
+                and all(isinstance(v, str) and re.fullmatch('[a-f0-9]{64}', v) for v in record['observationSHA256'].values()),
+                'shared_record_invalid')
+        for row in record['evidence']:
+            require(isinstance(row, dict) and set(row) == {'observation', 'path', 'operator', 'value'}
+                    and isinstance(row['observation'], str) and row['observation'] in record['observationSHA256']
+                    and row['operator'] in ('equals', 'gte'), 'shared_record_evidence_invalid')
+            path_parts(row['path']); packed(row['value'], 1024)
+        return record
+
+    def claim(self, key, guid, sid, goal_id, evidence, observations, guard):
+        # Contention is local metadata only; bounded waiting lets another
+        # claimant finish its atomic record without making a second winner.
+        for attempt in range(12):
+            try:
+                with Store(self.folder) as store:
+                    existing = self.read(key)
+                    if existing is not None: return existing
+                    guard()
+                    record = dict(version=1, key=key, winnerGuid=str(guid), sessionId=sid, goalId=goal_id,
+                        timestamp=time.time(), evidence=copy.deepcopy(evidence), observationSHA256={
+                            row['observation']: hashlib.sha256(packed(observations[row['observation']])).hexdigest() for row in evidence})
+                    store.write(key + '.json', packed(record, 8192))
+                    return record
+            except Error as error:
+                if str(error) != 'task_already_running' or attempt == 11: raise
+                time.sleep(.01)
+
+
+class Runner:
+    def __init__(self, store, bridge, rpc, guid, sid, goal, source, library, deadline=None, stopped=lambda: False, rpc_timeout=5, shared=None):
+        require(type(guid) is int and 0 < guid < 2**48 and isinstance(sid, str)
+                and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', sid), 'explicit_body_identity_required')
+        self.store, self.bridge, self.rpc = store, bridge, rpc
+        self.guid, self.sid, self.goal = guid, sid, checked_goal(goal)
+        self.source, self.library, self.deadline, self.stopped = Path(source), Path(library), deadline, stopped
+        require(type(rpc_timeout) in (int, float) and math.isfinite(rpc_timeout) and .1 <= rpc_timeout <= 40,
+                'rpc_timeout_bounds_required')
+        self.rpc_timeout = rpc_timeout
+        self.shared = shared if shared is not None else SharedBoard(ROOT / 'data/task-shared')
+        catalog = bridge.describe()
+        require(isinstance(catalog, dict) and isinstance(catalog.get('revision'), str)
+                and re.fullmatch('[a-f0-9]{64}', catalog['revision']) and isinstance(catalog.get('methods'), list)
+                and all(isinstance(m, dict) and isinstance(m.get('name'), str) and isinstance(m.get('effect'), str)
+                        for m in catalog['methods']), 'catalog_invalid')
+        self.methods = {m['name']: m['effect'] for m in catalog['methods']}
+        require(len(self.methods) == len(catalog['methods']), 'duplicate_catalog_method')
+        self.admit('buddy-actions.status', 'read', identity=True)
+        for method in goal['allow']: self.admit(method)
+        for observation in goal['observations'].values(): self.admit(observation['method'], 'read', 'query')
+        identity = dict(guid=str(guid), sessionId=sid, rpcUrl=rpc.url, goalSHA256=hashlib.sha256(packed(goal)).hexdigest(),
+                        catalogRevision=catalog['revision'])
+        self.data = store.load()
+        if self.data is None:
+            self.data = dict(version=1, identity=identity, goalId=goal['id'], memory={}, phase='starting', done=False, tick=0,
+                             last=None, pending=[], attempts=[], goodRevision='', rejectedRevision='', policyError='')
+        require(isinstance(self.data, dict) and type(self.data.get('version')) is int and self.data['version'] == 1
+                and self.data.get('identity') == identity
+                and isinstance(self.data.get('memory'), dict) and isinstance(self.data.get('phase'), str)
+                and len(self.data['phase']) <= 128
+                and type(self.data.get('done')) is bool and type(self.data.get('tick')) is int
+                and self.data['tick'] >= 0
+                and isinstance(self.data.get('pending'), list) and isinstance(self.data.get('attempts'), list)
+                and len(self.data['attempts']) <= MAX_ACTIONS, 'saved_task_binding_or_shape_changed')
+        attempts = self.data['attempts']
+        for revision in ('goodRevision', 'rejectedRevision'):
+            require(isinstance(self.data.get(revision), str) and re.fullmatch(r'|[a-f0-9]{64}', self.data[revision]),
+                    'saved_policy_revision_invalid')
+        for row in attempts:
+            require(isinstance(row, dict) and isinstance(row.get('id'), str)
+                    and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', row['id']) and row.get('method') in goal['allow']
+                    and row.get('effect') in ('query', 'mutation') and row['effect'] == self.methods.get(row['method'])
+                    and isinstance(row.get('params'), dict) and isinstance(row.get('requestSHA256'), str)
+                    and row['requestSHA256'] == hashlib.sha256(packed(dict(method=row['method'], params=row['params']))).hexdigest()
+                    and type(row.get('reservedAt')) in (float, int) and math.isfinite(row['reservedAt']) and row['reservedAt'] > 0
+                    and row.get('outcome') in ('pending', 'rpc_result', 'policy_observation_resolution'), 'saved_attempt_invalid')
+        require(len({r['id'] for r in attempts}) == len(attempts)
+                and all(r in attempts and r.get('outcome') == 'pending' for r in self.data['pending'])
+                and len({r['id'] for r in self.data['pending']}) == len(self.data['pending'])
+                and {r['id'] for r in self.data['pending']} == {r['id'] for r in attempts if r['outcome'] == 'pending'}
+                and not (self.data['done'] and self.data['pending']), 'saved_task_pending_invalid')
+        packed(self.data)
+        require(self.data.get('goalId', goal['id']) == goal['id'], 'saved_goal_identity_changed')
+        self.data['goalId'] = goal['id']
+
+    def admit(self, method, *effects, identity=False):
+        require(isinstance(method, str) and ALIAS.fullmatch(method)
+                and (identity or method in self.goal['allow'])
+                and self.methods.get(method) in (effects or ('read', 'query', 'mutation')), 'method_not_admitted')
+        return self.methods[method]
+
+    def active(self):
+        require(not self.stopped() and (self.deadline is None or time.monotonic() < self.deadline), 'task_stopped_or_deadline')
+
+    def persist(self): self.store.save(self.data)
+
+    def call(self, method, params):
+        self.active()
+        timeout = self.rpc_timeout if self.deadline is None else min(self.rpc_timeout, max(.001, self.deadline - time.monotonic()))
+        return self.rpc.call(method, params, timeout=timeout)
+
+    def bind(self):
+        params = self.bridge.validate('buddy-actions.status', {})
+        value = self.call('buddy-actions.status', params)
+        require(value.get('sessionId') == self.sid and str(value.get('selfGuid', '')) == str(self.guid), 'body_changed')
+        return dict(sessionId=self.sid, selfGuid=str(self.guid))
+
+    def request(self, action, observation=False):
+        method, params, request_id = action['method'], action['params'], action['id']
+        effect = self.admit(method, *('read', 'query') if observation else ())
+        require(not any(r['id'] == request_id for r in self.data['attempts']), 'action_id_already_attempted')
+        if effect == 'mutation': require(not self.data['pending'], 'pending_outcome_blocks_mutation')
+        params = self.bridge.validate(method, params)
+        require(isinstance(params, dict), 'typed_parameters_required')
+        fingerprint = hashlib.sha256(packed(dict(method=method, params=params))).hexdigest()
+        require(not any(r['requestSHA256'] == fingerprint for r in self.data['pending']), 'pending_request_no_retry')
+        self.bind()
+        self.active()
+        row = None
+        if effect in ('query', 'mutation'):
+            require(len(self.data['attempts']) < MAX_ACTIONS, 'attempt_history_full')
+            row = dict(id=request_id, method=method, params=params, effect=effect, requestSHA256=fingerprint,
+                       reservedAt=time.time(), sourceRevision=self.data['goodRevision'], outcome='pending')
+            self.data['attempts'].append(row); self.data['pending'].append(row)
+            self.persist()  # No query/mutation is invoked before this durable reservation.
+        try:
+            # Reservation fsync can yield while a loopback port is rebound.
+            # Check again after it, and never authenticate a reply on a new body.
+            self.bind()
+            response = self.call(method, params)
+            self.bind()
+            last = dict(id=request_id, method=method, response=response)
+            packed(last, MAX_INPUT)
+        except Error as error:
+            if not observation: self.data['last'] = dict(id=request_id, method=method, error=str(error))
+            if row is not None: row['error'] = str(error)
+            self.persist()
+            if str(error) == 'body_changed': raise
+            return None
+        # Construct and size-check the next record before replacing uncertain evidence.
+        next_data = copy.deepcopy(self.data)
+        if not observation: next_data['last'] = last
+        if row is not None:
+            next_data['pending'] = [r for r in next_data['pending'] if r['id'] != request_id]
+            next(r for r in next_data['attempts'] if r['id'] == request_id).update(outcome='rpc_result', respondedAt=time.time())
+        packed(next_data)
+        self.store.save(next_data); self.data = next_data
+        return response
+
+    def output(self, value):
+        require(isinstance(value, dict) and set(value) <= {'memory', 'phase', 'action', 'done', 'resolve', 'sharedClaim'}
+                and isinstance(value.get('memory'), dict) and isinstance(value.get('phase'), str)
+                and len(value['phase']) <= 128 and type(value.get('done', False)) is bool, 'policy_output_invalid')
+        effects = [value[k] for k in ('action', 'resolve', 'sharedClaim') if value.get(k) is not None]
+        require(len(effects) <= 1 and not (value.get('done') and effects), 'policy_output_conflict')
+        action = value.get('action')
+        if action is not None:
+            require(isinstance(action, dict) and set(action) == {'id', 'method', 'params'}
+                    and isinstance(action['id'], str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', action['id'])
+                    and isinstance(action['params'], dict), 'policy_action_invalid')
+            self.admit(action['method'])
+            self.bridge.validate(action['method'], action['params'])
+        resolution = value.get('resolve')
+        if resolution is not None:
+            require(isinstance(resolution, dict) and {'id', 'observation', 'path', 'equals'} <= set(resolution)
+                    and set(resolution) <= {'id', 'observation', 'path', 'equals', 'outcome'}
+                    and isinstance(resolution['id'], str) and isinstance(resolution['observation'], str)
+                    and resolution['observation'] in self.goal['observations']
+                    and isinstance(resolution.get('outcome', ''), str) and len(resolution.get('outcome', '')) <= 128,
+                    'resolution_predicate_required')
+            path_parts(resolution['path'])
+        claim = value.get('sharedClaim')
+        if claim is not None:
+            require(isinstance(claim, dict) and set(claim) == {'key', 'evidence'}
+                    and claim['key'] in self.goal.get('sharedKeys', []) and isinstance(claim['evidence'], list)
+                    and 1 <= len(claim['evidence']) <= 8, 'shared_claim_not_admitted')
+            for row in claim['evidence']:
+                require(isinstance(row, dict) and set(row) == {'observation', 'path', 'operator', 'value'}
+                        and isinstance(row['observation'], str) and row['observation'] in self.goal['observations']
+                        and row['operator'] in ('equals', 'gte'), 'shared_predicate_invalid')
+                path_parts(row['path']); packed(row['value'], 1024)
+        packed(value, MAX_INPUT)
+        return value
+
+    def shared_evidence(self, claim, observations):
+        for predicate in claim['evidence']:
+            name = predicate['observation']
+            require(name in observations, 'fresh_shared_observation_required')
+            found, actual = lookup(observations[name], path_parts(predicate['path']))
+            require(found, 'shared_predicate_not_observed')
+            expected = predicate['value']
+            if predicate['operator'] == 'equals':
+                require(packed(actual) == packed(expected), 'shared_predicate_not_observed')
+            else:
+                require(type(actual) in (int, float) and type(expected) in (int, float)
+                        and math.isfinite(actual) and math.isfinite(expected) and actual >= expected,
+                        'shared_predicate_not_observed')
+
+    def evaluate(self, value):
+        error = ''
+        try:
+            code = 'local tasks=(function()\n' + read_file(self.library, MAX_INPUT).decode() + '\nend)()\n' + read_file(self.source, MAX_INPUT).decode()
+            require(0 < len(code.encode()) <= MAX_INPUT, 'combined_source_size_bound')
+            revision = hashlib.sha256(code.encode()).hexdigest()
+            require(revision != self.data['rejectedRevision'], 'candidate_quarantined')
+            result = self.output(self.bridge.evaluate(code, value))
+            self.store.write('policy-' + revision + '.lua', code.encode())
+            self.data.update(goodRevision=revision, rejectedRevision='', policyError='')
+            return result
+        except (Error, OSError, UnicodeError) as failure:
+            error = str(failure)
+            if 'revision' in locals(): self.data['rejectedRevision'] = revision
+        self.data['policyError'] = error[:256]
+        revision = self.data['goodRevision']
+        require(re.fullmatch('[a-f0-9]{64}', revision or ''), 'no_valid_policy')
+        code = read_file(self.store.folder / ('policy-' + revision + '.lua'), MAX_INPUT, True)
+        require(hashlib.sha256(code).hexdigest() == revision, 'retained_policy_hash_changed')
+        return self.output(self.bridge.evaluate(code.decode(), value))
+
+    def tick(self):
+        self.active()
+        body = self.bind()
+        if self.data['done']: return self.data
+        self.data['tick'] += 1
+        self.persist()
+        observations = {}
+        for name, observation in self.goal['observations'].items():
+            try:
+                response = self.request(dict(id='observation:' + str(self.data['tick']) + ':' + name,
+                    method=observation['method'], params=observation['params']), observation=True)
+                if response is not None: observations[name] = project(response, observation['select'])
+            except Error as error:
+                if str(error) in ('body_changed', 'task_stopped_or_deadline'): raise
+                # Failed reads recover next tick. An unsettled query remains reserved.
+        value = dict(goal={k: self.goal[k] for k in ('id', 'kind', 'params')}, memory=self.data['memory'], body=body,
+                     observations=observations, last=self.data['last'], pending=self.data['pending'], now=time.time(),
+                     shared={k: record for k in self.goal.get('sharedKeys', []) if (record := self.shared.read(k)) is not None})
+        packed(value, MAX_INPUT)
+        result = self.evaluate(value)
+        require(not result.get('done') or not self.data['pending'], 'pending_outcome_prevents_done')
+        resolution = result.get('resolve')
+        if resolution is not None:
+            row = next((r for r in self.data['pending'] if r['id'] == resolution['id']), None)
+            observation = resolution['observation']
+            require(row is not None and observation in observations, 'fresh_resolution_observation_required')
+            found, actual = lookup(observations[observation], path_parts(resolution['path']))
+            require(found and packed(actual) == packed(resolution['equals']), 'resolution_predicate_not_observed')
+        claim = result.get('sharedClaim')
+        if claim is not None: self.shared_evidence(claim, observations)
+        self.data.update(memory=result['memory'], phase=result['phase'], done=result.get('done', False))
+        self.persist()  # Policy progress precedes any requested effect.
+        if resolution is not None:
+            next_data = copy.deepcopy(self.data)
+            next(r for r in next_data['attempts'] if r['id'] == row['id']).update(
+                outcome='policy_observation_resolution', resolvedAt=time.time(), resolution=copy.deepcopy(resolution))
+            next_data['pending'] = [r for r in next_data['pending'] if r['id'] != row['id']]
+            self.store.save(next_data); self.data = next_data
+        elif result.get('action') is not None:
+            self.request(result['action'])
+        elif claim is not None:
+            try:
+                record = self.shared.claim(claim['key'], self.guid, self.sid, self.goal['id'], claim['evidence'], observations,
+                                           lambda: (self.active(), self.bind(), self.active()))
+            except Error as error:
+                if str(error) != 'task_already_running': raise
+                self.data['phase'] = 'shared_claim_waiting_for_lock'
+                self.persist()
+                return self.data
+            self.data['last'] = dict(sharedClaim=claim['key'], winnerGuid=record['winnerGuid'],
+                                    sessionId=record['sessionId'], goalId=record['goalId'],
+                                    won=record['winnerGuid'] == str(self.guid) and record['sessionId'] == self.sid)
+            self.persist()
+        return self.data
+
+
+def status(data):
+    if data is None: return dict(phase='absent')
+    return {k: data.get(k) for k in ('identity', 'goalId', 'updatedAt', 'phase', 'done', 'tick', 'goodRevision', 'policyError', 'pending', 'last')}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    inspect = commands.add_parser('status'); inspect.add_argument('--state-dir', type=Path, required=True)
+    run = commands.add_parser('run')
+    for name in ('guid', 'rpc-url', 'session-id', 'goal', 'source', 'state-dir'): run.add_argument('--' + name, required=True)
+    run.add_argument('--max-seconds', type=int, default=600)
+    run.add_argument('--interval-seconds', type=float, default=1)
+    run.add_argument('--rpc-timeout-seconds', type=float, default=5)
+    run.add_argument('--policy-binary', type=Path, default=ROOT / 'data/bin/luapolicy')
+    args = parser.parse_args(argv)
+    if args.command == 'status':
+        print(json.dumps(status(Store(args.state_dir).load()), sort_keys=True)); return 0
+    require(1 <= args.max_seconds <= 28800 and math.isfinite(args.interval_seconds)
+            and .05 <= args.interval_seconds <= 60, 'finite_runtime_bounds_required')
+    stopped = [False]
+    def stop(*_): stopped[0] = True
+    signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
+    deadline = time.monotonic() + args.max_seconds
+    with Store(args.state_dir) as store:
+        runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules'), RPC(args.rpc_url), int(args.guid),
+            args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
+            deadline, lambda: stopped[0], args.rpc_timeout_seconds)
+        try:
+            while not stopped[0] and time.monotonic() < deadline:
+                runner.tick()
+                if runner.data['done']: break
+                time.sleep(min(args.interval_seconds, max(0, deadline - time.monotonic())))
+        except Error as error:
+            runner.data['hostError'] = str(error); runner.persist()
+            raise
+        print(json.dumps(status(runner.data), sort_keys=True))
+    return 0
+
+
+if __name__ == '__main__':
+    try: raise SystemExit(main())
+    except (Error, OSError, ValueError) as error: raise SystemExit('Task runtime: ' + str(error))

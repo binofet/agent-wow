@@ -2109,5 +2109,204 @@ class DeveloperBrainTests(unittest.TestCase):
                 self.assertTrue(brain.state['development']['enabled'])
 
 
+class MissionRuntimeContextTests(unittest.TestCase):
+    def fixture(self):
+        return dict(version=1,identity=dict(guid='1',sessionId='aw-current',rpcUrl='http://127.0.0.1:8086/rpc'),
+            goalId='joel-expedition',phase='waiting_for_call_result',goodRevision='a'*64,updatedAt=time.time(),
+            pending=[dict(outcome='pending',effect='mutation',params={'secret':'omit'})],
+            memory=dict(stack=[dict(kind='walk',stage='step_'+str(i),data={'private':'omit'}) for i in range(10)]),
+            last={'response':{'private':'omit'}})
+
+    def install(self, repo, kind, data):
+        folder=repo/'data/tasks'/kind/'1/runtime';folder.mkdir(parents=True,mode=0o700,exist_ok=True)
+        path=folder/'state.json';path.write_text(json.dumps(data));path.chmod(0o600);return path
+
+    def read(self):
+        return converse.mission_runtime_context(1,'aw-current','http://127.0.0.1:8086/rpc')
+
+    def test_current_body_metadata_projects_bounded_task_frames_and_paths_only(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);data=self.fixture();path=self.install(repo,'expedition',data);before=path.read_bytes()
+            self.install(repo,'fishing',data)
+            result=self.read();row=result['expedition']
+            self.assertTrue(row['available']);self.assertEqual(row['goalId'],'joel-expedition')
+            self.assertEqual(row['phase'],'waiting_for_call_result');self.assertEqual(row['sourceRevision'],'a'*64)
+            self.assertEqual(row['pendingCount'],1);self.assertEqual(len(row['stack']),8)
+            self.assertEqual(row['stack'][0],dict(kind='walk',phase='step_2'))
+            self.assertTrue(result['fishing']['available'])
+            self.assertEqual(row['goalPath'],str(repo/'data/tasks/expedition/1/goal.json'))
+            self.assertEqual(result['runtimeCLI'],str(repo/'dev/task-runtime'))
+            self.assertEqual(result['sharedScripts']['taskStack'],str(repo/'behaviors/task-stack.lua'))
+            self.assertEqual(result['sharedScripts']['expedition'],str(repo/'behaviors/expedition.lua'))
+            self.assertNotIn('"private"',json.dumps(result));self.assertNotIn('"secret"',json.dumps(result))
+            self.assertEqual(before,path.read_bytes())
+            data['phase']='complete';data['memory']['stack']=[];data['pending']=[];path.write_text(json.dumps(data))
+            self.assertEqual(self.read()['expedition']['phase'],'complete')
+
+    def test_wrong_body_malformed_and_stale_metadata_remain_unavailable(self):
+        changes=[lambda d:d['identity'].update(guid='4'),lambda d:d['identity'].update(sessionId='aw-old'),
+            lambda d:d['identity'].update(rpcUrl='http://127.0.0.1:8087/rpc'),lambda d:d.update(version=True),
+            lambda d:d.update(updatedAt=time.time()-16),lambda d:d.update(updatedAt=time.time()+5),
+            lambda d:d.update(updatedAt=float('nan')),lambda d:d.update(goalId=''),
+            lambda d:d.update(phase={'invented':'bad'}),lambda d:d.update(goodRevision='bad'),
+            lambda d:d.update(pending={}),lambda d:d.update(pending=[{}]),
+            lambda d:d['memory'].update(stack=[{}]),lambda d:d['memory'].update(stack=[dict(kind='walk',stage='s')]*13)]
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary)
+            self.assertFalse(self.read()['expedition']['available'])
+            for change in changes:
+                data=self.fixture();change(data);self.install(repo,'expedition',data)
+                self.assertFalse(self.read()['expedition']['available'])
+            path=self.install(repo,'expedition',self.fixture())
+            for raw in ('[]','{"version":1,"version":1}','x'*65537):
+                path.write_text(raw);self.assertFalse(self.read()['expedition']['available'])
+
+    def test_private_regular_file_and_real_parent_directories_are_required(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);path=self.install(repo,'expedition',self.fixture());raw=path.read_bytes()
+            path.chmod(0o644);self.assertFalse(self.read()['expedition']['available'])
+            path.chmod(0o600);outside=repo/'outside';outside.write_bytes(raw);outside.chmod(0o600)
+            path.unlink();path.symlink_to(outside);self.assertFalse(self.read()['expedition']['available'])
+            path.unlink();os.link(outside,path);self.assertFalse(self.read()['expedition']['available'])
+            path.unlink();path.write_bytes(raw);path.chmod(0o600)
+            folder=path.parent;folder.rename(folder.with_name('real-runtime'));folder.symlink_to(folder.with_name('real-runtime'),target_is_directory=True)
+            self.assertFalse(self.read()['expedition']['available'])
+
+
+class SharedRoleConfigurationTests(unittest.TestCase):
+    def config(self):
+        return json.loads((Path(__file__).resolve().parent.parent/'config/companion-roles.json').read_text())
+
+    def install(self, repo, data):
+        folder=repo/'config';folder.mkdir(exist_ok=True)
+        path=folder/'companion-roles.json';path.write_text(json.dumps(data));return path
+
+    def test_all_five_roles_are_validated_and_external_edits_are_read_fresh(self):
+        data=self.config()
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);path=self.install(repo,data)
+            first=converse.companion_role_context('Arlen')
+            self.assertTrue(first['available']);self.assertEqual(first['self']['gameplay'],['healer','party_coordinator'])
+            self.assertEqual(first['self']['development'],['mission_acceptance'])
+            team={row['name']:row for row in first['team']}
+            self.assertEqual(set(team),{'Mira','Rook','Nixwick','Lothar'})
+            self.assertEqual(team['Lothar']['gameplay'],[]);self.assertEqual(team['Lothar']['development'],['shared_integration'])
+            data['roles']['Arlen']['development']=['combat_verification'];path.write_text(json.dumps(data))
+            second=converse.companion_role_context('Arlen')
+            self.assertEqual(second['self']['development'],['combat_verification'])
+            self.assertNotEqual(first['revision'],second['revision'])
+            self.assertEqual(converse.companion_role_context('Unknown'),{'available':False})
+
+    def test_missing_unknown_or_malformed_role_configuration_never_invents_assignments(self):
+        changes=[lambda d:d['roles'].pop('Lothar'),lambda d:d['roles'].update(Other=d['roles']['Arlen']),
+            lambda d:d['roles']['Arlen'].update(gameplay=['invented_power']),
+            lambda d:d['roles']['Mira'].update(development=['navigation','navigation']),
+            lambda d:d['roles']['Rook'].update(extra=True),lambda d:d['roles']['Nixwick'].update(gameplay=[]),
+            lambda d:d.update(version=True),lambda d:d['architecture'].update(lua={'bad':'value'})]
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            for change in changes:
+                data=self.config();change(data);self.install(repo,data)
+                self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            path=self.install(repo,self.config());path.write_text('x'*8193)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            path.write_text('{"version":1,"version":1,"roles":{}}')
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+
+    def test_role_config_refuses_symlink_parent_file_hardlink_and_writable_input(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            repo=Path(temporary);path=self.install(repo,self.config());saved=path.read_bytes()
+            outside=repo/'other.json';outside.write_bytes(saved)
+            path.unlink();path.symlink_to(outside)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            path.unlink();os.link(outside,path)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            path.unlink();path.write_bytes(saved);path.chmod(0o666)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+            path.chmod(0o644);path.parent.rename(repo/'other-config');(repo/'config').symlink_to(repo/'other-config',target_is_directory=True)
+            self.assertEqual(converse.companion_role_context('Arlen'),{'available':False})
+
+    def test_each_fake_generation_gets_current_roles_only_in_developer_context(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo=Path(temporary).resolve();state_dir=repo/'state';state_dir.mkdir();data=self.config();path=self.install(repo,data)
+            fake=repo/'fake-codex';audit=repo/'prompts.jsonl'
+            fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys\n'
+                'a=sys.argv;p=sys.stdin.read()\n'
+                f'with pathlib.Path({str(audit)!r}).open("a") as f:f.write(json.dumps(dict(args=a,prompt=p))+"\\n")\n'
+                'pathlib.Path(a[a.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Checked.",emote="NONE")))\n'
+                'print(json.dumps(dict(type="turn.completed")))\n')
+            fake.chmod(0o700)
+            with patch.object(converse,'ROOT',repo),patch.object(converse,'checked_developer_workspace',return_value=repo):
+                brain=converse.CodexBrain(fake,state_dir,developer_workspace=repo)
+                state=DeveloperBrainTests().state(repo)
+                state['shared_development']={'untrusted':'ignored'};state['model_selection']={'requestedModel':'made-up'}
+                state['shared_tasks']={'untrusted':'ignored'}
+                brain.generate([],state)
+                data['roles']['Arlen']['development']=['profession_verification'];path.write_text(json.dumps(data));brain.generate([],state)
+                state['current_request']['source']='initiative';brain.generate([],state)
+                state['current_request']['source']='owner'
+                explicit=converse.CodexBrain(fake,state_dir,developer_workspace=repo,model='gpt-6.1-sol',reasoning_effort='high')
+                explicit.generate([],state)
+            rows=[json.loads(row) for row in audit.read_text().splitlines()]
+            states=[json.loads(row['prompt'].split('Current observations and control state JSON:\n',1)[1].split('\nConversation JSON:\n',1)[0]) for row in rows]
+            self.assertEqual(states[0]['shared_development']['self']['development'],['mission_acceptance'])
+            self.assertEqual(states[1]['shared_development']['self']['development'],['profession_verification'])
+            self.assertIn(str(repo/'dev/task-claim'),rows[0]['prompt']);self.assertIn('semantic task AND every touched file',rows[0]['prompt'])
+            self.assertIn('durable observed progress',json.dumps(states[0]['shared_development']))
+            self.assertNotIn('shared_development',states[2]);self.assertNotIn('model_selection',states[2])
+            self.assertNotIn('shared_tasks',states[2]);self.assertNotIn('untrusted',json.dumps(states[0]['shared_tasks']))
+            self.assertNotIn('Shared development ownership:',rows[2]['prompt'])
+            self.assertTrue(all('--model' not in row['args'] for row in rows[:3]))
+            self.assertFalse(states[0]['model_selection']['configured'])
+            self.assertEqual(rows[3]['args'][rows[3]['args'].index('--model')+1],'gpt-6.1-sol')
+            self.assertEqual(states[3]['model_selection']['requestedModel'],'gpt-6.1-sol')
+            self.assertTrue(states[3]['model_selection']['configured'])
+            self.assertIn('model_reasoning_effort="high"',rows[3]['args'])
+            self.assertEqual(states[3]['model_selection']['requestedReasoningEffort'],'high')
+            self.assertTrue(states[3]['model_selection']['reasoningOverride'])
+
+    def test_explicit_model_argument_and_status_preserve_the_unpinned_default_and_reasoning(self):
+        for developer in (False,True):
+            default=converse.codex_command('codex','repo','schema','out',developer=developer)
+            self.assertNotIn('--model',default)
+            explicit=converse.codex_command('codex','repo','schema','out',developer=developer,model='gpt-6.1-sol')
+            self.assertEqual(explicit[explicit.index('--model')+1],'gpt-6.1-sol')
+            self.assertIn('--ignore-user-config',explicit)
+            self.assertFalse(any('reasoning_effort' in arg for arg in explicit))
+            removed=list(explicit);i=removed.index('--model');del removed[i:i+2]
+            self.assertEqual(removed,default)
+        with tempfile.TemporaryDirectory() as directory:
+            default=converse.CodexBrain('codex',directory).model_selection()
+            explicit=converse.CodexBrain('codex',directory,model='gpt-6.1-sol').model_selection()
+        self.assertEqual(default['source'],'cli_default_unpinned');self.assertIsNone(default['requestedModel'])
+        self.assertTrue(explicit['configured']);self.assertEqual(explicit['requestedModel'],'gpt-6.1-sol')
+        self.assertEqual(explicit['source'],'explicit_cli');self.assertFalse(explicit['effectiveModelKnown'])
+        self.assertIsNone(default['requestedReasoningEffort']);self.assertFalse(default['reasoningOverride'])
+        for bad in ('','--other-flag','gpt\nmodel','x'*129):
+            with self.assertRaises(converse.ConversationError):converse.codex_command('codex','repo','s','o',model=bad)
+
+    def test_explicit_reasoning_argument_and_status_never_change_omitted_defaults(self):
+        for developer in (False,True):
+            default=converse.codex_command('codex','repo','schema','out',developer=developer)
+            self.assertFalse(any('model_reasoning_effort' in arg for arg in default))
+            for effort in ('low','medium','high','xhigh','max','ultra'):
+                command=converse.codex_command('codex','repo','schema','out',developer=developer,
+                                               model='gpt-6.1-sol',reasoning_effort=effort)
+                literal='model_reasoning_effort='+json.dumps(effort)
+                self.assertEqual(command.count(literal),1)
+                self.assertEqual(command[command.index(literal)-1],'-c')
+                removed=list(command);i=removed.index('--model');del removed[i:i+2]
+                i=removed.index(literal);del removed[i-1:i+1]
+                self.assertEqual(removed,default)
+                with tempfile.TemporaryDirectory() as directory:
+                    selected=converse.CodexBrain('codex',directory,model='gpt-6.1-sol',reasoning_effort=effort).model_selection()
+                self.assertEqual(selected['requestedReasoningEffort'],effort)
+                self.assertTrue(selected['reasoningOverride']);self.assertFalse(selected['effectiveModelKnown'])
+        for bad in ('','light','HIGH','high\n','high" -c injected=true',False,1,[]):
+            with self.assertRaises(converse.ConversationError):
+                converse.codex_command('codex','repo','s','o',reasoning_effort=bad)
+
+
 if __name__ == "__main__":
     unittest.main()

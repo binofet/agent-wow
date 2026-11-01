@@ -8,7 +8,7 @@ import (
 )
 
 func TestFixedCatalogPolicy(t *testing.T) {
-	for _, want := range []catalogItem{{6256, 356, true}, {7005, 393, true}, {2901, 186, true}, {6217, 333, true}, {4470, 185, true}, {4471, 185, false}, {2320, 197, false}} {
+	for _, want := range []catalogItem{{6256, 356, true}, {6365, 356, true}, {7005, 393, true}, {2901, 186, true}, {6217, 333, true}, {4470, 185, true}, {4471, 185, false}, {2320, 197, false}} {
 		got, ok := catalogLookup(want.entry)
 		if !ok || got != want {
 			t.Fatalf("entry%d got%+v,%v want%+v", want.entry, got, ok, want)

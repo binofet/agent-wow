@@ -11,6 +11,7 @@ Uses existing Codex CLI authentication. Account credentials are not needed here.
 import argparse
 import datetime
 import fcntl
+import hashlib
 import importlib.util
 import json
 import math
@@ -402,6 +403,123 @@ recordkeeping; REPAIR_CONTROLLER does not queue another coding agent in this mod
 def character_persona(name, character_class, developer=False):
     return (PERSONA.replace("CHARACTER_NAME", character_name(name)).replace("CHARACTER_CLASS", character_class)
             + (DEVELOPER_PERMISSIONS if developer else CHAT_PERMISSIONS))
+
+
+def companion_role_context(name):
+    """Reload shared assignments, never infer roles from a class or old snapshot."""
+    unknown = {"available": False}
+    folder, path = ROOT / "config", ROOT / "config/companion-roles.json"
+    try:
+        directory = folder.lstat()
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.geteuid()
+                or directory.st_mode & 0o022): return unknown
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                    or info.st_mode & 0o022 or not 0 < info.st_size <= 8192): return unknown
+            raw = stream.read(8193)
+        if len(raw) > 8192: return unknown
+        def unique(items):
+            result = {}
+            for key, value in items:
+                if key in result: raise ValueError('Duplicate role key')
+                result[key] = value
+            return result
+        data = json.loads(raw, object_pairs_hook=unique)
+        names = {'Arlen', 'Mira', 'Rook', 'Nixwick', 'Lothar'}
+        gameplay = {'healer', 'party_coordinator', 'mage', 'crowd_control', 'enchanting',
+                    'rogue', 'scout', 'skinning', 'warlock', 'support', 'engineering'}
+        development = {'mission_acceptance', 'navigation', 'api_metadata', 'combat_verification',
+                       'profession_verification', 'script_task_runtime', 'shared_integration'}
+        if (not isinstance(data, dict) or set(data) != {'version', 'roles', 'architecture'}
+                or type(data['version']) is not int or data['version'] != 1
+                or not isinstance(data['roles'], dict) or set(data['roles']) != names or name not in names): return unknown
+        for who, role in data['roles'].items():
+            if not isinstance(role, dict) or set(role) != {'gameplay', 'development'}: return unknown
+            for key, allowed in (('gameplay', gameplay), ('development', development)):
+                values = role[key]
+                if (not isinstance(values, list) or not (0 if who == 'Lothar' and key == 'gameplay' else 1) <= len(values) <= 4
+                        or any(not isinstance(value, str) or value not in allowed for value in values)
+                        or len(set(values)) != len(values)): return unknown
+        architecture = data['architecture']
+        if (not isinstance(architecture, dict) or set(architecture) != {'compiled', 'lua', 'progress', 'delivery'}): return unknown
+        architecture = {key: plain_text(value, 320) for key, value in architecture.items()}
+        def role(who): return dict(name=who, **{key:list(values) for key,values in data['roles'][who].items()})
+        return dict(available=True, self=role(name), team=[role(who) for who in sorted(names) if who != name],
+                    architecture=architecture, source='config/companion-roles.json', revision=hashlib.sha256(raw).hexdigest())
+    except (OSError, ValueError, TypeError, ConversationError): return unknown
+
+
+def explicit_model(value):
+    if value is not None and (not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}', value)):
+        raise ConversationError('Explicit model identifier is invalid')
+    return value
+
+
+def explicit_reasoning_effort(value):
+    if value is not None and value not in ('low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
+        raise ConversationError('Explicit reasoning effort is invalid')
+    return value
+
+
+def mission_runtime_context(guid, session_id, rpc_url):
+    """Read current-body task metadata only; never resume or authorize a task."""
+    result = dict(runtimeCLI=str(ROOT/'dev/task-runtime'), sharedScripts={
+        'taskStack':str(ROOT/'behaviors/task-stack.lua'), 'expedition':str(ROOT/'behaviors/expedition.lua')})
+    for kind in ('expedition', 'fishing'):
+        actor = ROOT/'data/tasks'/kind/str(guid)
+        folder = actor/'runtime'
+        summary = result[kind] = dict(available=False, goalPath=str(actor/'goal.json'), statePath=str(folder/'state.json'))
+        try:
+            if (type(guid) is not int or not 0 < guid < 2**48 or not isinstance(session_id, str)
+                    or re.fullmatch(r'[A-Za-z0-9._-]{1,128}', session_id) is None): continue
+            RPC(rpc_url)
+            for path in (ROOT/'data', ROOT/'data/tasks', actor.parent, actor, folder):
+                info = path.lstat()
+                if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                        or info.st_mode & (0o077 if path == folder else 0o022)):
+                    raise ConversationError('Task metadata directory is unavailable')
+            if folder.resolve() != folder: continue
+            with os.fdopen(os.open(folder/'state.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                        or info.st_mode & 0o077 or not 0 < info.st_size <= 65536): continue
+                raw = stream.read(65537)
+            if len(raw) > 65536: continue
+            def unique(rows):
+                out = {}
+                for key, value in rows:
+                    if key in out: raise ValueError('Duplicate task metadata key')
+                    out[key] = value
+                return out
+            data = json.loads(raw, object_pairs_hook=unique)
+            identity = data.get('identity', {})
+            if (type(data.get('version')) is not int or data['version'] != 1 or not isinstance(identity, dict)
+                    or str(identity.get('guid')) != str(guid) or identity.get('sessionId') != session_id
+                    or identity.get('rpcUrl') != rpc_url): continue
+            phase, goal, revision, updated = (data.get(key) for key in ('phase', 'goalId', 'goodRevision', 'updatedAt'))
+            if (not isinstance(phase, str) or re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', phase) is None
+                    or not isinstance(goal, str) or re.fullmatch(r'[A-Za-z0-9_.:-]{1,96}', goal) is None
+                    or not isinstance(revision, str) or re.fullmatch(r'|[a-f0-9]{64}', revision) is None
+                    or type(updated) not in (int, float) or not math.isfinite(updated) or not 0 <= time.time()-updated <= 15): continue
+            memory, pending = data.get('memory'), data.get('pending')
+            if (not isinstance(memory, dict) or not isinstance(pending, list) or len(pending) > 256
+                    or any(not isinstance(row, dict) or row.get('outcome') != 'pending'
+                           or row.get('effect') not in ('query', 'mutation') for row in pending)): continue
+            stack = memory.get('stack', [])
+            if not isinstance(stack, list) or len(stack) > 12: continue
+            clean = []
+            for frame in stack:
+                if not isinstance(frame, dict): raise ValueError('Invalid task frame')
+                frame_kind, frame_phase = frame.get('kind'), frame.get('phase', frame.get('stage'))
+                if (not isinstance(frame_kind, str) or re.fullmatch(r'[A-Za-z0-9_.:-]{1,96}', frame_kind) is None
+                        or not isinstance(frame_phase, str) or re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', frame_phase) is None):
+                    raise ValueError('Invalid task frame')
+                clean.append(dict(kind=frame_kind, phase=frame_phase))
+            summary.update(available=True, phase=phase, goalId=goal, sourceRevision=revision,
+                           stack=clean[-8:], pendingCount=len(pending), updatedAt=updated)
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError, ConversationError): pass
+    return result
 
 
 def named(text, name):
@@ -1333,12 +1451,15 @@ def checked_developer_workspace(path):
         raise ConversationError("Developer workspace belongs to another repository")
     return path
 
-def codex_command(binary, workspace, schema, output, developer=False):
+def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None):
     command = [str(binary), "exec", "--ephemeral", "--ignore-user-config",
                "--skip-git-repo-check", "--color", "never",
                "--json", "--output-schema", str(schema), "--output-last-message", str(output),
                "--cd", str(workspace), "-c", 'web_search="disabled"',
                "-c", "apps._default.enabled=false"]
+    if explicit_model(model) is not None: command.extend(("--model", model))
+    if explicit_reasoning_effort(reasoning_effort) is not None:
+        command.extend(("-c", 'model_reasoning_effort=' + json.dumps(reasoning_effort)))
     command += ["--approve-for-me"] if developer else ["--sandbox", "read-only"]
     for feature in DISABLED_FEATURES:
         if developer and feature in DEVELOPER_FEATURES:
@@ -1412,13 +1533,20 @@ def inspect_events(raw, developer=False):
 
 
 class CodexBrain:
-    def __init__(self, binary, state_dir, timeout=120, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None):
+    def __init__(self, binary, state_dir, timeout=120, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
         self.binary, self.state_dir = Path(binary), Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
+        self.character_name, self.model = character_name, explicit_model(model)
+        self.reasoning_effort = explicit_reasoning_effort(reasoning_effort)
         self.developer_workspace = checked_developer_workspace(developer_workspace) if developer_workspace is not None else None
         self.developer_persona = character_persona(character_name, character_class, developer=True)
         self.last_development_events = None
+
+    def model_selection(self):
+        return dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
+                    configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
+                    requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
 
     def development_enabled(self, state):
         if self.developer_workspace is None or not isinstance(state,dict): return False
@@ -1459,16 +1587,34 @@ class CodexBrain:
             # Names already appear in the schema; do not pay for the full
             # ID/name table twice on every model turn.
             prompt_state = dict(control_state or {})
+            prompt_state.pop('shared_development', None)
+            prompt_state.pop('model_selection', None)
+            prompt_state.pop('shared_tasks', None)
+            ownership = ''
+            if developer:
+                prompt_state['shared_development'] = companion_role_context(self.character_name)
+                prompt_state['model_selection'] = self.model_selection()
+                development = prompt_state['development']
+                prompt_state['shared_tasks'] = mission_runtime_context(integer(development['selfGuid']),
+                    development['sessionId'], development['rpcUrl'])
+                ownership = ('\nShared development ownership: before editing, use ' + str(ROOT / 'dev/task-claim')
+                    + ' from your registered own worktree. Inspect and claim the semantic task AND every touched file '
+                    'with your actual GUID and an explicit finite --ttl-seconds. An active peer claim means coordinate '
+                    'with its owner instead of duplicating the repair. Renew before expiry; release with the exact '
+                    'claim ID/token after handoff. Keep one shared implementation plus independent reviewers. '
+                    'shared_development supplies current role assignments and architecture; unavailable metadata '
+                    'does not assign a role. Roles are focus, not new permissions or proof of learned abilities.\n')
             if "emote_catalog" in prompt_state:
                 catalog = prompt_state["emote_catalog"]
                 prompt_state["emote_catalog"] = {k:catalog[k] for k in ("available","revision","source") if k in catalog}
                 prompt_state["emote_catalog"]["count"] = len(emotes)
-            prompt = ((self.developer_persona if developer else self.persona) + "\nCurrent observations and control state JSON:\n"
+            prompt = ((self.developer_persona if developer else self.persona) + ownership + "\nCurrent observations and control state JSON:\n"
                       + json.dumps(prompt_state, ensure_ascii=False)
                       + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False))
             # Files, rather than pipes, bound memory use and prevent pipe deadlock.
             with tempfile.TemporaryFile(dir=folder) as events, tempfile.TemporaryFile(dir=folder) as errors:
-                process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer),
+                process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer,
+                                                        model=self.model, reasoning_effort=self.reasoning_effort),
                                            stdin=subprocess.PIPE, stdout=events, stderr=errors,
                                            start_new_session=True)
                 try:
@@ -2773,6 +2919,9 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
+    parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
+    parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
+                        help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
                         help="Enable same-brain Lua/Go development on owner/verified-peer turns in this repository/worktree")
     parser.add_argument("--poll-seconds", type=float, default=1)
@@ -2827,8 +2976,12 @@ def main(argv=None):
                 record.pop("error", None)
             write_json(state / "status.json", record)
         rpc = RPC(args.rpc_url)
-        brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class, args.developer_workspace)
+        brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
+                           args.developer_workspace, args.model, args.reasoning_effort)
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
+        record["requestedModel"] = brain.model
+        record["requestedReasoningEffort"] = brain.reasoning_effort
+        record["modelSelection"] = brain.model_selection()
         controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid)
         conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
                                     controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster)

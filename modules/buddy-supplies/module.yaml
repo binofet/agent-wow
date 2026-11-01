@@ -27,6 +27,12 @@ script_api:
   buy:
     effect: mutation
     description: Buy one eligible quoted starter supply within wallet and explicit copper budget. Completion requires exact requestId, CONFIRMED status, serverSuccessObserved, inventoryConfirmed, copperConfirmed and leaseReleased in operation.
+  equip:
+    effect: mutation
+    description: Equip one exact owned metadata-verified fishing pole with actual item requirements and an empty offhand. Completion requires exact requestId, CONFIRMED status, equipmentConfirmed and leaseReleased; the displaced weapon remains owned for restoration.
+  restore:
+    effect: mutation
+    description: Restore the exact remembered original weapon from the current owned fishing pole. Completion requires exact requestId, CONFIRMED status, equipmentConfirmed and leaseReleased plus restoreRequired false; no restoration is inferred from transport.
 packets:
   SMSG_LIST_INVENTORY: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
   SMSG_BUY_ITEM: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket

@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Coordinate finite development ownership across registered companion worktrees."""
+import argparse
+import contextlib
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path, PurePosixPath
+import re
+import secrets
+import stat
+import subprocess
+import time
+import uuid
+
+MAX_BYTES, MAX_CLAIMS, MAX_TTL = 1048576, 256, 28800
+
+
+class Error(Exception):
+    def __init__(self, reason, conflicts=None):
+        super().__init__(reason)
+        self.conflicts = conflicts or []
+
+
+def require(value, reason):
+    if not value: raise Error(reason)
+
+
+def regular(info):
+    require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_nlink == 1 and not info.st_mode & 0o077, 'private_owned_regular_file_required')
+
+
+def no_links(root, path):
+    require(path.is_relative_to(root), 'path_outside_repository')
+    current = root
+    for part in path.relative_to(root).parts:
+        current /= part
+        try: info = current.lstat()
+        except FileNotFoundError: break
+        require(not stat.S_ISLNK(info.st_mode), 'symlink_path_refused')
+
+
+def decode(raw):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            require(key not in result, 'duplicate_json_key')
+            result[key] = value
+        return result
+    try:
+        return json.loads(raw, object_pairs_hook=pairs,
+            parse_constant=lambda value: (_ for _ in ()).throw(Error('nonfinite_json_number')))
+    except (ValueError, UnicodeError): raise Error('invalid_claim_json') from None
+
+
+def read_private(path, limit=MAX_BYTES):
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        info = os.fstat(stream.fileno()); regular(info)
+        require(info.st_size <= limit, 'claim_file_size_bound')
+        raw = stream.read(limit + 1)
+    require(len(raw) <= limit, 'claim_file_size_bound')
+    return decode(raw)
+
+
+def git(cwd, *args):
+    try:
+        result = subprocess.run(['git', '-C', str(cwd), *args], capture_output=True,
+                                text=True, timeout=3, check=True)
+    except (OSError, subprocess.SubprocessError): raise Error('git_identity_unavailable') from None
+    require(len(result.stdout) <= 8192, 'git_identity_size_bound')
+    return result.stdout.strip()
+
+
+def context(cwd, guid=None, actor_required=True):
+    """The registry names the actor; Git identifies the actual caller worktree."""
+    workspace = Path(git(cwd, 'rev-parse', '--show-toplevel'))
+    common = Path(git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
+    require(workspace.is_absolute() and workspace == workspace.resolve()
+            and common.is_absolute() and common == common.resolve() and common.name == '.git', 'canonical_git_paths_required')
+    root = common.parent
+    require(Path(git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir')) == common,
+            'shared_repository_identity_mismatch')
+    result = dict(root=root, workspace=workspace)
+    if not actor_required: return result
+    require(type(guid) is int and 0 < guid < 2**48, 'explicit_actor_guid_required')
+    path = root / 'data/self-edit/workspaces.json'; no_links(root, path)
+    registry = read_private(path, 65536)
+    require(isinstance(registry, dict) and isinstance(registry.get('characters'), list)
+            and 1 <= len(registry['characters']) <= 64, 'workspace_registry_invalid')
+    seen_guids, seen_paths, matches = set(), set(), []
+    for row in registry['characters']:
+        require(isinstance(row, dict) and set(row) == {'guid', 'name', 'workspace', 'branch', 'base'}, 'workspace_registry_invalid')
+        g, name, raw, branch, base = (row[k] for k in ('guid', 'name', 'workspace', 'branch', 'base'))
+        require(type(g) is int and 0 < g < 2**48 and g not in seen_guids
+                and isinstance(name, str) and re.fullmatch('[a-z][a-z0-9_-]{1,31}', name)
+                and isinstance(raw, str) and len(raw) <= 1024 and Path(raw).is_absolute()
+                and str(Path(raw)) == raw and '..' not in Path(raw).parts and raw not in seen_paths
+                and isinstance(branch, str) and re.fullmatch('[A-Za-z0-9][A-Za-z0-9._/-]{0,127}', branch)
+                and '..' not in branch and isinstance(base, str) and re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}', base), 'workspace_registry_invalid')
+        seen_guids.add(g); seen_paths.add(raw)
+        if Path(raw) == workspace: matches.append(row)
+    require(len(matches) == 1 and matches[0]['guid'] == guid, 'registered_actor_worktree_required')
+    row = matches[0]
+    require(git(workspace, 'symbolic-ref', '--short', 'HEAD') == row['branch'], 'registered_branch_mismatch')
+    git_dir = Path(git(workspace, 'rev-parse', '--absolute-git-dir'))
+    require(git_dir == git_dir.resolve() and (git_dir == common or git_dir.parent == common / 'worktrees'), 'worktree_git_identity_mismatch')
+    wi, gi = workspace.lstat(), git_dir.lstat()
+    require(stat.S_ISDIR(wi.st_mode) and stat.S_ISDIR(gi.st_mode)
+            and wi.st_uid == gi.st_uid == os.geteuid(), 'owned_worktree_required')
+    head = git(workspace, 'rev-parse', 'HEAD')
+    require(re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}', head), 'worktree_head_invalid')
+    result.update(head=head, actor=dict(guid=guid, name=row['name'], workspace=str(workspace), branch=row['branch'],
+        gitDir=str(git_dir), worktreeDevice=wi.st_dev, worktreeInode=wi.st_ino, gitDevice=gi.st_dev, gitInode=gi.st_ino))
+    return result
+
+
+def task_key(value):
+    require(isinstance(value, str) and len(value) <= 96 and re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.:/ -]*', value), 'bounded_semantic_task_required')
+    return re.sub('[ _-]+', '-', value.strip().lower()).strip('-')
+
+
+def file_paths(values):
+    require(isinstance(values, list) and 1 <= len(values) <= 64, 'one_to_sixty_four_files_required')
+    result = []
+    for value in values:
+        require(isinstance(value, str) and 1 <= len(value.encode()) <= 240 and '\\' not in value
+                and value.isprintable(), 'bounded_relative_file_required')
+        path = PurePosixPath(value)
+        require(not path.is_absolute() and str(path) == value and '..' not in path.parts
+                and '.git' not in [p.casefold() for p in path.parts] and value != '.', 'canonical_relative_file_required')
+        require(not any(p.casefold() == value.casefold() for p in result), 'duplicate_file_path')
+        result.append(value)
+    return sorted(result)
+
+
+def overlaps(left, right):
+    a, b = left.casefold(), right.casefold()
+    return a == b or a.startswith(b + '/') or b.startswith(a + '/')
+
+
+def stamp(value):
+    try: return type(value) in (int, float) and math.isfinite(value) and value > 0
+    except OverflowError: return False
+
+
+def validate(data):
+    require(isinstance(data, dict) and set(data) == {'version', 'claims'} and type(data['version']) is int and data['version'] == 1
+            and isinstance(data['claims'], list) and len(data['claims']) <= MAX_CLAIMS, 'claim_ledger_invalid')
+    seen = set()
+    for row in data['claims']:
+        require(isinstance(row, dict) and set(row) == {'id', 'task', 'files', 'actor', 'head', 'tokenHash', 'createdAt', 'updatedAt', 'expiresAt', 'releasedAt'}, 'claim_record_invalid')
+        require(isinstance(row['id'], str) and re.fullmatch('[a-f0-9]{32}', row['id']) and row['id'] not in seen
+                and isinstance(row['tokenHash'], str) and re.fullmatch('[a-f0-9]{64}', row['tokenHash'])
+                and row['task'] == task_key(row['task']) and row['files'] == file_paths(row['files'])
+                and all(stamp(row[k]) for k in ('createdAt', 'updatedAt', 'expiresAt'))
+                and row['createdAt'] <= row['updatedAt'] and row['createdAt'] < row['expiresAt'] <= row['updatedAt'] + MAX_TTL
+                and (row['releasedAt'] is None or stamp(row['releasedAt']) and row['releasedAt'] == row['updatedAt'])
+                and isinstance(row['head'], str) and re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}', row['head']), 'claim_record_invalid')
+        actor = row['actor']
+        require(isinstance(actor, dict) and set(actor) == {'guid', 'name', 'workspace', 'branch', 'gitDir', 'worktreeDevice', 'worktreeInode', 'gitDevice', 'gitInode'}
+                and type(actor['guid']) is int and 0 < actor['guid'] < 2**48
+                and all(isinstance(actor[k], str) and 1 <= len(actor[k]) <= 1024 for k in ('name', 'workspace', 'branch', 'gitDir'))
+                and Path(actor['workspace']).is_absolute() and Path(actor['gitDir']).is_absolute()
+                and all(type(actor[k]) is int and actor[k] >= 0 for k in ('worktreeDevice', 'worktreeInode', 'gitDevice', 'gitInode')), 'claim_actor_invalid')
+        seen.add(row['id'])
+
+
+def summary(row, now):
+    result = {k: v for k, v in row.items() if k != 'tokenHash'}
+    result['state'] = 'released' if row['releasedAt'] is not None else 'expired' if row['expiresAt'] <= now else 'active'
+    return result
+
+
+@contextlib.contextmanager
+def locked(root):
+    folder = root / 'data/task-claims'
+    no_links(root, folder)
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = folder.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o077, 'private_claim_directory_required')
+    fd = os.open(folder / 'lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(fd, 'r+') as lock:
+        regular(os.fstat(fd))
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise Error('claim_store_busy') from None
+        require((folder / 'lock').lstat().st_ino == os.fstat(fd).st_ino, 'claim_lock_replaced')
+        yield folder
+
+
+def save(folder, data):
+    validate(data)
+    raw = json.dumps(data, allow_nan=False, sort_keys=True).encode() + b'\n'
+    require(len(raw) <= MAX_BYTES, 'claim_ledger_capacity_reached')
+    target, temporary = folder / 'claims.json', folder / ('.claims-' + uuid.uuid4().hex)
+    if target.exists() or target.is_symlink(): regular(target.lstat())
+    try:
+        with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+    finally: temporary.unlink(missing_ok=True)
+
+
+def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, token=None, now=None):
+    now = time.time() if now is None else now
+    require(stamp(now), 'current_time_invalid')
+    require(command in ('inspect', 'claim', 'renew', 'release'), 'unknown_claim_command')
+    if command != 'inspect': require('actor' in ctx, 'registered_actor_worktree_required')
+    if command in ('claim', 'renew'): require(type(ttl) is int and 1 <= ttl <= MAX_TTL, 'explicit_ttl_one_to_28800_seconds_required')
+    if command == 'claim':
+        task, files = task_key(task), file_paths(files)
+        for path in files:
+            no_links(ctx['workspace'], ctx['workspace'] / path)
+            no_links(ctx['root'], ctx['root'] / path)
+    with locked(ctx['root']) as folder:
+        try: data = read_private(folder / 'claims.json')
+        except FileNotFoundError: data = dict(version=1, claims=[])
+        validate(data)
+        if command == 'inspect': return dict(ok=True, root=str(ctx['root']), claims=[summary(r, now) for r in data['claims']])
+        require(all(now >= r['updatedAt'] for r in data['claims']), 'clock_precedes_persisted_claim')
+        if command == 'claim':
+            conflicts = [summary(r, now) for r in data['claims'] if r['releasedAt'] is None and r['expiresAt'] > now
+                         and (r['task'] == task or any(overlaps(a, b) for a in files for b in r['files']))]
+            if conflicts: raise Error('active_claim_conflict', conflicts)
+            require(len(data['claims']) < MAX_CLAIMS, 'claim_history_full_no_records_discarded')
+            token = secrets.token_hex(32)
+            row = dict(id=uuid.uuid4().hex, task=task, files=files, actor=ctx['actor'], head=ctx['head'],
+                tokenHash=hashlib.sha256(token.encode()).hexdigest(), createdAt=now, updatedAt=now, expiresAt=now+ttl, releasedAt=None)
+            data['claims'].append(row)
+        else:
+            require(isinstance(claim_id, str) and re.fullmatch('[a-f0-9]{32}', claim_id)
+                    and isinstance(token, str) and re.fullmatch('[a-f0-9]{64}', token), 'exact_claim_id_and_token_required')
+            row = next((r for r in data['claims'] if r['id'] == claim_id), None)
+            require(row is not None and row['actor'] == ctx['actor']
+                    and secrets.compare_digest(row['tokenHash'], hashlib.sha256(token.encode()).hexdigest()), 'claim_token_or_owner_mismatch')
+            require(row['releasedAt'] is None, 'claim_already_released')
+            if command == 'renew':
+                require(row['expiresAt'] > now, 'expired_claim_cannot_renew')
+                row.update(updatedAt=now, expiresAt=now+ttl, head=ctx['head'])
+            else: row.update(updatedAt=now, releasedAt=now)
+        save(folder, data)
+        result = dict(ok=True, claim=summary(row, now))
+        if command == 'claim': result['token'] = token
+        return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('inspect')
+    for name in ('claim', 'renew', 'release'):
+        p = commands.add_parser(name); p.add_argument('--guid', type=int, required=True)
+        if name in ('claim', 'renew'): p.add_argument('--ttl-seconds', type=int, required=True)
+        if name == 'claim':
+            p.add_argument('--task', required=True); p.add_argument('--file', action='append', required=True)
+        else:
+            p.add_argument('--claim-id', required=True); p.add_argument('--token', required=True)
+    args = parser.parse_args(argv)
+    try:
+        ctx = context(Path.cwd(), getattr(args, 'guid', None), args.command != 'inspect')
+        result = operate(ctx, args.command, task=getattr(args, 'task', None), files=getattr(args, 'file', None),
+            ttl=getattr(args, 'ttl_seconds', None), claim_id=getattr(args, 'claim_id', None), token=getattr(args, 'token', None))
+    except (Error, OSError) as exc:
+        result = dict(ok=False, error=str(exc) if isinstance(exc, Error) else 'claim_filesystem_unavailable')
+        if isinstance(exc, Error) and exc.conflicts: result['conflicts'] = exc.conflicts
+        print(json.dumps(result, sort_keys=True)); return 1
+    print(json.dumps(result, sort_keys=True)); return 0
+
+
+if __name__ == '__main__': raise SystemExit(main())

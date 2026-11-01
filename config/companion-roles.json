@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "roles": {
+    "Arlen": {"gameplay": ["healer", "party_coordinator"], "development": ["mission_acceptance"]},
+    "Mira": {"gameplay": ["mage", "crowd_control", "enchanting"], "development": ["navigation", "api_metadata"]},
+    "Rook": {"gameplay": ["rogue", "scout", "skinning"], "development": ["combat_verification", "profession_verification"]},
+    "Nixwick": {"gameplay": ["warlock", "support", "engineering"], "development": ["script_task_runtime"]},
+    "Lothar": {"gameplay": [], "development": ["shared_integration"]}
+  },
+  "architecture": {
+    "compiled": "Keep compiled code thin: transport, geometry and validation of normal public-client operations.",
+    "lua": "Express goals, nested finite-state machines and task stacks as reusable Lua behavior rather than separate quest or class switches.",
+    "progress": "Persist durable observed progress and correlated receipts; requests, casts and transport alone do not prove outcomes.",
+    "delivery": "Use one shared implementation with coordinated owners and independent reviewers; reuse primitives instead of duplicate quest/class controllers."
+  }
+}

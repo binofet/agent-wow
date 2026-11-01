@@ -20,3 +20,9 @@ packets:
   SMSG_TRAINER_BUY_FAILED: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
   SMSG_LEARNED_SPELL: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
   SMSG_SUPERCEDED_SPELL: /warcraftbuddy.training.v1.BuddyTraining/OnPacket
+
+script_api:
+  state: {effect: query}
+  discover_professions: {effect: query}
+  list: {effect: query}
+  buy_profession: {effect: mutation}

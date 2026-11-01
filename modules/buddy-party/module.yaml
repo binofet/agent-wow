@@ -20,3 +20,6 @@ packets:
   SMSG_GROUP_DESTROYED: /warcraftbuddy.party.v1.BuddyParty/OnPacket
   SMSG_GROUP_UNINVITE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
   SMSG_PARTY_COMMAND_RESULT: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+
+script_api:
+  state: {effect: read}

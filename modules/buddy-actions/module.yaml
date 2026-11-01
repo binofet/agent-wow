@@ -55,3 +55,26 @@ packets:
   SMSG_PARTYKILLLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
 lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
+
+script_api:
+  status: {effect: read}
+  behavior: {effect: read}
+  spell_toolkit: {effect: read}
+  follow: {effect: mutation}
+  healing: {effect: mutation}
+  assist: {effect: mutation}
+  heal_once: {effect: mutation}
+  buffs: {effect: mutation}
+  reload_behavior: {effect: mutation}
+  acquire_interaction: {effect: mutation}
+  release_interaction: {effect: mutation}
+  approach_loot: {effect: mutation}
+  approach_quest: {effect: mutation}
+  travel_quest: {effect: mutation}
+  travel_trainer: {effect: mutation}
+  travel_vendor: {effect: mutation}
+  travel_to: {effect: mutation}
+  exit_crypt: {effect: mutation}
+  practice: {effect: mutation}
+  fargodeep_encounter: {effect: mutation}
+  recovery: {effect: mutation}
