@@ -17,13 +17,18 @@ const maxExactInteger = 1<<53 - 1
 
 type budget struct {
 	nodes, bytes, depth int
+	nodeLimit           int
 	ctx                 context.Context
 }
 
 func (b *budget) take(s string) error {
 	b.nodes++
 	b.bytes += len(s)
-	if b.nodes > MaxNodes || b.bytes > MaxJSONBytes || b.depth > MaxDepth {
+	limit := b.nodeLimit
+	if limit == 0 {
+		limit = MaxNodes
+	}
+	if b.nodes > limit || b.bytes > MaxJSONBytes || b.depth > MaxDepth {
 		return errors.New("policy value exceeds node, byte or depth bounds")
 	}
 	if !utf8.ValidString(s) {
@@ -48,7 +53,7 @@ func jsonSize(value any) error {
 
 func validateInput(input map[string]any) error {
 	// Conversion with no VM validates the entire input before running Lua.
-	if _, err := toLua(nil, input, &budget{}); err != nil {
+	if _, err := toLua(nil, input, &budget{nodeLimit: MaxInputNodes}); err != nil {
 		return err
 	}
 	return jsonSize(input)

@@ -119,6 +119,35 @@ class ClaimsTests(unittest.TestCase):
         with self.assertRaisesRegex(m.Error, 'already_released'): self.modify(result, 'renew', now=107, ttl=30)
         self.assertNotIn(result['token'], json.dumps(self.inspect(now=107)))
 
+    def test_resume_own_rotates_token_preserving_exact_claim_id_history_and_creation(self):
+        old=self.claim(files=['dev/b','dev/a']);peer=self.claim(self.b,'peer',['dev/peer'])
+        self.a['head']='c'*40
+        fresh=m.operate(self.a,'resume-own',task='Skin_Repair',files=['dev/a','dev/b'],ttl=60,now=105)
+        self.assertEqual(fresh['claim']['id'],old['claim']['id']);self.assertEqual(fresh['claim']['createdAt'],100)
+        self.assertEqual(fresh['claim']['expiresAt'],165);self.assertEqual(fresh['claim']['head'],'c'*40)
+        self.assertNotEqual(fresh['token'],old['token'])
+        for command in ('renew','release'):
+            with self.assertRaisesRegex(m.Error,'token_or_owner'):
+                self.modify(old,command,now=106,**({'ttl':20} if command=='renew' else {}))
+        rows=self.inspect(now=106);self.assertEqual(len(rows),2);self.assertEqual(rows[1]['id'],peer['claim']['id'])
+        self.modify(fresh,'release',now=107);self.assertEqual(self.inspect(now=108)[0]['state'],'released')
+
+    def test_resume_own_rejects_peer_changed_scope_identity_expired_and_mixed_claims_without_write(self):
+        old=self.claim(files=['dev/a','dev/b']);path=self.root/'data/task-claims/claims.json';original=path.read_bytes()
+        moved=copy.deepcopy(self.a);moved['actor']['worktreeInode']+=1
+        cases=[(self.b,'skin repair',['dev/a','dev/b'],101),(self.a,'different',['dev/a','dev/b'],101),
+               (self.a,'skin repair',['dev/a'],101),(self.a,'skin repair',['dev/a','dev/b','dev/c'],101),
+               (moved,'skin repair',['dev/a','dev/b'],101),(self.a,'skin repair',['dev/a','dev/b'],120)]
+        for ctx,task,files,now in cases:
+            with self.subTest(ctx=ctx['actor']['guid'],files=files,now=now),self.assertRaisesRegex(m.Error,'resume_own_exact'):
+                m.operate(ctx,'resume-own',task=task,files=files,ttl=20,now=now)
+            self.assertEqual(path.read_bytes(),original)
+        data=json.loads(original);mixed=copy.deepcopy(data['claims'][0]);mixed.update(id='f'*32,actor=self.b['actor'])
+        data['claims'].append(mixed);m.save(path.parent,data);before=path.read_bytes()
+        with self.assertRaisesRegex(m.Error,'resume_own_exact'):
+            m.operate(self.a,'resume-own',task='skin repair',files=['dev/a','dev/b'],ttl=20,now=101)
+        self.assertEqual(path.read_bytes(),before)
+
     def test_bounded_inputs_reject_aliases_metadata_paths_and_bad_expiry(self):
         for files in (['../escape'], ['/absolute'], ['./dev/repair'], ['.git/config'], ['.GIT/config'],
                       ['dev/a', 'DEV/A'], ['dev/\u202ehidden'], ['x'] * 65):
@@ -171,6 +200,9 @@ class ClaimsTests(unittest.TestCase):
             return code, json.loads(out.getvalue())
         code, result = run(['claim', '--guid', '1', '--task', 'repair', '--file', 'dev/repair', '--ttl-seconds', '30'])
         self.assertEqual(code, 0); token, claim = result['token'], result['claim']['id']
+        code,resumed=run(['resume-own','--guid','1','--task','repair','--file','dev/repair','--ttl-seconds','60'])
+        self.assertEqual(code,0);self.assertEqual(resumed['claim']['id'],claim)
+        self.assertNotEqual(resumed['token'],token);token=resumed['token']
         for command in ('renew', 'release'):
             args = [command, '--guid', '1', '--claim-id', claim, '--token', token]
             if command == 'renew': args += ['--ttl-seconds', '60']

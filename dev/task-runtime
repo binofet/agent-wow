@@ -27,6 +27,27 @@ ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
 class Error(Exception): pass
 
 
+class BridgeFailure(Error):
+    def __init__(self, mode, detail, raw):
+        super().__init__('typed_bridge_rejected' + (': ' + detail if detail else ''))
+        self.frame = raw if mode == 'evaluate' else None
+        self.evidence = dict(mode=mode, reason=detail, inputBytes=len(raw or b''),
+                             inputSHA256=hashlib.sha256(raw or b'').hexdigest())
+        if self.frame:
+            value = decoded(self.frame)
+            def nodes(v):
+                if isinstance(v, dict): return 1 + sum(1 + nodes(c) for c in v.values())
+                if isinstance(v, list): return 1 + sum(nodes(c) for c in v)
+                return 2 if isinstance(v, str) else 1
+            self.evidence['conversionNodes'] = nodes(value)
+            if not isinstance(value, dict): return
+            parts = {k: value[k] for k in ('goal','memory','observations','last','pending') if k in value}
+            if isinstance(value.get('observations'), dict):
+                parts.update(('observations.'+k, v) for k,v in value['observations'].items())
+            self.evidence['components'] = {k:dict(bytes=len(packed(v, MAX_INPUT)), conversionNodes=nodes(v))
+                                           for k,v in parts.items()}
+
+
 def require(value, reason):
     if not value: raise Error(reason)
 
@@ -199,16 +220,22 @@ class Bridge:
 
     def call(self, mode, value=None, method=None, source=None):
         command = [self.binary, '--mode', mode, '--modules', self.modules]
+        raw_input = packed(value, MAX_INPUT) if value is not None else None
         if method is not None: command += ['--method', method]
         with tempfile.TemporaryDirectory(prefix='buddy-task-policy-') as folder:
             if source is not None:
                 path = Path(folder) / 'policy.lua'; path.write_text(source); path.chmod(0o600)
                 command += ['--source', str(path)]
             try:
-                result = subprocess.run(command, input=packed(value, MAX_INPUT) if value is not None else b'',
+                result = subprocess.run(command, input=raw_input if raw_input is not None else b'',
                                         capture_output=True, timeout=6, check=False)
             except (OSError, subprocess.SubprocessError): raise Error('typed_bridge_unavailable') from None
-        require(result.returncode == 0, 'typed_bridge_rejected')
+        if result.returncode != 0:
+            # Preserve the native validator's actual reason, not a guessed
+            # diagnosis or permission to retry an already-issued game call.
+            detail = result.stderr.decode('utf-8', errors='replace')
+            detail = ''.join(c if 32 <= ord(c) < 127 else ' ' for c in detail).strip()[:192]
+            raise BridgeFailure(mode, detail, raw_input)
         require(len(result.stdout) <= (2097152 if mode == 'describe' else MAX_INPUT), 'typed_bridge_output_bound')
         return decoded(result.stdout)
 
@@ -504,19 +531,30 @@ class Runner:
                         and math.isfinite(actual) and math.isfinite(expected) and actual >= expected,
                         'shared_predicate_not_observed')
 
+    def bridge_failure(self, failure, revision, stage):
+        if isinstance(failure, BridgeFailure) and failure.frame is not None:
+            self.store.write('last-rejected-input.json', failure.frame, MAX_INPUT)
+            self.data['bridgeFailure'] = dict(failure.evidence, inputFile='last-rejected-input.json',
+                                              sourceRevision=revision, stage=stage)
+            self.persist()  # A rejected pure evaluation never settles gameplay calls.
+
     def evaluate(self, value):
         error = ''
         try:
             code = 'local tasks=(function()\n' + read_file(self.library, MAX_SOURCE).decode() + '\nend)()\n' + read_file(self.source, MAX_SOURCE).decode()
             require(0 < len(code.encode()) <= MAX_SOURCE, 'combined_source_size_bound')
             revision = hashlib.sha256(code.encode()).hexdigest()
-            require(revision != self.data['rejectedRevision'], 'candidate_quarantined')
+            # Input-dependent failure does not revoke a source that already
+            # produced a valid result. Retry only its pure decision on this
+            # frame; invalid new candidates still fall back without reloading.
+            require(revision != self.data['rejectedRevision'] or revision == self.data['goodRevision'], 'candidate_quarantined')
             result = self.output(self.bridge.evaluate(code, value))
             self.store.write('policy-' + revision + '.lua', code.encode(), MAX_SOURCE)
-            self.data.update(goodRevision=revision, rejectedRevision='', policyError='')
+            self.data.update(goodRevision=revision, policyError='')
             return result
         except (Error, OSError, UnicodeError) as failure:
             error = str(failure)
+            self.bridge_failure(failure, locals().get('revision', ''), 'candidate')
             if 'revision' in locals(): self.data['rejectedRevision'] = revision
         self.data['policyError'] = error[:256]
         if isinstance(self.data.get('run'),dict) and isinstance(self.data['run'].get('instance'),str):
@@ -525,7 +563,11 @@ class Runner:
         require(re.fullmatch('[a-f0-9]{64}', revision or ''), 'no_valid_policy')
         code = read_file(self.store.folder / ('policy-' + revision + '.lua'), MAX_SOURCE, True)
         require(hashlib.sha256(code).hexdigest() == revision, 'retained_policy_hash_changed')
-        return self.output(self.bridge.evaluate(code.decode(), value))
+        try:
+            return self.output(self.bridge.evaluate(code.decode(), value))
+        except BridgeFailure as failure:
+            self.bridge_failure(failure, revision, 'fallback')
+            raise
 
     def tick(self):
         self.active()

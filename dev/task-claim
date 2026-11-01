@@ -209,10 +209,10 @@ def save(folder, data):
 def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, token=None, now=None):
     now = time.time() if now is None else now
     require(stamp(now), 'current_time_invalid')
-    require(command in ('inspect', 'claim', 'renew', 'release'), 'unknown_claim_command')
+    require(command in ('inspect', 'claim', 'resume-own', 'renew', 'release'), 'unknown_claim_command')
     if command != 'inspect': require('actor' in ctx, 'registered_actor_worktree_required')
-    if command in ('claim', 'renew'): require(type(ttl) is int and 1 <= ttl <= MAX_TTL, 'explicit_ttl_one_to_28800_seconds_required')
-    if command == 'claim':
+    if command in ('claim', 'resume-own', 'renew'): require(type(ttl) is int and 1 <= ttl <= MAX_TTL, 'explicit_ttl_one_to_28800_seconds_required')
+    if command in ('claim', 'resume-own'):
         task, files = task_key(task), file_paths(files)
         for path in files:
             no_links(ctx['workspace'], ctx['workspace'] / path)
@@ -223,15 +223,22 @@ def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, tok
         validate(data)
         if command == 'inspect': return dict(ok=True, root=str(ctx['root']), claims=[summary(r, now) for r in data['claims']])
         require(all(now >= r['updatedAt'] for r in data['claims']), 'clock_precedes_persisted_claim')
-        if command == 'claim':
-            conflicts = [summary(r, now) for r in data['claims'] if r['releasedAt'] is None and r['expiresAt'] > now
+        if command in ('claim', 'resume-own'):
+            conflicts = [r for r in data['claims'] if r['releasedAt'] is None and r['expiresAt'] > now
                          and (r['task'] == task or any(overlaps(a, b) for a in files for b in r['files']))]
-            if conflicts: raise Error('active_claim_conflict', conflicts)
-            require(len(data['claims']) < MAX_CLAIMS, 'claim_history_full_no_records_discarded')
-            token = secrets.token_hex(32)
-            row = dict(id=uuid.uuid4().hex, task=task, files=files, actor=ctx['actor'], head=ctx['head'],
-                tokenHash=hashlib.sha256(token.encode()).hexdigest(), createdAt=now, updatedAt=now, expiresAt=now+ttl, releasedAt=None)
-            data['claims'].append(row)
+            if command == 'resume-own':
+                if not (len(conflicts)==1 and conflicts[0]['actor']==ctx['actor']
+                        and conflicts[0]['task']==task and conflicts[0]['files']==files):
+                    raise Error('resume_own_exact_active_claim_required', [summary(r,now) for r in conflicts])
+                row=conflicts[0];token=secrets.token_hex(32)
+                row.update(tokenHash=hashlib.sha256(token.encode()).hexdigest(),updatedAt=now,expiresAt=now+ttl,head=ctx['head'])
+            else:
+                if conflicts: raise Error('active_claim_conflict', [summary(r,now) for r in conflicts])
+                require(len(data['claims']) < MAX_CLAIMS, 'claim_history_full_no_records_discarded')
+                token = secrets.token_hex(32)
+                row = dict(id=uuid.uuid4().hex, task=task, files=files, actor=ctx['actor'], head=ctx['head'],
+                    tokenHash=hashlib.sha256(token.encode()).hexdigest(), createdAt=now, updatedAt=now, expiresAt=now+ttl, releasedAt=None)
+                data['claims'].append(row)
         else:
             require(isinstance(claim_id, str) and re.fullmatch('[a-f0-9]{32}', claim_id)
                     and isinstance(token, str) and re.fullmatch('[a-f0-9]{64}', token), 'exact_claim_id_and_token_required')
@@ -245,7 +252,7 @@ def operate(ctx, command, *, task=None, files=None, ttl=None, claim_id=None, tok
             else: row.update(updatedAt=now, releasedAt=now)
         save(folder, data)
         result = dict(ok=True, claim=summary(row, now))
-        if command == 'claim': result['token'] = token
+        if command in ('claim', 'resume-own'): result['token'] = token
         return result
 
 
@@ -253,10 +260,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('inspect')
-    for name in ('claim', 'renew', 'release'):
+    for name in ('claim', 'resume-own', 'renew', 'release'):
         p = commands.add_parser(name); p.add_argument('--guid', type=int, required=True)
-        if name in ('claim', 'renew'): p.add_argument('--ttl-seconds', type=int, required=True)
-        if name == 'claim':
+        if name in ('claim', 'resume-own', 'renew'): p.add_argument('--ttl-seconds', type=int, required=True)
+        if name in ('claim', 'resume-own'):
             p.add_argument('--task', required=True); p.add_argument('--file', action='append', required=True)
         else:
             p.add_argument('--claim-id', required=True); p.add_argument('--token', required=True)

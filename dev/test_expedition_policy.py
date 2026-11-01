@@ -145,7 +145,10 @@ class ExpeditionTests(unittest.TestCase):
             state['now']=now;out=self.bridge.evaluate(source,state);state['memory']=out['memory'];return out
         for now in (100,110,129):
             out=evaluate(now);self.assertNotIn('health',out['memory']);self.assertNotIn('action',out)
+        # An old sibling deferral must not relabel the current wait.
+        state['memory']['deferredQuests']={'hand_in:999':dict(reason='travel_route_plan_unavailable')}
         stalled=evaluate(130)['memory']['health']
+        self.assertEqual(stalled['phase'],'remaining_objectives_rendezvous_unknown')
         again=evaluate(140)['memory']['health']
         self.assertEqual((stalled['code'],stalled['phase']),(again['code'],again['phase']))
         self.assertEqual(stalled['noProgressSince'],100);self.assertEqual(again['since'],140)
@@ -174,6 +177,89 @@ class ExpeditionTests(unittest.TestCase):
             self.assertNotIn('health',runner.data['memory']);self.assertFalse(runner.data['pending'])
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
             self.assertEqual(self.count('buddy-actions.travel_to'),0)
+
+    def distant_anchor_goal(self):
+        self.rpc.giver_x=1380;self.rpc.discover();self.goal['params']['handIns'][0]['x']=1380
+        self.goal['params']['travelAnchors']=[dict(mapId=0,x=500,y=0,z=5),dict(mapId=0,x=1000,y=0,z=5)]
+
+    def test_distant_goal_uses_best_verified_anchor_then_replans_unchanged_final_goal(self):
+        self.distant_anchor_goal()
+        self.rpc.plan_endpoints=[dict(x=x,y=0,z=5) for x in (190,370,550,730,910,1090,1270,1380)]
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1,limit=64)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            self.assertEqual([p['x'] for p in plans],[1000]+[1380]*7)
+            self.assertEqual([p['expectedPositionRevision'] for p in plans],[str(n) for n in range(5,13)])
+            self.assertEqual(self.goal['params']['handIns'][0]['x'],1380)
+            self.assertEqual(self.count('buddy-actions.travel_to'),8)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),8)
+            self.assertFalse(self.rpc.lease);self.assertFalse(runner.data['pending'])
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_distant_anchor_candidates_fail_bounded_or_are_rejected_without_movement(self):
+        for mode in ('none_eligible','too_many','all_failed','best_failed_next_verified'):
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                self.rpc=Endpoint();self.rpc.discover();self.distant_anchor_goal()
+                if mode=='none_eligible':self.goal['params']['travelAnchors']=[dict(mapId=1,x=1000,y=0,z=5),dict(mapId=0,x=1200,y=0,z=5),dict(mapId=0,x=50,y=0,z=5),dict(mapId=0,x=900,y=0)]
+                elif mode=='too_many':self.goal['params']['travelAnchors']*=9
+                original=self.rpc.call
+                def call(method,params,timeout=5):
+                    if method=='buddy-actions.plan_route_leg' and (mode=='all_failed' or mode=='best_failed_next_verified' and params['x']==1000):
+                        self.rpc.calls.append((method,copy.deepcopy(params)));raise host.Error('native_anchor_no_physical_route')
+                    return original(method,params,timeout)
+                self.rpc.call=call
+                if mode=='best_failed_next_verified':self.rpc.plan_endpoints=[dict(x=190,y=0,z=5)]
+                runner=self.runner(store)
+                if mode=='best_failed_next_verified':
+                    self.until(runner,lambda:self.count('buddy-actions.acquire_interaction')==1)
+                    plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+                    self.assertEqual([p['x'] for p in plans],[1000,500])
+                else:
+                    self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+                    self.assertEqual(self.count('buddy-actions.plan_route_leg'),2 if mode=='all_failed' else 0)
+                    self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
+                self.assertEqual(self.count('buddy-actions.travel_to'),0)
+                self.assertFalse(runner.data['pending'])
+
+    def partial_travel_endpoint(self, mode='progress'):
+        self.rpc.pose['x']=-20;self.rpc.discover();original=self.rpc.call;first=True
+        def call(method,params,timeout=5):
+            nonlocal first
+            value=original(method,params,timeout)
+            if method=='buddy-actions.travel_to' and first:
+                first=False;self.rpc.pose['x']={'no_progress':-20,'wrong_way':-25,'short_progress':-18}.get(mode,-10)
+                value=self.rpc.actions();value['reason']='exploration_step_limit'
+                if mode=='foreign_reply':value['sessionId']='another-body'
+                elif mode=='uncertain_reply':value['motionUnconfirmed']=True
+            return value
+        self.rpc.call=call
+
+    def test_definite_partial_progress_releases_then_plans_from_fresh_pose_and_arrives(self):
+        self.partial_travel_endpoint()
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='partial_progress_replan')
+            self.assertFalse(runner.data['pending']);self.assertFalse(self.rpc.lease)
+            self.assertEqual(self.count('buddy-actions.travel_to'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+            self.assertEqual(runner.data['memory']['stack'][-1]['stage'],'start')
+            self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            self.assertEqual([p['expectedPositionRevision'] for p in plans],['5','6'])
+            self.assertEqual([p['x'] for p in plans],[10,10])
+            self.assertEqual(self.count('buddy-actions.travel_to'),2)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),2)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_partial_without_known_forward_progress_or_known_body_never_replans(self):
+        for mode in ('no_progress','wrong_way','short_progress','foreign_reply','uncertain_reply'):
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                self.rpc=Endpoint();self.rpc.discover();self.partial_travel_endpoint(mode)
+                runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+                self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
+                self.assertEqual(self.count('buddy-actions.travel_to'),1)
+                self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+                self.assertFalse(runner.data['pending']);self.assertFalse(self.rpc.lease)
+                self.assertEqual(self.count('buddy-quests.claim_reward'),0)
 
     def test_native_curved_leg_endpoints_replan_full_goal_with_fresh_pose_before_each_lease(self):
         self.rpc.giver_x=310;self.rpc.discover()
@@ -466,6 +552,62 @@ return mission
             self.assertTrue(runner.data['memory']['nestedChildResumed'])
             self.assertEqual(next(p for name,p in self.rpc.calls if name=='buddy-quests.claim_reward')['questId'],701)
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def lost_release_runner(self, store):
+        self.rpc.pose['x']=-20;self.rpc.discover();original=self.rpc.call
+        def call(method,params,timeout=5):
+            value=original(method,params,timeout)
+            if method=='buddy-actions.release_interaction':raise host.Error('rpc_result_unconfirmed')
+            return value
+        self.rpc.call=call;runner=self.runner(store)
+        self.until(runner,lambda:bool(runner.data['pending']))
+        self.assertEqual(runner.data['pending'][0]['method'],'buddy-actions.release_interaction')
+        return runner
+
+    def test_lost_release_reply_resolves_only_current_absent_custody_and_parent_proceeds(self):
+        with host.Store(self.folder) as store:
+            runner=self.lost_release_runner(store);original=copy.deepcopy(runner.data['pending'][0])
+            runner.tick();self.assertEqual(runner.data['pending'],[])
+            row=next(r for r in runner.data['attempts'] if r['id']==original['id'])
+            self.assertEqual(row['outcome'],'policy_observation_resolution')
+            self.assertEqual(row['error'],original['error']);self.assertEqual(row['params'],original['params'])
+            self.assertEqual(row['requestSHA256'],original['requestSHA256'])
+            self.assertEqual(row['resolution']['path'],'position.revision')
+            self.assertEqual(row['resolution']['outcome'],'custody_absent_observed_no_transport_ack')
+            self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+            self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_lost_release_cannot_resolve_foreign_body_active_custody_or_motion(self):
+        for mode in ('session','guid','active_lease','replacement_lease','remaining_lease','moving','traveling',
+                     'motionUnconfirmed','unknown_position','unknown_map','zero_revision','token','wrong_method'):
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                self.rpc=Endpoint();self.rpc.discover();runner=self.lost_release_runner(store)
+                actions=self.rpc.actions
+                def observed():
+                    a=actions()
+                    if mode=='session':a['sessionId']='another-body'
+                    elif mode=='guid':a['selfGuid']='99'
+                    elif mode in ('active_lease','replacement_lease'):a.update(interactionOwner='exploration' if mode=='active_lease' else 'quests',interactionLeaseRemainingMs=1000)
+                    elif mode=='remaining_lease':a['interactionLeaseRemainingMs']=1000
+                    elif mode in ('moving','traveling','motionUnconfirmed'):a[mode]=True
+                    elif mode=='unknown_position':a['position']['known']=False
+                    elif mode=='unknown_map':a['position']['mapKnown']=False
+                    elif mode=='zero_revision':a['position']['revision']='0'
+                    return a
+                self.rpc.actions=observed
+                if mode=='token':runner.data['pending'][0]['params']['token']='another-token'
+                elif mode=='wrong_method':
+                    runner.data['pending'][0]['method']='buddy-actions.travel_to'
+                    runner.data['memory']['stack'][-1]['waiting']['method']='buddy-actions.travel_to'
+                if mode in ('session','guid'):
+                    with self.assertRaisesRegex(host.Error,'body_changed'):runner.tick()
+                else:
+                    runner.tick();self.assertEqual(runner.data['phase'],'blocked_on_ambiguous_call')
+                self.assertEqual(len(runner.data['pending']),1)
+                self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+                self.assertEqual(self.count('buddy-quests.claim_reward'),0)
 
     def test_lost_claim_reply_stays_pending_until_exact_fresh_reward_receipt(self):
         self.rpc.fail_claim = True

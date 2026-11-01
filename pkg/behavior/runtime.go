@@ -20,6 +20,7 @@ const (
 	MaxJSONBytes    = 32 * 1024
 	MaxDepth        = 16
 	MaxNodes        = 2048
+	MaxInputNodes   = 4096
 	EvaluationLimit = 5 * time.Millisecond
 )
 
@@ -160,7 +161,7 @@ func evaluate(p *policy, input map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	state, err := toLua(L, input, &budget{})
+	state, err := toLua(L, input, &budget{nodeLimit: MaxInputNodes})
 	if err != nil {
 		return nil, err
 	}

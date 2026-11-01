@@ -135,6 +135,28 @@ local function geometry(p,map)
     end
     return true
 end
+-- Static anchors are candidate query destinations, never observed presence
+-- or permission to move without the native planner's verified endpoint.
+local function travel_anchor(context,frame,p)
+    local anchors=context.state.goal.params.travelAnchors or {}
+    if type(anchors)~="table" or #anchors>16 then return nil end
+    local best,index,remaining=nil,nil,distance(p,frame.data)
+    for i,anchor in ipairs(anchors) do
+        local valid=type(anchor)=="table" and type(anchor.mapId)=="number"
+            and anchor.mapId>=0 and anchor.mapId%1==0 and equal(anchor.mapId,p.mapId or 0)
+        for _,axis in ipairs({"x","y","z"}) do
+            local v=type(anchor)=="table" and anchor[axis] or nil
+            if type(v)~="number" or v~=v or math.abs(v)>40000 then valid=false end
+        end
+        if valid and not (frame.anchorTried or {})[tostring(i)] then
+            local left=distance(anchor,frame.data)
+            if distance(p,anchor)<=1000 and remaining-left>=100 and (not best or left<distance(best,frame.data)) then
+                best,index=anchor,i
+            end
+        end
+    end
+    return best,index
+end
 local function travel_blocked(context,reason)
     tasks.pop(context,{status="blocked",reason=reason})
 end
@@ -147,17 +169,26 @@ handlers.travel=function(context,frame)
             local p=position(context)
             if not equal(p.mapId or 0,frame.data.mapId or 0) then travel_blocked(context,"travel_map_change_required");return end
             if distance(p,frame.data)<=3 then tasks.pop(context,{status="arrived"});return end
-            if distance(p,frame.data)>=1200 then travel_blocked(context,"travel_goal_outside_native_plan_bound");return end
             if number(frame.legs)>=32 then travel_blocked(context,"travel_leg_budget");return end
+            frame.planGoal=frame.data;frame.planAnchor=nil
+            if distance(p,frame.data)>=1200 then
+                frame.planGoal,frame.planAnchor=travel_anchor(context,frame,p)
+                if not frame.planGoal then travel_blocked(context,"travel_goal_outside_native_plan_bound");return end
+            end
             frame.planStart={known=true,mapKnown=true,mapId=p.mapId or 0,x=number(p.x),y=number(p.y),z=number(p.z),revision=p.revision}
         end
-        local start=frame.planStart
+        local start=frame.planStart;local goal=frame.planGoal or frame.data
         local reply,out=tasks.call(context,frame,"buddy-actions.plan_route_leg",{sessionId=context.state.body.sessionId,
             selfGuid=context.state.body.selfGuid,expectedPositionRevision=start.revision,mapId=frame.data.mapId or 0,
-            x=frame.data.x,y=frame.data.y,z=frame.data.z},"planning_verified_native_route_leg")
+            x=goal.x,y=goal.y,z=goal.z},"planning_verified_native_route_leg")
         if out then return out end
         if reply.readError then
-            context.memory.lastRoutePlanError={error=reply.readError,goal=frame.data,at=context.state.now}
+            context.memory.lastRoutePlanError={error=reply.readError,goal=goal,at=context.state.now}
+            if frame.planAnchor then
+                frame.anchorTried=frame.anchorTried or {};frame.anchorTried[tostring(frame.planAnchor)]=true
+                frame.planGoal=nil;frame.planAnchor=nil
+                return tasks.await(context,"travel_anchor_candidate_unavailable")
+            end
             travel_blocked(context,"travel_route_plan_unavailable");return
         end
         local p=position(context);local endpoint=reply.endpoint
@@ -193,6 +224,9 @@ handlers.travel=function(context,frame)
                 {token=frame.token,mapId=to.mapId,x=to.x,y=to.y,z=to.z,arrivalDistance=0.75},"traveling_verified_native_route")
             if out then return out end
             local p=reply.position or {}
+            frame.partialReplyKnown=equal(reply.sessionId,context.state.body.sessionId)
+                and equal(reply.selfGuid,context.state.body.selfGuid) and not reply.motionUnconfirmed
+                and geometry(p,to.mapId) and number(p.revision)>0
             if not equal(reply.sessionId,context.state.body.sessionId) or not equal(reply.selfGuid,context.state.body.selfGuid)
                or reply.reason~="exploration_within_distance" or reply.motionUnconfirmed or reply.moving or reply.traveling
                or not geometry(p,to.mapId) or distance(p,to)>0.75 then
@@ -215,13 +249,24 @@ handlers.travel=function(context,frame)
             end
         elseif a.motionUnconfirmed or a.moving or a.traveling then return tasks.await(context,"travel_cleanup_unconfirmed") end
         frame.token=nil;frame.legs=number(frame.legs)+1
-        if frame.blocked then travel_blocked(context,frame.blocked);return end
         local p=position(context)
+        if frame.blocked=="travel_arrival_not_confirmed" and frame.partialReplyKnown
+           and frame.legs<32 and quiet(context,false) and number(a.interactionLeaseRemainingMs)==0
+           and geometry(p,frame.destination.mapId) and number(p.revision)>0
+           and geometry(frame.planStart,frame.destination.mapId)
+           and distance(p,frame.planStart)>=3
+           and distance(frame.planStart,frame.destination)-distance(p,frame.destination)>=3 then
+            frame.blocked=nil;frame.partialReplyKnown=nil;frame.destination=nil;frame.planStart=nil
+            frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil;frame.stage="start"
+            return tasks.await(context,"partial_progress_replan")
+        end
+        if frame.blocked then travel_blocked(context,frame.blocked);return end
         if not p then return tasks.await(context,"travel_position_unknown") end
         if not geometry(p,frame.destination.mapId) or distance(p,frame.destination)>0.75 then
             travel_blocked(context,"travel_arrival_not_observed");return
         end
-        frame.destination=nil;frame.planStart=nil;frame.stage="start"
+        frame.partialReplyKnown=nil;frame.destination=nil;frame.planStart=nil
+        frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil;frame.stage="start"
         return tasks.await(context,"travel_leg_arrived")
     end
 end
@@ -432,16 +477,37 @@ function policy.attach(child)
     end
     return policy
 end
+-- An absent current lease can retire an uncertain release reservation, but
+-- cannot establish a transport ACK, arrival, or any item/quest mutation.
+local function released_custody_revision(context,frame,row)
+    if #(context.state.pending or {})~=1 or frame.kind~="travel" or frame.stage~="release"
+       or frame.waiting.method~="buddy-actions.release_interaction" or row.effect~="mutation"
+       or row.outcome~="pending" or type(row.error)~="string" or row.error==""
+       or type(frame.token)~="string" or frame.token=="" then return nil end
+    local params=row.params or {}
+    if params.owner~="exploration" or params.token~=frame.token then return nil end
+    local a=context.observations.actions or {};local p=a.position or {}
+    if not quiet(context,false) or (a.interactionOwner or "")~=""
+       or number(a.interactionLeaseRemainingMs)~=0 or a.moving or a.traveling or a.motionUnconfirmed
+       or not geometry(p,(frame.destination or frame.data or {}).mapId)
+       or number(p.revision)<=0 then return nil end
+    return p.revision
+end
+
 local function decide(state)
     if #(state.pending or {})>0 then
         local memory=state.memory or {}
         local frame=(memory.stack or {})[#(memory.stack or {})]
         local context={state=state,memory=memory,observations=state.observations or {}}
-        local reserved=false
-        for _,row in ipairs(state.pending or {}) do
-            if frame and frame.waiting and row.id==frame.waiting.id and row.method==frame.waiting.method then reserved=true end
+        local reserved,row=false,nil
+        for _,candidate in ipairs(state.pending or {}) do
+            if frame and frame.waiting and candidate.id==frame.waiting.id and candidate.method==frame.waiting.method then reserved=true;row=candidate end
         end
         if reserved then
+            local revision=released_custody_revision(context,frame,row)
+            if revision then
+                return tasks.resolve(context,frame,"actions","position.revision",revision,"custody_absent_observed_no_transport_ack")
+            end
             local receipt=frame.kind=="hand_in" and frame.waiting.method=="buddy-quests.claim_reward" and reward_proof(context,frame)
             if receipt then
                 frame.stage="receipt"
@@ -492,8 +558,10 @@ local function progress(state,out)
     end
     if advanced or now<number(p.since) then p.since=now end
     local reason,key=out.phase,nil
-    for id,row in pairs(memory.deferredQuests or {}) do
-        if type(row.reason)=="string" and (not key or id<key) then key=id;reason=row.reason end
+    if out.phase=="waiting_for_deferred_quests" then
+        for id,row in pairs(memory.deferredQuests or {}) do
+            if type(row.reason)=="string" and (not key or id<key) then key=id;reason=row.reason end
+        end
     end
     p.blockedReason=type(reason)=="string" and #reason>0 and #reason<=128 and reason or "mission_waiting"
     if not out.done and now-number(p.since)>=30 then

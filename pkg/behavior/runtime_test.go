@@ -12,6 +12,62 @@ import (
 
 const goodPolicy = `return {decide=function(state) return {action="hold", health=state.health or 0} end}`
 
+func TestRichMissionInputHasSeparateFiniteBudget(t *testing.T) {
+	component := func(n int) map[string]any {
+		return map[string]any{"values": make([]any, n-3)}
+	}
+	// Neutral shape preserves the measured component costs of the actual
+	// 19,766-byte rejected mission frame without embedding private gameplay.
+	input := map[string]any{
+		"goal": component(414), "memory": component(395), "last": component(101),
+		"body":              map[string]any{"sessionId": "body", "selfGuid": "5"},
+		"observations":      map[string]any{"actions": component(45), "professions": component(485), "quests": component(551), "world": component(48)},
+		"observationErrors": map[string]any{}, "pending": []any{}, "shared": map[string]any{}, "now": 1,
+	}
+	// Lua arrays cannot contain null holes; false is an actual retained value.
+	for _, v := range []map[string]any{input["goal"].(map[string]any), input["memory"].(map[string]any), input["last"].(map[string]any)} {
+		for i := range v["values"].([]any) {
+			v["values"].([]any)[i] = false
+		}
+	}
+	for _, raw := range input["observations"].(map[string]any) {
+		rows := raw.(map[string]any)["values"].([]any)
+		for i := range rows {
+			rows[i] = false
+		}
+	}
+	b := &budget{nodeLimit: MaxInputNodes}
+	if _, err := toLua(nil, input, b); err != nil || b.nodes != 2065 {
+		t.Fatal("measured input component budget changed", b.nodes, err)
+	}
+	r := New()
+	load(t, r, `return {decide=function(s) return {phase="valid",professions=#s.observations.professions.values} end}`)
+	if out, err := r.Evaluate(input); err != nil || out["professions"] != float64(482) {
+		t.Fatal(out, err)
+	}
+	// Exact 4096-node input succeeds; one extra input value remains rejected.
+	rows := make([]any, MaxInputNodes-3)
+	for i := range rows {
+		rows[i] = false
+	}
+	load(t, r, `return {decide=function(s) return {count=#s.rows} end}`)
+	started := time.Now()
+	if _, err := r.Evaluate(map[string]any{"rows": rows}); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("exact 4096-node input full evaluation: %s", time.Since(started))
+	if _, err := r.Evaluate(map[string]any{"rows": append(rows, false)}); err == nil {
+		t.Fatal("input budget became unbounded")
+	}
+	load(t, r, `return {decide=function(s) local out={}; for i=1,2100 do out[i]=false end; return {rows=out} end}`)
+	if _, err := r.Evaluate(nil); err == nil {
+		t.Fatal("input allowance widened output budget")
+	}
+	if MaxNodes != 2048 || MaxJSONBytes != 32768 || MaxDepth != 16 || EvaluationLimit != 5*time.Millisecond {
+		t.Fatal("unrelated limits changed")
+	}
+}
+
 func TestComposedPolicySourceAboveJSONFrameLimit(t *testing.T) {
 	// Three independently closed-over modules model real source composition;
 	// their retained constants are never smuggled into the JSON frame.

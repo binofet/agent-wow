@@ -55,6 +55,30 @@ class FakeRPC:
         return dict(count=self.count, items=[dict(entry=4498, private='omit')], private='not selected')
 
 
+class BridgeDiagnosticsTests(unittest.TestCase):
+    def test_rejected_bridge_preserves_bounded_actual_reason_without_success(self):
+        reply = subprocess.CompletedProcess([], 1, stdout=b'{"done":true}',
+            stderr=b'invalid behavior input: node bound\n'+b'x'*1000+b'\x00')
+        with patch.object(m.subprocess, 'run', return_value=reply):
+            with self.assertRaisesRegex(m.Error, 'typed_bridge_rejected: invalid behavior input: node bound') as caught:
+                m.Bridge('/not/executed', '/unused').evaluate('return {}', {})
+        self.assertLessEqual(len(str(caught.exception)), len('typed_bridge_rejected: ')+192)
+        self.assertNotIn('\n', str(caught.exception)); self.assertNotIn('\x00', str(caught.exception))
+
+    @unittest.skipUnless((m.ROOT/'data/bin/luapolicy').is_file(), 'local pure bridge unavailable')
+    def test_actual_native_node_rejection_is_distinct_from_small_valid_frame(self):
+        bridge = m.Bridge(m.ROOT/'data/bin/luapolicy', m.ROOT/'modules')
+        source = 'return {decide=function(s) return {phase="valid"} end}'
+        self.assertEqual(bridge.evaluate(source, {})['phase'], 'valid')
+        value = {'rows': [[1]*128 for _ in range(32)]}
+        self.assertLess(len(m.packed(value)), m.MAX_INPUT)
+        with self.assertRaisesRegex(m.BridgeFailure, 'policy value exceeds node, byte or depth bounds') as caught:
+            bridge.evaluate(source, value)
+        self.assertEqual(caught.exception.evidence['inputBytes'], len(m.packed(value, m.MAX_INPUT)))
+        self.assertGreater(caught.exception.evidence['conversionNodes'], 4096)
+        self.assertEqual(m.decoded(caught.exception.frame), value)
+
+
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory(dir='/private/tmp'); self.addCleanup(folder.cleanup)
@@ -76,6 +100,53 @@ class RuntimeTests(unittest.TestCase):
         return dict(memory={'attempted': True}, phase='buying', action=dict(id=request, method='vendor.buy', params={'quantity': 1}))
 
     def purchases(self): return [v for v in self.rpc.calls if v[0] == 'vendor.buy']
+
+    def test_native_failure_keeps_exact_private_frame_and_preserves_pending(self):
+        self.bridge.decide = lambda _: self.buy()
+        self.rpc.hook = lambda method, _: (_ for _ in ()).throw(m.Error('lost')) if method == 'vendor.buy' else None
+        with m.Store(self.folder) as store:
+            runner = self.runner(store); runner.tick()
+            pending = copy.deepcopy(runner.data['pending'])
+            def reject(_source, value):
+                raise m.BridgeFailure('evaluate', 'policy value exceeds node, byte or depth bounds',
+                                      m.packed(value, m.MAX_INPUT))
+            self.bridge.evaluate = reject
+            with self.assertRaises(m.BridgeFailure): runner.tick()
+            saved = store.load()
+            self.assertEqual(saved['pending'], pending)
+            evidence = saved['bridgeFailure']
+            raw = m.read_file(self.folder/evidence['inputFile'], m.MAX_INPUT, True)
+            self.assertEqual(len(raw), evidence['inputBytes'])
+            self.assertEqual(m.hashlib.sha256(raw).hexdigest(), evidence['inputSHA256'])
+            self.assertEqual(m.decoded(raw)['pending'], pending)
+            self.assertIn('observations.stock', evidence['components'])
+            self.assertEqual(len(self.purchases()), 1)
+
+    def test_previously_good_source_rechecks_new_frame_without_erasing_rejection(self):
+        with m.Store(self.folder) as store:
+            runner = self.runner(store); runner.tick()
+            revision = runner.data['goodRevision']
+            runner.data['rejectedRevision'] = revision
+            def decide(value):
+                if value['now'] == 1:
+                    raise m.BridgeFailure('evaluate', 'input node bound', m.packed(value,m.MAX_INPUT))
+                return dict(memory=value['memory'], phase='fresh_frame_valid')
+            self.bridge.decide = decide
+            frame = dict(memory=runner.data['memory'], now=1)
+            with self.assertRaises(m.BridgeFailure): runner.evaluate(frame)
+            self.assertEqual(store.load()['bridgeFailure']['stage'], 'fallback')
+            result = runner.evaluate(dict(frame, now=2))
+            self.assertEqual(result['phase'], 'fresh_frame_valid')
+            self.assertEqual(runner.data['rejectedRevision'], revision)
+            self.assertEqual(runner.data['pending'], [])
+            # A different, invalid source remains quarantined on later frames.
+            self.source.write_text('BROKEN')
+            runner.evaluate(dict(frame, now=2))
+            bad_revision = runner.data['rejectedRevision']
+            self.bridge.sources.clear()
+            runner.evaluate(dict(frame, now=3))
+            self.assertEqual(runner.data['rejectedRevision'], bad_revision)
+            self.assertFalse(any('BROKEN' in source for source in self.bridge.sources))
 
     def enable_run(self, runner, store):
         runner.data['run'] = dict(instance='a'*32, pid=os.getpid(), active=True)
