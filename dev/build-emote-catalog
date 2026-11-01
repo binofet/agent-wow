@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Generate public TextEmotes facts from an explicitly supplied upstream header."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+
+
+ROOT = Path(__file__).resolve().parent.parent
+UPSTREAM = 'https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/shared/SharedDefines.h'
+
+
+def catalog(source, source_commit=None):
+    if len(source) > 2 * 1024 * 1024:
+        raise ValueError('Expected a bounded SharedDefines.h source')
+    text = source.decode('utf-8')
+    text = re.sub(r'/\*.*?\*/|//[^\n]*', '', text, flags=re.S)
+    enums = re.findall(r'\benum\s+TextEmotes\s*\{([^{}]*)\}\s*;', text, flags=re.S)
+    if len(enums) != 1:
+        raise ValueError('Expected exactly one complete enum TextEmotes')
+    entries, ids, names = [], set(), set()
+    for member in enums[0].split(','):
+        if not member.strip():
+            continue
+        match = re.fullmatch(r'\s*TEXT_EMOTE_([A-Z][A-Z0-9_]*)\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)\s*', member)
+        if match is None:
+            raise ValueError('Unsupported TextEmotes member; no partial catalog emitted')
+        name, literal = match.groups()
+        value = int(literal, 16 if literal.lower().startswith('0x') else 10)
+        if not 0 < value <= 0xffffffff or value in ids or name in names:
+            raise ValueError('TextEmotes IDs and names must be unique positive uint32 values')
+        entries.append(dict(id=value, name=name))
+        ids.add(value)
+        names.add(name)
+    if not entries:
+        raise ValueError('Empty TextEmotes enum')
+    if source_commit is not None and re.fullmatch(r'[0-9a-f]{40}', source_commit) is None:
+        raise ValueError('Source commit must be a full lowercase Git commit, or omitted when unknown')
+    url = UPSTREAM if source_commit is None else UPSTREAM.replace('/master/', '/' + source_commit + '/')
+    return dict(schemaVersion=1, kind='TextEmotes', provenance=dict(
+        upstreamUrl=url, sourcePath='src/server/shared/SharedDefines.h',
+        sourceSha256=hashlib.sha256(source).hexdigest(), sourceCommit=source_commit),
+        emotes=sorted(entries, key=lambda entry: entry['id']))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', required=True, type=Path)
+    parser.add_argument('--source-commit', help='Verified upstream commit; omit if unknown')
+    parser.add_argument('--output', type=Path, default=ROOT / 'pkg/emotecatalog/emotes.json')
+    args = parser.parse_args()
+    try:
+        result = catalog(args.source.read_bytes(), args.source_commit)
+    except (OSError, UnicodeError, ValueError) as error:
+        parser.error(str(error))
+    # Validation finishes before touching output. No network or private path is
+    # included; the full consumed source is pinned by SHA even without a commit.
+    args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+
+
+if __name__ == '__main__':
+    main()

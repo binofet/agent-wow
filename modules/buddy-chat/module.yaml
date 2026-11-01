@@ -9,6 +9,7 @@ grpc:
 rpc:
   send: /warcraftbuddy.chat.v1.BuddyChat/Send
   emote: /warcraftbuddy.chat.v1.BuddyChat/Emote
+  emotes: /warcraftbuddy.chat.v1.BuddyChat/Emotes
   poll: /warcraftbuddy.chat.v1.BuddyChat/Poll
   owner_feed: /warcraftbuddy.chat.v1.BuddyChat/OwnerFeed
   management_requests: /warcraftbuddy.chat.v1.BuddyChat/ManagementRequests

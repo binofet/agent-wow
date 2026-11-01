@@ -14,6 +14,19 @@ rpc:
   buy: /warcraftbuddy.supplies.v1.BuddySupplies/Buy
   equip: /warcraftbuddy.supplies.v1.BuddySupplies/Equip
   restore: /warcraftbuddy.supplies.v1.BuddySupplies/Restore
+script_api:
+  state:
+    effect: query
+    description: Refresh current owned supplies, inventory, wallet, skills and exact operation receipt; may issue read-only item metadata queries.
+  discover:
+    effect: query
+    description: Discover actually observed vendors and current interaction eligibility; may issue read-only item metadata queries.
+  list:
+    effect: query
+    description: Request one actual nearby vendor inventory and return an expiring revision-bound offer.
+  buy:
+    effect: mutation
+    description: Buy one eligible quoted starter supply within wallet and explicit copper budget. Completion requires exact requestId, CONFIRMED status, serverSuccessObserved, inventoryConfirmed, copperConfirmed and leaseReleased in operation.
 packets:
   SMSG_LIST_INVENTORY: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket
   SMSG_BUY_ITEM: /warcraftbuddy.supplies.v1.BuddySupplies/OnPacket

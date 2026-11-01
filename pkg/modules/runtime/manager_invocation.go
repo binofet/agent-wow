@@ -53,6 +53,9 @@ func (m *Manager) lookup(name, alias string, public bool) (*instance, moddisc.Me
 }
 
 func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMessage) (json.RawMessage, error) {
+	if full == "session.describe" {
+		return m.describe(params)
+	}
 	name, alias, _ := strings.Cut(full, ".")
 	fault := func(code int, err error) (json.RawMessage, error) {
 		return nil, &CallError{Code: code, Module: name, Method: alias, Err: err}

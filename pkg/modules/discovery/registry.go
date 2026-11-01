@@ -19,6 +19,7 @@ func (d *Definition) Manifest() Manifest {
 	m := d.manifest
 	m.Requires = slices.Clone(m.Requires)
 	m.RPC = maps.Clone(m.RPC)
+	m.ScriptAPI = maps.Clone(m.ScriptAPI)
 	m.Packets = maps.Clone(m.Packets)
 	return m
 }

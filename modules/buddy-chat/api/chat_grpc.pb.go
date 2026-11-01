@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	BuddyChat_Send_FullMethodName               = "/warcraftbuddy.chat.v1.BuddyChat/Send"
 	BuddyChat_Emote_FullMethodName              = "/warcraftbuddy.chat.v1.BuddyChat/Emote"
+	BuddyChat_Emotes_FullMethodName             = "/warcraftbuddy.chat.v1.BuddyChat/Emotes"
 	BuddyChat_Poll_FullMethodName               = "/warcraftbuddy.chat.v1.BuddyChat/Poll"
 	BuddyChat_OwnerFeed_FullMethodName          = "/warcraftbuddy.chat.v1.BuddyChat/OwnerFeed"
 	BuddyChat_ManagementRequests_FullMethodName = "/warcraftbuddy.chat.v1.BuddyChat/ManagementRequests"
@@ -36,6 +37,7 @@ const (
 type BuddyChatClient interface {
 	Send(ctx context.Context, in *SendRequest, opts ...grpc.CallOption) (*SendResponse, error)
 	Emote(ctx context.Context, in *EmoteRequest, opts ...grpc.CallOption) (*SendResponse, error)
+	Emotes(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EmoteCatalog, error)
 	Poll(ctx context.Context, in *PollRequest, opts ...grpc.CallOption) (*PollResponse, error)
 	OwnerFeed(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OwnerFeedResponse, error)
 	ManagementRequests(ctx context.Context, in *ManagementRequestsRequest, opts ...grpc.CallOption) (*ManagementRequestsResponse, error)
@@ -65,6 +67,16 @@ func (c *buddyChatClient) Emote(ctx context.Context, in *EmoteRequest, opts ...g
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SendResponse)
 	err := c.cc.Invoke(ctx, BuddyChat_Emote_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyChatClient) Emotes(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EmoteCatalog, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EmoteCatalog)
+	err := c.cc.Invoke(ctx, BuddyChat_Emotes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +139,7 @@ func (c *buddyChatClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts
 type BuddyChatServer interface {
 	Send(context.Context, *SendRequest) (*SendResponse, error)
 	Emote(context.Context, *EmoteRequest) (*SendResponse, error)
+	Emotes(context.Context, *emptypb.Empty) (*EmoteCatalog, error)
 	Poll(context.Context, *PollRequest) (*PollResponse, error)
 	OwnerFeed(context.Context, *emptypb.Empty) (*OwnerFeedResponse, error)
 	ManagementRequests(context.Context, *ManagementRequestsRequest) (*ManagementRequestsResponse, error)
@@ -147,6 +160,9 @@ func (UnimplementedBuddyChatServer) Send(context.Context, *SendRequest) (*SendRe
 }
 func (UnimplementedBuddyChatServer) Emote(context.Context, *EmoteRequest) (*SendResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Emote not implemented")
+}
+func (UnimplementedBuddyChatServer) Emotes(context.Context, *emptypb.Empty) (*EmoteCatalog, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Emotes not implemented")
 }
 func (UnimplementedBuddyChatServer) Poll(context.Context, *PollRequest) (*PollResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Poll not implemented")
@@ -216,6 +232,24 @@ func _BuddyChat_Emote_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyChatServer).Emote(ctx, req.(*EmoteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyChat_Emotes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyChatServer).Emotes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyChat_Emotes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyChatServer).Emotes(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -324,6 +358,10 @@ var BuddyChat_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Emote",
 			Handler:    _BuddyChat_Emote_Handler,
+		},
+		{
+			MethodName: "Emotes",
+			Handler:    _BuddyChat_Emotes_Handler,
 		},
 		{
 			MethodName: "Poll",

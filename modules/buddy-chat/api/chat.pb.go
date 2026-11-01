@@ -132,7 +132,8 @@ func (Language) EnumDescriptor() ([]byte, []int) {
 	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{1}
 }
 
-// Allowlisted EmotesText.dbc IDs, not arbitrary animation IDs.
+// Legacy symbolic TextEmotes IDs, not animation IDs. Numeric values advertised
+// by Emotes are also accepted; new text emotes do not require new enum symbols.
 type Emote int32
 
 const (
@@ -401,6 +402,126 @@ func (x *EmoteRequest) GetTargetGuid() uint64 {
 	return 0
 }
 
+type EmoteEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EmoteEntry) Reset() {
+	*x = EmoteEntry{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EmoteEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EmoteEntry) ProtoMessage() {}
+
+func (x *EmoteEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EmoteEntry.ProtoReflect.Descriptor instead.
+func (*EmoteEntry) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *EmoteEntry) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *EmoteEntry) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type EmoteCatalog struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // Current chat-module epoch, the same as Poll.
+	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	Revision      string                 `protobuf:"bytes,3,opt,name=revision,proto3" json:"revision,omitempty"` // SHA256 of the exact shared source-pinned JSON catalog.
+	Emotes        []*EmoteEntry          `protobuf:"bytes,4,rep,name=emotes,proto3" json:"emotes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EmoteCatalog) Reset() {
+	*x = EmoteCatalog{}
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EmoteCatalog) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EmoteCatalog) ProtoMessage() {}
+
+func (x *EmoteCatalog) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EmoteCatalog.ProtoReflect.Descriptor instead.
+func (*EmoteCatalog) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *EmoteCatalog) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *EmoteCatalog) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *EmoteCatalog) GetRevision() string {
+	if x != nil {
+		return x.Revision
+	}
+	return ""
+}
+
+func (x *EmoteCatalog) GetEmotes() []*EmoteEntry {
+	if x != nil {
+		return x.Emotes
+	}
+	return nil
+}
+
 type SendRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Channel  Channel                `protobuf:"varint,1,opt,name=channel,proto3,enum=warcraftbuddy.chat.v1.Channel" json:"channel,omitempty"`
@@ -415,7 +536,7 @@ type SendRequest struct {
 
 func (x *SendRequest) Reset() {
 	*x = SendRequest{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[1]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -427,7 +548,7 @@ func (x *SendRequest) String() string {
 func (*SendRequest) ProtoMessage() {}
 
 func (x *SendRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[1]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -440,7 +561,7 @@ func (x *SendRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendRequest.ProtoReflect.Descriptor instead.
 func (*SendRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{1}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SendRequest) GetChannel() Channel {
@@ -481,7 +602,7 @@ type SendResponse struct {
 
 func (x *SendResponse) Reset() {
 	*x = SendResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[2]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -493,7 +614,7 @@ func (x *SendResponse) String() string {
 func (*SendResponse) ProtoMessage() {}
 
 func (x *SendResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[2]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -506,7 +627,7 @@ func (x *SendResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendResponse.ProtoReflect.Descriptor instead.
 func (*SendResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SendResponse) GetTransportWritten() bool {
@@ -531,7 +652,7 @@ type PollRequest struct {
 
 func (x *PollRequest) Reset() {
 	*x = PollRequest{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[3]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -543,7 +664,7 @@ func (x *PollRequest) String() string {
 func (*PollRequest) ProtoMessage() {}
 
 func (x *PollRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[3]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -556,7 +677,7 @@ func (x *PollRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PollRequest.ProtoReflect.Descriptor instead.
 func (*PollRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PollRequest) GetAfterSequence() uint64 {
@@ -598,7 +719,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[4]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -610,7 +731,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[4]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -623,7 +744,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Message) GetSequence() uint64 {
@@ -700,7 +821,7 @@ type PollResponse struct {
 
 func (x *PollResponse) Reset() {
 	*x = PollResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[5]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -712,7 +833,7 @@ func (x *PollResponse) String() string {
 func (*PollResponse) ProtoMessage() {}
 
 func (x *PollResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[5]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -725,7 +846,7 @@ func (x *PollResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PollResponse.ProtoReflect.Descriptor instead.
 func (*PollResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PollResponse) GetMessages() []*Message {
@@ -796,7 +917,7 @@ type OwnerQuestState struct {
 
 func (x *OwnerQuestState) Reset() {
 	*x = OwnerQuestState{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -808,7 +929,7 @@ func (x *OwnerQuestState) String() string {
 func (*OwnerQuestState) ProtoMessage() {}
 
 func (x *OwnerQuestState) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[6]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -821,7 +942,7 @@ func (x *OwnerQuestState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerQuestState.ProtoReflect.Descriptor instead.
 func (*OwnerQuestState) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *OwnerQuestState) GetQuestId() uint32 {
@@ -851,7 +972,7 @@ type OwnerQuestEvent struct {
 
 func (x *OwnerQuestEvent) Reset() {
 	*x = OwnerQuestEvent{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -863,7 +984,7 @@ func (x *OwnerQuestEvent) String() string {
 func (*OwnerQuestEvent) ProtoMessage() {}
 
 func (x *OwnerQuestEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[7]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -876,7 +997,7 @@ func (x *OwnerQuestEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerQuestEvent.ProtoReflect.Descriptor instead.
 func (*OwnerQuestEvent) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *OwnerQuestEvent) GetQuestId() uint32 {
@@ -919,7 +1040,7 @@ type OwnerEquipmentSlot struct {
 
 func (x *OwnerEquipmentSlot) Reset() {
 	*x = OwnerEquipmentSlot{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -931,7 +1052,7 @@ func (x *OwnerEquipmentSlot) String() string {
 func (*OwnerEquipmentSlot) ProtoMessage() {}
 
 func (x *OwnerEquipmentSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[8]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -944,7 +1065,7 @@ func (x *OwnerEquipmentSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerEquipmentSlot.ProtoReflect.Descriptor instead.
 func (*OwnerEquipmentSlot) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OwnerEquipmentSlot) GetSlot() uint32 {
@@ -1020,7 +1141,7 @@ type OwnerProficiency struct {
 
 func (x *OwnerProficiency) Reset() {
 	*x = OwnerProficiency{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1032,7 +1153,7 @@ func (x *OwnerProficiency) String() string {
 func (*OwnerProficiency) ProtoMessage() {}
 
 func (x *OwnerProficiency) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[9]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1045,7 +1166,7 @@ func (x *OwnerProficiency) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerProficiency.ProtoReflect.Descriptor instead.
 func (*OwnerProficiency) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *OwnerProficiency) GetSkillId() uint32 {
@@ -1087,7 +1208,7 @@ type OwnerGear struct {
 
 func (x *OwnerGear) Reset() {
 	*x = OwnerGear{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1099,7 +1220,7 @@ func (x *OwnerGear) String() string {
 func (*OwnerGear) ProtoMessage() {}
 
 func (x *OwnerGear) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[10]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1112,7 +1233,7 @@ func (x *OwnerGear) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerGear.ProtoReflect.Descriptor instead.
 func (*OwnerGear) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *OwnerGear) GetAvailable() bool {
@@ -1254,7 +1375,7 @@ type OwnerFeedResponse struct {
 
 func (x *OwnerFeedResponse) Reset() {
 	*x = OwnerFeedResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1266,7 +1387,7 @@ func (x *OwnerFeedResponse) String() string {
 func (*OwnerFeedResponse) ProtoMessage() {}
 
 func (x *OwnerFeedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[11]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1279,7 +1400,7 @@ func (x *OwnerFeedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnerFeedResponse.ProtoReflect.Descriptor instead.
 func (*OwnerFeedResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *OwnerFeedResponse) GetAvailable() bool {
@@ -1406,7 +1527,7 @@ type ManagementRequestsRequest struct {
 
 func (x *ManagementRequestsRequest) Reset() {
 	*x = ManagementRequestsRequest{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[12]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1418,7 +1539,7 @@ func (x *ManagementRequestsRequest) String() string {
 func (*ManagementRequestsRequest) ProtoMessage() {}
 
 func (x *ManagementRequestsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[12]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1431,7 +1552,7 @@ func (x *ManagementRequestsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagementRequestsRequest.ProtoReflect.Descriptor instead.
 func (*ManagementRequestsRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ManagementRequestsRequest) GetSessionId() string {
@@ -1472,7 +1593,7 @@ type ManagementRequest struct {
 
 func (x *ManagementRequest) Reset() {
 	*x = ManagementRequest{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[13]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1484,7 +1605,7 @@ func (x *ManagementRequest) String() string {
 func (*ManagementRequest) ProtoMessage() {}
 
 func (x *ManagementRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[13]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1497,7 +1618,7 @@ func (x *ManagementRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagementRequest.ProtoReflect.Descriptor instead.
 func (*ManagementRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{13}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ManagementRequest) GetSequence() uint64 {
@@ -1574,7 +1695,7 @@ type ManagementRequestsResponse struct {
 
 func (x *ManagementRequestsResponse) Reset() {
 	*x = ManagementRequestsResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[14]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1586,7 +1707,7 @@ func (x *ManagementRequestsResponse) String() string {
 func (*ManagementRequestsResponse) ProtoMessage() {}
 
 func (x *ManagementRequestsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[14]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1599,7 +1720,7 @@ func (x *ManagementRequestsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagementRequestsResponse.ProtoReflect.Descriptor instead.
 func (*ManagementRequestsResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{14}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ManagementRequestsResponse) GetSessionId() string {
@@ -1687,7 +1808,7 @@ type TeamStatusRequest struct {
 
 func (x *TeamStatusRequest) Reset() {
 	*x = TeamStatusRequest{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[15]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1699,7 +1820,7 @@ func (x *TeamStatusRequest) String() string {
 func (*TeamStatusRequest) ProtoMessage() {}
 
 func (x *TeamStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[15]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1712,7 +1833,7 @@ func (x *TeamStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatusRequest.ProtoReflect.Descriptor instead.
 func (*TeamStatusRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{15}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TeamStatusRequest) GetSessionId() string {
@@ -1771,7 +1892,7 @@ type TeamStatusResponse struct {
 
 func (x *TeamStatusResponse) Reset() {
 	*x = TeamStatusResponse{}
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[16]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1783,7 +1904,7 @@ func (x *TeamStatusResponse) String() string {
 func (*TeamStatusResponse) ProtoMessage() {}
 
 func (x *TeamStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_chat_chat_proto_msgTypes[16]
+	mi := &file_modules_buddy_chat_chat_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1796,7 +1917,7 @@ func (x *TeamStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatusResponse.ProtoReflect.Descriptor instead.
 func (*TeamStatusResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{16}
+	return file_modules_buddy_chat_chat_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TeamStatusResponse) GetTransportWritten() bool {
@@ -1849,7 +1970,17 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\fEmoteRequest\x122\n" +
 	"\x05emote\x18\x01 \x01(\x0e2\x1c.warcraftbuddy.chat.v1.EmoteR\x05emote\x12\x1f\n" +
 	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
-	"targetGuid\"\xb6\x01\n" +
+	"targetGuid\"0\n" +
+	"\n" +
+	"EmoteEntry\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xa1\x01\n" +
+	"\fEmoteCatalog\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\tR\brevision\x129\n" +
+	"\x06emotes\x18\x04 \x03(\v2!.warcraftbuddy.chat.v1.EmoteEntryR\x06emotes\"\xb6\x01\n" +
 	"\vSendRequest\x128\n" +
 	"\achannel\x18\x01 \x01(\x0e2\x1e.warcraftbuddy.chat.v1.ChannelR\achannel\x12;\n" +
 	"\blanguage\x18\x02 \x01(\x0e2\x1f.warcraftbuddy.chat.v1.LanguageR\blanguage\x12\x12\n" +
@@ -2045,10 +2176,11 @@ const file_modules_buddy_chat_chat_proto_rawDesc = "" +
 	"\n" +
 	"\x06FAILED\x10\x15\x12\x17\n" +
 	"\x13OUTCOME_UNCONFIRMED\x10\x16\x12\f\n" +
-	"\bCOMPLETE\x10\x172\xf9\x04\n" +
+	"\bCOMPLETE\x10\x172\xc0\x05\n" +
 	"\tBuddyChat\x12O\n" +
 	"\x04Send\x12\".warcraftbuddy.chat.v1.SendRequest\x1a#.warcraftbuddy.chat.v1.SendResponse\x12Q\n" +
-	"\x05Emote\x12#.warcraftbuddy.chat.v1.EmoteRequest\x1a#.warcraftbuddy.chat.v1.SendResponse\x12O\n" +
+	"\x05Emote\x12#.warcraftbuddy.chat.v1.EmoteRequest\x1a#.warcraftbuddy.chat.v1.SendResponse\x12E\n" +
+	"\x06Emotes\x12\x16.google.protobuf.Empty\x1a#.warcraftbuddy.chat.v1.EmoteCatalog\x12O\n" +
 	"\x04Poll\x12\".warcraftbuddy.chat.v1.PollRequest\x1a#.warcraftbuddy.chat.v1.PollResponse\x12M\n" +
 	"\tOwnerFeed\x12\x16.google.protobuf.Empty\x1a(.warcraftbuddy.chat.v1.OwnerFeedResponse\x12y\n" +
 	"\x12ManagementRequests\x120.warcraftbuddy.chat.v1.ManagementRequestsRequest\x1a1.warcraftbuddy.chat.v1.ManagementRequestsResponse\x12h\n" +
@@ -2068,7 +2200,7 @@ func file_modules_buddy_chat_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_chat_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_modules_buddy_chat_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_modules_buddy_chat_chat_proto_goTypes = []any{
 	(Channel)(0),                       // 0: warcraftbuddy.chat.v1.Channel
 	(Language)(0),                      // 1: warcraftbuddy.chat.v1.Language
@@ -2076,60 +2208,65 @@ var file_modules_buddy_chat_chat_proto_goTypes = []any{
 	(TeamAction)(0),                    // 3: warcraftbuddy.chat.v1.TeamAction
 	(TeamPhase)(0),                     // 4: warcraftbuddy.chat.v1.TeamPhase
 	(*EmoteRequest)(nil),               // 5: warcraftbuddy.chat.v1.EmoteRequest
-	(*SendRequest)(nil),                // 6: warcraftbuddy.chat.v1.SendRequest
-	(*SendResponse)(nil),               // 7: warcraftbuddy.chat.v1.SendResponse
-	(*PollRequest)(nil),                // 8: warcraftbuddy.chat.v1.PollRequest
-	(*Message)(nil),                    // 9: warcraftbuddy.chat.v1.Message
-	(*PollResponse)(nil),               // 10: warcraftbuddy.chat.v1.PollResponse
-	(*OwnerQuestState)(nil),            // 11: warcraftbuddy.chat.v1.OwnerQuestState
-	(*OwnerQuestEvent)(nil),            // 12: warcraftbuddy.chat.v1.OwnerQuestEvent
-	(*OwnerEquipmentSlot)(nil),         // 13: warcraftbuddy.chat.v1.OwnerEquipmentSlot
-	(*OwnerProficiency)(nil),           // 14: warcraftbuddy.chat.v1.OwnerProficiency
-	(*OwnerGear)(nil),                  // 15: warcraftbuddy.chat.v1.OwnerGear
-	(*OwnerFeedResponse)(nil),          // 16: warcraftbuddy.chat.v1.OwnerFeedResponse
-	(*ManagementRequestsRequest)(nil),  // 17: warcraftbuddy.chat.v1.ManagementRequestsRequest
-	(*ManagementRequest)(nil),          // 18: warcraftbuddy.chat.v1.ManagementRequest
-	(*ManagementRequestsResponse)(nil), // 19: warcraftbuddy.chat.v1.ManagementRequestsResponse
-	(*TeamStatusRequest)(nil),          // 20: warcraftbuddy.chat.v1.TeamStatusRequest
-	(*TeamStatusResponse)(nil),         // 21: warcraftbuddy.chat.v1.TeamStatusResponse
-	(*emptypb.Empty)(nil),              // 22: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),             // 23: agentwow.module.v1.WorldPacket
+	(*EmoteEntry)(nil),                 // 6: warcraftbuddy.chat.v1.EmoteEntry
+	(*EmoteCatalog)(nil),               // 7: warcraftbuddy.chat.v1.EmoteCatalog
+	(*SendRequest)(nil),                // 8: warcraftbuddy.chat.v1.SendRequest
+	(*SendResponse)(nil),               // 9: warcraftbuddy.chat.v1.SendResponse
+	(*PollRequest)(nil),                // 10: warcraftbuddy.chat.v1.PollRequest
+	(*Message)(nil),                    // 11: warcraftbuddy.chat.v1.Message
+	(*PollResponse)(nil),               // 12: warcraftbuddy.chat.v1.PollResponse
+	(*OwnerQuestState)(nil),            // 13: warcraftbuddy.chat.v1.OwnerQuestState
+	(*OwnerQuestEvent)(nil),            // 14: warcraftbuddy.chat.v1.OwnerQuestEvent
+	(*OwnerEquipmentSlot)(nil),         // 15: warcraftbuddy.chat.v1.OwnerEquipmentSlot
+	(*OwnerProficiency)(nil),           // 16: warcraftbuddy.chat.v1.OwnerProficiency
+	(*OwnerGear)(nil),                  // 17: warcraftbuddy.chat.v1.OwnerGear
+	(*OwnerFeedResponse)(nil),          // 18: warcraftbuddy.chat.v1.OwnerFeedResponse
+	(*ManagementRequestsRequest)(nil),  // 19: warcraftbuddy.chat.v1.ManagementRequestsRequest
+	(*ManagementRequest)(nil),          // 20: warcraftbuddy.chat.v1.ManagementRequest
+	(*ManagementRequestsResponse)(nil), // 21: warcraftbuddy.chat.v1.ManagementRequestsResponse
+	(*TeamStatusRequest)(nil),          // 22: warcraftbuddy.chat.v1.TeamStatusRequest
+	(*TeamStatusResponse)(nil),         // 23: warcraftbuddy.chat.v1.TeamStatusResponse
+	(*emptypb.Empty)(nil),              // 24: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),             // 25: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_chat_chat_proto_depIdxs = []int32{
 	2,  // 0: warcraftbuddy.chat.v1.EmoteRequest.emote:type_name -> warcraftbuddy.chat.v1.Emote
-	0,  // 1: warcraftbuddy.chat.v1.SendRequest.channel:type_name -> warcraftbuddy.chat.v1.Channel
-	1,  // 2: warcraftbuddy.chat.v1.SendRequest.language:type_name -> warcraftbuddy.chat.v1.Language
-	0,  // 3: warcraftbuddy.chat.v1.Message.channel:type_name -> warcraftbuddy.chat.v1.Channel
-	9,  // 4: warcraftbuddy.chat.v1.PollResponse.messages:type_name -> warcraftbuddy.chat.v1.Message
-	13, // 5: warcraftbuddy.chat.v1.OwnerGear.slots:type_name -> warcraftbuddy.chat.v1.OwnerEquipmentSlot
-	14, // 6: warcraftbuddy.chat.v1.OwnerGear.proficiencies:type_name -> warcraftbuddy.chat.v1.OwnerProficiency
-	11, // 7: warcraftbuddy.chat.v1.OwnerFeedResponse.quests:type_name -> warcraftbuddy.chat.v1.OwnerQuestState
-	12, // 8: warcraftbuddy.chat.v1.OwnerFeedResponse.rewarded:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
-	12, // 9: warcraftbuddy.chat.v1.OwnerFeedResponse.accepted:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
-	15, // 10: warcraftbuddy.chat.v1.OwnerFeedResponse.owner_gear:type_name -> warcraftbuddy.chat.v1.OwnerGear
-	3,  // 11: warcraftbuddy.chat.v1.ManagementRequest.action:type_name -> warcraftbuddy.chat.v1.TeamAction
-	18, // 12: warcraftbuddy.chat.v1.ManagementRequestsResponse.requests:type_name -> warcraftbuddy.chat.v1.ManagementRequest
-	4,  // 13: warcraftbuddy.chat.v1.TeamStatusRequest.phase:type_name -> warcraftbuddy.chat.v1.TeamPhase
-	4,  // 14: warcraftbuddy.chat.v1.TeamStatusResponse.phase:type_name -> warcraftbuddy.chat.v1.TeamPhase
-	6,  // 15: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
-	5,  // 16: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
-	8,  // 17: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
-	22, // 18: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:input_type -> google.protobuf.Empty
-	17, // 19: warcraftbuddy.chat.v1.BuddyChat.ManagementRequests:input_type -> warcraftbuddy.chat.v1.ManagementRequestsRequest
-	20, // 20: warcraftbuddy.chat.v1.BuddyChat.PublishTeamStatus:input_type -> warcraftbuddy.chat.v1.TeamStatusRequest
-	23, // 21: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	7,  // 22: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
-	7,  // 23: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
-	10, // 24: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
-	16, // 25: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:output_type -> warcraftbuddy.chat.v1.OwnerFeedResponse
-	19, // 26: warcraftbuddy.chat.v1.BuddyChat.ManagementRequests:output_type -> warcraftbuddy.chat.v1.ManagementRequestsResponse
-	21, // 27: warcraftbuddy.chat.v1.BuddyChat.PublishTeamStatus:output_type -> warcraftbuddy.chat.v1.TeamStatusResponse
-	22, // 28: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
-	22, // [22:29] is the sub-list for method output_type
-	15, // [15:22] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	6,  // 1: warcraftbuddy.chat.v1.EmoteCatalog.emotes:type_name -> warcraftbuddy.chat.v1.EmoteEntry
+	0,  // 2: warcraftbuddy.chat.v1.SendRequest.channel:type_name -> warcraftbuddy.chat.v1.Channel
+	1,  // 3: warcraftbuddy.chat.v1.SendRequest.language:type_name -> warcraftbuddy.chat.v1.Language
+	0,  // 4: warcraftbuddy.chat.v1.Message.channel:type_name -> warcraftbuddy.chat.v1.Channel
+	11, // 5: warcraftbuddy.chat.v1.PollResponse.messages:type_name -> warcraftbuddy.chat.v1.Message
+	15, // 6: warcraftbuddy.chat.v1.OwnerGear.slots:type_name -> warcraftbuddy.chat.v1.OwnerEquipmentSlot
+	16, // 7: warcraftbuddy.chat.v1.OwnerGear.proficiencies:type_name -> warcraftbuddy.chat.v1.OwnerProficiency
+	13, // 8: warcraftbuddy.chat.v1.OwnerFeedResponse.quests:type_name -> warcraftbuddy.chat.v1.OwnerQuestState
+	14, // 9: warcraftbuddy.chat.v1.OwnerFeedResponse.rewarded:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	14, // 10: warcraftbuddy.chat.v1.OwnerFeedResponse.accepted:type_name -> warcraftbuddy.chat.v1.OwnerQuestEvent
+	17, // 11: warcraftbuddy.chat.v1.OwnerFeedResponse.owner_gear:type_name -> warcraftbuddy.chat.v1.OwnerGear
+	3,  // 12: warcraftbuddy.chat.v1.ManagementRequest.action:type_name -> warcraftbuddy.chat.v1.TeamAction
+	20, // 13: warcraftbuddy.chat.v1.ManagementRequestsResponse.requests:type_name -> warcraftbuddy.chat.v1.ManagementRequest
+	4,  // 14: warcraftbuddy.chat.v1.TeamStatusRequest.phase:type_name -> warcraftbuddy.chat.v1.TeamPhase
+	4,  // 15: warcraftbuddy.chat.v1.TeamStatusResponse.phase:type_name -> warcraftbuddy.chat.v1.TeamPhase
+	8,  // 16: warcraftbuddy.chat.v1.BuddyChat.Send:input_type -> warcraftbuddy.chat.v1.SendRequest
+	5,  // 17: warcraftbuddy.chat.v1.BuddyChat.Emote:input_type -> warcraftbuddy.chat.v1.EmoteRequest
+	24, // 18: warcraftbuddy.chat.v1.BuddyChat.Emotes:input_type -> google.protobuf.Empty
+	10, // 19: warcraftbuddy.chat.v1.BuddyChat.Poll:input_type -> warcraftbuddy.chat.v1.PollRequest
+	24, // 20: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:input_type -> google.protobuf.Empty
+	19, // 21: warcraftbuddy.chat.v1.BuddyChat.ManagementRequests:input_type -> warcraftbuddy.chat.v1.ManagementRequestsRequest
+	22, // 22: warcraftbuddy.chat.v1.BuddyChat.PublishTeamStatus:input_type -> warcraftbuddy.chat.v1.TeamStatusRequest
+	25, // 23: warcraftbuddy.chat.v1.BuddyChat.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	9,  // 24: warcraftbuddy.chat.v1.BuddyChat.Send:output_type -> warcraftbuddy.chat.v1.SendResponse
+	9,  // 25: warcraftbuddy.chat.v1.BuddyChat.Emote:output_type -> warcraftbuddy.chat.v1.SendResponse
+	7,  // 26: warcraftbuddy.chat.v1.BuddyChat.Emotes:output_type -> warcraftbuddy.chat.v1.EmoteCatalog
+	12, // 27: warcraftbuddy.chat.v1.BuddyChat.Poll:output_type -> warcraftbuddy.chat.v1.PollResponse
+	18, // 28: warcraftbuddy.chat.v1.BuddyChat.OwnerFeed:output_type -> warcraftbuddy.chat.v1.OwnerFeedResponse
+	21, // 29: warcraftbuddy.chat.v1.BuddyChat.ManagementRequests:output_type -> warcraftbuddy.chat.v1.ManagementRequestsResponse
+	23, // 30: warcraftbuddy.chat.v1.BuddyChat.PublishTeamStatus:output_type -> warcraftbuddy.chat.v1.TeamStatusResponse
+	24, // 31: warcraftbuddy.chat.v1.BuddyChat.OnPacket:output_type -> google.protobuf.Empty
+	24, // [24:32] is the sub-list for method output_type
+	16, // [16:24] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_chat_chat_proto_init() }
@@ -2143,7 +2280,7 @@ func file_modules_buddy_chat_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_chat_chat_proto_rawDesc), len(file_modules_buddy_chat_chat_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   17,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

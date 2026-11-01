@@ -23,7 +23,8 @@ enum Language {
   COMMON = 7;
 }
 
-// Allowlisted EmotesText.dbc IDs, not arbitrary animation IDs.
+// Legacy symbolic TextEmotes IDs, not animation IDs. Numeric values advertised
+// by Emotes are also accepted; new text emotes do not require new enum symbols.
 enum Emote {
   EMOTE_UNSPECIFIED = 0;
   BOW = 17;
@@ -36,6 +37,17 @@ message EmoteRequest {
   // 0 means untargeted. Nonzero targets must be player GUIDs; the server
   // resolves their presence/range. Does not turn or move the character.
   uint64 target_guid = 2;
+}
+
+message EmoteEntry {
+  uint32 id = 1;
+  string name = 2;
+}
+message EmoteCatalog {
+  string session_id = 1; // Current chat-module epoch, the same as Poll.
+  uint64 self_guid = 2;
+  string revision = 3; // SHA256 of the exact shared source-pinned JSON catalog.
+  repeated EmoteEntry emotes = 4;
 }
 
 message SendRequest {
@@ -246,6 +258,7 @@ message TeamStatusResponse {
 service BuddyChat {
   rpc Send(SendRequest) returns (SendResponse);
   rpc Emote(EmoteRequest) returns (SendResponse);
+  rpc Emotes(google.protobuf.Empty) returns (EmoteCatalog);
   rpc Poll(PollRequest) returns (PollResponse);
   rpc OwnerFeed(google.protobuf.Empty) returns (OwnerFeedResponse);
   rpc ManagementRequests(ManagementRequestsRequest) returns (ManagementRequestsResponse);

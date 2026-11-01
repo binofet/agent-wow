@@ -191,7 +191,7 @@ func TestModuleManifestAndDescriptorLoad(t *testing.T) {
 	if !ok {
 		t.Fatal("module not discovered")
 	}
-	for _, alias := range []string{"send", "poll", "emote", "owner_feed", "management_requests", "publish_team_status"} {
+	for _, alias := range []string{"send", "poll", "emote", "emotes", "owner_feed", "management_requests", "publish_team_status"} {
 		if _, ok := definition.RPC(alias); !ok {
 			t.Fatalf("missing public method %q", alias)
 		}

@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Edit an embodied companion's live Lua policy directly; no coding queue."""
+import argparse
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+loader = importlib.machinery.SourceFileLoader('self_edit_converse', str(ROOT / 'dev/converse'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+c = importlib.util.module_from_spec(spec)
+loader.exec_module(c)
+DATA = ROOT / 'data/self-edit'
+
+
+def digest(source):
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
+def private_folder(path):
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise c.ConversationError('Owned private policy directory required')
+
+
+def save_source(path, source):
+    """Retain the candidate before the RPC so a lost reply is reconcilable."""
+    fd, temporary = tempfile.mkstemp(prefix='.policy-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as output:
+            output.write(source)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def read_source(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd) as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 32768:
+            raise c.ConversationError('Bounded regular Lua source required')
+        result = source.read()
+    if not 0 < len(result.encode()) <= 32768:
+        raise c.ConversationError('Lua source must contain 1..32768 bytes')
+    return result
+
+
+def owned(rpc, guid, sid):
+    body = rpc.call('buddy-actions.status', {})
+    behavior = rpc.call('buddy-actions.behavior', {})
+    if (behavior.get('sessionId') != sid or body.get('sessionId') != sid
+            or c.integer(behavior.get('selfGuid', 0)) != guid
+            or c.integer(body.get('selfGuid', 0)) != guid):
+        raise c.ConversationError('Requested character/body changed; refresh observations')
+    return behavior
+
+
+def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
+    if (type(guid) is not int or not 0 < guid < 2**48 or not isinstance(sid, str)
+            or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', sid)):
+        raise c.ConversationError('Explicit character and body identity required')
+    if command not in ('show', 'apply', 'builtin'):
+        raise c.ConversationError('Unknown policy command')
+    if command != 'show' and (not isinstance(expected, str)
+                             or not re.fullmatch(r'|[a-f0-9]{64}', expected)):
+        raise c.ConversationError('Explicit expected revision required')
+    if command == 'apply' and (not isinstance(source, str) or not 0 < len(source.encode()) <= 32768):
+        raise c.ConversationError('Bounded Lua source required')
+    root = Path(data) if data is not None else DATA
+    private_folder(root)
+    actor = root / str(guid)
+    private_folder(actor)
+    fd = os.open(actor / 'edit.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise c.ConversationError('Owned private edit lock required')
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise c.ConversationError('Another direct edit is in progress; refresh before editing') from None
+        before = owned(rpc, guid, sid)
+        revision = before.get('revision', '')
+        if command == 'show':
+            result = dict(characterGuid=str(guid), sessionId=sid, status=before,
+                          schema='behaviors/contract_generated.lua', nativeSource='modules/buddy-actions',
+                          scope=['heal_target', 'heal_spell', 'damage_spell'], sourceKnown=False)
+            if revision:
+                candidates = [actor / (revision + '.lua'), ROOT / 'behaviors/party.lua']
+                for path in candidates:
+                    try:
+                        content = read_source(path)
+                    except FileNotFoundError:
+                        continue
+                    if digest(content) == revision:
+                        result.update(sourceKnown=True, source=content)
+                        break
+            return result
+        if revision != expected:
+            raise c.ConversationError('Live policy changed; read it before editing')
+        target = digest(source) if command == 'apply' else ''
+        if command == 'apply':
+            save_source(actor / (target + '.lua'), source)
+        started = time.monotonic()
+        if revision != target:
+            # One CAS write, including during combat. Native spell eligibility,
+            # leases and packet receipts remain owned by the running controller.
+            # A timeout never triggers a second write here.
+            rpc.call('buddy-actions.reload_behavior', dict(sessionId=sid, selfGuid=str(guid),
+                     expectedRevision=expected, source=source if command == 'apply' else '',
+                     useBuiltin=command == 'builtin'))
+        after = owned(rpc, guid, sid)
+        if after.get('revision', '') != target:
+            raise c.ConversationError('Policy is not current; inspect quarantine or concurrent edit')
+        return dict(characterGuid=str(guid), sessionId=sid, revision=target,
+                    phase='already_current' if revision == target else 'live', reconnected=False,
+                    elapsedMs=round((time.monotonic() - started) * 1000, 2),
+                    evaluations=after.get('evaluations', '0'))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('show', 'apply', 'builtin'))
+    parser.add_argument('--guid', type=int, required=True)
+    parser.add_argument('--session-id', required=True)
+    parser.add_argument('--rpc-url', required=True)
+    parser.add_argument('--expected-revision')
+    parser.add_argument('--source', type=Path)
+    args = parser.parse_args()
+    if args.command == 'apply' and args.source is None:
+        parser.error('apply requires --source')
+    if args.command != 'show' and args.expected_revision is None:
+        parser.error('apply/builtin requires --expected-revision (empty string for native policy)')
+    source = read_source(args.source) if args.command == 'apply' else None
+    print(json.dumps(edit(args.command, args.guid, args.session_id, c.RPC(args.rpc_url),
+                          source, args.expected_revision), ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, c.ConversationError) as error:
+        raise SystemExit('Direct edit: ' + str(error))

@@ -433,7 +433,7 @@ class ProfilePartyTests(unittest.TestCase):
                 self.assertFalse(controls.context()["abilities"]["assisting"])
         controls.actions={"classKnown":True,"classId":9,"knownFireball":True}
         self.assertFalse(controls.context()["abilities"]["assisting"])
-        self.assertTrue(all(method=="buddy-world.snapshot" for method,_ in rpc.calls))
+        self.assertTrue(all(method in ("buddy-world.snapshot","buddy-chat.emotes") for method,_ in rpc.calls))
 
     def test_profiles_isolate_state_and_validate_roster(self):
         def args(**extra):
@@ -1343,7 +1343,7 @@ class PartyMaintenanceContextTests(unittest.TestCase):
                 self.assertEqual(state["own"],{"name":"Arlen","guid":1,"phase":"waiting_for_training_confirmation",
                     "recordsKnown":True,"reservedCopper":300,"confirmedSpellIds":[585],"stipendStatus":"reserved_unconfirmed"})
                 self.assertNotIn("private",json.dumps(state));self.assertNotIn("never_forward",json.dumps(state))
-                self.assertEqual(rpc.calls,[("buddy-world.snapshot",{})])
+                self.assertEqual(rpc.calls,[("buddy-chat.emotes",{}),("buddy-world.snapshot",{})])
                 own["mail"]["status"]="confirmed";converse.write_json(folder/"character-1.json",own)
                 self.assertEqual(converse.party_maintenance_snapshot(1)["own"]["stipendStatus"],"confirmed")
             self.assertFalse(converse.party_maintenance_snapshot(1)["active"])
@@ -1970,6 +1970,143 @@ class NixSharedQuestTests(unittest.TestCase):
             self.assertTrue(rpc.call('buddy-quests.accept_shared',params)['transportWritten'])
         self.assertEqual(seen[0]['method'],'buddy-quests.accept_shared');self.assertEqual(seen[0]['params'],params)
         self.assertNotIn('ACCEPT_SHARED',converse.ACTIONS)
+
+
+class DeveloperBrainTests(unittest.TestCase):
+    def repository(self, path):
+        path.mkdir()
+        converse.subprocess.check_call(['git','init','-q',str(path)],stdout=converse.subprocess.DEVNULL)
+        return path.resolve()
+
+    def state(self, repo, source='owner'):
+        return dict(character=dict(guid='1'),current_request=dict(source=source,senderGuid='3',verifiedPeer=source=='party_agent'),
+            development=dict(enabled=True,directDevelopment=True,workspace=str(repo),selfGuid='1',ownerGuid='3',
+                sessionId='aw-current',rpcUrl='http://127.0.0.1:8086/rpc',policyCommands=dict(show=['python3','-B','dev/self-edit','show','--guid','1','--session-id','aw-current','--rpc-url','http://127.0.0.1:8086/rpc'])))
+
+    def test_developer_flags_enable_coding_without_sandbox_or_other_agents(self):
+        command=converse.codex_command('codex','repo','schema','output',developer=True)
+        self.assertIn('--approve-for-me',command);self.assertNotIn('--sandbox',command)
+        self.assertIn('sandbox_workspace_write.network_access=true',command)
+        disabled=[command[i+1] for i,v in enumerate(command[:-1]) if v=='--disable']
+        enabled=[command[i+1] for i,v in enumerate(command[:-1]) if v=='--enable']
+        self.assertEqual(set(enabled),{'shell_tool','unified_exec'})
+        self.assertFalse(set(disabled)&converse.DEVELOPER_FEATURES)
+        self.assertTrue({'multi_agent','multi_agent_v2','apps','plugins','hooks','browser_use','computer_use'}<=set(disabled))
+        self.assertNotIn('--model',command);self.assertFalse(any('dangerously' in x for x in command))
+
+    def test_workspace_is_exact_same_repository_and_accepts_real_worktree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary).resolve();repo=self.repository(folder/'repo');other=self.repository(folder/'other')
+            (repo/'dev').mkdir()
+            with patch.object(converse,'ROOT',repo):
+                self.assertEqual(converse.checked_developer_workspace(repo),repo)
+                for path in (repo/'dev',other,folder/'missing'):
+                    with self.assertRaises(converse.ConversationError):converse.checked_developer_workspace(path)
+                converse.subprocess.check_call(['git','-C',str(repo),'-c','user.name=Test','-c','user.email=test@example.invalid','commit','--allow-empty','-qm','fixture'])
+                tree=folder/'worktree'
+                converse.subprocess.check_call(['git','-C',str(repo),'worktree','add','--quiet','--detach',str(tree),'HEAD'])
+                self.assertTrue((tree/'.git').is_file())
+                self.assertEqual(converse.checked_developer_workspace(tree),tree)
+
+    def test_same_generation_can_edit_go_and_lua_but_banter_and_unverified_peer_cannot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary).resolve();repo=self.repository(folder/'repo');state_dir=folder/'state';state_dir.mkdir()
+            fake=folder/'fake-codex';audit=folder/'calls.jsonl'
+            fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys\n'
+                'a=sys.argv;p=sys.stdin.read();w=pathlib.Path(a[a.index("--cd")+1]);dev="--approve-for-me" in a\n'
+                f'with pathlib.Path({str(audit)!r}).open("a") as f:f.write(json.dumps(dict(args=a,prompt=p,developer=dev))+"\\n")\n'
+                'print(json.dumps(dict(type="turn.started")))\n'
+                'if dev:\n'
+                ' assert "--sandbox" not in a\n'
+                ' (w/"policy.lua").write_text("return {decide=function(s) return {} end}")\n'
+                ' (w/"controller.go").write_text("package controller\\n")\n'
+                ' print(json.dumps(dict(type="item.completed",item=dict(id="cmd1",type="command_execution",status="completed",exit_code=1 if "forceToolFailure" in p else 0))))\n'
+                ' print(json.dumps(dict(type="item.completed",item=dict(id="patch1",type="file_change",status="completed"))))\n'
+                ' if "repairAfterFailure" in p: print(json.dumps(dict(type="item.completed",item=dict(id="cmd2",type="command_execution",status="completed",exit_code=0))))\n'
+                ' if "fatalToolError" in p: print(json.dumps(dict(type="item.completed",item=dict(id="err1",type="error",message="CLI failure"))))\n'
+                'else: assert a[a.index("--sandbox")+1]=="read-only"\n'
+                'if "largeOutput" in p: print(json.dumps(dict(type="item.completed",item=dict(type="reasoning",text="x"*1100000))))\n'
+                'pathlib.Path(a[a.index("--output-last-message")+1]).write_text(json.dumps(dict(text="I checked the controller.",emote="NONE")))\n'
+                'print(json.dumps(dict(type="turn.completed")))\n')
+            fake.chmod(0o700)
+            with patch.object(converse,'ROOT',repo):brain=converse.CodexBrain(fake,state_dir,developer_workspace=repo)
+            state=self.state(repo);state['largeOutput']=True
+            self.assertEqual(brain.generate([{'speaker':'Joel','text':'Fix this controller.'}],state)['action'],'NONE')
+            self.assertTrue((repo/'controller.go').is_file());self.assertTrue((repo/'policy.lua').is_file())
+            for source in ('initiative','missing','party_agent'):
+                denied=self.state(repo,source);denied['current_request']['verifiedPeer']=False
+                brain.generate([],denied)
+            unbound=self.state(repo);del unbound['development']['sessionId'];brain.generate([],unbound)
+            peer=self.state(repo,'party_agent');brain.generate([],peer)
+            repaired=self.state(repo);repaired.update(forceToolFailure=True,repairAfterFailure=True)
+            self.assertEqual(brain.generate([],repaired)['action'],'NONE')
+            self.assertEqual(brain.last_development_events,dict(failedCommands=1,successfulCommands=1,failedPatches=0,completedPatches=1))
+            failed=self.state(repo);failed['fatalToolError']=True
+            with self.assertRaises(converse.ConversationError):brain.generate([],failed)
+            oversized=self.state(repo,'initiative');oversized['largeOutput']=True
+            with self.assertRaisesRegex(converse.ConversationError,'output exceeds'):brain.generate([],oversized)
+            rows=[json.loads(line) for line in audit.read_text().splitlines()]
+            self.assertEqual([r['developer'] for r in rows],[True,False,False,False,False,True,True,True,False])
+            self.assertIn('public owned-client APIs',rows[0]['prompt']);self.assertIn('aw-current',rows[0]['prompt'])
+            self.assertIn('/private/tmp/warcraft-buddy-tools/go/bin/go',rows[0]['prompt'])
+            self.assertIn('you have no tools',rows[1]['prompt'])
+            self.assertEqual(len(rows),9) # Each explicit generation ran once, without a queued coding generation.
+
+    def test_developer_tools_require_complete_success_and_unknown_tools_remain_forbidden(self):
+        start=b'{"type":"turn.started"}\n';end=b'{"type":"turn.completed"}\n'
+        for item in (dict(id='x',type='command_execution',status='completed',exit_code='0'),
+                     dict(id='x',type='command_execution',status='completed'),
+                     dict(id='x',type='file_change',status='unknown'),dict(id='x',type='mcp_tool_call'),
+                     dict(id='x',type='error',message='failed')):
+            with self.assertRaises(converse.ConversationError):
+                converse.inspect_events(start+json.dumps(dict(type='item.completed',item=item)).encode()+b'\n'+end,developer=True)
+        failure=dict(id='x',type='command_execution',status='failed',exit_code=None)
+        result=converse.inspect_events(start+json.dumps(dict(type='item.completed',item=failure)).encode()+b'\n'+end,developer=True)
+        self.assertEqual(result['failedCommands'],1) # Honest unresolved failure may be reported, never promoted to host success.
+        with self.assertRaises(converse.ConversationError):
+            converse.inspect_events(start+b'{"type":"item.started","item":{"id":"x","type":"command_execution"}}\n'+end,developer=True)
+
+    def test_direct_mode_refusal_never_starts_workshop_and_context_is_body_bound(self):
+        rpc=FakeRPC([poll(),poll([message(1,'Fix my follow controller')])]);rpc.url='http://127.0.0.1:8086/rpc'
+        controls=types.SimpleNamespace(events=[],actions_available=True,party_available=True,party_session='aw-current',
+            actions=dict(sessionId='aw-current',selfGuid='1'),refresh=lambda:None,context=lambda:{},
+            execute=lambda *a,**kw:(_ for _ in ()).throw(converse.ConversationError('refused')),
+            report_problem=lambda *a,**kw:(_ for _ in ()).throw(AssertionError('unexpected queued job')))
+        class Brain(FakeBrain):
+            developer_workspace=converse.ROOT
+            def generate(self,history,control_state=None):self.state=control_state;return super().generate(history,control_state)
+        brain=Brain(dict(text='Checking.',emote='NONE',action='FOLLOW'))
+        loop=converse.Conversation(rpc,brain,controls=controls);loop.tick();loop.tick()
+        development=brain.state['development'];self.assertTrue(development['directDevelopment'])
+        self.assertEqual(development['sessionId'],'aw-current');self.assertEqual(development['selfGuid'],'1')
+        self.assertIn('--expected-revision',development['policyCommands']['apply'])
+        self.assertIn('No repair was queued',[p['text'] for m,p in rpc.calls if m=='buddy-chat.send'][0])
+        controls.actions['sessionId']='new';self.assertFalse(loop.development_context('owner')['enabled'])
+
+    def test_peer_tools_need_fresh_membership_in_the_same_core_body(self):
+        for fresh_sid in ('aw-current','replacement'):
+            loop,rpc,brain,controls,_=ProfilePartyTests().setup_party([poll(),
+                poll([message(1,'Arlen, tell us a story',channel='PARTY')]),
+                poll([message(2,'Mira, debug my controller',sender=1,channel='PARTY')])],
+                reply=dict(text='I checked that source.',emote='NONE',action='REPAIR_CONTROLLER'))
+            controls.actions_available=controls.party_available=True;controls.party_session='aw-current'
+            controls.actions=dict(sessionId='aw-current',selfGuid='10');rpc.url='http://127.0.0.1:8087/rpc'
+            brain.developer_workspace=converse.ROOT
+            old_generate=brain.generate
+            def generate(history,state=None):brain.state=state;return old_generate(history,state)
+            brain.generate=generate
+            old_call=rpc.call
+            def call(method,params):
+                result=old_call(method,params)
+                if method=='buddy-party.state':result=dict(result,sessionId=fresh_sid)
+                return result
+            rpc.call=call
+            loop.tick();loop.tick();loop.tick()
+            self.assertEqual(len(brain.histories),1 if fresh_sid=='aw-current' else 0)
+            self.assertEqual(controls.executed,[])
+            if fresh_sid=='aw-current':
+                self.assertTrue(brain.state['current_request']['verifiedPeer'])
+                self.assertTrue(brain.state['development']['enabled'])
 
 
 if __name__ == "__main__":
