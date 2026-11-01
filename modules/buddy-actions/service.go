@@ -15,6 +15,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
@@ -79,6 +80,8 @@ type Service struct {
 	supportOp                                                *supportAttempt
 	resurrectionBindings                                     map[uint64]bool
 	resurrectionOffer                                        *resurrectionOffer
+	behavior                                                 *behavior.Runtime
+	behaviorRejection                                        string
 
 	improvedSinister1, improvedSinister2 bool
 	autoTarget                           uint64

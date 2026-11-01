@@ -28,6 +28,8 @@ const (
 	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
 	BuddyActions_Buffs_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
 	BuddyActions_SpellToolkit_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
+	BuddyActions_ReloadBehavior_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
+	BuddyActions_Behavior_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
 	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
 	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
 	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
@@ -55,6 +57,8 @@ type BuddyActionsClient interface {
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Buffs(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	SpellToolkit(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SpellToolkitState, error)
+	ReloadBehavior(ctx context.Context, in *BehaviorReloadRequest, opts ...grpc.CallOption) (*BehaviorStatus, error)
+	Behavior(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BehaviorStatus, error)
 	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
 	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
 	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
@@ -145,6 +149,26 @@ func (c *buddyActionsClient) SpellToolkit(ctx context.Context, in *emptypb.Empty
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SpellToolkitState)
 	err := c.cc.Invoke(ctx, BuddyActions_SpellToolkit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) ReloadBehavior(ctx context.Context, in *BehaviorReloadRequest, opts ...grpc.CallOption) (*BehaviorStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BehaviorStatus)
+	err := c.cc.Invoke(ctx, BuddyActions_ReloadBehavior_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Behavior(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BehaviorStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BehaviorStatus)
+	err := c.cc.Invoke(ctx, BuddyActions_Behavior_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -302,6 +326,8 @@ type BuddyActionsServer interface {
 	Status(context.Context, *emptypb.Empty) (*State, error)
 	Buffs(context.Context, *ToggleRequest) (*State, error)
 	SpellToolkit(context.Context, *emptypb.Empty) (*SpellToolkitState, error)
+	ReloadBehavior(context.Context, *BehaviorReloadRequest) (*BehaviorStatus, error)
+	Behavior(context.Context, *emptypb.Empty) (*BehaviorStatus, error)
 	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
 	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
 	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
@@ -348,6 +374,12 @@ func (UnimplementedBuddyActionsServer) Buffs(context.Context, *ToggleRequest) (*
 }
 func (UnimplementedBuddyActionsServer) SpellToolkit(context.Context, *emptypb.Empty) (*SpellToolkitState, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SpellToolkit not implemented")
+}
+func (UnimplementedBuddyActionsServer) ReloadBehavior(context.Context, *BehaviorReloadRequest) (*BehaviorStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReloadBehavior not implemented")
+}
+func (UnimplementedBuddyActionsServer) Behavior(context.Context, *emptypb.Empty) (*BehaviorStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Behavior not implemented")
 }
 func (UnimplementedBuddyActionsServer) AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcquireInteraction not implemented")
@@ -534,6 +566,42 @@ func _BuddyActions_SpellToolkit_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).SpellToolkit(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_ReloadBehavior_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BehaviorReloadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ReloadBehavior(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ReloadBehavior_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ReloadBehavior(ctx, req.(*BehaviorReloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Behavior_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Behavior(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Behavior_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Behavior(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -824,6 +892,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SpellToolkit",
 			Handler:    _BuddyActions_SpellToolkit_Handler,
+		},
+		{
+			MethodName: "ReloadBehavior",
+			Handler:    _BuddyActions_ReloadBehavior_Handler,
+		},
+		{
+			MethodName: "Behavior",
+			Handler:    _BuddyActions_Behavior_Handler,
 		},
 		{
 			MethodName: "AcquireInteraction",

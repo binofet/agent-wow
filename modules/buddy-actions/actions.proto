@@ -5,6 +5,25 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+// Pure Lua decisions change only subsequent selections; transport stays native.
+message BehaviorReloadRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string expected_revision = 3;
+  string source = 4;
+  bool use_builtin = 5;
+}
+message BehaviorStatus {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string revision = 3;
+  string last_good_revision = 4;
+  string quarantined_revision = 5;
+  string last_error = 6;
+  uint64 evaluations = 7;
+  uint64 failures = 8;
+  string last_rejected_decision = 9;
+}
 // One explicitly coordinated observed Fargodeep encounter; never chooses a target.
 message FargodeepEncounterRequest {
   bool enabled = 1;
@@ -258,6 +277,8 @@ service BuddyActions {
   rpc Status(google.protobuf.Empty) returns (State);
   rpc Buffs(ToggleRequest) returns (State);
   rpc SpellToolkit(google.protobuf.Empty) returns (SpellToolkitState);
+  rpc ReloadBehavior(BehaviorReloadRequest) returns (BehaviorStatus);
+  rpc Behavior(google.protobuf.Empty) returns (BehaviorStatus);
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);

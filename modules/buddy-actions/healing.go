@@ -126,8 +126,10 @@ func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotRe
 		return nil
 	}
 	var best *worldv1.PlayerState
+	var scriptTargets []*worldv1.PlayerState
 	if eligible(self) {
 		best = self
+		scriptTargets = append(scriptTargets, self)
 	}
 	if len(w.NearbyPlayers) > 64 {
 		return best
@@ -148,6 +150,7 @@ func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotRe
 		if !eligible(p) || p.Guid == s.selfGUID || !members[p.Guid] || observedHealingPlayer(w, p.Guid) != p {
 			continue
 		}
+		scriptTargets = append(scriptTargets, p)
 		better := best == nil
 		if best != nil {
 			left, right := uint64(p.Health)*uint64(best.MaxHealth), uint64(best.Health)*uint64(p.MaxHealth)
@@ -158,7 +161,7 @@ func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotRe
 			best = p
 		}
 	}
-	return best
+	return s.behaviorHealTargetLocked(self, scriptTargets, best)
 }
 
 func (s *Service) urgentSelfHealLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {

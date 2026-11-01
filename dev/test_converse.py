@@ -340,6 +340,24 @@ class ProfilePartyTests(unittest.TestCase):
         self.assertTrue(all(h[-1]["speaker"]=="Arlen" for h in brain.histories))
         self.assertEqual(loop.history["PARTY"][-1]["speaker"],"Mira")
 
+    def test_verified_peer_can_request_only_the_separate_repair_queue(self):
+        for action in ("REPAIR_CONTROLLER","FOLLOW"):
+            loop,rpc,brain,controls,_=self.setup_party([poll(),poll([message(1,"Arlen, debug this",channel="PARTY")]),
+                poll([message(2,"Mira, please repair the quest sweep refusal",sender=1,channel="PARTY")])],
+                reply={"text":"I'll report that failure.","emote":"NONE","action":action})
+            loop.tick();loop.tick();loop.tick()
+            self.assertEqual(controls.executed,[action] if action=="REPAIR_CONTROLLER" else [])
+
+    def test_controller_refusal_preserves_failed_report_acknowledgement(self):
+        rpc=FakeRPC([poll(),poll([message(1,"Follow me")])])
+        controls=types.SimpleNamespace(events=[],refresh=lambda:None,context=lambda:{},
+            execute=lambda *a,**k:(_ for _ in ()).throw(converse.ConversationError('refused')),
+            report_problem=lambda *a,**k:"I couldn't submit the workshop report. That repair is still unconfirmed.")
+        loop=converse.Conversation(rpc,FakeBrain({'text':'Coming','emote':'NONE','action':'FOLLOW'}),controls=controls)
+        loop.tick();loop.tick()
+        sent=[p for m,p in rpc.calls if m=='buddy-chat.send']
+        self.assertIn("couldn't submit",sent[0]['text'])
+
     def test_peer_requires_roster_named_address_and_current_server_membership(self):
         for mode in ("stranger","unnamed","whisper","absent","offline","wrongname","ownerabsent"):
             with self.subTest(mode=mode):

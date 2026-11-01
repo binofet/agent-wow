@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	contract "github.com/agent-wow/agent-wow/pkg/behaviorcontract"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"math"
 	"sort"
@@ -81,6 +82,8 @@ func spellCost(r spellcatalog.Spell, p *worldv1.PlayerState) uint64 {
 }
 func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Spell {
 	var best spellcatalog.Spell
+	var choices []contract.Spell
+	eligible := map[uint32]spellcatalog.Spell{}
 	score := float64(-1)
 	for _, r := range s.candidatesLocked(spellcatalog.Heal) {
 		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p) {
@@ -100,6 +103,17 @@ func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Sp
 		}
 		if amount > score || amount == score && (best.ID == 0 || r.Rank > best.Rank) {
 			best, score = r, amount
+		}
+		eligible[r.ID] = r
+		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: amount, CastMs: r.CastMs, Score: amount})
+	}
+	if s.behavior != nil && len(choices) > 0 {
+		decision := s.behaviorDecisionLocked(contract.Input{Kind: "heal_spell", Self: combatant(p), Target: combatant(target), Spells: choices})
+		if decision.SpellId != 0 {
+			if r, ok := eligible[decision.SpellId]; ok {
+				return r
+			}
+			s.behaviorRejection = "unknown_or_ineligible_heal_spell_using_native_decision"
 		}
 	}
 	return best
@@ -134,6 +148,8 @@ func (s *Service) healingReserveLocked(p *worldv1.PlayerState) uint64 {
 }
 func (s *Service) bestDamageLocked(p *worldv1.PlayerState, target position) spellcatalog.Spell {
 	var best spellcatalog.Spell
+	var choices []contract.Spell
+	eligible := map[uint32]spellcatalog.Spell{}
 	score := float64(-1)
 	for _, r := range s.candidatesLocked(spellcatalog.Damage) {
 		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p)+s.healingReserveLocked(p) || s.now().Before(s.spellReady[r.ID]) || distance(s.pos, target) > r.MaxHostile-2 || distance(s.pos, target) < r.MinHostile {
@@ -148,6 +164,17 @@ func (s *Service) bestDamageLocked(p *worldv1.PlayerState, target position) spel
 		value := damage / math.Max(1.5, float64(r.CastMs)/1000)
 		if value > score {
 			best, score = r, value
+		}
+		eligible[r.ID] = r
+		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: damage, CastMs: r.CastMs, Score: value})
+	}
+	if s.behavior != nil && len(choices) > 0 {
+		decision := s.behaviorDecisionLocked(contract.Input{Kind: "damage_spell", Self: combatant(p), Spells: choices})
+		if decision.SpellId != 0 {
+			if r, ok := eligible[decision.SpellId]; ok {
+				return r
+			}
+			s.behaviorRejection = "unknown_or_ineligible_damage_spell_using_native_decision"
 		}
 	}
 	return best

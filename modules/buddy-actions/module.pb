@@ -31,10 +31,30 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ŠO
+àT
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
-enabled (Renabled"×
+enabled (Renabled"¹
+BehaviorReloadRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid+
+expected_revision (	RexpectedRevision
+source (	Rsource
+use_builtin (R
+useBuiltin"Ü
+BehaviorStatus
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+revision (	Rrevision,
+last_good_revision (	RlastGoodRevision1
+quarantined_revision (	RquarantinedRevision
+
+last_error (	R	lastError 
+evaluations (Revaluations
+failures (Rfailures4
+last_rejected_decision	 (	RlastRejectedDecision"×
 FargodeepEncounterRequest
 enabled (Renabled
 target_guid (R
@@ -280,7 +300,7 @@ buffReason#
 
 session_idj (	R	sessionId
 	self_guidk (RselfGuidZ
-last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationJFGJId2Ä
+last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationJFGJId2ÿ
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -288,7 +308,9 @@ session_idj (	R	sessionId
 HealOnce.google.protobuf.Empty.warcraftbuddy.actions.v1.StateA
 Status.google.protobuf.Empty.warcraftbuddy.actions.v1.StateQ
 Buffs'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
-SpellToolkit.google.protobuf.Empty+.warcraftbuddy.actions.v1.SpellToolkitStaten
+SpellToolkit.google.protobuf.Empty+.warcraftbuddy.actions.v1.SpellToolkitStatek
+ReloadBehavior/.warcraftbuddy.actions.v1.BehaviorReloadRequest(.warcraftbuddy.actions.v1.BehaviorStatusL
+Behavior.google.protobuf.Empty(.warcraftbuddy.actions.v1.BehaviorStatusn
 AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
 ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
 ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`

@@ -2,3 +2,5 @@
 /config/
 /data/
 /tmp/
+/dev/behavior-schema/bin/
+/dev/behavior-schema/obj/

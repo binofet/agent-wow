@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Generate project-owned Go/Lua contracts using a private Metagen checkout."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+ROOT=Path(__file__).resolve().parent.parent
+INPUTS=['dev/behavior-schema/BehaviorSchema.csproj','dev/behavior-schema/Contracts.cs','dev/behavior-schema/Program.cs']
+OUTPUTS=['pkg/behaviorcontract/contracts_generated.go','behaviors/contract_generated.lua']
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--check',action='store_true');a=p.parse_args()
+    source=Path(os.environ['METAGEN_SOURCE']).resolve()
+    if not (source/'metagen/Metagen.csproj').is_file():p.error('METAGEN_SOURCE must name the private Metagen checkout')
+    def identity():
+        if subprocess.check_output(['git','-C',str(source),'status','--porcelain','--untracked-files=all'],text=True).strip():raise ValueError('Metagen checkout must be clean for attributed generation')
+        return subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    before=identity()
+    with tempfile.TemporaryDirectory(prefix='buddy-contract-') as temporary:
+        output=Path(temporary)
+        subprocess.run(['dotnet','run','--project',str(ROOT/'dev/behavior-schema'),'-p:MetagenPath='+str(source),'--',str(output)],cwd=ROOT,check=True)
+        if identity()!=before:raise ValueError('Metagen source changed during generation; no project outputs published')
+        gofmt=shutil.which('gofmt') or '/private/tmp/warcraft-buddy-tools/go/bin/gofmt'
+        subprocess.run([gofmt,'-w',str(output/OUTPUTS[0])],check=True)
+        digest=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
+        value=dict(generator='warcraftbuddy.behavior.go-lua.v1',metagenCommit=before,inputs={n:digest(ROOT/n) for n in INPUTS},outputs={n:digest(output/n) for n in OUTPUTS})
+        manifest=ROOT/'dev/behavior-schema/provenance.json'
+        if a.check:
+            assert value==json.loads(manifest.read_text()),'Generated contract provenance differs'
+            assert all((ROOT/n).read_bytes()==(output/n).read_bytes() for n in OUTPUTS),'Generated contract differs'
+        else:
+            for name in OUTPUTS:
+                path=ROOT/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes((output/name).read_bytes())
+            manifest.write_text(json.dumps(value,indent=2)+'\n')
+        print('Behavior contracts verified' if a.check else 'Behavior contracts generated')
+
+if __name__=='__main__':main()

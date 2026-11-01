@@ -15,6 +15,8 @@ rpc:
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
   buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
   spell_toolkit: /warcraftbuddy.actions.v1.BuddyActions/SpellToolkit
+  reload_behavior: /warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior
+  behavior: /warcraftbuddy.actions.v1.BuddyActions/Behavior
   acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
   release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot

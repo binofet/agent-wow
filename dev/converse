@@ -49,7 +49,7 @@ ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALIN
            "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
            "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
-           "EXECUTE_QUEST", "STOP_QUEST")
+           "EXECUTE_QUEST", "STOP_QUEST", "REPORT_PROBLEM", "REPAIR_CONTROLLER")
 QUEST_SYNC_IDENTITY = {"version": 1, "ownerGuid": 3, "desiredQuestIds": [7, 18, 3903],
                        "prerequisiteQuestIds": [783, 5261, 33],
                        "characters": [{"name": "Arlen", "guid": 1, "port": 8086},
@@ -107,6 +107,14 @@ professions contains the actual learned skill ranks and known recipe IDs. Use
 those facts and the reported automatic gathering/disenchanting state; do not
 claim a control is absent merely because it is not a model action.
 Be honest about these limits;
+REPORT_PROBLEM sends a concrete controller failure and current observations to
+our shared development queue. REPAIR_CONTROLLER requests an isolated coding job
+with tests and peer review. Use these when a needed gameplay control is missing
+or broken, or Joel asks us to improve/debug each other. Describe the intended
+behavior and exact observed refusal in text. A queued repair is not an installed
+fix. No source code is edited by ordinary chat actions themselves.
+Verified teammate requests may use these two development actions when
+repair_requests_allowed is true; gameplay controls still require Joel's request.
 never claim to see or do an action absent from the supplied observations. Choose
 an action only for a clear current request from Joel addressed to you or the whole party, never hypothetical examples
 or quoted chat. FOLLOW enables following; STOP_FOLLOWING disables it;
@@ -290,7 +298,7 @@ def professions_context(raw, guid, session):
     skills, recipes = raw.get("skills", []), raw.get("recipes", [])
     if not isinstance(skills, list) or len(skills) > 128 or not isinstance(recipes, list) or len(recipes) > 4096:
         return {"available": False}
-    out = {"available": True, "skillsKnown": raw.get("skillsKnown") is True,
+    out = {"available": True, "sessionId":raw["sessionId"], "selfGuid":str(guid), "skillsKnown": raw.get("skillsKnown") is True,
            "spellsKnown": raw.get("spellsKnown") is True, "active": raw.get("active") is True,
            "skills": [], "recipes": []}
     if out["skillsKnown"]:
@@ -1197,6 +1205,7 @@ class RPC:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def call(self, method, params, timeout=None):
+        self.last_failure = None
         if method not in ("buddy-chat.poll", "buddy-chat.send", "buddy-chat.emote", "buddy-chat.owner_feed",
                           "buddy-party.state", "buddy-party.accept",
                           "buddy-world.snapshot",
@@ -1209,7 +1218,8 @@ class RPC:
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist",
-                          "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state"):
+                          "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
+                          "buddy-actions.behavior", "buddy-actions.reload_behavior"):
             raise ConversationError("Unsupported chat method")
         self.request_id += 1
         body = json.dumps({"jsonrpc": "2.0", "id": self.request_id,
@@ -1232,6 +1242,10 @@ class RPC:
             raise ConversationError("Chat RPC response identity does not match")
         if "error" in result:
             error = result["error"]
+            details=error.get("data",{}) if isinstance(error,dict) else {}
+            self.last_failure={"at":time.time(),"method":method,"code":error.get("code") if isinstance(error,dict) else None,
+                "grpcStatus":details.get("grpc_status") if isinstance(details,dict) else None,
+                "reason":plain_text(details.get("grpc_message","request_rejected"),200) if isinstance(details,dict) else "request_rejected"}
             message = error.get("message", "") if isinstance(error, dict) else ""
             if method == "buddy-chat.poll" and ("cursor is newer than this module session" in message
                                                or "chat module session changed" in message):
@@ -1494,13 +1508,20 @@ class BuddyControls:
             self.inventory = {"available": False}
 
     def context(self):
+        workshop_context={"available":False}
+        try:
+            loader=importlib.machinery.SourceFileLoader("workshop_context",str(ROOT/"dev/workshop"))
+            spec=importlib.util.spec_from_loader(loader.name,loader)
+            workshop=importlib.util.module_from_spec(spec);loader.exec_module(workshop)
+            workshop_context=dict(available=True,**workshop.context(None if self.character_guid==86 else self.character_guid))
+        except (OSError,ValueError,KeyError,TypeError,RuntimeError):pass
         goal = quest_sync_snapshot(self.character_guid)
         standing = party_quest_sync_snapshot(self.character_guid)
         area = area_quest_snapshot(self.character_guid)
         task = quest_task_snapshot(self.character_guid, getattr(self.rpc, "url", None))
         if self.quest_items_available and task.get("bodySessionId") != self.quest_items.get("sessionId"):
             task["observationsCurrent"] = False
-        state = {"abilities": {"following": self.actions_available,
+        state = {"workshop":workshop_context,"abilities": {"following": self.actions_available,
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
                               "buffing": self.actions_available and self.spell_toolkit.get("available") is True
                               and any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", [])),
@@ -1946,7 +1967,19 @@ class BuddyControls:
             backpackSlot=integer(item.get("slot", "0")), expectedItemGuid=str(integer(item.get("itemGuid", "0"))), tradeSlot=slot))
         return f"I've requested the whole stack of {integer(item['count'])} {self.label(item.get('name'), 'item ' + str(item_entry), 75)}. Check your trade window."
 
-    def execute(self, action, quest_id=0, item_entry=0, gold_copper=0):
+    def report_problem(self,problem,repair=False,source="controller",intended_action="REPORT_PROBLEM"):
+        try:
+            loader=importlib.machinery.SourceFileLoader("companion_workshop",str(ROOT/"dev/workshop"))
+            spec=importlib.util.spec_from_loader(loader.name,loader)
+            workshop=importlib.util.module_from_spec(spec);loader.exec_module(workshop)
+            row=workshop.submit(self.character_guid,problem[:2000],workshop.observation(self),action=intended_action,repair=repair,source=source)
+            return "I've sent that to our workshop. Repair "+row["id"][:8]+" is "+row["phase"].replace("_"," ")+"; it isn't an installed fix yet."
+        except (OSError,ValueError,KeyError,TypeError,RuntimeError):
+            return "I couldn't submit the workshop report. That repair is still unconfirmed."
+
+    def execute(self, action, quest_id=0, item_entry=0, gold_copper=0, problem_text="", report_source="owner"):
+        if action in ("REPORT_PROBLEM","REPAIR_CONTROLLER"):
+            return self.report_problem(problem_text,repair=action=="REPAIR_CONTROLLER",source=report_source)
         if action == "NONE":
             return None
         if action == "STOP_QUEST":
@@ -2338,7 +2371,7 @@ class Conversation:
         self.next_banter = self.last_activity + self.banter_seconds
         self.status(phase="thinking", cursor=self.cursor)
         state = self.controls.context() if self.controls else {}
-        state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()], current_request={"source":"party_agent" if peer else "owner","controls_allowed":not peer})
+        state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()], current_request={"source":"party_agent" if peer else "owner","controls_allowed":not peer,"repair_requests_allowed":True})
         reply = validate_reply(self.brain.generate(self.history[channel], state))
         if self.stopped():
             raise Stopped("Conversation stop requested")
@@ -2348,9 +2381,16 @@ class Conversation:
             return
         if peer and not self.peer_member(sender, fresh=True):
             return
-        if self.controls and not peer:
+        if self.controls and (not peer or reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER")):
             arguments = {key: reply[key] for key in NUMERIC_ARGS if key in reply}
-            acknowledgement = self.controls.execute(reply["action"], **arguments)
+            if reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER"):
+                arguments.update(problem_text=selected[-1]["text"]+"\nObserved response: "+reply["text"],report_source="companion" if peer else "owner")
+            try:
+                acknowledgement = self.controls.execute(reply["action"], **arguments)
+            except ConversationError:
+                acknowledgement=self.controls.report_problem("Requested "+reply["action"]+": "+selected[-1]["text"],repair=True,intended_action=reply["action"])
+            if acknowledgement and reply["action"] not in ("REPORT_PROBLEM","REPAIR_CONTROLLER") and "couldn't start" in acknowledgement:
+                self.controls.report_problem("Requested "+reply["action"]+": "+selected[-1]["text"]+". Refusal: "+acknowledgement,repair=True,intended_action=reply["action"])
             if acknowledgement:
                 reply["text"] = acknowledgement
         if peer:
