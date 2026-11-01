@@ -87,9 +87,14 @@ func (e *physicalDiscontinuity) Error() string {
 	return fmt.Sprintf("physical ground has an unsupported vertical ledge at %.4f,%.4f (floor %.4f -> %.4f)", e.from.X, e.from.Y, e.floorFrom.Z, e.floorTo.Z)
 }
 
-// A smoothed polygon path can cross the edge of a collision prop. At most two
-// complete replans may avoid the exact polygon that proved discontinuous. All
-// temporary flags are restored under the same planner gate on every exit.
+type physicalFloorGap struct{ at Point }
+
+func (e *physicalFloorGap) Error() string { return errNoPhysicalFloor.Error() }
+func (e *physicalFloorGap) Unwrap() error { return errNoPhysicalFloor }
+
+// A smoothed polygon path can cross an unsupported collision edge or floor.
+// At most two complete replans may avoid the exact polygon that failed physical
+// proof. All temporary flags are restored under the planner gate on every exit.
 func planWithReroutes(ctx context.Context, p *planner, start, dest Point) ([]Point, error) {
 	return rerouteBounded(ctx, p, func() ([]Point, error) { return planRegion(ctx, p, p.region, start, dest) })
 }
@@ -109,10 +114,20 @@ func rerouteBounded(ctx context.Context, p *planner, attemptPath func() ([]Point
 			return points, nil
 		}
 		var edge *physicalDiscontinuity
-		if attempt == 2 || !errors.As(err, &edge) {
+		var gap *physicalFloorGap
+		var failed Point
+		if attempt == 2 {
 			return nil, err
 		}
-		ref, _, e := p.groundRef(edge.from)
+		switch {
+		case errors.As(err, &edge):
+			failed = edge.from
+		case errors.As(err, &gap):
+			failed = gap.at
+		default:
+			return nil, err
+		}
+		ref, _, e := p.groundRef(failed)
 		if e != nil {
 			return nil, err
 		}
@@ -264,6 +279,11 @@ func planWithin(ctx context.Context, b backend, contains func(Point) bool, name 
 		meshPoint := Point{q.X, q.Y, h}
 		floor, err := b.floor(ctx, q, h, terrain)
 		if err != nil {
+			// Only a complete physical-floor query with no supporting layer may
+			// guide a conservative detour. Missing or malformed assets fail now.
+			if errors.Is(err, errNoPhysicalFloor) {
+				err = &physicalFloorGap{at: meshPoint}
+			}
 			return fmt.Errorf("navigation physical floor at %+v mesh=%g terrain=%g: %w", q, h, terrain, err)
 		}
 		if !finite(floor) || floor < h-2 || floor > h+.5 {

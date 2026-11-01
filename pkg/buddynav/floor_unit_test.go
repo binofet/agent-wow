@@ -231,64 +231,125 @@ func FuzzCollisionAssets(f *testing.F) {
 }
 
 func TestRerouteAlwaysRestoresMeshFlags(t *testing.T) {
-	for _, mode := range []string{"success", "error", "cancel", "panic", "budget"} {
+	for _, failure := range []string{"ledge", "floor_gap"} {
+		for _, mode := range []string{"success", "error", "cancel", "panic", "budget"} {
+			t.Run(failure+"/"+mode, func(t *testing.T) {
+				p := testMesh(t)
+				a, b := Point{-8898, -98, 90}, Point{-8898, -87, 90}
+				ref, _, err := p.groundRef(a)
+				if err != nil {
+					t.Fatal(err)
+				}
+				other, _, err := p.groundRef(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				calls := 0
+				failed := func(at Point) error {
+					if failure == "floor_gap" {
+						return &physicalFloorGap{at: at}
+					}
+					return &physicalDiscontinuity{from: at}
+				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil && mode != "panic" {
+							panic(r)
+						}
+					}()
+					_, _ = rerouteBounded(ctx, p, func() ([]Point, error) {
+						calls++
+						if calls == 1 {
+							return nil, failed(a)
+						}
+						var flags uint16
+						p.mesh.GetPolyFlags(ref, &flags)
+						if flags != 0 {
+							t.Fatal("reroute did not exclude exact failed polygon")
+						}
+						switch mode {
+						case "success":
+							return []Point{a, b}, nil
+						case "error":
+							return nil, errors.New("no route")
+						case "cancel":
+							cancel()
+							return nil, context.Canceled
+						case "panic":
+							panic("test query panic")
+						default:
+							if calls == 2 {
+								return nil, failed(b)
+							}
+							return nil, failed(a)
+						}
+					})
+				}()
+				for _, r := range []detour.DtPolyRef{ref, other} {
+					var flags uint16
+					p.mesh.GetPolyFlags(r, &flags)
+					if flags != 1 {
+						t.Fatalf("persistent mesh mutation after%s flags=%d", mode, flags)
+					}
+				}
+				if calls > 3 {
+					t.Fatal("unbounded retries")
+				}
+			})
+		}
+	}
+}
+
+func TestPhysicalFloorGapRequiresCompleteLayerQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		gap  bool
+	}{
+		{"no_support", errNoPhysicalFloor, true},
+		{"missing_tile", errors.New("collision tile unavailable"), false},
+		{"malformed_model", errors.New("invalid collision model"), false},
+		{"same_text_not_proof", errors.New(errNoPhysicalFloor.Error()), false},
+		{"canceled", context.Canceled, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fakeRoute(testStart, testEnd)
+			f.groundFn = func(q Point) (float32, error) { return q.Z + .25, nil }
+			f.floorFn = func(Point, float32, float32) (float32, error) { return 0, tc.err }
+			_, err := plan(context.Background(), f, testStart, testEnd)
+			var gap *physicalFloorGap
+			if errors.As(err, &gap) != tc.gap {
+				t.Fatalf("gap=%v err=%v", gap, err)
+			}
+			if gap != nil && (gap.at != (Point{testStart.X, testStart.Y, testStart.Z + .25}) || !errors.Is(err, errNoPhysicalFloor)) {
+				t.Fatal("detour lost exact verified mesh layer", gap, err)
+			}
+		})
+	}
+}
+
+func TestPhysicalFloorDetourDoesNotRetryUnknownAssetsOrUnsafeRoute(t *testing.T) {
+	for _, mode := range []string{"missing_asset", "wall", "missing_terrain"} {
 		t.Run(mode, func(t *testing.T) {
 			p := testMesh(t)
-			a, b := Point{-8898, -98, 90}, Point{-8898, -87, 90}
-			ref, _, err := p.groundRef(a)
-			if err != nil {
-				t.Fatal(err)
+			f := fakeRoute(testStart, testEnd)
+			switch mode {
+			case "missing_asset":
+				f.floorFn = func(Point, float32, float32) (float32, error) { return 0, errors.New("collision tile unavailable") }
+			case "wall":
+				f.walkErr = errors.New("physical wall")
+			case "missing_terrain":
+				f.terrainOK = false
 			}
-			other, _, err := p.groundRef(b)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
 			calls := 0
-			func() {
-				defer func() {
-					if r := recover(); r != nil && mode != "panic" {
-						panic(r)
-					}
-				}()
-				_, _ = rerouteBounded(ctx, p, func() ([]Point, error) {
-					calls++
-					if calls == 1 {
-						return nil, &physicalDiscontinuity{from: a}
-					}
-					var flags uint16
-					p.mesh.GetPolyFlags(ref, &flags)
-					if flags != 0 {
-						t.Fatal("reroute did not exclude exact failed polygon")
-					}
-					switch mode {
-					case "success":
-						return []Point{a, b}, nil
-					case "error":
-						return nil, errors.New("no route")
-					case "cancel":
-						cancel()
-						return nil, context.Canceled
-					case "panic":
-						panic("test query panic")
-					default:
-						if calls == 2 {
-							return nil, &physicalDiscontinuity{from: b}
-						}
-						return nil, &physicalDiscontinuity{from: a}
-					}
-				})
-			}()
-			for _, r := range []detour.DtPolyRef{ref, other} {
-				var flags uint16
-				p.mesh.GetPolyFlags(r, &flags)
-				if flags != 1 {
-					t.Fatalf("persistent mesh mutation after%s flags=%d", mode, flags)
-				}
-			}
-			if calls > 3 {
-				t.Fatal("unbounded retries")
+			points, err := rerouteBounded(context.Background(), p, func() ([]Point, error) {
+				calls++
+				return plan(context.Background(), f, testStart, testEnd)
+			})
+			if err == nil || len(points) != 0 || calls != 1 {
+				t.Fatalf("unsafe route retried or accepted: points=%v calls=%d err=%v", points, calls, err)
 			}
 		})
 	}

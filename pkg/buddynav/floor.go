@@ -21,6 +21,8 @@ const floorCacheBytes = 32 << 20
 const floorModelBytes = 8 << 20
 const vmapMid = float32(32 * 533.33333333)
 
+var errNoPhysicalFloor = errors.New("no physical floor near verified ground layer")
+
 type floorSpawn struct {
 	name        string
 	pos, lo, hi Point // VMAP internal axes, deliberately not WoW world axes.
@@ -77,7 +79,7 @@ func selectPhysicalFloor(mesh, terrain, collision float32, collisionKnown bool) 
 		known = true
 	}
 	if !known {
-		return 0, errors.New("no physical floor near verified ground layer")
+		return 0, errNoPhysicalFloor
 	}
 	return h, nil
 }
