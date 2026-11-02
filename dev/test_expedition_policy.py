@@ -340,6 +340,74 @@ class ExpeditionTests(unittest.TestCase):
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
             self.assertEqual(self.count('buddy-actions.travel_to'),0)
 
+    def test_running_mira_policy_shortens_only_definite_rejected_route_query(self):
+        self.source=ROOT/'data/tasks/expedition/4/policy.lua'
+        self.rpc.giver_x=400;self.rpc.discover()
+        self.goal['params']['handIns'][0]['x']=400
+        original=self.rpc.call
+        def call(method,params,timeout=5):
+            if method=='buddy-actions.plan_route_leg' and params['x']==400:
+                self.rpc.calls.append((method,copy.deepcopy(params)))
+                raise host.Error('rpc_rejected(-32000): rpc error: code = FailedPrecondition desc = no verified recovery leg: find navigation path: navigation polygon path is partial, exhausted, or unavailable')
+            return original(method,params,timeout)
+        self.rpc.call=call
+        with host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:self.count('buddy-actions.travel_to')==1,limit=20)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            self.assertEqual([p['x'] for p in plans],[400,100])
+            self.assertEqual(self.goal['params']['handIns'][0]['x'],400)
+            self.assertEqual(self.count('buddy-actions.acquire_interaction'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_running_mira_policy_shorter_query_is_bounded_without_movement(self):
+        self.source=ROOT/'data/tasks/expedition/4/policy.lua'
+        self.rpc.giver_x=400;self.rpc.discover()
+        self.goal['params']['handIns'][0]['x']=400
+        self.rpc.plan_error='rpc_rejected(-32000): rpc error: code = FailedPrecondition desc = no verified recovery leg: find navigation path: navigation polygon path is partial, exhausted, or unavailable'
+        with host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests',limit=20)
+            self.assertEqual(self.count('buddy-actions.plan_route_leg'),5)
+            self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
+            self.assertEqual(self.count('buddy-actions.travel_to'),0)
+            self.assertFalse(runner.data['pending'])
+
+    def test_running_mira_ground_destination_rejections_use_bounded_shorter_queries(self):
+        self.source=ROOT/'data/tasks/expedition/4/policy.lua'
+        self.rpc.giver_x=400;self.rpc.discover()
+        self.goal['params']['handIns'][0]['x']=400
+        for suffix in ('sample is outside ground polygon','no nearby ground polygon'):
+            with self.subTest(suffix=suffix),host.Store(self.folder.parent/suffix.replace(' ','_')) as store:
+                self.rpc.calls=[]
+                self.rpc.plan_error='rpc_rejected(-32000): rpc error: code = FailedPrecondition desc = complete recovery corridor: destination: '+suffix
+                runner=self.runner(store)
+                self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests',limit=20)
+                plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+                self.assertEqual([p['x'] for p in plans],[400,100,55,32.5,21.25])
+                self.assertEqual(self.count('buddy-actions.acquire_interaction'),0)
+                self.assertEqual(self.count('buddy-actions.travel_to'),0)
+                self.assertFalse(runner.data['pending'])
+
+    def test_running_mira_shorter_ground_query_can_find_verified_path(self):
+        self.source=ROOT/'data/tasks/expedition/4/policy.lua'
+        self.rpc.giver_x=400;self.rpc.discover()
+        self.goal['params']['handIns'][0]['x']=400
+        original=self.rpc.call
+        def call(method,params,timeout=5):
+            if method=='buddy-actions.plan_route_leg' and params['x']>55:
+                self.rpc.calls.append((method,copy.deepcopy(params)))
+                raise host.Error('rpc_rejected(-32000): rpc error: code = FailedPrecondition desc = complete recovery corridor: destination: no nearby ground polygon')
+            return original(method,params,timeout)
+        self.rpc.call=call
+        with host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:self.count('buddy-actions.travel_to')==1,limit=20)
+            plans=[p for name,p in self.rpc.calls if name=='buddy-actions.plan_route_leg']
+            self.assertEqual([p['x'] for p in plans],[400,100,55])
+            self.assertEqual(self.count('buddy-actions.acquire_interaction'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
     def distant_anchor_goal(self):
         self.rpc.giver_x=1380;self.rpc.discover();self.goal['params']['handIns'][0]['x']=1380
         self.goal['params']['travelAnchors']=[dict(mapId=0,x=500,y=0,z=5),dict(mapId=0,x=1000,y=0,z=5)]
@@ -502,6 +570,53 @@ class ExpeditionTests(unittest.TestCase):
                 'buddy-actions.travel_to','buddy-actions.release_interaction']*3)
             self.assertFalse(self.rpc.lease);self.assertEqual(store.load()['pending'],[])
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def terminal_route_read_state(self):
+        self.rpc.pose['x']=-30;self.rpc.pose['revision']='1';self.rpc.discover()
+        return dict(body=dict(sessionId=self.rpc.sid,selfGuid=self.rpc.guid),now=200,pending=[],
+            goal={key:self.goal[key] for key in ('id','kind','params')},observations=dict(
+                actions=self.rpc.actions(),world=self.rpc.call('buddy-world.snapshot',{}),quests=self.rpc.quest),
+            last=dict(effect='read',id='old-read-195',method='buddy-actions.plan_route_leg',error='rpc_result_unconfirmed'),
+            memory=dict(serial=195,stack=[dict(kind='journal_sync',stage='start',data={}),
+                dict(kind='travel',stage='route_query_unconfirmed',data=dict(mapId=0,x=10,y=0,z=5),
+                    planStart=dict(known=True,mapKnown=True,x=-30,y=0,z=5,revision='9047'))]))
+
+    def test_failed_read_old_pose_is_archived_then_fresh_body_plans_and_moves(self):
+        state=self.terminal_route_read_state()
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        out=self.bridge.evaluate(source,state)
+        self.assertEqual(out['phase'],'route_read_replanning_from_fresh_pose');self.assertNotIn('action',out)
+        archived=out['memory']['routeReadRecoveries'][0]
+        self.assertEqual(archived['planStart']['revision'],'9047');self.assertEqual(archived['last'],state['last'])
+        self.assertEqual(archived['outcome'],'read_retired_no_arrival');self.assertEqual(archived['freshPositionRevision'],'1')
+        self.assertNotIn('completed',out['memory']);self.assertNotIn('planStart',out['memory']['stack'][-1])
+        state['memory']=out['memory'];out=self.bridge.evaluate(source,state)
+        self.assertEqual(out['action']['method'],'buddy-actions.plan_route_leg')
+        self.assertEqual(out['action']['params']['expectedPositionRevision'],'1')
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);runner.data['memory']=copy.deepcopy(state['memory']);runner.data['last']=state['last'];runner.persist()
+            self.until(runner,lambda:self.count('buddy-actions.travel_to')==1)
+            self.assertEqual(self.rpc.pose['x'],10);self.assertEqual(self.count('buddy-actions.release_interaction'),0)
+            self.until(runner,lambda:self.count('buddy-actions.release_interaction')==1)
+            self.assertFalse(runner.data['memory'].get('completed'))
+
+    def test_failed_read_recovery_rejects_mutation_uncertainty_custody_and_wrong_body(self):
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        for mode in ('mutation','pending','lease','token','moving','wrong_body','wrong_read_id','travel_destination','unknown_pose'):
+            state=self.terminal_route_read_state();frame=state['memory']['stack'][-1]
+            if mode=='mutation':state['last']['effect']='mutation'
+            if mode=='pending':state['pending']=[dict(id='other',method='buddy-actions.travel_to',effect='mutation',outcome='pending')]
+            if mode=='lease':state['observations']['actions']['interactionOwner']='exploration'
+            if mode=='token':frame['token']='old-token'
+            if mode=='moving':state['observations']['actions']['moving']=True
+            if mode=='wrong_body':state['observations']['actions']['sessionId']='other-body'
+            if mode=='wrong_read_id':frame['routeQueryId']='different-read'
+            if mode=='travel_destination':frame['destination']=dict(mapId=0,x=5)
+            if mode=='unknown_pose':state['observations']['actions']['position']['known']=False
+            with self.subTest(mode=mode):
+                out=self.bridge.evaluate(source,state)
+                self.assertNotIn('action',out);self.assertNotIn('resolve',out)
+                self.assertFalse(out['memory'].get('routeReadRecoveries'));self.assertFalse(out['memory'].get('completed'))
 
     def test_definite_read_failure_or_stale_foreign_plan_blocks_before_lease_and_cools_down(self):
         for mode in ('read_failure','foreign_body','pose_changed'):

@@ -192,6 +192,31 @@ local function travel_blocked(context,reason)
 end
 handlers.travel=function(context,frame)
     local a=context.observations.actions or {}
+    -- A descriptor-proven failed read cannot have issued gameplay. Legacy
+    -- policies sometimes quarantined this pre-custody frame like a write.
+    if frame.stage=="route_query_unconfirmed" then
+        local last=context.state.last or {};local p=position(context)
+        if #(context.state.pending or {})>0 or frame.token or frame.destination
+           or not quiet(context,false) or number(a.interactionLeaseRemainingMs)~=0
+           or not geometry(p,frame.data.mapId) or number(p.revision)<=0
+           or last.effect~="read" or last.method~="buddy-actions.plan_route_leg"
+           or type(last.id)~="string" or type(last.error)~="string" or last.error==""
+           or (frame.routeQueryId and frame.routeQueryId~=last.id)
+           or (frame.waiting and (frame.waiting.id~=last.id or frame.waiting.method~=last.method)) then
+            return tasks.await(context,"route_read_recovery_waiting_for_safe_idle")
+        end
+        if number(frame.readRecoveries)>=3 then travel_blocked(context,"route_read_retry_budget");return end
+        context.memory.routeReadRecoveries=context.memory.routeReadRecoveries or {}
+        if #context.memory.routeReadRecoveries>=16 then travel_blocked(context,"route_read_recovery_history_bound");return end
+        context.memory.routeReadRecoveries[#context.memory.routeReadRecoveries+1]={
+            last=last,planStart=frame.planStart,planGoal=frame.planGoal,
+            priorStage=frame.stage,sessionId=context.state.body.sessionId,
+            freshPositionRevision=p.revision,at=context.state.now,outcome="read_retired_no_arrival"}
+        frame.readRecoveries=number(frame.readRecoveries)+1
+        frame.waiting=nil;frame.planStart=nil;frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil
+        frame.routeQueryId=nil;frame.routeQueryError=nil;frame.stage="start"
+        return tasks.await(context,"route_read_replanning_from_fresh_pose")
+    end
     if frame.stage=="start" then
         if opportunity(context,frame) then return end
         if not frame.waiting then
