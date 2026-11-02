@@ -128,7 +128,10 @@ func recoveryLeg(ctx context.Context, p *planner, w mapWindow, start, corpse Poi
 		return nil, errors.New("recovery corridor endpoint or 2400yd length bound failed")
 	}
 	var candidates []Point
-	for _, budget := range []float64{150, 100, 50} {
+	// A valid long corridor can leave a building through a short physical
+	// prefix even when its longer local shortcuts fail collision/floor proof.
+	// Keep that progress available without returning any unverified segment.
+	for _, budget := range []float64{150, 100, 50, 25} {
 		var goal Point
 		if length <= budget {
 			goal = corpse

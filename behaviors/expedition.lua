@@ -79,6 +79,36 @@ local function acceptance_proof(context, frame)
        and number(receipt.confirmedLogRevision)>number(receipt.baselineLogRevision)
        and number(q.questLogRevision)>=number(receipt.confirmedLogRevision) and receipt
 end
+-- Selection is a preference over the current offer, never an equip/upgrade proof.
+-- A composition may supply read-only normal-query or public-template metadata.
+local rewardConfig
+local function reward_choice(context,choices)
+    if #choices==0 then return nil end
+    if #choices==1 then
+        if number(choices[1].itemId)<=0 then return nil,"reward_item_unknown" end
+        return choices[1],"only_offered_choice"
+    end
+    local config=context.state.goal.params.rewardSelection or rewardConfig
+    if type(config)~="table" or config.mode~="vendor_value" or type(config.items)~="table" then
+        return nil,"reward_choice_requires_selection"
+    end
+    if #choices>6 then return nil,"reward_choices_invalid" end
+    local best,bestValue,indices,ids=nil,-1,{},{}
+    for _,choice in ipairs(choices) do
+        local id,index,count=number(choice.itemId),number(choice.index),number(choice.count)
+        local item=config.items[tostring(id)]
+        if id<=0 or id%1~=0 or index<0 or index>=6 or index%1~=0 or count<1 or count>1000 or count%1~=0
+           or indices[tostring(index)] or ids[tostring(id)] then return nil,"reward_choices_invalid" end
+        indices[tostring(index)],ids[tostring(id)]=true,true
+        if type(item)~="table" or not equal(item.itemId,id) or item.available~=true or item.sellPriceKnown~=true
+           or type(item.sellPrice)~="number" or item.sellPrice<0 or item.sellPrice>1000000000
+           or item.sellPrice%1~=0 then return nil,"reward_choice_metadata_unknown" end
+        local value=item.sellPrice*count
+        if value>bestValue or (value==bestValue and index<number(best.index)) then best,bestValue=choice,value end
+    end
+    return best,"highest_verified_vendor_value",bestValue
+end
+
 local handlers,extensions={},{}
 local function defer_child(context,frame,reason)
     -- Only a definite, fully idle child can yield to another quest. Pending
@@ -227,10 +257,19 @@ handlers.travel=function(context,frame)
             frame.partialReplyKnown=equal(reply.sessionId,context.state.body.sessionId)
                 and equal(reply.selfGuid,context.state.body.selfGuid) and not reply.motionUnconfirmed
                 and geometry(p,to.mapId) and number(p.revision)>0
+            -- A definite native safety stop is not a failed destination. Keep
+            -- its correlated reason, release custody, then await the ordinary
+            -- safety gate before planning a fresh leg. This proves no arrival.
+            frame.safetyInterrupted=frame.partialReplyKnown and not reply.moving and not reply.traveling
+                and reply.reason=="exploration_character_unsafe_or_in_combat"
             if not equal(reply.sessionId,context.state.body.sessionId) or not equal(reply.selfGuid,context.state.body.selfGuid)
                or reply.reason~="exploration_within_distance" or reply.motionUnconfirmed or reply.moving or reply.traveling
                or not geometry(p,to.mapId) or distance(p,to)>0.75 then
                 frame.blocked="travel_arrival_not_confirmed"
+                if frame.partialReplyKnown then
+                    context.memory.lastTravelStop={requestId=context.state.last.id,reason=reply.reason,
+                        navReason=reply.navReason,position=p,destination=to,at=context.state.now}
+                end
             end
             frame.stage="release"
         end
@@ -250,12 +289,22 @@ handlers.travel=function(context,frame)
         elseif a.motionUnconfirmed or a.moving or a.traveling then return tasks.await(context,"travel_cleanup_unconfirmed") end
         frame.token=nil;frame.legs=number(frame.legs)+1
         local p=position(context)
+        if frame.blocked=="travel_arrival_not_confirmed" and frame.safetyInterrupted and frame.legs<32
+           and equal(a.sessionId,context.state.body.sessionId) and equal(a.selfGuid,context.state.body.selfGuid)
+           and number(a.interactionLeaseRemainingMs)==0 and geometry(p,frame.destination.mapId)
+           and number(p.revision)>0 then
+            frame.blocked=nil;frame.partialReplyKnown=nil;frame.safetyInterrupted=nil
+            frame.destination=nil;frame.planStart=nil;frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil
+            frame.stage="start"
+            return tasks.await(context,"travel_waiting_for_safe_idle")
+        end
         if frame.blocked=="travel_arrival_not_confirmed" and frame.partialReplyKnown
            and frame.legs<32 and quiet(context,false) and number(a.interactionLeaseRemainingMs)==0
            and geometry(p,frame.destination.mapId) and number(p.revision)>0
            and geometry(frame.planStart,frame.destination.mapId)
            and distance(p,frame.planStart)>=3
            and distance(frame.planStart,frame.destination)-distance(p,frame.destination)>=3 then
+            context.memory.verifiedPartialLegs=number(context.memory.verifiedPartialLegs)+1
             frame.blocked=nil;frame.partialReplyKnown=nil;frame.destination=nil;frame.planStart=nil
             frame.planGoal=nil;frame.planAnchor=nil;frame.anchorTried=nil;frame.stage="start"
             return tasks.await(context,"partial_progress_replan")
@@ -353,12 +402,16 @@ handlers.hand_in=function(context,frame)
             return defer_child(context,frame,"fresh_bound_reward_offer_required")
         end
         local choices=offer.choices or {}
-        if #choices>1 then return defer_child(context,frame,"reward_choice_requires_selection") end
+        local selected,selectionReason,selectionValue=reward_choice(context,choices)
+        if #choices>0 and not selected then return defer_child(context,frame,selectionReason) end
         local request={sessionId=context.state.body.sessionId,npcGuid=frame.guid,questId=frame.data.questId,
             offerRevision=offer.revision,noChoice=#choices==0,choiceIndex=0,expectedItemId=0}
-        if #choices==1 then
-            if number(choices[1].itemId)<=0 then return defer_child(context,frame,"reward_item_unknown") end
-            request.choiceIndex=choices[1].index or 0;request.expectedItemId=choices[1].itemId
+        if selected then
+            request.choiceIndex=selected.index or 0;request.expectedItemId=selected.itemId
+            frame.rewardSelection={itemId=selected.itemId,choiceIndex=request.choiceIndex,reason=selectionReason,
+                vendorValueCopper=selectionValue,offerRevision=offer.revision}
+            context.memory.rewardSelections=context.memory.rewardSelections or {}
+            context.memory.rewardSelections[tostring(frame.data.questId)]=frame.rewardSelection
         end
         frame.binding=frame.binding or {offerRevision=offer.revision,baselineLogRevision=q.questLogRevision}
         local _,out=tasks.call(context,frame,"buddy-quests.claim_reward",request,"claiming_exact_offered_reward")
@@ -530,6 +583,7 @@ handlers.journal_sync=function(context,frame)
 end
 
 local policy={handlers=handlers}
+function policy.configureRewards(config) rewardConfig=config;return policy end
 function policy.attach(child)
     assert(type(child)=="table" and type(child.handlers)=="table","child module handlers required")
     for kind,handler in pairs(child.handlers) do
@@ -619,6 +673,11 @@ local function progress(state,out)
     local p=memory.progress or {since=now,seen={},count=0}
     memory.progress=p
     local advanced=false
+    -- Count only forward movement verified by the travel handler after cleanup.
+    -- Replanning and dispatch alone never renew the watchdog.
+    if number(memory.verifiedPartialLegs)>number(p.verifiedPartialLegs) then
+        p.verifiedPartialLegs=memory.verifiedPartialLegs;advanced=true
+    end
     for _,frame in ipairs(memory.stack or {}) do
         local key=tostring(frame.kind)..":"..tostring((frame.data or {}).questId or "")..":"..tostring(frame.stage)
         if not p.seen[key] and number(p.count)<64 then
@@ -645,6 +704,13 @@ local function progress(state,out)
     end
     if advanced or now<number(p.since) then p.since=now end
     local reason,key=out.phase,nil
+    if out.phase=="quest_child_deferred" then
+        -- The just-popped child is still on its parent for one tick.
+        -- Report its actual blocker, never an older sibling's cooldown.
+        local parent=(memory.stack or {})[#(memory.stack or {})]
+        local child=(parent or {}).child or {}
+        if child.status=="blocked" then reason=child.reason end
+    end
     if out.phase=="waiting_for_deferred_quests" then
         for id,row in pairs(memory.deferredQuests or {}) do
             if type(row.reason)=="string" and (not key or id<key) then key=id;reason=row.reason end
@@ -653,13 +719,20 @@ local function progress(state,out)
     p.blockedReason=type(reason)=="string" and #reason>0 and #reason<=128 and reason or "mission_waiting"
     -- A newly dispatched native travel RPC has its own bounded wait. Do not
     -- count its reservation as progress or inherit a sibling's expired clock.
+    -- Planning and custody dispatches are fresh host operations, not stalled waits.
+    -- Suppress only this dispatch tick; retain the original progress clock.
+    local freshDispatch=out.action and (out.action.method=="buddy-actions.plan_route_leg"
+        or out.action.method=="buddy-actions.acquire_interaction"
+        or out.action.method=="buddy-actions.release_interaction")
     local travelWaiting=out.action and out.action.method=="buddy-actions.travel_to"
     for _,pending in ipairs(state.pending or {}) do
         if pending.method=="buddy-actions.travel_to" and pending.outcome=="pending"
            and number(pending.reservedAt)>0 and now>=number(pending.reservedAt)
            and now-number(pending.reservedAt)<40 then travelWaiting=true end
     end
-    if not out.done and not travelWaiting and now-number(p.since)>=30 then
+    -- A host-validated resolution is a local transition, not a stalled wait.
+    -- It does not renew the progress clock or establish a gameplay outcome.
+    if not out.done and not out.resolve and not freshDispatch and not travelWaiting and now-number(p.since)>=30 then
         memory.health={code="stalled",phase=p.blockedReason,since=now,noProgressSince=p.since}
     else memory.health=nil end
     return out

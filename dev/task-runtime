@@ -249,8 +249,15 @@ class RPC:
             require(len(raw) <= 1048576, 'rpc_response_size_bound')
             value = decoded(raw)
             require(isinstance(value, dict) and value.get('jsonrpc') == '2.0'
-                    and type(value.get('id')) is int and value['id'] == self.sequence
-                    and 'error' not in value and isinstance(value.get('result'), dict), 'rpc_result_unconfirmed')
+                    and type(value.get('id')) is int and value['id'] == self.sequence, 'rpc_result_unconfirmed')
+            if 'error' in value:
+                failure=value['error']
+                require(isinstance(failure,dict) and type(failure.get('code')) is int
+                        and isinstance(failure.get('message'),str) and 'result' not in value,
+                        'rpc_result_unconfirmed')
+                message=''.join(c if 32<=ord(c)<127 else ' ' for c in failure['message'])[:192]
+                raise Error('rpc_rejected('+str(failure['code'])+'): '+message)
+            require(isinstance(value.get('result'),dict),'rpc_result_unconfirmed')
             return value['result']
         except (OSError, ValueError): raise Error('rpc_result_unconfirmed') from None
 

@@ -260,6 +260,48 @@ class ExpeditionTests(unittest.TestCase):
         self.assertNotIn('health',evaluate(170)['memory'])
         self.assertEqual(evaluate(171)['memory']['health']['noProgressSince'],141)
 
+    def test_just_deferred_child_health_uses_its_blocker_without_progress(self):
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        source=source.replace('policy.decide=function(state) return progress(state,decide(state)) end',
+            'policy.decide=function(state) return progress(state,{memory=state.memory,phase="quest_child_deferred"}) end')
+        state=dict(body=dict(sessionId=self.rpc.sid,selfGuid='87'),observations={},pending=[],now=200,
+                   memory=dict(progress=dict(since=100,seen={'journal_sync::start':True},count=1),
+                               stack=[dict(kind='journal_sync',stage='start',child=dict(status='blocked',reason='travel_route_plan_unavailable'))],
+                               deferredQuests={'old':dict(reason='unrelated_old_blocker')}))
+        out=self.bridge.evaluate(source,state)
+        self.assertEqual(out['memory']['health']['phase'],'travel_route_plan_unavailable')
+        self.assertEqual(out['memory']['health']['noProgressSince'],100)
+        self.assertEqual(out['memory']['stack'],state['memory']['stack'])
+        self.assertNotIn('action',out)
+
+    def test_verified_partial_progress_renews_watchdog_once(self):
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        source=source.replace('policy.decide=function(state) return progress(state,decide(state)) end',
+            'policy.decide=function(state) return progress(state,{memory=state.memory,phase="partial_progress_replan"}) end')
+        state=dict(body=dict(sessionId=self.rpc.sid,selfGuid='87'),observations={},pending=[],now=200,
+                   memory=dict(verifiedPartialLegs=1,progress=dict(since=100,seen={},count=0)))
+        out=self.bridge.evaluate(source,state)
+        self.assertNotIn('health',out['memory'])
+        self.assertEqual(out['memory']['progress']['since'],200)
+        state['memory']=out['memory'];state['now']=230
+        out=self.bridge.evaluate(source,state)
+        self.assertEqual(out['memory']['health']['noProgressSince'],200)
+
+    def test_fresh_dispatch_does_not_inherit_stall_or_renew_progress(self):
+        source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+        source=source.replace('policy.decide=function(state) return progress(state,decide(state)) end',
+            'policy.decide=function(state) return progress(state,{memory=state.memory,phase="planning_verified_native_route_leg",action=state.testAction}) end')
+        for method in ("buddy-actions.plan_route_leg", "buddy-actions.acquire_interaction", "buddy-actions.release_interaction"):
+            state=dict(body=dict(sessionId=self.rpc.sid,selfGuid='87'),observations={},pending=[],now=200,
+                       memory=dict(progress=dict(since=100,seen={},count=0)),
+                       testAction=dict(method=method))
+            out=self.bridge.evaluate(source,state)
+            self.assertNotIn('health',out['memory'])
+            self.assertEqual(out['memory']['progress']['since'],100)
+            state['memory']=out['memory'];state['testAction']=None;state['now']=201
+            out=self.bridge.evaluate(source,state)
+            self.assertEqual(out['memory']['health']['noProgressSince'],100)
+
     def test_native_travel_grace_is_bounded_and_never_counts_as_progress(self):
         source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
         source=source.replace('policy.decide=function(state) return progress(state,decide(state)) end',
@@ -359,6 +401,9 @@ class ExpeditionTests(unittest.TestCase):
         with host.Store(self.folder) as store:
             runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='partial_progress_replan')
             self.assertFalse(runner.data['pending']);self.assertFalse(self.rpc.lease)
+            self.assertEqual(runner.data['memory']['verifiedPartialLegs'],1)
+            self.assertEqual(runner.data['memory']['progress']['verifiedPartialLegs'],1)
+            self.assertNotIn('health',runner.data['memory'])
             self.assertEqual(self.count('buddy-actions.travel_to'),1)
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
             self.assertEqual(runner.data['memory']['stack'][-1]['stage'],'start')
@@ -378,6 +423,63 @@ class ExpeditionTests(unittest.TestCase):
                 self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
                 self.assertEqual(self.count('buddy-actions.travel_to'),1)
                 self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+                self.assertFalse(runner.data['pending']);self.assertFalse(self.rpc.lease)
+                self.assertEqual(self.count('buddy-quests.claim_reward'),0)
+
+    def test_definite_combat_interruption_releases_and_waits_without_deferring_or_claiming_progress(self):
+        self.rpc.pose['x']=-20;self.rpc.discover()
+        self.rpc.nav_reason='exploration_character_unsafe_or_in_combat'
+        original=self.rpc.call;combat=[False];clock=[1000.0]
+        def call(method,params,timeout=5):
+            value=original(method,params,timeout)
+            if method=='buddy-actions.travel_to' and value.get('reason')=='exploration_character_unsafe_or_in_combat':combat[0]=True
+            if method=='buddy-world.snapshot' and combat[0]:value['self']['unitFlags']=0x80000
+            return value
+        self.rpc.call=call
+        with patch.object(host.time,'time',side_effect=lambda:clock[0]),host.Store(self.folder) as store:
+            runner=self.runner(store)
+            self.until(runner,lambda:runner.data['phase']=='travel_waiting_for_safe_idle')
+            self.assertEqual(self.count('buddy-actions.travel_to'),1)
+            self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+            self.assertFalse(self.rpc.lease);self.assertFalse(runner.data['pending'])
+            self.assertFalse(runner.data['memory'].get('deferredQuests'))
+            self.assertFalse(runner.data['memory'].get('verifiedPartialLegs'))
+            stop=runner.data['memory']['lastTravelStop']
+            self.assertEqual(stop['reason'],'exploration_character_unsafe_or_in_combat')
+            self.assertEqual(stop['requestId'],next(row['id'] for row in runner.data['attempts']
+                if row['method']=='buddy-actions.travel_to'))
+            since=runner.data['memory']['progress']['since']
+            clock[0]+=40;runner.tick()
+            self.assertEqual(runner.data['phase'],'travel_waiting_for_safe_idle')
+            self.assertEqual(runner.data['memory']['progress']['since'],since)
+            self.assertNotIn('health',runner.data['memory'])
+            self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
+            combat[0]=False;self.rpc.nav_reason='exploration_within_distance'
+            self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            self.assertEqual(self.count('buddy-actions.plan_route_leg'),2)
+            self.assertEqual(self.count('buddy-actions.travel_to'),2)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_combat_stop_requires_bound_definite_idle_reply_and_cannot_bypass_leg_budget(self):
+        for mode in ('foreign_reply','uncertain_reply','moving_reply','traveling_reply','leg_budget'):
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                self.rpc=Endpoint();self.rpc.pose['x']=-20;self.rpc.discover()
+                self.rpc.nav_reason='exploration_character_unsafe_or_in_combat';original=self.rpc.call
+                def call(method,params,timeout=5):
+                    value=original(method,params,timeout)
+                    if method=='buddy-actions.travel_to':
+                        if mode=='foreign_reply':value['sessionId']='foreign-body'
+                        elif mode=='uncertain_reply':value['motionUnconfirmed']=True
+                        elif mode=='moving_reply':value['moving']=True
+                        elif mode=='traveling_reply':value['traveling']=True
+                    return value
+                self.rpc.call=call;runner=self.runner(store)
+                self.until(runner,lambda:self.count('buddy-actions.travel_to')==1)
+                if mode=='leg_budget':runner.data['memory']['stack'][-1]['legs']=31
+                self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+                self.assertEqual(self.count('buddy-actions.travel_to'),1)
+                self.assertEqual(self.count('buddy-actions.release_interaction'),1)
+                self.assertEqual(self.count('buddy-actions.plan_route_leg'),1)
                 self.assertFalse(runner.data['pending']);self.assertFalse(self.rpc.lease)
                 self.assertEqual(self.count('buddy-quests.claim_reward'),0)
 
@@ -534,6 +636,59 @@ return mission
             self.until(runner, lambda: runner.data['phase'] == 'waiting_for_deferred_quests')
             self.assertEqual(runner.data['memory']['deferredQuests']['hand_in:701']['reason'],'reward_choice_requires_selection')
             self.assertEqual(self.count('buddy-quests.claim_reward'), 0)
+
+    def reward_catalog(self):
+        self.rpc.choices=[dict(itemId=9001,count=1),dict(index=1,itemId=9002,count=3),dict(index=2,itemId=9003,count=1)]
+        self.goal['params']['rewardSelection']=dict(mode='vendor_value',items={str(item):dict(itemId=item,available=True,
+            sellPriceKnown=True,sellPrice=price) for item,price in ((9001,90),(9002,40),(9003,100))})
+
+    def test_multiple_rewards_choose_actual_index_by_known_total_value_and_wait_exact_receipt(self):
+        self.reward_catalog();self.rpc.fail_claim=True
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            claim=next(p for n,p in self.rpc.calls if n=='buddy-quests.claim_reward')
+            self.assertEqual((claim['choiceIndex'],claim['expectedItemId']),(1,9002))
+            self.assertFalse(claim.get('noChoice',False));self.assertTrue(runner.data['pending'])
+            self.assertEqual(runner.data['memory']['rewardSelections']['701']['vendorValueCopper'],120)
+            for _ in range(2):runner.tick()
+            self.assertEqual(self.count('buddy-quests.claim_reward'),1)
+            self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+            self.rpc.confirm_reward();self.until(runner,lambda:'701' in runner.data['memory'].get('completed',{}))
+            self.assertFalse(runner.data['pending']);self.assertIn('701',runner.data['memory']['completed'])
+            self.assertEqual(self.count('buddy-quests.claim_reward'),1)
+
+    def test_reward_metadata_unknown_or_malformed_offer_never_claims(self):
+        for mode in ('missing','unavailable','price_unknown','negative','wrong_id','duplicate_index','duplicate_item','count_unknown'):
+            with self.subTest(mode=mode),host.Store(self.folder.parent/mode) as store:
+                self.rpc=Endpoint();self.rpc.discover();self.reward_catalog()
+                items=self.goal['params']['rewardSelection']['items']
+                if mode=='missing':del items['9001']
+                if mode=='unavailable':items['9001']['available']=False
+                if mode=='price_unknown':items['9001']['sellPriceKnown']=False
+                if mode=='negative':items['9001']['sellPrice']=-1
+                if mode=='wrong_id':items['9001']['itemId']=999
+                if mode=='duplicate_index':self.rpc.choices[1]['index']=0
+                if mode=='duplicate_item':self.rpc.choices[1]['itemId']=9001
+                if mode=='count_unknown':del self.rpc.choices[1]['count']
+                runner=self.runner(store);self.until(runner,lambda:runner.data['phase']=='waiting_for_deferred_quests')
+                self.assertEqual(self.count('buddy-quests.claim_reward'),0)
+                self.assertFalse(runner.data['memory'].get('completed'))
+
+    def test_reward_value_tie_uses_omitted_zero_index_and_composition_catalog(self):
+        self.reward_catalog();self.rpc.choices=[dict(index=2,itemId=9003,count=1),dict(itemId=9001,count=1)]
+        config=self.goal['params'].pop('rewardSelection');config['items']['9001']['sellPrice']=100
+        import json
+        def lua(v):
+            if isinstance(v,dict):return '{'+','.join('['+json.dumps(k)+']='+lua(w) for k,w in v.items())+'}'
+            if isinstance(v,bool):return 'true' if v else 'false'
+            return json.dumps(v)
+        self.source=self.folder.parent/'composed.lua'
+        self.source.write_text('local mission=(function()\n'+(ROOT/'behaviors/expedition.lua').read_text()+'\nend)()\nreturn mission.configureRewards('+lua(config)+')\n')
+        with host.Store(self.folder) as store:
+            runner=self.runner(store);self.until(runner,lambda:self.count('buddy-quests.claim_reward')==1)
+            claim=next(p for n,p in self.rpc.calls if n=='buddy-quests.claim_reward')
+            self.assertEqual(claim['expectedItemId'],9001);self.assertNotIn('choiceIndex',claim)
+            self.assertEqual(runner.data['memory']['rewardSelections']['701']['reason'],'highest_verified_vendor_value')
 
     def test_travel_normal_token_route_cleanup_then_fresh_giver(self):
         self.rpc.pose['x'] = -200; self.rpc.quest['nearby'] = []
@@ -720,6 +875,32 @@ return mission
             self.assertEqual(self.count('buddy-actions.release_interaction'),0)
             self.assertEqual(self.count('buddy-quests.claim_reward'),0)
             self.assertNotIn('701',runner.data['memory'].get('completed',{}))
+
+    def test_resolution_tick_does_not_report_stall_or_renew_progress(self):
+        with host.Store(self.folder) as store:
+            runner=self.lost_travel_runner(store)
+            original=copy.deepcopy(runner.data['pending'][0])
+            seen={f"{f['kind']}:{f.get('data',{}).get('questId','')}:{f['stage']}":True
+                  for f in runner.data['memory']['stack']}
+            seen['travel::release']=True
+            runner.data['memory']['progress']=dict(since=100,seen=seen,count=len(seen),
+                                                  questRevision=self.rpc.quest['questLogRevision'])
+            with patch.object(host.time,'time',return_value=200):runner.tick()
+            self.assertEqual(runner.data['phase'],'observed_pending_resolution')
+            self.assertNotIn('health',runner.data['memory'])
+            self.assertEqual(runner.data['memory']['progress']['since'],100)
+            self.assertEqual(self.count('buddy-actions.travel_to'),1)
+            row=next(r for r in runner.data['attempts'] if r['id']==original['id'])
+            for key in ('id','method','params','error','requestSHA256'):
+                self.assertEqual(row[key],original[key])
+            self.assertFalse(runner.data['memory'].get('completed'))
+            # The same label without an actual resolution remains diagnosable.
+            source='local tasks=(function()\n'+(ROOT/'behaviors/task-stack.lua').read_text()+'\nend)();\n'+self.source.read_text()
+            source=source.replace('policy.decide=function(state) return progress(state,decide(state)) end',
+                'policy.decide=function(state) return progress(state,{memory=state.memory,phase="observed_pending_resolution"}) end')
+            out=self.bridge.evaluate(source,dict(now=201,body=dict(sessionId=self.rpc.sid,selfGuid='87'),
+                memory=dict(progress=dict(since=100,seen={},count=0)),observations={},pending=[]))
+            self.assertEqual(out['memory']['health']['noProgressSince'],100)
 
     def test_unknown_navigation_abandonment_requires_exact_current_quiescence_and_request(self):
         for mode in ('body','active_lease','motionUnconfirmed','moving','traveling','castPending','autoAttacking',

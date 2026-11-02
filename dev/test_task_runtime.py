@@ -56,6 +56,26 @@ class FakeRPC:
 
 
 class BridgeDiagnosticsTests(unittest.TestCase):
+    def test_rpc_keeps_bound_server_rejection_distinct_from_unknown_transport(self):
+        rpc=m.RPC('http://127.0.0.1:8090/rpc')
+        response=io.BytesIO(json.dumps({'jsonrpc':'2.0','id':1,'error':{
+            'code':9,'message':'navigation polygon path is partial\n'+'x'*400}}).encode())
+        with patch.object(rpc.opener,'open',return_value=response):
+            with self.assertRaisesRegex(m.Error,r'rpc_rejected\(9\): navigation polygon path is partial') as caught:
+                rpc.call('buddy-actions.plan_route_leg',{})
+        self.assertNotIn('\n',str(caught.exception))
+        self.assertLessEqual(len(str(caught.exception)),220)
+        with patch.object(rpc.opener,'open',side_effect=ConnectionRefusedError):
+            with self.assertRaisesRegex(m.Error,'^rpc_result_unconfirmed$'):
+                rpc.call('buddy-actions.plan_route_leg',{})
+
+    def test_rpc_does_not_trust_rejection_for_a_different_request(self):
+        rpc=m.RPC('http://127.0.0.1:8090/rpc')
+        response=io.BytesIO(b'{"jsonrpc":"2.0","id":2,"error":{"code":9,"message":"wrong reply"}}')
+        with patch.object(rpc.opener,'open',return_value=response):
+            with self.assertRaisesRegex(m.Error,'^rpc_result_unconfirmed$'):
+                rpc.call('buddy-actions.plan_route_leg',{})
+
     def test_rejected_bridge_preserves_bounded_actual_reason_without_success(self):
         reply = subprocess.CompletedProcess([], 1, stdout=b'{"done":true}',
             stderr=b'invalid behavior input: node bound\n'+b'x'*1000+b'\x00')

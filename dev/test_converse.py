@@ -2408,6 +2408,61 @@ class MissionFaultRepairTests(unittest.TestCase):
         self.assertEqual(self.brain.states[0]['mission_fault']['field'],'health')
         self.assertEqual(len(self.brain.histories),1)
 
+    def deferred(self,reason='reward_choice_requires_selection',qid=176):
+        self.data['policyError']='';self.data['memory']['health']=None
+        self.data['memory']['deferredQuests']={'hand_in:'+str(qid):dict(taskKind='hand_in',data={'questId':qid},reason=reason,attempts=8,retryAfter=time.time()+60)}
+        source=self.repo/'data/tasks/expedition/1/policy.lua';source.write_text('return {}')
+        self.data['run']['sourcePath']=str(source);self.store.save(self.data)
+
+    def test_explicit_deferred_blocker_wakes_while_walking_once_across_retry_clock_and_host_instance(self):
+        self.deferred();self.data['memory']['progress']={'since':time.time()};self.store.save(self.data)
+        self.loop.tick();self.assertEqual(len(self.brain.histories),1)
+        fault=self.brain.states[0]['mission_fault'];self.assertEqual(fault['field'],'deferred_child')
+        self.assertEqual(fault['task'],'hand_in:176');self.assertTrue(fault['sourcePath'].endswith('/policy.lua'))
+        self.assertIn('repair that running Lua FSM',self.brain.histories[0][0]['text'])
+        for i in range(3):
+            self.data['memory']['deferredQuests']['hand_in:176'].update(attempts=9+i,retryAfter=time.time()+90+i)
+            self.data['memory']['progress']['since']=time.time();self.data['run']['instance']='b'*32
+            self.store.save(self.data);self.new_loop().tick()
+        self.assertEqual(len(self.brain.histories),1)
+        row=converse.mission_runtime_context(1,'aw-current',self.rpc.url)['expedition']['deferredChildren'][0]
+        self.assertEqual(row['reason'],'reward_choice_requires_selection');self.assertEqual(row['attempts'],11)
+        self.assertFalse(any(m in ('buddy-chat.send','buddy-chat.emote','buddy-actions.follow') for m,_ in self.rpc.calls))
+
+    def test_deferred_fault_source_or_confirmed_receipt_rearms_but_retry_and_unproven_receipt_do_not(self):
+        self.deferred('travel_route_plan_unavailable',1097)
+        first=converse.mission_faults(1,'aw-current',self.rpc.url)[0]['key'];self.loop.tick()
+        self.data['memory']['completed']={'9':dict(questId=9,status='REWARD_CONFIRMED',serverRewardObserved=True,
+            logRemovalConfirmed=False,baselineLogRevision='1',confirmedLogRevision='2')};self.store.save(self.data)
+        self.assertEqual(converse.mission_faults(1,'aw-current',self.rpc.url)[0]['key'],first)
+        self.data['memory']['completed']['9']['logRemovalConfirmed']=True;self.store.save(self.data)
+        second=converse.mission_faults(1,'aw-current',self.rpc.url)[0]['key'];self.assertNotEqual(second,first)
+        self.loop.tick();self.assertEqual(len(self.brain.histories),2)
+        self.data['goodRevision']='e'*64;self.store.save(self.data)
+        self.assertNotEqual(converse.mission_faults(1,'aw-current',self.rpc.url)[0]['key'],second)
+        self.loop.tick();self.assertEqual(len(self.brain.histories),2)  # Existing two/120s bound still applies.
+        self.assertEqual(self.statuses[-1]['missionRepairPhase'],'rate_limited')
+
+    def test_deferred_rows_need_exact_valid_scope_active_host_and_unresolved_task(self):
+        self.deferred();baseline=copy.deepcopy(self.data)
+        cases=[lambda d:d['memory']['deferredQuests']['hand_in:176'].update(attempts=0),
+               lambda d:d['memory']['deferredQuests']['hand_in:176'].update(reason='unsafe text'),
+               lambda d:d['memory']['deferredQuests']['hand_in:176']['data'].update(questId=1097),
+               lambda d:d['run'].update(active=False,stoppedAt=time.time()),
+               lambda d:d['identity'].update(sessionId='aw-old'),
+               lambda d:d['memory'].update(deferredQuests={}),
+               lambda d:d['memory'].update(completed={'176':dict(questId=176,status='REWARD_CONFIRMED',
+                   serverRewardObserved=True,logRemovalConfirmed=True,baselineLogRevision='1',confirmedLogRevision='2')})]
+        for change in cases:
+            data=copy.deepcopy(baseline);change(data);self.store.save(data)
+            self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+        picked=copy.deepcopy(baseline);row=picked['memory']['deferredQuests'].pop('hand_in:176')
+        row['taskKind']='pickup';picked['memory']['deferredQuests']['pickup:176']=row
+        picked['memory']['accepted']={'176':dict(questId=176,status='CONFIRMED_IN_LOG',baselineLogRevision='1',confirmedLogRevision='2')}
+        self.store.save(picked);self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+        self.store.save(baseline);self.store.__exit__()
+        self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
+
     def test_new_rejected_candidate_same_fallback_and_error_is_a_distinct_bounded_fault(self):
         self.loop.tick()
         with patch.object(self.controls,'context',side_effect=AssertionError('reserved fault must stay cheap')) as context:
