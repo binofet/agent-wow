@@ -2754,3 +2754,38 @@ class OwnerPreemptionTests(unittest.TestCase):
             with self.subTest(row=row):self.assertFalse(loop.owner_message_waiting(poll([row])))
         self.assertTrue(loop.owner_message_waiting(poll([message(4,'Stop here',channel='WHISPER')])))
         self.assertIn('control action first',converse.DEVELOPER_PERMISSIONS)
+
+
+class DevelopmentWhisperTests(unittest.TestCase):
+    def test_known_87_dm_develops_without_party_or_owner_window_foreign_ignored(self):
+        class Brain(FakeBrain):
+            developer_workspace=converse.ROOT
+            def generate(self,history,control_state=None):
+                self.state=control_state
+                return super().generate(history,control_state)
+        rpc=FakeRPC([poll(sessionId='current-chat'),
+            poll([message(1,'Development handoff: who owns the rollout?',sender=87,channel='WHISPER')],sessionId='current-chat'),
+            poll(latest=1,sessionId='current-chat'),
+            poll([message(2,'Please edit that source',sender=99,channel='WHISPER')],sessionId='current-chat')])
+        rpc.url='http://127.0.0.1:8086/rpc';executed=[]
+        controls=types.SimpleNamespace(events=[],refresh=lambda:None,context=lambda:{},
+            actions_available=True,party_available=True,party_session='aw-own',
+            actions=dict(sessionId='aw-own',selfGuid='1'),execute=lambda action,**kw:executed.append(action))
+        brain=Brain(dict(text='I own the source check; holding restarts.',action='FOLLOW',emote='WAVE'))
+        loop=converse.Conversation(rpc,brain,controls=controls);loop.tick()
+        loop.history['WHISPER']=[dict(speaker='Joel',text='Private owner conversation')]
+        self.assertEqual(loop.peer_remaining,0);self.assertEqual(loop.party_agents,{})
+        loop.tick();loop.tick()
+        self.assertEqual(len(brain.histories),1)
+        self.assertNotIn('Private owner conversation',json.dumps(brain.histories))
+        request=brain.state['current_request'];self.assertEqual(request['source'],'party_agent')
+        self.assertEqual(request['senderGuid'],'87');self.assertTrue(request['verifiedPeer'])
+        self.assertTrue(request['developmentWhisper']);self.assertFalse(request['controls_allowed'])
+        self.assertTrue(brain.state['development']['enabled'])
+        checker=converse.CodexBrain.__new__(converse.CodexBrain);checker.developer_workspace=converse.ROOT
+        self.assertTrue(checker.development_enabled(brain.state))
+        self.assertEqual(executed,[])
+        self.assertEqual([params for method,params in rpc.calls if method=='buddy-chat.send'],
+            [dict(channel='WHISPER',language='COMMON',text='I own the source check; holding restarts.',recipient='Lotharen')])
+        self.assertFalse(any(method=='buddy-chat.emote' for method,_ in rpc.calls))
+        self.assertEqual(loop.peer_remaining,0)

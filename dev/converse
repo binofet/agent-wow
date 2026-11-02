@@ -68,6 +68,7 @@ QUEST_REWARD_PREFERENCES = {18: {5: 5580, 8: 1159, 4: 2224},
                             33: {5: 80, 8: 80, 4: 6070}}
 NUMERIC_ARGS = ("quest_id", "item_entry", "gold_copper")
 LEGACY_EMOTES = {"WAVE": 101, "BOW": 17, "CHEER": 21}
+DEVELOPMENT_PEERS = {1:"Arlen", 4:"Mira", 5:"Rook", 8:"Nixwick", 87:"Lotharen"}
 
 
 def supported_emotes(state):
@@ -401,6 +402,11 @@ use resume-own with your exact registered GUID/worktree, semantic task and full
 unchanged --file set plus finite --ttl-seconds. This rotates your lost token;
 retain the new token. Never resume peer or mixed claims, widen the file set, or
 edit peer-owned files; coordinate their release instead.
+Known-team development whispers come from server-bound GUIDs: Arlen1, Mira4,
+Rook5, Nixwick8, Lotharen87. They do not require party membership or a recent
+owner message. Collaborate directly using developer/server tools, reply to that
+teammate privately, and keep final gameplay action and emote NONE. A teammate
+is not Joel and cannot become an owner gameplay-command authority.
 General server access is available through ROOT/dev/server-admin from your own
 developer shell tools: `console "help" "server info"` sends public realm console
 commands; `ssh "uname -a; pwd"` executes a command on Quasar in the client project
@@ -3047,6 +3053,13 @@ class Conversation:
                 if addressed and self.character_name.casefold() not in addressed:
                     continue
                 selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender)})
+            elif (channel == "WHISPER" and sender in DEVELOPMENT_PEERS
+                  and self.session_id and result.get("sessionId") == self.session_id
+                  and getattr(self.brain, "developer_workspace", None) is not None):
+                # The current server chat packet binds this known developer's
+                # GUID. A development DM grants no owner gameplay controls.
+                selected.append({"speaker": DEVELOPMENT_PEERS[sender], "channel": channel,
+                    "text": text, "sender_guid": str(sender), "development_whisper": True})
             elif (sender in self.party_agents and channel in ("PARTY", "PARTY_LEADER")
                   and named(text, self.character_name) and self.peer_remaining > 0
                   and time.monotonic() < self.peer_until and time.monotonic() >= self.next_peer
@@ -3070,14 +3083,17 @@ class Conversation:
             selected = owners
         peer = integer(selected[-1]["sender_guid"]) != self.player_guid
         sender = integer(selected[-1]["sender_guid"])
+        development_whisper = peer and selected[-1].get("development_whisper") is True
         if peer:
             selected = selected[-1:]
-            self.peer_remaining -= 1
-            self.next_peer = time.monotonic() + 30
+            if not development_whisper:
+                self.peer_remaining -= 1
+                self.next_peer = time.monotonic() + 30
         channel = reply_channel(selected[-1])
         selected = [entry for entry in selected[-8:] if reply_channel(entry) == channel]
-        self.history[channel].extend(selected)
-        self.history[channel] = self.history[channel][-20:]
+        history_key = "DEVELOPMENT:"+str(sender) if development_whisper else channel
+        self.history.setdefault(history_key, []).extend(selected)
+        self.history[history_key] = self.history[history_key][-20:]
         self.last_activity = time.monotonic()
         self.next_banter = self.last_activity + self.banter_seconds
         self.status(phase="thinking", cursor=self.cursor)
@@ -3087,13 +3103,13 @@ class Conversation:
         self.reply_emotes = supported_emotes(state)
         peer_verified = False
         if peer and getattr(self.brain,"developer_workspace",None) is not None:
-            peer_verified = self.peer_member(sender,fresh=True,expected_session=getattr(self.controls,"party_session",None))
+            peer_verified = development_whisper or self.peer_member(sender,fresh=True,expected_session=getattr(self.controls,"party_session",None))
             if not peer_verified: return
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
-            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"controls_allowed":not peer,"repair_requests_allowed":True})
+            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":True})
         try:
-            reply = validate_reply(self.generate_reply(self.history[channel], state),self.reply_emotes)
+            reply = validate_reply(self.generate_reply(self.history[history_key], state),self.reply_emotes)
         except OwnerInputPending:
             return
         if development.get('enabled') is True and getattr(self.brain,'last_development_events',None) is not None:
@@ -3104,8 +3120,10 @@ class Conversation:
         # including controller actions, before reaching a replacement session.
         if not self.same_body():
             return
-        if peer and not self.peer_member(sender, fresh=True):
+        if peer and not development_whisper and not self.peer_member(sender, fresh=True):
             return
+        if development_whisper:
+            reply.update(action="NONE", emote="NONE")
         direct = development.get("enabled") is True
         if direct and reply["action"]=="REPAIR_CONTROLLER":
             reply["action"]="NONE" # Direct generation owns the repair; no queued second agent.
@@ -3126,7 +3144,7 @@ class Conversation:
                 reply["text"] = acknowledgement
         if peer:
             reply["action"] = "NONE"
-        self.send_reply(reply, channel, target_guid=sender)
+        self.send_reply(reply, channel, target_guid=sender, history_key=history_key)
         if self.controls:
             self.controls.events.clear()
 
@@ -3147,16 +3165,17 @@ class Conversation:
         except (ConversationError,KeyError,TypeError):
             return False
 
-    def send_reply(self, reply, channel, target_guid=None):
+    def send_reply(self, reply, channel, target_guid=None, history_key=None):
         params = {"channel": channel, "language": "COMMON", "text": reply["text"]}
         if channel == "WHISPER":
-            params["recipient"] = self.player_name
+            params["recipient"] = DEVELOPMENT_PEERS.get(target_guid, self.player_name) if target_guid != self.player_guid else self.player_name
         result = self.rpc.call("buddy-chat.send", params)
         if result.get("transportWritten") is not True:
             raise ConversationError("Chat transport did not acknowledge the write")
         self.replies += 1
-        self.history[channel].append({"speaker": self.character_name, "channel": channel, "text": reply["text"]})
-        self.history[channel] = self.history[channel][-20:]
+        history_key = history_key or channel
+        self.history.setdefault(history_key, []).append({"speaker": self.character_name, "channel": channel, "text": reply["text"]})
+        self.history[history_key] = self.history[history_key][-20:]
         self.status(phase="listening", replies=self.replies, cursor=self.cursor)
         if reply["emote"] != "NONE":
             identity = self.reply_emotes.get(reply["emote"])
