@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v7.36.2
-// source: modules/buddy-actions/actions.proto
+// source: actions.proto
 
 package actionsv1
 
@@ -24,6 +24,7 @@ const (
 	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
 	BuddyActions_Healing_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
 	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_EngageNPC_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
 	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
 	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
 	BuddyActions_Buffs_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
@@ -54,6 +55,7 @@ type BuddyActionsClient interface {
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Healing(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
+	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
 	HealOnce(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Buffs(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
@@ -111,6 +113,16 @@ func (c *buddyActionsClient) Assist(ctx context.Context, in *ToggleRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_Assist_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_EngageNPC_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +346,7 @@ type BuddyActionsServer interface {
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Healing(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
+	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
 	HealOnce(context.Context, *emptypb.Empty) (*State, error)
 	Status(context.Context, *emptypb.Empty) (*State, error)
 	Buffs(context.Context, *ToggleRequest) (*State, error)
@@ -375,6 +388,9 @@ func (UnimplementedBuddyActionsServer) Healing(context.Context, *ToggleRequest) 
 }
 func (UnimplementedBuddyActionsServer) Assist(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Assist not implemented")
+}
+func (UnimplementedBuddyActionsServer) EngageNPC(context.Context, *EngageNPCRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EngageNPC not implemented")
 }
 func (UnimplementedBuddyActionsServer) HealOnce(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealOnce not implemented")
@@ -510,6 +526,24 @@ func _BuddyActions_Assist_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).Assist(ctx, req.(*ToggleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_EngageNPC_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngageNPCRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).EngageNPC(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_EngageNPC_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).EngageNPC(ctx, req.(*EngageNPCRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -912,6 +946,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _BuddyActions_Assist_Handler,
 		},
 		{
+			MethodName: "EngageNPC",
+			Handler:    _BuddyActions_EngageNPC_Handler,
+		},
+		{
 			MethodName: "HealOnce",
 			Handler:    _BuddyActions_HealOnce_Handler,
 		},
@@ -997,5 +1035,5 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "modules/buddy-actions/actions.proto",
+	Metadata: "actions.proto",
 }

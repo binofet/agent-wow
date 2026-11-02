@@ -109,7 +109,7 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	fail := func(reason string) bool { s.state.Reason = reason; s.stopAutoAttackLocked(ctx); return false }
 	self, owner := w.Self, w.Owner
 	s.updateClassLocked()
-	if !self.ClassKnown || (self.ClassId != 5 && self.ClassId != 8 && self.ClassId != 4 && self.ClassId != 9) {
+	if !self.ClassKnown || self.ClassId == 0 {
 		return fail("assist_class_unknown_or_unsupported")
 	}
 	if !defense && self.ClassId == 5 && (!owner.HealthKnown || owner.MaxHealth == 0 || uint64(owner.Health)*100 < uint64(owner.MaxHealth)*85) {
@@ -130,7 +130,7 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if self.LevelKnown && target.LevelKnown && uint64(target.Level) > uint64(self.Level)+3 {
 		return fail("assist_target_level_exceeds_self_plus_three")
 	}
-	if s.failedAssistTarget == target.Guid && (!defense || s.failedAssistCastTarget != target.Guid ||
+	if !s.engage.executing && s.failedAssistTarget == target.Guid && (!defense || s.failedAssistCastTarget != target.Guid ||
 		s.state.Practicing || s.fargodeep.active || s.now().Before(s.nextAssist)) {
 		return fail("assist_target_failed_no_retry")
 	}
@@ -141,8 +141,12 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if !known {
 		return fail("assist_target_outside_conservative_range")
 	}
-	if self.ClassId == 4 {
-		if defense && s.partyDefenseTarget == 0 && self.CombatReachKnown && target.CombatReachKnown && distance(s.pos, targetPosition) > math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5 {
+	r := s.bestDamageLocked(self, targetPosition)
+	if self.ClassId != 4 && r.ID == 0 && !s.state.KnownAutoAttack {
+		return fail("no_affordable_learned_damage_spell_in_range")
+	}
+	if self.ClassId == 4 || r.ID == 0 {
+		if defense && s.partyDefenseTarget == 0 && !s.engage.executing && self.CombatReachKnown && target.CombatReachKnown && distance(s.pos, targetPosition) > math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5 {
 			return fail("self_defense_melee_target_outside_range")
 		}
 		return s.rogueAssistLocked(ctx, w, target, targetPosition)
@@ -150,10 +154,6 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
-	}
-	r := s.bestDamageLocked(self, targetPosition)
-	if r.ID == 0 {
-		return fail("no_affordable_learned_damage_spell_in_range")
 	}
 	if self.UnitFlags&0x2000 != 0 {
 		return fail("caster_silenced")
@@ -202,7 +202,10 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	if s.fargodeep.active && !s.fargodeepWriteAllowedLocked(ctx, target, spell) {
 		return false
 	}
-	if s.partyDefenseTarget != 0 || s.selfDefenseTarget != 0 || s.failedAssistTarget == target {
+	if s.engage.executing && !s.engageOffenseAllowedLocked(ctx, target, spell) {
+		return false
+	}
+	if !s.engage.executing && (s.partyDefenseTarget != 0 || s.selfDefenseTarget != 0 || s.failedAssistTarget == target) {
 		allowed := false
 		if s.failedAssistTarget == target {
 			allowed = s.failedDefenseRetryAllowedLocked(ctx, target, spell)

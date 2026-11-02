@@ -170,7 +170,10 @@ func (s *Service) defenseOffenseAllowedLocked(w *worldv1.SnapshotResponse, targe
 	if self.ClassId == 8 {
 		limit = 33
 	}
-	if self.ClassId == 4 {
+	if spell == 0 || self.ClassId == 4 {
+		if spell == 0 && !s.state.KnownAutoAttack {
+			return false
+		}
 		if !self.BaseAttackTimeKnown || !self.CombatReachKnown || !c.CombatReachKnown || self.UnitFlags&(0x20000|0x200000) != 0 || !s.weaponReady(self) {
 			return false
 		}

@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Bounded map-aware ground following and class-aware priest mage rogue or warlock assistance to fixed owner Joel
+description: Bounded map-aware ground following, learned combat capabilities, weapon melee and explicitly selected observed NPC engagement
 requires: [buddy-world, buddy-party]
 compose:
   file: compose.yaml
@@ -11,6 +11,7 @@ rpc:
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   healing: /warcraftbuddy.actions.v1.BuddyActions/Healing
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
+  engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
   buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
@@ -65,6 +66,7 @@ script_api:
   follow: {effect: mutation}
   healing: {effect: mutation}
   assist: {effect: mutation}
+  engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}
   heal_once: {effect: mutation}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}

@@ -46,7 +46,10 @@ func (s *Service) updateClassLocked() {
 		s.state.CombatStyle = "rogue_melee"
 		s.state.CombatSpellId = s.selectedSpellLocked(sinisterStrike).id
 	default:
-		s.state.ClassName = "unsupported"
+		s.state.ClassName = "known_class"
+		if s.state.KnownAutoAttack {
+			s.state.CombatStyle = "weapon_melee"
+		}
 	}
 	s.state.MainhandWeaponVerified = s.weaponReady(p)
 }

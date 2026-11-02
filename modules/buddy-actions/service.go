@@ -65,6 +65,7 @@ type Service struct {
 	selfDefenseTarget                                        uint64
 	selfDefenseRevision                                      uint64
 	selfDefenseMap                                           uint32
+	engage                                                   engageIntent
 	interactionToken                                         string
 	interactionUntil                                         time.Time
 	harvestGuardAt                                           time.Time
@@ -149,6 +150,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.SessionId, out.SelfGuid = s.sessionID, s.selfGUID
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
+	out.EngageNpc = s.engage.snapshot(s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
 	if s.supportOp != nil {
@@ -580,6 +582,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.Practicing = false
 	s.fargodeep.active = false
 	s.fargodeep.phase = "session_closing"
+	s.engage.active, s.engage.phase = false, "session_closing"
 	s.explicitStopLocked(ctx)
 	s.state.Reason = "session_closing"
 	return &emptypb.Empty{}, nil
@@ -800,7 +803,11 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 			return false
 		}
 	}
-	if moving && s.partyDefenseTarget == 0 && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
+	if moving && s.engage.executing && !s.engageCurrentLocked(ctx) {
+		s.state.Reason = "engage_npc_authority_changed_before_movement"
+		return false
+	}
+	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -982,7 +989,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
@@ -1019,7 +1026,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1058,11 +1065,15 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
+	if s.engageTickLocked(ctx) {
+		s.lastStep = now
+		return
+	}
 	if s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
-	if reason := safePlayers(snapshot, s.selfGUID); reason != "" {
+	if reason := safeFollowPlayers(snapshot, s.selfGUID, s.state.Following && s.navDataDir != ""); reason != "" {
 		// Unknown or temporarily unsafe observations pause enabled intent. A
 		// normal jump, AFK or visibility loss must not silently revoke it.
 		// No local motion is attempted until fresh safe context is available.
