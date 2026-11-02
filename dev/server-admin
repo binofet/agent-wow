@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""General public realm-console and Quasar SSH access for existing developer tools."""
+import argparse
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+HOST = 'quasar'
+REMOTE_ROOT = '/home/jmax/dev/warcraft_buddy'
+TRANSPORT = ROOT/'dev/realm-console'
+SSH = ['ssh', '-i', str(Path.home()/'.ssh/id_ed5519_quasar'), '-o', 'IdentitiesOnly=yes',
+       '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', HOST]
+NAMES = {1:'Arlen', 3:'Joel', 4:'Mira', 5:'Rook', 8:'Nixwick'}
+
+
+def capabilities():
+    return dict(cli=str(ROOT/'dev/server-admin'), sshHost=HOST, remoteProjectRoot=REMOTE_ROOT,
+        console='dev/server-admin console "help" "server info"',
+        ssh='dev/server-admin ssh "uname -a; pwd"', rescue='dev/server-admin rescue --guid 8',
+        connectionVerified=False,
+        boundary='Use public realm commands and client project tools; project agreements prohibit server database/configuration/source changes and secret access.')
+
+
+def run(args, timeout=60):
+    completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    return dict(transportCompleted=completed.returncode==0, returncode=completed.returncode,
+                output=completed.stdout, error=completed.stderr)
+
+
+def console(commands):
+    if not commands or any(not isinstance(x,str) or not x.strip() or any(c in x for c in '\r\n\0') for x in commands):
+        raise ValueError('Pass each complete public console command as a quoted argument')
+    if not TRANSPORT.is_file() or TRANSPORT.is_symlink():
+        raise ValueError('Repository public console transport is unavailable')
+    return dict(run([sys.executable,str(TRANSPORT),*commands]), channel='public_realm_console',
+                commands=commands, effect='Command transport only; verify actual public observations before claiming game effects')
+
+
+def ssh(commands):
+    if not commands or any('\0' in x for x in commands):raise ValueError('SSH command required')
+    command=commands[0] if len(commands)==1 else shlex.join(commands)
+    return dict(run([*SSH,'cd '+shlex.quote(REMOTE_ROOT)+' && '+command]), channel='quasar_ssh')
+
+
+def rescue(guid, owner_guid=3):
+    if owner_guid!=3 or guid not in NAMES:raise ValueError('Known owner/roster identity required for named rescue')
+    return dict(console(['tele name '+NAMES[guid]+' Goldshire']),subjectGuid=guid,name=NAMES[guid],
+                ownerGuid=owner_guid,destination='Goldshire')
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    commands=parser.add_subparsers(dest='command',required=True)
+    commands.add_parser('capabilities')
+    for name in ('console','ssh'):
+        commands.add_parser(name).add_argument('commands',nargs=argparse.REMAINDER)
+    rescue_parser=commands.add_parser('rescue')
+    rescue_parser.add_argument('--guid',type=int,choices=tuple(NAMES),required=True)
+    rescue_parser.add_argument('--owner-guid',type=int,choices=(3,),default=3)
+    args=parser.parse_args(argv)
+    result=capabilities() if args.command=='capabilities' else rescue(args.guid,args.owner_guid) if args.command=='rescue' else globals()[args.command](args.commands)
+    print(json.dumps(result,ensure_ascii=False))
+    return 0 if result.get('transportCompleted',True) else 1
+
+
+if __name__=='__main__':
+    try:raise SystemExit(main())
+    except (OSError,ValueError,subprocess.SubprocessError) as error:
+        print(json.dumps(dict(transportCompleted=False,error=str(error),effect='Outcome unconfirmed; no automatic retry')),file=sys.stderr)
+        raise SystemExit(1)

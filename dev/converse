@@ -378,6 +378,12 @@ true. A queued repair is not installed. Idle banter never starts development.
 """
 
 DEVELOPER_PERMISSIONS = """
+Owner conversation and control requests take priority over background repairs.
+For follow/stop, status, or ordinary conversation, answer briefly with the existing
+control action first; do not claim files or start a coding investigation unless
+the owner actually requests development. The newest owner message supersedes
+older instructions. A repair turn may be interrupted for new owner input; leave
+already-written code and pending receipts intact and report only verified work.
 This SAME conversation generation has direct development tools. Joel authorizes
 you to read/edit Lua AND Go in the configured repository/worktree, run focused
 checks, collaborate on verified teammates' controller-development requests, and
@@ -395,6 +401,17 @@ use resume-own with your exact registered GUID/worktree, semantic task and full
 unchanged --file set plus finite --ttl-seconds. This rotates your lost token;
 retain the new token. Never resume peer or mixed claims, widen the file set, or
 edit peer-owned files; coordinate their release instead.
+General server access is available through ROOT/dev/server-admin from your own
+developer shell tools: `console "help" "server info"` sends public realm console
+commands; `ssh "uname -a; pwd"` executes a command on Quasar in the client project
+/home/jmax/dev/warcraft_buddy. These are general development/gameplay tools, not
+restricted to Unstuck or your own GUID. Use `capabilities` to inspect the actual
+paths. `rescue --guid N` is a convenience named teleport to Goldshire for Arlen1,
+Joel3, Mira4, Rook5, Nixwick8. Joel has authorized these controls; do not invent a
+new approval queue. Existing project agreements still prohibit server database,
+configuration/source changes and secret access. Command transport is not proof
+of game effects: verify actual public observations. A genuine navigation failure
+or explicit Unstuck can use the rescue command instead of merely refusing.
 For native embedded action policies, use development.policyCommands with the
 supplied exact GUID/core session/RPC binding. Run show first, then apply --source PATH --expected-revision HASH or
 builtin --expected-revision HASH. Never substitute a new body SID after a stale
@@ -1531,6 +1548,10 @@ class CapabilityUnavailable(ConversationError):
     pass
 
 
+class OwnerInputPending(ConversationError):
+    """A fresh owner message supersedes the current model turn."""
+
+
 class Stopped(ConversationError):
     pass
 
@@ -1798,7 +1819,7 @@ class CodexBrain:
         except (ConversationError,TypeError,ValueError,AttributeError):
             return False
 
-    def generate(self, history, control_state=None):
+    def generate(self, history, control_state=None, cancelled=None):
         developer = self.development_enabled(control_state)
         if (isinstance(control_state,dict) and isinstance(control_state.get('current_request'),dict)
                 and control_state['current_request'].get('source')=='mission_fault' and not developer):
@@ -1823,10 +1844,14 @@ class CodexBrain:
             prompt_state.pop('shared_development', None)
             prompt_state.pop('model_selection', None)
             prompt_state.pop('shared_tasks', None)
+            prompt_state.pop('server_admin', None)
             ownership = ''
             if developer:
                 prompt_state['shared_development'] = companion_role_context(self.character_name)
                 prompt_state['model_selection'] = self.model_selection()
+                prompt_state['server_admin'] = dict(available=(ROOT/'dev/server-admin').is_file(),
+                    cli=str(ROOT/'dev/server-admin'),sshHost='quasar',remoteProjectRoot='/home/jmax/dev/warcraft_buddy',
+                    consoleExample='console \"help\" \"server info\"',sshExample='ssh \"uname -a; pwd\"',connectionVerified=False)
                 development = prompt_state['development']
                 prompt_state['shared_tasks'] = mission_runtime_context(integer(development['selfGuid']),
                     development['sessionId'], development['rpcUrl'])
@@ -1844,6 +1869,8 @@ class CodexBrain:
             prompt = ((self.developer_persona if developer else self.persona) + ownership + "\nCurrent observations and control state JSON:\n"
                       + json.dumps(prompt_state, ensure_ascii=False)
                       + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False))
+            if cancelled and cancelled():
+                raise OwnerInputPending("Fresh owner input is waiting")
             # Files, rather than pipes, bound memory use and prevent pipe deadlock.
             with tempfile.TemporaryFile(dir=folder) as events, tempfile.TemporaryFile(dir=folder) as errors:
                 process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer,
@@ -1857,6 +1884,8 @@ class CodexBrain:
                     while process.poll() is None:
                         if self.stopped():
                             raise Stopped("Conversation stop requested")
+                        if cancelled and cancelled():
+                            raise OwnerInputPending("Fresh owner input is waiting")
                         if time.monotonic() >= deadline:
                             raise ConversationError("Codex reply timed out")
                         if events.tell() > limit or errors.tell() > limit:
@@ -2899,17 +2928,68 @@ class Conversation:
             self.controls.events.clear()
         self.status(phase="reconnecting", event="body_restarted")
 
+    def owner_message_waiting(self, result):
+        messages = result.get("messages", [])
+        if not isinstance(messages, list) or len(messages) > 256:
+            raise ConversationError("Chat poll messages are invalid")
+        for message in messages:
+            if (not isinstance(message, dict) or message.get("self", False) is not False
+                    or integer(message.get("senderGuid", "0")) != self.player_guid
+                    or integer(message.get("sequence", "0")) <= self.cursor
+                    or message.get("channel") not in ("SAY", "PARTY", "PARTY_LEADER", "WHISPER")):
+                continue
+            try:
+                text = plain_text(message.get("text"))
+            except ConversationError:
+                continue
+            addressed = addressed_names(text, [self.character_name, *self.party_agents.values()])
+            if not addressed or self.character_name.casefold() in addressed:
+                return True
+        return False
+
+    def generate_reply(self, history, state):
+        # One synchronous model process remains; a cheap read interrupts it
+        # without advancing the chat cursor or undoing already-written code.
+        next_poll = [0.0]
+        interrupt_reason = ["owner_input_waiting"]
+        def cancelled():
+            now = time.monotonic()
+            if now < next_poll[0]: return False
+            next_poll[0] = now + 0.75
+            try:
+                result = self.rpc.call("buddy-chat.poll", {"afterSequence": str(self.cursor),
+                    "limit": 256, "sessionId": self.session_id}, timeout=0.5)
+                if result.get("sessionId") != self.session_id:
+                    interrupt_reason[0] = "chat_body_changed"
+                    self.reset_body(); return True
+                return self.owner_message_waiting(result)
+            except ConversationError:
+                # Unknown freshness cannot authorize a stale gameplay reply.
+                interrupt_reason[0] = "chat_freshness_unavailable"
+                return True
+        try:
+            if isinstance(self.brain, CodexBrain):
+                return self.brain.generate(history, state, cancelled=cancelled)
+            return self.brain.generate(history, state)
+        except OwnerInputPending:
+            self.status(phase="listening", generationPhase="yielded_to_owner" if interrupt_reason[0]=="owner_input_waiting" else "yielded_for_chat_refresh",
+                        generationInterruptReason=interrupt_reason[0], cursor=self.cursor)
+            raise
+
     def same_body(self):
         if not self.session_id:
             return True
         try:
             result = self.rpc.call("buddy-chat.poll", {"afterSequence": str(self.cursor),
-                                                       "limit": 1, "sessionId": self.session_id})
+                                                       "limit": 256, "sessionId": self.session_id})
         except CursorReset:
             self.reset_body()
             return False
         if result.get("sessionId") != self.session_id:
             self.reset_body()
+            return False
+        if self.owner_message_waiting(result):
+            self.status(phase="listening", generationPhase="stale_reply_discarded", cursor=self.cursor)
             return False
         return True
 
@@ -3012,7 +3092,10 @@ class Conversation:
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
             development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"controls_allowed":not peer,"repair_requests_allowed":True})
-        reply = validate_reply(self.brain.generate(self.history[channel], state),self.reply_emotes)
+        try:
+            reply = validate_reply(self.generate_reply(self.history[channel], state),self.reply_emotes)
+        except OwnerInputPending:
+            return
         if development.get('enabled') is True and getattr(self.brain,'last_development_events',None) is not None:
             self.status(developmentEvents=dict(self.brain.last_development_events,sessionId=development['sessionId'],cursor=self.cursor))
         if self.stopped():
@@ -3139,12 +3222,14 @@ class Conversation:
                     'Native changes need the normal owned release. Do not restart actors/controllers or send gameplay commands during this turn. '
                     'Set final action NONE and emote NONE. Describe only verified changes; a finished model turn is not an installed or successful repair.')
                 self.status(phase='thinking',missionRepairPhase='developer_turn_started')
-                reply=validate_reply(self.brain.generate([cue],state))
+                reply=validate_reply(self.generate_reply([cue],state))
                 reply.update(action='NONE',emote='NONE')
                 self.status(phase='listening',missionRepairPhase='developer_turn_completed',missionRepairText=reply['text'],
                     developmentEvents=getattr(self.brain,'last_development_events',None))
                 return True  # No unsolicited game chat, emote, controller action, or second coding agent.
         except Stopped:raise
+        except OwnerInputPending:
+            self.status(phase='listening',missionRepairPhase='yielded_to_owner')
         except Exception:
             self.status(phase='listening',missionRepairPhase='unconfirmed')
         return True
@@ -3185,7 +3270,10 @@ class Conversation:
             state["emote_catalog"] = {"available":False}
         self.reply_emotes = supported_emotes(state)
         self.status(phase="thinking", event="occasional_conversation", cursor=self.cursor)
-        reply = validate_reply(self.brain.generate(self.history[channel][-19:] + [cue], state),self.reply_emotes)
+        try:
+            reply = validate_reply(self.generate_reply(self.history[channel][-19:] + [cue], state),self.reply_emotes)
+        except OwnerInputPending:
+            return
         if self.stopped():
             raise Stopped("Conversation stop requested")
         if not self.same_body():

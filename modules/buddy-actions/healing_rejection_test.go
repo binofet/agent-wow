@@ -143,7 +143,11 @@ func TestHealingRejectionDoesNotRelaxAmbiguityOrLeaseStops(t *testing.T) {
 			f.failSend = false
 			advance(6 * time.Second)
 			s.Tick(context.Background())
-			if s.state.Healing || countPackets(f, opcode.CMSGCastSpell) != before {
+			want := before
+			if mode == "timeout" {
+				want++
+			}
+			if s.state.Healing != (mode == "timeout") || countPackets(f, opcode.CMSGCastSpell) != want {
 				t.Fatal("ambiguous/expired authority resumed healing", mode, state(t, s))
 			}
 		})

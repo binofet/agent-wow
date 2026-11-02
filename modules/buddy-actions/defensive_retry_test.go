@@ -172,7 +172,7 @@ func TestDefensiveRetryRechecksWitnessAndResourcesAfterFacing(t *testing.T) {
 	}
 }
 
-func TestDefensiveRetryDoesNotRetireUncorrelatedPendingOrTransportAmbiguity(t *testing.T) {
+func TestDefensiveRetryWaitsForPendingDeadlineOrTransportBackoff(t *testing.T) {
 	for _, mode := range []string{"count", "spell", "caster", "no_receipt", "transport"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _, advance := selfDefenseRig(t, 8)
@@ -196,10 +196,35 @@ func TestDefensiveRetryDoesNotRetireUncorrelatedPendingOrTransportAmbiguity(t *t
 				s.OnPacket(context.Background(), healingRejectionPacket(opcode.SMSGSpellFailure, caster, count, spell))
 			}
 			before := countPackets(f, opcode.CMSGCastSpell)
+			if mode == "transport" {
+				advance(4 * time.Second)
+				s.Tick(context.Background())
+				if countPackets(f, opcode.CMSGCastSpell) != before {
+					t.Fatal("failed transport bypassed its cooldown", s.stateLocked())
+				}
+				advance(2 * time.Second)
+			} else {
+				advance(6 * time.Second)
+			}
+			if mode != "transport" && !s.state.CastPending {
+				t.Fatal("unrelated result settled the actual pending cast", s.stateLocked())
+			}
+			s.Tick(context.Background())
+			want := before
+			if mode == "transport" {
+				want++
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != want || s.failedAssistCastTarget != 0 || s.state.Assisting != (mode != "transport") {
+				t.Fatal("pending deadline/backoff or transport guard was bypassed", s.stateLocked())
+			}
 			advance(6 * time.Second)
 			s.Tick(context.Background())
-			if countPackets(f, opcode.CMSGCastSpell) != before || s.failedAssistCastTarget != 0 || s.state.Assisting {
-				t.Fatal("uncertain or unrelated result gained retry authority", s.stateLocked())
+			want = before + 1
+			if mode == "transport" {
+				want++
+			}
+			if countPackets(f, opcode.CMSGCastSpell) != want {
+				t.Fatal("fresh defense did not respect timeout versus transport outcome", s.stateLocked())
 			}
 		})
 	}

@@ -34,16 +34,21 @@ func (s *Service) assistLocked(ctx context.Context, w *worldv1.SnapshotResponse)
 
 // Self-defense consumes a tick only for an actual current attacker. Selecting
 // a player or creature target alone never authorizes an attack. Active normal
-// interaction leases retain priority in Tick, and this path never chases.
+// task custody is fenced before emergency defense, and this path never chases.
 func (s *Service) selfDefenseLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	if !s.state.Assisting || safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
+	if safeSelfCombat(w, s.selfGUID) != "" {
 		return false
 	}
 	target := s.selfAttackerLocked(w)
 	if target == nil {
 		return false
 	}
-	defer func() { s.state.AssistReason = s.state.Reason }()
+	if !s.refreshPositionLocked(w) {
+		return true
+	}
+	s.selfDefenseTarget = target.Guid
+	s.selfDefenseMap, s.selfDefenseRevision = w.Self.MapId, w.Self.PositionRevision
+	defer func() { s.selfDefenseTarget = 0; s.state.AssistReason = s.state.Reason }()
 	if s.state.CastPending {
 		s.stopLocked(ctx)
 		return true
@@ -197,12 +202,16 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	if s.fargodeep.active && !s.fargodeepWriteAllowedLocked(ctx, target, spell) {
 		return false
 	}
-	if s.partyDefenseTarget != 0 || s.failedAssistTarget == target {
+	if s.partyDefenseTarget != 0 || s.selfDefenseTarget != 0 || s.failedAssistTarget == target {
 		allowed := false
 		if s.failedAssistTarget == target {
 			allowed = s.failedDefenseRetryAllowedLocked(ctx, target, spell)
 		} else {
-			allowed = s.partyDefenseOffenseAllowedLocked(ctx, target, spell)
+			if s.selfDefenseTarget != 0 {
+				allowed = s.selfDefenseOffenseAllowedLocked(ctx, target, spell)
+			} else {
+				allowed = s.partyDefenseOffenseAllowedLocked(ctx, target, spell)
+			}
 		}
 		if !allowed {
 			if s.state.Reason != "party_defense_resources_changed_before_cast" {
@@ -233,6 +242,7 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 		s.state.CastPending = false
 		s.pendingSpell = 0
 		s.pendingTarget = 0
+		s.nextAssist = s.now().Add(5 * time.Second)
 		return false
 	}
 	switch spellRankFor(spell).family {

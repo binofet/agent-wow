@@ -309,7 +309,7 @@ func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
 	advance(6 * time.Second)
 	s.Tick(context.Background())
-	if got := state(t, s); got.CastPending || got.Reason != "cast_result_timeout_no_retry" || got.ServerCastGo != 0 {
+	if got := state(t, s); got.CastPending || got.Reason != "cast_result_timeout_backoff" || got.ServerCastGo != 0 {
 		t.Fatalf("timeout %+v", got)
 	}
 	if len(f.packets) != 1 {

@@ -135,7 +135,7 @@ func TestAssistStopsAfterLeaseExpiryAndCastTimeout(t *testing.T) {
 	s.Tick(context.Background())
 	advance(6 * time.Second)
 	s.Tick(context.Background())
-	if st := state(t, s); st.Assisting || st.CastPending || st.ServerAssistGo != 0 {
+	if st := state(t, s); !st.Assisting || st.CastPending || st.ServerAssistGo != 0 || st.AssistAttempts != 1 {
 		t.Fatal(st)
 	}
 	s, _, advance = assistRig(t)

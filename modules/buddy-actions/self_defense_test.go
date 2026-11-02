@@ -199,7 +199,7 @@ func TestSelfDefenseNeverChasesAndRetainsConservativeClassRanges(t *testing.T) {
 	}
 }
 
-func TestSelfDefenseRetainsExplicitDisableLeaseAndExpiryPriority(t *testing.T) {
+func TestSelfDefenseRemainsAvailableWithoutOwnerAssistIntent(t *testing.T) {
 	for _, mode := range []string{"disabled", "interaction", "expired"} {
 		s, f, _, advance := selfDefenseRig(t, 5)
 		switch mode {
@@ -213,7 +213,7 @@ func TestSelfDefenseRetainsExplicitDisableLeaseAndExpiryPriority(t *testing.T) {
 			advance(4*time.Hour + time.Second)
 		}
 		s.Tick(context.Background())
-		if got := state(t, s); got.AssistAttempts != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 {
+		if got := state(t, s); got.AssistAttempts != 1 || countPackets(f, opcode.CMSGCastSpell) != 1 {
 			t.Fatal(mode, got, f.packets)
 		}
 	}

@@ -2389,6 +2389,20 @@ class MissionFaultRepairTests(unittest.TestCase):
         self.assertTrue(any(s.get('missionRepairPhase')=='developer_turn_completed' for s in self.statuses))
         self.assertNotIn('installed',self.statuses[-1]['missionRepairPhase'])
 
+    def test_owner_interrupt_keeps_fault_reservation_and_pending_evidence(self):
+        self.data['pending']=[dict(outcome='pending',effect='mutation',id='issued-1')]
+        self.data.update(hostError='no_valid_policy',hostErrorInstance='a'*32,policyError='')
+        self.data['run'].update(active=False,stoppedAt=time.time());self.store.save(self.data);self.store.__exit__()
+        before=(self.folder/'state.json').read_bytes();calls=[]
+        def interrupted(history,state):
+            calls.append(state);raise converse.OwnerInputPending('new owner input')
+        self.brain.generate=interrupted
+        self.loop.tick();self.new_loop().tick()
+        self.assertEqual(len(calls),1)
+        self.assertTrue(any(s.get('missionRepairPhase')=='yielded_to_owner' for s in self.statuses))
+        self.assertEqual((self.folder/'state.json').read_bytes(),before)
+        self.assertFalse(any(m in ('buddy-chat.send','buddy-chat.emote','buddy-actions.follow') for m,_ in self.rpc.calls))
+
     def test_only_actual_fresh_errors_or_explicit_fresh_stall_are_faults(self):
         baseline=copy.deepcopy(self.data)
         for mutation in (lambda d:d.update(updatedAt=time.time()-16),lambda d:d['identity'].update(sessionId='aw-old'),
@@ -2681,3 +2695,62 @@ class SharedRoleConfigurationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnerPreemptionTests(unittest.TestCase):
+    def test_actual_model_process_cancels_and_keeps_already_written_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary);state=folder/'state';state.mkdir();marker=folder/'written.lua'
+            executable=folder/'fake-codex'
+            executable.write_text('#!/usr/bin/env python3\nimport pathlib,sys,time\n'
+                'sys.stdin.read()\n'+f'pathlib.Path({str(marker)!r}).write_text("completed source edit")\n'+'time.sleep(30)\n')
+            executable.chmod(0o700);brain=converse.CodexBrain(executable,state)
+            started=time.monotonic()
+            with self.assertRaises(converse.OwnerInputPending):
+                brain.generate([],{},cancelled=marker.exists)
+            self.assertLess(time.monotonic()-started,3)
+            self.assertEqual(marker.read_text(),'completed source edit')
+            self.assertIsNone(brain.last_development_events)
+
+    def test_live_owner_whisper_interrupts_generation_without_consuming_new_cursor(self):
+        class RPC(FakeRPC):
+            def call(self,method,params,timeout=None):return super().call(method,params)
+        class Brain(converse.CodexBrain):
+            def __init__(self):self.histories=[];self.developer_workspace=None
+            def generate(self,history,control_state=None,cancelled=None):
+                if cancelled():raise converse.OwnerInputPending('new owner input')
+                self.histories.append(list(history));return dict(text='Stopping now.',action='NONE',emote='NONE')
+        incoming=poll([message(2,'Stop here',channel='WHISPER')],sessionId='chat')
+        rpc=RPC([poll(sessionId='chat'),poll([message(1,'Explain the broken route')],sessionId='chat'),
+            incoming,incoming,poll(latest=2,sessionId='chat'),poll(latest=2,sessionId='chat')])
+        brain=Brain();statuses=[];loop=converse.Conversation(rpc,brain,status=lambda **kw:statuses.append(kw))
+        loop.tick();loop.tick()
+        self.assertEqual(loop.cursor,1);self.assertEqual(brain.histories,[])
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in rpc.calls))
+        self.assertTrue(any(s.get('generationPhase')=='yielded_to_owner' for s in statuses))
+        loop.tick();self.assertEqual(loop.cursor,2)
+        self.assertEqual(brain.histories[0][-1]['text'],'Stop here')
+        sends=[p for m,p in rpc.calls if m=='buddy-chat.send']
+        self.assertEqual(sends,[dict(channel='WHISPER',language='COMMON',text='Stopping now.',recipient='Joel')])
+
+    def test_late_old_reply_and_follow_are_discarded_for_new_owner_input(self):
+        class Controls:
+            def __init__(self):self.events=[];self.executed=[]
+            def refresh(self):pass
+            def context(self):return {}
+            def execute(self,action):self.executed.append(action)
+        rpc=FakeRPC([poll(sessionId='chat'),poll([message(1,'Follow me')],sessionId='chat'),
+            poll([message(2,'Actually stop here',channel='WHISPER')],sessionId='chat')])
+        controls=Controls();brain=FakeBrain(dict(text='Following.',action='FOLLOW',emote='NONE'))
+        loop=converse.Conversation(rpc,brain,controls=controls);loop.tick();loop.tick()
+        self.assertEqual(controls.executed,[]);self.assertEqual(loop.cursor,1)
+        self.assertFalse(any(m=='buddy-chat.send' for m,_ in rpc.calls))
+
+    def test_foreign_self_or_other_addressed_messages_do_not_preempt(self):
+        loop=converse.Conversation(FakeRPC([]),FakeBrain(),party_agents={4:'Mira'})
+        loop.cursor=3
+        for row in (message(4,'Hello',sender=99),message(4,'Echo',self=True),message(4,'Mira, follow me'),
+                    message(3,'Already consumed'),message(4,'Echo',channel='WHISPER_INFORM')):
+            with self.subTest(row=row):self.assertFalse(loop.owner_message_waiting(poll([row])))
+        self.assertTrue(loop.owner_message_waiting(poll([message(4,'Stop here',channel='WHISPER')])))
+        self.assertIn('control action first',converse.DEVELOPER_PERMISSIONS)

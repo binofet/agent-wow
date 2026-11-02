@@ -425,13 +425,22 @@ class Controllers:
                  ('listening' if row['script'] == 'converse' else 'running')))
 
 
+def public_server_rescue(guid):
+    result=subprocess.run([sys.executable,str(ROOT/'dev/server-admin'),'rescue','--guid',str(guid),'--owner-guid','3'],
+        capture_output=True,text=True,timeout=65)
+    check(result.returncode==0,'Public server rescue transport unconfirmed; no retry')
+    value=json.loads(result.stdout);check(value.get('transportCompleted') is True,'Public server rescue transport unconfirmed')
+    return value
+
+
 class Supervisor:
-    def __init__(self, data=None, save=lambda value: None, rpcs=None, adapter=None, controllers=None, reader=scene, now=time.monotonic):
+    def __init__(self, data=None, save=lambda value: None, rpcs=None, adapter=None, controllers=None, reader=scene, now=time.monotonic, rescue=None):
         self.data = data or dict(identity=IDENTITY, requests={}, relays={}, ownerNonce='', lastOwnerSeq=0, retiredNonces=[])
         check(self.data.get('identity') == IDENTITY and isinstance(self.data.get('requests'), dict)
               and len(self.data['requests']) <= 256 and isinstance(self.data.get('relays'), dict), 'Team ledger identity or bounds changed')
         self.save, self.rpcs, self.adapter, self.controllers = save, rpcs or {g: RPC(g) for g in ROSTER}, adapter or Adapter(), controllers or Controllers()
         self.reader, self.now, self.lock = reader, now, threading.RLock()
+        self.rescue = rescue
         self.owner_generation, self.halt, self.worker = 0, False, None
         check(isinstance(self.data.get('retiredNonces'), list) and len(self.data['retiredNonces']) <= 16
               and all(isinstance(n, str) and re.fullmatch('[0-9a-f]{12}', n) for n in self.data['retiredNonces']), 'Retired owner nonce bound changed')
@@ -653,9 +662,32 @@ class Supervisor:
                 raise NoRoute('Normal NAV found no safe route to the observed owner; no warp was attempted')
             raise Error('Normal NAV did not prove arrival; inspect the exact stopped route receipt')
         self.mark(row, 'COMPLETE', 'Normal verified NAV reached observed owner; exact custody released and stopped')
+    def server_rescue(self, row):
+        self.intent_guard(self.owner_generation)
+        check(not any(w['kind']=='public_server_rescue' for w in row['writes']),'Prior rescue reserved; no automatic retry')
+        baseline_revision=None
+        try:
+            baseline=self.read(row['guid'],guard=False)['world'].get('self',{})
+            baseline_revision=number(baseline.get('positionRevision',0))
+        except (Error,OSError,ValueError):pass
+        self.reserve(row,'public_server_rescue',{'guid':row['guid'],'destination':'Goldshire'})
+        self.mark(row,'UNSTUCK_ROUTING','Sending authorized named public server rescue')
+        result=self.rescue(row['guid']);row['serverRescue']=result;self.persist()
+        check(result.get('transportCompleted') is True,'Server command transport unconfirmed')
+        fresh=self.read(row['guid'],guard=False);own=fresh['world'].get('self',{})
+        observed=(str(own.get('guid'))==str(row['guid']) and own.get('present') is True
+            and own.get('positionKnown') is True and own.get('mapKnown') is True and number(own.get('mapId',0))==0
+            and baseline_revision is not None and number(own.get('positionRevision',0))>baseline_revision
+            and math.dist(tuple(own.get(k,math.inf) for k in ('x','y','z')),(-9465.,65.,56.))<=150)
+        self.mark(row,'COMPLETE' if observed else 'OUTCOME_UNCONFIRMED',
+            'Named rescue command sent; actual own position observed in Goldshire' if observed else
+            'Named rescue command sent; actual destination is not yet observed')
+
     def execute(self, row):
         try:
-            self.reset(row) if row['action'] == 'RESET' else self.unstuck(row)
+            if row['action']=='RESET': self.reset(row)
+            elif self.rescue is not None: self.server_rescue(row)
+            else: self.unstuck(row)
         except Exception as exc:
             # Once a mutation is reserved, no automated catch/retry can reissue it.
             phase = 'NEEDS_GM_HELP' if isinstance(exc, NoRoute) else 'OUTCOME_UNCONFIRMED' if row['writes'] else 'NEEDS_GM_HELP' if row['action'] == 'UNSTUCK' else 'FAILED'
@@ -691,6 +723,8 @@ class Supervisor:
                        for other in self.data['requests'].values()):
                     self.mark(row, 'FAILED', 'Prior reserved operation remains unconfirmed; no new lifecycle or movement'); continue
                 try:
+                    if row['action']=='UNSTUCK' and self.rescue is not None:
+                        self.worker=threading.Thread(target=self.execute,args=(row,),daemon=True);self.worker.start();break
                     s = self.read(row['guid'], guard=False)
                     if combat(s): self.mark(row, 'DEFERRED_COMBAT'); continue
                     if row['action'] == 'RESET': reset_admission(s, row['guid'])
@@ -748,7 +782,7 @@ def main(argv=None):
             return
         fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
         record = dict(identity=IDENTITY, instance=uuid.uuid4().hex, pid=os.getpid(), phase='running', startedAt=time.time())
-        supervisor = Supervisor(load_json(folder/'operations.json') or None, save=lambda value: save_json(folder/'operations.json', value), adapter=Adapter(args.nix_adapter))
+        supervisor = Supervisor(load_json(folder/'operations.json') or None, save=lambda value: save_json(folder/'operations.json', value), adapter=Adapter(args.nix_adapter),rescue=public_server_rescue)
         def halt(*_): supervisor.halt = True
         signal.signal(signal.SIGINT, halt); signal.signal(signal.SIGTERM, halt)
         deadline = time.monotonic()+args.max_hours*3600

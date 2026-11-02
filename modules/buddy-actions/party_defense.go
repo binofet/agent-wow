@@ -67,7 +67,17 @@ func partyDefenseEligible(w *worldv1.SnapshotResponse, c *worldv1.CreatureState,
 // separate from owner target assistance: only an actual hostile attack relation
 // can select a target, and independent profiles acquire no new group authority.
 func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	if s.independent || !s.state.Assisting || safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed || len(w.NearbyCreatures) > 32 {
+	if s.independent || safeSelfCombat(w, s.selfGUID) != "" || s.state.MotionUnconfirmed || len(w.NearbyCreatures) > 32 {
+		return false
+	}
+	potential := false
+	for _, c := range w.NearbyCreatures {
+		if c != nil && c.AttackVictimKnown && c.AttackVictimGuid != s.selfGUID {
+			potential = true
+			break
+		}
+	}
+	if !potential {
 		return false
 	}
 	online := s.healingPartyLocked(ctx)
@@ -85,6 +95,9 @@ func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotRes
 	}
 	if target == nil {
 		return false
+	}
+	if !s.refreshPositionLocked(w) {
+		return true
 	}
 	s.partyDefenseTarget, s.partyDefenseVictim = target.Guid, target.AttackVictimGuid
 	defer func() { s.partyDefenseTarget, s.partyDefenseVictim = 0, 0; s.state.AssistReason = s.state.Reason }()

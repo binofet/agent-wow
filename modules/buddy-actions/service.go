@@ -62,6 +62,9 @@ type Service struct {
 	posRevision                                              uint64
 	movementSequence                                         uint64
 	partyDefenseTarget, partyDefenseVictim                   uint64
+	selfDefenseTarget                                        uint64
+	selfDefenseRevision                                      uint64
+	selfDefenseMap                                           uint32
 	interactionToken                                         string
 	interactionUntil                                         time.Time
 	harvestGuardAt                                           time.Time
@@ -939,6 +942,11 @@ func (s *Service) Tick(ctx context.Context) {
 			s.followNav.Reset()
 		}
 	}()
+	s.expirePendingCastLocked(ctx)
+	if s.emergencyDefenseLocked(ctx) {
+		s.lastStep = s.now()
+		return
+	}
 	if s.state.InteractionHarvest && s.state.InteractionOwner != "" {
 		_, guids, reason := s.harvestContextLocked(ctx)
 		if !s.now().Before(s.interactionUntil) {
@@ -1010,20 +1018,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.stopAutoAttackLocked(ctx)
 		s.state.Reason = "assist_lease_expired"
 	}
-	if s.state.CastPending && !now.Before(s.castUntil) {
-		s.state.CastPending = false
-		s.state.Healing = false
-		s.state.Following = false
-		s.stopLocked(ctx)
-		s.state.Assisting = false
-		s.stopAutoAttackLocked(ctx)
-		if s.fargodeep.active {
-			s.stopFargodeepLocked(ctx, "cast_result_timeout_no_retry")
-		}
-		s.pendingSpell = 0
-		s.pendingTarget = 0
-		s.state.Reason = "cast_result_timeout_no_retry"
-	}
+
 	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending {
 		return
 	}

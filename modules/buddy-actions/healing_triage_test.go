@@ -257,8 +257,13 @@ func TestHealingTriageKeepsLeasePendingCooldownAndNoRetryGates(t *testing.T) {
 	}
 	advance(6 * time.Second)
 	s.Tick(context.Background())
-	if state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("timeout silently retried", state(t, s))
+	if !state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("timeout changed intent or skipped backoff", state(t, s))
+	}
+	advance(5 * time.Second)
+	s.Tick(context.Background())
+	if !state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 2 || state(t, s).ServerCastGo != 0 {
+		t.Fatal("fresh injured player did not permit healing after backoff", state(t, s))
 	}
 	s, f, _ = rig(t)
 	f.world.Self.Health, f.world.Owner, f.failSend = 20, nil, true
