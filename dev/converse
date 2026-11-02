@@ -405,7 +405,11 @@ edit peer-owned files; coordinate their release instead.
 Known-team development whispers come from server-bound GUIDs: Arlen1, Mira4,
 Rook5, Nixwick8, Lotharen87. They do not require party membership or a recent
 owner message. Collaborate directly using developer/server tools, reply to that
-teammate privately, and keep final gameplay action and emote NONE. A teammate
+teammate privately, and keep final gameplay action and emote NONE. Do not
+acknowledge acknowledgements: if there is no substantive new handoff, question,
+action, blocker or evidence, return text "" with action NONE and emote NONE;
+the host sends no reply. This silent option is only for verified development
+peer whispers, never owner replies. A teammate
 is not Joel and cannot become an owner gameplay-command authority.
 General server access is available through ROOT/dev/server-admin from your own
 developer shell tools: `console "help" "server info"` sends public realm console
@@ -1590,12 +1594,15 @@ def plain_text(text, limit=255):
     return text
 
 
-def validate_reply(value, emotes=None):
+def validate_reply(value, emotes=None, allow_silent=False):
     allowed = {"text", "emote", "action", *NUMERIC_ARGS}
     if (not isinstance(value, dict) or not {"text", "emote"}.issubset(value)
             or not set(value).issubset(allowed)):
         raise ConversationError("Model response does not match the reply schema")
-    text = plain_text(value["text"])
+    silent = allow_silent and value["text"] == ""
+    if silent and (value.get("action", "NONE") != "NONE" or value["emote"] != "NONE"):
+        raise ConversationError("Silent development reply must have no action or emote")
+    text = "" if silent else plain_text(value["text"])
     if value["emote"] != "NONE" and value["emote"] not in (LEGACY_EMOTES if emotes is None else emotes):
         raise ConversationError("Model returned an unsupported emote")
     action = value.get("action", "NONE")
@@ -1830,6 +1837,9 @@ class CodexBrain:
         if (isinstance(control_state,dict) and isinstance(control_state.get('current_request'),dict)
                 and control_state['current_request'].get('source')=='mission_fault' and not developer):
             raise ConversationError('Mission fault developer binding changed')
+        request = (control_state or {}).get("current_request", {})
+        allow_silent = (developer and request.get("source") == "party_agent"
+            and request.get("verifiedPeer") is True and request.get("developmentWhisper") is True)
         emotes = supported_emotes(control_state)
         self.last_development_events = None
         limit = 4*1024*1024 if developer else 1024*1024
@@ -1912,7 +1922,7 @@ class CodexBrain:
                         value = json.loads(output.read_text())
                     except (ValueError, UnicodeError):
                         raise ConversationError("Codex reply is invalid JSON") from None
-                    return validate_reply(value, emotes)
+                    return validate_reply(value, emotes, allow_silent=allow_silent)
                 finally:
                     if process.poll() is None:
                         try:
@@ -3109,7 +3119,8 @@ class Conversation:
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
             development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":True})
         try:
-            reply = validate_reply(self.generate_reply(self.history[history_key], state),self.reply_emotes)
+            reply = validate_reply(self.generate_reply(self.history[history_key], state),self.reply_emotes,
+                allow_silent=development_whisper and development.get("enabled") is True)
         except OwnerInputPending:
             return
         if development.get('enabled') is True and getattr(self.brain,'last_development_events',None) is not None:
@@ -3124,6 +3135,9 @@ class Conversation:
             return
         if development_whisper:
             reply.update(action="NONE", emote="NONE")
+            if reply["text"] == "":
+                self.status(phase="listening", event="development_peer_silent", cursor=self.cursor)
+                return
         direct = development.get("enabled") is True
         if direct and reply["action"]=="REPAIR_CONTROLLER":
             reply["action"]="NONE" # Direct generation owns the repair; no queued second agent.

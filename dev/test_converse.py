@@ -2789,3 +2789,25 @@ class DevelopmentWhisperTests(unittest.TestCase):
             [dict(channel='WHISPER',language='COMMON',text='I own the source check; holding restarts.',recipient='Lotharen')])
         self.assertFalse(any(method=='buddy-chat.emote' for method,_ in rpc.calls))
         self.assertEqual(loop.peer_remaining,0)
+
+
+class DevelopmentWhisperSilenceTests(unittest.TestCase):
+    def test_verified_peer_empty_reply_is_silent_but_owner_empty_reply_is_invalid(self):
+        rpc=FakeRPC([poll(sessionId='current-chat'),
+            poll([message(1,'Acknowledged; no new work.',sender=87,channel='WHISPER')],sessionId='current-chat'),
+            poll(latest=1,sessionId='current-chat'),
+            poll([message(2,'Are you there?',sender=3,channel='WHISPER')],sessionId='current-chat')])
+        rpc.url='http://127.0.0.1:8086/rpc';executed=[];statuses=[]
+        controls=types.SimpleNamespace(events=[],refresh=lambda:None,context=lambda:{},
+            actions_available=True,party_available=True,party_session='aw-own',
+            actions=dict(sessionId='aw-own',selfGuid='1'),execute=lambda action,**kw:executed.append(action))
+        brain=FakeBrain(dict(text='',action='NONE',emote='NONE'));brain.developer_workspace=converse.ROOT
+        loop=converse.Conversation(rpc,brain,controls=controls,status=lambda **kw:statuses.append(kw))
+        loop.tick();loop.tick()
+        self.assertEqual(loop.replies,0);self.assertEqual(loop.cursor,1);self.assertEqual(executed,[])
+        self.assertEqual(statuses[-1]['phase'],'listening');self.assertEqual(statuses[-1]['event'],'development_peer_silent')
+        self.assertFalse(any(method in ('buddy-chat.send','buddy-chat.emote') for method,_ in rpc.calls))
+        with self.assertRaises(converse.ConversationError):loop.tick()
+        self.assertEqual(loop.replies,0)
+        with self.assertRaises(converse.ConversationError):
+            converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
