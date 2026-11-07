@@ -408,6 +408,147 @@ func (x *CommandResult) GetValue() uint32 {
 	return 0
 }
 
+type RaidTarget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Client UI icon index 1..8, one higher than the wire slot.
+	Icon       uint32 `protobuf:"varint,1,opt,name=icon,proto3" json:"icon,omitempty"`
+	TargetGuid uint64 `protobuf:"varint,2,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	// Present only when the server delta identifies the setter.
+	SetterGuid    uint64 `protobuf:"varint,3,opt,name=setter_guid,json=setterGuid,proto3" json:"setter_guid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RaidTarget) Reset() {
+	*x = RaidTarget{}
+	mi := &file_modules_buddy_party_party_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RaidTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RaidTarget) ProtoMessage() {}
+
+func (x *RaidTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_party_party_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RaidTarget.ProtoReflect.Descriptor instead.
+func (*RaidTarget) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RaidTarget) GetIcon() uint32 {
+	if x != nil {
+		return x.Icon
+	}
+	return 0
+}
+
+func (x *RaidTarget) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *RaidTarget) GetSetterGuid() uint64 {
+	if x != nil {
+		return x.SetterGuid
+	}
+	return 0
+}
+
+type RaidTargetState struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	GroupGuid uint64                 `protobuf:"varint,1,opt,name=group_guid,json=groupGuid,proto3" json:"group_guid,omitempty"`
+	// Party state revision at which the last marker packet was observed.
+	Revision uint64 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	// True after a full server list; otherwise absent icons are unknown.
+	Complete bool          `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`
+	Marks    []*RaidTarget `protobuf:"bytes,4,rep,name=marks,proto3" json:"marks,omitempty"`
+	// Revision of the last full list, unchanged by subsequent deltas.
+	ListRevision  uint64 `protobuf:"varint,5,opt,name=list_revision,json=listRevision,proto3" json:"list_revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RaidTargetState) Reset() {
+	*x = RaidTargetState{}
+	mi := &file_modules_buddy_party_party_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RaidTargetState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RaidTargetState) ProtoMessage() {}
+
+func (x *RaidTargetState) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_party_party_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RaidTargetState.ProtoReflect.Descriptor instead.
+func (*RaidTargetState) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *RaidTargetState) GetGroupGuid() uint64 {
+	if x != nil {
+		return x.GroupGuid
+	}
+	return 0
+}
+
+func (x *RaidTargetState) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *RaidTargetState) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *RaidTargetState) GetMarks() []*RaidTarget {
+	if x != nil {
+		return x.Marks
+	}
+	return nil
+}
+
+func (x *RaidTargetState) GetListRevision() uint64 {
+	if x != nil {
+		return x.ListRevision
+	}
+	return 0
+}
+
 type StateResponse struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -421,13 +562,15 @@ type StateResponse struct {
 	ActionInFlight    bool           `protobuf:"varint,7,opt,name=action_in_flight,json=actionInFlight,proto3" json:"action_in_flight,omitempty"`
 	MalformedPackets  uint64         `protobuf:"varint,8,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
 	IgnoredPackets    uint64         `protobuf:"varint,9,opt,name=ignored_packets,json=ignoredPackets,proto3" json:"ignored_packets,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Absent before any marker packet for the current group roster.
+	RaidTargets   *RaidTargetState `protobuf:"bytes,10,opt,name=raid_targets,json=raidTargets,proto3" json:"raid_targets,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StateResponse) Reset() {
 	*x = StateResponse{}
-	mi := &file_modules_buddy_party_party_proto_msgTypes[4]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -439,7 +582,7 @@ func (x *StateResponse) String() string {
 func (*StateResponse) ProtoMessage() {}
 
 func (x *StateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_party_party_proto_msgTypes[4]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -452,7 +595,7 @@ func (x *StateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateResponse.ProtoReflect.Descriptor instead.
 func (*StateResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StateResponse) GetSessionId() string {
@@ -518,6 +661,13 @@ func (x *StateResponse) GetIgnoredPackets() uint64 {
 	return 0
 }
 
+func (x *StateResponse) GetRaidTargets() *RaidTargetState {
+	if x != nil {
+		return x.RaidTargets
+	}
+	return nil
+}
+
 type InviteDecisionRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -529,7 +679,7 @@ type InviteDecisionRequest struct {
 
 func (x *InviteDecisionRequest) Reset() {
 	*x = InviteDecisionRequest{}
-	mi := &file_modules_buddy_party_party_proto_msgTypes[5]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -541,7 +691,7 @@ func (x *InviteDecisionRequest) String() string {
 func (*InviteDecisionRequest) ProtoMessage() {}
 
 func (x *InviteDecisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_party_party_proto_msgTypes[5]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -554,7 +704,7 @@ func (x *InviteDecisionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteDecisionRequest.ProtoReflect.Descriptor instead.
 func (*InviteDecisionRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InviteDecisionRequest) GetSessionId() string {
@@ -588,7 +738,7 @@ type InviteRequest struct {
 
 func (x *InviteRequest) Reset() {
 	*x = InviteRequest{}
-	mi := &file_modules_buddy_party_party_proto_msgTypes[6]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -600,7 +750,7 @@ func (x *InviteRequest) String() string {
 func (*InviteRequest) ProtoMessage() {}
 
 func (x *InviteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_party_party_proto_msgTypes[6]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -613,7 +763,7 @@ func (x *InviteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteRequest.ProtoReflect.Descriptor instead.
 func (*InviteRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *InviteRequest) GetName() string {
@@ -633,7 +783,7 @@ type LeaveRequest struct {
 
 func (x *LeaveRequest) Reset() {
 	*x = LeaveRequest{}
-	mi := &file_modules_buddy_party_party_proto_msgTypes[7]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -645,7 +795,7 @@ func (x *LeaveRequest) String() string {
 func (*LeaveRequest) ProtoMessage() {}
 
 func (x *LeaveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_party_party_proto_msgTypes[7]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -658,7 +808,7 @@ func (x *LeaveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaveRequest.ProtoReflect.Descriptor instead.
 func (*LeaveRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *LeaveRequest) GetSessionId() string {
@@ -675,6 +825,58 @@ func (x *LeaveRequest) GetExpectedGroupGuid() uint64 {
 	return 0
 }
 
+type RaidTargetListRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ExpectedGroupGuid uint64                 `protobuf:"varint,2,opt,name=expected_group_guid,json=expectedGroupGuid,proto3" json:"expected_group_guid,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RaidTargetListRequest) Reset() {
+	*x = RaidTargetListRequest{}
+	mi := &file_modules_buddy_party_party_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RaidTargetListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RaidTargetListRequest) ProtoMessage() {}
+
+func (x *RaidTargetListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_party_party_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RaidTargetListRequest.ProtoReflect.Descriptor instead.
+func (*RaidTargetListRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RaidTargetListRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RaidTargetListRequest) GetExpectedGroupGuid() uint64 {
+	if x != nil {
+		return x.ExpectedGroupGuid
+	}
+	return 0
+}
+
 type ActionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Confirms a transport write only. Observe future server packets via state.
@@ -685,7 +887,7 @@ type ActionResponse struct {
 
 func (x *ActionResponse) Reset() {
 	*x = ActionResponse{}
-	mi := &file_modules_buddy_party_party_proto_msgTypes[8]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -697,7 +899,7 @@ func (x *ActionResponse) String() string {
 func (*ActionResponse) ProtoMessage() {}
 
 func (x *ActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_party_party_proto_msgTypes[8]
+	mi := &file_modules_buddy_party_party_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -710,7 +912,7 @@ func (x *ActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionResponse.ProtoReflect.Descriptor instead.
 func (*ActionResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_party_party_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ActionResponse) GetTransportWritten() bool {
@@ -756,7 +958,21 @@ const file_modules_buddy_party_party_proto_rawDesc = "" +
 	"\vmember_name\x18\x02 \x01(\tR\n" +
 	"memberName\x12\x16\n" +
 	"\x06result\x18\x03 \x01(\rR\x06result\x12\x14\n" +
-	"\x05value\x18\x04 \x01(\rR\x05value\"\xd2\x03\n" +
+	"\x05value\x18\x04 \x01(\rR\x05value\"b\n" +
+	"\n" +
+	"RaidTarget\x12\x12\n" +
+	"\x04icon\x18\x01 \x01(\rR\x04icon\x12\x1f\n" +
+	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
+	"targetGuid\x12\x1f\n" +
+	"\vsetter_guid\x18\x03 \x01(\x04R\n" +
+	"setterGuid\"\xc7\x01\n" +
+	"\x0fRaidTargetState\x12\x1d\n" +
+	"\n" +
+	"group_guid\x18\x01 \x01(\x04R\tgroupGuid\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\x12\x1a\n" +
+	"\bcomplete\x18\x03 \x01(\bR\bcomplete\x128\n" +
+	"\x05marks\x18\x04 \x03(\v2\".warcraftbuddy.party.v1.RaidTargetR\x05marks\x12#\n" +
+	"\rlist_revision\x18\x05 \x01(\x04R\flistRevision\"\x9e\x04\n" +
 	"\rStateResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -767,7 +983,9 @@ const file_modules_buddy_party_party_proto_rawDesc = "" +
 	"\x12last_declined_name\x18\x06 \x01(\tR\x10lastDeclinedName\x12(\n" +
 	"\x10action_in_flight\x18\a \x01(\bR\x0eactionInFlight\x12+\n" +
 	"\x11malformed_packets\x18\b \x01(\x04R\x10malformedPackets\x12'\n" +
-	"\x0fignored_packets\x18\t \x01(\x04R\x0eignoredPackets\"\x82\x01\n" +
+	"\x0fignored_packets\x18\t \x01(\x04R\x0eignoredPackets\x12J\n" +
+	"\fraid_targets\x18\n" +
+	" \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\"\x82\x01\n" +
 	"\x15InviteDecisionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12'\n" +
@@ -778,20 +996,25 @@ const file_modules_buddy_party_party_proto_rawDesc = "" +
 	"\fLeaveRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12.\n" +
+	"\x13expected_group_guid\x18\x02 \x01(\x04R\x11expectedGroupGuid\"f\n" +
+	"\x15RaidTargetListRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12.\n" +
 	"\x13expected_group_guid\x18\x02 \x01(\x04R\x11expectedGroupGuid\"=\n" +
 	"\x0eActionResponse\x12+\n" +
 	"\x11transport_written\x18\x01 \x01(\bR\x10transportWritten*N\n" +
 	"\x12InvitationDecision\x12\v\n" +
 	"\aPENDING\x10\x00\x12\x14\n" +
 	"\x10ACCEPT_REQUESTED\x10\x01\x12\x15\n" +
-	"\x11DECLINE_REQUESTED\x10\x022\x8c\x04\n" +
+	"\x11DECLINE_REQUESTED\x10\x022\xf9\x04\n" +
 	"\n" +
 	"BuddyParty\x12F\n" +
 	"\x05State\x12\x16.google.protobuf.Empty\x1a%.warcraftbuddy.party.v1.StateResponse\x12_\n" +
 	"\x06Accept\x12-.warcraftbuddy.party.v1.InviteDecisionRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12`\n" +
 	"\aDecline\x12-.warcraftbuddy.party.v1.InviteDecisionRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12W\n" +
 	"\x06Invite\x12%.warcraftbuddy.party.v1.InviteRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12U\n" +
-	"\x05Leave\x12$.warcraftbuddy.party.v1.LeaveRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12C\n" +
+	"\x05Leave\x12$.warcraftbuddy.party.v1.LeaveRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12k\n" +
+	"\x12RefreshRaidTargets\x12-.warcraftbuddy.party.v1.RaidTargetListRequest\x1a&.warcraftbuddy.party.v1.ActionResponse\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1b\x06proto3"
 
 var (
@@ -807,44 +1030,51 @@ func file_modules_buddy_party_party_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_party_party_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_party_party_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_modules_buddy_party_party_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_modules_buddy_party_party_proto_goTypes = []any{
 	(InvitationDecision)(0),       // 0: warcraftbuddy.party.v1.InvitationDecision
 	(*PendingInvite)(nil),         // 1: warcraftbuddy.party.v1.PendingInvite
 	(*Member)(nil),                // 2: warcraftbuddy.party.v1.Member
 	(*Group)(nil),                 // 3: warcraftbuddy.party.v1.Group
 	(*CommandResult)(nil),         // 4: warcraftbuddy.party.v1.CommandResult
-	(*StateResponse)(nil),         // 5: warcraftbuddy.party.v1.StateResponse
-	(*InviteDecisionRequest)(nil), // 6: warcraftbuddy.party.v1.InviteDecisionRequest
-	(*InviteRequest)(nil),         // 7: warcraftbuddy.party.v1.InviteRequest
-	(*LeaveRequest)(nil),          // 8: warcraftbuddy.party.v1.LeaveRequest
-	(*ActionResponse)(nil),        // 9: warcraftbuddy.party.v1.ActionResponse
-	(*emptypb.Empty)(nil),         // 10: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),        // 11: agentwow.module.v1.WorldPacket
+	(*RaidTarget)(nil),            // 5: warcraftbuddy.party.v1.RaidTarget
+	(*RaidTargetState)(nil),       // 6: warcraftbuddy.party.v1.RaidTargetState
+	(*StateResponse)(nil),         // 7: warcraftbuddy.party.v1.StateResponse
+	(*InviteDecisionRequest)(nil), // 8: warcraftbuddy.party.v1.InviteDecisionRequest
+	(*InviteRequest)(nil),         // 9: warcraftbuddy.party.v1.InviteRequest
+	(*LeaveRequest)(nil),          // 10: warcraftbuddy.party.v1.LeaveRequest
+	(*RaidTargetListRequest)(nil), // 11: warcraftbuddy.party.v1.RaidTargetListRequest
+	(*ActionResponse)(nil),        // 12: warcraftbuddy.party.v1.ActionResponse
+	(*emptypb.Empty)(nil),         // 13: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),        // 14: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_party_party_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.party.v1.PendingInvite.decision:type_name -> warcraftbuddy.party.v1.InvitationDecision
 	2,  // 1: warcraftbuddy.party.v1.Group.members:type_name -> warcraftbuddy.party.v1.Member
-	1,  // 2: warcraftbuddy.party.v1.StateResponse.pending_invite:type_name -> warcraftbuddy.party.v1.PendingInvite
-	3,  // 3: warcraftbuddy.party.v1.StateResponse.group:type_name -> warcraftbuddy.party.v1.Group
-	4,  // 4: warcraftbuddy.party.v1.StateResponse.last_command_result:type_name -> warcraftbuddy.party.v1.CommandResult
-	10, // 5: warcraftbuddy.party.v1.BuddyParty.State:input_type -> google.protobuf.Empty
-	6,  // 6: warcraftbuddy.party.v1.BuddyParty.Accept:input_type -> warcraftbuddy.party.v1.InviteDecisionRequest
-	6,  // 7: warcraftbuddy.party.v1.BuddyParty.Decline:input_type -> warcraftbuddy.party.v1.InviteDecisionRequest
-	7,  // 8: warcraftbuddy.party.v1.BuddyParty.Invite:input_type -> warcraftbuddy.party.v1.InviteRequest
-	8,  // 9: warcraftbuddy.party.v1.BuddyParty.Leave:input_type -> warcraftbuddy.party.v1.LeaveRequest
-	11, // 10: warcraftbuddy.party.v1.BuddyParty.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5,  // 11: warcraftbuddy.party.v1.BuddyParty.State:output_type -> warcraftbuddy.party.v1.StateResponse
-	9,  // 12: warcraftbuddy.party.v1.BuddyParty.Accept:output_type -> warcraftbuddy.party.v1.ActionResponse
-	9,  // 13: warcraftbuddy.party.v1.BuddyParty.Decline:output_type -> warcraftbuddy.party.v1.ActionResponse
-	9,  // 14: warcraftbuddy.party.v1.BuddyParty.Invite:output_type -> warcraftbuddy.party.v1.ActionResponse
-	9,  // 15: warcraftbuddy.party.v1.BuddyParty.Leave:output_type -> warcraftbuddy.party.v1.ActionResponse
-	10, // 16: warcraftbuddy.party.v1.BuddyParty.OnPacket:output_type -> google.protobuf.Empty
-	11, // [11:17] is the sub-list for method output_type
-	5,  // [5:11] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	5,  // 2: warcraftbuddy.party.v1.RaidTargetState.marks:type_name -> warcraftbuddy.party.v1.RaidTarget
+	1,  // 3: warcraftbuddy.party.v1.StateResponse.pending_invite:type_name -> warcraftbuddy.party.v1.PendingInvite
+	3,  // 4: warcraftbuddy.party.v1.StateResponse.group:type_name -> warcraftbuddy.party.v1.Group
+	4,  // 5: warcraftbuddy.party.v1.StateResponse.last_command_result:type_name -> warcraftbuddy.party.v1.CommandResult
+	6,  // 6: warcraftbuddy.party.v1.StateResponse.raid_targets:type_name -> warcraftbuddy.party.v1.RaidTargetState
+	13, // 7: warcraftbuddy.party.v1.BuddyParty.State:input_type -> google.protobuf.Empty
+	8,  // 8: warcraftbuddy.party.v1.BuddyParty.Accept:input_type -> warcraftbuddy.party.v1.InviteDecisionRequest
+	8,  // 9: warcraftbuddy.party.v1.BuddyParty.Decline:input_type -> warcraftbuddy.party.v1.InviteDecisionRequest
+	9,  // 10: warcraftbuddy.party.v1.BuddyParty.Invite:input_type -> warcraftbuddy.party.v1.InviteRequest
+	10, // 11: warcraftbuddy.party.v1.BuddyParty.Leave:input_type -> warcraftbuddy.party.v1.LeaveRequest
+	11, // 12: warcraftbuddy.party.v1.BuddyParty.RefreshRaidTargets:input_type -> warcraftbuddy.party.v1.RaidTargetListRequest
+	14, // 13: warcraftbuddy.party.v1.BuddyParty.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	7,  // 14: warcraftbuddy.party.v1.BuddyParty.State:output_type -> warcraftbuddy.party.v1.StateResponse
+	12, // 15: warcraftbuddy.party.v1.BuddyParty.Accept:output_type -> warcraftbuddy.party.v1.ActionResponse
+	12, // 16: warcraftbuddy.party.v1.BuddyParty.Decline:output_type -> warcraftbuddy.party.v1.ActionResponse
+	12, // 17: warcraftbuddy.party.v1.BuddyParty.Invite:output_type -> warcraftbuddy.party.v1.ActionResponse
+	12, // 18: warcraftbuddy.party.v1.BuddyParty.Leave:output_type -> warcraftbuddy.party.v1.ActionResponse
+	12, // 19: warcraftbuddy.party.v1.BuddyParty.RefreshRaidTargets:output_type -> warcraftbuddy.party.v1.ActionResponse
+	13, // 20: warcraftbuddy.party.v1.BuddyParty.OnPacket:output_type -> google.protobuf.Empty
+	14, // [14:21] is the sub-list for method output_type
+	7,  // [7:14] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_party_party_proto_init() }
@@ -858,7 +1088,7 @@ func file_modules_buddy_party_party_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_party_party_proto_rawDesc), len(file_modules_buddy_party_party_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

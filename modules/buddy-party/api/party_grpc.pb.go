@@ -21,12 +21,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyParty_State_FullMethodName    = "/warcraftbuddy.party.v1.BuddyParty/State"
-	BuddyParty_Accept_FullMethodName   = "/warcraftbuddy.party.v1.BuddyParty/Accept"
-	BuddyParty_Decline_FullMethodName  = "/warcraftbuddy.party.v1.BuddyParty/Decline"
-	BuddyParty_Invite_FullMethodName   = "/warcraftbuddy.party.v1.BuddyParty/Invite"
-	BuddyParty_Leave_FullMethodName    = "/warcraftbuddy.party.v1.BuddyParty/Leave"
-	BuddyParty_OnPacket_FullMethodName = "/warcraftbuddy.party.v1.BuddyParty/OnPacket"
+	BuddyParty_State_FullMethodName              = "/warcraftbuddy.party.v1.BuddyParty/State"
+	BuddyParty_Accept_FullMethodName             = "/warcraftbuddy.party.v1.BuddyParty/Accept"
+	BuddyParty_Decline_FullMethodName            = "/warcraftbuddy.party.v1.BuddyParty/Decline"
+	BuddyParty_Invite_FullMethodName             = "/warcraftbuddy.party.v1.BuddyParty/Invite"
+	BuddyParty_Leave_FullMethodName              = "/warcraftbuddy.party.v1.BuddyParty/Leave"
+	BuddyParty_RefreshRaidTargets_FullMethodName = "/warcraftbuddy.party.v1.BuddyParty/RefreshRaidTargets"
+	BuddyParty_OnPacket_FullMethodName           = "/warcraftbuddy.party.v1.BuddyParty/OnPacket"
 )
 
 // BuddyPartyClient is the client API for BuddyParty service.
@@ -38,6 +39,8 @@ type BuddyPartyClient interface {
 	Decline(ctx context.Context, in *InviteDecisionRequest, opts ...grpc.CallOption) (*ActionResponse, error)
 	Invite(ctx context.Context, in *InviteRequest, opts ...grpc.CallOption) (*ActionResponse, error)
 	Leave(ctx context.Context, in *LeaveRequest, opts ...grpc.CallOption) (*ActionResponse, error)
+	// Requests the server's current icon list; does not assign or clear icons.
+	RefreshRaidTargets(ctx context.Context, in *RaidTargetListRequest, opts ...grpc.CallOption) (*ActionResponse, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -99,6 +102,16 @@ func (c *buddyPartyClient) Leave(ctx context.Context, in *LeaveRequest, opts ...
 	return out, nil
 }
 
+func (c *buddyPartyClient) RefreshRaidTargets(ctx context.Context, in *RaidTargetListRequest, opts ...grpc.CallOption) (*ActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActionResponse)
+	err := c.cc.Invoke(ctx, BuddyParty_RefreshRaidTargets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyPartyClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -118,6 +131,8 @@ type BuddyPartyServer interface {
 	Decline(context.Context, *InviteDecisionRequest) (*ActionResponse, error)
 	Invite(context.Context, *InviteRequest) (*ActionResponse, error)
 	Leave(context.Context, *LeaveRequest) (*ActionResponse, error)
+	// Requests the server's current icon list; does not assign or clear icons.
+	RefreshRaidTargets(context.Context, *RaidTargetListRequest) (*ActionResponse, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyPartyServer()
 }
@@ -143,6 +158,9 @@ func (UnimplementedBuddyPartyServer) Invite(context.Context, *InviteRequest) (*A
 }
 func (UnimplementedBuddyPartyServer) Leave(context.Context, *LeaveRequest) (*ActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Leave not implemented")
+}
+func (UnimplementedBuddyPartyServer) RefreshRaidTargets(context.Context, *RaidTargetListRequest) (*ActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshRaidTargets not implemented")
 }
 func (UnimplementedBuddyPartyServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -258,6 +276,24 @@ func _BuddyParty_Leave_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyParty_RefreshRaidTargets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RaidTargetListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyPartyServer).RefreshRaidTargets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyParty_RefreshRaidTargets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyPartyServer).RefreshRaidTargets(ctx, req.(*RaidTargetListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyParty_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -302,6 +338,10 @@ var BuddyParty_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Leave",
 			Handler:    _BuddyParty_Leave_Handler,
+		},
+		{
+			MethodName: "RefreshRaidTargets",
+			Handler:    _BuddyParty_RefreshRaidTargets_Handler,
 		},
 		{
 			MethodName: "OnPacket",

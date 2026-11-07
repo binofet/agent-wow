@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Bounded Westfall cohort rehearsal using the existing public client controls."""
+import argparse
+import json
+import math
+import time
+import urllib.request
+
+
+# The live pilot observed these outdoor Westfall creature templates.
+WESTFALL_PREY = {199, 480, 834}
+ROSTER = ((87, 'Lotharen', 8090), (1, 'Arlen', 8086), (4, 'Mira', 8087),
+          (5, 'Rook', 8088), (8, 'Nixwick', 8402))
+TANK = ROSTER[0][2]
+
+
+class TrialError(Exception):
+    pass
+
+
+class StagingCombat(TrialError):
+    pass
+
+
+def rpc(port, method, params=None, timeout=6):
+    request = urllib.request.Request(f'http://127.0.0.1:{port}/rpc',
+        data=json.dumps(dict(jsonrpc='2.0', id=1, method=method, params=params or {})).encode(),
+        headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        message = json.load(response)
+    if 'error' in message:
+        raise TrialError(message['error']['message'])
+    return message['result']
+
+
+def report(phase, **facts):
+    print(json.dumps(dict(at=time.time(), phase=phase, **facts)), flush=True)
+
+
+def wait(check, deadline):
+    while time.monotonic() < deadline:
+        result = check()
+        if result:
+            return result
+        time.sleep(.25)
+    raise TrialError('expected observation did not arrive')
+
+
+def frame(port, target=None):
+    actions = rpc(port, 'buddy-actions.status')
+    world = rpc(port, 'buddy-world.snapshot', {'creatureGuid': target} if target else None)
+    player = world['self']
+    if world.get('owner', {}).get('present'):
+        raise TrialError('Joel became visible; yield the rehearsal')
+    if actions.get('selfGuid') != player.get('guid') or not player.get('present') or not player.get('alive'):
+        raise TrialError('living owned character unavailable')
+    return actions, world
+
+
+def party(port):
+    return rpc(port, 'buddy-party.state')
+
+
+def group(port):
+    return party(port).get('group', {})
+
+
+def form_party(roster):
+    expected = {str(guid) for guid, _, _ in roster}
+    for guid, name, port in roster:
+        actions, world = frame(port)
+        if actions.get('selfGuid') != str(guid) or actions.get('following'):
+            raise TrialError(f'{name} is not an idle, identified trial character')
+        if actions.get('interactionOwner') or int(world['self'].get('unitFlags', 0)) & 0x80000:
+            raise TrialError(f'{name} has active gameplay custody')
+    if len(roster) == 1:
+        if group(TANK).get('inGroup'):
+            raise TrialError('solo trial requires Lotharen to be ungrouped')
+        return
+    for guid, name, port in roster[1:]:
+        current = party(port)
+        old = current.get('group', {})
+        ours = group(TANK).get('groupGuid')
+        if ours and old.get('groupGuid') == ours:
+            continue
+        if old.get('inGroup'):
+            if any(m.get('online') and m['guid'] not in expected for m in old.get('members', [])):
+                raise TrialError(f'{name} is in a party with another online player')
+            rpc(port, 'buddy-party.leave', dict(sessionId=current['sessionId'], expectedGroupGuid=old['groupGuid']))
+            wait(lambda: not group(port).get('inGroup'), time.monotonic()+6)
+            report('left_previous_party', name=name, previousGroup=old['groupGuid'])
+        rpc(TANK, 'buddy-party.invite', {'name': name})
+        def offered():
+            current = party(port)
+            invite = current.get('pendingInvite', {})
+            return current if invite.get('inviterName', '').casefold() == 'lotharen' else None
+        current = wait(offered, time.monotonic()+6)
+        invite = current['pendingInvite']
+        rpc(port, 'buddy-party.accept', dict(sessionId=current['sessionId'], inviteSequence=invite['sequence'],
+                                           inviterName=invite['inviterName']))
+        wait(lambda: group(TANK).get('groupGuid') and group(port).get('groupGuid') == group(TANK).get('groupGuid'),
+             time.monotonic()+6)
+    actual = group(TANK)
+    if {m['guid'] for m in actual.get('members', []) if m.get('online')} != expected or actual.get('leaderGuid') != '87':
+        raise TrialError('actual online party or leader does not match the trial')
+    report('party_confirmed', group=actual['groupGuid'], members=sorted(expected))
+
+
+def point(row):
+    return tuple(row.get(k, 0) for k in 'xyz')
+
+
+def endpoint(creature, settled=False):
+    path = creature.get('trajectory', {})
+    if not path.get('known') or path.get('stopped'):
+        return point(creature)
+    if not path.get('destinationKnown') or path.get('cyclic') or path.get('transportRelative'):
+        return None
+    if settled and int(path.get('ageMs', 0)) < int(path.get('durationMs', 0)):
+        return None
+    return tuple(path['destination'+k.upper()] for k in 'xyz')
+
+
+def candidates(world, settled=False):
+    level = world['self']['level']
+    for c in world.get('nearbyCreatures', []):
+        if (c.get('entry') in WESTFALL_PREY and c.get('alive') and c.get('positionKnown')
+                and level - (5 + level//10) < c.get('level', 0) <= level):
+            destination = endpoint(c, settled)
+            if destination is not None:
+                yield c, destination
+
+
+def recovered(roster):
+    current = {p:frame(p) for _,_,p in roster}
+    for a,w in current.values():
+        s=w['self']
+        if (int(s.get('unitFlags',0)) & 0x80000 or s['health'] < s['maxHealth']*.80
+                or a.get('interactionOwner') or any(a.get(k) for k in ('castPending',
+                    'moving','traveling','motionUnconfirmed','autoAttacking','autoAttackUnconfirmed'))):
+            return None
+        if s.get('powerType',0)==0 and s.get('maxPower') and s.get('power',0) < s['maxPower']*.20:
+            return None
+    return current
+
+
+def walk(port, goal, radius):
+    a, w = frame(port)
+    if int(w['self'].get('unitFlags', 0)) & 0x80000:
+        raise StagingCombat('combat interrupted staging')
+    p = a['position']; distance = math.dist(point(p), goal)
+    if distance <= radius+2:
+        return
+    # A point interpolated from an NPC's terrain height may land outside the
+    # mesh. Try neighboring standoffs through the read-only verifier before
+    # requesting any movement; don't repeat a rejected movement write.
+    for standoff in (radius, radius+3, radius-3, radius+6):
+        fraction=max(0,(distance-standoff)/distance)
+        if fraction == 0:
+            return
+        dest=dict(zip('xyz',(x+(y-x)*fraction for x,y in zip(point(p),goal))))
+        try:
+            leg=rpc(port,'buddy-actions.plan_route_leg',dict(sessionId=a['sessionId'],selfGuid=a['selfGuid'],
+                expectedPositionRevision=p['revision'],mapId=p.get('mapId',0),**dest))
+            break
+        except TrialError as error:
+            if 'destination: sample is outside ground polygon' not in str(error):raise
+    else:
+        raise TrialError('no verified ground route to any staging standoff')
+    e = leg['endpoint']
+    token = rpc(port, 'buddy-actions.acquire_interaction', {'owner':'exploration', 'leaseMs':30000})['token']
+    try:
+        a = rpc(port, 'buddy-actions.travel_to', {'token':token,'mapId':p.get('mapId',0), **{k:e[k] for k in 'xyz'}}, 35)
+        report('staged', port=port, reason=a.get('reason'), yards=leg.get('pathLength'))
+        if a.get('reason') != 'exploration_within_distance' and math.dist(point(a['position']), point(e)) > 3:
+            _,world=frame(port)
+            if int(world['self'].get('unitFlags',0)) & 0x80000:
+                raise StagingCombat('combat interrupted staging')
+            raise TrialError('normal staging movement did not complete')
+    finally:
+        if rpc(port, 'buddy-actions.status').get('interactionOwner') == 'exploration':
+            rpc(port, 'buddy-actions.release_interaction', {'owner':'exploration','token':token})
+
+
+def pull(roster, deadline):
+    report('waiting_for_recovery')
+    current=wait(lambda:recovered(roster), min(deadline,time.monotonic()+45))
+    a, w = current[TANK]
+    if all(w['self']['level'] >= 20 for _,w in current.values()):
+        report('target_level_observed'); return False
+    p = point(a['position'])
+    nearby = [(math.dist(p, dest), c, dest) for c,dest in candidates(w)]
+    if not nearby:
+        raise TrialError('no level-appropriate observed Westfall prey; move to the next route')
+    distance, _, destination = min(nearby, key=lambda v:v[0])
+    if distance > 110:
+        raise TrialError('no prey within the local rehearsal area')
+    for _,_,port in roster[1:]:
+        walk(port, destination, 24)
+    walk(TANK, destination, 15)
+    starting_frames = {p:frame(p) for _,_,p in roster}
+    starts = {p:row[0] for p,row in starting_frames.items()}
+    if any(w['self']['health'] < w['self']['maxHealth']*.80 for _,w in starting_frames.values()):
+        raise TrialError('party needs recovery before the next pull')
+    guid = None
+    try:
+        def select():
+            a,w = frame(TANK)
+            support = [point(rpc(p,'buddy-actions.status')['position']) for _,_,p in roster[1:]]
+            for c,cp in sorted(candidates(w,True),key=lambda v:math.dist(v[1],point(a['position']))):
+                if math.dist(cp,point(a['position'])) > 33 or any(
+                    math.dist(cp,sp) > 38 for sp in support):
+                    continue
+                try:
+                    rpc(TANK,'buddy-actions.engage_npc',{'enabled':True,'targetGuid':c['guid']})
+                    return c['guid']
+                except TrialError as e:
+                    if 'living observed NPC unavailable' not in str(e): raise
+        guid=wait(select,min(deadline,time.monotonic()+18))
+        report('pull_started', target=guid)
+        def result():
+            _,w=frame(TANK,guid);target=w.get('requestedCreature',{})
+            if target.get('present') and target.get('aliveKnown') and not target.get('alive'):
+                return 'kill_confirmed'
+            players = [frame(p)[1]['self'] for _,_,p in roster]
+            if any(s['health'] < s['maxHealth']*.20 for s in players):
+                raise TrialError('party health fell below the rehearsal minimum')
+        outcome=wait(result,min(deadline,time.monotonic()+75))
+        results=[]
+        for _,name,port in roster:
+            a,w=frame(port);me=w['self'];b=starts[port]
+            delta=lambda k:int(a.get(k,0))-int(b.get(k,0))
+            results.append(dict(name=name,level=me['level'],health=me['health'],
+                melee=delta('meleeDamageTotal'),damage=delta('assistDamageTotal'),healGo=delta('serverCastGo')))
+        report(outcome,target=guid,characters=results);return True
+    finally:
+        if guid and rpc(TANK,'buddy-actions.status')['sessionId']==starts[TANK]['sessionId']:
+            rpc(TANK,'buddy-actions.engage_npc',{'enabled':False})
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('cohort', type=int, choices=(1,2,3,5))
+    parser.add_argument('--pulls', type=int, choices=range(1,21), default=1)
+    args=parser.parse_args();roster=ROSTER[:args.cohort];deadline=time.monotonic()+300
+    form_party(roster)
+    for guid,_,port in roster:
+        rpc(port,'buddy-actions.recovery',{'enabled':True})
+        if port != TANK: rpc(port,'buddy-actions.assist',{'enabled':True})
+        if guid == 1: rpc(port,'buddy-actions.healing',{'enabled':True})
+    count=0
+    while count<args.pulls and time.monotonic()<deadline:
+        try:
+            if not pull(roster, deadline):break
+            count+=1
+        except StagingCombat:
+            # The live defense loop owns combat now. Resume navigation only
+            # after fresh recovery and from the newly observed positions.
+            report('staging_interrupted_by_combat')
+            wait(lambda:recovered(roster),min(deadline,time.monotonic()+45))
+    report('trial_finished', confirmedPulls=count)
+
+
+if __name__ == '__main__':
+    try:main()
+    except (TrialError, OSError, KeyError, ValueError) as error:
+        report('blocked', reason=str(error))
+        raise SystemExit(2)

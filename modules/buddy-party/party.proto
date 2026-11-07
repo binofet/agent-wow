@@ -55,6 +55,25 @@ message CommandResult {
   uint32 value = 4;
 }
 
+message RaidTarget {
+  // Client UI icon index 1..8, one higher than the wire slot.
+  uint32 icon = 1;
+  uint64 target_guid = 2;
+  // Present only when the server delta identifies the setter.
+  uint64 setter_guid = 3;
+}
+
+message RaidTargetState {
+  uint64 group_guid = 1;
+  // Party state revision at which the last marker packet was observed.
+  uint64 revision = 2;
+  // True after a full server list; otherwise absent icons are unknown.
+  bool complete = 3;
+  repeated RaidTarget marks = 4;
+  // Revision of the last full list, unchanged by subsequent deltas.
+  uint64 list_revision = 5;
+}
+
 message StateResponse {
   string session_id = 1;
   uint64 revision = 2;
@@ -67,6 +86,8 @@ message StateResponse {
   bool action_in_flight = 7;
   uint64 malformed_packets = 8;
   uint64 ignored_packets = 9;
+  // Absent before any marker packet for the current group roster.
+  RaidTargetState raid_targets = 10;
 }
 
 message InviteDecisionRequest {
@@ -85,6 +106,11 @@ message LeaveRequest {
   uint64 expected_group_guid = 2;
 }
 
+message RaidTargetListRequest {
+  string session_id = 1;
+  uint64 expected_group_guid = 2;
+}
+
 message ActionResponse {
   // Confirms a transport write only. Observe future server packets via state.
   bool transport_written = 1;
@@ -96,5 +122,7 @@ service BuddyParty {
   rpc Decline(InviteDecisionRequest) returns (ActionResponse);
   rpc Invite(InviteRequest) returns (ActionResponse);
   rpc Leave(LeaveRequest) returns (ActionResponse);
+  // Requests the server's current icon list; does not assign or clear icons.
+  rpc RefreshRaidTargets(RaidTargetListRequest) returns (ActionResponse);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
 }

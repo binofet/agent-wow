@@ -48,6 +48,7 @@ func (s *Service) State(ctx context.Context, _ *emptypb.Empty) (*partyv1.StateRe
 
 func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
 	var group *partyv1.Group
+	var raid *raidTargetUpdate
 	var result *partyv1.CommandResult
 	var name string
 	var active bool
@@ -63,6 +64,8 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			}
 		case uint32(opcode.SMSGGroupList):
 			group, err = decodeGroup(packet.Payload, s.selfGUID, s.selfName)
+		case uint32(opcode.MSGRaidTargetUpdate):
+			raid, err = decodeRaidTargets(packet.Payload)
 		case uint32(opcode.SMSGPartyCommandResult):
 			result, err = decodeCommandResult(packet.Payload)
 		case uint32(opcode.SMSGGroupDecline):
@@ -91,7 +94,16 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	}
 	switch {
 	case group != nil:
+		if !sameMarkerRoster(s.state.Group, group) {
+			s.state.RaidTargets = nil
+		}
 		s.state.Group, s.state.PendingInvite = group, nil
+	case raid != nil:
+		if group := s.state.Group; group.GetKnown() && group.GetInGroup() && group.GetGroupGuid() != 0 {
+			s.state.RaidTargets = applyRaidTargets(s.state.RaidTargets, group.GroupGuid, s.state.Revision, raid)
+		} else {
+			s.state.IgnoredPackets++
+		}
 	case result != nil:
 		s.state.LastCommandResult = result
 	case active:
@@ -101,6 +113,22 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.state.LastDeclinedName = name
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func (s *Service) RefreshRaidTargets(ctx context.Context, request *partyv1.RaidTargetListRequest) (*partyv1.ActionResponse, error) {
+	if request == nil || request.SessionId == "" || request.ExpectedGroupGuid == 0 {
+		return nil, status.Error(codes.InvalidArgument, "session_id and expected_group_guid are required")
+	}
+	if err := s.begin(ctx, func() error {
+		group := s.state.Group
+		if request.SessionId != s.state.SessionId || !group.GetKnown() || !group.GetInGroup() || request.ExpectedGroupGuid != group.GetGroupGuid() {
+			return status.Error(codes.FailedPrecondition, "observed group no longer matches; read state again")
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.write(ctx, uint32(opcode.MSGRaidTargetUpdate), []byte{0xff}, 0)
 }
 
 func (s *Service) Accept(ctx context.Context, request *partyv1.InviteDecisionRequest) (*partyv1.ActionResponse, error) {

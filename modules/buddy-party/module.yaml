@@ -13,6 +13,7 @@ rpc:
   decline: /warcraftbuddy.party.v1.BuddyParty/Decline
   invite: /warcraftbuddy.party.v1.BuddyParty/Invite
   leave: /warcraftbuddy.party.v1.BuddyParty/Leave
+  refresh_raid_targets: /warcraftbuddy.party.v1.BuddyParty/RefreshRaidTargets
 packets:
   SMSG_GROUP_INVITE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
   SMSG_GROUP_LIST: /warcraftbuddy.party.v1.BuddyParty/OnPacket
@@ -20,6 +21,8 @@ packets:
   SMSG_GROUP_DESTROYED: /warcraftbuddy.party.v1.BuddyParty/OnPacket
   SMSG_GROUP_UNINVITE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
   SMSG_PARTY_COMMAND_RESULT: /warcraftbuddy.party.v1.BuddyParty/OnPacket
+  MSG_RAID_TARGET_UPDATE: /warcraftbuddy.party.v1.BuddyParty/OnPacket
 
 script_api:
   state: {effect: read}
+  refresh_raid_targets: {effect: query, description: Request the actual server raid target list without assigning icons}
