@@ -109,6 +109,8 @@ message CorpseState {
   uint32 flags = 15;
   bool dynamic_flags_known = 16;
   uint32 dynamic_flags = 17;
+  bool race_known = 18;
+  uint32 race_id = 19;
 }
 
 message EquippedWeapon {

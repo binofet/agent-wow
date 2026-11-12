@@ -3,12 +3,13 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"testing"
+	"time"
+
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
-	"testing"
-	"time"
 )
 
 func resRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
@@ -102,23 +103,34 @@ func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testi
 	}
 }
 func TestActualPartyResurrectionOfferAcceptedOnceNotForgedOrUnsolicited(t *testing.T) {
-	for _, caster := range []uint64{3, 99} {
-		t.Run(string(rune(caster)), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		caster uint64
+		tail   []byte
+		want   int
+	}{
+		{name: "legacy", caster: 3, tail: []byte{0, 0}, want: 1},
+		{name: "legacy timer", caster: 3, tail: []byte{0, 0, 0, 0, 0, 0}, want: 1},
+		{name: "azerothcore", caster: 3, tail: []byte{0, 0, 0}, want: 1},
+		{name: "azerothcore timer", caster: 3, tail: []byte{0, 0, 0, 0, 0, 0, 0}, want: 1},
+		{name: "stranger", caster: 99, tail: []byte{0, 0, 0}},
+		{name: "creature", caster: 0xf130000000000003, tail: []byte{0, 0, 1}},
+		{name: "invalid padding", caster: 3, tail: []byte{0, 1, 0}},
+		{name: "invalid sickness", caster: 3, tail: []byte{0, 0, 2}},
+		{name: "trailing bytes", caster: 3, tail: []byte{0, 0, 0, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			s, f, _ := rig(t)
 			f.world.Self.Alive = false
 			f.world.Self.Health = 0
-			p := binary.LittleEndian.AppendUint64(nil, caster)
+			p := binary.LittleEndian.AppendUint64(nil, tc.caster)
 			p = binary.LittleEndian.AppendUint32(p, 1)
-			p = append(p, 0, 0)
+			p = append(p, tc.tail...)
 			for i := 0; i < 2; i++ {
 				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGResurrectRequest, Payload: p})
-				s.acceptResurrectionLocked(context.Background())
+				s.Tick(context.Background())
 			}
-			want := 0
-			if caster == 3 {
-				want = 1
-			}
-			if countPackets(f, opcode.CMSGResurrectResponse) != want {
+			if countPackets(f, opcode.CMSGResurrectResponse) != tc.want {
 				t.Fatal("offer acceptance mismatch", f.packets)
 			}
 		})

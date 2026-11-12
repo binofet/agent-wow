@@ -207,6 +207,7 @@ message SpellToolkitState {
   BuffOperation last_buff = 5;
   string session_id = 6;
   uint64 self_guid = 7;
+  bool targeted_resurrection_supported = 8;
 }
 message State {
   bool following = 1;
@@ -302,6 +303,9 @@ message State {
   SpellOperation last_spell_operation = 108;
   EngageNPCState engage_npc = 109;
 }
+message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
+
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
   rpc Healing(ToggleRequest) returns (State);
@@ -330,4 +334,6 @@ service BuddyActions {
   rpc Recovery(ToggleRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc ResurrectOnce(ResurrectOnceRequest) returns (State);
+  rpc AcceptResurrection(AcceptResurrectionRequest) returns (State);
 }

@@ -557,9 +557,11 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	defer s.mu.Unlock()
 	// Read-only refresh: active movement is not echoed back to its sender, so
 	// report the client's estimate only while its authoritative base is valid.
-	if _, err := s.snapshot(ctx); err != nil {
+	w, err := s.snapshot(ctx)
+	if err != nil {
 		s.lastWorld = nil
 	}
+	s.supportSnapshotLocked(w)
 	return s.stateLocked(), nil
 }
 

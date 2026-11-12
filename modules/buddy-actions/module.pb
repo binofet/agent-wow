@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-‡]
+¨a
 actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -231,7 +231,7 @@ targetGuid
 transport_written (RtransportWritten$
 server_cast_go (RserverCastGo%
 aura_confirmed (RauraConfirmed#
-aura_revision (RauraRevision"õ
+aura_revision (RauraRevision"½
 SpellToolkitState'
 spellbook_known (RspellbookKnown-
 spellbook_revision (RspellbookRevision<
@@ -240,7 +240,8 @@ targetGuid
 	last_buff (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
 
 session_id (	R	sessionId
-	self_guid (RselfGuid"ø
+	self_guid (RselfGuidF
+targeted_resurrection_supported (RtargetedResurrectionSupported"ø
 State
 	following (R	following
 healing (Rhealing
@@ -334,7 +335,20 @@ session_idj (	R	sessionId
 	self_guidk (RselfGuidZ
 last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationG
 
-engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJFGJId2¼
+engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJFGJId"Ž
+ResurrectOnceRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+target_guid (R
+targetGuid
+spell_id (RspellId"x
+AcceptResurrectionRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+caster_guid (R
+casterGuid2Š
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -360,4 +374,6 @@ engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJFGJI
 FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
-BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
+ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
+AcceptResurrection3.warcraftbuddy.actions.v1.AcceptResurrectionRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

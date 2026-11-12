@@ -122,6 +122,13 @@ func TestPlayerCorpseExportRetainsActualOwnerAndExcludesBones(t *testing.T) {
 	if len(r.PlayerCorpses) != 1 || r.PlayerCorpses[0].OwnerGuid != 4 || r.OwnCorpse != nil {
 		t.Fatal("foreign party corpse was guessed or hidden", r.PlayerCorpses)
 	}
+	if r.PlayerCorpses[0].RaceKnown {
+		t.Fatal("missing corpse race was guessed", r.PlayerCorpses[0])
+	}
+	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(ownCorpseGUID, map[int]uint32{0x1e: 0x03010700}))
+	if c := r.PlayerCorpses[0]; !c.RaceKnown || c.RaceId != 7 {
+		t.Fatal("corpse race was not read from the actual appearance field", c)
+	}
 	r = packet(t, s, opcode.SMSGUpdateObject, deltaFixture(ownCorpseGUID, map[int]uint32{0x21: 1}))
 	if len(r.PlayerCorpses) != 0 {
 		t.Fatal("bones exported as resurrectable corpse")

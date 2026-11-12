@@ -17,7 +17,13 @@ func (s *observations) appendPlayerCorpses(r *worldv1.SnapshotResponse, now time
 		if owner == 0 || owner>>48 != 0 || !ownReclaimableCorpse(p, owner) || !p.mapKnown || p.mapID != self.mapID {
 			continue
 		}
-		r.PlayerCorpses = append(r.PlayerCorpses, &worldv1.CorpseState{Guid: p.guid, OwnerGuid: owner, Present: true, MapKnown: true, MapId: p.mapID, PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision, FlagsKnown: true, Flags: p.fields[corpseFlags], ObservationAgeMs: age(now, p.observedAt)})
+		race := uint32(uint8(p.fields[corpseBytes1] >> 8))
+		r.PlayerCorpses = append(r.PlayerCorpses, &worldv1.CorpseState{
+			Guid: p.guid, OwnerGuid: owner, Present: true, MapKnown: true, MapId: p.mapID, PositionKnown: p.positionKnown,
+			X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation, PositionRevision: p.positionRevision,
+			FlagsKnown: true, Flags: p.fields[corpseFlags], ObservationAgeMs: age(now, p.observedAt),
+			RaceKnown: p.known[corpseBytes1] && race >= 1 && race <= 11 && race != 9, RaceId: race,
+		})
 	}
 	sort.Slice(r.PlayerCorpses, func(i, j int) bool { return r.PlayerCorpses[i].Guid < r.PlayerCorpses[j].Guid })
 }
@@ -28,6 +34,7 @@ func (s *observations) appendPlayerCorpses(r *worldv1.SnapshotResponse, now time
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Corpse/Corpse.cpp
 const (
 	corpseOwner   = 6
+	corpseBytes1  = 0x1e // Player::CreateCorpse stores race in byte 1.
 	corpseFlags   = 0x21
 	corpseDynamic = 0x22
 	maxCorpses    = 32

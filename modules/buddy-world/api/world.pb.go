@@ -690,6 +690,8 @@ type CorpseState struct {
 	Flags             uint32                 `protobuf:"varint,15,opt,name=flags,proto3" json:"flags,omitempty"`
 	DynamicFlagsKnown bool                   `protobuf:"varint,16,opt,name=dynamic_flags_known,json=dynamicFlagsKnown,proto3" json:"dynamic_flags_known,omitempty"`
 	DynamicFlags      uint32                 `protobuf:"varint,17,opt,name=dynamic_flags,json=dynamicFlags,proto3" json:"dynamic_flags,omitempty"`
+	RaceKnown         bool                   `protobuf:"varint,18,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId            uint32                 `protobuf:"varint,19,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -839,6 +841,20 @@ func (x *CorpseState) GetDynamicFlagsKnown() bool {
 func (x *CorpseState) GetDynamicFlags() uint32 {
 	if x != nil {
 		return x.DynamicFlags
+	}
+	return 0
+}
+
+func (x *CorpseState) GetRaceKnown() bool {
+	if x != nil {
+		return x.RaceKnown
+	}
+	return false
+}
+
+func (x *CorpseState) GetRaceId() uint32 {
+	if x != nil {
+		return x.RaceId
 	}
 	return 0
 }
@@ -2922,7 +2938,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x0emax_durability\x18\t \x01(\rR\rmaxDurability\x12-\n" +
 	"\x12enhancements_known\x18\n" +
 	" \x01(\bR\x11enhancementsKnown\x12)\n" +
-	"\x10has_enhancements\x18\v \x01(\bR\x0fhasEnhancements\"\x90\x04\n" +
+	"\x10has_enhancements\x18\v \x01(\bR\x0fhasEnhancements\"\xc8\x04\n" +
 	"\vCorpseState\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x1d\n" +
 	"\n" +
@@ -2943,7 +2959,10 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"flagsKnown\x12\x14\n" +
 	"\x05flags\x18\x0f \x01(\rR\x05flags\x12.\n" +
 	"\x13dynamic_flags_known\x18\x10 \x01(\bR\x11dynamicFlagsKnown\x12#\n" +
-	"\rdynamic_flags\x18\x11 \x01(\rR\fdynamicFlags\"\xfb\x01\n" +
+	"\rdynamic_flags\x18\x11 \x01(\rR\fdynamicFlags\x12\x1d\n" +
+	"\n" +
+	"race_known\x18\x12 \x01(\bR\traceKnown\x12\x17\n" +
+	"\arace_id\x18\x13 \x01(\rR\x06raceId\"\xfb\x01\n" +
 	"\x0eEquippedWeapon\x12\x1d\n" +
 	"\n" +
 	"slot_known\x18\x01 \x01(\bR\tslotKnown\x12\x1b\n" +

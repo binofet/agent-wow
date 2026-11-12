@@ -46,6 +46,8 @@ const (
 	BuddyActions_Recovery_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
 	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_ResurrectOnce_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
+	BuddyActions_AcceptResurrection_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -79,6 +81,8 @@ type BuddyActionsClient interface {
 	Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error)
+	AcceptResurrection(ctx context.Context, in *AcceptResurrectionRequest, opts ...grpc.CallOption) (*State, error)
 }
 
 type buddyActionsClient struct {
@@ -339,6 +343,26 @@ func (c *buddyActionsClient) BeforeLogout(ctx context.Context, in *emptypb.Empty
 	return out, nil
 }
 
+func (c *buddyActionsClient) ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ResurrectOnce_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) AcceptResurrection(ctx context.Context, in *AcceptResurrectionRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_AcceptResurrection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -370,6 +394,8 @@ type BuddyActionsServer interface {
 	Recovery(context.Context, *ToggleRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error)
+	AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -454,6 +480,12 @@ func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket
 }
 func (UnimplementedBuddyActionsServer) BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BeforeLogout not implemented")
+}
+func (UnimplementedBuddyActionsServer) ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResurrectOnce not implemented")
+}
+func (UnimplementedBuddyActionsServer) AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcceptResurrection not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -926,6 +958,42 @@ func _BuddyActions_BeforeLogout_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_ResurrectOnce_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResurrectOnceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ResurrectOnce(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ResurrectOnce_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ResurrectOnce(ctx, req.(*ResurrectOnceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_AcceptResurrection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AcceptResurrectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AcceptResurrection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AcceptResurrection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AcceptResurrection(ctx, req.(*AcceptResurrectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1032,6 +1100,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BeforeLogout",
 			Handler:    _BuddyActions_BeforeLogout_Handler,
+		},
+		{
+			MethodName: "ResurrectOnce",
+			Handler:    _BuddyActions_ResurrectOnce_Handler,
+		},
+		{
+			MethodName: "AcceptResurrection",
+			Handler:    _BuddyActions_AcceptResurrection_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

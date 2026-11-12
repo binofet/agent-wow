@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-èY
+«Y
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ˆ
 PlayerState
 guid (Rguid
@@ -123,7 +123,7 @@ durability%
 max_durability	 (RmaxDurability-
 enhancements_known
  (RenhancementsKnown)
-has_enhancements (RhasEnhancements"ê
+has_enhancements (RhasEnhancements"»
 CorpseState
 guid (Rguid
 
@@ -144,7 +144,10 @@ owner_guid (R	ownerGuid
 flagsKnown
 flags (Rflags.
 dynamic_flags_known (RdynamicFlagsKnown#
-dynamic_flags (RdynamicFlags"˚
+dynamic_flags (RdynamicFlags
+
+race_known (R	raceKnown
+race_id (RraceId"˚
 EquippedWeapon
 
 slot_known (R	slotKnown

@@ -34,30 +34,41 @@ func (s *Service) spellKindLocked(id uint32) spellcatalog.Kind {
 }
 
 // Only observed dead players or actual owned corpse objects can grant a target.
-func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner uint64, r spellcatalog.Spell) (uint64, position) {
+func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner uint64, r spellcatalog.Spell, team uint8) uint64 {
 	if owner == s.selfGUID {
-		return 0, position{}
+		return 0
 	}
 	p := observedHealingPlayer(w, owner)
-	if p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&0x10 == 0 && p.MapKnown && p.MapId == s.posMap && p.PositionKnown && finite(playerPosition(p)) && distance(s.pos, playerPosition(p)) <= r.MaxFriendly {
-		return owner, playerPosition(p)
+	playerTeam := observedPlayerTeam(p)
+	if team != 0 && p != nil && p.Present && (p.AliveKnown && p.Alive || playerTeam != 0 && playerTeam != team) {
+		return 0
+	}
+	if (team == 0 || playerTeam == team) && p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&ghostFlag == 0 && p.MapKnown && p.MapId == s.posMap && p.PositionKnown && finite(playerPosition(p)) && distance(s.pos, playerPosition(p)) <= r.MaxFriendly {
+		return owner
 	}
 	var body *worldv1.CorpseState
 	for _, c := range w.PlayerCorpses {
 		if c != nil && c.OwnerGuid == owner && c.Present && c.Guid>>48 == 0xf101 && c.FlagsKnown && c.Flags&1 == 0 && c.MapKnown && c.MapId == s.posMap && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) {
 			if body != nil {
-				return 0, position{}
+				return 0
 			}
 			body = c
 		}
 	}
 	if body != nil {
+		corpseTeam := uint8(0)
+		if body.RaceKnown {
+			corpseTeam = playerTeamForRace(body.RaceId)
+		}
+		if team != 0 && (corpseTeam != 0 && corpseTeam != team || corpseTeam == 0 && playerTeam != team) {
+			return 0
+		}
 		pos := position{body.X, body.Y, body.Z, body.Orientation}
 		if distance(s.pos, pos) <= r.MaxFriendly {
-			return body.Guid, pos
+			return body.Guid
 		}
 	}
-	return 0, position{}
+	return 0
 }
 
 func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
@@ -111,7 +122,7 @@ func (s *Service) resurrectionTickLocked(ctx context.Context, w *worldv1.Snapsho
 			continue
 		}
 		for _, owner := range owners {
-			target, _ := s.resurrectionTargetLocked(w, owner, r)
+			target := s.resurrectionTargetLocked(w, owner, r, 0)
 			if target == 0 {
 				continue
 			}
@@ -122,18 +133,22 @@ func (s *Service) resurrectionTickLocked(ctx context.Context, w *worldv1.Snapsho
 			if err != nil || safeSelfCombat(fresh, s.selfGUID) != "" || fresh.Self.UnitFlags&(0x80000|0x2000) != 0 || !s.refreshPositionLocked(fresh) || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || uint64(fresh.Self.Power) < spellCost(r, fresh.Self) || !s.healingPartyLocked(ctx)[owner] {
 				return false
 			}
-			again, _ := s.resurrectionTargetLocked(fresh, owner, r)
+			again := s.resurrectionTargetLocked(fresh, owner, r, 0)
 			if again != target {
 				return false
 			}
-			if s.resurrectionBindings == nil {
-				s.resurrectionBindings = map[uint64]bool{}
-			}
-			s.resurrectionBindings[owner] = true
-			return s.castSupportLocked(ctx, r, target, owner)
+			return s.castResurrectionLocked(ctx, r, target, owner)
 		}
 	}
 	return false
+}
+
+func (s *Service) castResurrectionLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64) bool {
+	if s.resurrectionBindings == nil {
+		s.resurrectionBindings = map[uint64]bool{}
+	}
+	s.resurrectionBindings[owner] = true
+	return s.castSupportLocked(ctx, r, target, owner)
 }
 
 func (s *Service) castSupportLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64) bool {
@@ -169,9 +184,24 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, bad
 		}
 		caster := binary.LittleEndian.Uint64(p)
-		n := int(binary.LittleEndian.Uint32(p[8:]))
-		end := 12 + n
-		if caster == 0 || caster>>48 != 0 || n != 1 || end+1 > len(p) || p[end-1] != 0 || p[end] > 1 || (len(p) != end+1 && len(p) != end+5) {
+		if caster == 0 || caster>>48 != 0 || binary.LittleEndian.Uint32(p[8:]) != 1 || p[12] != 0 {
+			return true, bad
+		}
+		// AzerothCore serializes the empty player name as a C string, then
+		// writes another NUL before the sickness byte. Some realm versions
+		// send a single NUL. Both can include a four-byte timer.
+		sickness := 13
+		switch len(p) - sickness {
+		case 2, 6:
+			if p[sickness] != 0 {
+				return true, bad
+			}
+			sickness++
+		case 1, 5:
+		default:
+			return true, bad
+		}
+		if p[sickness] > 1 {
 			return true, bad
 		}
 		if s.resurrectionOffer == nil || s.resurrectionOffer.caster != caster {
@@ -216,7 +246,11 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		op.view.ServerCastGo = true
 		op.view.Phase = "server_cast_go_effect_unverified"
 		if op.view.EffectObserved {
-			op.view.Phase = "confirmed_effect"
+			if op.view.Capability == string(spellcatalog.Resurrect) {
+				op.view.Phase = "confirmed_alive"
+			} else {
+				op.view.Phase = "confirmed_effect"
+			}
 		}
 	default:
 		return false, nil
@@ -248,13 +282,22 @@ func (s *Service) acceptResurrectionLocked(ctx context.Context) bool {
 		s.resurrectionOffer = nil
 		return false
 	}
-	if offer.consumed || !s.now().Before(offer.until) || !s.healingPartyLocked(ctx)[offer.caster] {
+	if !s.pendingResurrectionOfferLocked(offer, offer.caster) || !s.healingPartyLocked(ctx)[offer.caster] {
 		return false
 	}
+	s.acceptResurrectionOfferLocked(ctx, offer)
+	return true
+}
+
+func (s *Service) pendingResurrectionOfferLocked(offer *resurrectionOffer, caster uint64) bool {
+	return offer != nil && offer.caster == caster && !offer.consumed && s.now().Before(offer.until)
+}
+
+func (s *Service) acceptResurrectionOfferLocked(ctx context.Context, offer *resurrectionOffer) {
 	offer.consumed = true
 	payload := binary.LittleEndian.AppendUint64(nil, offer.caster)
 	payload = append(payload, 1)
-	s.sendLocked(ctx, opcode.CMSGResurrectResponse, payload)
-	s.state.Reason = "resurrection_accepted_waiting_for_alive_observation"
-	return true
+	if s.sendLocked(ctx, opcode.CMSGResurrectResponse, payload) {
+		s.state.Reason = "resurrection_accepted_waiting_for_alive_observation"
+	}
 }

@@ -66,7 +66,7 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 	if err == nil {
 		s.pruneBuffAurasLocked(w)
 	}
-	out := &actionsv1.SpellToolkitState{SessionId: s.sessionID, SelfGuid: s.selfGUID, SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision}
+	out := &actionsv1.SpellToolkitState{SessionId: s.sessionID, SelfGuid: s.selfGUID, SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision, TargetedResurrectionSupported: true}
 	ids := make([]uint32, 0, len(s.knownSpells))
 	for id, known := range s.knownSpells {
 		if known {
