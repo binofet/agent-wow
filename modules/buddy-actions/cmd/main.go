@@ -57,6 +57,7 @@ func run() error {
 	if identity.Independent() {
 		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	}
+	service.UseAutomaticCorpseLoot()
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)

@@ -116,27 +116,29 @@ func (s *Service) approachLootStepLocked(ctx context.Context, r *actionsv1.Appro
 		if corpse == nil || !corpse.Present || !corpse.MapKnown || corpse.MapId != w.Self.MapId || !corpse.HealthKnown || corpse.Health != 0 || !corpse.AliveKnown || corpse.Alive || corpse.DynamicFlags&1 == 0 || corpse.Guid>>48 != 0xf130 && corpse.Guid>>48 != 0xf150 {
 			return pause("loot_approach_corpse_not_eligible")
 		}
-		quest33, _ := ownWolfQuest(w)
-		quest179, _ := ownColdridgeQuest(w, s.selfGUID)
-		if s.coldridgeGoal.questID == 170 || s.coldridgeGoal.questID == 183 || s.coldridgeGoal.questID == 182 {
-			// Another accepted quest must not replace the goal bound at start.
-			quest179 = false
-		}
-		coldridgeCorpse = w.Self.MapId == 0 && quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
-		if s.ownColdridgeGoalCorpseLocked(w, corpse) {
-			coldridgeCorpse = true
-			coldridgeNavigationGoal = s.coldridgeGoal
-		}
-		if s.coldridgeGoal.questID == 182 && !coldridgeCorpse {
-			return pause("loot_approach_bound_quest_182_scope_invalid")
-		}
-		fargodeepCorpse = s.ownFargodeepCorpseLocked(ctx, w, corpse)
-		if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse && !fargodeepCorpse {
-			if reason := safePlayers(w, s.selfGUID); reason != "" {
-				return pause("loot_approach_" + reason)
+		if !s.automaticCorpseLoot {
+			quest33, _ := ownWolfQuest(w)
+			quest179, _ := ownColdridgeQuest(w, s.selfGUID)
+			if s.coldridgeGoal.questID == 170 || s.coldridgeGoal.questID == 183 || s.coldridgeGoal.questID == 182 {
+				// Another accepted quest must not replace the goal bound at start.
+				quest179 = false
 			}
-			if w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
-				return pause("loot_approach_requires_nearby_owner_outside_combat")
+			coldridgeCorpse = w.Self.MapId == 0 && quest179 && corpse.Entry == 705 && uint32(corpse.Guid>>24&0xffffff) == 705 && coldridge(s.pos)
+			if s.ownColdridgeGoalCorpseLocked(w, corpse) {
+				coldridgeCorpse = true
+				coldridgeNavigationGoal = s.coldridgeGoal
+			}
+			if s.coldridgeGoal.questID == 182 && !coldridgeCorpse {
+				return pause("loot_approach_bound_quest_182_scope_invalid")
+			}
+			fargodeepCorpse = s.ownFargodeepCorpseLocked(ctx, w, corpse)
+			if (!quest33 || corpse.Entry != 299) && !coldridgeCorpse && !fargodeepCorpse {
+				if reason := safePlayers(w, s.selfGUID); reason != "" {
+					return pause("loot_approach_" + reason)
+				}
+				if w.Owner.UnitFlags&0x80000 != 0 || distance(s.pos, playerPosition(w.Owner)) > 30 {
+					return pause("loot_approach_requires_nearby_owner_outside_combat")
+				}
 			}
 		}
 		target, targetKnown, _ = creaturePosition(corpse)

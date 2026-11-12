@@ -156,7 +156,7 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 	if s.questFargodeep && !fargodeepLootSelection(w, a, s.selfGUID, s.pendingGUID()) {
 		return false
 	}
-	if !s.questWolf && !s.questColdridge && !s.questFargodeep {
+	if !s.automaticCorpseContext(w, a) && !s.questWolf && !s.questColdridge && !s.questFargodeep {
 		p, owner := a.Position, w.Owner
 		if !activeOwnerReady(w) || p == nil || !p.Known || !p.MapKnown || !owner.MapKnown || owner.MapId != p.MapId || !owner.PositionKnown {
 			return false
