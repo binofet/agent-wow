@@ -107,7 +107,7 @@ func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Sp
 		eligible[r.ID] = r
 		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: amount, CastMs: r.CastMs, Score: amount})
 	}
-	if s.behavior != nil && len(choices) > 0 {
+	if len(choices) > 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
 		decision := s.behaviorDecisionLocked(contract.Input{Kind: "heal_spell", Self: combatant(p), Target: combatant(target), Spells: choices})
 		if decision.SpellId != 0 {
 			if r, ok := eligible[decision.SpellId]; ok {
@@ -168,7 +168,7 @@ func (s *Service) bestDamageLocked(p *worldv1.PlayerState, target position) spel
 		eligible[r.ID] = r
 		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: damage, CastMs: r.CastMs, Score: value})
 	}
-	if s.behavior != nil && len(choices) > 0 {
+	if len(choices) > 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
 		decision := s.behaviorDecisionLocked(contract.Input{Kind: "damage_spell", Self: combatant(p), Spells: choices})
 		if decision.SpellId != 0 {
 			if r, ok := eligible[decision.SpellId]; ok {

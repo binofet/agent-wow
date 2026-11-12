@@ -74,7 +74,12 @@ func (s *Service) ReloadBehavior(_ context.Context, r *actionsv1.BehaviorReloadR
 }
 
 func (s *Service) behaviorDecisionLocked(input contract.Input) contract.Decision {
-	if s.behavior == nil || s.behavior.Status().Revision == "" {
+	revision := ""
+	if s.behavior != nil {
+		revision = s.behavior.Status().Revision
+	}
+	recording := s.dungeonTrace != nil && s.dungeonTrace.Active()
+	if revision == "" && !recording {
 		return contract.Decision{}
 	}
 	// GUIDs stay decimal strings, including values above Lua's exact integer range.
@@ -90,6 +95,24 @@ func (s *Service) behaviorDecisionLocked(input contract.Input) contract.Decision
 	}
 	var value map[string]any
 	if json.Unmarshal(raw, &value) != nil {
+		return contract.Decision{}
+	}
+	if recording {
+		if traceContractInScope(input) {
+			if revision == "" {
+				s.dungeonTrace.Record("policy_context", s.now(), map[string]any{
+					"engine": "native_combat", "input": value,
+				})
+			} else {
+				s.dungeonTrace.Record("policy_input", s.now(), map[string]any{
+					"engine": "combat_policy", "revision": revision, "input": value,
+				})
+			}
+		} else {
+			s.dungeonTrace.Record("observation_gap", s.now(), map[string]any{"stream": "policy_input", "reason": "identity_outside_scope"})
+		}
+	}
+	if revision == "" {
 		return contract.Decision{}
 	}
 	output, err := s.behavior.Evaluate(value)
@@ -112,7 +135,7 @@ func (s *Service) behaviorDecisionLocked(input contract.Input) contract.Decision
 }
 
 func (s *Service) behaviorHealTargetLocked(self *worldv1.PlayerState, players []*worldv1.PlayerState, best *worldv1.PlayerState) *worldv1.PlayerState {
-	if best == nil || s.behavior == nil {
+	if best == nil || (s.behavior == nil && (s.dungeonTrace == nil || !s.dungeonTrace.Active())) {
 		return best
 	}
 	input := contract.Input{Kind: "heal_target", Self: combatant(self), DefaultTargetGuid: strconv.FormatUint(best.Guid, 10)}

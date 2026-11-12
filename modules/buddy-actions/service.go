@@ -16,6 +16,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/dungeontrace"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
@@ -44,6 +45,10 @@ type Service struct {
 	actionsv1.UnimplementedBuddyActionsServer
 	mu                                                       sync.Mutex
 	session                                                  sessionAPI
+	dungeonTrace                                             *dungeontrace.Recorder
+	traceLastWorld, traceLastParty                           time.Time
+	tracePreviousWorld                                       *worldv1.SnapshotResponse
+	traceBoundary                                            dungeonTraceBoundary
 	sessionID                                                string
 	selfGUID                                                 uint64
 	independent                                              bool
@@ -577,6 +582,9 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.dungeonTrace != nil {
+		s.dungeonTrace.Close(s.now(), "observer_logout")
+	}
 	s.closed = true
 	s.state.Buffing = false
 	s.buffUnconfirmedLocked("logout_buff_outcome_unconfirmed")
@@ -615,6 +623,18 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
+	out, err := s.readWorldSnapshot(ctx, creatureGUID...)
+	if err != nil {
+		s.observeDungeonWorld(nil)
+		return nil, err
+	}
+	s.observeDungeonWorld(out)
+	s.lastWorld = out
+	s.updateClassLocked()
+	return out, nil
+}
+
+func (s *Service) readWorldSnapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
 	if s.session == nil {
 		return nil, errors.New("session callback unavailable")
 	}
@@ -641,8 +661,6 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 		// A mixed-version world module must not restore owner authority.
 		out.Owner, out.OwnerTarget = nil, nil
 	}
-	s.lastWorld = out
-	s.updateClassLocked()
 	return out, nil
 }
 
@@ -932,6 +950,9 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.dungeonTrace != nil {
+		defer s.sampleDungeonTraceLocked(ctx)
+	}
 	s.buffTimeoutLocked()
 	if !s.closed && s.acceptResurrectionLocked(ctx) {
 		return
@@ -1228,6 +1249,9 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	defer s.mu.Unlock()
 	if packet == nil {
 		return &emptypb.Empty{}, nil
+	}
+	if s.dungeonTrace != nil {
+		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload
 	malformed := false

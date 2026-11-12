@@ -5,11 +5,14 @@ services:
       dockerfile: modules/buddy-actions/Dockerfile
     network_mode: none
     read_only: true
+    user: "${BUDDY_DUNGEON_TRACE_USER:-65532:65532}"
     environment:
       BUDDY_INDEPENDENT: ${BUDDY_INDEPENDENT:-false}
       BUDDY_NAV_DATA_DIR: /var/lib/buddy-nav
+      BUDDY_DUNGEON_TRACE_MAP: "${BUDDY_DUNGEON_TRACE_MAP:-}"
     volumes:
       - ${BUDDY_NAV_DATA_DIR_HOST:-../../data/navigation}:/var/lib/buddy-nav:ro
+      - "${BUDDY_DUNGEON_TRACE_DIR_HOST:-/dev/null}:/var/lib/buddy-dungeon-trace:${BUDDY_DUNGEON_TRACE_ACCESS:-ro}"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     logging:

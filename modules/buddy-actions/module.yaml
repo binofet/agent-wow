@@ -39,6 +39,7 @@ packets:
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_NEW_WORLD: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   MSG_CORPSE_QUERY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CORPSE_RECLAIM_DELAY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_DEATH_RELEASE_LOC: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
