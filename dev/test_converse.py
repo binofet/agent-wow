@@ -20,6 +20,11 @@ converse = importlib.util.module_from_spec(spec)
 loader.exec_module(converse)
 
 
+def real_temp_directory():
+    # Mission metadata rejects symlinked paths, including macOS's temp alias.
+    return tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
+
+
 def message(sequence, text="Hello, Arlen", sender=3, channel="SAY", **fields):
     return dict(sequence=str(sequence), text=text, senderGuid=str(sender), channel=channel, **fields)
 
@@ -2132,7 +2137,7 @@ class MissionRuntimeContextTests(unittest.TestCase):
         return converse.mission_runtime_context(1,'aw-current','http://127.0.0.1:8086/rpc')
 
     def test_current_body_metadata_projects_bounded_task_frames_and_paths_only(self):
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
             repo=Path(temporary);data=self.fixture();path=self.install(repo,'expedition',data);before=path.read_bytes()
             self.install(repo,'fishing',data)
             result=self.read();row=result['expedition']
@@ -2151,7 +2156,7 @@ class MissionRuntimeContextTests(unittest.TestCase):
             self.assertEqual(self.read()['expedition']['phase'],'complete')
 
     def test_large_controller_metadata_uses_terminal_status_and_never_calls_crashed_hosts_active(self):
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
             repo=Path(temporary);data=self.fixture()
             data['run']=dict(instance='a'*32,pid=os.getpid(),active=True)
             data['attempts']=[dict(id='audit-'+str(i),private='retained audit '*40) for i in range(165)]
@@ -2182,12 +2187,12 @@ class MissionRuntimeContextTests(unittest.TestCase):
             row=self.read()['expedition'];self.assertFalse(row['stopped']);self.assertTrue(row['exitUnconfirmed'])
 
     def test_actual_run_source_path_is_developer_metadata_only_and_root_bounded(self):
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
             repo=Path(temporary);data=self.fixture();source=repo/'data/tasks/expedition/1/policy.lua'
             data['run']=dict(instance='a'*32,pid=os.getpid(),active=True,sourcePath=str(source))
             self.install(repo,'expedition',data);source.write_text('return {}')
             self.assertEqual(self.read()['expedition']['sourcePath'],str(source))
-            for bad in ('relative.lua','/private/tmp/unrelated.lua',str(repo/'data/../outside.lua')):
+            for bad in ('relative.lua', str(repo.parent/'unrelated.lua'), str(repo/'data/../outside.lua')):
                 data['run']['sourcePath']=bad;self.install(repo,'expedition',data)
                 self.assertNotIn('sourcePath',self.read()['expedition'])
             source.unlink();source.symlink_to(repo/'behaviors/expedition.lua')
@@ -2206,7 +2211,7 @@ class MissionRuntimeContextTests(unittest.TestCase):
             lambda d:d.update(phase={'invented':'bad'}),lambda d:d.update(goodRevision='bad'),
             lambda d:d.update(pending={}),lambda d:d.update(pending=[{}]),
             lambda d:d['memory'].update(stack=[{}]),lambda d:d['memory'].update(stack=[dict(kind='walk',stage='s')]*13)]
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
             repo=Path(temporary)
             self.assertFalse(self.read()['expedition']['available'])
             for change in changes:
@@ -2217,7 +2222,7 @@ class MissionRuntimeContextTests(unittest.TestCase):
                 path.write_text(raw);self.assertFalse(self.read()['expedition']['available'])
 
     def test_private_regular_file_and_real_parent_directories_are_required(self):
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as temporary,patch.object(converse,'ROOT',Path(temporary)):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
             repo=Path(temporary);path=self.install(repo,'expedition',self.fixture());raw=path.read_bytes()
             path.chmod(0o644);self.assertFalse(self.read()['expedition']['available'])
             path.chmod(0o600);outside=repo/'outside';outside.write_bytes(raw);outside.chmod(0o600)
@@ -2230,7 +2235,7 @@ class MissionRuntimeContextTests(unittest.TestCase):
 
 class MissionHandoffTests(unittest.TestCase):
     def setUp(self):
-        temporary=tempfile.TemporaryDirectory(dir='/private/tmp');self.addCleanup(temporary.cleanup)
+        temporary=real_temp_directory();self.addCleanup(temporary.cleanup)
         self.repo=Path(temporary.name);(self.repo/'dev').mkdir()
         source=Path(__file__).with_name('task-runtime').read_bytes()
         (self.repo/'dev/task-runtime').write_bytes(source)
