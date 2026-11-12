@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -59,6 +60,21 @@ func run() error {
 	}
 	service.UseAutomaticCorpseLoot()
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
+	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {
+		mapID, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || mapID == 0 {
+			return errors.New("dungeon trace needs an explicit nonzero map ID")
+		}
+		if err := service.EnableDungeonTrace("/var/lib/buddy-dungeon-trace", uint32(mapID)); err != nil {
+			return err
+		}
+		defer func() {
+			stop, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			service.FlushDungeonTrace(stop)
+		}()
+	}
+
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)
 	readiness := health.NewServer()

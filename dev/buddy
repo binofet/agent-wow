@@ -492,6 +492,32 @@ def child_identity(child, deadline):
         time.sleep(min(0.01, remaining_time(settle_until, expired)))
 
 
+def trace_environment(environment, independent):
+    map_id = environment.get("BUDDY_DUNGEON_TRACE_MAP", "")
+    destination = environment.get("BUDDY_DUNGEON_TRACE_DIR_HOST", "")
+    for key in ("BUDDY_DUNGEON_TRACE_USER", "BUDDY_DUNGEON_TRACE_ACCESS"):
+        environment.pop(key, None)
+    if not map_id and not destination:
+        return
+    if independent or PROFILE != "default" or CHARACTER != "Arlen" or CHARACTER_GUID not in (None, 1):
+        raise BuddyError("Dungeon recording is restricted to Arlen's default party profile.")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", map_id) or int(map_id) >= 2**32:
+        raise BuddyError("Dungeon recording requires a nonzero map ID.")
+    directory = Path(destination)
+    if not directory.is_absolute() or directory.is_symlink() or any(c in destination for c in ":$\n\r"):
+        raise BuddyError("Dungeon recording requires an absolute private output directory.")
+    try:
+        info = directory.stat()
+    except OSError as error:
+        raise BuddyError("Dungeon recording output directory is unavailable.") from error
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.geteuid() or not os.geteuid():
+        raise BuddyError("Dungeon recording requires a mode-0700 directory owned by the non-root launcher user.")
+    if (directory / "dungeon-trace.jsonl").exists() or (directory / "dungeon-trace.jsonl").is_symlink():
+        raise BuddyError("Dungeon recording output already exists. Use a new private directory.")
+    environment["BUDDY_DUNGEON_TRACE_USER"] = f"{os.geteuid()}:{os.getegid()}"
+    environment["BUDDY_DUNGEON_TRACE_ACCESS"] = "rw"
+
+
 def start(*, deadline=None):
     """Start this profile, optionally within an absolute same-host deadline."""
     deadline = operation_deadline(deadline, START_TIMEOUT)
@@ -523,6 +549,7 @@ def start(*, deadline=None):
         except OSError:
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
+    trace_environment(environment, independent)
     environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
                        AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
                        AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))
