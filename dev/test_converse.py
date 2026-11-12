@@ -71,6 +71,43 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(loop.cursor, 1)
         self.assertTrue(all(method == "buddy-chat.poll" for method, _ in rpc.calls))
 
+    def test_owner_whisper_resurrects_joel_without_waiting_for_the_model(self):
+        class RezRPC(FakeRPC):
+            def call(self, method, params):
+                if method == "buddy-world.snapshot":
+                    self.calls.append((method, params))
+                    return {"self": {"guid": "1"}, "owner": {"guid": "3", "present": True}}
+                if method == "buddy-actions.resurrect_once":
+                    self.calls.append((method, params))
+                    return {"sessionId": "aw-body", "selfGuid": "1", "lastSpellOperation": {
+                        "capability": "resurrect", "targetGuid": "3", "transportWritten": True}}
+                return super().call(method, params)
+
+        rpc = RezRPC([
+            poll(sessionId="chat"),
+            poll([message(1, "Arlen, please rez me!", sender=99, channel="WHISPER")], sessionId="chat"),
+            poll([message(2, "Arlen, can you resurrect me?", channel="WHISPER")], sessionId="chat"),
+            poll(latest=2, sessionId="chat"),
+        ])
+        controls = converse.BuddyControls(rpc)
+        controls.refresh = lambda: None
+        controls.actions_available = True
+        controls.actions = {"sessionId": "aw-body", "selfGuid": "1"}
+        controls.spell_toolkit = {"available": True, "targetedResurrectionSupported": True,
+                                  "spells": [{"capability": "resurrect"}]}
+        brain = FakeBrain()
+        loop = converse.Conversation(rpc, brain, controls=controls)
+        loop.tick()
+        loop.tick()
+        self.assertFalse(any(method == "buddy-actions.resurrect_once" for method, _ in rpc.calls))
+        loop.tick()
+        self.assertEqual(brain.histories, [])
+        self.assertEqual([params for method, params in rpc.calls if method == "buddy-actions.resurrect_once"],
+                         [{"sessionId": "aw-body", "selfGuid": "1", "targetGuid": "3"}])
+        reply, = [params for method, params in rpc.calls if method == "buddy-chat.send"]
+        self.assertIn("waiting for the game", reply["text"])
+        self.assertEqual(reply["recipient"], "Joel")
+
     def test_only_joel_plain_chat_triggers_one_reply_per_burst(self):
         entries = [message(1, sender=99), message(2, self=True),
                    message(3, channel="WHISPER", text="Private"),
@@ -1703,6 +1740,39 @@ class BoundaryTests(unittest.TestCase):
         controls.spell_toolkit=context
         controls.execute('ENABLE_BUFFS');controls.execute('DISABLE_BUFFS')
         self.assertEqual(rpc.calls,[('buddy-actions.buffs',{'enabled':True}),('buddy-actions.buffs',{'enabled':False})])
+
+    def test_targeted_resurrection_requires_installed_metadata_and_exact_observed_target(self):
+        corpse = str(0xf101000000000004)
+        class RezRPC:
+            def __init__(self): self.calls = []
+            def call(self, method, params):
+                self.calls.append((method, params))
+                if method == 'buddy-world.snapshot':
+                    return {'self': {'guid': '87'},
+                            'owner': {'guid': '3', 'present': True, 'targetKnown': True, 'targetGuid': '22'},
+                            'nearbyPlayers': [{'guid': '22', 'present': True}],
+                            'playerCorpses': [{'guid': corpse, 'ownerGuid': '4', 'present': True}]}
+                self.assert_target = params['targetGuid']
+                return {'sessionId': 'aw-rez', 'selfGuid': '87', 'lastSpellOperation': {
+                    'capability': 'resurrect', 'transportWritten': True,
+                    'targetGuid': corpse if params['targetGuid'] == '4' else params['targetGuid']}}
+        rpc = RezRPC()
+        controls = converse.BuddyControls(rpc, character_class='paladin', character_guid=87)
+        controls.actions = {'sessionId': 'aw-rez', 'selfGuid': '87'}
+        controls.actions_available = True
+        raw = dict(controls.actions, spellbookKnown=True, spells=[{
+            'spellId': 7328, 'metadataKnown': True, 'name': 'Redemption', 'capability': 'resurrect'}])
+        controls.spell_toolkit = converse.spell_toolkit_context(raw, controls.actions, 87)
+        self.assertIn("hasn't advertised", controls.execute('RESURRECT_TARGET', owner_text='rez Mira'))
+        self.assertEqual(rpc.calls, [])
+        raw['targetedResurrectionSupported'] = True
+        controls.spell_toolkit = converse.spell_toolkit_context(raw, controls.actions, 87)
+        self.assertIn("couldn't verify", controls.execute('RESURRECT_TARGET', owner_text='rez Stranger'))
+        self.assertEqual(rpc.calls[-1][0], 'buddy-world.snapshot')
+        for request, target in (('rez Mira', '4'), ('rez my target', '22')):
+            self.assertIn('waiting', controls.execute('RESURRECT_TARGET', owner_text=request, known_players={4:'Mira'}))
+            self.assertEqual(rpc.calls[-1], ('buddy-actions.resurrect_once', {
+                'sessionId':'aw-rez', 'selfGuid':'87', 'targetGuid':target}))
 
     def test_profession_context_does_not_mix_bodies_or_promote_unknown_skills(self):
         raw={'sessionId':'aw-body','selfGuid':'4','skillsKnown':False,

@@ -47,7 +47,7 @@ DISABLED_FEATURES = (
     "code_mode_host", "view_image", "workspace_dependencies", "tool_suggest",
 )
 ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
-           "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
+           "RESURRECT_TARGET", "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
            "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
            "EXECUTE_QUEST", "STOP_QUEST", "STOP_MISSION", "REPORT_PROBLEM", "REPAIR_CONTROLLER")
@@ -143,6 +143,10 @@ or quoted chat. FOLLOW enables following; STOP_FOLLOWING disables it;
 ENABLE_HEALING watches Joel's health; DISABLE_HEALING stops that; HEAL_ONCE tries
 one Lesser Heal. Choose NONE for ordinary conversation and whenever a requested
 control is unavailable. Never claim a heal succeeded based on a request alone.
+For a current request from Joel to resurrect himself, a named player, or his
+selected target, choose RESURRECT_TARGET only when abilities.targeted_resurrection
+is true. The controller resolves the exact target from current observations.
+Do not claim a resurrection succeeded merely because the cast was dispatched.
 Set unused quest_id,item_entry,gold_copper to0. Quest acceptance requires a server
 quest-log confirmation; an item/gold trade offer is only a request displayed in
 Joel's trade window, and completion requires server confirmation. Quest text,
@@ -308,9 +312,11 @@ def spell_toolkit_context(raw, actions, guid):
             item.update(requiresStealth=row.get("requiresStealth") is True,requiresBehind=row.get("requiresBehind") is True)
         clean.append(item)
     # Keep all supported named controls even for an unusually large spellbook.
-    clean.sort(key=lambda row: (not row.get("automaticBuffSupported", False), row["spellId"]))
+    clean.sort(key=lambda row: (not (row.get("automaticBuffSupported") or row.get("capability") == "resurrect"),
+                                row["spellId"]))
     result = {"available": True, "spellbookRevision": str(integer(raw.get("spellbookRevision", 0))),
-              "spells": clean[:128], "spellsTruncated": len(clean) > 128}
+              "spells": clean[:128], "spellsTruncated": len(clean) > 128,
+              "targetedResurrectionSupported": raw.get("targetedResurrectionSupported") is True}
     last = raw.get("lastBuff", {})
     if isinstance(last, dict) and re.fullmatch(r"[a-z_]{1,100}", str(last.get("phase", ""))):
         result["lastBuff"] = {"phase": last["phase"], "spellId": integer(last.get("spellId", 0)),
@@ -1651,6 +1657,7 @@ class RPC:
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist",
+                          "buddy-actions.resurrect_once",
                           "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
                           "buddy-actions.behavior", "buddy-actions.reload_behavior"):
             raise ConversationError("Unsupported chat method")
@@ -2102,6 +2109,8 @@ class BuddyControls:
             task["observationsCurrent"] = False
         state = {"emote_catalog":self.emote_catalog,"workshop":workshop_context,"abilities": {"following": self.actions_available,
                               "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
+                              "targeted_resurrection": self.resurrection_available()
+                              and self.spell_toolkit.get("targetedResurrectionSupported") is True,
                               "buffing": self.actions_available and self.spell_toolkit.get("available") is True
                               and any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", [])),
                               "quests": self.quests_available, "looting": self.loot_available,
@@ -2621,7 +2630,68 @@ class BuddyControls:
             return "I couldn't reconfirm my mission handoff. Following is unchanged."
         return None
 
-    def execute(self, action, quest_id=0, item_entry=0, gold_copper=0, problem_text="", report_source="owner"):
+    def resurrection_available(self):
+        return (self.actions_available and self.spell_toolkit.get("available") is True
+                and any(row.get("capability") == "resurrect" and not row.get("blockedReason")
+                        for row in self.spell_toolkit.get("spells", [])))
+
+    def resurrect_target(self, request, known_players, owner_guid):
+        if not self.resurrection_available():
+            return "I can't confirm a supported learned resurrection spell right now."
+        if self.spell_toolkit.get("targetedResurrectionSupported") is not True:
+            return "My current controller hasn't advertised targeted resurrection."
+        try:
+            world = self.rpc.call("buddy-world.snapshot", {})
+            owner = world.get("owner", {})
+            players = [owner, *world.get("nearbyPlayers", [])]
+            corpses = world.get("playerCorpses", [])
+            if integer(world.get("self", {}).get("guid", 0)) != self.character_guid:
+                return "I couldn't verify my current body for that resurrection."
+            if re.search(r"\bmy target\b", request, re.IGNORECASE):
+                target = integer(owner.get("targetGuid", 0)) if (owner.get("targetKnown") is True
+                    and owner.get("present") is True and integer(owner.get("guid", 0)) == owner_guid) else 0
+                if target >= 2**48:
+                    owners = {integer(row.get("ownerGuid", 0)) for row in corpses if row.get("present") is True
+                              and integer(row.get("guid", 0)) == target}
+                    target = owners.pop() if len(owners) == 1 else 0
+            elif re.search(r"\b(?:rez|resurrect|revive) me\b", request, re.IGNORECASE):
+                target = owner_guid
+            else:
+                names = dict(known_players or {})
+                names[owner_guid] = self.player_name
+                group = self.party.get("group", {}) if self.party_available else {}
+                if group.get("known") is True and group.get("inGroup") is True:
+                    for member in group.get("members", []):
+                        guid, name = integer(member.get("guid", 0)), member.get("name")
+                        if guid and isinstance(name, str) and name.isalpha():
+                            names[guid] = name
+                targets = [guid for guid, name in names.items() if guid != self.character_guid and named(request, name)]
+                target = targets[0] if len(targets) == 1 else 0
+            corpse_guids = {integer(row.get("guid", 0)) for row in corpses if row.get("present") is True
+                            and integer(row.get("ownerGuid", 0)) == target}
+            if not 0 < target < 2**48 or target == self.character_guid or not (corpse_guids or any(
+                    row.get("present") is True and integer(row.get("guid", 0)) == target for row in players)):
+                return "I couldn't verify one nearby player or corpse. You can select them and ask me to rez your target."
+            session = self.actions.get("sessionId")
+            result = self.rpc.call("buddy-actions.resurrect_once", {
+                "sessionId": session, "selfGuid": str(self.character_guid), "targetGuid": str(target)})
+            if result.get("sessionId") != session or integer(result.get("selfGuid", 0)) != self.character_guid:
+                return "My connection changed before I could confirm the resurrection attempt."
+            self.actions = result
+            operation = result.get("lastSpellOperation", {})
+            if (operation.get("capability") == "resurrect" and operation.get("transportWritten") is True
+                    and integer(operation.get("targetGuid", 0)) in {target, *corpse_guids}):
+                return "I sent the resurrection cast. I'm waiting for the game to confirm they're alive."
+            return "The game hasn't confirmed the cast. I need an eligible target in range and a safe moment to cast."
+        except CapabilityUnavailable:
+            return "Targeted resurrection isn't installed on my current controller."
+        except (ConversationError, TypeError, AttributeError):
+            return "I couldn't confirm a resurrection attempt."
+
+    def execute(self, action, quest_id=0, item_entry=0, gold_copper=0, problem_text="", report_source="owner",
+                owner_text="", known_players=None, owner_guid=3):
+        if action == "RESURRECT_TARGET":
+            return self.resurrect_target(owner_text, known_players, owner_guid)
         if action in ("REPORT_PROBLEM","REPAIR_CONTROLLER"):
             return self.report_problem(problem_text,repair=action=="REPAIR_CONTROLLER",source=report_source)
         if action == "NONE":
@@ -3106,6 +3176,19 @@ class Conversation:
         self.history[history_key] = self.history[history_key][-20:]
         self.last_activity = time.monotonic()
         self.next_banter = self.last_activity + self.banter_seconds
+        request_text = selected[-1]["text"].strip()
+        address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
+        request = request_text[address.end():] if address else request_text
+        if (not peer and isinstance(self.controls, BuddyControls)
+                and self.controls.resurrection_available()
+                and self.controls.spell_toolkit.get("targetedResurrectionSupported") is True
+                and re.fullmatch(r"(?:(?:can|could|would|will) you |please )?(?:rez|resurrect|revive)\s+"
+                                 r"(?:my target|[a-z]+)(?: please)?[.!?]?", request, re.IGNORECASE)):
+            if self.same_body():
+                text = self.controls.resurrect_target(request, self.party_agents, self.player_guid)
+                self.send_reply({"text": text, "emote": "NONE"}, channel,
+                                target_guid=sender, history_key=history_key)
+            return
         self.status(phase="thinking", cursor=self.cursor)
         state = self.controls.context() if self.controls else {}
         if state.get("emote_catalog",{}).get("sessionId") != self.session_id:
@@ -3143,6 +3226,8 @@ class Conversation:
             reply["action"]="NONE" # Direct generation owns the repair; no queued second agent.
         if self.controls and (not peer or reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER")):
             arguments = {key: reply[key] for key in NUMERIC_ARGS if key in reply}
+            if reply["action"] == "RESURRECT_TARGET":
+                arguments.update(owner_text=request, known_players=self.party_agents, owner_guid=self.player_guid)
             if reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER"):
                 arguments.update(problem_text=selected[-1]["text"]+"\nObserved response: "+reply["text"],report_source="companion" if peer else "owner")
             try:
