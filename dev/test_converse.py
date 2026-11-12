@@ -638,19 +638,20 @@ class ControlsTests(unittest.TestCase):
             self.assertEqual(sum(method=="buddy-quests.accept" for method,_ in rpc.calls),1)
             self.assertEqual(sum(method=="buddy-quests.state" for method,_ in rpc.calls),1)
 
-    def test_loot_is_explicit_and_independent_of_missing_follow_module(self):
+    def test_corpse_looting_is_automatic_without_a_chat_toggle(self):
         rpc = FakeRPC([])
         controls = converse.BuddyControls(rpc)
-        self.assertIn("isn't ready", controls.execute("ENABLE_LOOTING"))
-        self.assertEqual(rpc.calls, [])
         controls.loot_available = True
-        def call(method, params):
-            rpc.calls.append((method, params))
-            return {"enabled": params["enabled"]}
-        rpc.call = call
-        self.assertIn("loot nearby", controls.execute("ENABLE_LOOTING"))
-        self.assertEqual(controls.execute("DISABLE_LOOTING"), "Automatic looting is off.")
-        self.assertEqual(rpc.calls, [("buddy-loot.enable", {"enabled": True}), ("buddy-loot.enable", {"enabled": False})])
+        controls.loot = {"enabled": True, "itemsStoredConfirmed": 2}
+        actions = converse.REPLY_SCHEMA["properties"]["action"]["enum"]
+        for action in ("ENABLE_LOOTING", "DISABLE_LOOTING"):
+            with self.subTest(action=action):
+                self.assertNotIn(action, actions)
+                with self.assertRaises(converse.ConversationError):
+                    converse.validate_reply({"text": "Okay.", "emote": "NONE", "action": action})
+                self.assertIn("automatically loot", controls.execute(action))
+        self.assertEqual(rpc.calls, [])
+        self.assertEqual(controls.loot, {"enabled": True, "itemsStoredConfirmed": 2})
 
     def trade_controls(self, backpack=None):
         backpack = backpack if backpack is not None else [{"slot": 2, "entry": 159, "count": 3,

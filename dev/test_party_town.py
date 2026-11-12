@@ -749,8 +749,7 @@ class TownTests(unittest.TestCase):
             self.assertEqual(enables,[],mode)
     def test_conversation_toggle_revokes_only_its_owned_town_control(self):
         for action,control in (("ENABLE_ASSIST","assist"),("DISABLE_ASSIST","assist"),
-                               ("ENABLE_HEALING","healing"),("DISABLE_HEALING","healing"),
-                               ("ENABLE_LOOTING","loot"),("DISABLE_LOOTING","loot")):
+                               ("ENABLE_HEALING","healing"),("DISABLE_HEALING","healing")):
             _,rpc,_,_,_=self.rig()
             controls=m.c.BuddyControls(rpc);controls.actions_available=controls.loot_available=True
             with patch.object(m.c,"party_town_snapshot",return_value={}) as marker:

@@ -47,7 +47,7 @@ DISABLED_FEATURES = (
     "code_mode_host", "view_image", "workspace_dependencies", "tool_suggest",
 )
 ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
-           "RESURRECT_TARGET", "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD", "ENABLE_LOOTING", "DISABLE_LOOTING",
+           "RESURRECT_TARGET", "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
            "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
            "EXECUTE_QUEST", "STOP_QUEST", "STOP_MISSION", "REPORT_PROBLEM", "REPAIR_CONTROLLER")
@@ -114,8 +114,9 @@ installed and available. Following uses the installed client navigation on the
 current map. Other abilities exist only when supplied abilities say available.
 DISCOVER_QUESTS reads the nearest interactable NPC's actual offers. ACCEPT_QUEST
 requests one offered quest: quest_id is the exact observed ID, or0 only for a
-unique available offer. ENABLE_LOOTING/DISABLE_LOOTING toggles nearby ordinary
-corpse loot. TURN_IN_QUEST requests completion of an own active quest: use its exact quest_id, or0 only for a unique completed own quest. Reward choices are selected automatically from actual item facts for useful class-compatible equipment/stats, or sell value when none is known usable. Missing item facts cause a short wait, never a request for item IDs. CLAIM_QUEST_REWARD uses quest_id and an optional actual item_entry only when Joel explicitly chose it; otherwise leave item_entry0 for automatic selection. reward_items contains actual observed item names and facts; use those names when discussing rewards. Never call a reward an upgrade without an equipped comparison or claim an unknown weapon proficiency. PLAN_QUEST uses quest_id from the own journal to discuss a next objective; it does not move or start combat. OPEN_TRADE/CANCEL_TRADE controls a trade with Joel. OFFER_TRADE_ITEM
+unique available offer. Looting eligible corpses, including quest drops, is
+automatic. Use the observed loot state to explain current progress or waits.
+TURN_IN_QUEST requests completion of an own active quest: use its exact quest_id, or0 only for a unique completed own quest. Reward choices are selected automatically from actual item facts for useful class-compatible equipment/stats, or sell value when none is known usable. Missing item facts cause a short wait, never a request for item IDs. CLAIM_QUEST_REWARD uses quest_id and an optional actual item_entry only when Joel explicitly chose it; otherwise leave item_entry0 for automatic selection. reward_items contains actual observed item names and facts; use those names when discussing rewards. Never call a reward an upgrade without an equipped comparison or claim an unknown weapon proficiency. PLAN_QUEST uses quest_id from the own journal to discuss a next objective; it does not move or start combat. OPEN_TRADE/CANCEL_TRADE controls a trade with Joel. OFFER_TRADE_ITEM
 uses item_entry from an observed backpack item explicitly requested by Joel;
 it offers one whole stack, never equipment or bag contents. OFFER_TRADE_GOLD
 uses an exact gold_copper amount explicitly stated by Joel (1gold=10000copper,
@@ -1650,6 +1651,7 @@ class RPC:
                           "buddy-world.snapshot",
                           "buddy-quests.discover", "buddy-quests.state", "buddy-quests.offer", "buddy-quests.accept",
                           "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward", "buddy-quests.accept_shared",
+                          # Internal town and quest workers share this transport.
                           "buddy-loot.state", "buddy-loot.enable",
                           "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
                           "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
@@ -2690,6 +2692,8 @@ class BuddyControls:
 
     def execute(self, action, quest_id=0, item_entry=0, gold_copper=0, problem_text="", report_source="owner",
                 owner_text="", known_players=None, owner_guid=3):
+        if action in ("ENABLE_LOOTING", "DISABLE_LOOTING"):
+            return "I automatically loot eligible corpses, including quest drops."
         if action == "RESURRECT_TARGET":
             return self.resurrect_target(owner_text, known_players, owner_guid)
         if action in ("REPORT_PROBLEM","REPAIR_CONTROLLER"):
@@ -2781,17 +2785,6 @@ class BuddyControls:
                 return self.execute_turn_in(action, quest_id, item_entry)
             if action in ("DISCOVER_QUESTS", "ACCEPT_QUEST"):
                 return self.execute_quest(action, quest_id)
-            if action in ("ENABLE_LOOTING", "DISABLE_LOOTING"):
-                if not self.loot_available:
-                    return "Automatic looting isn't ready yet."
-                enabled = action == "ENABLE_LOOTING"
-                party_town_snapshot(self.character_guid, revoke_control="loot")
-                self.loot = self.rpc.call("buddy-loot.enable", {"enabled": enabled})
-                if enabled and self.loot.get("enabled") is not True:
-                    return "I couldn't enable automatic looting yet."
-                if not enabled and self.loot.get("enabled", False) is not False:
-                    return "I couldn't confirm automatic looting is off yet."
-                return "I'll loot nearby ordinary corpses when it's safe." if enabled else "Automatic looting is off."
             if action in ("OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE"):
                 return self.execute_trade(action, item_entry, gold_copper)
         except ConversationError:

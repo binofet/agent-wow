@@ -477,3 +477,60 @@ func TestConcurrentStateAndPackets(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestAutomaticLootPicksPersonalQuestItemWithoutOwner(t *testing.T) {
+	_, f, _ := rig(t)
+	ctx := context.Background()
+	f.world.Owner = nil
+	s := NewAutomaticService(f, 1, "session")
+	now := time.Unix(1000, 0).Add(5 * time.Hour)
+	s.now = func() time.Time { return now }
+	s.Tick(ctx)
+	if got := current(t, s); !got.Enabled || got.EnabledRemainingMs != 0 || got.Phase != "waiting_open" {
+		t.Fatalf("automatic looting did not open observed corpse: %v", got)
+	}
+	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0,
+		lootItem{slot: 0, id: 123, count: 1}, lootItem{slot: 1, id: 7365, count: 1, slotType: 4}))
+	s.Tick(ctx)
+	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGAutostoreLootItem || (len(f.packets[1].Payload) != 1 || f.packets[1].Payload[0] != 1) {
+		t.Fatalf("personal quest item was not taken first: %v", f.packets)
+	}
+	emit(s, opcode.SMSGLootRemoved, []byte{1})
+	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 7365, 1))
+	if got := current(t, s); got.ItemsStoredConfirmed != 1 {
+		t.Fatalf("quest pickup was not confirmed: %v", got)
+	}
+}
+
+func TestAutomaticLootRecoversFromCombatAndMaintenance(t *testing.T) {
+	_, f, _ := rig(t)
+	ctx := context.Background()
+	f.world.Owner.UnitFlags |= 0x80000 // Joel's combat does not prevent loot.
+	s := NewAutomaticService(f, 1, "session")
+	now := time.Unix(1000, 0)
+	s.now = func() time.Time { return now }
+	if got, err := s.Enable(ctx, &lootv1.EnableRequest{}); err != nil || got.Enabled {
+		t.Fatalf("maintenance suspension: %v %v", got, err)
+	}
+	s.Tick(ctx)
+	if len(f.packets) != 0 {
+		t.Fatal("looted during maintenance")
+	}
+	now = now.Add(maintenanceLootPause)
+	f.world.Self.UnitFlags |= 0x80000
+	s.Tick(ctx)
+	if !current(t, s).Enabled || len(f.packets) != 0 {
+		t.Fatal("policy failed to resume, or looted during own combat")
+	}
+	now = now.Add(time.Second)
+	f.world.Self.UnitFlags &^= 0x80000
+	s.Tick(ctx)
+	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+		t.Fatal("loot did not resume after combat without a command")
+	}
+	f.leaseOwner = "trade"
+	s.Tick(ctx)
+	if !current(t, s).Enabled || len(f.packets) != 1 {
+		t.Fatal("lease loss should stop only the current transaction")
+	}
+}

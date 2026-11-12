@@ -52,7 +52,7 @@ func run() error {
 		return err
 	}
 	defer connection.Close()
-	service := buddyloot.NewService(modv1.NewSessionClient(connection), self, sessionID)
+	service := buddyloot.NewAutomaticService(modv1.NewSessionClient(connection), self, sessionID)
 	server := grpc.NewServer()
 	lootv1.RegisterBuddyLootServer(server, service)
 	readiness := health.NewServer()
