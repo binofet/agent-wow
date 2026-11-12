@@ -1,0 +1,46 @@
+api_version: 1
+enabled: true
+description: Explicit nearby NPC quest offers and bound pickup with server quest-log confirmation
+requires: [buddy-world, buddy-actions, buddy-party]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  discover: /warcraftbuddy.quests.v1.BuddyQuests/Discover
+  state: /warcraftbuddy.quests.v1.BuddyQuests/State
+  offer: /warcraftbuddy.quests.v1.BuddyQuests/Offer
+  details: /warcraftbuddy.quests.v1.BuddyQuests/Details
+  accept: /warcraftbuddy.quests.v1.BuddyQuests/Accept
+  accept_shared: /warcraftbuddy.quests.v1.BuddyQuests/AcceptShared
+  journal: /warcraftbuddy.quests.v1.BuddyQuests/Journal
+  turn_in: /warcraftbuddy.quests.v1.BuddyQuests/TurnIn
+  claim_reward: /warcraftbuddy.quests.v1.BuddyQuests/ClaimReward
+  explore: /warcraftbuddy.quests.v1.BuddyQuests/Explore
+packets:
+  SMSG_QUESTGIVER_STATUS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_LIST: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_GOSSIP_MESSAGE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_DETAILS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUEST_CONFIRM_ACCEPT: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_INVALID: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTLOG_FULL: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_FAILED: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_GOSSIP_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUEST_QUERY_RESPONSE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_REQUEST_ITEMS: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_OFFER_REWARD: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+  SMSG_QUESTGIVER_QUEST_COMPLETE: /warcraftbuddy.quests.v1.BuddyQuests/OnPacket
+
+script_api:
+  state: {effect: read}
+  discover: {effect: query}
+  journal: {effect: query}
+  offer: {effect: query}
+  details: {effect: query}
+  accept: {effect: mutation}
+  accept_shared: {effect: mutation}
+  turn_in: {effect: query}
+  claim_reward: {effect: mutation}
+  explore: {effect: mutation}

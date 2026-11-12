@@ -1,0 +1,379 @@
+
+‰
+google/protobuf/any.protogoogle.protobuf"6
+Any
+type_url (	RtypeUrl
+value (RvalueBv
+com.google.protobufBAnyProtoPZ,google.golang.org/protobuf/types/known/anypb¢GPB™Google.Protobuf.WellKnownTypesbproto3
+æ
+google/protobuf/empty.protogoogle.protobuf"
+EmptyB}
+com.google.protobufB
+EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.Protobuf.WellKnownTypesbproto3
+ß
+api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"?
+WorldPacket
+opcode (Ropcode
+payload (Rpayload"E
+SendPacketRequest
+opcode (Ropcode
+payload (Rpayload"5
+ClockResponse$
+client_time_ms (RclientTimeMs"u
+InvokeModuleRequest
+module (	Rmodule
+method (	Rmethod.
+request (2.google.protobuf.AnyRrequest"D
+InvokeModuleResponse,
+result (2.google.protobuf.AnyRresult2Ä
+SessionK
+
+SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
+GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
+InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
+®a
+actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
+ToggleRequest
+enabled (Renabled"M
+EngageNPCRequest
+enabled (Renabled
+target_guid (R
+targetGuid"ç
+EngageNPCState
+active (Ractive
+target_guid (R
+targetGuid
+phase (	Rphase,
+lease_remaining_ms (RleaseRemainingMs"π
+BehaviorReloadRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid+
+expected_revision (	RexpectedRevision
+source (	Rsource
+use_builtin (R
+useBuiltin"‹
+BehaviorStatus
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+revision (	Rrevision,
+last_good_revision (	RlastGoodRevision1
+quarantined_revision (	RquarantinedRevision
+
+last_error (	R	lastError 
+evaluations (Revaluations
+failures (Rfailures4
+last_rejected_decision	 (	RlastRejectedDecision"◊
+FargodeepEncounterRequest
+enabled (Renabled
+target_guid (R
+targetGuid!
+engager_guid (RengagerGuid=
+expected_quest_log_revision (RexpectedQuestLogRevision
+
+session_id (	R	sessionId"Æ
+FargodeepEncounterState
+active (Ractive
+target_guid (R
+targetGuid!
+engager_guid (RengagerGuid
+phase (	Rphase!
+remaining_ms (RremainingMs"˜
+ClientPosition
+known (Rknown
+	map_known (RmapKnown
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz 
+orientation (Rorientation
+	estimated (R	estimated
+age_ms	 (RageMs
+revision
+ (Rrevision"u
+InteractionRequest
+owner (	Rowner
+token (	Rtoken
+lease_ms (RleaseMs
+harvest (Rharvest"@
+InteractionRelease
+owner (	Rowner
+token (	Rtoken"v
+ApproachLootRequest
+token (	Rtoken
+corpse_guid (R
+corpseGuid(
+game_object_guid (RgameObjectGuid"G
+ApproachQuestRequest
+token (	Rtoken
+npc_guid (RnpcGuid"ì
+TravelToRequest
+token (	Rtoken
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz)
+arrival_distance (RarrivalDistance"–
+PlanRouteLegRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid<
+expected_position_revision (RexpectedPositionRevision
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz"Ç
+RouteLeg
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+map_id (RmapId>
+start (2(.warcraftbuddy.actions.v1.ClientPositionRstartD
+endpoint (2(.warcraftbuddy.actions.v1.ClientPositionRendpoint
+path_length (R
+pathLength
+point_count (R
+pointCount!
+goal_reached (RgoalReached8
+server_position_revision	 (RserverPositionRevision"(
+ExitCryptRequest
+token (	Rtoken"_
+InteractionLease
+token (	Rtoken5
+state (2.warcraftbuddy.actions.v1.StateRstate"©
+RecoveryState
+enabled (Renabled
+active (Ractive
+phase (	Rphase
+reason (	Rreason
+death_epoch (R
+deathEpoch+
+release_attempted (RreleaseAttempted'
+release_written (RreleaseWritten%
+ghost_observed (RghostObserved,
+corpse_query_known	 (RcorpseQueryKnown!
+corpse_found
+ (RcorpseFoundQ
+corpse_location (2(.warcraftbuddy.actions.v1.ClientPositionRcorpseLocation"
+corpse_map_id (RcorpseMapId
+corpse_guid (R
+corpseGuidW
+graveyard_location (2(.warcraftbuddy.actions.v1.ClientPositionRgraveyardLocation.
+reclaim_delay_known (RreclaimDelayKnown;
+reclaim_delay_remaining_ms (RreclaimDelayRemainingMs+
+reclaim_attempted (RreclaimAttempted'
+reclaim_written (RreclaimWritten%
+alive_observed (RaliveObserved
+rested (Rrested1
+movement_unconfirmed (RmovementUnconfirmed#
+verified_legs (RverifiedLegs"Æ
+
+KnownSpell
+spell_id (RspellId%
+metadata_known (RmetadataKnown
+name (	Rname
+	family_id (RfamilyId
+rank (Rrank!
+mana_percent (RmanaPercent
+range_yards (R
+rangeYards
+	self_only (RselfOnly8
+automatic_buff_supported	 (RautomaticBuffSupported
+
+capability
+ (	R
+capability
+target_rule (	R
+targetRule%
+blocked_reason (	RblockedReason 
+cast_time_ms (R
+castTimeMs
+	flat_cost (RflatCost
+
+power_type (R	powerType.
+required_item_class (RrequiredItemClass4
+required_subclass_mask (RrequiredSubclassMask)
+requires_stealth (RrequiresStealth'
+requires_behind (RrequiresBehind"˛
+SpellOperation
+spell_id (RspellId
+target_guid (R
+targetGuid
+
+capability (	R
+capability
+phase (	Rphase+
+transport_written (RtransportWritten$
+server_cast_go (RserverCastGo'
+effect_observed (ReffectObserved"‡
+ObservedAura
+slot (Rslot
+spell_id (RspellId
+caster_guid (R
+casterGuid
+positive (Rpositive%
+duration_known (RdurationKnown!
+remaining_ms (RremainingMs
+revision (Rrevision"§
+PlayerAuras
+target_guid (R
+targetGuid
+complete (Rcomplete
+revision (Rrevision<
+auras (2&.warcraftbuddy.actions.v1.ObservedAuraRauras"ú
+BuffOperation
+sequence (Rsequence
+spell_id (RspellId
+target_guid (R
+targetGuid
+phase (	Rphase+
+transport_written (RtransportWritten$
+server_cast_go (RserverCastGo%
+aura_confirmed (RauraConfirmed#
+aura_revision (RauraRevision"Ω
+SpellToolkitState'
+spellbook_known (RspellbookKnown-
+spellbook_revision (RspellbookRevision<
+spells (2$.warcraftbuddy.actions.v1.KnownSpellRspellsH
+player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAurasD
+	last_buff (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
+
+session_id (	R	sessionId
+	self_guid (RselfGuidF
+targeted_resurrection_supported (RtargetedResurrectionSupported"¯
+State
+	following (R	following
+healing (Rhealing
+moving (Rmoving*
+known_lesser_heal (RknownLesserHeal!
+cast_pending (RcastPending
+reason (	Rreason)
+transport_writes (RtransportWrites#
+heal_attempts (RhealAttempts,
+server_cast_starts	 (RserverCastStarts$
+server_cast_go
+ (RserverCastGo*
+last_cast_failure (RlastCastFailure+
+malformed_packets (RmalformedPackets9
+follow_lease_remaining_ms (RfollowLeaseRemainingMs;
+healing_lease_remaining_ms (RhealingLeaseRemainingMs
+
+limitation (	R
+limitation-
+motion_unconfirmed (RmotionUnconfirmedD
+position (2(.warcraftbuddy.actions.v1.ClientPositionRposition+
+interaction_owner (	RinteractionOwnerC
+interaction_lease_remaining_ms (RinteractionLeaseRemainingMs
+	assisting (R	assisting
+known_smite (R
+knownSmite'
+assist_attempts (RassistAttempts9
+assist_lease_remaining_ms (RassistLeaseRemainingMs+
+last_cast_spell_id (RlastCastSpellId1
+last_cast_target_guid (RlastCastTargetGuid0
+server_assist_starts (RserverAssistStarts(
+server_assist_go (RserverAssistGo#
+assist_reason (	RassistReason.
+smite_damage_events (RsmiteDamageEvents,
+smite_damage_total (RsmiteDamageTotal
+class_known (R
+classKnown
+class_id  (RclassId
+
+class_name! (	R	className%
+known_fireball" (RknownFireball2
+known_sinister_strike# (RknownSinisterStrike*
+known_auto_attack$ (RknownAutoAttack&
+combat_spell_id% (RcombatSpellId!
+combat_style& (	RcombatStyle0
+assist_damage_events' (RassistDamageEvents.
+assist_damage_total( (RassistDamageTotal4
+fireball_damage_events) (RfireballDamageEvents2
+fireball_damage_total* (RfireballDamageTotalA
+sinister_strike_damage_events+ (RsinisterStrikeDamageEvents?
+sinister_strike_damage_total, (RsinisterStrikeDamageTotal.
+melee_damage_events- (RmeleeDamageEvents,
+melee_damage_total. (RmeleeDamageTotal%
+auto_attacking/ (RautoAttacking5
+auto_attack_target_guid0 (RautoAttackTargetGuid2
+auto_attack_requested1 (RautoAttackRequested6
+auto_attack_unconfirmed2 (RautoAttackUnconfirmed=
+sinister_strike_energy_cost3 (RsinisterStrikeEnergyCost8
+mainhand_weapon_verified4 (RmainhandWeaponVerified
+	traveling5 (R	traveling&
+travel_npc_guid6 (RtravelNpcGuid#
+nav_available7 (RnavAvailable
+
+nav_reason8 (	R	navReason
+
+practicing9 (R
+practicing%
+practice_phase: (	RpracticePhase0
+practice_target_guid; (RpracticeTargetGuid=
+practice_lease_remaining_ms< (RpracticeLeaseRemainingMs%
+practice_pulls= (RpracticePulls%
+practice_kills> (RpracticeKills*
+known_shadow_bolt? (RknownShadowBolt9
+shadow_bolt_damage_events@ (RshadowBoltDamageEvents7
+shadow_bolt_damage_totalA (RshadowBoltDamageTotal/
+interaction_harvestB (RinteractionHarvest.
+harvest_guard_guidsC (RharvestGuardGuidsC
+recoveryD (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryO
+	fargodeepE (21.warcraftbuddy.actions.v1.FargodeepEncounterStateR	fargodeepQ
+%client_movement_observation_confirmedG (R"clientMovementObservationConfirmedO
+$client_movement_observation_failuresH (R!clientMovementObservationFailures
+buffingd (Rbuffing5
+buff_lease_remaining_mse (RbuffLeaseRemainingMs
+buff_reasonf (	R
+buffReason#
+buff_attemptsg (RbuffAttempts'
+buffs_confirmedh (RbuffsConfirmedD
+	last_buffi (2'.warcraftbuddy.actions.v1.BuffOperationRlastBuff
+
+session_idj (	R	sessionId
+	self_guidk (RselfGuidZ
+last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationG
+
+engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJFGJId"é
+ResurrectOnceRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+target_guid (R
+targetGuid
+spell_id (RspellId"x
+AcceptResurrectionRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+caster_guid (R
+casterGuid2ä
+BuddyActionsR
+Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
+Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
+Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
+	EngageNPC*.warcraftbuddy.actions.v1.EngageNPCRequest.warcraftbuddy.actions.v1.StateC
+HealOnce.google.protobuf.Empty.warcraftbuddy.actions.v1.StateA
+Status.google.protobuf.Empty.warcraftbuddy.actions.v1.StateQ
+Buffs'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
+SpellToolkit.google.protobuf.Empty+.warcraftbuddy.actions.v1.SpellToolkitStatek
+ReloadBehavior/.warcraftbuddy.actions.v1.BehaviorReloadRequest(.warcraftbuddy.actions.v1.BehaviorStatusL
+Behavior.google.protobuf.Empty(.warcraftbuddy.actions.v1.BehaviorStatusn
+AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
+ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
+ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`
+ApproachQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State^
+TravelQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State`
+TravelTrainer..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State_
+TravelVendor..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.StateV
+TravelTo).warcraftbuddy.actions.v1.TravelToRequest.warcraftbuddy.actions.v1.Statea
+PlanRouteLeg-.warcraftbuddy.actions.v1.PlanRouteLegRequest".warcraftbuddy.actions.v1.RouteLegX
+	ExitCrypt*.warcraftbuddy.actions.v1.ExitCryptRequest.warcraftbuddy.actions.v1.StateT
+Practice'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.Statej
+FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
+Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateC
+OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
+BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
+ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
+AcceptResurrection3.warcraftbuddy.actions.v1.AcceptResurrectionRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

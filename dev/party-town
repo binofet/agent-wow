@@ -1,0 +1,647 @@
+#!/usr/bin/env python3
+"""Supervise finite inventory upkeep near actually observed town services."""
+import argparse
+import copy
+import fcntl
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import signal
+import sys
+import threading
+import time
+import uuid
+
+def load(name, filename):
+    loader = importlib.machinery.SourceFileLoader(name, str(Path(__file__).with_name(filename)))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec); loader.exec_module(module)
+    return module
+
+c, town = load("party_town_converse", "converse"), load("party_town_finite", "town-maintenance")
+gear = load('party_town_gear', 'party-gear')
+disenchant = load('party_town_disenchant', 'party-disenchant')
+Error, integer, ROOT = c.ConversationError, c.integer, c.ROOT
+ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088), 8: ("Nixwick", 8402)}
+MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.equip_gear", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
+CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
+            ("assist", "buddy-actions.assist", "assisting", "actions"),
+            ("healing", "buddy-actions.healing", "healing", "actions"),
+            ("buffs", "buddy-actions.buffs", "buffing", "actions"),
+            ("follow", "buddy-actions.follow", "following", "actions"))
+TASK_PRIORITY = ['combat_or_recovery', 'existing_game_operation', 'usable_gear', 'bag_space_or_service', 'idle_gathering_quests_or_training']
+
+def identity(guid):
+    if guid not in ROSTER:
+        raise Error("Town supervisor requires an owned party profile")
+    return dict(version=1, mode="party_town", characterGuid=guid,
+                rpcUrl=f"http://127.0.0.1:{ROSTER[guid][1]}/rpc")
+
+def point(p, known="positionKnown"):
+    return (isinstance(p, dict) and p.get(known) is True and p.get("mapKnown") is True
+            and all(type(p.get(k)) in (int, float) and math.isfinite(p[k]) and abs(p[k]) <= 40000 for k in ("x", "y", "z")))
+
+def distance(a, b):
+    return math.sqrt(sum((a[k]-b[k])**2 for k in ("x", "y", "z")))
+
+def load_operations(path):
+    try:
+        with os.fdopen(c.private_open(path,os.O_RDONLY),"r") as source:
+            raw=source.read(65537)
+        if len(raw)>65536: raise Error("Town ledger exceeds its bound")
+        value=json.loads(raw)
+        if not isinstance(value,dict): raise Error("Town ledger must be an object")
+        return value
+    except FileNotFoundError:return None
+    except ValueError:raise Error("Town ledger is invalid") from None
+
+class RPC(c.RPC):
+    EXTRA = {"buddy-inventory.discover", "buddy-mail.state", "buddy-mail.list",
+             "buddy-actions.acquire_interaction", "buddy-actions.release_interaction", "buddy-actions.travel_vendor"}
+    def fork(self): return RPC(self.url, self.timeout)
+    def call(self, method, params, timeout=None):
+        if method not in self.EXTRA:
+            return super().call(method, params, timeout=timeout)
+        self.request_id += 1
+        request_id = self.request_id
+        request = c.urllib.request.Request(self.url, data=json.dumps(dict(jsonrpc="2.0", id=request_id,
+            method=method, params=params), allow_nan=False).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with self.opener.open(request, timeout=35 if method.endswith("travel_vendor") else 5) as response:
+                raw = response.read(262145)
+            value = json.loads(raw)
+        except (OSError, ValueError):
+            raise Error("Town request is unconfirmed") from None
+        if (len(raw) > 262144 or not isinstance(value, dict) or value.get("jsonrpc") != "2.0"
+                or type(value.get("id")) is not int or value["id"] != request_id or "error" in value
+                or not isinstance(value.get("result"), dict)):
+            raise Error("Town response is unconfirmed")
+        return value["result"]
+
+def profession_active(guid):
+    folder = ROOT / "data/professions" / str(guid)
+    try:
+        if folder.is_symlink(): return True
+        with os.fdopen(c.private_open(folder/"lock", os.O_RDONLY), "r") as lock:
+            return c.is_locked(lock)
+    except FileNotFoundError: return False
+    except OSError: return True
+
+class GuardedWorkerRPC:
+    def __init__(self, actor, rpc): self.actor, self.rpc = actor, rpc
+    @property
+    def url(self):return self.rpc.url
+    def call(self, method, params):
+        if method in MUTATIONS:
+            self.actor.guard()
+        if method=='buddy-inventory.sell' and integer(params.get('source',{}).get('itemGuid',0)) in self.actor.gear_protected:
+            raise Error('Displaced equipment is retained, not automatically sold')
+        return self.rpc.call(method, params)
+
+class GuardedWorker(town.Worker):
+    def __init__(self, actor, rpc, journal):
+        super().__init__(GuardedWorkerRPC(actor, rpc), actor.guid, journal)
+        self.actor = actor
+    def ready(self, state):
+        self.actor.guard()
+        return super().ready(state)
+    def protect(self,state):
+        for row in state.get('items',[]):
+            if integer(row.get('item',{}).get('itemGuid',0)) in self.actor.gear_protected:
+                row['safeJunkSaleEligible']=False
+        return state
+    def state(self):return self.protect(super().state())
+    def discovery(self,vendor_guid=None):
+        state,vendors=super().discovery(vendor_guid)
+        return self.protect(state),vendors
+
+class Supervisor:
+    def __init__(self, guid, rpc=None, save=lambda value: None, stored=None, now=time.time,
+                 stopped=lambda: False, revoked=lambda: False, notify=lambda: None, worker=None, revoked_controls=None):
+        self.guid, self.identity = guid, identity(guid)
+        self.rpc = rpc or RPC(self.identity["rpcUrl"])
+        if self.rpc.url != self.identity["rpcUrl"]: raise Error("Town endpoint differs from owned profile")
+        self.save, self.now, self.stopped, self.revoked, self.notify = save, now, stopped, revoked, notify
+        self.revoked_controls = revoked_controls
+        self.data = stored or dict(identity=self.identity, attempts=[])
+        if self.data.get("identity") != self.identity or not isinstance(self.data.get("attempts"), list) or len(self.data["attempts"]) > 128:
+            raise Error("Town journal identity or bound is invalid")
+        for row in self.data["attempts"]:
+            if (not isinstance(row, dict) or not isinstance(row.get("key"), str) or len(row["key"]) > 256
+                    or row.get("phase") not in ("reserved", "complete", "blocked", "unconfirmed")
+                    or not isinstance(row.get("sessionId"), str) or not 1 <= len(row["sessionId"]) <= 128):
+                raise Error("Town attempt journal is invalid")
+        self.status = dict(characterGuid=guid, phase="starting", busy=False, observationsCurrent=False)
+        self.session, self.owner_anchor, self.steady_owner, self.owner_since = None, None, None, self.now()
+        self.token, self.activity_id, self.held, self.original_follow = None, "", False, False
+        self.release_uncertain, self.worker = False, worker or self.run_worker
+        self.held_controls, self.controls_paused, self.pause_uncertain, self.worker_uncertain = {}, False, False, False
+        self.gear_protected=set()
+        self.gear_scope, self.gear_group = False, None
+        self.status.update(taskQueue=list(TASK_PRIORITY), selectedTask='none', blockedReason='', gearCandidateCount=0)
+        self.disenchant_running=False
+        self.disenchant_scanner=disenchant.Scanner() if guid==4 else None
+        self.disenchant_next_query=0
+        self.status.update(disenchantConfigured=guid==4,disenchantPhase='waiting_for_party_comparison' if guid==4 else 'not_configured')
+
+    def persist(self): self.save(copy.deepcopy(self.data))
+    def controls_revoked(self):
+        if self.revoked_controls is not None:
+            return set(self.revoked_controls())
+        return {row[0] for row in CONTROLS} if self.revoked() else set()
+    def activities(self):
+        return (c.quest_task_snapshot(self.guid).get("active") is True
+                or c.area_quest_snapshot(self.guid).get("active") is True
+                or not self.disenchant_running and profession_active(self.guid))
+
+    def read(self):
+        inv = town.checked_state(self.rpc.call("buddy-inventory.state", {}), self.guid)
+        party = self.rpc.call('buddy-party.state', {}) if self.gear_scope else None
+        actions = self.rpc.call("buddy-actions.status", {})
+        trade = self.rpc.call("buddy-trade.state", {})
+        quests = self.rpc.call("buddy-quests.state", {})
+        loot = self.rpc.call("buddy-loot.state", {})
+        world = self.rpc.call("buddy-world.snapshot", {})
+        player = world.get("self", {})
+        if integer(player.get("guid", 0)) != self.guid: raise Error("Town actor identity changed")
+        if self.session is not None and inv["sessionId"] != self.session:
+            if self.status.get("busy") is True: raise Error("Town body changed")
+            self.session, self.steady_owner = inv["sessionId"], None
+            if self.guid==4:
+                self.status.update(disenchantPhase='waiting_for_party_comparison',disenchantedItems=[])
+        for state in (trade, quests, loot):
+            if state.get("sessionId") != inv["sessionId"]: raise Error("Town module body is unconfirmed")
+        return dict(inv=inv, world=world, actions=actions, self=player, trade=trade, quests=quests, loot=loot, party=party)
+
+    def block(self, reason, message):
+        self.status['blockedReason'] = reason
+        raise Error(message)
+
+    def gear_party_safe(self, context):
+        party, p, a = context.get('party'), context['self'], context['actions']
+        if a.get('sessionId') != context['inv']['sessionId'] or integer(a.get('selfGuid', 0)) != self.guid:
+            self.block('gear_waits_for_current_body', 'Gear actions body is unconfirmed')
+        group = party.get('group', {}) if isinstance(party, dict) else {}
+        members = group.get('members', [])
+        if (not isinstance(party, dict) or party.get('sessionId') != context['inv']['sessionId']
+                or group.get('known') is not True or group.get('inGroup') is not True
+                or not integer(group.get('groupGuid', 0)) or integer(group.get('leaderGuid', 0)) != 3
+                or not isinstance(members, list) or not 2 <= len(members) <= 5):
+            self.block('gear_waits_for_current_party', 'Gear needs the actual current party')
+        roster = []
+        for member in members:
+            guid = integer(member.get('guid', 0)) if isinstance(member, dict) else 0
+            if guid not in (1, 3, 4, 5, 8) or guid in [g for g, _ in roster] or type(member.get('online', False)) is not bool:
+                self.block('gear_waits_for_current_party', 'Gear party membership is unconfirmed')
+            roster.append((guid, member.get('online', False)))
+        signature = (integer(group['groupGuid']), tuple(sorted(roster)))
+        if self.guid not in dict(roster) or not dict(roster)[self.guid] or 3 not in dict(roster):
+            self.block('gear_waits_for_current_party', 'Gear party identity is unconfirmed')
+        if self.gear_group is None: self.gear_group = signature
+        elif self.gear_group != signature:
+            self.block('gear_party_changed', 'Gear party changed during upkeep')
+        players = context['world'].get('nearbyPlayers', [])
+        if not isinstance(players, list) or len(players) > 64:
+            self.block('gear_waits_for_safe_party', 'Gear player observations are unconfirmed')
+        views = [p, context['world'].get('owner', {})] + players
+        for guid, online in roster:
+            if not online: continue
+            matches = [v for v in views if isinstance(v, dict) and integer(v.get('guid', 0)) == guid]
+            if guid != self.guid:
+                # Changing owned gear needs no remote-party health inference.
+                # Only actual nearby party observations can defer it for
+                # healing/assist priority; distant or absent peers stay unknown.
+                near = [v for v in matches if v.get('present') is True and point(v)
+                        and integer(v.get('mapId', 0)) == integer(p.get('mapId', 0))
+                        and distance(a['position'], v) <= 60]
+                if not near: continue
+            if len(matches) != 1:
+                self.block('gear_waits_for_safe_party', 'Gear waits for observed party health')
+            player = matches[0]
+            if (any(player.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown', 'movementFlagsKnown'))
+                    or not 0 < integer(player.get('health', 0)) <= integer(player.get('maxHealth', 0))
+                    or integer(player['health'])*100 < integer(player['maxHealth'])*85
+                    or integer(player.get('unitFlags', 0)) & (1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
+                    or integer(player.get('movementFlags', 0)) & ~0x700001ff or integer(player.get('extraMovementFlags', 0))
+                    or not point(player) or integer(player.get('mapId', 0)) != integer(p.get('mapId', 0))):
+                self.block('gear_waits_for_safe_party', 'Gear waits for healthy out-of-combat party members')
+            # Own raw pose can be old; the separately guarded client position is
+            # the current own movement estimate, never a replacement raw pose.
+            if guid != self.guid:
+                if integer(player.get('movementFlags', 0)) & 0xff and integer(player.get('positionAgeMs', 0)) > 2000:
+                    self.block('gear_waits_for_fresh_moving_party', 'Gear waits for fresh moving party positions')
+
+    def safe(self, context, traveling=False, own_worker=False):
+        p, a, inv = context["self"], context["actions"], context["inv"]
+        pos = a.get("position", {})
+        if (any(p.get(k) is not True for k in ("present", "mapKnown", "aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
+                or integer(p.get("unitFlags", 0)) & (1|4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
+                or integer(p.get("movementFlags", 0)) & ~0x700001ff or integer(p.get("extraMovementFlags", 0))
+                or not point(pos, "known") or integer(pos.get("mapId", 0)) != integer(p.get("mapId", 0))):
+            self.block('waiting_for_safe_known_living_character', 'Town needs a safe known living character')
+        if (any(a.get(k) is True for k in ("motionUnconfirmed", "castPending", "practicing", "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed"))
+                or a.get('recovery', {}).get('active') is True):
+            self.block('combat_recovery_or_action_has_priority', 'Town waits for other game actions')
+        follow_handoff = (self.gear_scope and not self.controls_paused and a.get('following') is True
+                          and integer(a.get('followLeaseRemainingMs', 0)) > 1000 and a.get('traveling') is not True
+                          and integer(pos.get('ageMs', 0)) <= 2000)
+        if not traveling and (a.get("traveling") is True or a.get("moving") is True and not follow_handoff):
+            self.block('waiting_for_idle_movement', 'Town waits for idle movement')
+        owner = a.get("interactionOwner", "")
+        if owner and not (traveling and owner == "trade" or own_worker and self.disenchant_running and owner == 'professions'):
+            self.block('existing_interaction_has_custody', 'Town waits for another interaction')
+        if self.activities(): self.block('requested_routine_has_custody', 'Town defers to a requested routine')
+        if (context["quests"].get("actionInFlight") is True or integer(context["loot"].get("pendingCorpseGuid", 0))
+                or integer(context["loot"].get("pendingGameObjectGuid", 0))):
+            self.block('quest_or_loot_receipt_has_priority', 'Town defers to quest or loot interaction')
+        if not c.trade_idle(context['trade']):
+            self.block('trade_receipt_has_priority', 'Town defers to trading')
+        if inv.get("active") is True or inv.get("closing") is True or inv.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
+            if not own_worker: self.block('inventory_receipt_has_priority', 'Town waits for inventory receipt')
+        town.layout(inv)
+        if self.controls_paused and any(context[group].get(field,False) is not False for _,_,field,group in CONTROLS):
+            self.block('control_intent_changed', 'Town controls changed after the verified hold')
+        if self.gear_scope:
+            self.gear_party_safe(context)
+            return None  # The stationary owner anchor belongs to service trips.
+        owner = context["world"].get("owner", {})
+        if not isinstance(owner,dict): raise Error("Owner observation is invalid")
+        if owner.get("present") is True:
+            if (integer(owner.get("guid", 0)) != 3 or any(owner.get(k) is not True for k in ("aliveKnown", "alive", "unitFlagsKnown", "movementFlagsKnown"))
+                    or integer(owner.get("unitFlags", 0)) & 0x80000 or not self.gear_scope and integer(owner.get("movementFlags", 0)) & 0x1ff
+                    or not point(owner)):
+                self.block('waiting_for_joel_to_stop_safely', 'Town waits for Joel to stop safely')
+            return {"mapId": integer(owner.get("mapId", 0)), **{k: owner[k] for k in ("x", "y", "z")}}
+        return None
+
+    def guard(self, traveling=False):
+        if self.stopped() or self.revoked() or self.controls_revoked(): self.block('control_stop_requested', 'Town activity stop requested')
+        context = self.read()
+        owner = self.safe(context, traveling=traveling, own_worker=not traveling)
+        if not self.gear_scope and ((owner is None) != (self.owner_anchor is None) or owner is not None and
+                (owner["mapId"] != self.owner_anchor["mapId"] or distance(owner, self.owner_anchor) > .35)):
+            raise Error("Joel moved or returned during town upkeep")
+        return context
+
+    def pause_controls(self, context, row):
+        self.held_controls, self.pause_uncertain, self.worker_uncertain, self.controls_paused = {}, False, False, False
+        row["heldControls"] = {}
+        for name,method,field,group in CONTROLS:
+            enabled=context[group].get(field,False)
+            if type(enabled) is not bool: raise Error("Town control intent is invalid")
+            if not enabled: continue
+            self.guard()
+            self.held_controls[name]=True
+            row["heldControls"][name]=True
+            self.persist()  # Record the owned hold before its potentially ambiguous request.
+            if self.stopped() or self.revoked() or self.controls_revoked():
+                del self.held_controls[name]
+                del row["heldControls"][name]
+                self.persist()
+                raise Error("Town hold revoked before its control write")
+            try:
+                reply=self.rpc.call(method,dict(enabled=False))
+                if reply.get(field,False) is not False:
+                    raise Error("Town control pause receipt is unconfirmed")
+                if self.gear_scope and name == 'follow' and any(reply.get(k) is True for k in ('moving','traveling','motionUnconfirmed')):
+                    raise Error('Gear follow stop is unconfirmed')
+            except Error:
+                self.pause_uncertain=True
+                raise
+        fresh=self.guard()
+        if any(fresh[group].get(field,False) is not False for _,_,field,group in CONTROLS):
+            self.pause_uncertain=True
+            raise Error("Town needs all held controls confirmed paused")
+        self.controls_paused=True
+
+    def restore_controls(self):
+        if self.release_uncertain or self.pause_uncertain or self.worker_uncertain:
+            self.status["controlsRestore"]="unconfirmed_no_automatic_control_restore"
+            return
+        try:
+            fresh=self.read()
+            operation=fresh["inv"].get("operation",{})
+            if (fresh["actions"].get("interactionOwner") or fresh["actions"].get("motionUnconfirmed") is True
+                    or fresh["inv"].get("active") is True or operation.get("status") in ("REQUESTED","OUTCOME_UNCONFIRMED")
+                    or operation.get("leaseReleased",True) is not True):
+                self.status["controlsRestore"]="pending_game_cleanup_no_control_restore"
+                return
+            for name,method,field,_ in reversed(CONTROLS):
+                if name not in self.held_controls or name in self.controls_revoked(): continue
+                # The loopback URL can survive a body reconnect. Recheck the
+                # current actual body immediately before each restoration.
+                current=town.checked_state(self.rpc.call("buddy-inventory.state",{}),self.guid)
+                if current["sessionId"] != self.session: raise Error("Town body changed before control restore")
+                if name in self.controls_revoked(): continue
+                reply=self.rpc.call(method,dict(enabled=True))
+                if reply.get(field) is not True: raise Error("Town control restore is unconfirmed")
+            self.status["controlsRestore"]="held_controls_restored_except_explicit_new_commands"
+        except (Error,town.Error):
+            self.status["controlsRestore"]="control_restore_unconfirmed_no_retry"
+
+    def vendors(self, context):
+        reply = self.rpc.call("buddy-inventory.discover", {})
+        state = town.checked_state(reply.get("state"), self.guid)
+        if state["sessionId"] != self.session or integer(state["inventoryRevision"]) != integer(context["inv"]["inventoryRevision"]):
+            raise Error("Inventory changed during vendor discovery")
+        rows, result, seen = reply.get("nearby", []), [], set()
+        if not isinstance(rows, list) or len(rows) > 96: raise Error("Vendor discovery exceeds bounds")
+        pos = context["actions"]["position"]
+        for row in rows:
+            p = row.get("creature", {}) if isinstance(row, dict) else {}
+            guid = integer(p.get("guid", 0))
+            if (guid in seen or guid >> 48 != 0xf130 or not guid & 0xffffff or integer(p.get("entry", 0)) != guid >> 24 & 0xffffff
+                    or any(p.get(k) is not True for k in ("present", "aliveKnown", "alive", "healthKnown")) or not integer(p.get("health", 0))
+                    or not integer(p.get("npcFlags", 0)) & 0x80 or integer(p.get("unitFlags", 0)) & 0x80000
+                    or integer(p.get("movementFlags", 0)) & 0x080000ff or not point(p)
+                    or integer(p.get("mapId", 0)) != integer(pos.get("mapId", 0))): continue
+            seen.add(guid)
+            d = distance(pos, p)
+            if d <= 35: result.append((d, guid))
+        return sorted(result)
+
+    def release(self):
+        if self.token is None: return
+        token, self.token = self.token, None
+        try: self.rpc.call("buddy-actions.release_interaction", dict(owner="trade", token=token))
+        except Error:
+            self.release_uncertain = True
+            self.status["phase"] = "town_trade_lease_release_unconfirmed"
+
+    def travel(self, vendor):
+        self.guard()
+        reply = self.rpc.call("buddy-actions.acquire_interaction", dict(owner="trade", leaseMs=30000))
+        token = reply.get("token", "")
+        if not isinstance(token, str) or not 1 <= len(token) <= 128: raise Error("Town trade token is unconfirmed")
+        self.token = token
+        try:
+            control = reply.get("state", {})
+            if control.get("interactionOwner") != "trade" or control.get("moving") is True or control.get("motionUnconfirmed") is True:
+                raise Error("Town stop before vendor travel is unconfirmed")
+            self.guard(traveling=True)
+            client, result, done = self.rpc.fork(), queue.Queue(maxsize=1), threading.Event()
+            def route():
+                try: result.put((client.call("buddy-actions.travel_vendor", dict(token=token, npcGuid=str(vendor))), None))
+                except Exception as error: result.put((None, error))
+                finally: done.set()
+            threading.Thread(target=route, daemon=True).start()
+            end = time.monotonic()+36
+            while not done.wait(.3):
+                self.guard(traveling=True)
+                if time.monotonic() >= end: raise Error("Town vendor travel exceeded its finite bound")
+            value, error = result.get_nowait()
+            if error is not None or not isinstance(value, dict): raise Error("Town vendor travel is unconfirmed")
+            if (value.get("reason") != "vendor_travel_within_distance"
+                    or any(value.get(k) is True for k in ("moving", "traveling", "motionUnconfirmed"))):
+                raise Error("Town vendor travel stopped before arrival")
+            self.guard(traveling=True)
+        finally: self.release()
+        if self.release_uncertain: raise Error("Town cannot start inventory work before lease release")
+
+    def run_worker(self, kind, target):
+        port = ROSTER[self.guid][1]
+        folder = ROOT / "data/autonomy/town-maintenance" / f"{self.guid}-{port}"
+        default = folder / "receipts.json"
+        # Share the maintained finite CLI lock; never rewrite its receipts.
+        with town.Journal(default, self.rpc.url, self.guid) as existing:
+            if any(row["phase"] not in town.TERMINAL for row in existing.data["attempts"]):
+                raise Error("Existing finite town worker has an unresolved receipt")
+            with gear.Journal(folder/'gear.json',self.rpc.url,self.guid) as gear_journal:
+                if kind=='gear':
+                    # Gear completes this guard before reserving its request;
+                    # another read callback inside dispatch would obscure a
+                    # definite local abort as an ambiguous mutation.
+                    return gear.Worker(gear.RPC(self.rpc.url),self.guid,gear_journal,
+                        guard=self.guard,stopped=self.stopped).run()
+                if any(row['phase'] not in gear.TERMINAL for row in gear_journal.data['attempts']):
+                    raise Error('Existing gear swap has an unresolved receipt')
+            if kind=='disenchant':
+                profession_folder=c.ensure_state(ROOT/'data/professions'/str(self.guid))
+                with os.fdopen(c.private_open(profession_folder/'lock',os.O_RDWR|os.O_CREAT),'r+') as lock:
+                    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    except BlockingIOError:raise Error('Existing profession worker owns the character') from None
+                    self.disenchant_running=True
+                    try:
+                        with disenchant.Journal(folder/'disenchant.json',self.rpc.url,self.guid) as journal:
+                            return disenchant.Worker(disenchant.RPC(self.rpc.url),journal,self.disenchant_scanner,
+                                guard=self.guard,stopped=lambda:self.stopped() or self.revoked() or bool(self.controls_revoked())).run(protected=self.gear_protected)
+                    finally:self.disenchant_running=False
+            path = folder / ("supervisor-"+hashlib.sha256(self.session.encode()).hexdigest()[:24]+".json")
+            with town.Journal(path, self.rpc.url, self.guid) as journal:
+                worker = GuardedWorker(self, town.RPC(self.rpc.url), journal)
+                before = sum(row["phase"] == "confirmed" for row in journal.data["attempts"])
+                result = worker.run(mailbox_guid=target if kind == "bags" else None,
+                                    vendor_guid=target if kind == "sell" else None,
+                                    claims_only=kind == "bags", max_seconds=45)
+                result["newConfirmedOperations"] = sum(row["phase"] == "confirmed" for row in journal.data["attempts"])-before
+                return result
+
+    def tick(self):
+        self.gear_scope, self.gear_group = False, None
+        self.status.update(observationsCurrent=False, busy=False, selectedTask='none', blockedReason='', gearCandidateCount=0)
+        if self.stopped(): return
+        context = self.read()
+        pending,self.gear_protected=gear.ledger_facts(self.guid)
+        pending_disenchant=self.guid==4 and disenchant.pending()
+        choices = gear.candidates(context['inv']) if context['inv'].get('equipmentKnown') is True else []
+        self.status.update(gearCandidateCount=len(choices), selectedTask='gear' if pending or choices else 'none')
+        if not pending_disenchant and (pending or choices):
+            self.gear_scope = True
+            context = self.read()
+            choices = gear.candidates(context['inv']) if context['inv'].get('equipmentKnown') is True else []
+            self.status['gearCandidateCount'] = len(choices)
+            if not pending and not choices:
+                self.status.update(phase='waiting_for_fresh_gear_candidate', blockedReason='gear_candidate_changed_before_hold')
+                return
+        owner = self.safe(context)
+        self.release_uncertain = False  # Fresh idle state proves no old movement lease remains.
+        if self.session is None: self.session = context["inv"]["sessionId"]
+        if not self.gear_scope and owner != self.steady_owner:
+            self.steady_owner, self.owner_since = owner, self.now()
+            if owner is not None:
+                self.status.update(phase='waiting_for_joel_to_remain_stationary', blockedReason='waiting_for_joel_to_remain_stationary'); return
+        if not self.gear_scope and owner is not None and self.now()-self.owner_since < 2:
+            self.status.update(phase='waiting_for_joel_to_remain_stationary', blockedReason='waiting_for_joel_to_remain_stationary'); return
+        self.owner_anchor = owner
+        inv = context["inv"]
+        summary = c.inventory_context(inv, self.guid)
+        self.status.update(observationsCurrent=True, freeSlots=summary["freeSlots"], totalSlots=summary["totalSlots"], bodySessionId=self.session)
+        bags, slots = town.layout(inv)
+        empty = any(not integer(bags[b].get("containerGuid", 0)) for b in range(1,5))
+        carried = bool(town.bag_candidates(inv, slots))
+        kind, target, mode = "", 0, "local"
+        if pending_disenchant:
+            kind='disenchant'
+            self.status['disenchantPhase']='reconciling_previous_attempt'
+        elif pending or inv.get('equipmentKnown') is True and gear.candidates(inv):
+            kind='gear'
+        elif empty and carried:
+            kind = "bags"
+        elif empty and summary["freeSlots"]:
+            boxes = context["world"].get("mailboxes", [])
+            if not isinstance(boxes, list) or len(boxes) > 32: raise Error("Mailbox observations exceed bounds")
+            boxes = [p for p in boxes if isinstance(p,dict) and point(p) and p.get("present") is True
+                     and p.get("typeKnown") is True and integer(p.get("gameObjectType",0)) == 19
+                     and integer(p.get("guid",0)) >> 48 == 0xf110
+                     and integer(p.get("mapId",0)) == integer(context["self"].get("mapId",0))
+                     and distance(context["actions"]["position"],p) <= 4.5]
+            if boxes:
+                mailbox = min(boxes,key=lambda p:distance(context["actions"]["position"],p))
+                mail = self.rpc.call("buddy-mail.list", dict(mailboxGuid=str(integer(mailbox["guid"]))))
+                mails=mail.get("bagMails",[])
+                valid = isinstance(mails,list) and 0 < len(mails) <= 50
+                lows=set()
+                for letter in mails if valid else []:
+                    if not isinstance(letter,dict): valid=False;break
+                    attachments=letter.get("attachments",[])
+                    if (not integer(letter.get("mailId",0)) or not isinstance(attachments,list) or not 1 <= len(attachments) <= 4):
+                        valid=False;break
+                    for item in attachments:
+                        low=integer(item.get("itemGuidLow",0)) if isinstance(item,dict) else 0
+                        if (not 0 < low < 2**32 or low in lows or integer(item.get("entry",0)) != 41599 or integer(item.get("count",0)) != 1):
+                            valid=False;break
+                        lows.add(low)
+                if (valid and mail.get("sessionId") == self.session and mail.get("listKnown") is True and mail.get("listCurrent") is True
+                        and not mail.get("operationInFlight")):
+                    kind,target="bags",integer(mailbox["guid"])
+        if not kind and self.guid==4:
+            if self.now()>=self.disenchant_next_query:
+                self.disenchant_next_query=self.now()+30
+                try:
+                    candidate,reason,_=self.disenchant_scanner.scan(inv,self.gear_protected)
+                    self.status['disenchantReason']=reason
+                    self.status['disenchantPhase']='waiting_for_party_comparison' if candidate is None else 'ready_for_unused_gear'
+                    if candidate is not None:kind='disenchant';target=integer(candidate['itemGuid'])
+                except (Error,disenchant.Error,disenchant.c.ConversationError,c.ConversationError,OSError,ValueError,KeyError,TypeError):
+                    self.status['disenchantReason']='party_comparison_unavailable_keep_gear'
+                    self.status['disenchantPhase']='waiting_for_party_comparison'
+        if not kind:
+            if any(row.get('safeJunkSaleEligible') is True and row.get('gearBlockedReason') in gear.PENDING_METADATA for row in inv.get('items',[]) if isinstance(row,dict)):
+                self.status['phase']='waiting_for_gear_comparison_metadata';return
+            eligible=[]
+            for item in inv.get("items",[]):
+                if (not isinstance(item,dict) or item.get("metadataKnown") is not True
+                        or item.get("safeJunkSaleEligible") is not True or not integer(item.get("unitSellPriceCopper",0))
+                        or integer(item.get('item',{}).get('itemGuid',0)) in self.gear_protected): continue
+                source=town.ref(item.get("item"))
+                actual=slots.get((source["bag"],source["slot"]),{})
+                if actual.get("metadataKnown") is True and town.ref(actual) == source: eligible.append(item)
+            if eligible:
+                vendors = self.vendors(context)
+                resting = bool(integer(context["self"].get("playerFlags",0)) & 0x20 or owner is not None
+                    and owner["mapId"] == integer(context["self"].get("mapId",0))
+                    and integer(context["world"]["owner"].get("playerFlags",0)) & 0x20)
+                if vendors and (vendors[0][0] <= 4.5 or summary["freeSlots"] <= 2 or resting):
+                    kind,target="sell",vendors[0][1]
+                    mode="travel" if vendors[0][0] > 4.5 else "local"
+        if not kind:
+            self.status.update(phase='idle_no_qualified_town_upkeep', blockedReason='no_verified_conservative_upgrade_or_service'); return
+        self.status['selectedTask'] = kind
+        key = f"{self.session}/{integer(inv['inventoryRevision'])}/{kind}/{target}/{mode}"
+        if kind == "gear": key += f"/module/{integer(inv['revision'])}"
+        existing=next((row for row in self.data['attempts'] if row['key']==key),None)
+        if existing is not None and not pending_disenchant:
+            self.status.update(phase='unchanged_town_attempt_not_repeated', blockedReason='unchanged_attempt_not_repeated'); return
+        if existing is None and len(self.data["attempts"]) >= 128:
+            self.status.update(phase='finite_town_attempt_limit', blockedReason='finite_attempt_limit'); return
+        row=existing or dict(key=key, sessionId=self.session, phase="reserved")
+        if existing is None:self.data['attempts'].append(row)
+        self.persist()
+        self.activity_id, self.held, self.original_follow = uuid.uuid4().hex, False, context["actions"].get("following") is True
+        self.status.update(busy=True,lastKind=kind,confirmedOperations=0,phase="holding_follow_for_town_upkeep"); self.notify()
+        try:
+            self.pause_controls(context,row)
+            self.guard()
+            if mode == "travel":
+                self.status["phase"]="traveling_to_observed_vendor"; self.notify(); self.travel(target)
+            self.guard()
+            self.status["phase"]="finite_town_worker_running"
+            if kind=='disenchant':self.status['disenchantPhase']='waiting_for_normal_receipt'
+            self.notify()
+            self.worker_uncertain=True
+            result=self.worker(kind,target)
+            phase=result.get("phase")
+            self.worker_uncertain=phase not in ("complete","blocked","server_rejected")
+            row["phase"]="complete" if phase == "complete" else "blocked" if phase == "blocked" else "unconfirmed"
+            self.status.update(phase="town_upkeep_"+row["phase"], confirmedOperations=result.get("newConfirmedOperations",0))
+            if kind=='gear':self.status['equippedItems']=result.get('equippedItems',[])
+            if kind=='disenchant':
+                self.status['disenchantReason']=result.get('reason','')[:160]
+                self.status['disenchantedItems']=result.get('disenchantedItems',[])
+                self.status['disenchantPhase']='completed' if phase=='complete' and result.get('newConfirmedOperations') else 'blocked' if phase in ('complete','blocked','server_rejected') else 'outcome_unconfirmed'
+        except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError,ValueError,KeyError,TypeError):
+            row["phase"]="unconfirmed"
+            self.status["phase"]="town_upkeep_stopped_or_unconfirmed"
+            if kind=='disenchant':self.status['disenchantPhase']='outcome_unconfirmed'
+        finally:
+            self.release(); self.persist()
+            self.restore_controls()
+            self.controls_paused=False
+            self.status["busy"]=False; self.activity_id=""; self.notify()
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command",choices=("run","status","stop"))
+    parser.add_argument("--character-guid",type=int,required=True,choices=tuple(ROSTER))
+    parser.add_argument("--max-hours",type=float,default=8)
+    args=parser.parse_args(argv)
+    if not math.isfinite(args.max_hours) or not 0 < args.max_hours <= 8: parser.error("Runtime must be within eight hours")
+    expected=identity(args.character_guid)
+    folder=c.ensure_state(c.ensure_state(ROOT/"data/party-town")/str(args.character_guid))
+    with os.fdopen(c.private_open(folder/"lock",os.O_RDWR|os.O_CREAT),"r+") as lock:
+        record=c.read_json(folder/"status.json")
+        if args.command != "run":
+            if args.command == "status": print(json.dumps(c.party_town_snapshot(args.character_guid),indent=2))
+            elif c.is_locked(lock) and record.get("identity") == expected:
+                c.write_json(folder/"stop.json",dict(identity=expected,instance=record.get("instance")))
+            return 0
+        try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: raise Error("This town supervisor already runs") from None
+        record=dict(identity=expected,instance=uuid.uuid4().hex,routineActive=True,pid=os.getpid())
+        end,requested=time.monotonic()+args.max_hours*3600,False
+        def request_stop(signum,frame):
+            nonlocal requested
+            requested=True
+        signal.signal(signal.SIGINT,request_stop);signal.signal(signal.SIGTERM,request_stop)
+        def stopped():
+            return requested or time.monotonic() >= end or c.read_json(folder/"stop.json") == dict(identity=expected,instance=record["instance"])
+        actor=None
+        def revoked():
+            return bool(revoked_controls())
+        def revoked_controls():
+            if actor is None or not actor.activity_id:return set()
+            marker=c.read_json(folder/"follow-revoked.json")
+            if any(marker.get(key) != value for key,value in dict(identity=expected,instance=record["instance"],activityId=actor.activity_id).items()):
+                return set()
+            controls=marker.get("controls",[row[0] for row in CONTROLS])
+            if not isinstance(controls,list) or any(name not in {row[0] for row in CONTROLS} for name in controls):
+                return {row[0] for row in CONTROLS}
+            return set(controls)
+        def save(value):
+            if len(json.dumps(value)) > 65536: raise Error("Town ledger exceeds its bound")
+            c.write_json(folder/"operations.json",value)
+        actor=Supervisor(args.character_guid,save=save,stored=load_operations(folder/"operations.json"),stopped=stopped,revoked=revoked,revoked_controls=revoked_controls)
+        def status():
+            record.update(updatedAt=time.time(),activityId=actor.activity_id,own=actor.status)
+            c.write_json(folder/"status.json",record)
+        actor.notify=status
+        try:
+            while not stopped():
+                try: actor.tick()
+                except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError,KeyError,ValueError,TypeError):
+                    actor.status.update(phase="waiting_for_safe_known_town_state",observationsCurrent=False)
+                status()
+                until=time.monotonic()+5
+                while not stopped() and time.monotonic()<until: time.sleep(.2)
+        finally:
+            actor.release();record["routineActive"]=False;status()
+    return 0
+
+if __name__ == "__main__":
+    try: sys.exit(main())
+    except (Error,town.Error,gear.Error,disenchant.Error,disenchant.c.ConversationError,OSError) as error: print("Party town: "+str(error),file=sys.stderr);sys.exit(1)

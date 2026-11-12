@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Loopback UI-body transport for the existing typed task runtime; no decision loop."""
+import argparse
+import copy
+import importlib.machinery
+import importlib.util
+import math
+import os
+from pathlib import Path
+import re
+import subprocess
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ROOT = Path(__file__).resolve().parent.parent
+_loader = importlib.machinery.SourceFileLoader('ui_body_task_host', str(ROOT/'dev/task-runtime'))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+host = importlib.util.module_from_spec(_spec); _loader.exec_module(host)
+Error, require = host.Error, host.require
+PUBLIC = '''guid present mapKnown mapId positionKnown x y z orientation positionAgeMs positionRevision
+movementFlagsKnown movementFlags extraMovementFlags movementTime healthKnown health maxHealth powerKnown
+power maxPower powerType unitFlagsKnown unitFlags aliveKnown alive vitalsAgeMs speedsKnown walkSpeed
+runSpeed observationAgeMs playerFlags dynamicFlags targetKnown targetGuid factionTemplate unitFlags2
+classKnown classId levelKnown level raceKnown raceId channelSpellKnown channelSpellId'''.split()
+
+
+def integer(value):
+    require(not isinstance(value, bool) and isinstance(value, (str, int))
+            and re.fullmatch(r'[0-9]{1,20}', str(value)) is not None, 'invalid_observed_integer')
+    return int(value)
+
+
+def process_identity(pid):
+    try:
+        reply = subprocess.run(['ps','-p',str(pid),'-o','uid=,lstart=,comm='],
+                               capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError): raise Error('ui_process_unavailable') from None
+    parts = reply.stdout.strip().split(None, 6)
+    require(reply.returncode == 0 and len(parts) == 7, 'ui_process_unavailable')
+    return dict(uid=integer(parts[0]), start=' '.join(parts[1:6]), command=parts[6])
+
+
+class Body:
+    def __init__(self, session_id, pid, window_id, proof, observer, bridge, attest, *, process=process_identity):
+        require(isinstance(session_id,str) and re.fullmatch(r'ui-[A-Za-z0-9_-]{8,100}',session_id), 'distinct_ui_session_required')
+        require(type(pid) is int and pid > 1 and type(window_id) is int and window_id > 0, 'ui_pid_window_required')
+        proof = Path(proof).absolute()
+        require(proof.resolve() == proof, 'ui_proof_symlink_refused')
+        value = host.decoded(host.read_file(proof, 8192, True))
+        require(isinstance(value,dict) and type(value.get('version')) is int and value['version'] == 1 and value.get('sessionId') == session_id
+                and value.get('guid') == '3' and value.get('pid') == pid and value.get('windowId') == window_id
+                and value.get('characterQualified') is True, 'ui_character_proof_required')
+        stamp = value.get('capturedAt')
+        require(type(stamp) in (int,float) and math.isfinite(stamp) and 0 < stamp <= time.time()+2,
+                'ui_bootstrap_timestamp_required')
+        expected = value.get('process')
+        require(isinstance(expected,dict) and set(expected) == {'uid','start','command'}
+                and type(expected['uid']) is int and expected['uid'] == os.geteuid()
+                and all(isinstance(expected[k],str) and 1 <= len(expected[k]) <= 4096 for k in ('start','command')),
+                'ui_process_proof_required')
+        expected['start'] = ' '.join(expected['start'].split())
+        self.sid,self.pid,self.window_id,self.expected = session_id,pid,window_id,expected
+        self.helper_sha = value.get('helperSha256')
+        require(isinstance(self.helper_sha,str) and re.fullmatch('[a-f0-9]{64}',self.helper_sha), 'ui_helper_pin_required')
+        self.observer,self.bridge,self.attest,self.process = observer,bridge,attest,process
+        self.observer_binding,self.lock = None,threading.Lock()
+        self.methods = {'buddy-world.snapshot':self.snapshot, 'buddy-actions.status':self.status}
+
+    def qualify(self):
+        require(self.process(self.pid) == self.expected, 'ui_process_changed')
+        actual = self.attest()
+        require(isinstance(actual,dict) and actual.get('pid') == self.pid and actual.get('windowId') == self.window_id
+                and actual.get('windowQualified') is True and isinstance(actual.get('helperSha256'),str)
+                and actual['helperSha256'] == self.helper_sha, 'ui_window_unqualified')
+
+    def observe(self):
+        with self.lock:
+            self.qualify()
+            before = self.observer.call('buddy-actions.status', {}, timeout=2)
+            world = self.observer.call('buddy-world.snapshot', {}, timeout=2)
+            after = self.observer.call('buddy-actions.status', {}, timeout=2)
+            binding = (before.get('sessionId'), str(before.get('selfGuid','')))
+            require(isinstance(binding[0],str) and 1 <= len(binding[0]) <= 128 and binding[0] != self.sid
+                    and integer(binding[1]) != 3 and binding == (after.get('sessionId'), str(after.get('selfGuid',''))),
+                    'observer_body_changed')
+            require(self.observer_binding in (None,binding), 'observer_body_changed')
+            owner = world.get('owner')
+            require(isinstance(owner,dict) and str(owner.get('guid','')) == '3' and owner.get('present') is True
+                    and owner.get('mapKnown') is True and owner.get('positionKnown') is True
+                    and integer(owner.get('positionRevision',0)) > 0, 'joel_observation_unavailable')
+            require(0 <= integer(owner.get('mapId',0)) < 2**32, 'invalid_observed_map')
+            for key in ('x','y','z','orientation'):
+                value = owner.get(key,0)
+                require(type(value) in (int,float) and math.isfinite(value) and abs(value) <= 40000,
+                        'invalid_observed_position')
+            if owner.get('movementFlagsKnown') is True and integer(owner.get('movementFlags',0)) & 0xff:
+                require(integer(owner.get('positionAgeMs',0)) <= 2000, 'moving_owner_position_stale')
+            self.qualify()
+            self.observer_binding = binding
+            result = {k:copy.deepcopy(owner[k]) for k in PUBLIC if k in owner}
+            result['uiBinding'] = dict(sessionId=self.sid,pid=self.pid,windowId=self.window_id,qualified=True,
+                                       observerSessionId=binding[0],observerGuid=binding[1])
+            return result
+
+    def snapshot(self, params):
+        require(not params, 'ui_snapshot_filters_unsupported')
+        value = self.observe(); value.pop('uiBinding')
+        return {'self':value}
+
+    def status(self, _params):
+        value = self.observe()
+        position = {k:value[k] for k in ('mapKnown','mapId','x','y','z','orientation') if k in value}
+        position.update(known=True, estimated=False, revision=value['positionRevision'], ageMs=value.get('positionAgeMs','0'))
+        return dict(sessionId=self.sid,selfGuid='3',position=position,
+                    moving=bool(integer(value.get('movementFlags',0)) & 0xff),
+                    motionUnconfirmed=value.get('movementFlagsKnown') is not True,
+                    reason='observed_ui_body_read_only',navAvailable=False)
+
+    def register(self, backend):
+        # Backends explicitly export aliases; arbitrary observer forwarding is never available.
+        for method in backend.METHODS:
+            require(method.startswith('buddy-actions.') and method != 'buddy-world.snapshot', 'invalid_ui_backend_alias')
+            self.methods[method] = lambda params, name=method: backend.call(name,params)
+
+    def dispatch(self, method, params):
+        require(isinstance(method,str) and method in self.methods, 'ui_method_unsupported')
+        require(isinstance(params,dict), 'rpc_parameters_object_required')
+        params = self.bridge.validate(method,params)
+        require(isinstance(params,dict), 'typed_bridge_rejected')
+        return self.methods[method](params)
+
+
+def handler(body):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*_): pass
+        def do_POST(self):
+            request_id = None
+            try:
+                self.connection.settimeout(5)
+                require(self.path == '/rpc' and not self.headers.get('Origin') and not self.headers.get('Transfer-Encoding')
+                        and self.headers.get('Host') == '127.0.0.1:'+str(self.server.server_port)
+                        and self.headers.get_content_type() == 'application/json', 'loopback_json_rpc_required')
+                length = integer(self.headers.get('Content-Length','0'))
+                require(0 < length <= host.MAX_INPUT, 'rpc_request_size_bound')
+                raw = self.rfile.read(length); require(len(raw) == length, 'incomplete_rpc_request')
+                value = host.decoded(raw)
+                require(isinstance(value,dict) and set(value) <= {'jsonrpc','id','method','params'}
+                        and value.get('jsonrpc') == '2.0' and type(value.get('id')) is int, 'rpc_request_invalid')
+                request_id = value['id']
+                result = body.dispatch(value.get('method'), value.get('params',{}))
+                reply = dict(jsonrpc='2.0',id=request_id,result=result)
+            except Exception as error:
+                message = str(error)
+                if not re.fullmatch('[a-z][a-z0-9_]{0,159}',message): message = 'ui_backend_unconfirmed'
+                reply = dict(jsonrpc='2.0',id=request_id,error=dict(code=-32000,message=message[:160]))
+            raw = host.packed(reply,1048576)
+            self.send_response(200); self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
+    return Handler
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('session-id','proof','state-dir','data-dir'): parser.add_argument('--'+name,required=True)
+    for name in ('wine-pid','window-id','port'): parser.add_argument('--'+name,type=int,required=True)
+    parser.add_argument('--observer-url',default='http://127.0.0.1:8086/rpc')
+    parser.add_argument('--policy-binary',default=str(ROOT/'data/bin/luapolicy'))
+    parser.add_argument('--helper',default=str(ROOT/'data/bin/mac-game-input'))
+    args = parser.parse_args(argv)
+    require(args.observer_url == 'http://127.0.0.1:8086/rpc' and 1024 <= args.port <= 65535 and args.port != 8086,
+            'fixed_loopback_observer_required')
+    from ui_body_movement import KeyActuator, MovementBackend, METHODS
+    body = Body(args.session_id,args.wine_pid,args.window_id,args.proof,host.RPC(args.observer_url),
+                host.Bridge(args.policy_binary,ROOT/'modules'),None)
+    actuator = KeyActuator(args.wine_pid,args.window_id,helper=args.helper,expected_sha256=body.helper_sha)
+    body.attest = actuator.attest
+    backend = MovementBackend(args.session_id,args.wine_pid,args.window_id,body.observe,
+                              args.state_dir,args.data_dir,actuator=actuator)
+    backend.METHODS = METHODS; body.register(backend)
+    # One actuator owner for this game window, even across ports and worktrees.
+    lock = Path('/private/tmp')/('warcraft-buddy-ui-body-'+str(os.geteuid()))/f'{args.wine_pid}-{args.window_id}'
+    with host.Store(lock):
+        body.qualify()
+        with ThreadingHTTPServer(('127.0.0.1',args.port),handler(body)) as server: server.serve_forever()
+
+
+if __name__ == '__main__':
+    try: main()
+    except (Error,OSError,ValueError) as error: raise SystemExit(str(error))

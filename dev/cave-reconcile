@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Retire one uncertain encounter after fresh observations; never retries it."""
+import argparse
+import copy
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import time
+
+loader = importlib.machinery.SourceFileLoader('cave_reconcile_worker', str(Path(__file__).with_name('cave-catchup')))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+cave = importlib.util.module_from_spec(spec); loader.exec_module(cave)
+Error, number = cave.Error, cave.number
+
+
+def proof(scenes, row):
+    targets = []
+    for guid, scene in scenes.items():
+        p, a, loot = scene['self'], scene['actions'], scene['loot']
+        operation = scene['professions'].get('operation') or {}
+        if (any(p.get(k) is not True for k in ('present', 'aliveKnown', 'alive', 'healthKnown', 'unitFlagsKnown'))
+                or not 0 < number(p.get('health', 0)) <= number(p.get('maxHealth', 0))
+                or number(p.get('unitFlags', 0)) & (0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x2000000|0x8000000)
+                or any(a.get(k) is True for k in ('moving', 'motionUnconfirmed', 'castPending', 'autoAttacking', 'autoAttackRequested', 'autoAttackUnconfirmed', 'traveling', 'practicing'))
+                or a.get('interactionOwner') or a.get('fargodeep', {}).get('active') is True
+                or loot.get('phase') not in ('idle', 'disabled') or number(loot.get('pendingCorpseGuid', 0)) or number(loot.get('pendingGameObjectGuid', 0))
+                or scene['quests'].get('actionInFlight') is True or not cave.c.trade_idle(scene['trade'])
+                or scene['professions'].get('active') is True or scene['professions'].get('closing') is True
+                or operation and (operation.get('status') not in ('COMPLETED', 'SERVER_REJECTED', 'BLOCKED', 'CANCELLED') or operation.get('leaseReleased') is not True)):
+            raise Error('All three bodies must be actually alive, out of combat, stopped and idle')
+        scope = a.get('fargodeep') or {}
+        if number(scope.get('targetGuid', 0)) not in (0, row['target']): raise Error('Another retained encounter needs independent inspection')
+        target = scene['world'].get('requestedCreature')
+        if target is None: continue
+        if (number(target.get('guid', 0)) != row['target'] or number(target.get('entry', 0)) != row['entry']
+                or any(target.get(k) is not True for k in ('present', 'mapKnown', 'healthKnown', 'aliveKnown', 'unitFlagsKnown', 'dynamicFlagsKnown'))
+                or number(target.get('mapId', 0)) != 0): raise Error('Exact old target observation is unknown or changed')
+        targets.append(target)
+    if not targets:
+        return 'outcome_unknown_target_absent_all_three'
+    alive = targets and all(t.get('alive') is True and 0 < number(t.get('health', 0)) == number(t.get('maxHealth', 0))
+        and not number(t.get('dynamicFlags', 0)) and not number(t.get('unitFlags', 0)) & 0x80000
+        and t.get('targetKnown') is True and not number(t.get('targetGuid', 0))
+        and not (t.get('attackVictimKnown') is True and number(t.get('attackVictimGuid', 0))) for t in targets)
+    dead = len(targets) == 3 and all(t.get('alive') is False and number(t.get('health', 0)) == 0
+        and not number(t.get('dynamicFlags', 0)) & 1 for t in targets)
+    if not alive and not dead: raise Error('Target remains unsafe or has unsettled receiver-specific loot')
+    return 'observed_alive_full_unclaimed' if alive else 'observed_dead_loot_settled'
+
+
+def reconcile(rpcs, sessions, stored, target, save, now=time.time):
+    worker = cave.Catchup(rpcs, sessions, stored=copy.deepcopy(stored))
+    pending = [r for r in worker.data['encounters'] if r['phase'] not in ('settled', 'stopped')]
+    if len(pending) != 1 or pending[0]['target'] != target: raise Error('Exactly one matching uncertain encounter is required')
+    row = pending[0]
+    first, second = worker.read(target), worker.read(target)
+    kind = proof(first, row)
+    if proof(second, row) != kind: raise Error('Target state changed during reconciliation')
+    receipt = {'version': 1, 'kind': 'abandoned_without_retry', 'targetGuid': str(target), 'entry': row['entry'],
+        'proof': kind, 'sessions': dict(worker.sessions), 'observedAt': now(), 'characters': worker.status['characters'],
+        'targetObservations': [{'observerGuid': g, **{k: t.get(k, 0) for k in ('guid', 'entry', 'alive', 'health', 'maxHealth', 'unitFlags', 'dynamicFlags')}}
+            for g, s in second.items() if (t := s['world'].get('requestedCreature')) is not None]}
+    row['reconciliation'], row['phase'] = receipt, 'stopped'
+    save(worker.data)  # One private atomic write; all old requests/GUIDs survive.
+    return receipt
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target', type=int, required=True)
+    parser.add_argument('--session', action='append', default=[], metavar='GUID=BODY_SESSION')
+    parser.add_argument('--state-dir', type=Path, default=cave.c.ROOT/'data/cave-catchup')
+    args = parser.parse_args(argv)
+    sessions = {}
+    for binding in args.session:
+        key, value = binding.split('=', 1)
+        if not key.isdigit() or int(key) in sessions: raise Error('Three unique body session bindings are required')
+        sessions[int(key)] = cave.session(value)
+    folder = cave.c.ensure_state(args.state_dir)
+    with os.fdopen(cave.c.private_open(folder/'lock', os.O_RDWR|os.O_CREAT), 'r+') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: raise Error('Stop the existing cave worker before reconciliation') from None
+        stored = cave.read_private(folder/'ledger.json')
+        if stored is None: raise Error('An existing cave ledger is required')
+        rpcs = {g: cave.RPC(f'http://127.0.0.1:{port}/rpc', timeout=.5) for g, (_, port, _) in cave.ROSTER.items()}
+        result = reconcile(rpcs, sessions, stored, number(args.target), lambda value: cave.write_private(folder/'ledger.json', value))
+        print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    try: main()
+    except (Error, OSError, ValueError) as error: raise SystemExit(str(error))

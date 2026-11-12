@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Manage the project's isolated local AzerothCore development realm."""
+
+import argparse
+import os
+from pathlib import Path
+import platform
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parent.parent
+COMPOSE = ROOT / "dev" / "realm.compose.yaml"
+ENV_FILE = ROOT / "config" / "realm.env"
+PROJECT = "warcraft-buddy-realm"
+DATABASE_VOLUME = f"{PROJECT}_database"
+
+
+class RealmError(Exception):
+    pass
+
+
+def capture(*args):
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RealmError(detail or f"{' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def requirements():
+    if platform.system() != "Linux" or platform.machine() not in ("x86_64", "amd64"):
+        raise RealmError("This launcher uses official linux/amd64 images; run it on x86_64 Linux.")
+    if not shutil.which("docker"):
+        raise RealmError("Docker Engine and its Compose plugin are required; no software was installed.")
+    capture("docker", "compose", "version")
+    endpoint = os.environ.get("DOCKER_HOST", "")
+    if not endpoint or os.environ.get("DOCKER_CONTEXT"):
+        endpoint = capture("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+    if not endpoint.startswith("unix://"):
+        raise RealmError("Select a local Docker Engine Unix socket; remote Docker contexts are unsupported.")
+    capture("docker", "info", "--format", "{{.ServerVersion}}")
+
+
+def existing_database():
+    names = capture("docker", "volume", "ls", "--filter", f"name={DATABASE_VOLUME}", "--format", "{{.Name}}")
+    return DATABASE_VOLUME in names.splitlines()
+
+
+def secret_file(create=False):
+    if ENV_FILE.is_symlink():
+        raise RealmError("config/realm.env must be a regular file.")
+    if not ENV_FILE.exists():
+        if not create:
+            raise RealmError("Local secret is missing: config/realm.env. Run dev/realm up for a new realm.")
+        if existing_database():
+            raise RealmError("The database volume exists but config/realm.env is missing. Restore its original secret; no data was changed.")
+        ENV_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            descriptor = os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return secret_file()
+        with os.fdopen(descriptor, "w") as output:
+            output.write(f"REALM_DB_ROOT_PASSWORD={secrets.token_urlsafe(48)}\n")
+        print("Created config/realm.env with a unique local database secret.")
+    if ENV_FILE.is_symlink() or not ENV_FILE.is_file():
+        raise RealmError("config/realm.env must be a regular file.")
+    if stat.S_IMODE(ENV_FILE.stat().st_mode) & 0o077:
+        raise RealmError("Protect the local secret with: chmod 600 config/realm.env")
+    values = ENV_FILE.read_text().splitlines()
+    if not any(line.startswith("REALM_DB_ROOT_PASSWORD=") and line.split("=", 1)[1].strip() for line in values):
+        raise RealmError("config/realm.env has no nonempty REALM_DB_ROOT_PASSWORD; it was not replaced.")
+
+
+def compose(*args):
+    environment = os.environ.copy()
+    # The private file must remain authoritative over an inherited shell value.
+    environment.pop("REALM_DB_ROOT_PASSWORD", None)
+    command = [
+        "docker", "compose", "--project-name", PROJECT,
+        "--project-directory", str(ROOT), "--env-file", str(ENV_FILE),
+        "--file", str(COMPOSE), *args,
+    ]
+    return subprocess.run(command, env=environment).returncode
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("check", "up", "down", "status"))
+    args = parser.parse_args()
+    requirements()
+    if args.command == "check":
+        print("Ready: x86_64 Linux, local Docker Engine, and Docker Compose.")
+        print(f"Free project disk space: {shutil.disk_usage(ROOT).free / 2**30:.1f} GiB (allow at least 20 GiB for initial setup).")
+        print("Only 127.0.0.1:3724 and 127.0.0.1:8085 are published; MySQL stays internal.")
+        print("This check does not start containers or verify a running game world.")
+        return 0
+    secret_file(create=args.command == "up")
+    if args.command == "up":
+        result = compose("up", "--detach")
+        if not result:
+            print("Containers started; game-world readiness has not yet been verified.")
+        return result
+    if args.command == "down":
+        result = compose("down")
+        if not result:
+            print("Realm containers stopped; database, configuration, and client-data volumes preserved.")
+        return result
+    return compose("ps", "--all")
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, RealmError) as error:
+        print(f"realm: {error}", file=sys.stderr)
+        sys.exit(1)

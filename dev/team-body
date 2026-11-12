@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Fixed main-party bridge to the maintained normal client lifecycle on Linux."""
+import sys
+sys.dont_write_bytecode = True
+import argparse, contextlib, errno, fcntl, hashlib, importlib.machinery, importlib.util, io, json, os
+from pathlib import Path
+import re, socket, stat, subprocess, time, types, urllib.request, uuid
+ROOT = Path(__file__).resolve().parent.parent
+CORE = '54272589b0aa5ee6e64bdff8c41a804ca3659c679122a96576c0dcbbdf2161ec'
+ROSTER = {1: ('Arlen', 'default', 8086), 4: ('Mira', 'mira', 8087), 5: ('Rook', 'rook', 8088)}
+class Refusal(Exception): pass
+
+def need(value, reason):
+    if not value: raise Refusal(reason)
+def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def canonical(value): return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+def operation_id(value):
+    need(isinstance(value, str) and len(value)==36, 'canonical_uuid_required')
+    try: parsed=uuid.UUID(value)
+    except ValueError: raise Refusal('canonical_uuid_required') from None
+    need(str(parsed)==value and parsed.version==4, 'canonical_uuid_required'); return value
+
+def private_read(path, limit=65536):
+    fd=os.open(path, os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    with os.fdopen(fd,'rb') as f:
+        info=os.fstat(f.fileno())
+        need(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and info.st_nlink==1 and not info.st_mode&0o077, 'private_owned_file_required')
+        raw=f.read(limit+1);need(len(raw)<=limit,'private_record_bound');return raw
+
+def private_dir(path):
+    path.mkdir(mode=0o700,parents=True,exist_ok=True);i=path.lstat()
+    need(stat.S_ISDIR(i.st_mode) and i.st_uid==os.getuid() and not i.st_mode&0o077,'private_owned_directory_required')
+
+def save(path, value, exclusive=False):
+    raw=canonical(value)+b'\n';need(len(raw)<=65536,'receipt_bound')
+    if exclusive:
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+    else:
+        temporary=path.with_name('.'+path.name+'.'+uuid.uuid4().hex)
+        try:
+            save(temporary,value,True);os.replace(temporary,path)
+        finally:temporary.unlink(missing_ok=True)
+    fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+
+def rpc(port, method):
+    need(method in ('buddy-party.state','buddy-world.snapshot'), 'read_only_identity_rpc_required')
+    q=urllib.request.Request(f'http://127.0.0.1:{port}/rpc',data=canonical(dict(jsonrpc='2.0',id=1,method=method,params={})),headers={'Content-Type':'application/json'})
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(q,timeout=5) as f:raw=f.read(262145)
+    need(len(raw)<=262144,'rpc_bound');d=json.loads(raw)
+    need(d.get('id')==1 and isinstance(d.get('result'),dict) and 'error' not in d,'identity_rpc_unavailable');return d['result']
+
+def port_closed(port):
+    # A failed RPC is not proof that no listener exists.
+    with socket.socket() as s:
+        s.settimeout(.5);result=s.connect_ex(('127.0.0.1',port))
+    need(result in (0,errno.ECONNREFUSED),'listener_absence_unconfirmed');return result==errno.ECONNREFUSED
+
+def containers_gone(sid):
+    need(isinstance(sid,str) and re.fullmatch('[A-Za-z0-9._-]{1,128}',sid),'session_identity_required')
+    names=subprocess.check_output(['docker','ps','-a','--format','{{.Names}}'],timeout=15,text=True).splitlines()
+    return not any(n.startswith(sid+'-') for n in names)
+
+class Body:
+    def __init__(self,guid,buddy):
+        need(guid in ROSTER,'fixed_main_party_only');self.guid,self.b=guid,buddy
+        name,profile,self.port=ROSTER[guid]
+        buddy.configure(types.SimpleNamespace(profile=profile,character_name=name if guid!=1 else None,
+            character_guid=guid if guid!=1 else None,rpc_port=self.port if guid!=1 else None,
+            config=None,config_dir=None,data_dir=None,module_dir=None))
+        self.folder=ROOT/'data/team-body'/str(guid)
+    def record(self):
+        try:raw=private_read(self.b.PID_FILE,8192)
+        except FileNotFoundError:return None,None
+        record=json.loads(raw)
+        need(isinstance(record,dict) and record.get('argv')==self.b.command_line(),'record_profile_mismatch')
+        need(record.get('profile_identity')==self.b.profile_identity(),'record_profile_mismatch')
+        for k in ('pid','start_ticks','exe_device','exe_inode','log_device','log_inode'):
+            need(type(record.get(k)) is int and record[k]>=0,'record_identity_invalid')
+        need(record['pid']>1 and record.get('independent',False) is False,'companion_identity_required')
+        return record,hashlib.sha256(raw).hexdigest()
+    def scan(self,r,offset,predicate):
+        fd=os.open(self.b.LOG_FILE,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        with os.fdopen(fd,'rb') as f:
+            i=os.fstat(f.fileno());need(stat.S_ISREG(i.st_mode) and i.st_uid==os.getuid() and not i.st_mode&0o077,'private_log_required')
+            need((i.st_dev,i.st_ino)==(r['log_device'],r['log_inode']) and 0<=offset<=i.st_size,'log_identity_changed')
+            f.seek(offset);raw=f.read(min(i.st_size-offset,16*1024*1024)+1)
+            need(len(raw)<=16*1024*1024,'log_scan_bound')
+        lines=raw.splitlines(keepends=True)
+        return any(len(line)<=65536 and line.endswith(b'\n') and predicate(line) for line in lines),raw,i
+    def ready(self,r):
+        # A cached ready offset identifies one bounded historical line. Do not
+        # scan the subsequent hours of debug traffic to prove startup again.
+        fd=os.open(self.b.LOG_FILE,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        with os.fdopen(fd,'rb') as f:
+            info=os.fstat(f.fileno());need(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and not info.st_mode&0o077,'private_log_required')
+            need((info.st_dev,info.st_ino)==(r['log_device'],r['log_inode']),'log_identity_changed')
+            at=r.get('ready_offset')
+            need(at is None or type(at) is int and 0<=at<info.st_size,'ready_offset_invalid')
+            f.seek(at or 0);remaining=65536 if at is not None else 16*1024*1024
+            while remaining>0:
+                line=f.readline(min(65537,remaining));remaining-=len(line)
+                if not line:break
+                need(len(line)<=65536 and line.endswith(b'\n'),'complete_ready_line_required')
+                if self.b.ready_line(line,r['pid']):return True,info
+                if at is not None:break
+        return False,info
+    def status(self):
+        r,record_sha=self.record()
+        out={'guid':self.guid,'rpcPort':self.port,'ownedProfile':True,'coreSha256':CORE,'ready':False,'online':False,'state':'notTracked'}
+        if r is None:return out
+        info=self.b.process_info(r['pid'])
+        if info is None:return out
+        need(all(info[k]==r[k] for k in ('argv','start_ticks','exe_device','exe_inode')),'process_identity_mismatch')
+        need(digest(Path('/proc')/str(r['pid'])/'exe')==CORE and digest(self.b.BINARY)==CORE,'core_identity_mismatch')
+        ready,log=self.ready(r)
+        party=rpc(self.port,'buddy-party.state');world=rpc(self.port,'buddy-world.snapshot');last=rpc(self.port,'buddy-party.state')
+        sid=party.get('sessionId');need(isinstance(sid,str) and re.fullmatch('[A-Za-z0-9._-]{1,128}',sid) and last.get('sessionId')==sid,'current_session_identity_unknown')
+        own=world.get('self') or {};need(int(own.get('guid',0))==self.guid and own.get('present') is True,'current_character_identity_unknown')
+        identity={k:r[k] for k in ('pid','start_ticks','exe_device','exe_inode','log_device','log_inode')}
+        fingerprint=hashlib.sha256(canonical(dict(recordSHA256=record_sha,sessionId=sid,identity=identity,coreSha256=CORE))).hexdigest()
+        out.update(state='trackedReady' if ready else 'trackedRunningNotReady',ready=ready,online=True,
+            fingerprint=fingerprint,sessionId=sid,pid=r['pid'],startTicks=r['start_ticks'],exeDevice=r['exe_device'],exeInode=r['exe_inode'],
+            logDevice=log.st_dev,logInode=log.st_ino,logOffset=log.st_size)
+        current=self.folder/'current.json'
+        if current.exists():
+            active=json.loads(private_read(current));op=self.path(active['operationId'])
+            row=json.loads(private_read(op));out['lifecycleOperation']={'operationId':row['operationId'],'phase':row['phase']}
+        return out
+    def path(self,op):return self.folder/(operation_id(op)+'.json')
+    def startable(self,row):
+        need(row.get('phase')=='stopped' and row.get('outcome')=='stopped' and all(row.get(k) is True for k in ('normalLogoutObserved','oldPidGone','rpcClosed','sessionContainersGone')),'positive_stop_receipt_required')
+        need(self.b.process_info(row['old']['pid']) is None and port_closed(self.port) and containers_gone(row['old']['sessionId']),'old_body_not_retired')
+        record,_=self.record();need(record is not None and record['pid']==row['old']['pid'],'old_tracking_record_changed')
+        need(digest(self.b.BINARY)==CORE,'core_identity_mismatch')
+        need(self.b.requested_independent() is False,'companion_operating_mode_required')
+    def mutate(self,kind,value):
+        need(kind in ('stop','start') and isinstance(value,dict),'fixed_operation_required')
+        op=operation_id(value.get('operationId'));path=self.path(op);private_dir(self.folder)
+        if path.exists():row=json.loads(private_read(path))
+        else:row=None
+        active_path=self.folder/'current.json'
+        if active_path.exists():
+            active=json.loads(private_read(active_path));prior=json.loads(private_read(self.path(active['operationId'])))
+            need(active['operationId']==op or prior.get('phase')=='complete','previous_lifecycle_outcome_unconfirmed')
+        if kind=='stop':
+            need(set(value)=={'operationId','expectedFingerprint'},'stop_binding_required')
+            if row is not None:
+                need(row.get('old',{}).get('fingerprint')==value['expectedFingerprint'],'duplicate_stop_binding_changed')
+                return self.public_result(row)
+            old=self.status();need(old.get('state')=='trackedReady' and old.get('fingerprint')==value['expectedFingerprint'],'tracked_ready_fingerprint_changed')
+            r,_=self.record();need(r is not None,'tracked_record_required')
+            row=dict(guid=self.guid,operationId=op,phase='stop_reserved',outcome='unconfirmed',old=old)
+            save(path,row,True);save(active_path,{'operationId':op})
+            save(self.folder/(op+'.pid-before.json'),r,True)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):code=self.b.stop()
+                need(code==0,'normal_stop_failed')
+                logout,tail,_=self.scan(r,old['logOffset'],self.b.logout_line)
+                # Keep the bounded private old-epoch evidence before start can truncate it.
+                archive=self.folder/(op+'.logout-tail');fd=os.open(archive,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'wb') as f:f.write(tail);f.flush();os.fsync(f.fileno())
+                row.update(normalLogoutObserved=logout,oldPidGone=self.b.process_info(old['pid']) is None,
+                    rpcClosed=port_closed(self.port),sessionContainersGone=containers_gone(old['sessionId']))
+                need(all(row[k] is True for k in ('normalLogoutObserved','oldPidGone','rpcClosed','sessionContainersGone')),'normal_retirement_unconfirmed')
+                row.update(phase='stopped',outcome='stopped',stopReceiptRef=op)
+            except Exception:
+                row.update(phase='stop_unconfirmed',outcome='unconfirmed');save(path,row);raise Refusal('normal_stop_outcome_unconfirmed_no_retry') from None
+            save(path,row);return self.public_result(row)
+        need(set(value)=={'operationId','stopReceiptRef'} and value.get('stopReceiptRef')==op and row is not None,'bound_stop_receipt_required')
+        if row.get('phase')=='complete':
+            current=self.status();stored=row.get('new') or {}
+            need(all(current.get(k)==stored.get(k) for k in ('fingerprint','sessionId','pid','startTicks','coreSha256')),'completed_start_body_changed')
+            return dict(current,operationId=op,outcome='started',stopReceiptRef=op)
+        self.startable(row);row['phase']='start_reserved';save(path,row)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):code=self.b.start()
+            need(code==0,'normal_start_failed');new=self.status()
+            need(new.get('state')=='trackedReady' and new['sessionId']!=row['old']['sessionId'] and new['pid']!=row['old']['pid'],'new_ready_body_unconfirmed')
+            row.update(phase='complete',outcome='started',new=new);save(path,row)
+            return dict(new,operationId=op,outcome='started',stopReceiptRef=op)
+        except Exception:
+            row.update(phase='start_unconfirmed',outcome='unconfirmed');save(path,row);raise Refusal('normal_start_outcome_unconfirmed_no_retry') from None
+    @staticmethod
+    def public_result(row):
+        return {k:row[k] for k in ('guid','operationId','outcome','normalLogoutObserved','oldPidGone','rpcClosed','sessionContainersGone','stopReceiptRef') if k in row}
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=('status','stop','start'));p.add_argument('--guid',type=int,choices=ROSTER,required=True);args=p.parse_args()
+    need(sys.platform=='linux','linux_owned_process_adapter_required')
+    raw=sys.stdin.buffer.read(16385);need(len(raw)<=16384,'input_bound');value=json.loads(raw or b'{}');need(isinstance(value,dict),'input_object_required')
+    loader=importlib.machinery.SourceFileLoader('team_body_maintained_buddy',str(ROOT/'dev/buddy'));spec=importlib.util.spec_from_loader(loader.name,loader);buddy=importlib.util.module_from_spec(spec);loader.exec_module(buddy)
+    body=Body(args.guid,buddy)
+    # The same maintained-profile flock serializes CAS, normal stop and start.
+    with os.fdopen(buddy.private_file(buddy.LOCK_FILE,os.O_WRONLY|os.O_CREAT),'w') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        result=body.status() if args.command=='status' and not value else body.mutate(args.command,value)
+    print(json.dumps(result,sort_keys=True))
+if __name__=='__main__':
+    try:main()
+    except (Refusal,OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):
+        print(json.dumps({'outcome':'unconfirmed','reason':'owned_lifecycle_not_confirmed_no_retry'}));raise SystemExit(2)

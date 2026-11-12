@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+"""Inspect starter supplies or submit one explicitly bounded supplies operation."""
+import argparse
+import copy
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+ROOT = Path(__file__).resolve().parent.parent
+MAX_RESPONSE = 262144
+METHODS = {"buddy-supplies." + name for name in ("state", "discover", "list", "buy", "equip", "restore")}
+STATUSES = ("REQUESTED", "CONFIRMED", "SERVER_REJECTED", "OUTCOME_UNCONFIRMED", "BLOCKED")
+TERMINAL = ("confirmed", "server_rejected", "blocked")
+TOOLS = frozenset((6256, 7005, 2901, 6217, 4470))
+CATALOG = TOOLS | {4471, 2320}
+COMMON_REQUEST = {"sessionId", "requestId", "expectedRevision", "expectedBackpackRevision", "expectedSkillsRevision"}
+BUY_REQUEST = COMMON_REQUEST | {"npcGuid", "offerRevision", "vendorSlot", "itemId", "count", "expectedPriceCopper",
+                               "maxSpendCopper", "expectedCopperRevision"}
+EQUIPMENT_REQUEST = COMMON_REQUEST | {"backpackSlot", "itemGuid", "originalWeaponGuid"}
+
+
+class Error(Exception):
+    pass
+
+
+def number(value, maximum=2**64 - 1):
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise Error("invalid_integer_evidence")
+    return value
+
+
+def positive(value, maximum=2**64 - 1):
+    result = number(value, maximum)
+    if result == 0:
+        raise Error("positive_identity_required")
+    return result
+
+
+def item_guid(value, allow_empty=False):
+    result = number(value)
+    if result == 0 and allow_empty:
+        return result
+    if result >> 48 != 0x4000 or result & ((1 << 48) - 1) == 0:
+        raise Error("actual_item_guid_required")
+    return result
+
+
+def token(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value):
+        raise Error("invalid_session_or_request_identity")
+    return value
+
+
+def rpc_url(value):
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except (ValueError, AttributeError):
+        raise Error("explicit_loopback_rpc_url_required") from None
+    if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or port is None
+            or not 1 <= port <= 65535 or parsed.path != "/rpc" or parsed.query or parsed.fragment
+            or parsed.username is not None or parsed.password is not None
+            or value != f"http://127.0.0.1:{port}/rpc"):
+        raise Error("explicit_loopback_rpc_url_required")
+    return value
+
+
+def decode_json(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise Error("rpc_redirect_refused")
+
+
+class RPC:
+    def __init__(self, url, opener=None):
+        self.url, self.calls = rpc_url(url), 0
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    def call(self, method, params):
+        if method not in METHODS or not isinstance(params, dict) or self.calls >= 8:
+            raise Error("rpc_method_or_call_bound_invalid")
+        self.calls += 1
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
+            "method": method, "params": params}, allow_nan=False).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=12) as response:
+                raw = response.read(MAX_RESPONSE + 1)
+            if len(raw) > MAX_RESPONSE:
+                raise Error("rpc_response_too_large")
+            reply = decode_json(raw)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("rpc_response_unconfirmed") from None
+        if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0" or type(reply.get("id")) is not int
+                or reply["id"] != self.calls or "error" in reply or not isinstance(reply.get("result"), dict)):
+            raise Error("rpc_matching_result_unconfirmed")
+        return reply["result"]
+
+
+def checked_state(raw, guid):
+    if not isinstance(raw, dict):
+        raise Error("invalid_supplies_state")
+    state = copy.deepcopy(raw)
+    token(state.get("sessionId"))
+    if positive(state.get("selfGuid", 0), 2**48 - 1) != guid:
+        raise Error("supplies_character_identity_mismatch")
+    for field in ("revision", "backpackRevision", "copperRevision", "skillsRevision", "originalWeaponGuid", "equippedPoleGuid"):
+        number(state.get(field, 0))
+    for field in ("originalWeaponGuid", "equippedPoleGuid"):
+        item_guid(state.get(field, 0), allow_empty=True)
+    for field in ("active", "copperKnown", "backpackKnown", "skillsKnown", "restoreRequired"):
+        if type(state.get(field, False)) is not bool:
+            raise Error("invalid_supplies_boolean")
+    number(state.get("copper", 0), 2**32 - 1)
+    backpack = state.get("backpack", [])
+    if not isinstance(backpack, list) or len(backpack) > 16:
+        raise Error("invalid_backpack_evidence")
+    slots, guids = set(), set()
+    for item in backpack:
+        if not isinstance(item, dict) or number(item.get("bag", 0)) != 0:
+            raise Error("invalid_backpack_evidence")
+        slot = number(item.get("slot", 0), 15)
+        observed_guid = item_guid(item.get("itemGuid", 0), allow_empty=True)
+        if slot in slots or observed_guid and observed_guid in guids or type(item.get("metadataKnown", False)) is not bool:
+            raise Error("duplicate_or_invalid_backpack_evidence")
+        slots.add(slot)
+        if observed_guid:
+            guids.add(observed_guid)
+        entry, stack = number(item.get("entry", 0), 2**32 - 1), number(item.get("stackCount", 0), 2**32 - 1)
+        if (not observed_guid and (entry or stack or item.get("metadataKnown", False))
+                or observed_guid and item.get("metadataKnown") is True and (entry == 0 or stack == 0)
+                or item.get("metadataKnown", False) is False and (entry or stack)):
+            raise Error("inconsistent_backpack_item_evidence")
+    if state.get("backpackKnown") is True and (slots != set(range(16)) or number(state.get("backpackRevision", 0)) == 0):
+        raise Error("complete_current_16_slot_backpack_required")
+    hand = state.get("mainhand", {})
+    if not isinstance(hand, dict):
+        raise Error("invalid_mainhand_evidence")
+    for field in ("slotKnown", "metadataKnown"):
+        if type(hand.get(field, False)) is not bool:
+            raise Error("invalid_mainhand_evidence")
+    hand_guid, hand_entry = item_guid(hand.get("itemGuid", 0), allow_empty=True), number(hand.get("entry", 0), 2**32 - 1)
+    if (not hand_guid and (hand_entry or hand.get("metadataKnown", False))
+            or hand.get("metadataKnown") is True and (hand_guid == 0 or hand_entry == 0)
+            or hand.get("metadataKnown", False) is False and hand_entry):
+        raise Error("inconsistent_mainhand_item_evidence")
+    operation = state.get("operation")
+    if operation is not None:
+        if (not isinstance(operation, dict) or operation.get("kind") not in ("buy", "equip", "restore")
+                or operation.get("status") not in STATUSES):
+            raise Error("invalid_supplies_operation")
+        token(operation.get("requestId"))
+        for field in ("npcGuid", "itemId", "count", "costCopper", "itemGuid", "originalWeaponGuid",
+                      "baselineBackpackRevision", "baselineCopperRevision", "serverFailure"):
+            number(operation.get(field, 0))
+        for field in ("transportWritten", "serverSuccessObserved", "inventoryConfirmed", "copperConfirmed",
+                      "equipmentConfirmed", "leaseReleased"):
+            if type(operation.get(field, False)) is not bool:
+                raise Error("invalid_operation_boolean")
+        if not isinstance(operation.get("reason", ""), str) or len(operation.get("reason", "")) > 1024:
+            raise Error("invalid_operation_reason")
+    return state
+
+
+class Journal:
+    def __init__(self, path, url, guid):
+        self.path, self.url, self.guid = Path(path).absolute(), rpc_url(url), positive(guid, 2**48 - 1)
+        self.data = {"version": 1, "rpcUrl": self.url, "characterGuid": str(guid), "attempts": []}
+        self.lock = None
+
+    @staticmethod
+    def check_file(fd):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise Error("journal_file_must_be_owned_regular_mode0600")
+
+    @staticmethod
+    def sync(directory):
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def __enter__(self):
+        for parent in (self.path.parent, *self.path.parent.parents):
+            if parent.is_symlink():
+                raise Error("journal_directory_symlink_refused")
+        missing, directory = [], self.path.parent
+        while not directory.exists():
+            missing.append(directory)
+            directory = directory.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700)
+            self.sync(directory.parent)
+        info = self.path.parent.stat()
+        if not self.path.parent.is_dir() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise Error("journal_directory_must_be_owned_mode0700")
+        self.lock = os.open(str(self.path) + ".lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            self.check_file(self.lock)
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                with os.fdopen(os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
+                    self.check_file(source.fileno())
+                    raw = source.read(1048577)
+                if len(raw) > 1048576:
+                    raise Error("journal_size_bound_exceeded")
+                self.data = decode_json(raw)
+                self.validate()
+            except FileNotFoundError:
+                pass
+        except BaseException:
+            os.close(self.lock)
+            self.lock = None
+            raise
+        return self
+
+    def __exit__(self, *args):
+        os.close(self.lock)
+        self.lock = None
+
+    def validate(self):
+        data = self.data
+        if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
+                or data.get("rpcUrl") != self.url or data.get("characterGuid") != str(self.guid)
+                or not isinstance(data.get("attempts"), list) or len(data["attempts"]) > 64):
+            raise Error("journal_identity_or_bound_mismatch")
+        seen = set()
+        for row in data["attempts"]:
+            if (not isinstance(row, dict) or row.get("kind") not in ("buy", "equip", "restore")
+                    or row.get("phase") not in (*TERMINAL, "reserved", "transport_unknown", "requested",
+                                              "outcome_unconfirmed", "receipt_mismatch", "new_session_requires_review")):
+                raise Error("invalid_journal_attempt")
+            request = row.get("request")
+            if (not isinstance(request, dict) or request.get("requestId") != row.get("requestId")
+                    or request.get("sessionId") != row.get("sessionId")
+                    or set(request) != (BUY_REQUEST if row["kind"] == "buy" else EQUIPMENT_REQUEST)):
+                raise Error("invalid_journal_request_binding")
+            token(row["sessionId"]); token(row["requestId"])
+            if row["requestId"] in seen:
+                raise Error("duplicate_journal_request")
+            seen.add(row["requestId"])
+            number(row.get("originalMainhandGuid", 0))
+            for field in ("expectedRevision", "expectedBackpackRevision", "expectedSkillsRevision"):
+                number(request[field])
+            if row["kind"] == "buy":
+                positive(request["npcGuid"]); positive(request["offerRevision"])
+                number(request["vendorSlot"], 255)
+                if number(request["itemId"]) not in CATALOG or number(request["count"]) != 1:
+                    raise Error("journal_purchase_outside_starter_scope")
+                price, budget = positive(request["expectedPriceCopper"], 10000), positive(request["maxSpendCopper"], 10000)
+                number(request["expectedCopperRevision"])
+                if number(row.get("costCopper")) != price or price > budget:
+                    raise Error("journal_purchase_budget_mismatch")
+            else:
+                number(request["backpackSlot"], 15)
+                item_guid(request["itemGuid"]); item_guid(request["originalWeaponGuid"])
+                if row["kind"] == "equip" and number(row["originalMainhandGuid"]) != number(request["originalWeaponGuid"]):
+                    raise Error("journal_original_mainhand_mismatch")
+            if row["phase"] in TERMINAL:
+                op = row.get("operation")
+                if (not isinstance(op, dict) or op.get("requestId") != row["requestId"] or op.get("kind") != row["kind"]
+                        or op.get("status") != row["phase"].upper()):
+                    raise Error("journal_terminal_receipt_missing")
+        backup = data.get("backup")
+        if backup is not None:
+            if (not isinstance(backup, dict) or set(backup) != {"sessionId", "equipRequestId", "originalWeaponGuid",
+                    "originalWeaponEntry", "poleGuid", "poleEntry", "confirmed", "restored"}
+                    or type(backup["confirmed"]) is not bool or type(backup["restored"]) is not bool):
+                raise Error("invalid_private_weapon_backup")
+            token(backup["sessionId"]); token(backup["equipRequestId"])
+            for field in ("originalWeaponGuid", "originalWeaponEntry", "poleGuid", "poleEntry"):
+                positive(backup[field])
+            item_guid(backup["originalWeaponGuid"]); item_guid(backup["poleGuid"])
+            if number(backup["poleEntry"]) != 6256:
+                raise Error("private_backup_pole_outside_fixed_scope")
+            source = next((r for r in data["attempts"] if r["kind"] == "equip" and r["requestId"] == backup["equipRequestId"]), None)
+            if (not source or source["sessionId"] != backup["sessionId"]
+                    or number(source["request"]["itemGuid"]) != number(backup["poleGuid"])
+                    or number(source["request"]["originalWeaponGuid"]) != number(backup["originalWeaponGuid"])):
+                raise Error("weapon_backup_missing_exact_equip_intent")
+
+    def save(self):
+        if self.lock is None:
+            raise Error("journal_lock_required")
+        self.validate()
+        if self.path.is_symlink():
+            raise Error("journal_symlink_refused")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, prefix=".supplies-", delete=False) as output:
+                temporary = Path(output.name)
+                os.fchmod(output.fileno(), 0o600)
+                json.dump(self.data, output, allow_nan=False, separators=(",", ":"))
+                output.write("\n"); output.flush(); os.fsync(output.fileno())
+            os.replace(temporary, self.path)
+            temporary = None
+            self.sync(self.path.parent)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
+class Worker:
+    def __init__(self, rpc, guid, journal=None):
+        self.rpc, self.guid, self.journal = rpc, positive(guid, 2**48 - 1), journal
+
+    def state(self):
+        return checked_state(self.rpc.call("buddy-supplies.state", {}), self.guid)
+
+    def result(self, phase, state, reason=""):
+        return {"characterGuid": str(self.guid), "phase": phase, "reason": reason, "state": state}
+
+    def receipt(self, row, state):
+        if state["sessionId"] != row["sessionId"]:
+            row.update(phase="new_session_requires_review", reason="module_history_changed_no_replay")
+        else:
+            op, req = state.get("operation", {}), row["request"]
+            matches = op.get("requestId") == row["requestId"] and op.get("kind") == row["kind"]
+            fields = ("npcGuid", "itemId", "count") if row["kind"] == "buy" else ("itemGuid", "originalWeaponGuid")
+            matches = matches and all(number(op.get(k, 0)) == number(req[k]) for k in fields)
+            if row["kind"] == "buy":
+                matches = (matches and number(op.get("costCopper", 0)) == row["costCopper"]
+                           and number(op.get("baselineBackpackRevision", 0)) == number(req["expectedBackpackRevision"])
+                           and number(op.get("baselineCopperRevision", 0)) == number(req["expectedCopperRevision"]))
+            else:
+                matches = matches and number(op.get("baselineBackpackRevision", 0)) == number(req["expectedBackpackRevision"])
+            if not matches:
+                row.update(phase="receipt_mismatch", reason="exact_owned_request_receipt_unavailable")
+            else:
+                row["operation"] = copy.deepcopy(op)
+                status = op["status"]
+                complete = op.get("leaseReleased") is True
+                if status == "CONFIRMED":
+                    if row["kind"] == "buy":
+                        complete = complete and all(op.get(k) is True for k in
+                                                    ("serverSuccessObserved", "inventoryConfirmed", "copperConfirmed"))
+                    else:
+                        hand = state.get("mainhand", {})
+                        expected_entry = 6256 if row["kind"] == "equip" else number(self.journal.data["backup"]["originalWeaponEntry"])
+                        complete = (complete and op.get("equipmentConfirmed") is True and hand.get("slotKnown") is True
+                                    and hand.get("metadataKnown") is True and number(hand.get("itemGuid", 0)) == number(req["itemGuid"])
+                                    and number(hand.get("entry", 0)) == expected_entry)
+                    row["phase"] = "confirmed" if complete else "outcome_unconfirmed"
+                    if complete and row["kind"] == "equip":
+                        self.journal.data["backup"]["confirmed"] = True
+                    if complete and row["kind"] == "restore":
+                        self.journal.data["backup"]["restored"] = True
+                elif status == "SERVER_REJECTED" and complete and (number(op.get("serverFailure", 0)) or op.get("reason")):
+                    row["phase"] = "server_rejected"
+                elif status == "BLOCKED" and op.get("transportWritten", False) is False:
+                    row["phase"] = "blocked"
+                    if row["kind"] == "equip":
+                        self.journal.data["backup"]["restored"] = True
+                else:
+                    row["phase"] = "requested" if status == "REQUESTED" else "outcome_unconfirmed"
+                row["reason"] = op.get("reason", "")
+        row["observedState"] = copy.deepcopy(state)
+        self.journal.save()
+        return self.result(row["phase"], state, row.get("reason", ""))
+
+    def reconcile(self):
+        if not self.journal:
+            raise Error("private_journal_required")
+        state = self.state()
+        rows = self.journal.data["attempts"]
+        if not rows:
+            return self.result("no_prior_operation", state)
+        return self.receipt(rows[-1], state)
+
+    def mutation(self, kind, **options):
+        if not self.journal or self.journal.lock is None or kind not in ("buy", "equip", "restore"):
+            raise Error("locked_journal_and_known_operation_required")
+        state = self.state()
+        rows = self.journal.data["attempts"]
+        pending = next((row for row in reversed(rows) if row["phase"] not in TERMINAL), None)
+        if pending:
+            return self.receipt(pending, state)
+        if state.get("active") or state.get("operation", {}).get("status") in ("REQUESTED", "OUTCOME_UNCONFIRMED"):
+            raise Error("prior_module_operation_unconfirmed_no_new_mutation")
+        if len(rows) >= 64 or not all(state.get(k) is True for k in ("backpackKnown", "skillsKnown")):
+            raise Error("known_inventory_skills_and_journal_capacity_required")
+        params = {"sessionId": state["sessionId"], "requestId": str(uuid.uuid4()),
+                  "expectedRevision": str(number(state.get("revision", 0))),
+                  "expectedBackpackRevision": str(number(state.get("backpackRevision", 0))),
+                  "expectedSkillsRevision": str(number(state.get("skillsRevision", 0)))}
+        original = number(state.get("mainhand", {}).get("itemGuid", 0))
+        cost = 0
+        if kind == "buy":
+            vendor, item = positive(options.get("vendor_guid")), positive(options.get("item_id"), 2**32 - 1)
+            slot, count, budget = number(options.get("vendor_slot"), 255), positive(options.get("count"), 20), positive(options.get("max_spend_copper"), 10000)
+            if item not in CATALOG or count != 1:
+                raise Error("starter_catalog_and_single_unit_purchase_required")
+            if item in TOOLS and (any(r["kind"] == "buy" and r["phase"] == "confirmed"
+                                     and number(r["request"]["itemId"]) == item for r in rows)
+                                  or number(state.get("mainhand", {}).get("entry", 0)) == item
+                                  or any(i.get("metadataKnown") is True and number(i.get("entry", 0)) == item
+                                         for i in state["backpack"])):
+                raise Error("starter_tool_already_owned_or_purchase_confirmed_no_repeat")
+            offer = state.get("offer", {})
+            if (not isinstance(offer, dict) or number(offer.get("npcGuid", 0)) != vendor
+                    or number(offer.get("revision", 0)) == 0 or number(offer.get("expiresInMs", 0)) == 0
+                    or not isinstance(offer.get("items", []), list) or len(offer.get("items", [])) > 128):
+                raise Error("fresh_matching_vendor_offer_required")
+            items = [i for i in offer.get("items", []) if isinstance(i, dict)
+                     and number(i.get("slot", 0)) == slot and number(i.get("entry", 0)) == item]
+            if len(items) != 1:
+                raise Error("exact_vendor_slot_item_required")
+            selected = items[0]
+            price = positive(selected.get("priceCopper", 0), 10000)
+            available = selected.get("availableCount", 0)
+            if (number(selected.get("buyCount", 0)) != 1 or number(selected.get("extendedCost", 0)) != 0
+                    or type(available) is not int or available != -1 and available < count):
+                raise Error("ordinary_available_single_unit_offer_required")
+            cost = price * count
+            if state.get("copperKnown") is not True or cost > budget or cost > number(state.get("copper", 0)):
+                raise Error("explicit_spend_or_observed_wallet_budget_exceeded")
+            params.update(npcGuid=str(vendor), offerRevision=str(number(offer["revision"])), vendorSlot=slot,
+                          itemId=item, count=count, expectedPriceCopper=price, maxSpendCopper=budget,
+                          expectedCopperRevision=str(number(state.get("copperRevision", 0))))
+        else:
+            hand = state.get("mainhand", {})
+            if hand.get("slotKnown") is not True or hand.get("metadataKnown") is not True or original == 0:
+                raise Error("exact_known_nonempty_mainhand_required")
+            positive(hand.get("entry", 0), 2**32 - 1)
+            if kind == "equip":
+                item_guid, slot = positive(options.get("item_guid")), number(options.get("backpack_slot"), 15)
+                if positive(options.get("original_mainhand_guid")) != original:
+                    raise Error("explicit_original_mainhand_mismatch")
+                if self.journal.data.get("backup", {}).get("restored", True) is False or state.get("restoreRequired"):
+                    raise Error("prior_weapon_backup_requires_restore_or_review")
+            else:
+                backup = self.journal.data.get("backup", {})
+                if (backup.get("confirmed") is not True or backup.get("restored") is not False
+                        or backup.get("sessionId") != state["sessionId"] or state.get("restoreRequired") is not True
+                        or number(state.get("originalWeaponGuid", 0)) != number(backup.get("originalWeaponGuid", 0))
+                        or original != number(backup.get("poleGuid", 0))
+                        or number(state.get("equippedPoleGuid", 0)) != original):
+                    raise Error("same_module_verified_backup_required_no_replay_keep_original")
+                item_guid = positive(backup["originalWeaponGuid"])
+                slots = [i for i in state["backpack"] if number(i.get("itemGuid", 0)) == item_guid]
+                if len(slots) != 1:
+                    raise Error("original_weapon_not_uniquely_observed_in_backpack")
+                slot = number(slots[0].get("slot", 0), 15)
+            matches = [i for i in state["backpack"] if number(i.get("slot", 0)) == slot
+                       and number(i.get("itemGuid", 0)) == item_guid and i.get("metadataKnown") is True]
+            if len(matches) != 1 or number(matches[0].get("entry", 0)) == 0:
+                raise Error("explicit_equipment_item_not_observed_with_metadata")
+            if kind == "equip" and number(matches[0]["entry"]) != 6256:
+                raise Error("only_observed_starter_fishing_pole_6256_can_be_equipped")
+            if kind == "restore" and number(matches[0]["entry"]) != number(backup["originalWeaponEntry"]):
+                raise Error("original_weapon_metadata_mismatch_keep_backup")
+            params.update(backpackSlot=slot, itemGuid=str(item_guid), originalWeaponGuid=str(original if kind == "equip" else item_guid))
+        row = {"kind": kind, "sessionId": state["sessionId"], "requestId": params["requestId"],
+               "request": params, "originalMainhandGuid": str(original), "costCopper": cost, "phase": "reserved"}
+        rows.append(row)
+        if kind == "equip":
+            self.journal.data["backup"] = {"sessionId": state["sessionId"], "equipRequestId": params["requestId"],
+                "originalWeaponGuid": str(original), "originalWeaponEntry": number(state["mainhand"].get("entry", 0)),
+                "poleGuid": params["itemGuid"], "poleEntry": number(matches[0]["entry"]), "confirmed": False, "restored": False}
+        self.journal.save()
+        try:
+            observed = checked_state(self.rpc.call("buddy-supplies." + kind, params), self.guid)
+        except Error as error:
+            row.update(phase="transport_unknown", reason=str(error))
+            self.journal.save()
+            return self.result("transport_unknown", state, str(error))
+        return self.receipt(row, observed)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("state", "discover", "list", "reconcile", "buy", "equip", "restore"):
+        command = commands.add_parser(name)
+        command.add_argument("--rpc-url", required=True)
+        command.add_argument("--character-guid", required=True)
+        command.add_argument("--journal", type=Path)
+        if name in ("list", "buy"):
+            command.add_argument("--vendor-guid", required=True)
+        if name == "buy":
+            for flag in ("vendor-slot", "item-id", "count", "max-spend-copper"):
+                command.add_argument("--" + flag, required=True)
+        if name == "equip":
+            for flag in ("item-guid", "backpack-slot", "original-mainhand-guid"):
+                command.add_argument("--" + flag, required=True)
+    args = parser.parse_args(argv)
+    url, guid = rpc_url(args.rpc_url), positive(args.character_guid, 2**48 - 1)
+    rpc = RPC(url)
+    worker = Worker(rpc, guid)
+    if args.command == "state":
+        result = worker.state()
+    elif args.command == "discover":
+        result = rpc.call("buddy-supplies.discover", {})
+        checked_state(result.get("state"), guid)
+    elif args.command == "list":
+        before = worker.state()
+        result = checked_state(rpc.call("buddy-supplies.list", {"sessionId": before["sessionId"],
+                               "npcGuid": str(positive(args.vendor_guid))}), guid)
+        if before["sessionId"] != result["sessionId"]:
+            raise Error("module_session_changed_during_vendor_list")
+    else:
+        path = args.journal or ROOT / "data/autonomy/supplies" / f"{guid}-{urllib.parse.urlsplit(url).port}" / "receipts.json"
+        with Journal(path, url, guid) as journal:
+            worker.journal = journal
+            result = worker.reconcile() if args.command == "reconcile" else worker.mutation(args.command, **vars(args))
+    print(json.dumps(result, allow_nan=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError, ValueError) as error:
+        print(f"supplies: {error}", file=sys.stderr)
+        sys.exit(1)

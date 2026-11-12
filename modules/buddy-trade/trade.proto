@@ -1,0 +1,123 @@
+syntax = "proto3";
+package warcraftbuddy.trade.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-trade/api;tradev1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message Item {
+  uint32 slot = 1;
+  uint32 entry = 2;
+  uint32 count = 3;
+  uint64 item_guid = 4;
+  string name = 5;
+  bool metadata_known = 6;
+}
+message State {
+  string session_id = 1;
+  uint64 revision = 2;
+  string phase = 3;
+  uint64 partner_guid = 4;
+  bool partner_accepted = 5;
+  bool accept_transport_written = 6;
+  // Our requested offers are transport intentions; the server does not always
+  // echo them to their sender. Joel reviews them in his normal trade window.
+  repeated Item own_requested_items = 7;
+  uint32 own_requested_copper = 8;
+  repeated Item partner_items = 9;
+  uint32 partner_copper = 10;
+  uint32 last_server_status = 11;
+  string reason = 12;
+  uint64 completed_trades = 13;
+  uint64 transport_writes = 14;
+  uint64 malformed_packets = 15;
+  bool backpack_known = 16;
+  uint64 backpack_revision = 17;
+  repeated Item backpack = 18;
+  string limitation = 19;
+  bool copper_known = 20;
+  uint32 copper = 21;
+  uint64 copper_revision = 22;
+  bool junk_disposal_enabled = 23;
+  JunkDisposal last_junk_disposal = 24;
+  uint64 junk_stacks_destroyed = 25;
+  string junk_reason = 26;
+}
+message JunkDisposal {
+  uint32 backpack_slot = 1;
+  uint64 item_guid = 2;
+  uint32 entry = 3;
+  uint32 count = 4;
+  string name = 5;
+  string status = 6;
+  uint64 backpack_revision = 7;
+}
+message JunkToggle { bool enabled = 1; }
+message JunkRequest {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 backpack_revision = 3;
+  uint32 backpack_slot = 4;
+  uint64 expected_item_guid = 5;
+}
+message BoundRequest { string session_id = 1; uint64 revision = 2; }
+message ItemRequest {
+  string session_id = 1;
+  uint64 revision = 2;
+  uint64 backpack_revision = 3;
+  uint32 backpack_slot = 4;
+  uint64 expected_item_guid = 5;
+  uint32 trade_slot = 6;
+}
+message GoldRequest { string session_id = 1; uint64 revision = 2; uint32 copper = 3; }
+message ItemStat { uint32 type = 1; sint32 value = 2; }
+message WeaponDamage { float minimum = 1; float maximum = 2; uint32 school = 3; }
+// Static template facts from a complete normal server item-query response.
+// These are not proof that this character can equip or owns the item.
+message ItemDetails {
+  uint32 item_id = 1;
+  bool available = 2;
+  bool pending = 3;
+  string reason = 4;
+  string name = 5;
+  uint32 item_class = 6;
+  uint32 subclass = 7;
+  uint32 inventory_type = 8;
+  uint32 quality = 9;
+  uint32 item_level = 10;
+  uint32 required_level = 11;
+  uint32 buy_price = 12;
+  uint32 sell_price = 13;
+  uint32 allowable_class = 14;
+  uint32 allowable_race = 15;
+  uint32 required_skill = 16;
+  uint32 required_skill_rank = 17;
+  uint32 required_spell = 18;
+  repeated ItemStat stats = 19;
+  uint32 armor = 20;
+  repeated WeaponDamage damages = 21;
+  uint32 delay_ms = 22;
+  uint32 flags = 23;
+  uint32 flags2 = 24;
+  bool has_spell = 25;
+  uint32 required_reputation_faction = 26;
+  uint32 required_reputation_rank = 27;
+  uint32 required_honor_rank = 28;
+  uint32 required_city_rank = 29;
+  // Full normal query proves otherwise unrepresented armor properties empty.
+  // False is unknown/unsupported, never a zero-resistance comparison claim.
+  bool armor_comparison_known = 30;
+}
+message LookupItemsRequest { repeated uint32 item_ids = 1; }
+message LookupItemsResponse { string session_id = 1; repeated ItemDetails items = 2; }
+service BuddyTrade {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Open(BoundRequest) returns (State);
+  rpc OfferItem(ItemRequest) returns (State);
+  rpc OfferGold(GoldRequest) returns (State);
+  rpc Cancel(BoundRequest) returns (State);
+  rpc JunkDisposal(JunkToggle) returns (State);
+  rpc DestroyJunk(JunkRequest) returns (State);
+  rpc LookupItems(LookupItemsRequest) returns (LookupItemsResponse);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

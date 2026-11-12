@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Revision-bound Lua policy updates over public owned-client RPC; no reconnect."""
+import argparse
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import time
+
+ROOT=Path(__file__).resolve().parent.parent
+loader=importlib.machinery.SourceFileLoader('behavior_converse',str(ROOT/'dev/converse'))
+spec=importlib.util.spec_from_loader(loader.name,loader);c=importlib.util.module_from_spec(spec);loader.exec_module(c)
+PORTS={1:8086,4:8087,5:8088,8:8402}
+
+def apply(guid,source=None,rpc=None):
+    if guid not in PORTS:raise c.ConversationError('Known companion required')
+    rpc=rpc or c.RPC('http://127.0.0.1:'+str(PORTS[guid])+'/rpc')
+    before=rpc.call('buddy-actions.behavior',{})
+    body=rpc.call('buddy-actions.status',{})
+    sid=before.get('sessionId')
+    if not isinstance(sid,str) or not sid or sid!=body.get('sessionId') or c.integer(before.get('selfGuid',0))!=guid or c.integer(body.get('selfGuid',0))!=guid:
+        raise c.ConversationError('Current policy and body identity must agree')
+    if source is not None and (not isinstance(source,str) or not 0<len(source.encode())<=32768):raise c.ConversationError('Bounded Lua source required')
+    revision=hashlib.sha256(source.encode()).hexdigest() if source is not None else ''
+    expected=before.get('revision','')
+    if revision==expected:return dict(guid=guid,sessionId=sid,revision=revision,phase='already_current')
+    # Exactly one CAS write. A timeout is not automatically retried.
+    result=rpc.call('buddy-actions.reload_behavior',dict(sessionId=sid,selfGuid=str(guid),expectedRevision=expected,source=source or '',useBuiltin=source is None))
+    if result.get('sessionId')!=sid or c.integer(result.get('selfGuid',0))!=guid or result.get('revision','')!=revision:
+        raise c.ConversationError('Policy installation result is unconfirmed')
+    after=rpc.call('buddy-actions.status',{})
+    if after.get('sessionId')!=sid:raise c.ConversationError('Body changed during update')
+    current=rpc.call('buddy-actions.behavior',{})
+    if current.get('sessionId')!=sid or c.integer(current.get('selfGuid',0))!=guid or current.get('revision','')!=revision:
+        raise c.ConversationError('Requested policy is not current; inspect quarantine/fallback status')
+    return dict(guid=guid,sessionId=sid,revision=revision,phase='loaded_for_subsequent_decisions',reconnected=False)
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=('apply','builtin','status'))
+    p.add_argument('--guid',type=int,choices=PORTS,required=True);p.add_argument('--source',type=Path,default=ROOT/'behaviors/party.lua');a=p.parse_args()
+    if a.command=='status':print(json.dumps(c.RPC('http://127.0.0.1:'+str(PORTS[a.guid])+'/rpc').call('buddy-actions.behavior',{})));return
+    source=a.source.read_text() if a.command=='apply' else None
+    print(json.dumps(apply(a.guid,source)))
+
+if __name__=='__main__':
+    try:main()
+    except (OSError,ValueError,c.ConversationError) as e:raise SystemExit('Behavior: '+str(e))

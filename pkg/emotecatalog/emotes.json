@@ -1,0 +1,1020 @@
+{
+  "schemaVersion": 1,
+  "kind": "TextEmotes",
+  "provenance": {
+    "upstreamUrl": "https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/shared/SharedDefines.h",
+    "sourcePath": "src/server/shared/SharedDefines.h",
+    "sourceSha256": "7b17defee7cfb58fe42bcfbc2aab304b210eb922446cdf4193925d220b9bdf47",
+    "sourceCommit": null
+  },
+  "emotes": [
+    {
+      "id": 1,
+      "name": "AGREE"
+    },
+    {
+      "id": 2,
+      "name": "AMAZE"
+    },
+    {
+      "id": 3,
+      "name": "ANGRY"
+    },
+    {
+      "id": 4,
+      "name": "APOLOGIZE"
+    },
+    {
+      "id": 5,
+      "name": "APPLAUD"
+    },
+    {
+      "id": 6,
+      "name": "BASHFUL"
+    },
+    {
+      "id": 7,
+      "name": "BECKON"
+    },
+    {
+      "id": 8,
+      "name": "BEG"
+    },
+    {
+      "id": 9,
+      "name": "BITE"
+    },
+    {
+      "id": 10,
+      "name": "BLEED"
+    },
+    {
+      "id": 11,
+      "name": "BLINK"
+    },
+    {
+      "id": 12,
+      "name": "BLUSH"
+    },
+    {
+      "id": 13,
+      "name": "BONK"
+    },
+    {
+      "id": 14,
+      "name": "BORED"
+    },
+    {
+      "id": 15,
+      "name": "BOUNCE"
+    },
+    {
+      "id": 16,
+      "name": "BRB"
+    },
+    {
+      "id": 17,
+      "name": "BOW"
+    },
+    {
+      "id": 18,
+      "name": "BURP"
+    },
+    {
+      "id": 19,
+      "name": "BYE"
+    },
+    {
+      "id": 20,
+      "name": "CACKLE"
+    },
+    {
+      "id": 21,
+      "name": "CHEER"
+    },
+    {
+      "id": 22,
+      "name": "CHICKEN"
+    },
+    {
+      "id": 23,
+      "name": "CHUCKLE"
+    },
+    {
+      "id": 24,
+      "name": "CLAP"
+    },
+    {
+      "id": 25,
+      "name": "CONFUSED"
+    },
+    {
+      "id": 26,
+      "name": "CONGRATULATE"
+    },
+    {
+      "id": 27,
+      "name": "COUGH"
+    },
+    {
+      "id": 28,
+      "name": "COWER"
+    },
+    {
+      "id": 29,
+      "name": "CRACK"
+    },
+    {
+      "id": 30,
+      "name": "CRINGE"
+    },
+    {
+      "id": 31,
+      "name": "CRY"
+    },
+    {
+      "id": 32,
+      "name": "CURIOUS"
+    },
+    {
+      "id": 33,
+      "name": "CURTSEY"
+    },
+    {
+      "id": 34,
+      "name": "DANCE"
+    },
+    {
+      "id": 35,
+      "name": "DRINK"
+    },
+    {
+      "id": 36,
+      "name": "DROOL"
+    },
+    {
+      "id": 37,
+      "name": "EAT"
+    },
+    {
+      "id": 38,
+      "name": "EYE"
+    },
+    {
+      "id": 39,
+      "name": "FART"
+    },
+    {
+      "id": 40,
+      "name": "FIDGET"
+    },
+    {
+      "id": 41,
+      "name": "FLEX"
+    },
+    {
+      "id": 42,
+      "name": "FROWN"
+    },
+    {
+      "id": 43,
+      "name": "GASP"
+    },
+    {
+      "id": 44,
+      "name": "GAZE"
+    },
+    {
+      "id": 45,
+      "name": "GIGGLE"
+    },
+    {
+      "id": 46,
+      "name": "GLARE"
+    },
+    {
+      "id": 47,
+      "name": "GLOAT"
+    },
+    {
+      "id": 48,
+      "name": "GREET"
+    },
+    {
+      "id": 49,
+      "name": "GRIN"
+    },
+    {
+      "id": 50,
+      "name": "GROAN"
+    },
+    {
+      "id": 51,
+      "name": "GROVEL"
+    },
+    {
+      "id": 52,
+      "name": "GUFFAW"
+    },
+    {
+      "id": 53,
+      "name": "HAIL"
+    },
+    {
+      "id": 54,
+      "name": "HAPPY"
+    },
+    {
+      "id": 55,
+      "name": "HELLO"
+    },
+    {
+      "id": 56,
+      "name": "HUG"
+    },
+    {
+      "id": 57,
+      "name": "HUNGRY"
+    },
+    {
+      "id": 58,
+      "name": "KISS"
+    },
+    {
+      "id": 59,
+      "name": "KNEEL"
+    },
+    {
+      "id": 60,
+      "name": "LAUGH"
+    },
+    {
+      "id": 61,
+      "name": "LAYDOWN"
+    },
+    {
+      "id": 62,
+      "name": "MESSAGE"
+    },
+    {
+      "id": 63,
+      "name": "MOAN"
+    },
+    {
+      "id": 64,
+      "name": "MOON"
+    },
+    {
+      "id": 65,
+      "name": "MOURN"
+    },
+    {
+      "id": 66,
+      "name": "NO"
+    },
+    {
+      "id": 67,
+      "name": "NOD"
+    },
+    {
+      "id": 68,
+      "name": "NOSEPICK"
+    },
+    {
+      "id": 69,
+      "name": "PANIC"
+    },
+    {
+      "id": 70,
+      "name": "PEER"
+    },
+    {
+      "id": 71,
+      "name": "PLEAD"
+    },
+    {
+      "id": 72,
+      "name": "POINT"
+    },
+    {
+      "id": 73,
+      "name": "POKE"
+    },
+    {
+      "id": 74,
+      "name": "PRAY"
+    },
+    {
+      "id": 75,
+      "name": "ROAR"
+    },
+    {
+      "id": 76,
+      "name": "ROFL"
+    },
+    {
+      "id": 77,
+      "name": "RUDE"
+    },
+    {
+      "id": 78,
+      "name": "SALUTE"
+    },
+    {
+      "id": 79,
+      "name": "SCRATCH"
+    },
+    {
+      "id": 80,
+      "name": "SEXY"
+    },
+    {
+      "id": 81,
+      "name": "SHAKE"
+    },
+    {
+      "id": 82,
+      "name": "SHOUT"
+    },
+    {
+      "id": 83,
+      "name": "SHRUG"
+    },
+    {
+      "id": 84,
+      "name": "SHY"
+    },
+    {
+      "id": 85,
+      "name": "SIGH"
+    },
+    {
+      "id": 86,
+      "name": "SIT"
+    },
+    {
+      "id": 87,
+      "name": "SLEEP"
+    },
+    {
+      "id": 88,
+      "name": "SNARL"
+    },
+    {
+      "id": 89,
+      "name": "SPIT"
+    },
+    {
+      "id": 90,
+      "name": "STARE"
+    },
+    {
+      "id": 91,
+      "name": "SURPRISED"
+    },
+    {
+      "id": 92,
+      "name": "SURRENDER"
+    },
+    {
+      "id": 93,
+      "name": "TALK"
+    },
+    {
+      "id": 94,
+      "name": "TALKEX"
+    },
+    {
+      "id": 95,
+      "name": "TALKQ"
+    },
+    {
+      "id": 96,
+      "name": "TAP"
+    },
+    {
+      "id": 97,
+      "name": "THANK"
+    },
+    {
+      "id": 98,
+      "name": "THREATEN"
+    },
+    {
+      "id": 99,
+      "name": "TIRED"
+    },
+    {
+      "id": 100,
+      "name": "VICTORY"
+    },
+    {
+      "id": 101,
+      "name": "WAVE"
+    },
+    {
+      "id": 102,
+      "name": "WELCOME"
+    },
+    {
+      "id": 103,
+      "name": "WHINE"
+    },
+    {
+      "id": 104,
+      "name": "WHISTLE"
+    },
+    {
+      "id": 105,
+      "name": "WORK"
+    },
+    {
+      "id": 106,
+      "name": "YAWN"
+    },
+    {
+      "id": 107,
+      "name": "BOGGLE"
+    },
+    {
+      "id": 108,
+      "name": "CALM"
+    },
+    {
+      "id": 109,
+      "name": "COLD"
+    },
+    {
+      "id": 110,
+      "name": "COMFORT"
+    },
+    {
+      "id": 111,
+      "name": "CUDDLE"
+    },
+    {
+      "id": 112,
+      "name": "DUCK"
+    },
+    {
+      "id": 113,
+      "name": "INSULT"
+    },
+    {
+      "id": 114,
+      "name": "INTRODUCE"
+    },
+    {
+      "id": 115,
+      "name": "JK"
+    },
+    {
+      "id": 116,
+      "name": "LICK"
+    },
+    {
+      "id": 117,
+      "name": "LISTEN"
+    },
+    {
+      "id": 118,
+      "name": "LOST"
+    },
+    {
+      "id": 119,
+      "name": "MOCK"
+    },
+    {
+      "id": 120,
+      "name": "PONDER"
+    },
+    {
+      "id": 121,
+      "name": "POUNCE"
+    },
+    {
+      "id": 122,
+      "name": "PRAISE"
+    },
+    {
+      "id": 123,
+      "name": "PURR"
+    },
+    {
+      "id": 124,
+      "name": "PUZZLE"
+    },
+    {
+      "id": 125,
+      "name": "RAISE"
+    },
+    {
+      "id": 126,
+      "name": "READY"
+    },
+    {
+      "id": 127,
+      "name": "SHIMMY"
+    },
+    {
+      "id": 128,
+      "name": "SHIVER"
+    },
+    {
+      "id": 129,
+      "name": "SHOO"
+    },
+    {
+      "id": 130,
+      "name": "SLAP"
+    },
+    {
+      "id": 131,
+      "name": "SMIRK"
+    },
+    {
+      "id": 132,
+      "name": "SNIFF"
+    },
+    {
+      "id": 133,
+      "name": "SNUB"
+    },
+    {
+      "id": 134,
+      "name": "SOOTHE"
+    },
+    {
+      "id": 135,
+      "name": "STINK"
+    },
+    {
+      "id": 136,
+      "name": "TAUNT"
+    },
+    {
+      "id": 137,
+      "name": "TEASE"
+    },
+    {
+      "id": 138,
+      "name": "THIRSTY"
+    },
+    {
+      "id": 139,
+      "name": "VETO"
+    },
+    {
+      "id": 140,
+      "name": "SNICKER"
+    },
+    {
+      "id": 141,
+      "name": "STAND"
+    },
+    {
+      "id": 142,
+      "name": "TICKLE"
+    },
+    {
+      "id": 143,
+      "name": "VIOLIN"
+    },
+    {
+      "id": 163,
+      "name": "SMILE"
+    },
+    {
+      "id": 183,
+      "name": "RASP"
+    },
+    {
+      "id": 203,
+      "name": "PITY"
+    },
+    {
+      "id": 204,
+      "name": "GROWL"
+    },
+    {
+      "id": 205,
+      "name": "BARK"
+    },
+    {
+      "id": 223,
+      "name": "SCARED"
+    },
+    {
+      "id": 224,
+      "name": "FLOP"
+    },
+    {
+      "id": 225,
+      "name": "LOVE"
+    },
+    {
+      "id": 226,
+      "name": "MOO"
+    },
+    {
+      "id": 243,
+      "name": "COMMEND"
+    },
+    {
+      "id": 264,
+      "name": "TRAIN"
+    },
+    {
+      "id": 303,
+      "name": "HELPME"
+    },
+    {
+      "id": 304,
+      "name": "INCOMING"
+    },
+    {
+      "id": 305,
+      "name": "CHARGE"
+    },
+    {
+      "id": 306,
+      "name": "FLEE"
+    },
+    {
+      "id": 307,
+      "name": "ATTACKMYTARGET"
+    },
+    {
+      "id": 323,
+      "name": "OOM"
+    },
+    {
+      "id": 324,
+      "name": "FOLLOW"
+    },
+    {
+      "id": 325,
+      "name": "WAIT"
+    },
+    {
+      "id": 326,
+      "name": "HEALME"
+    },
+    {
+      "id": 327,
+      "name": "OPENFIRE"
+    },
+    {
+      "id": 328,
+      "name": "FLIRT"
+    },
+    {
+      "id": 329,
+      "name": "JOKE"
+    },
+    {
+      "id": 343,
+      "name": "GOLFCLAP"
+    },
+    {
+      "id": 363,
+      "name": "WINK"
+    },
+    {
+      "id": 364,
+      "name": "PAT"
+    },
+    {
+      "id": 365,
+      "name": "SERIOUS"
+    },
+    {
+      "id": 366,
+      "name": "MOUNT_SPECIAL"
+    },
+    {
+      "id": 367,
+      "name": "GOODLUCK"
+    },
+    {
+      "id": 368,
+      "name": "BLAME"
+    },
+    {
+      "id": 369,
+      "name": "BLANK"
+    },
+    {
+      "id": 370,
+      "name": "BRANDISH"
+    },
+    {
+      "id": 371,
+      "name": "BREATH"
+    },
+    {
+      "id": 372,
+      "name": "DISAGREE"
+    },
+    {
+      "id": 373,
+      "name": "DOUBT"
+    },
+    {
+      "id": 374,
+      "name": "EMBARRASS"
+    },
+    {
+      "id": 375,
+      "name": "ENCOURAGE"
+    },
+    {
+      "id": 376,
+      "name": "ENEMY"
+    },
+    {
+      "id": 377,
+      "name": "EYEBROW"
+    },
+    {
+      "id": 378,
+      "name": "TOAST"
+    },
+    {
+      "id": 379,
+      "name": "FAIL"
+    },
+    {
+      "id": 380,
+      "name": "HIGHFIVE"
+    },
+    {
+      "id": 381,
+      "name": "ABSENT"
+    },
+    {
+      "id": 382,
+      "name": "ARM"
+    },
+    {
+      "id": 383,
+      "name": "AWE"
+    },
+    {
+      "id": 384,
+      "name": "BACKPACK"
+    },
+    {
+      "id": 385,
+      "name": "BADFEELING"
+    },
+    {
+      "id": 386,
+      "name": "CHALLENGE"
+    },
+    {
+      "id": 387,
+      "name": "CHUG"
+    },
+    {
+      "id": 389,
+      "name": "DING"
+    },
+    {
+      "id": 390,
+      "name": "FACEPALM"
+    },
+    {
+      "id": 391,
+      "name": "FAINT"
+    },
+    {
+      "id": 392,
+      "name": "GO"
+    },
+    {
+      "id": 393,
+      "name": "GOING"
+    },
+    {
+      "id": 394,
+      "name": "GLOWER"
+    },
+    {
+      "id": 395,
+      "name": "HEADACHE"
+    },
+    {
+      "id": 396,
+      "name": "HICCUP"
+    },
+    {
+      "id": 398,
+      "name": "HISS"
+    },
+    {
+      "id": 399,
+      "name": "HOLDHAND"
+    },
+    {
+      "id": 401,
+      "name": "HURRY"
+    },
+    {
+      "id": 402,
+      "name": "IDEA"
+    },
+    {
+      "id": 403,
+      "name": "JEALOUS"
+    },
+    {
+      "id": 404,
+      "name": "LUCK"
+    },
+    {
+      "id": 405,
+      "name": "MAP"
+    },
+    {
+      "id": 406,
+      "name": "MERCY"
+    },
+    {
+      "id": 407,
+      "name": "MUTTER"
+    },
+    {
+      "id": 408,
+      "name": "NERVOUS"
+    },
+    {
+      "id": 409,
+      "name": "OFFER"
+    },
+    {
+      "id": 410,
+      "name": "PET"
+    },
+    {
+      "id": 411,
+      "name": "PINCH"
+    },
+    {
+      "id": 413,
+      "name": "PROUD"
+    },
+    {
+      "id": 414,
+      "name": "PROMISE"
+    },
+    {
+      "id": 415,
+      "name": "PULSE"
+    },
+    {
+      "id": 416,
+      "name": "PUNCH"
+    },
+    {
+      "id": 417,
+      "name": "POUT"
+    },
+    {
+      "id": 418,
+      "name": "REGRET"
+    },
+    {
+      "id": 420,
+      "name": "REVENGE"
+    },
+    {
+      "id": 421,
+      "name": "ROLLEYES"
+    },
+    {
+      "id": 422,
+      "name": "RUFFLE"
+    },
+    {
+      "id": 423,
+      "name": "SAD"
+    },
+    {
+      "id": 424,
+      "name": "SCOFF"
+    },
+    {
+      "id": 425,
+      "name": "SCOLD"
+    },
+    {
+      "id": 426,
+      "name": "SCOWL"
+    },
+    {
+      "id": 427,
+      "name": "SEARCH"
+    },
+    {
+      "id": 428,
+      "name": "SHAKEFIST"
+    },
+    {
+      "id": 429,
+      "name": "SHIFTY"
+    },
+    {
+      "id": 430,
+      "name": "SHUDDER"
+    },
+    {
+      "id": 431,
+      "name": "SIGNAL"
+    },
+    {
+      "id": 432,
+      "name": "SILENCE"
+    },
+    {
+      "id": 433,
+      "name": "SING"
+    },
+    {
+      "id": 434,
+      "name": "SMACK"
+    },
+    {
+      "id": 435,
+      "name": "SNEAK"
+    },
+    {
+      "id": 436,
+      "name": "SNEEZE"
+    },
+    {
+      "id": 437,
+      "name": "SNORT"
+    },
+    {
+      "id": 438,
+      "name": "SQUEAL"
+    },
+    {
+      "id": 439,
+      "name": "STOPATTACK"
+    },
+    {
+      "id": 440,
+      "name": "SUSPICIOUS"
+    },
+    {
+      "id": 441,
+      "name": "THINK"
+    },
+    {
+      "id": 442,
+      "name": "TRUCE"
+    },
+    {
+      "id": 443,
+      "name": "TWIDDLE"
+    },
+    {
+      "id": 444,
+      "name": "WARN"
+    },
+    {
+      "id": 445,
+      "name": "SNAP"
+    },
+    {
+      "id": 446,
+      "name": "CHARM"
+    },
+    {
+      "id": 447,
+      "name": "COVEREARS"
+    },
+    {
+      "id": 448,
+      "name": "CROSSARMS"
+    },
+    {
+      "id": 449,
+      "name": "LOOK"
+    },
+    {
+      "id": 450,
+      "name": "OBJECT"
+    },
+    {
+      "id": 451,
+      "name": "SWEAT"
+    },
+    {
+      "id": 453,
+      "name": "YW"
+    }
+  ]
+}

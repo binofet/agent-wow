@@ -1,0 +1,13 @@
+{
+  "generator": "warcraftbuddy.behavior.go-lua.v1",
+  "metagenCommit": "abb7a4adad859a71d1cd74fc07a76fbba57c66d8",
+  "inputs": {
+    "dev/behavior-schema/BehaviorSchema.csproj": "219ebac2e9722c888169a612621b2c5b646ebdca68046ab7c94457bc3797802a",
+    "dev/behavior-schema/Contracts.cs": "b18474216c819f55369637b74ec79d0605d7215f400377755cb73d606928096d",
+    "dev/behavior-schema/Program.cs": "0f0004c79c0b2d9850f3b11ad582ac809dc51788e47d8c26ae0184a47442a0cc"
+  },
+  "outputs": {
+    "pkg/behaviorcontract/contracts_generated.go": "37ad45b18e6ae36cab511c5708bc7f1186ff07a05321fd04a22a120d84c3e59d",
+    "behaviors/contract_generated.lua": "f708a599547ef18f691692fa18d65195899fd5f67228b7bacf6537b9c2aeffa7"
+  }
+}

@@ -37,8 +37,9 @@ type Manifest struct {
 	GRPC struct {
 		DescriptorSet string `yaml:"descriptor_set" json:"descriptor_set"`
 	} `yaml:"grpc" json:"grpc"`
-	RPC       map[string]string `yaml:"rpc" json:"rpc"`
-	Packets   map[string]string `yaml:"packets" json:"packets"`
+	RPC       map[string]string       `yaml:"rpc" json:"rpc"`
+	ScriptAPI map[string]ScriptMethod `yaml:"script_api" json:"script_api,omitempty"`
+	Packets   map[string]string       `yaml:"packets" json:"packets"`
 	Lifecycle struct {
 		BeforeLogout string `yaml:"before_logout" json:"before_logout,omitempty"`
 	} `yaml:"lifecycle" json:"lifecycle"`
@@ -104,6 +105,17 @@ func Discover(root string) ([]Manifest, error) {
 		for alias := range m.RPC {
 			if !aliasName.MatchString(alias) {
 				return nil, fmt.Errorf("module %s: invalid method alias %q", name, alias)
+			}
+		}
+		for alias, script := range m.ScriptAPI {
+			if _, ok := m.RPC[alias]; !ok {
+				return nil, fmt.Errorf("module %s: script_api alias %q is not public", name, alias)
+			}
+			if !validEffect(script.Effect) {
+				return nil, fmt.Errorf("module %s: invalid script_api effect %q", name, script.Effect)
+			}
+			if len(script.Description) > 2048 {
+				return nil, fmt.Errorf("module %s: script_api description exceeds 2048 bytes", name)
 			}
 		}
 		result = append(result, m)

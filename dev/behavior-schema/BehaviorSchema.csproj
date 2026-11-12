@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <MetagenPath Condition="'$(MetagenPath)' == ''">$(METAGEN_SOURCE)</MetagenPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(MetagenPath)/metagen/Metagen.csproj"/>
+  </ItemGroup>
+  <Target Name="RequireMetagen" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(MetagenPath)/metagen/Metagen.csproj')" Text="Set METAGEN_SOURCE to the private Metagen checkout. Its source is not vendored here."/>
+  </Target>
+</Project>

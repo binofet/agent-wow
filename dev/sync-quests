@@ -1,0 +1,828 @@
+#!/usr/bin/env python3
+"""Quiet, fixed-roster starter-quest synchronization through public game RPCs."""
+
+import argparse
+import fcntl
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+import uuid
+import urllib.request
+import urllib.error
+
+
+ROOT = Path(__file__).resolve().parent.parent
+loader = importlib.machinery.SourceFileLoader("quest_sync_converse", str(Path(__file__).with_name("converse")))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+converse = importlib.util.module_from_spec(spec)
+loader.exec_module(converse)
+Error = converse.ConversationError
+integer = converse.integer
+DESIRED = frozenset((7, 18, 3903))
+INTRO = 783
+EAGAN_INTRO = 5261
+WOLVES = 33
+PREREQUISITES = frozenset((INTRO, EAGAN_INTRO, WOLVES))
+TURN_IN_GIVERS = {INTRO: 197, EAGAN_INTRO: 196, WOLVES: 196}
+# Official AzerothCore quest33 offers item80 (cloth feet) and6070 (leather
+# wrists). Choose only the verified role-usable item when actually offered.
+WOLF_REWARD_BY_CLASS = {5: 80, 8: 80, 4: 6070}
+ROSTER = (("Arlen", 1, 8086), ("Mira", 4, 8087), ("Rook", 5, 8088))
+IDENTITY = converse.QUEST_SYNC_IDENTITY
+LIMITATION = "Uses observed starter NPCs within8yd only; no travel, abandonment, combat pulls or progress grants. IDs are the goal; Joel's objective progress is unknown."
+
+
+class SyncRPC(converse.RPC):
+    EXTRA = {"buddy-actions.acquire_interaction", "buddy-actions.release_interaction",
+             "buddy-actions.travel_quest", "buddy-actions.practice"}
+
+    def call(self, method, params):
+        if method not in self.EXTRA:
+            return super().call(method, params)
+        self.request_id += 1
+        request_id = self.request_id
+        request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": request_id,
+            "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with self.opener.open(request, timeout=35 if method == "buddy-actions.travel_quest" else 6) as response:
+                raw = response.read(256 * 1024 + 1)
+            if len(raw) > 256 * 1024:
+                raise Error("Goal RPC response exceeds the limit")
+            result = json.loads(raw)
+        except (OSError, ValueError, urllib.error.URLError):
+            raise Error("Goal RPC unavailable or invalid") from None
+        if (not isinstance(result, dict) or result.get("jsonrpc") != "2.0"
+                or type(result.get("id")) is not int or result["id"] != request_id
+                or "error" in result or not isinstance(result.get("result"), dict)):
+            raise Error("Goal RPC did not confirm a matching response")
+        return result["result"]
+
+
+def session_id(state):
+    value = state.get("sessionId")
+    if not isinstance(value, str) or not 1 <= len(value) <= 128:
+        raise Error("Quest session identity is unknown")
+    return value
+
+
+def active_log(state):
+    entries = state.get("questLog", [])
+    if state.get("questLogKnown") is not True or not isinstance(entries, list) or len(entries) > 25:
+        raise Error("Own quest log is unknown")
+    result = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise Error("Own quest log is invalid")
+        quest_id = integer(entry.get("questId", 0))
+        if quest_id > 2**32 - 1 or quest_id and quest_id in result:
+            raise Error("Own quest log is invalid")
+        if quest_id:
+            result.add(quest_id)
+    return result
+
+
+def binding(session, npc, revision):
+    return [session, str(npc), str(revision)]
+
+
+def giver_entry(guid):
+    value = integer(guid)
+    entry = value >> 24 & 0xffffff
+    return entry if value >> 48 == 0xf130 and value & 0xffffff and entry in (196, 197, 823) else 0
+
+
+class CharacterSync:
+    def __init__(self, name, guid, rpc, save=lambda value: None, stored=None,
+                 now=time.time, stopped=lambda: False, autonomous=False, notify=lambda: None):
+        self.name, self.guid, self.rpc, self.save = name, guid, rpc, save
+        self.now, self.stopped = now, stopped
+        self.autonomous, self.notify, self.actions, self.self_player = autonomous, notify, {}, {}
+        identity = {"name": name, "guid": guid, "ownerGuid": 3, "desiredQuestIds": sorted(DESIRED)}
+        if stored and stored.get("identity") != identity:
+            raise Error("Saved character goal identity does not match")
+        self.data = stored or {"identity": identity, "nextMutationAt": 0, "reservations": {}, "queries": []}
+        cooldown = self.data.get("nextMutationAt")
+        reservations, queries = self.data.get("reservations"), self.data.get("queries")
+        if (type(cooldown) not in (int, float) or not math.isfinite(cooldown) or cooldown < 0
+                or not isinstance(reservations, dict) or len(reservations) > 9
+                or not isinstance(queries, list) or len(queries) > 8):
+            raise Error("Saved character goal state is invalid")
+        for key, value in reservations.items():
+            if (key not in {"accept:" + str(q) for q in DESIRED | PREREQUISITES}
+                    | {"claim:" + str(q) for q in PREREQUISITES}
+                    or not isinstance(value, list) or len(value) != 3
+                    or not all(isinstance(part, str) and len(part) <= 128 for part in value)):
+                raise Error("Saved mutation reservation is invalid")
+        for query in queries:
+            if (not isinstance(query, dict) or set(query) != {"npc", "signature", "at"}
+                    or not isinstance(query["signature"], list) or len(query["signature"]) != 3
+                    or type(query["at"]) not in (int, float) or not math.isfinite(query["at"])):
+                raise Error("Saved offer query is invalid")
+        rewards = self.data.get("confirmedRewards", {})
+        if (not isinstance(rewards, dict) or len(rewards) > 3
+                or any(key not in {str(q) for q in PREREQUISITES} or not isinstance(value, dict)
+                       or value.get("serverRewardObserved") is not True or value.get("logRemovalConfirmed") is not True
+                       for key, value in rewards.items())):
+            raise Error("Saved prerequisite reward evidence is invalid")
+        self.data["confirmedRewards"] = rewards
+        known = self.data.get("knownGivers", {})
+        sources = {"observed", "reward_receipt", "bound_offer", "quest_query", "request"}
+        if (not isinstance(known, dict) or len(known) > 3
+                or any(key not in ("196", "197", "823") or not isinstance(value, dict)
+                       or set(value) != {"guid", "source", "session"}
+                       or giver_entry(value.get("guid", 0)) != integer(key) or value.get("source") not in sources
+                       or not isinstance(value.get("session"), str) or not 1 <= len(value["session"]) <= 128
+                       for key, value in known.items())):
+            raise Error("Saved questgiver history is invalid")
+        self.data["knownGivers"] = known
+        # These legacy records were persisted only after an actual observed
+        # giver/menu/receipt. Retain their GUID as history, never live presence.
+        for key, receipt in rewards.items():
+            self.remember_giver(receipt.get("npcGuid", 0), "reward_receipt", receipt.get("session", ""),
+                                expected=TURN_IN_GIVERS[integer(key)])
+        accept_givers = {783: 823, 7: 197, 18: 823, 3903: 823, 5261: 823, 33: 196}
+        for key, value in reservations.items():
+            verb, quest = key.split(":")
+            expected = accept_givers[integer(quest)] if verb == "accept" else TURN_IN_GIVERS[integer(quest)]
+            if integer(value[2]) > 0:
+                self.remember_giver(value[1], "bound_offer", value[0], expected=expected)
+        for query in queries:
+            self.remember_giver(query["npc"], "quest_query", query["signature"][0])
+        last = self.data.get("lastMutation", {})
+        if isinstance(last, dict) and last.get("method") in ("buddy-quests.offer", "buddy-quests.turn_in", "buddy-actions.travel_quest"):
+            routine = self.data.get("routine", {})
+            if isinstance(routine, dict):
+                self.remember_giver(last.get("npcGuid", 0), "request", routine.get("session", ""))
+        waypoints = self.data.get("waypoints", {})
+        if (not isinstance(waypoints, dict) or set(waypoints) - {"session", "scopes"}
+                or not isinstance(waypoints.get("session", ""), str) or len(waypoints.get("session", "")) > 128
+                or not isinstance(waypoints.get("scopes", []), list) or len(waypoints.get("scopes", [])) > 32
+                or any(not isinstance(scope, str) or len(scope) > 2048 for scope in waypoints.get("scopes", []))):
+            raise Error("Saved observed-waypoint attempts are invalid")
+        self.status = {"name": name, "guid": guid, "phase": "starting", "observationsCurrent": False,
+                       "activeQuestIds": [], "missingQuestIds": sorted(DESIRED), "levelKnown": False}
+
+    def remember_giver(self, guid, source, session, expected=None):
+        entry = giver_entry(guid)
+        if (not entry or expected is not None and entry != expected
+                or not isinstance(session, str) or not 1 <= len(session) <= 128):
+            return False
+        key = str(entry)
+        known = self.data["knownGivers"]
+        if key in known and (source != "observed" or known[key]["guid"] == str(integer(guid))):
+            return False
+        known[key] = {"guid": str(integer(guid)), "source": source, "session": session}
+        return True
+
+    def remember_observed_givers(self, state, session):
+        changed = False
+        nearby = state.get("nearby", [])
+        if not isinstance(nearby, list) or len(nearby) > 64:
+            raise Error("Questgiver observations are invalid")
+        for row in nearby:
+            c = row.get("creature", {}) if isinstance(row, dict) else {}
+            if (not isinstance(c, dict) or giver_entry(c.get("guid", 0)) != integer(c.get("entry", 0))
+                    or integer(c.get("entry", 0)) not in (196, 197, 823)
+                    or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
+                    or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
+                    or integer(c.get("movementFlags", 0)) & ~0x70000100):
+                continue
+            bounds = (("x", -9050, -8650), ("y", -500, 200), ("z", 40, 180))
+            if any(type(c.get(key)) not in (int, float) or not math.isfinite(c[key]) or not lower <= c[key] <= upper
+                   for key, lower, upper in bounds):
+                continue
+            changed |= self.remember_giver(c["guid"], "observed", session)
+        if changed:
+            self.save(self.data)
+
+    def call(self, method, params):
+        if self.stopped():
+            raise converse.Stopped("Quest synchronization stop requested")
+        return self.rpc.call(method, params)
+
+    def mutate(self, method, params, key=None, offer_binding=None, query=None, operation=None):
+        if self.stopped():
+            raise converse.Stopped("Quest synchronization stop requested")
+        now = self.now()
+        if now < self.data["nextMutationAt"]:
+            return False
+        if key and self.data["reservations"].get(key) == offer_binding:
+            self.status["phase"] = "waiting_for_fresh_server_offer"
+            return False
+        # Persist the reservation before writing. A timeout or restart never
+        # repeats an acceptance/reward against the same consumed offer.
+        self.data["nextMutationAt"] = now + 10
+        if key:
+            self.data["reservations"][key] = offer_binding
+        if query:
+            self.data["queries"] = [old for old in self.data["queries"] if old["npc"] != query["npc"]][-7:] + [query]
+        self.data["lastMutation"] = {"method": method, "at": now,
+                                     "questId": params.get("questId", 0), "npcGuid": params.get("npcGuid", "0")}
+        self.save(self.data)
+        self.status["lastMutation"] = self.data["lastMutation"]
+        self.notify()
+        try:
+            result = operation() if operation else self.call(method, params)
+            self.status["phase"] = "waiting_for_fresh_state_after_request"
+            if method == "buddy-actions.travel_quest":
+                self.status["phase"] = ("quest_travel_arrival_reported_rechecking" if isinstance(result, dict)
+                    and result.get("reason") == "quest_travel_within_distance"
+                    and result.get("moving") is not True and result.get("motionUnconfirmed") is not True
+                    else "quest_travel_not_confirmed")
+                if (isinstance(result, dict) and result.get("reason") in
+                        ("quest_travel_landmark_reached_requires_observation", "quest_travel_landmark_giver_reobserved")
+                        and result.get("moving") is not True and result.get("motionUnconfirmed") is not True):
+                    self.status["phase"] = "landmark_route_stopped_rediscovering_actual_questgiver"
+            elif method == "buddy-actions.practice":
+                self.status["phase"] = ("practicing_for_wolf_quest" if WOLVES in self.status.get("activeQuestIds", [])
+                    else "practicing_to_level_2") if isinstance(result, dict) and result.get("practicing") is True else "practice_control_requested_rechecking"
+        except converse.Stopped:
+            raise
+        except Error:
+            self.status["phase"] = "request_unconfirmed_reconciling_fresh_state"
+        return True
+
+    def hold_follow(self, session):
+        self.actions = self.call("buddy-actions.status", {})
+        self.status["navAvailable"] = self.actions.get("navAvailable") is True
+        self.status["practicePhase"] = self.actions.get("practicePhase", "unknown")
+        self.status["practiceKills"] = integer(self.actions.get("practiceKills", 0))
+        routine = self.data.get("routine", {})
+        if not isinstance(routine, dict) or routine.get("session") != session or routine.get("closed") is True:
+            # A replacement body never inherits a prior body's restore intent.
+            routine = {"session": session, "originalFollowing": self.actions.get("following") is True,
+                       "held": False, "practiceOwned": False, "closed": False}
+            self.data["routine"] = routine
+            self.save(self.data)
+        if not routine.get("held") or self.actions.get("following") is True:
+            if self.now() < self.data["nextMutationAt"]:
+                self.status["phase"] = "waiting_for_confirmed_follow_hold"
+                return False
+            routine["held"] = True
+            self.mutate("buddy-actions.follow", {"enabled": False})
+            return False
+        if self.actions.get("motionUnconfirmed") is True:
+            self.status["phase"] = "waiting_for_confirmed_movement_stop"
+            return False
+        return True
+
+    def stop_practice_for_quests(self):
+        routine = self.data["routine"]
+        if (self.actions.get("practicing") is True or routine.get("practiceOwned") is True
+                and any(self.actions.get(key) is True for key in ("autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed"))):
+            self.mutate("buddy-actions.practice", {"enabled": False})
+            return False
+        if self.actions.get("autoAttackUnconfirmed") is True:
+            self.status["phase"] = "waiting_for_practice_attack_stop"
+            return False
+        if routine.get("practiceOwned"):
+            routine["practiceOwned"] = False
+            self.save(self.data)
+        return True
+
+    def practice(self):
+        # navAvailable is an observation of a previous plan, not installation
+        # readiness. The actuator must validate its first complete route before
+        # moving or pulling; initial false cannot prevent that first plan.
+        if self.actions.get("practicing") is True and integer(self.actions.get("practiceLeaseRemainingMs", 0)) > 60000:
+            self.status["phase"] = "practicing_for_wolf_quest" if WOLVES in self.status.get("activeQuestIds", []) else "practicing_to_level_2"
+            return
+        if self.now() < self.data["nextMutationAt"]:
+            return
+        self.data["routine"]["practiceOwned"] = True
+        self.mutate("buddy-actions.practice", {"enabled": True})
+
+    def ensure_wolf_looting(self):
+        try:
+            loot = self.call("buddy-loot.state", {})
+        except Error:
+            self.status["phase"] = "waiting_for_wolf_loot_module"
+            return False
+        if loot.get("enabled") is True:
+            return True
+        self.status["phase"] = "waiting_for_confirmed_wolf_looting"
+        self.mutate("buddy-loot.enable", {"enabled": True})
+        # Even a positive enable response is reconciled by a fresh state read
+        # on a later tick before any new practice request.
+        self.status["phase"] = "waiting_for_confirmed_wolf_looting"
+        return False
+
+    def travel(self, state, entry=None):
+        nearby = state.get("nearby", [])
+        if not isinstance(nearby, list) or len(nearby) > 64:
+            raise Error("Questgiver observations are invalid")
+        all_choices, visible = [], set()
+        target_observed = False
+        self.status.pop("waypointQuestgiverEntry", None)
+        self.status.pop("rememberedQuestgiverEntry", None)
+        for row in nearby:
+            if not isinstance(row, dict):
+                continue
+            c, d = row.get("creature", {}), row.get("distance")
+            if isinstance(c, dict) and c.get("present") is True and integer(c.get("entry", 0)) in (196, 197, 823):
+                visible.add(str(integer(c.get("guid", 0))))
+                target_observed |= integer(c.get("entry", 0)) == entry
+            if row.get("distanceKnown") is not True:
+                continue
+            if (not isinstance(c, dict) or type(d) not in (int, float) or not math.isfinite(d)
+                    or not 4 < d <= 180 or integer(c.get("entry", 0)) not in (196, 197, 823)
+                    or integer(c.get("guid", 0)) >> 48 not in (0xf130, 0xf150)
+                    or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive", "mapKnown", "positionKnown"))
+                    or integer(c.get("mapId", 0)) != 0 or integer(c.get("npcFlags", 0)) & 2 == 0
+                    or integer(c.get("movementFlags", 0)) & ~0x70000100):
+                continue
+            if any(type(c.get(key, 0)) not in (int, float) or not math.isfinite(c.get(key, 0)) for key in ("x", "y", "z")):
+                continue
+            all_choices.append((d, integer(c["guid"]), integer(c["entry"])))
+        choices = [choice for choice in all_choices if entry is None or choice[2] == entry]
+        waypoint_scope = None
+        remembered = None if target_observed or all_choices else self.data["knownGivers"].get(str(entry))
+        session = session_id(state)
+        if not choices and not target_observed and entry in (196, 197, 823) and (all_choices or remembered):
+            # Coordinates only identify a repeated observation scope. The
+            # actuator receives only an observed or historically observed NPC
+            # GUID and validates the mesh route; no caller waypoint is sent.
+            p = self.actions.get("position", {})
+            if (not isinstance(p, dict) or p.get("known") is not True or p.get("mapKnown") is not True
+                    or integer(p.get("mapId", 0)) != 0
+                    or any(type(p.get(key)) not in (int, float) or not math.isfinite(p[key]) for key in ("x", "y", "z"))):
+                self.status["phase"] = "waiting_for_known_position_before_observed_waypoint"
+                return False
+            waypoint_scope = json.dumps([entry, math.floor(p["x"] / 8), math.floor(p["y"] / 8), sorted(visible)], separators=(",", ":"))
+            attempts = self.data.get("waypoints", {})
+            scopes = attempts.get("scopes", []) if attempts.get("session") == session else []
+            if waypoint_scope in scopes or len(scopes) >= 32:
+                self.status["phase"] = "waiting_for_new_position_or_questgiver_observation"
+                return False
+            choices = all_choices or [(0, integer(remembered["guid"]), entry)]
+        if not choices:
+            self.status["phase"] = "waiting_for_observed_northshire_questgiver_route"
+            return False
+        _, npc, waypoint_entry = min(choices)
+        def operation():
+            lease = self.call("buddy-actions.acquire_interaction", {"owner": "quests", "leaseMs": 30000})
+            token, control = lease.get("token"), lease.get("state", {})
+            if (not isinstance(token, str) or not 1 <= len(token) <= 128
+                    or not isinstance(control, dict) or control.get("interactionOwner") != "quests"):
+                raise Error("Quest travel lease was not confirmed")
+            try:
+                if control.get("moving") is True or control.get("motionUnconfirmed") is True:
+                    raise Error("Quest travel lease movement is unconfirmed")
+                if waypoint_scope is not None:
+                    attempts = self.data.get("waypoints", {})
+                    scopes = attempts.get("scopes", []) if attempts.get("session") == session else []
+                    self.data["waypoints"] = {"session": session, "scopes": scopes + [waypoint_scope]}
+                    self.save(self.data) # Persist before the potentially ambiguous route write.
+                    self.status["rememberedQuestgiverEntry" if remembered else "waypointQuestgiverEntry"] = waypoint_entry
+                self.data["routine"]["travelToken"] = token
+                self.save(self.data)
+                self.status["phase"] = ("traveling_toward_remembered_starter_landmark" if remembered
+                    else "traveling_via_observed_starter_questgiver" if waypoint_scope is not None
+                    else "traveling_to_observed_starter_questgiver")
+                self.notify()
+                return self.call("buddy-actions.travel_quest", {"token": token, "npcGuid": str(npc)})
+            finally:
+                # Cleanup bypasses the cooperative-stop predicate; only the
+                # exact token we acquired can release this interaction.
+                try:
+                    self.rpc.call("buddy-actions.release_interaction", {"owner": "quests", "token": token})
+                except Error:
+                    pass
+                self.data["routine"].pop("travelToken", None)
+                self.save(self.data)
+        return self.mutate("buddy-actions.travel_quest", {"npcGuid": str(npc)}, operation=operation)
+
+    def cleanup(self):
+        if not self.autonomous:
+            return
+        routine = self.data.get("routine", {})
+        if not isinstance(routine, dict) or not routine or routine.get("closed") is True:
+            return
+        try:
+            world = self.rpc.call("buddy-world.snapshot", {})
+            state = self.rpc.call("buddy-quests.discover", {})
+            if integer(world.get("self", {}).get("guid", 0)) != self.guid or session_id(state) != routine.get("session"):
+                self.status["cleanup"] = "body_changed_no_stale_restore"
+                return
+            token = routine.get("travelToken")
+            if isinstance(token, str) and token:
+                self.rpc.call("buddy-actions.release_interaction", {"owner": "quests", "token": token})
+                routine.pop("travelToken", None)
+            if routine.get("practiceOwned") is True:
+                result = self.rpc.call("buddy-actions.practice", {"enabled": False})
+                if any(result.get(key) is True for key in ("practicing", "autoAttacking", "autoAttackUnconfirmed", "motionUnconfirmed")):
+                    self.status["cleanup"] = "practice_stop_unconfirmed_follow_not_restored"
+                    return
+            if routine.get("held") is True and routine.get("originalFollowing") is True:
+                self.rpc.call("buddy-actions.follow", {"enabled": True})
+            routine["closed"] = True
+            self.save(self.data)
+            self.status["cleanup"] = "previous_follow_intent_restore_requested"
+        except Error:
+            self.status["cleanup"] = "cleanup_unconfirmed_no_blind_retry"
+
+    def candidates(self, state):
+        nearby = state.get("nearby", [])
+        ranked = converse.BuddyControls.quest_candidates(nearby)
+        entries = {}
+        for row in nearby:
+            if isinstance(row, dict) and isinstance(row.get("creature"), dict):
+                creature = row["creature"]
+                guid, entry = integer(creature.get("guid", 0)), integer(creature.get("entry", 0))
+                if entry in (196, 197, 823):
+                    entries[guid] = entry
+        return [(priority, distance, guid, entries[guid]) for priority, distance, guid in ranked if guid in entries]
+
+    def observe_rewards(self, state, session, active):
+        receipt = state.get("lastReward", {})
+        quest_id = integer(receipt.get("questId", 0)) if isinstance(receipt, dict) else 0
+        if (quest_id in PREREQUISITES
+                and receipt.get("status") in ("REWARD_CONFIRMED", 2)
+                and receipt.get("serverRewardObserved") is True and receipt.get("logRemovalConfirmed") is True
+                and quest_id not in active):
+            evidence = {"session": session, "questId": quest_id,
+                        "npcGuid": str(integer(receipt.get("npcGuid", 0))),
+                        "offerRevision": str(integer(receipt.get("offerRevision", 0))),
+                        "confirmedLogRevision": str(integer(receipt.get("confirmedLogRevision", 0))),
+                        "observedAt": self.now(), "serverRewardObserved": True, "logRemovalConfirmed": True}
+            if str(quest_id) not in self.data["confirmedRewards"]:
+                self.data["confirmedRewards"][str(quest_id)] = evidence
+                if quest_id == INTRO:
+                    self.data["introRewardConfirmed"] = True
+                self.save(self.data)
+        confirmed = {integer(q) for q in self.data["confirmedRewards"]}
+        if self.data.get("introRewardConfirmed") is True:
+            confirmed.add(INTRO) # Preserve historical evidence from the first controller.
+            self.status["introRewardConfirmed"] = True
+        self.status["confirmedPrerequisiteQuestIds"] = sorted(confirmed)
+
+    def reward(self, state, session, candidates, active, quest_id=INTRO):
+        if quest_id not in active or quest_id not in PREREQUISITES:
+            return False
+        giver_entry = TURN_IN_GIVERS[quest_id]
+        givers = [row for row in candidates if row[3] == giver_entry]
+        if not givers:
+            if self.autonomous:
+                self.travel(state, entry=giver_entry)
+                return True
+            self.status["phase"] = "waiting_for_observed_prerequisite_reward_giver"
+            return True
+        _, _, npc, _ = min(givers)
+        offer = state.get("turnInOffer", {})
+        if (isinstance(offer, dict) and integer(offer.get("questId", 0)) == quest_id
+                and integer(offer.get("npcGuid", 0)) == npc and offer.get("source") == "reward_offer"
+                and offer.get("canComplete") is True and integer(offer.get("expiresInMs", 0)) > 0
+                and offer.get("rewardRequested") is not True):
+            choices = offer.get("choices", [])
+            if not isinstance(choices, list) or len(choices) > 6:
+                raise Error("Prerequisite reward choices are invalid")
+            indices = set()
+            for item in choices:
+                if (not isinstance(item, dict) or not 0 < integer(item.get("itemId", 0)) <= 2**32 - 1
+                        or not 0 < integer(item.get("count", 0)) <= 2**32 - 1
+                        or not 0 <= integer(item.get("index", 0)) < 6
+                        or integer(item.get("index", 0)) in indices):
+                    raise Error("Prerequisite reward choice is invalid")
+                indices.add(integer(item.get("index", 0)))
+            choice = choices[0] if choices else None
+            if len(choices) > 1:
+                class_id = integer(self.self_player.get("classId", 0)) if self.self_player.get("classKnown") is True else 0
+                preferred = WOLF_REWARD_BY_CLASS.get(class_id) if quest_id == WOLVES else None
+                matches = [item for item in choices if isinstance(item, dict) and integer(item.get("itemId", 0)) == preferred]
+                if len(matches) != 1:
+                    self.status["phase"] = "waiting_for_verified_prerequisite_reward_choice"
+                    return True
+                choice = matches[0]
+            revision = integer(offer.get("revision", 0))
+            if not revision:
+                raise Error("Prerequisite reward offer revision is unknown")
+            key = "claim:" + str(quest_id)
+            used = self.data["reservations"].get(key) == binding(session, npc, revision)
+            if not used:
+                self.mutate("buddy-quests.claim_reward", {
+                    "sessionId": session, "offerRevision": str(revision), "npcGuid": str(npc), "questId": quest_id,
+                    "choiceIndex": integer(choice.get("index", 0)) if choice else 0,
+                    "expectedItemId": integer(choice["itemId"]) if choice else 0, "noChoice": not choices},
+                    key, binding(session, npc, revision))
+                return True
+        # Turn-in is a bounded dialogue query, not a reward claim. Once a
+        # consumed/ambiguous reward needs reconciliation, query a new offer;
+        # claim can happen only against that new actual server revision.
+        last = self.data.get("lastMutation", {})
+        if (last.get("method") == "buddy-quests.turn_in" and integer(last.get("questId", 0)) == quest_id
+                and self.now() - last.get("at", 0) < 60):
+            self.status["phase"] = "waiting_for_prerequisite_turn_in_response"
+            return True
+        self.mutate("buddy-quests.turn_in", {"sessionId": session, "npcGuid": str(npc), "questId": quest_id,
+                                            "questLogRevision": str(integer(state.get("questLogRevision", 0)))})
+        return True
+
+    def tick(self):
+        self.status["observationsCurrent"] = False
+        world = self.call("buddy-world.snapshot", {})
+        state = self.call("buddy-quests.discover", {})
+        session = session_id(state)
+        self_player, owner = world.get("self", {}), world.get("owner", {})
+        if not isinstance(self_player, dict) or integer(self_player.get("guid", 0)) != self.guid:
+            raise Error("RPC character identity does not match this goal")
+        self.self_player = self_player
+        active = active_log(state)
+        self.remember_observed_givers(state, session)
+        level_known = self_player.get("levelKnown") is True
+        level = integer(self_player.get("level", 0)) if level_known else 0
+        if level_known and not 1 <= level <= 80:
+            raise Error("Observed character level is invalid")
+        missing = DESIRED - active
+        self.status.update(observationsCurrent=True, lastObservedAt=self.now(), activeQuestIds=sorted(active),
+                           missingQuestIds=sorted(missing), extraQuestIds=sorted(active - DESIRED - PREREQUISITES),
+                           levelKnown=level_known, level=level if level_known else None,
+                           questSession=session, questLogRevision=str(integer(state.get("questLogRevision", 0))),
+                           matchedRequestedIds=not missing, exactGoalMatched=active == DESIRED)
+        self.status.pop("error", None)
+        self.observe_rewards(state, session, active)
+        confirmed = set(self.status["confirmedPrerequisiteQuestIds"])
+        wolf_log = next((row for row in state.get("questLog", []) if integer(row.get("questId", 0)) == WOLVES), {})
+        wolf_complete, wolf_failed = wolf_log.get("complete") is True, wolf_log.get("failed") is True
+        self.status["wolfQuestComplete"] = WOLVES in active and wolf_complete
+        needs_wolves = WOLVES in active and not wolf_complete and not wolf_failed
+        # The normal chain supplies XP while collecting its actual objective.
+        # XP-only practice is a fallback after the wolf prerequisite is proven,
+        # or when3903 is already active; it cannot bypass obtaining quest33.
+        xp_needed = (level_known and level == 1 and self.guid in (4, 5) and 18 in missing
+                     and (3903 in active or WOLVES in confirmed))
+        practice_needed = needs_wolves and level_known and 1 <= level <= 5 or xp_needed
+        own_practice = self.autonomous and self.data.get("routine", {}).get("practiceOwned") is True
+        if active == DESIRED and not own_practice:
+            self.status["phase"] = "matched_requested_active_quest_ids"
+            return
+        if self.autonomous:
+            if (self_player.get("present") is not True or self_player.get("aliveKnown") is not True
+                    or self_player.get("alive") is not True):
+                self.status["phase"] = "waiting_for_alive_observed_character"
+                return
+            if not self.hold_follow(session):
+                return
+            # Party XP can raise us to2 while our own previously pulled wolf
+            # is still attacking. The actuator finishes that engagement and
+            # auto-stops; synchronization must not interrupt it with a quest.
+            if (self.actions.get("practicePhase") in ("finishing_current_fight_to_level2", "finishing_current_fight_to_goal")
+                    or not practice_needed and (wolf_complete or level_known and level >= 2)
+                    and self.actions.get("practicing") is True):
+                self.status["phase"] = "finishing_current_practice_engagement_before_quests"
+                return
+            if integer(self_player.get("unitFlags", 0)) & 0x80000:
+                self.status["phase"] = "waiting_out_of_combat_before_quests"
+                return
+            if active == DESIRED:
+                self.status["phase"] = "matched_requested_active_quest_ids"
+                return
+        elif (not isinstance(owner, dict) or integer(owner.get("guid", 0)) != 3
+                or any(player.get("present") is not True or player.get("aliveKnown") is not True or player.get("alive") is not True for player in (self_player, owner))
+                or integer(owner.get("playerFlags", 0)) & 6):
+            self.status["phase"] = "waiting_for_alive_present_owner_and_character"
+            return
+        if state.get("actionInFlight") is True:
+            self.status["phase"] = "waiting_for_existing_quest_operation"
+            return
+        if wolf_failed:
+            self.status["phase"] = "waiting_for_failed_wolf_prerequisite_resolution"
+            return
+        if practice_needed:
+            if self.autonomous:
+                if needs_wolves and not self.ensure_wolf_looting():
+                    return
+                self.practice()
+            else:
+                self.status["phase"] = "waiting_for_own_wolf_objectives" if needs_wolves else "waiting_for_level_2"
+            return
+        if needs_wolves:
+            self.status["phase"] = "waiting_for_supported_wolf_practice_level"
+            return
+        self.status["phase"] = "waiting_for_mutation_cooldown" if self.now() < self.data["nextMutationAt"] else "checking_observed_quest_offers"
+        all_candidates = self.candidates(state)
+        reward_quest = next((q for q in (INTRO, EAGAN_INTRO, WOLVES)
+                             if q in active and (q != WOLVES or wolf_complete)), None)
+        if reward_quest is not None:
+            needed_entry = TURN_IN_GIVERS[reward_quest]
+        elif 7 in missing:
+            needed_entry = 197 if INTRO in confirmed else 823
+        elif (3903 in missing and WOLVES not in confirmed and self.data.get("wolfProbeSession") != session
+              and (EAGAN_INTRO in confirmed or self.data.get("eaganProbeSession") == session)):
+            needed_entry = 196
+        else:
+            needed_entry = 823
+        # If an actual fresh Willem menu no longer offers the intro, probe
+        # McBride for7. This is a dialogue query, never invented quest access.
+        raw_offer = state.get("offer", {})
+        if 7 in missing and INTRO not in active:
+            willem_guids = {row[2] for row in all_candidates if row[3] == 823}
+            if (isinstance(raw_offer, dict) and integer(raw_offer.get("npcGuid", 0)) in willem_guids
+                    and integer(raw_offer.get("expiresInMs", 0)) > 0
+                    and isinstance(raw_offer.get("quests", []), list)
+                    and not any(isinstance(q, dict) and integer(q.get("questId", 0)) == INTRO
+                                and q.get("available") is True for q in raw_offer.get("quests", []))):
+                self.data["introProbeSession"] = session
+                self.save(self.data)
+            if self.data.get("introProbeSession") == session:
+                needed_entry = 197
+        if (7 in active and 3903 in missing and EAGAN_INTRO not in confirmed and WOLVES not in confirmed
+                and not (active & {EAGAN_INTRO, WOLVES}) and isinstance(raw_offer, dict)
+                and integer(raw_offer.get("npcGuid", 0)) in {row[2] for row in all_candidates if row[3] == 823}
+                and integer(raw_offer.get("expiresInMs", 0)) > 0
+                and isinstance(raw_offer.get("quests"), list)
+                and not any(isinstance(q, dict) and integer(q.get("questId", 0)) in (EAGAN_INTRO, 3903)
+                            and q.get("available") is True for q in raw_offer["quests"])):
+            self.data["eaganProbeSession"] = session
+            self.data.pop("wolfProbeSession", None)
+            self.save(self.data)
+            needed_entry = 196
+        # A reward may have applied just before a body replacement discarded
+        # its receipt. An actual Eagan menu with no33 allows a fresh Willem
+        # query; only Willem's actual3903 offer can reconcile that history.
+        if (reward_quest is None and 3903 in missing and not (active & {EAGAN_INTRO, WOLVES})
+                and isinstance(raw_offer, dict)
+                and integer(raw_offer.get("npcGuid", 0)) in {row[2] for row in all_candidates if row[3] == 196}
+                and integer(raw_offer.get("expiresInMs", 0)) > 0
+                and isinstance(raw_offer.get("quests"), list)
+                and not any(isinstance(q, dict) and integer(q.get("questId", 0)) == WOLVES
+                            and q.get("available") is True for q in raw_offer["quests"])):
+            self.data["wolfProbeSession"] = session
+            self.save(self.data)
+            needed_entry = 823
+        candidates = [row for row in all_candidates if row[3] == needed_entry]
+        self.status["neededQuestgiverEntry"] = needed_entry
+        if self.autonomous:
+            candidates = [row for row in candidates if row[0] == 0]
+            if not self.stop_practice_for_quests():
+                return
+        if reward_quest is not None and self.reward(state, session, candidates, active, reward_quest):
+            return
+        allowed = set()
+        if needed_entry == 197 and 7 in missing:
+            allowed.add(7)
+        elif needed_entry == 823:
+            if 7 in missing:
+                allowed.add(INTRO)
+            if level_known and level >= 2:
+                allowed |= missing & {18, 3903}
+            if 3903 in missing and EAGAN_INTRO not in confirmed and WOLVES not in confirmed:
+                allowed.add(EAGAN_INTRO)
+        elif needed_entry == 196 and 3903 in missing and WOLVES not in confirmed:
+            allowed.add(WOLVES)
+        if not allowed:
+            self.status["phase"] = "waiting_for_level_2" if level_known and level < 2 else "waiting_for_level_observation"
+            if self.autonomous and level_known and level == 1 and missing & {18, 3903}:
+                self.practice()
+            if not missing:
+                self.status["phase"] = "requested_ids_present_extra_quests_unchanged"
+            return
+        offer = state.get("offer", {})
+        nearby_guids = {row[2] for row in candidates}
+        if (isinstance(offer, dict) and integer(offer.get("npcGuid", 0)) in nearby_guids
+                and integer(offer.get("expiresInMs", 0)) > 0):
+            quests = offer.get("quests", [])
+            if not isinstance(quests, list) or len(quests) > 32:
+                raise Error("Observed offer quest list is invalid")
+            desired = []
+            for quest in quests:
+                if not isinstance(quest, dict):
+                    raise Error("Observed offer quest is invalid")
+                quest_id = integer(quest.get("questId", 0))
+                if (quest.get("available") is True and quest.get("acceptRequested") is not True
+                        and quest.get("repeatable") is not True and quest_id not in active
+                        and quest_id in allowed):
+                    desired.append(quest_id)
+            desired.sort(key=lambda quest_id: (quest_id == INTRO, quest_id))
+            for quest_id in desired:
+                npc, revision = integer(offer["npcGuid"]), integer(offer.get("revision", 0))
+                if not revision:
+                    raise Error("Quest offer revision is unknown")
+                current_binding = binding(session, npc, revision)
+                if any(key.startswith("accept:") and value == current_binding for key, value in self.data["reservations"].items()):
+                    break # Refresh the actual menu after every acceptance.
+                if self.data["reservations"].get("accept:" + str(quest_id)) != current_binding:
+                    self.mutate("buddy-quests.accept", {"sessionId": session, "offerRevision": str(revision),
+                        "npcGuid": str(npc), "questId": quest_id}, "accept:" + str(quest_id), current_binding)
+                    return
+        if not candidates:
+            if self.autonomous:
+                self.travel(state, entry=needed_entry)
+                return
+            self.status["phase"] = "waiting_for_observed_starter_questgiver_within_8yd"
+            return
+        signature = [session, str(integer(state.get("questLogRevision", 0))), str(level)]
+        eligible = []
+        for priority, distance, npc, entry in candidates:
+            previous = next((q for q in self.data["queries"] if q["npc"] == str(npc)), None)
+            if previous and previous["signature"] == signature and self.now() - previous["at"] < 60:
+                continue
+            eligible.append((priority, previous["at"] if previous else 0, distance, npc))
+        if not eligible:
+            self.status["phase"] = "waiting_for_new_offer_or_prerequisite_state"
+            return
+        _, _, _, npc = min(eligible)
+        self.mutate("buddy-quests.offer", {"sessionId": session, "npcGuid": str(npc)},
+                    query={"npc": str(npc), "signature": signature, "at": self.now()})
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("run", "status", "stop"))
+    parser.add_argument("--state-dir", type=Path, default=ROOT / "data/sync-quests")
+    parser.add_argument("--max-hours", type=float, default=8)
+    parser.add_argument("--autonomous", action="store_true",
+                        help="Use installed verified Northshire navigation and level1 practice controls")
+    args = parser.parse_args(argv)
+    if not math.isfinite(args.max_hours) or not 0 < args.max_hours <= 8:
+        parser.error("Maximum runtime must be greater than0 and at most8hours")
+    folder = converse.ensure_state(args.state_dir)
+    with os.fdopen(converse.private_open(folder / "lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        if args.command != "run":
+            record = converse.read_json(folder / "status.json")
+            running = converse.is_locked(lock)
+            if record and record.get("identity") not in (IDENTITY, converse.LEGACY_QUEST_SYNC_IDENTITY):
+                raise Error("State directory tracks a different quest goal; left untouched")
+            if args.command == "status":
+                print(json.dumps(dict(record, running=running), indent=2))
+            elif running and record.get("instance"):
+                converse.write_json(folder / "stop.json", {"instance": record["instance"], "identity": record["identity"]})
+                print("Quest synchronization stop requested; characters remain online.")
+            else:
+                print("Quest synchronization is not running.")
+            return 0
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Error("Quest synchronization is already running") from None
+        record = {"identity": IDENTITY, "instance": uuid.uuid4().hex, "pid": os.getpid(),
+                  "startedAt": time.time(), "phase": "starting", "limitation": LIMITATION,
+                  "routineActive": True, "mode": "autonomous" if args.autonomous else "nearby-only"}
+        if args.autonomous:
+            record["limitation"] = "Observed Northshire196/197/823 routes via verified navigation only; finite YoungWolf practice for own33 objectives or level1 fallback. No abandonment or grants; Joel's objective progress is unknown."
+        local_stop = False
+        def request_stop(signum, frame):
+            nonlocal local_stop
+            local_stop = True
+        signal.signal(signal.SIGINT, request_stop)
+        signal.signal(signal.SIGTERM, request_stop)
+        deadline = time.monotonic() + args.max_hours * 3600
+        def cancel_requested():
+            stop = converse.read_json(folder / "stop.json")
+            return local_stop or stop.get("instance") == record["instance"] and stop.get("identity") == IDENTITY
+        def stopped():
+            return cancel_requested() or time.monotonic() >= deadline
+        profiles = []
+        for name, guid, port in ROSTER:
+            path = folder / ("character-" + str(guid) + ".json")
+            profiles.append(CharacterSync(name, guid, SyncRPC("http://127.0.0.1:" + str(port) + "/rpc", timeout=6),
+                save=lambda value, path=path: converse.write_json(path, value), stored=converse.read_json(path),
+                stopped=stopped, autonomous=args.autonomous))
+        def status(phase):
+            record.update(phase=phase, routineActive=phase in ("starting", "running"), updatedAt=time.time(), characters=[p.status for p in profiles])
+            converse.write_json(folder / "status.json", record)
+        for profile in profiles:
+            profile.notify = lambda: status("running")
+        status("running")
+        print("Quest synchronization running for Arlen, Mira and Rook; inspect dev/sync-quests status.", flush=True)
+        try:
+            while not stopped() and time.monotonic() < deadline:
+                round_end = time.monotonic() + 2
+                for profile in profiles:
+                    if stopped():
+                        break
+                    try:
+                        profile.tick()
+                    except converse.Stopped:
+                        break
+                    except Error:
+                        profile.status.update(phase="rpc_or_observation_unavailable", observationsCurrent=False)
+                    status("running")
+                if all(p.status.get("exactGoalMatched") is True and p.status.get("observationsCurrent") is True
+                       and p.status.get("phase") == "matched_requested_active_quest_ids" for p in profiles):
+                    for profile in profiles:
+                        profile.cleanup()
+                    status("goal_matched")
+                    return 0
+                status("running")
+                while time.monotonic() < round_end and not stopped():
+                    time.sleep(0.1)
+        finally:
+            if record.get("phase") != "goal_matched":
+                for profile in profiles:
+                    profile.cleanup()
+                status("stopped" if cancel_requested() else "runtime_expired")
+        return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (Error, OSError) as error:
+        print("Quest synchronization: " + str(error), file=sys.stderr)
+        sys.exit(1)

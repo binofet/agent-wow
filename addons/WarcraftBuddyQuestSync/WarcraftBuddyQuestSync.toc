@@ -1,0 +1,7 @@
+## Interface: 30300
+## Title: Warcraft Buddy Quest Sync
+## Notes: Quest sync and companion inventory. Type /wbinv to inspect bags.
+## Version: 0.2.0
+## SavedVariablesPerCharacter: WarcraftBuddyQuestSyncDB
+Catalog.lua
+WarcraftBuddyQuestSync.lua

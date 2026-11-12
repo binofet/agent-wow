@@ -1,0 +1,104 @@
+name: warcraft-buddy-realm
+
+x-databases: &databases
+  AC_LOGIN_DATABASE_INFO: "database;3306;root;${REALM_DB_ROOT_PASSWORD:?Run dev/realm up to create the local secret};acore_auth"
+  AC_WORLD_DATABASE_INFO: "database;3306;root;${REALM_DB_ROOT_PASSWORD:?Run dev/realm up to create the local secret};acore_world"
+  AC_CHARACTER_DATABASE_INFO: "database;3306;root;${REALM_DB_ROOT_PASSWORD:?Run dev/realm up to create the local secret};acore_characters"
+  AC_CLOSE_IDLE_CONNECTIONS: "0"
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  database:
+    image: mysql:8.4@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+    platform: linux/amd64
+    environment:
+      MYSQL_ROOT_PASSWORD: "${REALM_DB_ROOT_PASSWORD:?Run dev/realm up to create the local secret}"
+    volumes:
+      - database:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user=root --execute "SELECT 1" >/dev/null']
+      interval: 5s
+      timeout: 10s
+      retries: 40
+    restart: unless-stopped
+    logging: *logging
+
+  client-data:
+    image: acore/ac-wotlk-client-data:master@sha256:3443f2d307d638c4827297d2fc8b5b6719245b8019c6b78bbf4f681a291c2d9e
+    platform: linux/amd64
+    volumes:
+      - client-data:/azerothcore/env/dist/data
+    restart: "no"
+    logging: *logging
+
+  db-import:
+    image: acore/ac-wotlk-db-import:master@sha256:e8497a04670edb1a5536acd01135bea814532e7934a563dd76e31edc479f2a5f
+    platform: linux/amd64
+    environment:
+      <<: *databases
+      AC_FORCE_CREATE_DB: "1"
+      AC_DISABLE_INTERACTIVE: "1"
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - configuration:/azerothcore/env/dist/etc
+    restart: "no"
+    logging: *logging
+
+  worldserver:
+    image: acore/ac-wotlk-worldserver:master@sha256:e39abd60e45b65381f76bf3f2c60e2040924569aa4c22ebbf4b3fbf921586a15
+    platform: linux/amd64
+    environment:
+      <<: *databases
+      AC_DATA_DIR: /azerothcore/env/dist/data
+      AC_LOGS_DIR: /azerothcore/env/dist/logs
+      AC_UPDATES_ENABLE_DATABASES: "0"
+      AC_DISABLE_INTERACTIVE: "1"
+    ports:
+      - "127.0.0.1:8085:8085"
+    volumes:
+      - client-data:/azerothcore/env/dist/data:ro
+      - configuration:/azerothcore/env/dist/etc
+    depends_on:
+      database:
+        condition: service_healthy
+      db-import:
+        condition: service_completed_successfully
+      client-data:
+        condition: service_completed_successfully
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    logging: *logging
+
+  authserver:
+    image: acore/ac-wotlk-authserver:master@sha256:a0d76cc0aa6960701a0d940d15575dd7a2046e34f1c900420b66eae8bc8acf7e
+    platform: linux/amd64
+    environment:
+      <<: *databases
+      AC_LOGS_DIR: /azerothcore/env/dist/logs
+      AC_TEMP_DIR: /azerothcore/env/dist/temp
+      AC_UPDATES_ENABLE_DATABASES: "0"
+      AC_DISABLE_INTERACTIVE: "1"
+    ports:
+      - "127.0.0.1:3724:3724"
+    volumes:
+      - configuration:/azerothcore/env/dist/etc
+    depends_on:
+      database:
+        condition: service_healthy
+      db-import:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  database:
+  client-data:
+  configuration:

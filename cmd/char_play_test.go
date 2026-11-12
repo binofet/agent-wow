@@ -180,7 +180,10 @@ func TestPlayCommandStartupTimeoutDoesNotLimitGameplay(t *testing.T) {
 		return s, nil
 	}}
 	command := deps.command()
-	command.SetArgs([]string{"play", "Mira", "--timeout", "100ms"})
+	// Realm discovery still performs real loopback I/O. Give race-enabled CI
+	// enough time for that setup, then keep gameplay alive past the same budget.
+	const startupTimeout = 2 * time.Second
+	command.SetArgs([]string{"play", "Mira", "--timeout", startupTimeout.String()})
 	out := readyWriter{make(chan []byte, 1)}
 	var stdout bytes.Buffer
 	command.SetOut(&stdout)
@@ -194,7 +197,7 @@ func TestPlayCommandStartupTimeoutDoesNotLimitGameplay(t *testing.T) {
 	if startup.Err() == nil {
 		t.Fatal("startup context not released")
 	}
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(startupTimeout + 20*time.Millisecond)
 	postRPC(t, url, "session.getState")
 	postRPC(t, url, "session.logout")
 	if err := <-exited; err != nil {

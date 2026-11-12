@@ -1,0 +1,658 @@
+#!/usr/bin/env python3
+"""Start, stop, or inspect one independently tracked buddy profile on Linux."""
+
+import argparse
+import fcntl
+import http.client
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import re
+import shlex
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BINARY = ROOT / "bin" / "agent-wow"
+CONFIG = ROOT / "config" / "buddy.yaml"
+PID_FILE = ROOT / "config" / "buddy.pid"
+LOG_FILE = ROOT / "config" / "buddy-live.log"
+LOCK_FILE = ROOT / "config" / "buddy.lock"
+CHARACTER = "Arlen"
+RPC_HOST, RPC_PORT = "127.0.0.1", 8086
+PROFILE = "default"
+CONFIG_DIR = DATA_DIR = MODULE_DIR = CHARACTER_GUID = None
+START_TIMEOUT, STOP_TIMEOUT = 330, 45
+EXEC_SETTLE_TIMEOUT = 2
+MAX_LINE = 64 << 10
+MAX_RPC_RESPONSE = 256 << 10
+
+
+class BuddyError(Exception):
+    pass
+
+
+class StopRPCFault(Exception):
+    def __init__(self, error):
+        self.error = error
+
+
+def strict_json(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+
+
+class NoStopRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise BuddyError("Stop safeguard refused an RPC redirect; no signal sent")
+
+
+class StopRPC:
+    def __init__(self, opener=None):
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoStopRedirect())
+        self.sequence = 0
+
+    def call(self, method, params, deadline):
+        if method not in ("buddy-world.snapshot", "buddy-professions.state", "buddy-professions.prepare_stop") or not isinstance(params, dict) or self.sequence >= 4:
+            raise BuddyError("Stop safeguard request is invalid; no signal sent")
+        self.sequence += 1
+        expired = "Stop deadline expired before SIGTERM; no signal sent"
+        timeout = min(5, remaining_time(deadline, expired))
+        request = urllib.request.Request(f"http://{RPC_HOST}:{RPC_PORT}/rpc",
+            data=json.dumps({"jsonrpc": "2.0", "id": self.sequence, "method": method,
+                             "params": params}, allow_nan=False).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=timeout) as response:
+                raw = response.read(MAX_RPC_RESPONSE + 1)
+            remaining_time(deadline, expired)
+            if len(raw) > MAX_RPC_RESPONSE:
+                raise BuddyError("Stop safeguard RPC response exceeds its bound; no signal sent")
+            reply = strict_json(raw)
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            raise BuddyError("Stop safeguard RPC is unavailable or invalid; no signal sent") from None
+        if (not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0"
+                or type(reply.get("id")) is not int or reply["id"] != self.sequence
+                or ("result" in reply) == ("error" in reply)):
+            raise BuddyError("Stop safeguard RPC response identity is unconfirmed; no signal sent")
+        if "error" in reply:
+            if not isinstance(reply["error"], dict):
+                raise BuddyError("Stop safeguard RPC error is invalid; no signal sent")
+            raise StopRPCFault(reply["error"])
+        if not isinstance(reply["result"], dict):
+            raise BuddyError("Stop safeguard RPC state is invalid; no signal sent")
+        return reply["result"]
+
+
+def stop_integer(value, maximum=2**64 - 1):
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value):
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise BuddyError("Stop safeguard integer evidence is invalid; no signal sent")
+    return value
+
+
+def stop_boolean(state, key):
+    value = state.get(key, False)
+    if type(value) is not bool:
+        raise BuddyError("Stop safeguard boolean evidence is invalid; no signal sent")
+    return value
+
+
+def stop_body_guid(record):
+    # The world snapshot exposes no name/session field. Attribute the name and
+    # GUID to this exact PID's private ready event, then bind current RPC GUIDs.
+    at, _ = scan_log(record, record.get("ready_offset") or 0,
+                     lambda line: ready_line(line, record["pid"]))
+    if at is None:
+        raise BuddyError("Stop safeguard has no matching own ready identity; no signal sent")
+    with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as source:
+        info = os.fstat(source.fileno())
+        if (info.st_dev, info.st_ino) != (record["log_device"], record["log_inode"]):
+            raise BuddyError("Buddy log was replaced; stop identity is unconfirmed; no signal sent")
+        source.seek(at)
+        line = source.readline(MAX_LINE + 1)
+    if len(line) > MAX_LINE or not line.endswith(b"\n") or not ready_line(line, record["pid"]):
+        raise BuddyError("Stop ready identity changed; no signal sent")
+    guid = stop_integer(log_fields(line).get("character.guid"), 2**48 - 1)
+    if guid == 0 or CHARACTER_GUID is not None and guid != CHARACTER_GUID:
+        raise BuddyError("Stop character identity is unconfirmed; no signal sent")
+    return guid
+
+
+def checked_stop_world(state, guid):
+    own = state.get("self") if isinstance(state, dict) else None
+    if not isinstance(own, dict) or own.get("present") is not True or stop_integer(own.get("guid", 0), 2**48 - 1) != guid:
+        raise BuddyError("Stop RPC does not identify this profile's connected character; no signal sent")
+
+
+def checked_stop_professions(state, guid, expected_session=None, prepared=False):
+    if not isinstance(state, dict):
+        raise BuddyError("Profession stop state is invalid; no signal sent")
+    session = state.get("sessionId")
+    if (not isinstance(session, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", session)
+            or stop_integer(state.get("selfGuid", 0), 2**48 - 1) != guid
+            or expected_session is not None and session != expected_session
+            or stop_boolean(state, "closing")):
+        raise BuddyError("Profession stop session or character is unconfirmed; no signal sent")
+    active = stop_boolean(state, "active")
+    if prepared and not stop_boolean(state, "stopPrepared"):
+        raise BuddyError("Atomic profession stop preparation is unconfirmed; no signal sent")
+    operation = state.get("operation")
+    if operation is None:
+        if active:
+            raise BuddyError("Active profession identity is unknown; no signal sent")
+        return session
+    if not isinstance(operation, dict):
+        raise BuddyError("Profession operation evidence is invalid; no signal sent")
+    skill, spell = (stop_integer(operation.get(key, 0), 2**32 - 1) for key in ("skillId", "spellId"))
+    if skill == 0 or spell == 0 or (skill == 333) != (spell == 13262):
+        raise BuddyError("Profession operation identity is unconfirmed; no signal sent")
+    if skill != 333:
+        return session
+    if active or stop_boolean(operation, "cleanupUnconfirmed") or not stop_boolean(operation, "leaseReleased"):
+        raise BuddyError("Selected disenchant is active or has pending cleanup; keep connected and leave its material window open; no signal sent")
+    status = operation.get("status")
+    if status == "COMPLETED":
+        if (not all(stop_boolean(operation, key) for key in ("ownGoObserved", "lootWindowObserved", "lootReleaseObserved", "inputConsumedObserved", "outputInventoryObserved"))
+                or stop_integer(operation.get("lootSlotsRemoved", 0)) == 0
+                or stop_integer(operation.get("ownLootedItemsObserved", 0)) == 0):
+            raise BuddyError("Selected disenchant material proof is incomplete; keep connected; no signal sent")
+    elif status in ("BLOCKED", "SERVER_REJECTED", "CANCELLED"):
+        if any(stop_boolean(operation, key) for key in ("ownGoObserved", "lootWindowObserved", "inputConsumedObserved", "outputInventoryObserved")):
+            raise BuddyError("Selected disenchant has an unsettled material window; keep connected; no signal sent")
+    else:
+        raise BuddyError("Selected disenchant outcome is uncertain; keep connected; no signal sent")
+    return session
+
+
+def missing_professions_module(error):
+    # This exact structured fault originates in the running fixed registry's
+    # lookup, before forwarding. Missing methods and generic -32601 are unknown.
+    data = error.get("data")
+    return (type(error.get("code")) is int and error["code"] == -32601 and isinstance(data, dict)
+            and data.get("module") == "buddy-professions" and data.get("method") == "state"
+            and data.get("grpc_status") == "NotFound" and data.get("grpc_message") == "module not found")
+
+
+def prepare_owned_stop(record, deadline):
+    guid = stop_body_guid(record)
+    rpc = StopRPC()
+    try:
+        state = rpc.call("buddy-professions.state", {}, deadline)
+    except StopRPCFault as fault:
+        if missing_professions_module(fault.error):
+            return False
+        raise BuddyError("Profession stop safeguard is unavailable or unknown; no signal sent") from None
+    try:
+        checked_stop_world(rpc.call("buddy-world.snapshot", {}, deadline), guid)
+    except StopRPCFault:
+        raise BuddyError("Connected character stop safeguard is unavailable; no signal sent") from None
+    session = checked_stop_professions(state, guid)
+    try:
+        # This persistent module latch serializes with Attempt's reservation;
+        # repeated state reads alone cannot close the preflight/SIGTERM race.
+        prepared = rpc.call("buddy-professions.prepare_stop", {"sessionId": session, "selfGuid": str(guid)}, deadline)
+        checked_stop_professions(prepared, guid, session, prepared=True)
+        checked_stop_world(rpc.call("buddy-world.snapshot", {}, deadline), guid)
+    except (BuddyError, StopRPCFault) as error:
+        if isinstance(error, BuddyError):
+            detail = str(error)
+        else:
+            data = error.error.get("data")
+            missing_method = (error.error.get("code") == -32601 and isinstance(data, dict)
+                and data.get("module") == "buddy-professions" and data.get("method") == "prepare_stop"
+                and data.get("grpc_status") == "NotFound" and data.get("grpc_message") == "method not found")
+            detail = ("Atomic stop safeguard is missing; update this profile's professions module; no signal sent"
+                if missing_method else "Profession stop preparation was refused or unconfirmed; keep connected and leave any material window open; no signal sent")
+        raise BuddyError(detail + "; stop preparation may remain latched and disenchanting may stay disabled for this session") from None
+    return True
+
+
+def command_line():
+    return [str(BINARY), "--config", str(CONFIG), "char", "play", CHARACTER,
+            "--timeout", "15s", "--module-timeout", "5m"]
+
+
+def profile_identity():
+    return {"profile": PROFILE, "character": CHARACTER, "character_guid": CHARACTER_GUID,
+            "rpc_port": RPC_PORT, "config_dir": str(CONFIG_DIR) if CONFIG_DIR else None,
+            "data_dir": str(DATA_DIR) if DATA_DIR else None,
+            "module_dir": str(MODULE_DIR) if MODULE_DIR else None}
+
+
+def requested_independent():
+    value = os.environ.get("BUDDY_INDEPENDENT", "")
+    if value in ("", "false"):
+        return False
+    if value == "true":
+        return True
+    raise BuddyError("BUDDY_INDEPENDENT must be true or false")
+
+
+def recorded_independent(record):
+    value = record.get("independent", False)
+    if type(value) is not bool:
+        raise BuddyError(f"PID file has an invalid operating mode; left untouched: {PID_FILE}")
+    return value
+
+
+def operation_deadline(deadline, timeout):
+    now = time.monotonic()
+    if deadline is None:
+        return now + timeout
+    if type(deadline) not in (int, float):
+        raise BuddyError("Deadline must be a finite future same-host monotonic time")
+    try:
+        valid = math.isfinite(deadline) and deadline > now
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise BuddyError("Deadline must be a finite future same-host monotonic time")
+    return min(now + timeout, deadline)
+
+
+def remaining_time(deadline, expired):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise BuddyError(expired)
+    return remaining
+
+
+def configure(args):
+    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR
+    global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", args.profile):
+        raise BuddyError("Profile must be a short lowercase slug")
+    custom = args.profile != "default"
+    if custom and (not args.character_name or not args.character_guid or args.rpc_port is None):
+        raise BuddyError("Named profiles require --character-name, --character-guid, and --rpc-port")
+    name = args.character_name or "Arlen"
+    if not 2 <= len(name) <= 12 or not name.isalpha():
+        raise BuddyError("Character name must contain2..12 letters")
+    if args.character_guid is not None and not 0 < args.character_guid < 2**48:
+        raise BuddyError("Character GUID must be a player GUID")
+    if args.rpc_port is not None and not 1024 <= args.rpc_port <= 65535:
+        raise BuddyError("RPC port must be1024..65535")
+    PROFILE, CHARACTER, CHARACTER_GUID = args.profile, name, args.character_guid
+    directory = ROOT / "config" / "buddies" / PROFILE if custom else ROOT / "config"
+    CONFIG = (args.config or directory / "buddy.yaml").absolute()
+    CONFIG_DIR = (args.config_dir or directory).absolute() if custom or args.config_dir else None
+    DATA_DIR = (args.data_dir or ROOT / "data" / "buddies" / PROFILE).absolute() if custom or args.data_dir else None
+    MODULE_DIR = args.module_dir.absolute() if args.module_dir else None
+    PID_FILE, LOG_FILE, LOCK_FILE = (directory / name for name in ("buddy.pid", "buddy-live.log", "buddy.lock"))
+    RPC_PORT = args.rpc_port if args.rpc_port is not None else 8086
+
+
+def private_file(path, flags):
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+        os.close(fd)
+        raise BuddyError(f"Expected a regular file owned by this user: {path}")
+    os.fchmod(fd, 0o600)
+    return fd
+
+
+def load_record():
+    try:
+        with os.fdopen(private_file(PID_FILE, os.O_RDONLY), "r") as source:
+            record = json.loads(source.read(8193))
+    except FileNotFoundError:
+        return None
+    except (ValueError, TypeError):
+        raise BuddyError(f"Unrecognized PID file; left untouched: {PID_FILE}") from None
+    keys = ("pid", "start_ticks", "exe_device", "exe_inode", "log_device", "log_inode")
+    if (not isinstance(record, dict) or record.get("argv") != command_line()
+            or (record.get("profile_identity") is not None and record["profile_identity"] != profile_identity())
+            or (record.get("profile_identity") is None and profile_identity() != {"profile":"default", "character":"Arlen", "character_guid":None, "rpc_port":8086, "config_dir":None, "data_dir":None, "module_dir":None})
+            or any(type(record.get(key)) is not int or record[key] < 0 for key in keys)
+            or record["pid"] <= 1
+            or (record.get("ready_offset") is not None and
+                (type(record["ready_offset"]) is not int or record["ready_offset"] < 0))):
+        raise BuddyError(f"PID file does not identify this launcher's body; left untouched: {PID_FILE}")
+    recorded_independent(record)
+    return record
+
+
+def save_record(record):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", prefix=".buddy-pid-", dir=PID_FILE.parent,
+                                         delete=False) as output:
+            temporary = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(record, output, separators=(",", ":"))
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, PID_FILE)
+        temporary = None
+    except OSError as error:
+        raise BuddyError(f"PID {record['pid']} was preserved, but its tracking update failed: {error}. "
+                         f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def preflight_pid_file():
+    # Exercise creation and durable writing in the PID directory before spawning.
+    # The actual record is replaced atomically so failed updates preserve the old one.
+    with tempfile.NamedTemporaryFile(prefix=".buddy-pid-check-", dir=PID_FILE.parent) as output:
+        output.write(b"{}\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
+def process_info(pid):
+    directory = Path("/proc") / str(pid)
+    try:
+        # comm may contain spaces or parentheses; fields after its last ')' start at field 3.
+        fields = (directory / "stat").read_text().rsplit(") ", 1)[1].split()
+        if fields[0] in ("Z", "X"):
+            return None
+        argv = [part.decode("utf-8") for part in (directory / "cmdline").read_bytes().split(b"\0") if part]
+        executable = (directory / "exe").stat()
+        return {"start_ticks": int(fields[19]), "argv": argv,
+                "exe_device": executable.st_dev, "exe_inode": executable.st_ino}
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def running_owned(record):
+    info = process_info(record["pid"])
+    if info is None:
+        return False
+    if any(info[key] != record[key] for key in ("argv", "start_ticks", "exe_device", "exe_inode")):
+        raise BuddyError(f"PID {record['pid']} no longer matches the exact project binary/config/character; no signal sent.")
+    return True
+
+
+def log_fields(line):
+    try:
+        return dict(token.split("=", 1) for token in shlex.split(line.decode("utf-8")) if "=" in token)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+
+
+def ready_line(line, pid):
+    fields = log_fields(line)
+    return (fields.get("msg") == "world session ready" and fields.get("event") == "ready"
+            and fields.get("pid") == str(pid) and fields.get("character.name") == CHARACTER
+            and fields.get("rpc_url") == f"http://{RPC_HOST}:{RPC_PORT}/rpc"
+            and (CHARACTER_GUID is None or fields.get("character.guid") == str(CHARACTER_GUID)))
+
+
+def logout_line(line):
+    fields = log_fields(line)
+    return (fields.get("msg") == "world packet" and fields.get("direction") == "read"
+            and fields.get("opcode") == "0x04d" and fields.get("opcode_label") == "SMSG_LOGOUT_COMPLETE"
+            and fields.get("bytes") == "0")
+
+
+def scan_log(record, offset, predicate):
+    """Read complete bounded lines from one snapshot, never displaying log contents."""
+    with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as source:
+        info = os.fstat(source.fileno())
+        if (info.st_dev, info.st_ino) != (record["log_device"], record["log_inode"]):
+            raise BuddyError("Buddy log was replaced; readiness/logout cannot be attributed to the recorded process.")
+        if offset > info.st_size:
+            raise BuddyError("Buddy log was truncated; readiness/logout cannot be verified.")
+        source.seek(offset)
+        while source.tell() < info.st_size:
+            start = source.tell()
+            line = source.readline(min(MAX_LINE + 1, info.st_size - start))
+            if len(line) > MAX_LINE:
+                raise BuddyError("Buddy log contains an oversized line; inspect it privately.")
+            if not line.endswith(b"\n"):
+                return None, start
+            if predicate(line):
+                return start, source.tell()
+        return None, source.tell()
+
+
+def readiness(record):
+    offset = record.get("ready_offset")
+    found, _ = scan_log(record, 0 if offset is None else offset,
+                        lambda line: ready_line(line, record["pid"]))
+    if found is not None and offset is None:
+        record["ready_offset"] = found
+        save_record(record)
+    return found is not None
+
+
+def docker_access(deadline):
+    if not shutil.which("docker"):
+        raise BuddyError("Docker CLI is missing; install Docker Engine and Compose before starting the buddy.")
+    for args in (("info", "--format", "{{.ServerVersion}}"), ("compose", "version", "--short")):
+        remaining = remaining_time(deadline, "Docker access deadline expired; no client was launched")
+        try:
+            result = subprocess.run(["docker", *args], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, timeout=min(10, remaining))
+        except subprocess.TimeoutExpired:
+            raise BuddyError("Docker access check timed out; verify docker info and docker compose version in this SSH session.") from None
+        if result.returncode:
+            raise BuddyError("Docker is unavailable to this SSH session; verify docker info and docker compose version with the current user's groups.")
+
+
+def child_identity(child, deadline):
+    """Wait for this Popen child to expose a stable post-exec /proc identity.
+
+    cmdline/exe/stat are separate reads and can straddle exec. No sample is
+    recorded until the exact command and executable identity agree twice; a
+    changed start tick or child exit can never become an adopted process.
+    """
+    settle_until = min(deadline, time.monotonic() + EXEC_SETTLE_TIMEOUT)
+    start_ticks = None
+    previous = None
+    expired = (f"PID {child.pid} did not expose the exact project command before the tracking deadline; "
+               f"it was preserved and left untouched. Log: {LOG_FILE}")
+    while True:
+        remaining_time(settle_until, expired)
+        if child.poll() is not None:
+            raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
+        try:
+            info = process_info(child.pid)
+        except OSError as error:
+            raise BuddyError(f"PID {child.pid} was preserved, but ownership tracking failed: {error}. "
+                             f"No signal was sent; verify this PID before retrying. Log: {LOG_FILE}") from None
+        if info is not None:
+            if start_ticks is None:
+                start_ticks = info["start_ticks"]
+            elif info["start_ticks"] != start_ticks:
+                raise BuddyError(f"PID {child.pid} changed process identity before tracking; it was left untouched. Log: {LOG_FILE}")
+            if info["argv"] == command_line() and previous == info:
+                if child.poll() is not None:
+                    raise BuddyError(f"PID {child.pid} exited before it could be tracked. Log: {LOG_FILE}")
+                remaining_time(settle_until, expired)
+                return info
+        previous = info if info is not None and info["argv"] == command_line() else None
+        time.sleep(min(0.01, remaining_time(settle_until, expired)))
+
+
+def start(*, deadline=None):
+    """Start this profile, optionally within an absolute same-host deadline."""
+    deadline = operation_deadline(deadline, START_TIMEOUT)
+    independent = requested_independent()
+    record = load_record()
+    if record is not None and running_owned(record):
+        if recorded_independent(record) != independent:
+            actual, requested = ("true" if value else "false" for value in (recorded_independent(record), independent))
+            raise BuddyError(f"PID {record['pid']} is running with BUDDY_INDEPENDENT={actual}, but {requested} was requested; "
+                             "no signal or restart sent. Stop this profile before starting in another mode.")
+        if readiness(record):
+            remaining_time(deadline, f"Startup deadline expired; PID {record['pid']} was preserved without restart")
+            print(f"Already running: PID {record['pid']}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            return 0
+        raise BuddyError(f"PID {record['pid']} is already running without a verified ready event; left untouched. Log: {LOG_FILE}")
+    for path in (BINARY, CONFIG):
+        if path.is_symlink() or not path.is_file():
+            raise BuddyError(f"Required project file is missing or is a symlink: {path}")
+    if not os.access(BINARY, os.X_OK):
+        raise BuddyError(f"Project binary is not executable: {BINARY}; build it with ./run build.")
+    docker_access(deadline)
+    preflight_pid_file()
+    # Test availability before touching the old log. The client performs the actual bind;
+    # a race is handled as startup failure, never by terminating the port's owner.
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((RPC_HOST, RPC_PORT))
+        except OSError:
+            raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
+    environment = os.environ.copy()
+    environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
+                       AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
+                       AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))
+    if CONFIG_DIR is not None:
+        environment.update(AGENT_WOW_CONFIG_DIR=str(CONFIG_DIR),
+                           AGENT_WOW_AUTH_FILE_PATH=str(CONFIG_DIR / "auth.json"),
+                           AGENT_WOW_REALM_FILE_PATH=str(CONFIG_DIR / "realm.json"))
+    if DATA_DIR is not None:
+        environment["AGENT_WOW_DATA_DIR"] = str(DATA_DIR)
+    expired = "Startup deadline expired before launch; no client was launched"
+    remaining_time(deadline, expired)
+    with os.fdopen(private_file(LOG_FILE, os.O_WRONLY | os.O_CREAT), "wb") as log:
+        remaining_time(deadline, expired)
+        log.truncate()
+        remaining_time(deadline, expired)
+        child = subprocess.Popen(command_line(), cwd=ROOT, env=environment, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+        info = child_identity(child, deadline)
+        log_info = os.fstat(log.fileno())
+        record = dict(info, pid=child.pid, log_device=log_info.st_dev, log_inode=log_info.st_ino,
+                      ready_offset=None, profile_identity=profile_identity(), independent=independent)
+        save_record(record)
+    offset = 0
+    while time.monotonic() < deadline:
+        if child.poll() is not None or not running_owned(record):
+            raise BuddyError(f"PID {record['pid']} exited before a matching ready event. Log: {LOG_FILE}")
+        found, offset = scan_log(record, offset, lambda line: ready_line(line, child.pid))
+        if found is not None and running_owned(record):
+            remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
+            record["ready_offset"] = found
+            save_record(record)
+            remaining_time(deadline, f"Startup deadline expired; PID {child.pid} was preserved. Log: {LOG_FILE}")
+            print(f"Started: PID {child.pid}; matching world session ready event observed.\nLog: {LOG_FILE}")
+            return 0
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    raise BuddyError(f"Startup deadline expired without readiness; PID {child.pid} was preserved. Use dev/buddy status or stop. Log: {LOG_FILE}")
+
+
+def stop(*, deadline=None):
+    """Stop this owned profile, optionally within an absolute same-host deadline."""
+    deadline = operation_deadline(deadline, STOP_TIMEOUT)
+    record = load_record()
+    if record is None or not running_owned(record):
+        remaining_time(deadline, f"Stop deadline expired during lifecycle checks; no signal sent. Log: {LOG_FILE}")
+        print(f"Buddy is not running.\nLog: {LOG_FILE}")
+        return 0
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise BuddyError("Linux pidfd signal support is unavailable; refusing a signal that could race PID reuse.")
+    expired = f"Stop deadline expired before SIGTERM; no signal sent. PID {record['pid']} preserved. Log: {LOG_FILE}"
+    remaining_time(deadline, expired)
+    stop_prepared = False
+    try:
+        # pidfd pins the exact process while /proc identity is rechecked before SIGTERM.
+        pidfd = os.pidfd_open(record["pid"])
+        try:
+            if not running_owned(record):
+                raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
+            with os.fdopen(private_file(LOG_FILE, os.O_RDONLY), "rb") as log:
+                offset = os.fstat(log.fileno()).st_size
+            remaining_time(deadline, expired)
+            stop_prepared = prepare_owned_stop(record, deadline)
+            if not running_owned(record):
+                raise BuddyError("Buddy exited before SIGTERM; no signal sent.")
+            remaining_time(deadline, expired)
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        finally:
+            os.close(pidfd)
+        confirmed = False
+        while time.monotonic() < deadline:
+            found, offset = scan_log(record, offset, logout_line)
+            confirmed = confirmed or found is not None
+            if not running_owned(record):
+                # Catch the final flushed line if exit raced the previous log snapshot.
+                found, offset = scan_log(record, offset, logout_line)
+                confirmed = confirmed or found is not None
+                if not confirmed:
+                    raise BuddyError(f"PID {record['pid']} exited, but no server logout completion was observed; logout is unverified. Log: {LOG_FILE}")
+                remaining_time(deadline, f"Server logout completion and process exit were verified, but the stop deadline was not met; no force kill sent. Log: {LOG_FILE}")
+                print(f"Stopped: PID {record['pid']}; server logout completion and process exit verified.\nLog: {LOG_FILE}")
+                return 0
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        detail = "server logout was confirmed, but the process is still exiting" if confirmed else "server-confirmed exit was not observed"
+        raise BuddyError(f"Stop deadline expired: {detail}; no force kill sent. PID {record['pid']} preserved. Log: {LOG_FILE}")
+    except (BuddyError, OSError) as error:
+        if stop_prepared:
+            raise BuddyError(str(error) + "; disenchanting remains disabled by stop preparation for this connected session") from None
+        raise
+
+
+def status():
+    record = load_record()
+    if record is None:
+        print(f"PID: none\nRunning: no\nReadiness: not observed\nLog: {LOG_FILE}")
+        return 0
+    running = running_owned(record)
+    ready = running and readiness(record)
+    mode = "independent" if recorded_independent(record) else "companion"
+    print(f"PID: {record['pid']}\nRunning: {'yes' if running else 'no'}\nMode: {mode}\nReadiness: {'matching ready event observed' if ready else 'not observed for a running body'}\nLog: {LOG_FILE}")
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("start", "stop", "status"))
+    parser.add_argument("--profile", default="default")
+    parser.add_argument("--character-name")
+    parser.add_argument("--character-guid", type=int)
+    parser.add_argument("--rpc-port", type=int)
+    for flag in ("config", "config-dir", "data-dir", "module-dir"):
+        parser.add_argument("--" + flag, type=Path)
+    args = parser.parse_args(argv)
+    configure(args)
+    if platform.system() != "Linux":
+        raise BuddyError("Run dev/buddy from a fresh Linux SSH session with Docker access.")
+    for directory in {PID_FILE.parent, CONFIG_DIR, DATA_DIR} - {None}:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = directory.stat()
+        if directory.is_symlink() or not directory.is_dir() or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise BuddyError("Profile directories must be real, owned, and without group/other write access")
+    with os.fdopen(private_file(LOCK_FILE, os.O_WRONLY | os.O_CREAT), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BuddyError(f"Another buddy operation is in progress; no action taken. Log: {LOG_FILE}") from None
+        return {"start": start, "stop": stop, "status": status}[args.command]()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, BuddyError) as error:
+        print(f"buddy: {error}", file=sys.stderr)
+        sys.exit(1)

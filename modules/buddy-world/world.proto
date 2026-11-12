@@ -1,0 +1,406 @@
+syntax = "proto3";
+
+package warcraftbuddy.world.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1";
+
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+// Read-only observations for the session character and fixed owner player 3.
+// Ages measure time since an actual observation, not a claim that an unchanged
+// stationary player disappeared. Positions are never predicted by this module.
+message PlayerState {
+  uint64 guid = 1;
+  bool present = 2;
+  bool map_known = 3;
+  uint32 map_id = 4;
+  bool position_known = 5;
+  float x = 6;
+  float y = 7;
+  float z = 8;
+  float orientation = 9;
+  uint64 position_age_ms = 10;
+  uint64 position_revision = 11;
+  bool movement_flags_known = 12;
+  uint32 movement_flags = 13;
+  uint32 extra_movement_flags = 14;
+  // Timestamp from this player's movement packet; not our session clock.
+  uint32 movement_time = 15;
+  bool health_known = 16;
+  uint32 health = 17;
+  uint32 max_health = 18;
+  bool power_known = 19;
+  uint32 power = 20;
+  uint32 max_power = 21;
+  uint32 power_type = 22;
+  bool unit_flags_known = 23;
+  uint32 unit_flags = 24;
+  bool alive_known = 25;
+  bool alive = 26;
+  uint64 vitals_age_ms = 27;
+  bool speeds_known = 28;
+  float walk_speed = 29;
+  float run_speed = 30;
+  uint64 observation_age_ms = 31;
+  uint32 player_flags = 32;
+  uint32 dynamic_flags = 33;
+  bool target_known = 34;
+  uint64 target_guid = 35;
+  uint32 faction_template = 36;
+  uint32 unit_flags_2 = 37;
+  bool class_known = 38;
+  uint32 class_id = 39;
+  bool level_known = 40;
+  uint32 level = 41;
+  bool base_mana_known = 42;
+  uint32 base_mana = 43;
+  bool combat_reach_known = 44;
+  float combat_reach = 45;
+  bool base_attack_time_known = 46;
+  uint32 base_attack_time_ms = 47;
+  EquippedWeapon mainhand = 48;
+  bool channel_object_known = 49;
+  uint64 channel_object_guid = 50;
+  bool channel_spell_known = 51;
+  uint32 channel_spell_id = 52;
+  bool shapeshift_form_known = 53;
+  uint32 shapeshift_form = 54;
+  // Private own equipment slot16, including an explicitly known empty slot.
+  EquippedWeapon offhand = 55;
+  uint64 offhand_revision = 56;
+  // Observed public UNIT_FIELD_BYTES_0 race byte, not an inferred race.
+  bool race_known = 57;
+  uint32 race_id = 58;
+  bool aura_state_known = 59;
+  uint32 aura_state = 60;
+}
+
+// Private own equipment slots0..18; bags and bank slots are excluded.
+message EquipmentSlotState {
+  uint32 slot = 1;
+  bool slot_known = 2;
+  uint64 item_guid = 3;
+  bool metadata_known = 4;
+  uint32 entry = 5;
+  uint32 stack_count = 6;
+  bool durability_known = 7;
+  uint32 durability = 8;
+  uint32 max_durability = 9;
+  bool enhancements_known = 10;
+  bool has_enhancements = 11;
+}
+
+// Actual observed own non-bones CORPSE object, not a guessed death location.
+message CorpseState {
+  uint64 guid = 1;
+  uint64 owner_guid = 2;
+  bool present = 3;
+  bool map_known = 4;
+  uint32 map_id = 5;
+  bool position_known = 6;
+  float x = 7;
+  float y = 8;
+  float z = 9;
+  float orientation = 10;
+  uint64 position_revision = 11;
+  uint64 position_age_ms = 12;
+  uint64 observation_age_ms = 13;
+  bool flags_known = 14;
+  uint32 flags = 15;
+  bool dynamic_flags_known = 16;
+  uint32 dynamic_flags = 17;
+  bool race_known = 18;
+  uint32 race_id = 19;
+}
+
+message EquippedWeapon {
+  bool slot_known = 1;
+  uint64 item_guid = 2;
+  bool metadata_known = 3;
+  uint32 entry = 4;
+  bool durability_known = 5;
+  uint32 durability = 6;
+  uint32 max_durability = 7;
+}
+
+message SnapshotRequest {
+  // Optional exact lookup in the existing creature cache; zero requests none.
+  // This never changes the cache, discovery ranking or observed positions.
+  uint64 creature_guid = 1;
+  // Optional exact-entry filters in existing bounded caches; zero requests none.
+  uint32 creature_entry = 2;
+  uint32 game_object_entry = 3;
+  // Optional bounded discovery from actual cached same-map type3 objects.
+  // Raw server distance only orders candidates; the current client position
+  // and public template proof remain required before approach or gathering.
+  bool include_gathering_objects = 4;
+  // Retain the existing Nixwick client lookup contract during consolidation.
+  // Both nonzero filters must match actual observed fields.
+  uint32 creature_faction_template = 5;
+}
+
+// A successful client movement write, supplied by the movement controller.
+// This is discovery guidance, not server acceptance or an observed player pose.
+message ClientMovementRequest {
+  uint64 self_guid = 1;
+  uint32 map_id = 2;
+  uint64 server_position_revision = 3;
+  uint64 sequence = 4;
+  // false invalidates a preceding estimate after an ambiguous movement write.
+  bool valid = 5;
+  float x = 6;
+  float y = 7;
+  float z = 8;
+  float orientation = 9;
+}
+
+message DiscoveryAnchor {
+  uint64 self_guid = 1;
+  uint32 map_id = 2;
+  uint64 server_position_revision = 3;
+  uint64 sequence = 4;
+  float x = 5;
+  float y = 6;
+  float z = 7;
+  float orientation = 8;
+  bool estimated = 9;
+  uint64 age_ms = 10;
+}
+
+message GameObjectState {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  bool present = 3;
+  bool map_known = 4;
+  uint32 map_id = 5;
+  bool position_known = 6;
+  float x = 7;
+  float y = 8;
+  float z = 9;
+  float orientation = 10;
+  uint64 position_revision = 11;
+  uint64 position_age_ms = 12;
+  uint64 observation_age_ms = 13;
+  bool type_known = 14;
+  uint32 game_object_type = 15;
+  bool flags_known = 16;
+  uint32 flags = 17;
+  bool dynamic_flags_known = 18;
+  uint32 dynamic_flags = 19;
+  bool created_by_known = 20;
+  uint64 created_by_guid = 21;
+  bool state_known = 22;
+  uint32 state = 23;
+}
+
+// Public, server-observed creature state. No database lookup or invented name.
+message CreatureState {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  uint32 npc_flags = 3;
+  bool present = 4;
+  bool map_known = 5;
+  uint32 map_id = 6;
+  bool position_known = 7;
+  float x = 8;
+  float y = 9;
+  float z = 10;
+  float orientation = 11;
+  uint64 position_age_ms = 12;
+  uint64 position_revision = 13;
+  uint64 observation_age_ms = 14;
+  bool health_known = 15;
+  uint32 health = 16;
+  uint32 max_health = 17;
+  bool alive_known = 18;
+  bool alive = 19;
+  uint32 unit_flags = 20;
+  uint32 dynamic_flags = 21;
+  // These distances use the last SERVER position, never predicted motion.
+  // Consumers must use the companion controller's estimate for current range.
+  bool distance_to_self_observed_known = 22;
+  float distance_to_self_observed = 23;
+  bool distance_to_owner_observed_known = 24;
+  float distance_to_owner_observed = 25;
+  uint32 movement_flags = 26;
+  uint32 faction_template = 27;
+  bool target_known = 28;
+  uint64 target_guid = 29;
+  uint32 unit_flags_2 = 30;
+  // Distinct from target selection: actual ATTACKSTART or positive incoming
+  // NPC damage evidence. Damage refreshes this age only from a complete frame.
+  bool attack_victim_known = 31;
+  uint64 attack_victim_guid = 32;
+  uint64 attack_age_ms = 33;
+  CreatureTrajectory trajectory = 34;
+  bool combat_reach_known = 35;
+  float combat_reach = 36;
+  bool level_known = 37;
+  uint32 level = 38;
+  bool unit_flags_known = 39;
+  bool dynamic_flags_known = 40;
+}
+
+// Advertised server trajectory, separate from actual position observations.
+// A consumer may derive an explicitly estimated endpoint after age>=duration
+// for noncyclic, nontransport paths. This does not refresh position_age_ms.
+message CreatureTrajectory {
+  bool known = 1;
+  uint32 duration_ms = 2;
+  uint64 age_ms = 3;
+  bool destination_known = 4;
+  float destination_x = 5;
+  float destination_y = 6;
+  float destination_z = 7;
+  bool cyclic = 8;
+  bool transport_relative = 9;
+  uint64 transport_guid = 10;
+  int32 transport_seat = 11;
+  bool stopped = 12;
+  uint32 flags = 13;
+}
+
+message QuestLogEntry {
+  // Zero-based server quest-log slot; 0 quest_id means empty.
+  uint32 slot = 1;
+  uint32 quest_id = 2;
+  uint32 state = 3;
+  bool complete = 4;
+  bool failed = 5;
+  // Four uint16 counters from the two server quest-objective fields.
+  repeated uint32 objective_counts = 6;
+  uint32 expire_time = 7;
+}
+
+message BackpackSlot {
+  // Logical carried bag0..4 and zero-based slot; bag0 is the built-in backpack.
+  uint32 bag = 1;
+  uint32 slot = 2;
+  uint64 item_guid = 3;
+  uint32 entry = 4;
+  uint32 stack_count = 5;
+  // Requires an owned ITEM/CONTAINER observation matching the current GUID.
+  bool metadata_known = 6;
+  bool durability_known = 7;
+  uint32 durability = 8;
+  uint32 max_durability = 9;
+  bool enhancements_known = 10;
+  bool has_enhancements = 11;
+}
+
+// Only private own carried inventory: built-in backpack plus four equipped bags.
+// Unknown occupied bag contents are never represented as known empty slots.
+message InventoryBag {
+  uint32 bag = 1;
+  bool slot_known = 2;
+  uint64 container_guid = 3;
+  bool metadata_known = 4;
+  uint32 entry = 5;
+  bool contents_known = 6;
+  uint32 slot_count = 7;
+  repeated BackpackSlot slots = 8;
+}
+
+// Actual private own-player skill fields; no inferred profession membership.
+message SkillState {
+  uint32 slot = 1;
+  uint32 skill_id = 2;
+  uint32 step = 3;
+  uint32 value = 4;
+  uint32 max_value = 5;
+  int32 temporary_bonus = 6;
+  int32 permanent_bonus = 7;
+}
+
+message SnapshotResponse {
+  PlayerState self = 1;
+  PlayerState owner = 2;
+  uint64 ignored_packets = 3;
+  uint64 malformed_packets = 4;
+  uint32 last_opcode = 5;
+  // Fixed diagnostic strings only; no packet payloads or player text.
+  string last_parse_error = 6;
+  uint64 observed_packets = 7;
+  // At most64 present questgivers, nearest observed owner first (self fallback).
+  repeated CreatureState quest_givers = 8;
+  bool self_quest_log_known = 9;
+  uint64 self_quest_log_revision = 10;
+  // Exactly25 slots when known; only the current character's quest log.
+  repeated QuestLogEntry self_quest_log = 11;
+  // At most64 dead creatures flagged LOOTABLE for this receiving character.
+  repeated CreatureState lootable_corpses = 12;
+  bool backpack_known = 13;
+  uint64 backpack_revision = 14;
+  // Exactly16 slots when known; empty slots have item_guid0.
+  repeated BackpackSlot backpack = 15;
+  // Only the currently observed owner's target, if present in the NPC cache.
+  CreatureState owner_target = 16;
+  // At most32 present creatures, prioritizing actual player attackers and then
+  // discovery distance. The optional client-written anchor never changes poses.
+  repeated CreatureState nearby_creatures = 17;
+  bool self_copper_known = 18;
+  uint32 self_copper = 19;
+  // Advances only when the own coinage value/known baseline changes.
+  uint64 self_copper_revision = 20;
+  // At most32 actual, present GAMEOBJECTs whose public type byte is MAILBOX19.
+  repeated GameObjectState mailboxes = 21;
+  // At most32 present Milly's Harvest entry161557/type3 quest chests.
+  repeated GameObjectState quest_objects = 22;
+  // The requested creature, if still present in the bounded observation cache.
+  // Independent of nearby_creatures truncation; retains actual observation ages.
+  CreatureState requested_creature = 23;
+  bool self_skills_known = 24;
+  uint64 self_skills_revision = 25;
+  // Exactly128 wire slots when known; skill_id0 means empty.
+  repeated SkillState self_skills = 26;
+  bool self_free_primary_slots_known = 27;
+  uint32 self_free_primary_slots = 28;
+  uint64 self_free_primary_slots_revision = 29;
+  // At most32 present public SPELL_FOCUS(type8) objects. FocusID is template
+  // metadata and must be obtained through an ordinary gameobject query.
+  repeated GameObjectState spell_focuses = 30;
+  // At most4 present type17/entry35591 bobbers with actual createdBy=self.
+  repeated GameObjectState own_fishing_bobbers = 31;
+  // At most32 present exact-entry matches, retaining actual positions and ages.
+  repeated CreatureState requested_creatures = 32;
+  repeated GameObjectState requested_game_objects = 33;
+  // True only with coherent private own slot references and all equipped bag
+  // layouts/contents observed. Nonempty item metadata is separately qualified.
+  bool inventory_known = 34;
+  uint64 inventory_revision = 35;
+  // Exactly5 logical bags0..4 after own CREATE; total at most160 content slots.
+  repeated InventoryBag inventory_bags = 36;
+  // At most32 present cached creatures with observed zero health, SKINNABLE
+  // unit flag and known cleared LOOTABLE dynamic flag. This is recipient-visible
+  // eligibility evidence, not a claim about unobserved loot contents or range.
+  repeated CreatureState skinnable_corpses = 37;
+  // At most64 other actual present PLAYER CREATE observations, excluding self
+  // and the fixed owner. Public pose/vitals/flags/class/level only: no private
+  // equipment, inventory, skills or quest state. No party membership is inferred.
+  repeated PlayerState nearby_players = 38;
+  repeated GameObjectState nearby_gathering_objects = 39;
+  // At most64 actual present cached NPCs with observed TRAINER(0x10),
+  // independent of nearby_creatures truncation. Ordered by observed self
+  // distance; no trainer type, range, availability or interaction is inferred.
+  repeated CreatureState trainer_creatures = 40;
+  // Coherent private own equipment GUID references. Nonempty item metadata
+  // is qualified separately and requires an actual owned current-epoch ITEM.
+  bool self_equipment_known = 41;
+  uint64 self_equipment_revision = 42;
+  // Exactly19 logical slots after own CREATE; empty slots have item_guid0.
+  repeated EquipmentSlotState self_equipment = 43;
+  // Absent when unobserved, foreign, bones, or multiple own corpses disagree.
+  CorpseState own_corpse = 44;
+  // Client-written estimate used only to rank/cache observations. Raw Self and
+  // observed distance fields remain server-only and retain their original ages.
+  DiscoveryAnchor discovery_anchor = 45;
+  // Actual same-map non-bones corpses, bounded by the existing 32-entry cache.
+  // Consumers must establish current group membership before targeting one.
+  repeated CorpseState player_corpses = 46;
+}
+
+service BuddyWorld {
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc ObserveClientMovement(ClientMovementRequest) returns (google.protobuf.Empty);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+}

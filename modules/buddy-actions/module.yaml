@@ -1,0 +1,88 @@
+api_version: 1
+enabled: true
+description: Bounded map-aware ground following, learned combat capabilities, weapon melee and explicitly selected observed NPC engagement
+requires: [buddy-world, buddy-party]
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
+  healing: /warcraftbuddy.actions.v1.BuddyActions/Healing
+  assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
+  engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
+  resurrect_once: /warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce
+  accept_resurrection: /warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection
+  heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
+  status: /warcraftbuddy.actions.v1.BuddyActions/Status
+  buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
+  spell_toolkit: /warcraftbuddy.actions.v1.BuddyActions/SpellToolkit
+  reload_behavior: /warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior
+  behavior: /warcraftbuddy.actions.v1.BuddyActions/Behavior
+  acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
+  release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
+  approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
+  approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
+  travel_quest: /warcraftbuddy.actions.v1.BuddyActions/TravelQuest
+  travel_trainer: /warcraftbuddy.actions.v1.BuddyActions/TravelTrainer
+  travel_vendor: /warcraftbuddy.actions.v1.BuddyActions/TravelVendor
+  travel_to: /warcraftbuddy.actions.v1.BuddyActions/TravelTo
+  plan_route_leg: /warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg
+  exit_crypt: /warcraftbuddy.actions.v1.BuddyActions/ExitCrypt
+  practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
+  fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
+  recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
+packets:
+  SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  MSG_CORPSE_QUERY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_CORPSE_RECLAIM_DELAY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_DEATH_RELEASE_LOC: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_INITIAL_SPELLS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_LEARNED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SUPERCEDED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_REMOVED_SPELL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_GO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_FAILURE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKERSTATEUPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKSTART: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ATTACKSTOP: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_PARTYKILLLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+lifecycle:
+  before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
+
+script_api:
+  plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
+  status: {effect: read}
+  behavior: {effect: read}
+  spell_toolkit: {effect: read}
+  follow: {effect: mutation}
+  healing: {effect: mutation}
+  assist: {effect: mutation}
+  engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}
+  resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
+  accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
+  heal_once: {effect: mutation}
+  buffs: {effect: mutation}
+  reload_behavior: {effect: mutation}
+  acquire_interaction: {effect: mutation}
+  release_interaction: {effect: mutation}
+  approach_loot: {effect: mutation}
+  approach_quest: {effect: mutation}
+  travel_quest: {effect: mutation}
+  travel_trainer: {effect: mutation}
+  travel_vendor: {effect: mutation}
+  travel_to: {effect: mutation}
+  exit_crypt: {effect: mutation}
+  practice: {effect: mutation}
+  fargodeep_encounter: {effect: mutation}
+  recovery: {effect: mutation}

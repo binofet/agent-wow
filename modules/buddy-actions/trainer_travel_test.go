@@ -1,0 +1,581 @@
+package buddyactions
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+)
+
+func trainerTravelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachQuestRequest) {
+	t.Helper()
+	s, f, advance := rig(t)
+	f.world.Owner = nil
+	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -9460, 70, 58
+	const guid = uint64(0xf130000202000001)
+	f.world.NearbyCreatures = []*worldv1.CreatureState{{Guid: guid, Entry: 514, Present: true, MapKnown: true, MapId: 0, PositionKnown: true, PositionRevision: 1, X: -9435, Y: 70, Z: 58, AliveKnown: true, Alive: true, HealthKnown: true, Health: 100, NpcFlags: 0x50}}
+	s.SetNavigationDataDir("/fixture/client-data")
+	s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+		return []position{from, {x: from.x, y: from.y + 6, z: from.z}, {x: to.x, y: from.y + 6, z: from.z}, to}, nil
+	}
+	s.approachDelay = func(ctx context.Context, d time.Duration) error { advance(d); return ctx.Err() }
+	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training", LeaseMs: 30000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, f, advance, &actionsv1.ApproachQuestRequest{Token: lease.Token, NpcGuid: guid}
+}
+
+func TestTrainerTravelUsesObservedProfessionTrainerWithoutQuestFlagOrOwner(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	s.state.Following, s.followUntil = true, s.now().Add(lease)
+	got, err := s.TravelTrainer(context.Background(), r)
+	if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || !got.NavAvailable || !got.Following || got.InteractionOwner != "training" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, f.packets)
+	}
+	if distance(s.pos, position{x: -9435, y: 70, z: 58}) > 3 || len(f.lookups) == 0 {
+		t.Fatal("not at an actually observed trainer", s.pos, f.lookups)
+	}
+}
+
+func TestTrainerTravelAcceptsActualClassOrProfessionTeacherFlags(t *testing.T) {
+	for _, flags := range []uint32{0x30, 0x33, 0x50, 0x53, 0x70} {
+		t.Run(fmt.Sprintf("flags_%x", flags), func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			f.world.NearbyCreatures[0].NpcFlags = flags
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || !got.NavAvailable || got.InteractionOwner != "training" || distance(s.pos, position{x: -9435, y: 70, z: 58}) > 3 {
+				t.Fatal(flags, got, err)
+			}
+			for _, packet := range f.packets {
+				if packet.Opcode != opcode.MSGMoveStartForward && packet.Opcode != opcode.MSGMoveHeartbeat && packet.Opcode != opcode.MSGMoveStop {
+					t.Fatal("travel emitted an interaction or purchase", packet)
+				}
+			}
+		})
+	}
+}
+
+func TestTrainerTravelRejectsMissingTrainerOrSubtypeFlagsBeforePlanning(t *testing.T) {
+	for _, flags := range []uint32{0, 0x3, 0x10, 0x20, 0x40, 0x60, 0x80, 0x83} {
+		t.Run(fmt.Sprintf("flags_%x", flags), func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			f.world.NearbyCreatures[0].NpcFlags = flags
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("invalid trainer role reached planner")
+				return nil, nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_observed_stationary_class_or_profession_trainer_required" || got.Moving || got.Traveling || len(f.packets) != 0 {
+				t.Fatal(flags, got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelUsesVerifiedNearbyStandoffWithoutMovingObservedTeacher(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	npc := playerPosition(f.world.Self)
+	npc.x, npc.y, npc.z = f.world.NearbyCreatures[0].X, f.world.NearbyCreatures[0].Y, f.world.NearbyCreatures[0].Z
+	calls := 0
+	s.planMapPath = func(_ context.Context, _ string, mapID uint32, from, to position) ([]position, error) {
+		calls++
+		if mapID != f.world.Self.MapId || distance(to, npc) > 2.501 || to.z != npc.z {
+			t.Fatal("standoff changed observed layer/map", mapID, to, npc)
+		}
+		if to == npc {
+			return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+		}
+		return []position{from, {x: from.x, y: from.y + 6, z: from.z}, {x: to.x, y: from.y + 6, z: from.z}, to}, nil
+	}
+	got, err := s.TravelTrainer(context.Background(), r)
+	if err != nil || calls != 2 || got.Moving || got.Traveling || got.Reason != "trainer_travel_within_distance" || !got.NavAvailable || distance(s.pos, npc) > 3 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, calls, s.pos)
+	}
+	if f.world.NearbyCreatures[0].X != npc.x || f.world.NearbyCreatures[0].PositionRevision != 1 {
+		t.Fatal("standoff fabricated teacher observation")
+	}
+}
+
+func TestTrainerStandoffStillRejectsChangedActualNPCMapSelfOrLeaseAfterPlanning(t *testing.T) {
+	for _, mode := range []string{"npc", "self", "map", "lease"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			npc := f.world.NearbyCreatures[0]
+			center := position{x: npc.X, y: npc.Y, z: npc.Z}
+			s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+				if to == center {
+					return nil, errors.New("find navigation path: destination: sample is outside ground polygon")
+				}
+				switch mode {
+				case "npc":
+					npc.X++
+					npc.PositionRevision++
+				case "self":
+					f.world.Self.X++
+					f.world.Self.PositionRevision++
+				case "map":
+					f.world.Self.MapId = 1
+					f.world.Self.PositionRevision++
+				case "lease":
+					advance(31 * time.Second)
+				}
+				return []position{from, to}, nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || got.Reason == "trainer_travel_within_distance" || len(f.packets) != 0 {
+				t.Fatal(mode, got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelExactLookupRetainsRealTrainerOutsideNearbyRanking(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	f.lookupCreatures = map[uint64]*worldv1.CreatureState{r.NpcGuid: f.world.NearbyCreatures[0]}
+	f.world.NearbyCreatures = nil
+	got, err := s.TravelTrainer(context.Background(), r)
+	if err != nil || got.Reason != "trainer_travel_within_distance" {
+		t.Fatal(got, err)
+	}
+}
+
+func TestTrainerTravelNeverFallsBackWithoutActualNAVOrTrainer(t *testing.T) {
+	for _, mode := range []string{"no_nav", "planner_error", "bad_route", "absent"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			switch mode {
+			case "no_nav":
+				s.navDataDir = ""
+				s.planMapPath = planMapNavigation
+			case "planner_error":
+				s.planPath = func(context.Context, string, position, position) ([]position, error) {
+					return nil, errors.New("no path")
+				}
+			case "bad_route":
+				s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
+					return []position{from, {x: -9700}, to}, nil
+				}
+			case "absent":
+				f.world.NearbyCreatures = nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || got.Reason == "trainer_travel_within_distance" || len(f.packets) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelRequiresSafeStationaryConsistentActualTeacher(t *testing.T) {
+	for _, mode := range []string{"entry", "dead", "map", "position", "health", "missing_role", "moving", "spline", "combat", "invalid_position", "speed", "views"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			c := f.world.NearbyCreatures[0]
+			switch mode {
+			case "entry":
+				c.Entry++
+			case "dead":
+				c.Alive = false
+			case "map":
+				c.MapId = 1
+			case "position":
+				c.PositionKnown = false
+			case "health":
+				c.HealthKnown = false
+			case "missing_role":
+				c.NpcFlags = 0x10
+			case "moving":
+				c.MovementFlags = 1
+			case "spline":
+				c.Trajectory = &worldv1.CreatureTrajectory{Known: true}
+			case "combat":
+				c.UnitFlags = 0x80000
+			case "invalid_position":
+				c.X = 40001
+			case "speed":
+				f.world.Self.RunSpeed = 14
+			case "views":
+				other := proto.Clone(c).(*worldv1.CreatureState)
+				other.X++
+				f.world.QuestGivers = []*worldv1.CreatureState{other}
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || len(f.packets) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelStopOnLostNPCExpiryCorrectionAndCancellation(t *testing.T) {
+	for _, mode := range []string{"lost", "expiry", "correction", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s.approachDelay = func(call context.Context, d time.Duration) error {
+				advance(d)
+				switch mode {
+				case "lost":
+					f.world.NearbyCreatures = nil
+				case "expiry":
+					advance(29 * time.Second)
+				case "correction":
+					f.world.Self.X++
+					f.world.Self.PositionRevision++
+				case "cancel":
+					cancel()
+				}
+				return call.Err()
+			}
+			got, err := s.TravelTrainer(ctx, r)
+			if mode == "cancel" && status.Code(err) != codes.Canceled || mode != "cancel" && err != nil || got.Moving || got.Traveling || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelInvalidOrForeignLeaseNeverWrites(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	for _, request := range []*actionsv1.ApproachQuestRequest{nil, {}, {Token: r.Token, NpcGuid: 3}, {Token: "other", NpcGuid: r.NpcGuid}} {
+		if _, err := s.TravelTrainer(context.Background(), request); err == nil {
+			t.Fatal("accepted invalid or foreign lease", request)
+		}
+	}
+	if len(f.packets) != 0 {
+		t.Fatal(f.packets)
+	}
+}
+
+func TestProfessionsInteractionOwnerIsExclusiveAndRetainsDefaultLease(t *testing.T) {
+	s, _, _ := rig(t)
+	got, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "professions"})
+	if err != nil || got.State.InteractionOwner != "professions" || got.State.InteractionLeaseRemainingMs != 15000 {
+		t.Fatal(got, err)
+	}
+	if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal(err)
+	}
+	if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "professions", Token: got.Token}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrainerTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		for _, planFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("assist=%t/plan_error=%t", assist, planFails), func(t *testing.T) {
+				s, f, _, r := trainerTravelRig(t)
+				s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					var got *actionsv1.State
+					var err error
+					if assist {
+						got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					} else {
+						got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+					}
+					if err != nil || got.Moving {
+						t.Fatal("explicit stop failed", got, err)
+					}
+					if planFails {
+						return nil, errors.New("late planner failure")
+					}
+					return []position{a, b}, nil
+				}
+				got, err := s.TravelTrainer(context.Background(), r)
+				if err != nil || got.Reason != "trainer_travel_interrupted_by_controller_change" || got.Moving || got.Traveling || got.NavAvailable || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+func TestTrainerTravelExplicitStopBetweenStepsNeverRestarts(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			s.approachDelay = func(ctx context.Context, d time.Duration) error {
+				advance(d)
+				var got *actionsv1.State
+				var err error
+				if assist {
+					got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				} else {
+					got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				}
+				if err != nil || got.Moving {
+					t.Fatal("explicit stop failed", got, err)
+				}
+				return ctx.Err()
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_interrupted_by_controller_change" || got.Moving || got.Traveling || got.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelPlannerDoesNotOverwriteReplacementOwner(t *testing.T) {
+	for _, owner := range []string{"quests", "training"} {
+		for _, planFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("owner=%s/plan_error=%t", owner, planFails), func(t *testing.T) {
+				s, f, _, r := trainerTravelRig(t)
+				replacement := ""
+				planCalls := 0
+				s.planMapPath = func(ctx context.Context, _ string, _ uint32, a, b position) ([]position, error) {
+					planCalls++
+					if planCalls > 1 {
+						return nil, errors.New("old planner failure")
+					}
+					if _, err := s.ReleaseInteraction(ctx, &actionsv1.InteractionRelease{Owner: "training", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					lease, err := s.AcquireInteraction(ctx, &actionsv1.InteractionRequest{Owner: owner, LeaseMs: 30000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					replacement = lease.Token
+					s.state.Reason = "replacement_reason"
+					s.state.NavReason = "replacement_nav"
+					s.state.NavAvailable = true
+					s.state.Moving = true
+					s.state.Traveling = true
+					s.state.TravelNpcGuid = 778
+					if planFails {
+						return nil, errors.New("old planner failure")
+					}
+					return []position{a, b}, nil
+				}
+				got, err := s.TravelTrainer(context.Background(), r)
+				if err != nil || got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 778 || got.InteractionOwner != owner || s.interactionToken != replacement || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+			})
+		}
+	}
+}
+
+type trainerTravelSetupContext struct {
+	context.Context
+	once      sync.Once
+	interrupt func()
+}
+
+func (c *trainerTravelSetupContext) Deadline() (time.Time, bool) {
+	c.once.Do(c.interrupt)
+	return c.Context.Deadline()
+}
+
+func TestTrainerTravelReservationHonorsStopAndReplacement(t *testing.T) {
+	for _, mode := range []string{"follow", "assist", "replacement"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _, r := trainerTravelRig(t)
+			replacement := ""
+			ctx := &trainerTravelSetupContext{Context: context.Background(), interrupt: func() {
+				if mode == "replacement" {
+					if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "training", Token: r.Token}); err != nil {
+						t.Fatal(err)
+					}
+					lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training", LeaseMs: 30000})
+					if err != nil {
+						t.Fatal(err)
+					}
+					replacement = lease.Token
+					s.state.Reason = "replacement_reason"
+					s.state.NavReason = "replacement_nav"
+					s.state.NavAvailable = true
+					s.state.Moving = true
+					s.state.Traveling = true
+					s.state.TravelNpcGuid = 779
+				} else if mode == "assist" {
+					if _, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if _, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}}
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				t.Fatal("interrupted reservation reached planner")
+				return nil, nil
+			}
+			got, err := s.TravelTrainer(ctx, r)
+			if err != nil || len(f.packets) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+			if mode == "replacement" {
+				if got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 779 || s.interactionToken != replacement {
+					t.Fatal(got)
+				}
+			} else if got.Moving || got.Traveling || got.Reason != "trainer_travel_interrupted_by_controller_change" {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelCanceledPlannerAndDelayKeepCancellationAndCleanup(t *testing.T) {
+	for _, planning := range []bool{false, true} {
+		t.Run(fmt.Sprintf("planning=%t", planning), func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if planning {
+				s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+					cancel()
+					return nil, context.Canceled
+				}
+			} else {
+				s.approachDelay = func(call context.Context, d time.Duration) error { advance(d); cancel(); return call.Err() }
+			}
+			got, err := s.TravelTrainer(ctx, r)
+			want := 0
+			if !planning {
+				want = 1
+			}
+			if status.Code(err) != codes.Canceled || got.Reason != "trainer_travel_canceled_or_time_limit" || got.Moving || got.Traveling || got.MotionUnconfirmed || countPackets(f, opcode.MSGMoveStartForward) != want || countPackets(f, opcode.MSGMoveStop) != want {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelIdleStopBetweenStepsDoesNotRestart(t *testing.T) {
+	for _, assist := range []bool{false, true} {
+		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
+			s, f, advance, r := trainerTravelRig(t)
+			s.approachDelay = func(ctx context.Context, d time.Duration) error {
+				advance(d)
+				// Model a frame that is already stopped before the explicit disable.
+				// The subsequent stop writes no packet and must still revoke travel.
+				s.mu.Lock()
+				stopped := s.stopLocked(ctx)
+				s.mu.Unlock()
+				if !stopped {
+					t.Fatal("initial frame stop failed")
+				}
+				var got *actionsv1.State
+				var err error
+				if assist {
+					got, err = s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				} else {
+					got, err = s.Follow(ctx, &actionsv1.ToggleRequest{Enabled: false})
+				}
+				if err != nil || got.Moving {
+					t.Fatal(got, err)
+				}
+				return ctx.Err()
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Moving || got.Traveling || got.Reason != "trainer_travel_interrupted_by_controller_change" || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal(got, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestTrainerTravelCancellationAfterReplacementPreservesNewController(t *testing.T) {
+	s, f, advance, r := trainerTravelRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	replacement := ""
+	s.approachDelay = func(call context.Context, d time.Duration) error {
+		advance(d)
+		if _, err := s.ReleaseInteraction(call, &actionsv1.InteractionRelease{Owner: "training", Token: r.Token}); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := s.AcquireInteraction(call, &actionsv1.InteractionRequest{Owner: "quests", LeaseMs: 30000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replacement = lease.Token
+		s.state.Moving = true
+		s.state.Traveling = true
+		s.state.TravelNpcGuid = 780
+		s.state.Reason = "replacement_reason"
+		s.state.NavReason = "replacement_nav"
+		s.state.NavAvailable = true
+		cancel()
+		return call.Err()
+	}
+	got, err := s.TravelTrainer(ctx, r)
+	if status.Code(err) != codes.Canceled || got.Reason != "replacement_reason" || got.NavReason != "replacement_nav" || !got.NavAvailable || !got.Moving || !got.Traveling || got.TravelNpcGuid != 780 || s.interactionToken != replacement || s.questApproaching || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveStop) != 1 {
+		t.Fatal(got, err, f.packets)
+	}
+}
+
+func TestTrainerTravelReleasedOrExpiredIdleReservationReturnsIdle(t *testing.T) {
+	for _, duringPlan := range []bool{false, true} {
+		for _, expire := range []bool{false, true} {
+			t.Run(fmt.Sprintf("planning=%t/expiry=%t", duringPlan, expire), func(t *testing.T) {
+				s, f, advance, r := trainerTravelRig(t)
+				interrupt := func() {
+					if expire {
+						advance(31 * time.Second)
+						s.Tick(context.Background())
+					} else {
+						if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "training", Token: r.Token}); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				var ctx context.Context = context.Background()
+				if duringPlan {
+					interrupted := false
+					s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+						if !interrupted {
+							interrupted = true
+							interrupt()
+						}
+						return nil, errors.New("old planner stopped")
+					}
+				} else {
+					ctx = &trainerTravelSetupContext{Context: ctx, interrupt: interrupt}
+					s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+						t.Fatal("revoked reservation reached planner")
+						return nil, nil
+					}
+				}
+				got, err := s.TravelTrainer(ctx, r)
+				if err != nil || got.Traveling || got.Moving || s.questApproaching || len(f.packets) != 0 {
+					t.Fatal(got, err, f.packets)
+				}
+				s.Tick(context.Background())
+				after := state(t, s)
+				if after.InteractionOwner != "" || after.Traveling || after.Moving {
+					t.Fatal("released or expired operation did not become idle", after)
+				}
+			})
+		}
+	}
+}
+
+func TestTrainerTravelCanceledInitialReservationReturnsCanceled(t *testing.T) {
+	s, f, _, r := trainerTravelRig(t)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &trainerTravelSetupContext{Context: parent, interrupt: cancel}
+	s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+		t.Fatal("canceled reservation reached planner")
+		return nil, nil
+	}
+	got, err := s.TravelTrainer(ctx, r)
+	if status.Code(err) != codes.Canceled || got.Reason != "trainer_travel_canceled_or_time_limit" || got.Moving || got.Traveling || s.questApproaching || len(f.packets) != 0 {
+		t.Fatal(got, err, f.packets)
+	}
+}

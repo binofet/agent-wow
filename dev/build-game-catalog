@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Generate shared client knowledge from pinned public content, never a live DB."""
+import argparse
+import hashlib
+import json
+import re
+import struct
+from collections import defaultdict
+from pathlib import Path
+
+
+def sql_rows(path):
+    text = path.read_text()
+    schema = re.search(r"CREATE TABLE.*?\((.*?)\) ENGINE", text, re.S)
+    if not schema:
+        raise ValueError("Missing SQL schema: " + path.name)
+    columns = re.findall(r"`([^`]+)`\s+(?:tinyint|smallint|mediumint|bigint|int|float|double|decimal|varchar|char|text|longtext)\b", schema[1], re.I)
+    columns = [c.lower() for c in columns]
+    escape = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "Z": "\x1a"}
+    for match in re.finditer(r"INSERT INTO `[^`]+`(?:\s*\([^;]*?\))? VALUES\s*", text):
+        i = match.end()
+        while i < len(text):
+            while text[i].isspace() or text[i] == ',': i += 1
+            if text[i] == ';': break
+            if text[i] != '(': raise ValueError("Unexpected SQL row")
+            i += 1
+            values = []
+            while True:
+                while text[i].isspace(): i += 1
+                if text[i] == "'":
+                    i += 1; chars = []
+                    while True:
+                        ch = text[i]; i += 1
+                        if ch == "\\":
+                            ch = text[i]; i += 1; chars.append(escape.get(ch, ch))
+                        elif ch == "'":
+                            if text[i:i+1] == "'": chars.append("'"); i += 1
+                            else: break
+                        else: chars.append(ch)
+                    value = ''.join(chars)
+                    while text[i].isspace(): i += 1
+                else:
+                    start = i
+                    while text[i] not in ',)': i += 1
+                    raw = text[start:i].strip()
+                    value = None if raw == 'NULL' else float(raw) if any(c in raw for c in '.eE') else int(raw)
+                values.append(value)
+                ch = text[i]; i += 1
+                if ch == ')': break
+                if ch != ',': raise ValueError("Invalid SQL separator")
+            if len(values) != len(columns):
+                raise ValueError(f"{path.name}: expected {len(columns)} fields, got {len(values)}")
+            yield dict(zip(columns, values))
+
+
+def lock_actions(path, spell_path):
+    spells=spell_path.read_bytes()
+    magic, total, fields, size, strings=struct.unpack_from('<4sIIII',spells)
+    if magic!=b'WDBC' or fields!=234 or size!=936 or len(spells)!=20+total*size+strings:
+        raise ValueError('Unexpected build12340 Spell.dbc format')
+    # Plain object opening variants: OPEN(5), OPEN_TINKERING(12),
+    # OPEN_KNEELING(13). Profession/key locks remain separate mechanics.
+    opening={}
+    for i in range(total):
+        r=struct.unpack_from('<234I',spells,20+i*size)
+        if r[71]==33 and r[86]==23 and r[110] in (5,12,13) and r[28]==4 and r[46]==12:
+            opening[r[110]]=min(opening.get(r[110],r[0]),r[0])
+    data = path.read_bytes()
+    magic, count, fields, size, strings = struct.unpack_from('<4sIIII', data)
+    if magic != b'WDBC' or fields != 33 or size != 132 or len(data) != 20 + count*size + strings:
+        raise ValueError('Unexpected build12340 Lock.dbc format')
+    actions = {0:opening[5]}
+    for n in range(count):
+        row = struct.unpack_from('<33I', data, 20+n*size)
+        requirements = [(row[1+i], row[9+i], row[17+i]) for i in range(8) if row[1+i]]
+        if not requirements:actions[row[0]]=opening[5]
+        elif all(t==2 and skill in opening and rank==0 for t,skill,rank in requirements):
+            actions[row[0]]=opening[requirements[0][1]]
+    return actions
+
+
+def build(source, lock, spell_path):
+    provenance = json.loads((source/'manifest.json').read_text())
+    for name, record in provenance['files'].items():
+        if hashlib.sha256((source/(name+'.sql')).read_bytes()).hexdigest() != record['sha256']:
+            raise ValueError('Source checksum mismatch: ' + name)
+    quests, items, objects = {}, {}, {}
+    reverse = defaultdict(list)
+    for r in sql_rows(source/'quest_template.sql'):
+        required = [{'itemId': r[f'requireditemid{i}'], 'count': r[f'requireditemcount{i}']}
+                    for i in range(1, 7) if r[f'requireditemid{i}'] and r[f'requireditemcount{i}']]
+        quests[r['id']] = dict(name=r['logtitle'], requiredItems=required)
+        for item in required: reverse[item['itemId']].append(dict(questId=r['id'], **item))
+    for r in sql_rows(source/'item_template.sql'):
+        use = [r[f'spellid_{i}'] for i in range(1, 6) if r[f'spellid_{i}'] > 0 and r[f'spelltrigger_{i}'] in (0, 5)]
+        record = dict(name=r['name'], itemClass=r['class'], subclass=r['subclass'], inventoryType=r['inventorytype'])
+        if use: record['useSpells'] = use
+        if r['containerslots']: record['containerSlots'] = r['containerslots']
+        if r['startquest']: record['startsQuest'] = r['startquest']
+        if r['entry'] in reverse: record['questIds'] = sorted(x['questId'] for x in reverse[r['entry']])
+        items[r['entry']] = record
+    references, loot = defaultdict(list), defaultdict(list)
+    for name, dest in [('reference_loot_template', references), ('gameobject_loot_template', loot)]:
+        for r in sql_rows(source/(name+'.sql')):
+            if r['lootmode'] & 1: dest[r['entry']].append(r)
+    def contents(rows, visited=frozenset()):
+        out = set()
+        for row in rows:
+            ref = row['reference']
+            if ref and ref not in visited: out.update(contents(references[ref], visited | {ref}))
+            elif not ref and row['item'] > 0: out.add(row['item'])
+        return out
+    actions = lock_actions(lock,spell_path)
+    containers = {}
+    for r in sql_rows(source/'gameobject_template.sql'):
+        record = dict(name=r['name'], type=r['type'])
+        if r['type'] == 3:
+            possible = sorted(contents(loot[r['data1']]))
+            required = sorted((q for item in possible for q in reverse[item]), key=lambda q:(q['questId'], q['itemId']))
+            record.update(lockId=r['data0'], lootItems=possible, questItems=required)
+            spell = actions.get(r['data0'], 0)
+            record.update(action='open_and_loot' if spell else 'inspect_lock', openSpell=spell)
+            containers[r['entry']] = record
+        objects[r['entry']] = record
+    header = dict(schemaVersion=1, build=12340, sourceCommit=provenance['commit'],
+                  sources=provenance['files'], lockSHA256=hashlib.sha256(lock.read_bytes()).hexdigest(),
+                  spellSHA256=hashlib.sha256(spell_path.read_bytes()).hexdigest())
+    return dict(header, items=items, quests=quests, gameobjects=objects), dict(header, objects=containers)
+
+
+def lua(value):
+    if isinstance(value, dict): return '{'+','.join('['+lua(k)+']='+lua(v) for k,v in value.items())+'}'
+    if isinstance(value, list): return '{'+','.join(lua(v) for v in value)+'}'
+    if isinstance(value, str):
+        # Lua 5.1 has no JSON-style Unicode escapes. Preserve UTF-8 and use
+        # fixed-width decimal escapes for the remaining control characters.
+        return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: '\\'+format(int(m[1],16),'03d'),
+                      json.dumps(value, ensure_ascii=False))
+    if value is True: return 'true'
+    if value is False: return 'false'
+    if value is None: return 'nil'
+    return str(value)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--source', type=Path, required=True)
+    p.add_argument('--lock-dbc', type=Path, required=True)
+    p.add_argument('--spell-dbc', type=Path, required=True)
+    p.add_argument('--output', type=Path, required=True)
+    args = p.parse_args()
+    full, containers = build(args.source, args.lock_dbc, args.spell_dbc)
+    args.output.mkdir(parents=True, exist_ok=True)
+    for name, value in [('catalog.json', full), ('containers.json', containers)]:
+        (args.output/name).write_text(json.dumps(value, ensure_ascii=False, separators=(',', ':'))+'\n')
+    # Literal data only. Namespaces remain numeric ID maps in the addon.
+    (args.output/'Catalog.lua').write_text('WarcraftBuddyCatalog='+lua(full)+'\n'+'''
+function WarcraftBuddyCatalog.Lookup(kind, id)
+    local records = WarcraftBuddyCatalog[kind]
+    if (kind ~= "items" and kind ~= "quests" and kind ~= "gameobjects") or type(records) ~= "table" then return nil end
+    return records[tonumber(id)]
+end
+SLASH_WARCRAFTBUDDYLOOKUP1 = "/wblookup"
+SlashCmdList.WARCRAFTBUDDYLOOKUP = function(input)
+    local kind, id = string.match(input or "", "^(%a+)%s+(%d+)%s*$")
+    local record = WarcraftBuddyCatalog.Lookup(kind, id)
+    if not record then DEFAULT_CHAT_FRAME:AddMessage("Usage: /wblookup items|quests|gameobjects ID (no record found)"); return end
+    DEFAULT_CHAT_FRAME:AddMessage(kind .. " " .. id .. ": " .. record.name)
+    if record.action then DEFAULT_CHAT_FRAME:AddMessage("Catalog mechanic: " .. record.action .. " (live conditions still apply)") end
+end
+''')
+    print(json.dumps({k:len(full[k]) for k in ('items','quests','gameobjects')}))
+
+
+if __name__ == '__main__': main()

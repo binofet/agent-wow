@@ -1,0 +1,22 @@
+api_version: 1
+enabled: true
+description: Explicit chat/emotes, session-bound chat and owner feeds, authenticated fixed team requests and structured host status; no automatic replies or backend lifecycle operations
+compose:
+  file: compose.yaml
+  service: module
+grpc:
+  descriptor_set: module.pb
+rpc:
+  send: /warcraftbuddy.chat.v1.BuddyChat/Send
+  emote: /warcraftbuddy.chat.v1.BuddyChat/Emote
+  emotes: /warcraftbuddy.chat.v1.BuddyChat/Emotes
+  poll: /warcraftbuddy.chat.v1.BuddyChat/Poll
+  owner_feed: /warcraftbuddy.chat.v1.BuddyChat/OwnerFeed
+  management_requests: /warcraftbuddy.chat.v1.BuddyChat/ManagementRequests
+  publish_team_status: /warcraftbuddy.chat.v1.BuddyChat/PublishTeamStatus
+packets:
+  SMSG_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket
+
+script_api:
+  owner_feed: {effect: read}
+  emotes: {effect: read}

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Own a finite, locked SSH forward group; never issue avatar RPC writes."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+GROUPS = {'party': (8086, 8087, 8088), 'nix': (8402,)}
+
+
+def save(path, value):
+    temporary = path.with_suffix('.tmp')
+    with temporary.open('w') as stream:
+        os.chmod(temporary, 0o600)
+        json.dump(value, stream, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def process(pid):
+    reply = subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'lstart=,command='],
+                           capture_output=True, text=True, timeout=3)
+    return reply.stdout.strip() if reply.returncode == 0 else ''
+
+
+def owns(record, current):
+    return (type(record.get('pid')) is int and record['pid'] > 1
+            and isinstance(record.get('process'), str) and bool(record['process'])
+            and current == record['process'])
+
+
+def reserve(folder, group):
+    lock = (folder / (group + '.lock')).open('a+')
+    os.chmod(folder / (group + '.lock'), 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        lock.close()
+        raise
+    return lock
+
+
+def listening(port):
+    with socket.socket() as probe:
+        probe.settimeout(.2)
+        return probe.connect_ex(('127.0.0.1', port)) == 0
+
+
+def command(group):
+    args = ['/usr/bin/ssh', '-NT', '-i', str(Path.home() / '.ssh/id_ed5519_quasar'),
+            '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+            '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
+            '-o', 'ServerAliveCountMax=4']
+    for port in GROUPS[group]:
+        args += ['-L', f'127.0.0.1:{port}:127.0.0.1:{port}']
+    return args + ['quasar']
+
+
+def run(folder, group, seconds):
+    lock = reserve(folder, group)
+    if any(listening(port) for port in GROUPS[group]):
+        raise ValueError('existing listener preserved; no forward started')
+    stopped = [False]
+    def stop(*_): stopped[0] = True
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    deadline = time.monotonic() + seconds
+    record = dict(pid=os.getpid(), process=process(os.getpid()), group=group,
+                  ports=list(GROUPS[group]), startedAt=time.time(), maxSeconds=seconds,
+                  active=True, attempts=0)
+    path = folder / (group + '.json')
+    child = None
+    try:
+        while not stopped[0] and time.monotonic() < deadline:
+            # A foreign owner appearing after a disconnect is never taken over.
+            if any(listening(port) for port in GROUPS[group]):
+                raise ValueError('unexpected listener after prior child exit')
+            with (folder / (group + '-ssh.log')).open('ab', buffering=0) as log:
+                os.chmod(folder / (group + '-ssh.log'), 0o600)
+                child = subprocess.Popen(command(group), stdin=subprocess.DEVNULL,
+                                         stdout=log, stderr=subprocess.STDOUT, close_fds=True)
+                record.update(sshPid=child.pid, attempts=record['attempts'] + 1,
+                              childStartedAt=time.time())
+                save(path, record)
+                while child.poll() is None and not stopped[0] and time.monotonic() < deadline:
+                    time.sleep(.5)
+                if child.poll() is None:
+                    child.terminate()  # Only this owned SSH child; never an avatar.
+                    child.wait(timeout=12)
+                record.update(lastSshExit=child.returncode, lastSshExitAt=time.time())
+                save(path, record)
+            backoff = min(15, 2 * record['attempts'])
+            until = min(deadline, time.monotonic() + backoff)
+            while not stopped[0] and time.monotonic() < until:
+                time.sleep(.25)
+    finally:
+        if child is not None and child.poll() is None:
+            child.terminate()
+            child.wait(timeout=12)
+        record.update(active=False, stoppedAt=time.time())
+        save(path, record)
+        lock.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=('run', 'status', 'stop'))
+    parser.add_argument('--group', choices=tuple(GROUPS), required=True)
+    parser.add_argument('--max-seconds', type=int, default=28800)
+    args = parser.parse_args()
+    if not 1 <= args.max_seconds <= 28800:
+        raise ValueError('finite duration required')
+    folder = ROOT / 'data/client-tunnel'
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if args.operation == 'run':
+        run(folder, args.group, args.max_seconds)
+        return
+    path = folder / (args.group + '.json')
+    record = json.loads(path.read_text()) if path.exists() else {}
+    current = process(record['pid']) if type(record.get('pid')) is int else ''
+    record['ownedProcessCurrent'] = owns(record, current)
+    record['listeningPorts'] = [port for port in GROUPS[args.group] if listening(port)]
+    if args.operation == 'stop':
+        if not record['ownedProcessCurrent']:
+            raise ValueError('owner identity unavailable; no signal sent')
+        os.kill(record['pid'], signal.SIGTERM)
+        record['stopRequested'] = True
+    print(json.dumps(record, sort_keys=True))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise SystemExit('Client tunnel: ' + str(error))

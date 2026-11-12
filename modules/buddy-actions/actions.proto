@@ -1,0 +1,339 @@
+syntax = "proto3";
+package warcraftbuddy.actions.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+
+message ToggleRequest { bool enabled = 1; }
+// Explicitly select one currently observed NPC; never selects another target.
+message EngageNPCRequest { bool enabled = 1; uint64 target_guid = 2; }
+message EngageNPCState {
+  bool active = 1;
+  uint64 target_guid = 2;
+  string phase = 3;
+  uint64 lease_remaining_ms = 4;
+}
+// Pure Lua decisions change only subsequent selections; transport stays native.
+message BehaviorReloadRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string expected_revision = 3;
+  string source = 4;
+  bool use_builtin = 5;
+}
+message BehaviorStatus {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string revision = 3;
+  string last_good_revision = 4;
+  string quarantined_revision = 5;
+  string last_error = 6;
+  uint64 evaluations = 7;
+  uint64 failures = 8;
+  string last_rejected_decision = 9;
+}
+// One explicitly coordinated observed Fargodeep encounter; never chooses a target.
+message FargodeepEncounterRequest {
+  bool enabled = 1;
+  uint64 target_guid = 2;
+  uint64 engager_guid = 3;
+  uint64 expected_quest_log_revision = 4;
+  string session_id = 5;
+}
+message FargodeepEncounterState {
+  bool active = 1;
+  uint64 target_guid = 2;
+  uint64 engager_guid = 3;
+  string phase = 4;
+  uint64 remaining_ms = 5;
+}
+message ClientPosition {
+  bool known = 1;
+  bool map_known = 2;
+  uint32 map_id = 3;
+  float x = 4;
+  float y = 5;
+  float z = 6;
+  float orientation = 7;
+  // True when these coordinates come from this client's successful movement
+  // transport write. This is an estimate, not a server movement acknowledgement.
+  bool estimated = 8;
+  uint64 age_ms = 9;
+  uint64 revision = 10;
+}
+message InteractionRequest {
+  // Fixed coordination labels: loot, quests, trade, training, mail, professions, exploration.
+  string owner = 1;
+  // Required only to renew an existing lease; never returned by Status.
+  string token = 2;
+  // 0 means15000; allowed1000..30000ms.
+  uint32 lease_ms = 3;
+  // Explicit non-destructive gathering/exploration guard; immutable per token.
+  // Only professions and exploration may request it. Defense intent stays on.
+  bool harvest = 4;
+}
+message InteractionRelease { string owner = 1; string token = 2; }
+message ApproachLootRequest {
+  string token = 1;
+  // Exactly one observed target: an eligible corpse or own Milly harvest crate.
+  uint64 corpse_guid = 2;
+  uint64 game_object_guid = 3;
+}
+message ApproachQuestRequest { string token = 1; uint64 npc_guid = 2; }
+// Movement only: a caller destination grants no NPC presence or interaction proof.
+message TravelToRequest {
+  string token = 1;
+  uint32 map_id = 2;
+  float x = 3;
+  float y = 4;
+  float z = 5;
+  // 0 preserves the default3yd stop. Explicit0.5..3yd requires the verified
+  // route endpoint to fit this radius; it grants no floor/layer tolerance.
+  float arrival_distance = 6;
+}
+// Read-only guidance. TravelTo independently replans the returned endpoint
+// under its normal movement custody and physical checks.
+message PlanRouteLegRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 expected_position_revision = 3;
+  uint32 map_id = 4;
+  float x = 5;
+  float y = 6;
+  float z = 7;
+}
+message RouteLeg {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint32 map_id = 3;
+  ClientPosition start = 4;
+  // Planned geometry only, not an observed player pose or movement receipt.
+  // Age and position revision are deliberately unset.
+  ClientPosition endpoint = 5;
+  float path_length = 6;
+  uint32 point_count = 7;
+  bool goal_reached = 8;
+  uint64 server_position_revision = 9;
+}
+// An owned quests lease permits only the fixed, measured crypt exit route.
+message ExitCryptRequest { string token = 1; }
+message InteractionLease { string token = 1; State state = 2; }
+message RecoveryState {
+  bool enabled = 1;
+  bool active = 2;
+  string phase = 3;
+  string reason = 4;
+  uint64 death_epoch = 5;
+  bool release_attempted = 6;
+  bool release_written = 7;
+  bool ghost_observed = 8;
+  bool corpse_query_known = 9;
+  bool corpse_found = 10;
+  ClientPosition corpse_location = 11;
+  uint32 corpse_map_id = 12;
+  uint64 corpse_guid = 13;
+  ClientPosition graveyard_location = 14;
+  bool reclaim_delay_known = 15;
+  uint64 reclaim_delay_remaining_ms = 16;
+  bool reclaim_attempted = 17;
+  bool reclaim_written = 18;
+  bool alive_observed = 19;
+  bool rested = 20;
+  bool movement_unconfirmed = 21;
+  uint32 verified_legs = 22;
+}
+// Only actual server spellbook IDs are returned. Unknown metadata stays unknown.
+message KnownSpell {
+  uint32 spell_id = 1;
+  bool metadata_known = 2;
+  string name = 3;
+  uint32 family_id = 4;
+  uint32 rank = 5;
+  uint32 mana_percent = 6;
+  float range_yards = 7;
+  bool self_only = 8;
+  bool automatic_buff_supported = 9;
+  string capability = 10;
+  string target_rule = 11;
+  string blocked_reason = 12;
+  uint32 cast_time_ms = 13;
+  uint32 flat_cost = 14;
+  int32 power_type = 15;
+  int32 required_item_class = 16;
+  uint32 required_subclass_mask = 17;
+  bool requires_stealth = 18;
+  bool requires_behind = 19;
+}
+message SpellOperation {
+  uint32 spell_id = 1;
+  uint64 target_guid = 2;
+  string capability = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  bool server_cast_go = 6;
+  bool effect_observed = 7;
+}
+message ObservedAura {
+  uint32 slot = 1;
+  uint32 spell_id = 2;
+  uint64 caster_guid = 3;
+  bool positive = 4;
+  bool duration_known = 5;
+  uint32 remaining_ms = 6;
+  uint64 revision = 7;
+}
+message PlayerAuras {
+  uint64 target_guid = 1;
+  // Only a full SMSG_AURA_UPDATE_ALL establishes a complete baseline.
+  bool complete = 2;
+  uint64 revision = 3;
+  repeated ObservedAura auras = 4;
+}
+message BuffOperation {
+  uint64 sequence = 1;
+  uint32 spell_id = 2;
+  uint64 target_guid = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  bool server_cast_go = 6;
+  bool aura_confirmed = 7;
+  uint64 aura_revision = 8;
+}
+message SpellToolkitState {
+  bool spellbook_known = 1;
+  uint64 spellbook_revision = 2;
+  repeated KnownSpell spells = 3;
+  repeated PlayerAuras player_auras = 4;
+  BuffOperation last_buff = 5;
+  string session_id = 6;
+  uint64 self_guid = 7;
+  bool targeted_resurrection_supported = 8;
+}
+message State {
+  bool following = 1;
+  bool healing = 2;
+  bool moving = 3;
+  bool known_lesser_heal = 4;
+  bool cast_pending = 5;
+  string reason = 6;
+  // Observation of transport writes is not server movement/healing acceptance.
+  uint64 transport_writes = 7;
+  uint64 heal_attempts = 8;
+  uint64 server_cast_starts = 9;
+  uint64 server_cast_go = 10;
+  uint32 last_cast_failure = 11;
+  uint64 malformed_packets = 12;
+  uint64 follow_lease_remaining_ms = 13;
+  uint64 healing_lease_remaining_ms = 14;
+  // Installed client navigation availability and remaining controller limits.
+  string limitation = 15;
+  // A failed movement-stop write blocks further movement/healing until an
+  // explicit stop succeeds or a new authoritative stopped position is seen.
+  bool motion_unconfirmed = 16;
+  ClientPosition position = 17;
+  string interaction_owner = 18;
+  uint64 interaction_lease_remaining_ms = 19;
+  bool assisting = 20;
+  bool known_smite = 21;
+  uint64 assist_attempts = 22;
+  uint64 assist_lease_remaining_ms = 23;
+  uint32 last_cast_spell_id = 24;
+  uint64 last_cast_target_guid = 25;
+  uint64 server_assist_starts = 26;
+  uint64 server_assist_go = 27;
+  string assist_reason = 28;
+  uint64 smite_damage_events = 29;
+  uint64 smite_damage_total = 30;
+  bool class_known = 31;
+  uint32 class_id = 32;
+  string class_name = 33;
+  bool known_fireball = 34;
+  bool known_sinister_strike = 35;
+  bool known_auto_attack = 36;
+  uint32 combat_spell_id = 37;
+  string combat_style = 38;
+  uint64 assist_damage_events = 39;
+  uint64 assist_damage_total = 40;
+  uint64 fireball_damage_events = 41;
+  uint64 fireball_damage_total = 42;
+  uint64 sinister_strike_damage_events = 43;
+  uint64 sinister_strike_damage_total = 44;
+  uint64 melee_damage_events = 45;
+  uint64 melee_damage_total = 46;
+  // Server ATTACKSTART/ATTACKSTOP observations, distinct from transport intent.
+  bool auto_attacking = 47;
+  uint64 auto_attack_target_guid = 48;
+  bool auto_attack_requested = 49;
+  bool auto_attack_unconfirmed = 50;
+  uint32 sinister_strike_energy_cost = 51;
+  bool mainhand_weapon_verified = 52;
+  bool traveling = 53;
+  uint64 travel_npc_guid = 54;
+  bool nav_available = 55;
+  string nav_reason = 56;
+  bool practicing = 57;
+  string practice_phase = 58;
+  uint64 practice_target_guid = 59;
+  uint64 practice_lease_remaining_ms = 60;
+  uint64 practice_pulls = 61;
+  uint64 practice_kills = 62;
+  bool known_shadow_bolt = 63;
+  uint64 shadow_bolt_damage_events = 64;
+  uint64 shadow_bolt_damage_total = 65;
+  bool interaction_harvest = 66;
+  // Actual online party plus self/fixed owner, refreshed by guarded renewal.
+  // Only present while interaction_harvest is true; at most42 unique GUIDs.
+  repeated uint64 harvest_guard_guids = 67;
+  RecoveryState recovery = 68;
+  FargodeepEncounterState fargodeep = 69;
+  // Observation RPC acknowledgement, separate from actual movement transport.
+  // Retained Nixwick modules decode these legacy finite-controller messages.
+  // Do not reuse their tags even though these controllers are absent here.
+  reserved 70, 73 to 99;
+  bool client_movement_observation_confirmed = 71;
+  uint64 client_movement_observation_failures = 72;
+  bool buffing = 100;
+  uint64 buff_lease_remaining_ms = 101;
+  string buff_reason = 102;
+  uint64 buff_attempts = 103;
+  uint64 buffs_confirmed = 104;
+  BuffOperation last_buff = 105;
+  string session_id = 106;
+  uint64 self_guid = 107;
+  SpellOperation last_spell_operation = 108;
+  EngageNPCState engage_npc = 109;
+}
+message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
+
+service BuddyActions {
+  rpc Follow(ToggleRequest) returns (State);
+  rpc Healing(ToggleRequest) returns (State);
+  rpc Assist(ToggleRequest) returns (State);
+  rpc EngageNPC(EngageNPCRequest) returns (State);
+  rpc HealOnce(google.protobuf.Empty) returns (State);
+  rpc Status(google.protobuf.Empty) returns (State);
+  rpc Buffs(ToggleRequest) returns (State);
+  rpc SpellToolkit(google.protobuf.Empty) returns (SpellToolkitState);
+  rpc ReloadBehavior(BehaviorReloadRequest) returns (BehaviorStatus);
+  rpc Behavior(google.protobuf.Empty) returns (BehaviorStatus);
+  rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
+  rpc ReleaseInteraction(InteractionRelease) returns (State);
+  rpc ApproachLoot(ApproachLootRequest) returns (State);
+  rpc ApproachQuest(ApproachQuestRequest) returns (State);
+  rpc TravelQuest(ApproachQuestRequest) returns (State);
+  rpc TravelTrainer(ApproachQuestRequest) returns (State);
+  // Movement only under an owned trade lease to an actual observed vendor.
+  rpc TravelVendor(ApproachQuestRequest) returns (State);
+  rpc TravelTo(TravelToRequest) returns (State);
+  rpc PlanRouteLeg(PlanRouteLegRequest) returns (RouteLeg);
+  rpc ExitCrypt(ExitCryptRequest) returns (State);
+  rpc Practice(ToggleRequest) returns (State);
+  rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);
+  // Normal release, validated same-map ghost route, and corpse reclamation.
+  rpc Recovery(ToggleRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc ResurrectOnce(ResurrectOnceRequest) returns (State);
+  rpc AcceptResurrection(AcceptResurrectionRequest) returns (State);
+}

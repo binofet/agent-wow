@@ -78,7 +78,24 @@ func newModuleCommand() *cobra.Command {
 		return err
 	}}
 	list.Flags().BoolVar(&asJSON, "json", false, "Output module manifests as JSON")
-	command.AddCommand(list)
+	describe := &cobra.Command{Use: "describe [method]", Short: "Describe validated public module contracts offline as JSON", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+		registry, err := moddisc.Load(config.Get().ModuleDir)
+		if err != nil {
+			return err
+		}
+		catalog := registry.Catalog()
+		if len(args) == 1 {
+			catalog, err = catalog.ForMethod(args[0])
+			if err != nil {
+				return err
+			}
+		}
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(catalog)
+	}}
+	command.AddCommand(list, describe)
 	return command
 }
 

@@ -1,0 +1,111 @@
+syntax = "proto3";
+package warcraftbuddy.supplies.v1;
+option go_package = "github.com/agent-wow/agent-wow/modules/buddy-supplies/api;suppliesv1";
+import "api/module/v1/session.proto";
+import "google/protobuf/empty.proto";
+import "modules/buddy-world/world.proto";
+
+message VendorItem {
+  uint32 slot = 1;
+  uint32 entry = 2;
+  sint32 available_count = 3;
+  uint32 price_copper = 4;
+  uint32 buy_count = 5;
+  uint32 extended_cost = 6;
+}
+message Offer {
+  uint64 revision = 1;
+  uint64 npc_guid = 2;
+  repeated VendorItem items = 3;
+  uint64 expires_in_ms = 4;
+}
+message Operation {
+  string request_id = 1;
+  string kind = 2;
+  string status = 3;
+  string reason = 4;
+  uint64 npc_guid = 5;
+  uint32 item_id = 6;
+  uint32 count = 7;
+  uint32 cost_copper = 8;
+  uint64 item_guid = 9;
+  uint64 original_weapon_guid = 10;
+  uint32 original_weapon_entry = 11;
+  bool transport_written = 12;
+  bool server_success_observed = 13;
+  bool inventory_confirmed = 14;
+  bool copper_confirmed = 15;
+  bool equipment_confirmed = 16;
+  bool lease_released = 17;
+  uint64 baseline_backpack_revision = 18;
+  uint64 baseline_copper_revision = 19;
+  uint32 server_failure = 20;
+}
+message State {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 revision = 3;
+  bool active = 4;
+  Offer offer = 5;
+  Operation operation = 6;
+  bool copper_known = 7;
+  uint32 copper = 8;
+  uint64 copper_revision = 9;
+  bool backpack_known = 10;
+  uint64 backpack_revision = 11;
+  repeated warcraftbuddy.world.v1.BackpackSlot backpack = 12;
+  bool skills_known = 13;
+  uint64 skills_revision = 14;
+  warcraftbuddy.world.v1.EquippedWeapon mainhand = 15;
+  string blocked_reason = 16;
+  uint64 transport_writes = 17;
+  uint64 malformed_packets = 18;
+  string limitation = 19;
+  uint64 original_weapon_guid = 20;
+  uint32 original_weapon_entry = 21;
+  uint64 equipped_pole_guid = 22;
+  bool restore_required = 23;
+}
+message Vendor {
+  warcraftbuddy.world.v1.CreatureState creature = 1;
+  bool interactable = 2;
+  string blocked_reason = 3;
+  double distance = 4;
+}
+message Discovery { State state = 1; repeated Vendor nearby = 2; }
+message ListRequest { string session_id = 1; uint64 npc_guid = 2; }
+message BuyRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint64 expected_revision = 3;
+  uint64 npc_guid = 4;
+  uint64 offer_revision = 5;
+  uint32 vendor_slot = 6;
+  uint32 item_id = 7;
+  uint32 count = 8;
+  uint32 expected_price_copper = 9;
+  uint32 max_spend_copper = 10;
+  uint64 expected_backpack_revision = 11;
+  uint64 expected_copper_revision = 12;
+  uint64 expected_skills_revision = 13;
+}
+message EquipmentRequest {
+  string session_id = 1;
+  string request_id = 2;
+  uint64 expected_revision = 3;
+  uint64 expected_backpack_revision = 4;
+  uint64 expected_skills_revision = 5;
+  uint32 backpack_slot = 6;
+  uint64 item_guid = 7;
+  uint64 original_weapon_guid = 8;
+}
+service BuddySupplies {
+  rpc GetState(google.protobuf.Empty) returns (State);
+  rpc Discover(google.protobuf.Empty) returns (Discovery);
+  rpc List(ListRequest) returns (State);
+  rpc Buy(BuyRequest) returns (State);
+  rpc Equip(EquipmentRequest) returns (State);
+  rpc Restore(EquipmentRequest) returns (State);
+  rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
+  rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

@@ -1,0 +1,548 @@
+#!/usr/bin/env python3
+"""Conservative party gear review and one normally receipted Mira disenchant."""
+import copy
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import time
+import uuid
+from pathlib import Path
+
+
+def load(name, filename):
+    loader = importlib.machinery.SourceFileLoader(name, str(Path(__file__).with_name(filename)))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec); loader.exec_module(module)
+    return module
+
+
+gear = load('disenchant_gear', 'party-gear')
+town, c = gear.town, gear.c
+rewards = load('disenchant_items', 'quest-rewards.py')
+Error, number, token, ROOT = town.Error, town.number, town.token, gear.ROOT
+PROFILES = {1: (8086, 5), 4: (8087, 8), 5: (8088, 4), 8: (8402, 9)}
+PARTY = frozenset((1, 3, 4, 5, 8))
+TERMINAL = frozenset(('completed', 'blocked', 'server_rejected', 'not_dispatched'))
+PHASES = TERMINAL | {'reserved', 'requested', 'unconfirmed', 'new_session_requires_review'}
+METHODS = frozenset(('buddy-inventory.state', 'buddy-world.snapshot', 'buddy-party.state',
+    'buddy-quests.journal', 'buddy-professions.state', 'buddy-professions.inspect_disenchant',
+    'buddy-professions.attempt', 'buddy-professions.cancel', 'buddy-trade.lookup_items', 'buddy-chat.owner_feed'))
+
+
+class RPC(town.RPC):
+    def __init__(self, url):
+        super().__init__(url); self.deadline=time.monotonic()+30
+    def call(self, method, params):
+        if method not in METHODS or not isinstance(params, dict) or self.calls >= 512:
+            raise Error('bounded_disenchant_rpc_required')
+        self.calls += 1
+        remaining=self.deadline-time.monotonic()
+        if remaining<=0:raise Error('disenchant_read_deadline')
+        request = town.urllib.request.Request(self.url, data=json.dumps(dict(jsonrpc='2.0', id=self.calls,
+            method=method, params=params), allow_nan=False).encode(), headers={'Content-Type': 'application/json'})
+        try:
+            with self.opener.open(request, timeout=min(3,remaining)) as response: raw = response.read(262145)
+            value = town.base.decode_json(raw) if len(raw) <= 262144 else None
+        except (OSError, ValueError): raise Error('disenchant_response_unconfirmed') from None
+        if time.monotonic()>=self.deadline:raise Error('disenchant_response_unconfirmed')
+        if (not isinstance(value, dict) or value.get('jsonrpc') != '2.0' or type(value.get('id')) is not int
+                or value['id'] != self.calls or 'error' in value or not isinstance(value.get('result'), dict)):
+            raise Error('disenchant_response_unconfirmed')
+        return value['result']
+
+
+def group_known(state, self_guid):
+    token(state.get('sessionId'))
+    group = state.get('group', {})
+    members = group.get('members', [])
+    if (group.get('known') is not True or group.get('inGroup') is not True or not isinstance(members, list)
+            or len(members) != 5 or {number(m.get('guid', 0)) for m in members if isinstance(m, dict)} != PARTY
+            or any(not isinstance(m, dict) or m.get('online') is not True for m in members)
+            or [number(m.get('guid',0)) for m in members if m.get('self') is True] != [self_guid]):
+        raise Error('complete_current_five_member_party_required')
+
+
+def item_metadata(row):
+    if (not isinstance(row, dict) or row.get('available') is not True or row.get('pending', False) is not False
+            or not rewards._validate_item(row) or not number(row.get('itemId', 0))):
+        raise Error('party_item_metadata_pending')
+    return row
+
+
+def stats(row):
+    out = {}
+    for stat in row.get('stats', []):
+        kind, value = number(stat.get('type', 0)), stat.get('value', 0)
+        if (type(value) is not int or value < 0 or kind in out
+                or not (kind <= 1 or 3 <= kind <= 7 or 12 <= kind <= 39 or 43 <= kind <= 48)):
+            raise Error('party_stat_comparison_unknown')
+        out[kind] = value
+    return out
+
+
+def player_known(world, guid):
+    player = world.get('self', {})
+    if (number(player.get('guid', 0)) != guid or any(player.get(k) is not True for k in
+            ('present', 'aliveKnown', 'alive', 'classKnown', 'raceKnown', 'levelKnown','unitFlagsKnown','healthKnown'))
+            or number(player.get('unitFlags',0))&0x80000 or not 0<number(player.get('health',0))<=number(player.get('maxHealth',0))
+            or number(player['health'])*100<number(player['maxHealth'])*85
+            or number(player.get('classId', 0)) != PROFILES[guid][1]
+            or not 0 < number(player.get('raceId', 0)) <= 11 or not 0 < number(player.get('level', 0)) <= 80):
+        raise Error('actual_party_character_identity_required')
+    return player
+
+
+def owner_view(feed):
+    """Addon comparison facts contain slot entries, never invented item GUIDs."""
+    owner = feed.get('ownerGear')
+    if (not isinstance(owner, dict) or owner.get('available') is not True or owner.get('gearKnown') is not True
+            or any(owner.get(k) is not True for k in ('classKnown','raceKnown','levelKnown'))
+            or not isinstance(owner.get('addonSession'),str) or not re.fullmatch('[0-9a-f]{12}',owner['addonSession'])
+            or not number(owner.get('revision',0)) or number(owner.get('ageMs',0))>10000
+            or not number(owner.get('equipmentRevision', 0)) or number(owner.get('classId', 0)) != 1
+            or not 0 < number(owner.get('raceId', 0)) <= 11 or not 0 < number(owner.get('level', 0)) <= 80):
+        raise Error('owner_gear_comparison_unavailable')
+    rows, equipment = owner.get('slots', []), {}
+    if not isinstance(rows, list) or len(rows) != 19: raise Error('owner_gear_comparison_unavailable')
+    for row in rows:
+        if not isinstance(row, dict) or row.get('slotKnown') is not True: raise Error('owner_gear_comparison_unavailable')
+        slot = number(row.get('slot', 0), 18)
+        if slot in equipment: raise Error('owner_gear_comparison_unavailable')
+        number(row.get('entry', 0), 2**32-1); equipment[slot] = row
+    proficiencies, seen = {}, set()
+    rows = owner.get('proficiencies', [])
+    if owner.get('proficienciesKnown') is not True or not isinstance(rows, list) or len(rows) > 32:
+        raise Error('owner_proficiency_comparison_unavailable')
+    for row in rows:
+        skill = number(row.get('skillId', 0), 65535)
+        if not skill or skill in seen or type(row.get('known', False)) is not bool:
+            raise Error('owner_proficiency_comparison_unavailable')
+        seen.add(skill); proficiencies[skill] = row.get('known', False)
+    return dict(player=owner, equipment=equipment, proficiencies=proficiencies)
+
+
+def could_use(item, player):
+    """Return false only for a permanent actual class/race exclusion."""
+    class_id, race = number(player['classId']), number(player['raceId'])
+    if not number(item.get('allowableClass', 0)) & (1 << (class_id-1)): return False
+    if not number(item.get('allowableRace', 0)) & (1 << (race-1)): return False
+    subclass = number(item.get('subclass', 0))
+    maximum = {1: 4, 4: 2, 5: 1, 8: 1, 9: 1}.get(class_id)
+    return maximum is None or subclass <= maximum
+
+
+def dominated(item, equipped, current):
+    if (item.get('armorComparisonKnown') is not True or current.get('armorComparisonKnown') is not True
+            or not number(equipped.get('entry', 0)) or equipped.get('metadataKnown') is not True
+            or equipped.get('enhancementsKnown') is not True or equipped.get('hasEnhancements', False) is not False
+            or number(equipped.get('stackCount', 1)) != 1 or current.get('hasSpell', False) is not False
+            or number(current.get('flags', 0)) or number(current.get('flags2', 0))
+            or number(current.get('itemClass', 0)) != 4
+            or number(current.get('itemLevel', 0)) < number(item.get('itemLevel', 0))
+            or number(current.get('armor', 0)) < number(item.get('armor', 0))): return False
+    if equipped.get('durabilityKnown') is not True: return False
+    maximum, durability = number(equipped.get('maxDurability', 0)), number(equipped.get('durability', 0))
+    if maximum and not 0 < durability <= maximum: return False
+    old, new = stats(current), stats(item)
+    return all(old.get(kind, 0) >= value for kind, value in new.items())
+
+
+def decision(source, item, views, metadata, quest_items, protected):
+    """An unknown comparison always keeps the exact carried item."""
+    guid, entry = number(source.get('itemGuid', 0)), number(source.get('entry', 0))
+    if guid in protected: return 'reserved_or_displaced_gear_retained'
+    if entry in quest_items: return 'active_party_quest_item_retained'
+    if (source.get('metadataKnown') is not True or number(source.get('stackCount', 0)) != 1
+            or source.get('enhancementsKnown') is not True or source.get('hasEnhancements', False) is not False):
+        return 'owned_item_enhancement_context_required'
+    if (number(item.get('itemClass', 0)) != 4 or number(item.get('subclass', 0)) not in (1, 2, 3, 4)
+            or item.get('armorComparisonKnown') is not True
+            or not 2 <= number(item.get('quality', 0)) <= 4 or item.get('hasSpell', False) is not False
+            or number(item.get('flags', 0)) or number(item.get('flags2', 0))):
+        return 'only_ordinary_armor_compared_for_automatic_disenchant'
+    slot = {1: 0, 3: 2, 5: 4, 20: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14}.get(number(item.get('inventoryType', 0)))
+    if slot is None: return 'unsupported_party_equipment_comparison'
+    if number(item.get('inventoryType',0))==16 and number(item.get('subclass',0))!=1:
+        return 'unsupported_party_equipment_comparison'
+    if any(number(item.get(k, 0)) for k in ('requiredSpell', 'requiredHonorRank', 'requiredCityRank',
+            'requiredReputationFaction', 'requiredReputationRank', 'requiredSkill', 'requiredSkillRank')):
+        return 'special_or_future_requirements_retained'
+    for guid in sorted(PARTY):
+        view = views.get(guid)
+        if view is None:
+            if guid == 3 and not number(item.get('allowableClass', 0)) & 1: continue
+            return 'owner_gear_comparison_unavailable' if guid == 3 else 'party_upgrade_or_unknown_comparison_retained'
+        player = view['player'] if guid == 3 else player_known(view['world'], guid)
+        if not could_use(item, player): continue
+        if number(item.get('requiredLevel', 0)) > number(player['level']): return 'future_party_equipment_retained'
+        proficiency = {1: 415, 2: 414, 3: 413, 4: 293}[number(item['subclass'])]
+        if guid == 3:
+            if view['proficiencies'].get(proficiency) is not True: return 'future_or_unknown_party_proficiency_retained'
+            equipped = view['equipment'][slot]
+        else:
+            world = view['world']; skills = world.get('selfSkills', [])
+            if (world.get('selfSkillsKnown') is not True or not number(world.get('selfSkillsRevision', 0))
+                    or not isinstance(skills, list) or len(skills) != 128 or any(not isinstance(r,dict) for r in skills)):
+                return 'future_or_unknown_party_proficiency_retained'
+            by_slot, by_skill = {}, {}
+            for skill in skills:
+                index, skill_id = number(skill.get('slot', 0), 127), number(skill.get('skillId', 0), 65535)
+                value,maximum=number(skill.get('value',0),65535),number(skill.get('maxValue',0),65535)
+                if index in by_slot or skill_id and skill_id in by_skill or value>maximum or not skill_id and (value or maximum):
+                    return 'future_or_unknown_party_proficiency_retained'
+                by_slot[index] = skill; by_skill[skill_id] = value
+            if not by_skill.get(proficiency): return 'future_or_unknown_party_proficiency_retained'
+            equipped = gear.equipment(view['inventory'])[slot]
+        current = metadata.get(number(equipped.get('entry', 0)))
+        if current is None or not dominated(item, equipped, item_metadata(current)):
+            return 'party_upgrade_or_unknown_comparison_retained'
+    return ''
+
+
+class Scanner:
+    def __init__(self, client=RPC): self.client, self.offset, self.deadline = client, 0, None
+    def connection(self,url):
+        client=self.client(url)
+        if isinstance(client,RPC):client.deadline=self.scan_deadline
+        return client
+    def lookup(self, rpc, session, ids):
+        out = {}
+        ids = sorted(set(ids)-{0})
+        if len(ids) > 40: raise Error('party_metadata_bound')
+        for offset in range(0, len(ids), 6):
+            wanted = ids[offset:offset+6]
+            state = rpc.call('buddy-trade.lookup_items', {'itemIds': wanted})
+            rows = state.get('items', [])
+            if state.get('sessionId') != session or not isinstance(rows, list) or len(rows) != len(wanted):
+                raise Error('party_metadata_body_or_set_changed')
+            for row in rows:
+                item_metadata(row); entry = number(row['itemId'])
+                if entry not in wanted or entry in out: raise Error('party_metadata_body_or_set_changed')
+                out[entry] = row
+        return out
+    def scan(self, own, protected=(), selected=None):
+        own=copy.deepcopy(own)
+        self.scan_deadline=min(self.deadline or time.monotonic()+12,time.monotonic()+12)
+        if number(own.get('selfGuid', 0)) != 4: return None, 'mira_only', None
+        _, slots = town.layout(own); gear.equipment(own)
+        choices = sorted((r for r in slots.values() if number(r.get('itemGuid', 0)) and number(r.get('stackCount', 0)) == 1),
+            key=lambda r: (number(r.get('bag', 0)), number(r.get('slot', 0))))
+        if not choices: return None, 'no_carried_candidate', None
+        if selected is not None:
+            choices = [r for r in choices if town.ref(r) == town.ref(selected)]
+            if not choices: return None, 'disenchant_source_changed_during_comparison', None
+        else:
+            start = self.offset % len(choices); self.offset += 8
+            choices = (choices+choices)[start:start+min(8, len(choices))]
+        rpc = self.connection('http://127.0.0.1:8087/rpc')
+        metadata = self.lookup(rpc, own['sessionId'], [number(r.get('entry', 0)) for r in choices])
+        choices=[r for r in choices if number(metadata[number(r['entry'])].get('itemClass',0))==4
+            and 2<=number(metadata[number(r['entry'])].get('quality',0))<=4]
+        if not choices:return None,'no_ordinary_quality_gear_candidate',None
+        raw_feed = rpc.call('buddy-chat.owner_feed', {})
+        owner_feed = c.validated_owner_feed(raw_feed)
+        # Chat has its own module epoch, distinct from the core aw session.
+        chat_session=token(owner_feed['bodySessionId'])
+        try: owner = owner_view(raw_feed)
+        except Error:return None, 'owner_gear_comparison_unavailable', None
+        if raw_feed['ownerGear']['addonSession']!=owner_feed['addonSession']:
+            raise Error('owner_gear_comparison_unavailable')
+        views, quest_items, shared, quest_templates = {}, set(), {}, set()
+        for guid, (port, _) in PROFILES.items():
+            client = rpc if guid == 4 else self.connection(f'http://127.0.0.1:{port}/rpc')
+            inv = town.checked_state(client.call('buddy-inventory.state', {}), guid)
+            world = client.call('buddy-world.snapshot', {})
+            party = client.call('buddy-party.state', {}); group_known(party,guid)
+            journal = client.call('buddy-quests.journal', dict(refresh=guid==4,
+                **({'requestedQuestIds':[q['questId'] for q in owner_feed['quests']]} if guid==4 else {})))
+            if any(s.get('sessionId') != inv['sessionId'] for s in (party, journal)):
+                raise Error('party_comparison_body_changed')
+            if inv.get('active') is True or inv.get('closing') is True or inv.get('operation') and (
+                    inv['operation'].get('status') not in ('CONFIRMED', 'BLOCKED', 'SERVER_REJECTED')
+                    or inv['operation'].get('leaseReleased') is not True): raise Error('party_inventory_operation_unsettled')
+            player_known(world, guid); equipped = gear.equipment(inv)
+            if (world.get('selfEquipmentKnown') is not True
+                    or number(world.get('selfEquipmentRevision', 0)) != number(inv.get('equipmentRevision', 0))):
+                raise Error('party_equipment_epoch_unconfirmed')
+            entries = journal.get('entries', []);raw_log=world.get('selfQuestLog',[])
+            if (not isinstance(entries, list) or len(entries) > 25 or any(not isinstance(r,dict) for r in entries)
+                    or world.get('selfQuestLogKnown') is not True
+                    or not isinstance(raw_log,list) or len(raw_log)!=25 or not number(journal.get('questLogRevision',0))
+                    or any(not isinstance(r,dict) for r in raw_log)
+                    or number(journal['questLogRevision'])!=number(world.get('selfQuestLogRevision',0))):
+                raise Error('complete_party_quest_journal_required')
+            if ({number(r.get('slot',0),24) for r in raw_log}!=set(range(25))
+                    or any(not isinstance(r,dict) for r in raw_log)
+                    or len({number(r.get('questId',0)) for r in raw_log if number(r.get('questId',0))})!=sum(bool(number(r.get('questId',0))) for r in raw_log)
+                    or {number(r.get('questId',0)) for r in raw_log if number(r.get('questId',0))}
+                        !={number(r.get('questId',0)) for r in entries}):
+                raise Error('complete_party_quest_journal_required')
+            for quest in entries:
+                if (quest.get('templateKnown') is not True or quest.get('logStateKnown') is not True
+                        or quest.get('itemProtectionKnown') is not True):
+                    raise Error('complete_party_quest_journal_required')
+                quest_templates.add(number(quest.get('questId', 0)))
+                targets=quest.get('targets',[])
+                if not isinstance(targets,list) or len(targets)>32 or any(not isinstance(t,dict) for t in targets):
+                    raise Error('complete_party_quest_journal_required')
+                for target in targets:
+                    if target.get('kind') in ('ITEM','SOURCE_ITEM') and number(target.get('targetId', 0)):
+                        quest_items.add(number(target['targetId']))
+            if guid==4:
+                templates=journal.get('requestedTemplates',[])
+                wanted={q['questId'] for q in owner_feed['quests']}
+                if (not isinstance(templates,list) or len(templates)!=len(wanted)
+                        or any(not isinstance(t,dict) for t in templates)
+                        or {number(t.get('questId',0)) for t in templates}!=wanted):
+                    raise Error('owner_active_quest_requirements_unknown')
+                for template in templates:
+                    if (template.get('templateKnown') is not True or template.get('itemProtectionKnown') is not True
+                            or template.get('logStateKnown',False) is not False):
+                        raise Error('owner_active_quest_requirements_unknown')
+                    targets=template.get('targets',[])
+                    if not isinstance(targets,list) or len(targets)>32 or any(not isinstance(t,dict) for t in targets):
+                        raise Error('owner_active_quest_requirements_unknown')
+                    quest_templates.add(number(template['questId']))
+                    for target in targets:
+                        if target.get('kind') in ('ITEM','SOURCE_ITEM') and number(target.get('targetId',0)):
+                            quest_items.add(number(target['targetId']))
+            views[guid] = dict(world=world, inventory=inv)
+            shared[guid] = dict(sessionId=inv['sessionId'], equipmentRevision=str(number(inv['equipmentRevision'])),
+                inventoryRevision=str(number(inv['inventoryRevision'])), questLogRevision=str(number(journal['questLogRevision'])))
+        if any(q['questId'] not in quest_templates for q in owner_feed['quests']):
+            raise Error('owner_active_quest_requirements_unknown')
+        views[3] = owner
+        shared[3] = dict(addonSession=raw_feed['ownerGear']['addonSession'],
+            equipmentRevision=str(number(raw_feed['ownerGear']['equipmentRevision'])))
+        if (views[4]['inventory']['sessionId'] != own['sessionId']
+                or number(views[4]['inventory']['inventoryRevision']) != number(own['inventoryRevision'])):
+            raise Error('disenchant_source_changed_during_comparison')
+        compared_slots = {1: 0, 3: 2, 5: 4, 20: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14}
+        wanted_slots = {compared_slots.get(number(metadata[number(r['entry'])].get('inventoryType', 0))) for r in choices}
+        entries = [number(row.get('entry', 0)) for guid, view in views.items()
+            for slot, row in (view['equipment'] if guid == 3 else gear.equipment(view['inventory'])).items() if slot in wanted_slots]
+        metadata.update(self.lookup(rpc, own['sessionId'], entries))
+        final_feed=rpc.call('buddy-chat.owner_feed',{})
+        final_quests=c.validated_owner_feed(final_feed);owner_view(final_feed)
+        if (final_quests['bodySessionId']!=chat_session or final_quests['addonSession']!=owner_feed['addonSession']
+                or final_quests['revision']!=owner_feed['revision'] or final_quests['quests']!=owner_feed['quests']
+                or any(
+                    final_feed['ownerGear'].get(k)!=raw_feed['ownerGear'].get(k)
+                    for k in ('addonSession','revision','equipmentRevision','slots','proficiencies',
+                        'proficienciesKnown','classId','raceId','level'))):
+            raise Error('owner_feed_changed_during_comparison')
+        tail=rpc.call('buddy-party.state',{});group_known(tail,4)
+        if tail.get('sessionId')!=own['sessionId']:raise Error('party_comparison_body_changed')
+        reason = 'no_unused_party_gear_proven'
+        for source in choices:
+            reason = decision(source, metadata[number(source['entry'])], views, metadata, quest_items, set(protected))
+            if not reason:
+                proof = dict(characters=shared, chatModuleSessionId=chat_session,ownerAddonSession=owner_feed['addonSession'],
+                    ownerQuestIds=sorted(q['questId'] for q in owner_feed['quests']))
+                chosen=copy.deepcopy(source)
+                chosen['name']=c.BuddyControls.label(metadata[number(source['entry'])].get('name'),f"item {source['entry']}",120)
+                return chosen, '', proof
+        return None, reason, None
+
+
+def matches(request, source, operation):
+    return (isinstance(operation, dict) and operation.get('requestId') == request['requestId']
+        and number(operation.get('skillId', 0)) == 333 and number(operation.get('spellId', 0)) == 13262
+        and number(operation.get('targetGuid', 0)) == number(source['itemGuid'])
+        and number(operation.get('targetEntry', 0)) == source['entry']
+        and number(operation.get('sourceBag', 0)) == source['bag'] and number(operation.get('sourceSlot', 0)) == source['slot']
+        and number(operation.get('baselineInventoryRevision', 0)) == number(request['expectedInventoryRevision'])
+        and number(operation.get('baselineSkillsRevision', 0)) == number(request['expectedSkillsRevision']))
+
+
+def completion(operation):
+    return (operation.get('status') == 'COMPLETED' and all(operation.get(k) is True for k in
+        ('leaseReleased', 'castTransportWritten', 'ownGoObserved', 'lootWindowObserved', 'lootReleaseObserved',
+         'inputConsumedObserved', 'outputInventoryObserved')) and operation.get('cleanupUnconfirmed', False) is False
+        and number(operation.get('observedInventoryRevision', 0)) > number(operation.get('baselineInventoryRevision', 0))
+        and number(operation.get('lootSlotsRemoved', 0)) > 0 and number(operation.get('ownLootedItemsObserved', 0)) > 0)
+
+
+class Journal(town.base.Journal):
+    def __init__(self, path, url='http://127.0.0.1:8087/rpc', guid=4):
+        if guid != 4 or url != 'http://127.0.0.1:8087/rpc': raise Error('mira_disenchant_identity_required')
+        super().__init__(path, url, guid); self.data['mode'] = 'party_disenchant'
+    def validate(self):
+        data = self.data
+        if (not isinstance(data,dict) or type(data.get('version')) is not int or data.get('version') != 1
+                or data.get('mode') != 'party_disenchant' or data.get('rpcUrl') != self.url
+                or data.get('characterGuid') != '4' or not isinstance(data.get('attempts'), list) or len(data['attempts']) > 64):
+            raise Error('disenchant_journal_identity_or_bound')
+        seen = set()
+        for row in data['attempts']:
+            if not isinstance(row,dict):raise Error('invalid_disenchant_request')
+            request, source = row.get('request', {}), row.get('source', {})
+            if (not isinstance(request,dict) or row.get('phase') not in PHASES or token(request.get('requestId')) in seen
+                    or set(request) != {'sessionId', 'requestId', 'expectedRevision', 'expectedSkillsRevision',
+                        'expectedInventoryRevision', 'skillId', 'spellId', 'targetGuid', 'targetPositionRevision'}
+                    or request['skillId'] != 333 or request['spellId'] != 13262 or number(request['targetPositionRevision']) != 0):
+                raise Error('invalid_disenchant_request')
+            token(request['sessionId']); town.ref(source); seen.add(request['requestId'])
+            for field in ('expectedRevision', 'expectedSkillsRevision', 'expectedInventoryRevision'): town.positive(request[field])
+            if number(source['itemGuid']) != number(request['targetGuid']) or source['stackCount'] != 1:
+                raise Error('invalid_disenchant_source')
+            proof=row.get('partyProof',{});characters=proof.get('characters',{}) if isinstance(proof,dict) else {}
+            if (not isinstance(characters,dict) or {str(k) for k in characters}!={'1','3','4','5','8'}
+                    or not isinstance(proof.get('ownerAddonSession'),str)
+                    or not re.fullmatch('[0-9a-f]{12}',proof['ownerAddonSession'])
+                    or not isinstance(proof.get('ownerQuestIds'),list) or len(proof['ownerQuestIds'])>25):
+                raise Error('invalid_disenchant_party_proof')
+            quest_ids=[town.positive(q,2**31-1) for q in proof['ownerQuestIds']]
+            token(proof.get('chatModuleSessionId'))
+            if len(set(quest_ids))!=len(quest_ids):raise Error('invalid_disenchant_party_proof')
+            for key,facts in characters.items():
+                if not isinstance(facts,dict):raise Error('invalid_disenchant_party_proof')
+                town.positive(facts.get('equipmentRevision',0))
+                if str(key)!='3':
+                    token(facts.get('sessionId'));town.positive(facts.get('inventoryRevision',0));town.positive(facts.get('questLogRevision',0))
+                    if str(key)=='4' and (facts['sessionId']!=request['sessionId']
+                            or number(facts['inventoryRevision'])!=number(request['expectedInventoryRevision'])):
+                        raise Error('invalid_disenchant_party_proof')
+            if row['phase'] in TERMINAL-{'not_dispatched'}:
+                op = row.get('receipt', {})
+                if not matches(request, source, op) or op.get('leaseReleased') is not True or op.get('cleanupUnconfirmed', False) is not False:
+                    raise Error('invalid_disenchant_terminal_receipt')
+                if row['phase'] == 'completed' and not completion(op): raise Error('unproven_disenchant_completion')
+                if row['phase'] == 'blocked' and (op.get('status') != 'BLOCKED' or op.get('castTransportWritten') is True or op.get('ownGoObserved') is True):
+                    raise Error('ambiguous_disenchant_marked_blocked')
+                if row['phase'] == 'server_rejected' and (op.get('status') != 'SERVER_REJECTED' or not number(op.get('failureCode', 0))):
+                    raise Error('unproven_disenchant_rejection')
+            if row['phase'] == 'not_dispatched' and (row.get('rpcInvoked') is not False or row.get('receipt')):
+                raise Error('invalid_disenchant_local_abort')
+        if len(json.dumps(data, allow_nan=False).encode()) > 262144: raise Error('disenchant_journal_size_bound')
+
+
+def journal_path(): return ROOT/'data/autonomy/town-maintenance/4-8087/disenchant.json'
+
+
+def pending():
+    path = journal_path()
+    try:
+        with os.fdopen(c.private_open(path, os.O_RDONLY), 'rb') as source: raw = source.read(262145)
+    except FileNotFoundError: return False
+    if len(raw) > 262144: raise Error('disenchant_journal_size_bound')
+    journal = Journal(path); journal.data = town.base.decode_json(raw); journal.validate()
+    return any(r['phase'] not in TERMINAL for r in journal.data['attempts'])
+
+
+class Worker:
+    def __init__(self, rpc, journal, scanner, guard, stopped=lambda: False, now=time.monotonic, sleep=time.sleep):
+        self.rpc, self.journal, self.scanner, self.guard = rpc, journal, scanner, guard
+        self.stopped, self.now, self.sleep = stopped, now, sleep
+        if rpc.url != journal.url: raise Error('mira_disenchant_identity_required')
+    def check_guard(self):
+        try:self.guard()
+        except Exception:raise Error('disenchant_control_or_safety_changed') from None
+    def state(self):
+        state = self.rpc.call('buddy-professions.state', {})
+        if number(state.get('selfGuid', 0)) != 4: raise Error('mira_disenchant_identity_required')
+        token(state.get('sessionId')); return state
+    def receipt(self, row, state):
+        request = row['request']; operation = state.get('operation') or {}
+        if state['sessionId'] != request['sessionId']: row['phase'] = 'new_session_requires_review'
+        elif matches(request, row['source'], operation):
+            row['receipt'] = copy.deepcopy(operation)
+            if operation.get('operationId'): token(operation['operationId']); row['operationId'] = operation['operationId']
+            clean = operation.get('leaseReleased') is True and operation.get('cleanupUnconfirmed', False) is False and state.get('active', False) is False
+            if clean and completion(operation):
+                inv = town.checked_state(self.rpc.call('buddy-inventory.state', {}), 4)
+                _, slots = town.layout(inv); equipped = gear.equipment(inv)
+                absent = all(number(r.get('itemGuid', 0)) != number(row['source']['itemGuid'])
+                    for r in [*slots.values(), *equipped.values()])
+                row['phase'] = ('completed' if inv['sessionId'] == request['sessionId'] and absent
+                    and number(inv['inventoryRevision']) >= number(operation['observedInventoryRevision']) else 'unconfirmed')
+            elif clean and operation.get('status') == 'BLOCKED' and not operation.get('castTransportWritten', False) and not operation.get('ownGoObserved', False): row['phase'] = 'blocked'
+            elif clean and operation.get('status') == 'SERVER_REJECTED' and number(operation.get('failureCode', 0)): row['phase'] = 'server_rejected'
+            else: row['phase'] = 'requested' if operation.get('status') in ('RESERVED', 'WAITING_CAST', 'WAITING_LOOT', 'WAITING_OBSERVATIONS') else 'unconfirmed'
+        else: row['phase'] = 'unconfirmed'
+        self.journal.save(); return row['phase']
+    def result(self,row):
+        phase=row['phase']
+        result=dict(phase='complete' if phase=='completed' else phase if phase in TERMINAL else 'unconfirmed',
+            newConfirmedOperations=int(phase=='completed'))
+        if phase=='completed':
+            op=row['receipt'];result['disenchantedItems']=[dict(entry=row['source']['entry'],name=row.get('name',''),
+                bodySessionId=row['request']['sessionId'],status='COMPLETED',ownGoObserved=True,inputConsumedObserved=True,
+                outputInventoryObserved=True,lootReleaseObserved=True,leaseReleased=True,
+                baselineInventoryRevision=op['baselineInventoryRevision'],observedInventoryRevision=op['observedInventoryRevision'])]
+        return result
+    def run(self, protected=(), max_seconds=25):
+        self.reservation_created=any(r['phase'] not in TERMINAL for r in self.journal.data['attempts'])
+        try:return self.run_checked(protected,max_seconds)
+        except (Error,c.ConversationError,OSError,ValueError,KeyError,TypeError):
+            if self.reservation_created:raise
+            return dict(phase='blocked',reason='comparison_or_preflight_unavailable_keep_item',newConfirmedOperations=0)
+    def run_checked(self, protected=(), max_seconds=25):
+        if self.journal.lock is None or not 0 < max_seconds <= 30: raise Error('finite_locked_disenchant_required')
+        deadline = self.now()+max_seconds
+        if isinstance(self.rpc,RPC):self.rpc.deadline=time.monotonic()+max_seconds
+        self.scanner.deadline=time.monotonic()+max_seconds
+        row = next((r for r in self.journal.data['attempts'] if r['phase'] not in TERMINAL), None)
+        if row is not None:
+            phase = self.receipt(row, self.state())
+            return self.result(row)
+        self.check_guard()
+        inv = town.checked_state(self.rpc.call('buddy-inventory.state', {}), 4)
+        source, reason, shared = self.scanner.scan(inv, protected)
+        if source is None: return dict(phase='blocked', reason=reason, newConfirmedOperations=0)
+        attempted = {number(r['source']['itemGuid']) for r in self.journal.data['attempts'] if r['phase'] != 'not_dispatched'}
+        if number(source['itemGuid']) in attempted or len(self.journal.data['attempts']) >= 64:
+            return dict(phase='blocked', reason='disenchant_source_already_reserved', newConfirmedOperations=0)
+        state = self.rpc.call('buddy-professions.inspect_disenchant', dict(sessionId=inv['sessionId'], targetGuid=source['itemGuid']))
+        item = state.get('disenchantItem', {})
+        if (state.get('sessionId') != inv['sessionId'] or number(state.get('selfGuid', 0)) != 4 or item.get('ready') is not True
+                or state.get('active') is True or state.get('closing') is True or state.get('stopPrepared') is True
+                or state.get('skillsKnown') is not True or state.get('spellsKnown') is not True
+                or number(state.get('inventoryRevision', 0)) != number(inv['inventoryRevision'])
+                or any(number(item.get(k, 0)) != number(source.get(k, 0)) for k in ('bag', 'slot', 'itemGuid', 'entry', 'stackCount'))):
+            return dict(phase='blocked', reason=item.get('reason', 'selected_disenchant_not_ready'), newConfirmedOperations=0)
+        self.check_guard()
+        fresh = town.checked_state(self.rpc.call('buddy-inventory.state', {}), 4)
+        # Re-read every party comparison before reserving destruction. A changed
+        # selection or source is a read-only abort, never an issued request.
+        latest, reason, latest_shared = self.scanner.scan(fresh, protected, selected=source)
+        if (fresh['sessionId'] != inv['sessionId'] or number(fresh['inventoryRevision']) != number(inv['inventoryRevision'])
+                or latest is None or town.ref(latest) != town.ref(source) or latest_shared != shared):
+            return dict(phase='blocked', reason=reason or 'party_comparison_changed', newConfirmedOperations=0)
+        self.check_guard()
+        final = self.state()
+        if (final['sessionId'] != state['sessionId'] or final.get('active') is True or final.get('closing') is True
+                or any(number(final.get(k, 0)) != number(state.get(k, 0)) for k in ('revision', 'skillsRevision', 'inventoryRevision'))):
+            return dict(phase='blocked', reason='disenchant_observations_changed', newConfirmedOperations=0)
+        request = dict(sessionId=state['sessionId'], requestId='auto_de_'+uuid.uuid4().hex,
+            expectedRevision=str(number(state['revision'])), expectedSkillsRevision=str(number(state['skillsRevision'])),
+            expectedInventoryRevision=str(number(state['inventoryRevision'])), skillId=333, spellId=13262,
+            targetGuid=source['itemGuid'], targetPositionRevision='0')
+        row = dict(phase='reserved', request=request, source=town.ref(source), partyProof=shared,name=source.get('name',''))
+        self.reservation_created=True
+        self.journal.data['attempts'].append(row); self.journal.save()
+        if self.stopped() or self.now() >= deadline:
+            row.update(phase='not_dispatched', rpcInvoked=False); self.journal.save()
+            return dict(phase='blocked', reason='stop_before_disenchant_dispatch', newConfirmedOperations=0)
+        try: state = self.rpc.call('buddy-professions.attempt', request)
+        except Error:
+            row['phase'] = 'unconfirmed'; self.journal.save()
+            return dict(phase='unconfirmed', reason='disenchant_reply_unknown_no_retry', newConfirmedOperations=0)
+        while True:
+            phase = self.receipt(row, state)
+            if phase in TERMINAL:
+                return dict(self.result(row),reason=(row.get('receipt') or {}).get('reason',''))
+            if self.now() >= deadline: return dict(phase='unconfirmed', reason='disenchant_pending_no_retry', newConfirmedOperations=0)
+            try: self.check_guard()
+            except Error:
+                current=self.state()
+                if (current['sessionId']==request['sessionId'] and matches(request,row['source'],current.get('operation'))
+                        and row.get('operationId')==current.get('operation',{}).get('operationId') and not row.get('cancelReserved')):
+                    row['cancelReserved'] = True; self.journal.save()
+                    try: self.rpc.call('buddy-professions.cancel', dict(sessionId=request['sessionId'], operationId=row['operationId']))
+                    except Error: pass
+                return dict(phase='unconfirmed', reason='disenchant_cleanup_pending', newConfirmedOperations=0)
+            self.sleep(.15); state = self.state()
