@@ -39,6 +39,7 @@ packets:
   SMSG_LOOT_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELLDISPELLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_DESTROY_OBJECT: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_NEW_WORLD: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

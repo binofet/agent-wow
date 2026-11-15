@@ -1022,7 +1022,8 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active {
+	cleanse := s.potentialCleanseLocked()
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
@@ -1059,7 +1060,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1079,6 +1080,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.state.Healing && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
+		s.lastStep = now
+		return
+	}
+	if cleanse && s.cleanseTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
