@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-¨a
-actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
+éb
+#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
 EngageNPCRequest
@@ -348,7 +348,12 @@ targetGuid
 session_id (	R	sessionId
 	self_guid (RselfGuid
 caster_guid (R
-casterGuid2Š
+casterGuid"Q
+PickLockRequest
+
+session_id (	R	sessionId
+target_guid (R
+targetGuid2â
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
 Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
@@ -376,4 +381,5 @@ casterGuid2Š
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
 ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
-AcceptResurrection3.warcraftbuddy.actions.v1.AcceptResurrectionRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+AcceptResurrection3.warcraftbuddy.actions.v1.AcceptResurrectionRequest.warcraftbuddy.actions.v1.StateV
+PickLock).warcraftbuddy.actions.v1.PickLockRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

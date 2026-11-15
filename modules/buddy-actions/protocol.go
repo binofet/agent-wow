@@ -190,7 +190,8 @@ func validCastTargetBody(data []byte, offset int, goEvent bool, expectedTarget u
 	pos += 4
 	if mask == 0 && allowSelf && (!goEvent || exactSelfHit) {
 		// Server normalization for an implicit self-only effect.
-	} else if mask == 2 || expectedTarget>>48 == 0xf101 && (mask == 0x8000 || mask == 0x8200) {
+	} else if mask == 2 || expectedTarget>>48 == 0xf101 && (mask == 0x8000 || mask == 0x8200) ||
+		expectedTarget>>48 == 0xf110 && mask == 0x800 {
 		target, n, err := readGUID(data[pos:])
 		if err != nil || target != expectedTarget && !(allowSelf && target == 0 && goEvent && exactSelfHit) {
 			return false
