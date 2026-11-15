@@ -18,6 +18,17 @@ func TestMapName(t *testing.T) {
 	}
 }
 
+func TestIsDungeon(t *testing.T) {
+	for id, want := range map[uint32]bool{
+		0: false, 33: true, 36: true, 489: false, 533: true, 571: false,
+		574: true, 617: false, 724: true, 0xffffffff: false,
+	} {
+		if got := maps.IsDungeon(id); got != want {
+			t.Errorf("IsDungeon(%d) = %t, want %t", id, got, want)
+		}
+	}
+}
+
 func TestZoneName(t *testing.T) {
 	for id, want := range map[uint32]string{
 		12: "Elwynn Forest", 14: "Durotar", 9: "Northshire Valley",

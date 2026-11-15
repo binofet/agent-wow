@@ -6,6 +6,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/maps"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
@@ -301,7 +302,16 @@ const (
 func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.LastCastFailure = code
 	s.state.CastPending = false
-	if s.spellKindLocked(s.pendingSpell) != spellcatalog.Heal {
+	kind := s.spellKindLocked(s.pendingSpell)
+	self := s.lastWorld.GetSelf()
+	if kind == spellcatalog.Damage && (code == spellFailedInterrupted || code == spellFailedInterruptedCombat) &&
+		s.pendingTarget != 0 && !s.independent && self.GetMapKnown() && maps.IsDungeon(self.GetMapId()) && !s.state.Practicing && !s.fargodeep.active {
+		// A correlated interruption settles the cast. The next defensive attempt
+		// still requires positive evidence of an active attacker and the normal GCD.
+		s.failedAssistTarget = s.pendingTarget
+		s.failedAssistCastTarget = s.pendingTarget
+		s.state.Reason = "server_dungeon_offense_interrupted"
+	} else if kind != spellcatalog.Heal {
 		s.failedAssistTarget = s.pendingTarget
 		s.failedAssistCastTarget = s.pendingTarget
 		s.nextAssist = s.now().Add(5 * time.Second)
