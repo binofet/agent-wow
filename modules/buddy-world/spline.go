@@ -7,6 +7,7 @@ import "time"
 // https://github.com/azerothcore/azerothcore-wotlk/tree/master/src/server/game/Movement/Spline
 type observedTrajectory struct {
 	known, destinationKnown, cyclic, relative, stopped bool
+	controlReturned                                    bool
 	duration, elapsed, flags                           uint32
 	at                                                 time.Time
 	destination                                        [3]float32
@@ -17,6 +18,8 @@ type observedTrajectory struct {
 // These modes do not establish arrival at a finite endpoint. Enter_Cycle is
 // intentionally absent: the producer emits it for real cyclic flying paths.
 const unsafeEndpointFlags uint32 = 0x400 | 0x400000 | 0x02000000 | 0x04000000 | 0xf0000000
+
+const splineMotionFlags uint32 = 0x080000ff
 
 func point(c *cursor) ([3]float32, error) {
 	p := [3]float32{c.f32(), c.f32(), c.f32()}
@@ -127,23 +130,52 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 	if p == nil {
 		return nil
 	}
-	if transport {
+	if p.isSelf && (transport || !t.stopped) {
+		// The controller cannot steer or report a stable self pose while the
+		// server moves it. Keep the last spline for control-return recovery.
+		p.positionKnown = false
+		p.observedAt = now
+	} else if transport {
 		// Start and destination are transport-relative, not world coordinates.
 		p.positionKnown = false
 		p.observedAt = now
-		p.movementFlags |= 0x200
 	} else {
 		if err := position(p, start[0], start[1], start[2], p.orientation, now); err != nil {
 			return err
 		}
+	}
+	if transport {
+		p.movementFlags |= 0x200
+	} else {
 		p.movementFlags &^= 0x200
 	}
-	p.movementKnown = false
+	p.movementKnown = p.isSelf && t.stopped && !transport
 	if t.stopped {
-		p.movementFlags &^= 0x080000ff
+		p.movementFlags &^= splineMotionFlags
 	} else {
 		p.movementFlags |= 0x08000000
 	}
 	p.trajectory = t
 	return nil
+}
+
+func settleSelfSpline(p *observed, now time.Time) {
+	t := p.trajectory
+	const parabolicOrAnimation = 0x800 | 0x200000
+	if !p.present || !p.mapKnown || p.positionKnown || !t.controlReturned || !t.destinationKnown || t.stopped || t.relative || t.flags&parabolicOrAnimation != 0 {
+		return
+	}
+	arrival := t.at.Add(time.Duration(t.duration) * time.Millisecond)
+	if now.Before(arrival) {
+		return
+	}
+	latestObservation := p.observedAt
+	if err := position(p, t.destination[0], t.destination[1], t.destination[2], p.orientation, arrival); err != nil {
+		return
+	}
+	if latestObservation.After(arrival) {
+		p.observedAt = latestObservation
+	}
+	p.movementFlags &^= splineMotionFlags
+	p.movementKnown = true
 }

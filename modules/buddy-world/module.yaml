@@ -29,6 +29,7 @@ packets:
   SMSG_MOVE_KNOCK_BACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_MONSTER_MOVE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_MONSTER_MOVE_TRANSPORT: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_START_FORWARD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_START_BACKWARD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   MSG_MOVE_STOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket

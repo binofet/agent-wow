@@ -147,6 +147,7 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
+	settleSelfSpline(&s.state.players[0], now)
 	r := &worldv1.SnapshotResponse{Self: snapshot(s.state.players[0], now), IgnoredPackets: s.ignored, MalformedPackets: s.malformed, ObservedPackets: s.observed, LastOpcode: s.lastOpcode, LastParseError: s.lastError}
 	if owner := s.state.players[1]; owner.guid != 0 {
 		r.Owner = snapshot(owner, now)

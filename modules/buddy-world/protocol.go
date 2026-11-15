@@ -333,24 +333,35 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			p.observedAt = now
 		}
 		return true, nil
+	case opcode.SMSGClientControlUpdate:
+		guid, enabled := c.guid(), c.u8()
+		if err := c.done(); err != nil {
+			return true, err
+		}
+		if enabled > 1 {
+			return true, errLayout
+		}
+		if p := &players[0]; guid != 0 && guid == p.guid {
+			p.trajectory.controlReturned = enabled == 1
+			p.observedAt = now
+			settleSelfSpline(p, now)
+		}
+		return true, nil
 	case opcode.SMSGMonsterMove, opcode.SMSGMonsterMoveTransport:
 		guid := c.guid()
 		p := state.target(guid)
-		if !creatureGUID(guid) {
-			p = nil
-		}
-		if err := monsterMove(c, p, op == opcode.SMSGMonsterMoveTransport, now); err != nil {
-			return true, err
-		}
-		// Server spline motion of controlled players is outside this controller.
-		if !creatureGUID(guid) {
-			if player := state.target(guid); player != nil {
-				player.positionKnown = false
-				player.movementKnown = false
-				player.observedAt = now
+		if p != nil && !p.isSelf && !creatureGUID(guid) {
+			// Only the session mover can receive a matching control-return signal.
+			if err := monsterMove(c, nil, op == opcode.SMSGMonsterMoveTransport, now); err != nil {
+				return true, err
 			}
+			p.positionKnown = false
+			p.movementKnown = false
+			p.observedAt = now
+			p.trajectory = observedTrajectory{}
+			return true, nil
 		}
-		return true, nil
+		return true, monsterMove(c, p, op == opcode.SMSGMonsterMoveTransport, now)
 	case opcode.SMSGMoveKnockBack:
 		// Spline and knockback trajectories are deliberately not predicted.
 		// Invalidate a tracked player's position until the next actual position.
