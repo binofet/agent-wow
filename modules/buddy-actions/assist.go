@@ -6,6 +6,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/maps"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
@@ -141,7 +142,11 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if !known {
 		return fail("assist_target_outside_conservative_range")
 	}
-	r := s.bestDamageLocked(self, targetPosition)
+	finishHealth := uint32(0)
+	if target.HealthKnown && target.MaxHealth > 0 && uint64(target.Health)*100 <= uint64(target.MaxHealth)*25 {
+		finishHealth = target.Health
+	}
+	r := s.bestDamageLocked(self, targetPosition, finishHealth, target.Guid)
 	if self.ClassId != 4 && r.ID == 0 && !s.state.KnownAutoAttack {
 		return fail("no_affordable_learned_damage_spell_in_range")
 	}
@@ -289,10 +294,24 @@ func creaturePosition(c *worldv1.CreatureState) (position, bool, bool) {
 	return p, c.PositionKnown && finite(p), false
 }
 
+const (
+	spellFailedInterrupted       = 40
+	spellFailedInterruptedCombat = 41
+)
+
 func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.LastCastFailure = code
 	s.state.CastPending = false
-	if s.spellKindLocked(s.pendingSpell) != spellcatalog.Heal {
+	kind := s.spellKindLocked(s.pendingSpell)
+	self := s.lastWorld.GetSelf()
+	if kind == spellcatalog.Damage && (code == spellFailedInterrupted || code == spellFailedInterruptedCombat) &&
+		s.pendingTarget != 0 && !s.independent && self.GetMapKnown() && maps.IsDungeon(self.GetMapId()) && !s.state.Practicing && !s.fargodeep.active {
+		// A correlated interruption settles the cast. The next defensive attempt
+		// still requires positive evidence of an active attacker and the normal GCD.
+		s.failedAssistTarget = s.pendingTarget
+		s.failedAssistCastTarget = s.pendingTarget
+		s.state.Reason = "server_dungeon_offense_interrupted"
+	} else if kind != spellcatalog.Heal {
 		s.failedAssistTarget = s.pendingTarget
 		s.failedAssistCastTarget = s.pendingTarget
 		s.nextAssist = s.now().Add(5 * time.Second)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,6 +27,22 @@ func fixture(fields, labelField int) []byte {
 	binary.LittleEndian.PutUint32(data[20+(fields+labelField)*4:], 11)
 	copy(data[20+2*fields*4:], strings)
 	return data
+}
+
+func TestDecodeDungeonMaps(t *testing.T) {
+	data := fixture(66, 5)
+	binary.LittleEndian.PutUint32(data[20+2*4:], 2)      // Map 1, raid.
+	binary.LittleEndian.PutUint32(data[20+(66+2)*4:], 1) // Map 0, party.
+	ids, err := decodeDungeonMaps(data)
+	if err != nil || !slices.Equal(ids, []uint32{0, 1}) {
+		t.Fatalf("dungeon maps = %v, %v", ids, err)
+	}
+	binary.LittleEndian.PutUint32(data[20+2*4:], 3)      // Battleground.
+	binary.LittleEndian.PutUint32(data[20+(66+2)*4:], 4) // Arena.
+	ids, err = decodeDungeonMaps(data)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("dungeon maps = %v, %v", ids, err)
+	}
 }
 
 func TestDecodeLabels(t *testing.T) {

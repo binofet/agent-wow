@@ -1,6 +1,6 @@
-// Command mapcatalog generates stock build-12340 English map and zone labels
-// from local Map.dbc and AreaTable.dbc reference files. It does not access the
-// network or server internals. Run from the repository root:
+// Command mapcatalog generates stock build-12340 map classifications and
+// English map and zone labels from local Map.dbc and AreaTable.dbc reference
+// files. It does not access the network or server internals. Run from the repository root:
 //
 //	./run client-data:fetch
 //	./run mapcatalog:generate
@@ -22,6 +22,8 @@ import (
 )
 
 const destination = "pkg/maps/labels_gen.go"
+
+const mapFields = 66
 
 func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
@@ -54,7 +56,7 @@ func generate(directory string) ([]byte, error) {
 		file, variable string
 		fields, label  uint32
 	}{
-		{"Map.dbc", "mapNames", 66, 5},
+		{"Map.dbc", "mapNames", mapFields, 5},
 		{"AreaTable.dbc", "zoneNames", 36, 11},
 	} {
 		data, err := clientdata.Read(directory, table.file)
@@ -76,36 +78,58 @@ func generate(directory string) ([]byte, error) {
 			fmt.Fprintf(&out, "%d: %q,\n", id, labels[id])
 		}
 		fmt.Fprintln(&out, "}")
+		if table.file == "Map.dbc" {
+			dungeons, err := decodeDungeonMaps(data)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", table.file, err)
+			}
+			fmt.Fprintf(&out, "\n// Map.dbc: %d party and raid maps, by InstanceType.\n", len(dungeons))
+			fmt.Fprintln(&out, "var dungeonMapIDs = [...]uint32{")
+			for _, id := range dungeons {
+				fmt.Fprintf(&out, "%d,\n", id)
+			}
+			fmt.Fprintln(&out, "}")
+		}
 	}
 	return format.Source(out.Bytes())
 }
 
-func decodeLabels(data []byte, fields, labelField uint32) (map[uint32]string, error) {
+func dbcBlocks(data []byte, fields uint32) (records, strings []byte, err error) {
 	if len(data) < 20 || string(data[:4]) != "WDBC" {
-		return nil, errors.New("expected a complete WDBC header")
+		return nil, nil, errors.New("expected a complete WDBC header")
 	}
 	count := binary.LittleEndian.Uint32(data[4:8])
 	columns := binary.LittleEndian.Uint32(data[8:12])
 	size := binary.LittleEndian.Uint32(data[12:16])
 	stringsSize := binary.LittleEndian.Uint32(data[16:20])
-	if columns != fields || uint64(size) != uint64(fields)*4 || labelField >= fields {
-		return nil, errors.New("unexpected DBC field layout")
+	if columns != fields || uint64(size) != uint64(fields)*4 {
+		return nil, nil, errors.New("unexpected DBC field layout")
 	}
 	// Validate using uint64 before converting header lengths to slice indexes.
 	stringsStart := 20 + uint64(count)*uint64(size)
 	if stringsStart+uint64(stringsSize) != uint64(len(data)) {
-		return nil, errors.New("file length does not match DBC record and string counts")
+		return nil, nil, errors.New("file length does not match DBC record and string counts")
 	}
 	if count == 0 {
-		return nil, errors.New("DBC has no records")
+		return nil, nil, errors.New("DBC has no records")
 	}
-	strings := data[int(stringsStart):]
-	labels := make(map[uint32]string, int(count))
-	for i := uint32(0); i < count; i++ {
-		start := 20 + int(i)*int(size)
-		id := binary.LittleEndian.Uint32(data[start : start+4])
+	return data[20:stringsStart], data[stringsStart:], nil
+}
+
+func decodeLabels(data []byte, fields, labelField uint32) (map[uint32]string, error) {
+	records, strings, err := dbcBlocks(data, fields)
+	if err != nil {
+		return nil, err
+	}
+	if labelField >= fields {
+		return nil, errors.New("unexpected DBC field layout")
+	}
+	size := int(fields) * 4
+	labels := make(map[uint32]string, len(records)/size)
+	for start := 0; start < len(records); start += size {
+		id := binary.LittleEndian.Uint32(records[start : start+4])
 		labelStart := start + int(labelField)*4
-		offset := binary.LittleEndian.Uint32(data[labelStart : labelStart+4])
+		offset := binary.LittleEndian.Uint32(records[labelStart : labelStart+4])
 		if uint64(offset) >= uint64(len(strings)) {
 			return nil, fmt.Errorf("ID %d: label offset outside string block", id)
 		}
@@ -123,4 +147,29 @@ func decodeLabels(data []byte, fields, labelField uint32) (map[uint32]string, er
 		labels[id] = string(label)
 	}
 	return labels, nil
+}
+
+func decodeDungeonMaps(data []byte) ([]uint32, error) {
+	records, _, err := dbcBlocks(data, mapFields)
+	if err != nil {
+		return nil, err
+	}
+	const (
+		instanceTypeField = 2
+		partyInstance     = 1
+		raidInstance      = 2
+	)
+	var ids []uint32
+	for offset := 0; offset < len(records); offset += mapFields * 4 {
+		row := records[offset:]
+		switch binary.LittleEndian.Uint32(row[instanceTypeField*4:]) {
+		case partyInstance, raidInstance:
+			ids = append(ids, binary.LittleEndian.Uint32(row))
+		case 0, 3, 4: // World, battleground and arena.
+		default:
+			return nil, fmt.Errorf("unknown InstanceType for map %d", binary.LittleEndian.Uint32(row))
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
 }
