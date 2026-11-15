@@ -217,11 +217,14 @@ def supply_step(rpc, observations, state):
 
     needs_bag_space = False
     usable = {}
-    for _, port, recipient, slots in sorted(peers):
+    for drink_count, port, recipient, slots in sorted(peers):
         available = compatible(recipient["world"]["self"])
         if not available:
             continue
-        stack = carried_water(world, available, own_stock - STOCK_MINIMUM, slots)
+        # Help an empty caster immediately. Conjuring into the same stack
+        # cannot make it fit within a reserve, because the trade moves it whole.
+        spare = own_stock if drink_count == 0 else own_stock - STOCK_MINIMUM
+        stack = carried_water(world, available, spare, slots)
         if stack:
             return give_water(rpc, mira, port, recipient, *stack)
         if any(not number(slot.get("itemGuid")) for slot in slots):
