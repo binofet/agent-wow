@@ -124,13 +124,20 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_full_bags_can_accept_a_matching_partial_stack(self):
-        carried(self.mira, 2136, 8)
-        self.arlen["inventory"]["manaDrinkCount"] = 2
+        carried(self.mira, 2136, 6)
+        self.arlen["inventory"]["manaDrinkCount"] = 8
         self.arlen["inventory"]["inventoryBags"][0]["slots"][:] = [
-            dict(entry=2136, stackCount=2, metadataKnown=True, itemGuid="14"),
+            dict(entry=2136, stackCount=8, metadataKnown=True, itemGuid="14"),
         ]
         self.assertEqual(self.step(), "water_trade_started")
         self.assertEqual(self.calls[1][2]["itemEntry"], 2136)
+        self.assertEqual(self.calls[1][2]["itemCount"], 6)
+
+        self.calls.clear()
+        self.arlen["inventory"]["manaDrinkCount"] = 14
+        self.arlen["inventory"]["inventoryBags"][0]["slots"][0]["stackCount"] = 14
+        self.assertEqual(self.step(), "water_stock_sufficient")
+        self.assertEqual(self.calls, [])
 
     def test_observes_peer_with_current_action_position(self):
         carried(self.mira, 2136, 8)
