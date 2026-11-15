@@ -38,7 +38,7 @@ class BagPressureTests(unittest.TestCase):
             str(JUNK_ID): dict(itemClass=15, subclass=0),
             str(GEAR_ID): dict(itemClass=4, subclass=1),
             str(QUEST_ID): dict(itemClass=15, subclass=0, questIds=[386])}})
-        self.assertEqual(self.entries, {JUNK_ID})
+        self.assertEqual(self.entries, {JUNK_ID: None})
         self.views = {8088: snapshot(5)}
         self.attempts = {}
         self.calls = []
@@ -106,6 +106,44 @@ class BagPressureTests(unittest.TestCase):
         rook['inventory']['inventoryBags'][1]['slots'][0] = dict(bag=1, slot=0)
         self.assertEqual(self.tick(), 'room_available')
         self.assertEqual(self.calls, [])
+
+    def test_low_water_stock_reserves_slot_only_without_compatible_stack_room(self):
+        arlen = self.views[8086] = snapshot(1, loot=False)
+        arlen['inventory']['manaDrinkCount'] = 4
+        self.views[8087] = dict(spell_toolkit=dict(spells=[dict(
+            familyId=5504, capability='create_item', createdItemEntry=8077)]))
+        slots = arlen['inventory']['inventoryBags'][0]['slots']
+        slots[1].update(entry=8077, stackCount=4)
+        self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
+        slots[1].update(entry=159)
+        self.assertEqual(self.tick(port=8086), 'waiting_for_disposal')
+
+    def test_gray_armor_requires_no_upgrade_and_exact_equipped_comparison(self):
+        arlen = self.views[8086] = snapshot(1, loot=False)
+        arlen['inventory']['manaDrinkCount'] = 0
+        arlen['world'].update(selfEquipmentKnown=True, selfEquipment=[dict(
+            slot=8, slotKnown=True, metadataKnown=True, itemGuid=str(GUID_BASE + 200), entry=100)])
+        self.entries = bags.safe_junk_entries({'items': {
+            str(GEAR_ID): dict(itemClass=4, subclass=1, inventoryType=9),
+            str(QUEST_ID): dict(itemClass=4, subclass=1, inventoryType=9, questIds=[386]),
+            '4': dict(itemClass=4, subclass=1, inventoryType=9, useSpells=[1])}})
+        self.assertEqual(self.entries, {GEAR_ID: 8})
+        slots = arlen['inventory']['inventoryBags'][0]['slots']
+        slots[2]['enhancementsKnown'] = True
+        arlen['inventory']['items'][2]['conservativeUpgrade'] = True
+        self.assertEqual(self.tick(port=8086), 'no_verified_gray_junk')
+        arlen['inventory']['items'][2]['conservativeUpgrade'] = False
+        arlen['trade'].update(backpackKnown=True, backpackRevision='21')
+
+        def rpc(port, method, args):
+            self.calls.append((port, method, args))
+            return dict(sessionId='body', items=[dict(itemId=GEAR_ID, available=True, armorComparisonKnown=True, armor=9),
+                dict(itemId=100, available=True, armor=15)])
+
+        with patch.object(self, 'rpc', rpc):
+            self.assertEqual(self.tick(131, 8086), 'waiting_for_disposal')
+        self.assertEqual(self.calls[0], (8086, 'buddy-trade.lookup_items', {'itemIds': [GEAR_ID, 100]}))
+        self.assertEqual(self.calls[1][2]['expectedItemGuid'], slots[2]['itemGuid'])
 
 
 if __name__ == '__main__':

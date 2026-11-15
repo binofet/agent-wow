@@ -244,7 +244,12 @@ def supply_step(rpc, observations, state):
         "waiting_server", "waiting_created_item", "transport_unconfirmed_no_retry",
     ):
         return "conjure_pending"
-    _, spell, _ = max(usable.values())
+    own_slots = receiving_slots(mira)
+    has_room = {item: rank for item, rank in usable.items()
+                if receiving_capacity(own_slots, item) > 0}
+    if not has_room:
+        return "mage_needs_bag_space"
+    _, spell, _ = max(has_room.values())
     if number(world["self"].get("power")) == 0:
         return "waiting_for_mana_to_conjure"
     result = rpc(MIRA, "buddy-actions.create_item", {

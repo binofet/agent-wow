@@ -7,6 +7,7 @@ CASTERS = {8086: 1, 8087: 4, 8402: 8}
 DUNGEON_MAPS = frozenset({33, 34, 36, 43, 48, 389})  # Early dungeons used by the party.
 START_BELOW = 80
 COMBAT = 0x80000
+RECENT_ATTACK_MS = 5000
 
 
 def number(value):
@@ -35,6 +36,7 @@ def unsafe(world, own, actions, party):
         return True
     victims = {number(row.get('guid')) for row in people}
     if any(row.get('present') and row.get('aliveKnown') and row.get('alive') and row.get('attackVictimKnown')
+           and number(row.get('attackAgeMs')) <= RECENT_ATTACK_MS
            and number(row.get('attackVictimGuid')) in victims for row in world.get('nearbyCreatures', [])):
         return True
     urgent_heal = (actions.get('healing') and number(own.get('power')) > 0

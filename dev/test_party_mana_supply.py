@@ -146,6 +146,16 @@ class SupplyTest(unittest.TestCase):
         self.arlen["world"]["nearbyPlayers"][0] = dict(self.mira["world"]["self"], x=0)
         self.assertEqual(self.step(), "water_trade_started")
 
+    def test_mage_needs_room_before_conjuring_and_uses_partial_stack(self):
+        self.mira["inventory"]["manaDrinkCount"] = 0
+        own_slots = self.mira["inventory"]["inventoryBags"][0]["slots"]
+        own_slots[:] = [dict(entry=117, stackCount=3, metadataKnown=True, itemGuid="11")]
+        self.assertEqual(self.step(), "mage_needs_bag_space")
+        self.assertEqual(self.calls, [])
+        own_slots[:] = [dict(entry=2288, stackCount=5, metadataKnown=True, itemGuid="12")]
+        self.assertEqual(self.step(), "conjure_requested")
+        self.assertEqual(self.calls[-1][2]["spellId"], 5505)
+
     def test_pending_conjure_is_not_repeated(self):
         self.mira["actions"]["lastSpellOperation"] = dict(capability="create_item", phase="waiting_created_item")
         self.assertEqual(self.step(), "conjure_pending")

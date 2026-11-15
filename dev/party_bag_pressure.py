@@ -3,6 +3,8 @@
 import math
 import time
 
+from party_mana_supply import MIRA, MIRA_GUID, PEER_REORDER_THRESHOLD, STOCK_MINIMUM, receiving_capacity
+
 
 PARTY = {8086: 1, 8087: 4, 8088: 5, 8402: 8}
 CASTERS = {1, 4, 8}
@@ -11,6 +13,8 @@ COOLDOWN = 30
 RECHECK = 5
 RECEIPT_WAIT = 8
 IN_COMBAT = 0x80000
+ITEM_LOOKUP_LIMIT = 6  # Public buddy-trade.lookup_items bound.
+ARMOR_SLOTS = {1: 0, 3: 2, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14, 20: 4}
 
 
 def number(value):
@@ -18,11 +22,17 @@ def number(value):
 
 
 def safe_junk_entries(catalog):
-    """Filter the maintained build-12340 catalog to ordinary non-quest misc."""
-    return frozenset(int(entry) for entry, item in catalog['items'].items()
-                     if item.get('itemClass') == 15 and item.get('subclass') == 0
-                     and item.get('inventoryType', 0) == 0
-                     and not any(item.get(key) for key in ('questIds', 'startsQuest', 'useSpells', 'containerSlots')))
+    """Index ordinary non-quest misc and armor; live item facts prove quality."""
+    result = {}
+    for entry, item in catalog['items'].items():
+        if any(item.get(key) for key in ('questIds', 'startsQuest', 'useSpells', 'containerSlots')):
+            continue
+        kind, subclass, inv_type = item.get('itemClass'), item.get('subclass'), item.get('inventoryType', 0)
+        if (kind, subclass, inv_type) == (15, 0, 0):
+            result[int(entry)] = None
+        elif kind == 4 and subclass in (1, 2, 3, 4) and inv_type in ARMOR_SLOTS:
+            result[int(entry)] = ARMOR_SLOTS[inv_type]
+    return result
 
 
 def carried_slots(inventory):
@@ -75,7 +85,9 @@ def can_dispose(world, actions, inventory, trade, guid):
             and trade.get('phase') in ('IDLE', 'COMPLETE') and not trade.get('waterGiftArmed'))
 
 
-def candidate(inventory, slots, safe_entries):
+def candidates(world, inventory, slots, safe_entries):
+    worn = {number(item.get('slot')): item for item in world.get('selfEquipment', [])
+            if item.get('slotKnown') and item.get('metadataKnown') and number(item.get('itemGuid'))}
     choices = []
     for row in inventory.get('items', []):
         if row.get('safeJunkSaleEligible') is not True or row.get('metadataKnown') is not True:
@@ -89,8 +101,49 @@ def candidate(inventory, slots, safe_entries):
                 or current.get('metadataKnown') is not True or number(current.get('itemGuid')) != guid
                 or number(current.get('entry')) != entry or number(current.get('stackCount')) != count):
             continue
-        choices.append((count * price, bag, slot, guid, entry))
-    return min(choices, default=None)
+        armor_slot = safe_entries[entry]
+        replacement = worn.get(armor_slot, {})
+        if armor_slot is not None and (not world.get('selfEquipmentKnown') or row.get('conservativeUpgrade')
+                or not current.get('enhancementsKnown') or current.get('hasEnhancements')
+                or not number(replacement.get('entry')) or number(replacement.get('itemGuid')) == guid):
+            continue
+        choices.append((count * price, bag, slot, guid, entry, number(replacement.get('entry'))))
+    return sorted(choices)
+
+
+def water_needs_slot(views, guid, inventory, slots):
+    stock = inventory.get('manaDrinkCount')
+    if guid not in CASTERS or stock is None:
+        return False
+    if number(stock) == 0:
+        return True
+    if number(stock) >= (STOCK_MINIMUM if guid == MIRA_GUID else PEER_REORDER_THRESHOLD):
+        return False
+    toolkit = views.get(MIRA, {}).get('spell_toolkit', {})
+    conjured = {number(spell.get('createdItemEntry')) for spell in toolkit.get('spells', [])
+                if number(spell.get('familyId')) == 5504 and spell.get('capability') == 'create_item'
+                and not spell.get('blockedReason') and spell.get('createdItemEntry')}
+    return bool(conjured) and not any(receiving_capacity(slots.values(), entry) for entry in conjured)
+
+
+def verified_candidate(rpc, port, session, choices):
+    ids = []
+    for *_, entry, replacement in choices:
+        needed = [item for item in dict.fromkeys((entry, replacement)) if item and item not in ids]
+        if len(ids) + len(needed) <= ITEM_LOOKUP_LIMIT:
+            ids.extend(needed)
+    templates = rpc(port, 'buddy-trade.lookup_items', {'itemIds': ids}) or {}
+    if templates.get('sessionId') != session:
+        return None, 'waiting_for_item_template'
+    facts = {number(row.get('itemId')): row for row in templates.get('items', []) if row.get('available') is True}
+    for choice in choices:
+        *_, entry, replacement = choice
+        item, worn = facts.get(entry), facts.get(replacement)
+        if item and (not replacement or worn and item.get('armorComparisonKnown') and not item.get('stats')
+                     and number(item.get('armor')) <= number(worn.get('armor'))):
+            return choice, None
+    reason = 'waiting_for_item_template' if any(item_id not in facts for item_id in ids) else 'gray_gear_still_useful_or_unverified'
+    return None, reason
 
 
 def step(rpc, views, attempts, safe_entries, port, guid, now):
@@ -122,24 +175,22 @@ def step(rpc, views, attempts, safe_entries, port, guid, now):
         return 'room_available'
     loot_needs_room = (loot.get('sessionId') == session and loot.get('enabled') is True
                        and loot.get('inventoryPaused') is True and nearby_loot(world, actions))
-    water_needs_room = (guid in CASTERS and 'manaDrinkCount' in inventory and inventory['manaDrinkCount'] is not None
-                        and number(inventory['manaDrinkCount']) == 0)
+    water_needs_room = water_needs_slot(views, guid, inventory, slots)
     if not loot_needs_room and not water_needs_room:
         return 'no_current_bag_pressure'
     if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active'):
         return 'waiting_for_safe_pause'
     if record and now < record['nextCheck']:
         return 'cooldown'
-    selected = candidate(inventory, slots, safe_entries)
-    if selected is None:
+    choices = candidates(world, inventory, slots, safe_entries)
+    if not choices:
         attempts[port] = {'sessionId': session, 'nextCheck': now + COOLDOWN}
         return 'no_verified_gray_junk'
-    _, bag, slot, item_guid, entry = selected
-    template = rpc(port, 'buddy-trade.lookup_items', {'itemIds': [entry]}) or {}
-    if (template.get('sessionId') != session or not any(
-           number(item.get('itemId')) == entry and item.get('available') is True for item in template.get('items', []))):
+    selected, waiting = verified_candidate(rpc, port, session, choices)
+    if selected is None:
         attempts[port] = {'sessionId': session, 'nextCheck': now + RECHECK}
-        return 'waiting_for_item_template'
+        return waiting
+    _, bag, slot, item_guid, _, _ = selected
     if bag == 0 and (trade.get('backpackKnown') is not True or not number(trade.get('backpackRevision'))):
         return 'waiting_for_trade_revision'
     source = (dict(sourceBag=bag, sourceSlot=slot, inventoryRevision=inventory['inventoryRevision']) if bag else
