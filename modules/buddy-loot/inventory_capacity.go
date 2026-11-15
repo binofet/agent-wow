@@ -13,50 +13,56 @@ import (
 // containers never imply empty slots; specialty bags never imply general space.
 // The initial ordinary-bag scope is the explicitly supported bag41599.
 func ownKnownFreeSlot(w *worldv1.SnapshotResponse, self uint64) bool {
+	return ownKnownFreeSlots(w, self) > 0
+}
+
+func ownKnownFreeSlots(w *worldv1.SnapshotResponse, self uint64) int {
 	if w == nil || w.Self == nil || w.Self.Guid != self || !w.Self.Present || !w.InventoryKnown || w.InventoryRevision == 0 || len(w.InventoryBags) != 5 {
-		return false
+		return 0
 	}
 	validGUID := func(g uint64) bool { return g>>48 == 0x4000 && uint32(g) != 0 }
 	seenBags := [5]bool{}
 	guids := map[uint64]bool{}
-	free, total := false, 0
+	free, total := 0, 0
 	for _, b := range w.InventoryBags {
 		if b == nil || b.Bag > 4 || seenBags[b.Bag] || !b.SlotKnown || !b.ContentsKnown || b.SlotCount > 36 || len(b.Slots) != int(b.SlotCount) {
-			return false
+			return 0
 		}
 		seenBags[b.Bag] = true
 		if b.Bag == 0 {
 			if b.ContainerGuid != 0 || b.Entry != 0 || b.MetadataKnown || b.SlotCount != 16 {
-				return false
+				return 0
 			}
 		} else if b.ContainerGuid == 0 {
 			if b.Entry != 0 || b.MetadataKnown || b.SlotCount != 0 {
-				return false
+				return 0
 			}
 		} else {
 			if !validGUID(b.ContainerGuid) || guids[b.ContainerGuid] || !b.MetadataKnown || b.Entry == 0 || b.SlotCount == 0 || b.Entry == 41599 && b.SlotCount != 20 {
-				return false
+				return 0
 			}
 			guids[b.ContainerGuid] = true
 		}
 		total += len(b.Slots)
 		if total > 160 {
-			return false
+			return 0
 		}
 		seen := [36]bool{}
 		for _, item := range b.Slots {
 			if item == nil || item.Bag != b.Bag || item.Slot >= b.SlotCount || seen[item.Slot] {
-				return false
+				return 0
 			}
 			seen[item.Slot] = true
 			if item.ItemGuid == 0 {
 				if item.Entry != 0 || item.StackCount != 0 || item.MetadataKnown {
-					return false
+					return 0
 				}
-				free = free || b.Bag == 0 || b.Entry == 41599
+				if b.Bag == 0 || b.Entry == 41599 {
+					free++
+				}
 			} else {
 				if !validGUID(item.ItemGuid) || guids[item.ItemGuid] || item.MetadataKnown && (item.Entry == 0 || item.StackCount == 0) || !item.MetadataKnown && (item.Entry != 0 || item.StackCount != 0) {
-					return false
+					return 0
 				}
 				guids[item.ItemGuid] = true
 			}
