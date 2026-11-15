@@ -23,10 +23,12 @@ type fakeSession struct {
 	mu               sync.Mutex
 	world            *worldv1.SnapshotResponse
 	actions          *actionsv1.State
+	toolkit          *actionsv1.SpellToolkitState
 	packets          []*modv1.SendPacketRequest
 	fail             uint32
 	leases, releases int
 	leaseChange      func()
+	toolkitChange    func()
 }
 
 func fixture() (*Service, *fakeSession) {
@@ -59,6 +61,14 @@ func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleReque
 		result = f.world
 	case "buddy-actions.status":
 		result = f.actions
+	case "buddy-actions.spell_toolkit":
+		if f.toolkitChange != nil {
+			f.toolkitChange()
+		}
+		if f.toolkit == nil {
+			return nil, errors.New("spell toolkit unavailable")
+		}
+		result = f.toolkit
 	case "buddy-actions.acquire_interaction":
 		f.leases++
 		if f.leaseChange != nil {
@@ -332,17 +342,17 @@ func TestConcurrentPacketStatusAndTick(t *testing.T) {
 
 func TestStrictProtocolAndItemName(t *testing.T) {
 	data := extended(true, 159, 5, 0, 0)
-	partner, _, _, items, err := parseExtended(data)
-	if err != nil || !partner || len(items) != 1 || items[0].Count != 5 {
-		t.Fatal(items, err)
+	view, err := parseExtended(data)
+	if err != nil || !view.partner || len(view.items) != 1 || view.items[0].Count != 5 {
+		t.Fatal(view.items, err)
 	}
 	for i := range len(data) {
-		if _, _, _, _, err := parseExtended(data[:i]); err == nil {
+		if _, err := parseExtended(data[:i]); err == nil {
 			t.Fatalf("accepted truncation %d", i)
 		}
 	}
 	data[21+73] = 0
-	if _, _, _, _, err := parseExtended(data); err == nil {
+	if _, err := parseExtended(data); err == nil {
 		t.Fatal("duplicate slot")
 	}
 	name := append(make([]byte, 16), []byte("Refreshing Spring Water\x00\x00\x00\x00")...)
@@ -362,7 +372,7 @@ func FuzzTradePackets(f *testing.F) {
 	f.Add(u32(4))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, _, _ = parseStatus(data)
-		_, _, _, _, _ = parseExtended(data)
+		_, _ = parseExtended(data)
 		_, _, _ = parseItemName(data)
 	})
 }

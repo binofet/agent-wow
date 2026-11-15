@@ -47,28 +47,45 @@ func parseStatus(data []byte) (uint32, uint64, error) {
 
 // Extended trade data has seven fixed 73-byte slots, including the nontraded
 // enchantment slot. Only the first six slots can transfer items.
-func parseExtended(data []byte) (bool, uint32, uint32, []*tradev1.Item, error) {
+func parseExtended(data []byte) (extendedTrade, error) {
 	if len(data) != 532 || data[0] > 1 || binary.LittleEndian.Uint32(data[5:]) != 7 || binary.LittleEndian.Uint32(data[9:]) != 7 {
-		return false, 0, 0, nil, malformed
+		return extendedTrade{}, malformed
 	}
-	copper, spell := binary.LittleEndian.Uint32(data[13:]), binary.LittleEndian.Uint32(data[17:])
-	items := make([]*tradev1.Item, 0, 7)
+	view := extendedTrade{
+		partner: data[0] == 1,
+		copper:  binary.LittleEndian.Uint32(data[13:]),
+		spell:   binary.LittleEndian.Uint32(data[17:]),
+		items:   make([]*tradev1.Item, 0, 7),
+	}
 	seen := [7]bool{}
 	for at := 21; at < len(data); at += 73 {
 		slot := data[at]
 		if slot > 6 || seen[slot] {
-			return false, 0, 0, nil, malformed
+			return extendedTrade{}, malformed
 		}
 		seen[slot] = true
 		entry, count := binary.LittleEndian.Uint32(data[at+1:]), binary.LittleEndian.Uint32(data[at+9:])
 		if (entry == 0) != (count == 0) {
-			return false, 0, 0, nil, malformed
+			return extendedTrade{}, malformed
 		}
 		if entry != 0 {
-			items = append(items, &tradev1.Item{Slot: uint32(slot), Entry: entry, Count: count, MetadataKnown: true})
+			view.items = append(view.items, &tradev1.Item{Slot: uint32(slot), Entry: entry, Count: count, MetadataKnown: true})
+			if slot == nonTradedSlot {
+				view.serviceItem = tradeServiceItem{entry: entry, count: count,
+					wrapped: binary.LittleEndian.Uint32(data[at+13:]) != 0,
+					lockID:  binary.LittleEndian.Uint32(data[at+61:]),
+				}
+			}
 		}
 	}
-	return data[0] == 1, copper, spell, items, nil
+	return view, nil
+}
+
+type extendedTrade struct {
+	partner       bool
+	copper, spell uint32
+	items         []*tradev1.Item
+	serviceItem   tradeServiceItem
 }
 
 // Names are descriptive only; every item mutation separately binds the live

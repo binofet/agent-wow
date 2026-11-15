@@ -37,7 +37,10 @@ type Service struct {
 	deadline, renewAt           time.Time
 	token                       string // protected by opMu, never returned through status
 	pendingBegin, pendingCancel bool
-	spell                       uint32
+	partnerSpell                uint32
+	serviceItem                 tradeServiceItem
+	pickLock                    tradePickLock
+	pickLockCount               byte
 	names                       map[uint32]string
 	queried                     map[uint32]bool
 	metadata                    map[uint32]itemMetadata
@@ -47,7 +50,7 @@ type Service struct {
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
-	return &Service{session: session, selfGUID: selfGUID, now: time.Now, names: map[uint32]string{}, queried: map[uint32]bool{}, metadata: map[uint32]itemMetadata{}, state: &tradev1.State{SessionId: sessionID, Phase: "IDLE", Limitation: "Joel only; whole backpack stacks; no equipment, bag contents, splitting or enchantments. Own requested offers are transport intentions. Completion requires server confirmation. Opt-in junk disposal removes one full gray miscellaneous junk stack only when all sixteen backpack slots are occupied."}}
+	return &Service{session: session, selfGUID: selfGUID, now: time.Now, names: map[uint32]string{}, queried: map[uint32]bool{}, metadata: map[uint32]itemMetadata{}, state: &tradev1.State{SessionId: sessionID, Phase: "IDLE", Limitation: "Joel only; whole backpack stacks; no equipment, bag contents or splitting. Rogues can pick eligible locks in the nontraded slot. Own requested offers are transport intentions. Completion requires server confirmation. Opt-in junk disposal removes one full gray miscellaneous junk stack only when all sixteen backpack slots are occupied."}}
 }
 
 // NewIndependentService retains own inventory operations without owner trades.
@@ -220,7 +223,7 @@ func (s *Service) resetLocked(phase string) {
 	s.state.PartnerItems = nil
 	s.state.PartnerCopper = 0
 	s.state.Reason = ""
-	s.spell = 0
+	s.partnerSpell, s.serviceItem, s.pickLock = 0, tradeServiceItem{}, tradePickLock{}
 	s.state.Revision++
 }
 func (s *Service) Open(ctx context.Context, r *tradev1.BoundRequest) (*tradev1.State, error) {
@@ -461,7 +464,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		return
 	}
-	if phase != "OPEN" || !accepted {
+	if phase != "OPEN" || s.prepareTradePickLock(call, wCombat) || !accepted {
 		return
 	}
 	if err := s.nearby(call); err != nil {
@@ -475,7 +478,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	if s.state.Phase != "OPEN" || !s.state.PartnerAccepted || s.spell != 0 {
+	if s.state.Phase != "OPEN" || !s.state.PartnerAccepted || !s.serviceOfferReadyLocked() {
 		s.mu.Unlock()
 		return
 	}
@@ -493,6 +496,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 	}
 	s.state.Phase = "ACCEPT_SENT"
+	s.pickLock.accepted = s.pickLock.queued
 	s.state.PartnerAccepted = false
 	s.state.Revision++
 	s.mu.Unlock()
@@ -563,12 +567,16 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 				s.state.Phase = "OPEN"
 				s.state.PartnerAccepted = false
 				s.state.AcceptTransportWritten = false
+				s.pickLock.accepted = false
 			}
 		case 8:
 			if s.state.PartnerGuid == ownerGUID && s.state.Phase == "ACCEPT_SENT" {
 				s.state.Phase = "COMPLETE"
 				s.state.CompletedTrades++
 				s.state.Reason = "server_confirmed_trade_complete"
+				if s.pickLock.accepted && s.pickLock.castGo {
+					s.state.Reason = "server_confirmed_trade_and_pick_lock_cast"
+				}
 			} else {
 				s.state.Reason = "unexpected_completion_status"
 			}
@@ -585,7 +593,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 			s.pendingBegin = false
 		}
 	case uint32(opcode.SMSGTradeStatusExtended):
-		partner, copper, spell, items, err := parseExtended(p.Payload)
+		view, err := parseExtended(p.Payload)
 		if err != nil {
 			s.state.MalformedPackets++
 			break
@@ -608,20 +616,20 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 		s.state.PartnerAccepted = false
 		s.state.AcceptTransportWritten = false
 		s.state.Phase = "OPEN"
-		if partner {
-			s.state.PartnerCopper = copper
-			s.state.PartnerItems = items
-			s.spell = spell
-			for _, item := range items {
-				if item.Slot == 6 {
-					s.spell = 1
-				}
+		if view.partner {
+			s.state.PartnerCopper = view.copper
+			s.state.PartnerItems = view.items
+			s.partnerSpell = view.spell
+			if s.serviceItem != view.serviceItem {
+				s.serviceItem = view.serviceItem
+				s.pickLock = tradePickLock{}
 			}
 		} else {
 			// Some server paths echo our side too. If present, that view must
 			// agree with the explicit requests before automatic consent.
-			matches := copper == s.state.OwnRequestedCopper && spell == 0 && len(items) == len(s.state.OwnRequestedItems)
-			for _, item := range items {
+			knownPickLock := view.spell == pickLockSpell && s.pickLock.item.entry != 0 && s.pickLock.item == s.serviceItem
+			matches := view.copper == s.state.OwnRequestedCopper && (view.spell == 0 || knownPickLock) && len(view.items) == len(s.state.OwnRequestedItems)
+			for _, item := range view.items {
 				found := false
 				for _, requested := range s.state.OwnRequestedItems {
 					if item.Slot == requested.Slot && item.Entry == requested.Entry && item.Count == requested.Count {
@@ -633,8 +641,18 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 			if !matches {
 				s.state.Reason = "unexpected_own_trade_offer"
 				s.pendingCancel = true
+			} else if knownPickLock {
+				s.pickLock.queued = true
+				s.pickLock.until = time.Time{}
+				s.state.Reason = "trade_pick_lock_staged_waiting_for_joel"
+			} else if s.pickLock.queued {
+				// AzerothCore removes a queued spell if trade changes. Stage
+				// it again only after rechecking the current service slot.
+				s.pickLock = tradePickLock{}
 			}
 		}
+	case opcode.SMSGCastFailed, opcode.SMSGSpellGo:
+		s.tradePickLockPacketLocked(p.Opcode, p.Payload)
 	case uint32(opcode.SMSGItemQuerySingleResponse):
 		s.observeItemLookupLocked(p.Payload)
 		entry, name, err := parseItemName(p.Payload)
