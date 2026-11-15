@@ -3,11 +3,14 @@ package buddyactions
 import (
 	"bytes"
 	"encoding/binary"
+	"log"
 	"math"
 	"strconv"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/dungeontrace"
+	"github.com/agent-wow/agent-wow/pkg/maps"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -153,9 +156,10 @@ func projectDungeonOwner(w, previous *worldv1.SnapshotResponse, observer uint64)
 // An independently updated snapshot can show a destination before the actions
 // recorder sees NEW_WORLD. Pin changed snapshots to this recorder's boundary.
 type dungeonTraceBoundary struct {
-	mapID   uint32
-	known   bool
-	pending bool
+	mapID               uint32
+	known, pending      bool
+	lastRevision        uint64
+	beforeEntryRevision uint64
 }
 
 func (b *dungeonTraceBoundary) accepts(mapID uint32) bool {
@@ -168,19 +172,30 @@ func (b *dungeonTraceBoundary) accepts(mapID uint32) bool {
 	return b.mapID == mapID
 }
 
-func (s *Service) traceWorld(w *worldv1.SnapshotResponse, at time.Time) {
-	if s.dungeonTrace == nil {
-		return
-	}
-	if w != nil && w.Self != nil && w.Self.Guid == s.selfGUID && w.Self.Present && w.Self.MapKnown &&
-		s.traceBoundary.accepts(w.Self.MapId) {
-		s.dungeonTrace.ObserveMap(w.Self.MapId, true, at)
+func (s *Service) traceWorld(w *worldv1.SnapshotResponse, at time.Time) bool {
+	self := w.GetSelf()
+	accepted := self.GetGuid() == s.selfGUID && self.GetPresent() && self.GetMapKnown() &&
+		s.traceBoundary.accepts(self.GetMapId()) && (s.traceBoundary.beforeEntryRevision == 0 || self.GetPositionRevision() > s.traceBoundary.beforeEntryRevision)
+	if accepted {
+		s.traceBoundary.lastRevision = self.GetPositionRevision()
+		s.traceBoundary.beforeEntryRevision = 0
+		if reason := s.traceVisitPending; reason != "" {
+			s.traceVisitPending = ""
+			trace, err := dungeontrace.NewVisit(s.traceAutoDirectory, s.sessionID, self.GetMapId(), at, reason)
+			if err != nil {
+				log.Printf("could not start dungeon trace for map %d: %v", self.GetMapId(), err)
+			} else {
+				s.dungeonTrace = trace
+			}
+		}
+		s.dungeonTrace.ObserveMap(self.GetMapId(), true, at)
 	} else {
 		s.dungeonTrace.ObserveMap(0, false, at)
 	}
-	if s.dungeonTrace.Active() {
+	if s.dungeonTrace != nil && s.dungeonTrace.Active() {
 		s.dungeonTrace.Record("owner_observation", at, projectDungeonOwner(w, s.tracePreviousWorld, s.selfGUID))
 	}
+	return accepted
 }
 
 type traceCastMiss struct {
@@ -331,15 +346,12 @@ func projectTraceCastTargets(row *traceCast, data []byte, goEvent bool, observer
 }
 
 func (s *Service) traceOwnerPacket(op uint32, p []byte, at time.Time) {
-	if s.dungeonTrace == nil {
-		return
-	}
 	switch {
 	case op == opcode.SMSGTransferPending && len(p) >= 4:
 		s.traceBoundary.pending = true
 		s.dungeonTrace.ObserveMap(0, false, at)
 		return
-	case op == opcode.SMSGNewWorld && len(p) == 20:
+	case (op == opcode.SMSGLoginVerifyWorld || op == opcode.SMSGNewWorld) && len(p) == 20:
 		pose := position{
 			x: math.Float32frombits(binary.LittleEndian.Uint32(p[4:])),
 			y: math.Float32frombits(binary.LittleEndian.Uint32(p[8:])),
@@ -349,15 +361,29 @@ func (s *Service) traceOwnerPacket(op uint32, p []byte, at time.Time) {
 		if !finite(pose) {
 			return
 		}
-		// A second world entry may use the same map ID for another instance.
-		// Close on the server transfer even if that ID did not change.
-		if s.dungeonTrace.Status().Phase == "recording" {
-			s.dungeonTrace.Close(at, "observer_world_transfer")
+		mapID := binary.LittleEndian.Uint32(p)
+		boundary := dungeonTraceBoundary{known: true, mapID: mapID}
+		s.traceVisitPending = ""
+		if op == opcode.SMSGNewWorld {
+			// A transfer can enter another visit with the same map ID.
+			if s.dungeonTrace != nil && s.dungeonTrace.Status().Phase == "recording" {
+				s.finishDungeonTraceLocked(at, "observer_world_transfer")
+			}
+			if s.traceAutoDirectory != "" && s.traceBoundary.known && maps.IsDungeon(mapID) {
+				s.traceVisitPending = "observed_map_entry"
+				if s.traceBoundary.mapID == mapID {
+					boundary.beforeEntryRevision = s.traceBoundary.lastRevision
+				}
+			}
+			s.tracePreviousWorld = nil
+			s.traceLastParty = time.Time{}
+		} else if s.traceAutoDirectory != "" && maps.IsDungeon(mapID) {
+			s.traceVisitPending = "observed_dungeon_login_partial_visit"
 		}
-		s.traceBoundary = dungeonTraceBoundary{known: true, mapID: binary.LittleEndian.Uint32(p)}
+		s.traceBoundary = boundary
 		return
 	}
-	if !s.dungeonTrace.Active() {
+	if s.dungeonTrace == nil || !s.dungeonTrace.Active() {
 		return
 	}
 	row, ok := decodeOwnerCast(op, p, s.selfGUID)
