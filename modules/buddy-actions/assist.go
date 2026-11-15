@@ -316,6 +316,8 @@ func (s *Service) castFailedLocked(code uint32, reason string) {
 		s.failedAssistTarget = s.pendingTarget
 		s.failedAssistCastTarget = s.pendingTarget
 		s.state.Reason = "server_dungeon_offense_interrupted"
+	} else if kind == spellcatalog.Interrupt {
+		s.state.Reason = "interrupt_cast_rejected"
 	} else if kind != spellcatalog.Heal {
 		s.failedAssistTarget = s.pendingTarget
 		s.failedAssistCastTarget = s.pendingTarget
