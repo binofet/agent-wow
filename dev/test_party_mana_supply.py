@@ -69,13 +69,29 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.calls[1][2]["partnerGuid"], "1")
         self.assertEqual(self.calls[1][2]["backpackSlot"], 8)
 
-    def test_preserves_own_supply_and_conjures_best_rank_recipient_can_use(self):
+    def test_preserves_own_supply_when_recipient_still_has_water(self):
         carried(self.mira, 2288, 14)
         self.arlen["world"]["self"]["level"] = 14
+        self.arlen["inventory"]["manaDrinkCount"] = 1
         self.assertEqual(self.step(), "conjure_requested")
         self.assertEqual(self.calls, [(8087, "buddy-actions.create_item", dict(
             sessionId="aw-4", selfGuid="4", spellId=5505,
         ))])
+
+    def test_initial_resupply_does_not_wait_to_conjure_a_second_stack(self):
+        self.mira["inventory"]["manaDrinkCount"] = 3
+        self.arlen["world"]["self"].update(power=45, maxPower=1297)
+        carried(self.mira, 2136, 3)
+        self.assertEqual(self.step(), "water_trade_started")
+        self.assertEqual(self.calls[1][2]["itemCount"], 3)
+        self.assertEqual(self.calls[1][2]["partnerGuid"], "1")
+
+        self.calls.clear()
+        self.mira["inventory"]["manaDrinkCount"] = 0
+        self.mira["world"]["backpack"].clear()
+        self.arlen["inventory"]["manaDrinkCount"] = 3
+        self.assertEqual(self.step(), "conjure_requested")
+        self.assertEqual(self.calls[0][2]["spellId"], 5506)
 
     def test_chooses_highest_currently_usable_rank(self):
         self.assertEqual(self.step(), "conjure_requested")
@@ -108,13 +124,20 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_full_bags_can_accept_a_matching_partial_stack(self):
-        carried(self.mira, 2136, 8)
-        self.arlen["inventory"]["manaDrinkCount"] = 2
+        carried(self.mira, 2136, 6)
+        self.arlen["inventory"]["manaDrinkCount"] = 8
         self.arlen["inventory"]["inventoryBags"][0]["slots"][:] = [
-            dict(entry=2136, stackCount=2, metadataKnown=True, itemGuid="14"),
+            dict(entry=2136, stackCount=8, metadataKnown=True, itemGuid="14"),
         ]
         self.assertEqual(self.step(), "water_trade_started")
         self.assertEqual(self.calls[1][2]["itemEntry"], 2136)
+        self.assertEqual(self.calls[1][2]["itemCount"], 6)
+
+        self.calls.clear()
+        self.arlen["inventory"]["manaDrinkCount"] = 14
+        self.arlen["inventory"]["inventoryBags"][0]["slots"][0]["stackCount"] = 14
+        self.assertEqual(self.step(), "water_stock_sufficient")
+        self.assertEqual(self.calls, [])
 
     def test_observes_peer_with_current_action_position(self):
         carried(self.mira, 2136, 8)

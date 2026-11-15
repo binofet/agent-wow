@@ -8,6 +8,7 @@ RECIPIENTS = {8086: 1, 8402: 8}
 MIRA_GUID = 4
 OWNER_GUID = 3
 STOCK_MINIMUM = 5
+PEER_REORDER_THRESHOLD = 12
 IN_COMBAT = 0x80000
 
 
@@ -203,7 +204,7 @@ def supply_step(rpc, observations, state):
             continue
         drink_count = stock_count(recipient, guid)
         player = recipient["world"]["self"]
-        if (drink_count is not None and drink_count < STOCK_MINIMUM
+        if (drink_count is not None and drink_count < PEER_REORDER_THRESHOLD
                 and player.get("levelKnown") is True and player.get("powerKnown") is True
                 and number(player.get("powerType")) == 0 and number(player.get("maxPower")) > 0):
             peers.append((drink_count, port, recipient, receiving_slots(recipient)))
@@ -217,11 +218,14 @@ def supply_step(rpc, observations, state):
 
     needs_bag_space = False
     usable = {}
-    for _, port, recipient, slots in sorted(peers):
+    for drink_count, port, recipient, slots in sorted(peers):
         available = compatible(recipient["world"]["self"])
         if not available:
             continue
-        stack = carried_water(world, available, own_stock - STOCK_MINIMUM, slots)
+        # Help an empty caster immediately. Conjuring into the same stack
+        # cannot make it fit within a reserve, because the trade moves it whole.
+        spare = own_stock if drink_count == 0 else own_stock - STOCK_MINIMUM
+        stack = carried_water(world, available, spare, slots)
         if stack:
             return give_water(rpc, mira, port, recipient, *stack)
         if any(not number(slot.get("itemGuid")) for slot in slots):
