@@ -96,6 +96,50 @@ func TestJunkWholeStackWaitsForServerInventoryReceipt(t *testing.T) {
 	}
 }
 
+func TestDestroyGrayArmorRequiresObservedAtLeastEqualReplacement(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*tradev1.ItemDetails, *tradev1.ItemDetails, *worldv1.SnapshotResponse)
+		allow  bool
+	}{
+		{name: "ordinary gray armor with stronger replacement", allow: true},
+		{name: "armor improvement", change: func(item, _ *tradev1.ItemDetails, _ *worldv1.SnapshotResponse) { item.Armor++ }},
+		{name: "valuable stats", change: func(item, _ *tradev1.ItemDetails, _ *worldv1.SnapshotResponse) {
+			item.Stats = []*tradev1.ItemStat{{Type: 5, Value: 1}}
+		}},
+		{name: "uncertain inventory", change: func(_, _ *tradev1.ItemDetails, w *worldv1.SnapshotResponse) { w.SelfEquipmentKnown = false }},
+		{name: "enchanted candidate", change: func(_, _ *tradev1.ItemDetails, w *worldv1.SnapshotResponse) { w.Backpack[2].HasEnhancements = true }},
+		{name: "empty equipment slot", change: func(_, _ *tradev1.ItemDetails, w *worldv1.SnapshotResponse) { w.SelfEquipment[0].ItemGuid = 0 }},
+		{name: "required quest item", change: func(_, _ *tradev1.ItemDetails, w *worldv1.SnapshotResponse) {
+			w.SelfQuestLog = []*worldv1.QuestLogEntry{{QuestId: 16}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, f := junkFixture()
+			entry := uint32(3375)
+			if test.name == "required quest item" {
+				entry = 159 // Required by quest 16. Even inconsistent template metadata cannot allow disposal.
+			}
+			f.world.Backpack[2].Entry = entry
+			f.world.Backpack[2].StackCount = 1
+			f.world.Backpack[2].EnhancementsKnown = true
+			f.world.SelfQuestLogKnown, f.world.SelfEquipmentKnown = true, true
+			f.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: 8, SlotKnown: true, ItemGuid: 0x4000000000009000, MetadataKnown: true, Entry: 1302, DurabilityKnown: true}}
+			candidate := &tradev1.ItemDetails{ItemId: entry, Available: true, ItemClass: 4, Subclass: 1, InventoryType: 9, ArmorComparisonKnown: true, SellPrice: 30, Armor: 9}
+			equipped := &tradev1.ItemDetails{ItemId: 1302, Available: true, ItemClass: 4, Subclass: 1, InventoryType: 9, Armor: 9}
+			s.metadata[entry] = itemMetadata{known: true, entry: entry, class: 4}
+			s.lookup.items = map[uint32]*tradev1.ItemDetails{entry: candidate, 1302: equipped}
+			if test.change != nil {
+				test.change(candidate, equipped, f.world)
+			}
+			_, err := s.DestroyJunk(context.Background(), requestJunk(s, f))
+			if (err == nil) != test.allow || (f.count(opcode.CMSGDestroyitem) == 1) != test.allow {
+				t.Fatalf("allowed=%t, writes=%d, error=%v", test.allow, f.count(opcode.CMSGDestroyitem), err)
+			}
+		})
+	}
+}
+
 func TestJunkAmbiguousWriteNeverRetriesOrDisposesSecondStack(t *testing.T) {
 	s, f := junkFixture()
 	f.fail = opcode.CMSGDestroyitem

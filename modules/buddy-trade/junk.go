@@ -7,12 +7,46 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
+
+var grayArmorSlots = map[uint32]uint32{1: 0, 3: 2, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14, 20: 4}
+
+// Called under mu with the fresh inventory snapshot used to bind the mutation.
+// Only basic armor with no other benefits and a verified replacement qualifies.
+func (s *Service) grayArmorJunk(w *worldv1.SnapshotResponse, item *worldv1.BackpackSlot) bool {
+	meta := s.lookup.items[item.Entry]
+	slot, armor := grayArmorSlots[meta.GetInventoryType()]
+	if !armor || !meta.GetAvailable() || !meta.GetArmorComparisonKnown() || meta.ItemClass != 4 || meta.Subclass < 1 || meta.Subclass > 4 ||
+		meta.Quality != 0 || meta.SellPrice == 0 || meta.Flags != 0 || meta.Flags2 != 0 || meta.HasSpell || len(meta.Stats) != 0 ||
+		meta.RequiredSkill != 0 || meta.RequiredSkillRank != 0 || meta.RequiredSpell != 0 || meta.RequiredHonorRank != 0 ||
+		meta.RequiredCityRank != 0 || meta.RequiredReputationFaction != 0 || meta.RequiredReputationRank != 0 ||
+		item.StackCount != 1 || !item.EnhancementsKnown || item.HasEnhancements || !w.SelfEquipmentKnown || !w.SelfQuestLogKnown {
+		return false
+	}
+	for _, quest := range w.SelfQuestLog {
+		for _, required := range gamecatalog.RequiredQuestItems(quest.GetQuestId()) {
+			if required.ItemID == item.Entry {
+				return false
+			}
+		}
+	}
+	for _, worn := range w.SelfEquipment {
+		if worn.GetSlot() != slot || !worn.GetSlotKnown() || !worn.GetMetadataKnown() || worn.GetItemGuid() == 0 || worn.GetItemGuid() == item.ItemGuid ||
+			!worn.GetDurabilityKnown() || worn.GetMaxDurability() > 0 && worn.GetDurability() == 0 {
+			continue
+		}
+		replacement := s.lookup.items[worn.Entry]
+		wornSlot, knownSlot := grayArmorSlots[replacement.GetInventoryType()]
+		return knownSlot && wornSlot == slot && replacement.GetAvailable() && replacement.GetItemClass() == 4 && replacement.GetArmor() >= meta.Armor
+	}
+	return false
+}
 
 func (s *Service) JunkDisposal(_ context.Context, r *tradev1.JunkToggle) (*tradev1.State, error) {
 	if r == nil {
@@ -142,9 +176,10 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	}
 	s.mu.Lock()
 	meta, known := s.metadata[selected.Entry]
-	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil || !known || !meta.disposable() {
+	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil || !known ||
+		(!meta.disposable() && !s.grayArmorJunk(w, selected)) {
 		s.mu.Unlock()
-		return status.Error(codes.FailedPrecondition, "only fully queried gray miscellaneous junk is disposable")
+		return status.Error(codes.FailedPrecondition, "only fully queried gray junk with no remaining use is disposable")
 	}
 	// Reserve before SendPacket: an ambiguous error must never resend a destroy.
 	s.junkPending = &tradev1.JunkDisposal{BackpackSlot: selected.Slot, ItemGuid: selected.ItemGuid, Entry: selected.Entry, Count: selected.StackCount, Name: s.names[selected.Entry], Status: "AWAITING_SERVER_SLOT_UPDATE", BackpackRevision: w.BackpackRevision}
