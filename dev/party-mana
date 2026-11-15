@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Keep the private realm's three caster companions stocked and rested."""
+import argparse
+import concurrent.futures
+import fcntl
+import json
+from pathlib import Path
+import signal
+import time
+import urllib.request
+
+from party_mana_drink import maintain_drink
+from party_mana_supply import maintain_supply
+
+CASTERS = {8086: "1", 8087: "4", 8402: "8"}
+METHODS = {
+    "world": "buddy-world.snapshot",
+    "actions": "buddy-actions.status",
+    "inventory": "buddy-inventory.state",
+    "party": "buddy-party.state",
+    "trade": "buddy-trade.state",
+    "spell_toolkit": "buddy-actions.spell_toolkit",
+}
+
+
+class RPCError(RuntimeError):
+    pass
+
+
+def rpc(port, method, params=None):
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/rpc",
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=1.5) as response:
+        reply = json.load(response)
+    if "error" in reply:
+        detail = reply["error"]
+        raise RPCError(detail.get("message", "game client rejected request"))
+    return reply["result"]
+
+
+def observe(port):
+    try:
+        world = rpc(port, METHODS["world"])
+        player = world.get("self", {})
+        if str(player.get("guid")) != CASTERS[port] or not player.get("present"):
+            return None
+        view = {"world": world}
+        for key, method in METHODS.items():
+            if key != "world":
+                view[key] = rpc(port, method)
+        session = view["actions"].get("sessionId")
+        if not session or any(view[key].get("sessionId") != session for key in ("party", "inventory", "trade")):
+            return None
+        view["toolkit"] = view["spell_toolkit"]
+        return view
+    except (KeyError, OSError, ValueError, RPCError):
+        return None
+
+
+def run(state_dir):
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "worker.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stop = False
+
+        def stopping(*_):
+            nonlocal stop
+            stop = True
+
+        signal.signal(signal.SIGTERM, stopping)
+        signal.signal(signal.SIGINT, stopping)
+        rests, supply = {}, {}
+        previous, views = None, {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(CASTERS)) as readers:
+            try:
+                while not stop:
+                    views = {port: view for port, view in zip(CASTERS, readers.map(observe, CASTERS)) if view}
+                    drink = maintain_drink(rpc, views, rests)
+                    for port, view in views.items():
+                        view["mana_rest_active"] = port in rests
+                    try:
+                        water = maintain_supply(rpc, views, supply)
+                    except (KeyError, OSError, ValueError, RPCError) as error:
+                        water = str(error)
+                    status = {
+                        "phases": {"drinking": drink, "water": water},
+                        "casters": {
+                            str(port): {"mana": view["world"]["self"].get("power", 0),
+                                        "max_mana": view["world"]["self"].get("maxPower", 0),
+                                        "drinks": view["inventory"].get("manaDrinkCount", 0)}
+                            for port, view in views.items()
+                        },
+                    }
+                    if status != previous:
+                        tmp = state_dir / "status.next.json"
+                        tmp.write_text(json.dumps(status, sort_keys=True) + "\n")
+                        tmp.replace(state_dir / "status.json")
+                        previous = status
+                    time.sleep(1)
+            finally:
+                for port, view in views.items():
+                    if port in rests and rests[port].get("restoreFollow") is True:
+                        try:
+                            current = rpc(port, METHODS["actions"])
+                            if current.get("sessionId") == rests[port].get("sessionId"):
+                                rpc(port, "buddy-actions.follow", {"enabled": True})
+                        except (OSError, RPCError):
+                            pass
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-dir", type=Path, required=True)
+    run(parser.parse_args().state_dir)
