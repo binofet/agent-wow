@@ -83,6 +83,7 @@ type Service struct {
 	harvestGuardAt                                           time.Time
 	assistUntil, nextAssist                                  time.Time
 	pendingSpell                                             uint32
+	lastInterrupt                                            enemyCastIdentity
 	pendingTarget, failedAssistTarget                        uint64
 	failedAssistCastTarget                                   uint64
 	weaponQueries                                            map[uint32]bool
@@ -1157,6 +1158,10 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
+	if s.interruptHealLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
 	if s.fargodeepTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
@@ -1489,6 +1494,8 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 				if s.spellKindLocked(spell) == spellcatalog.Heal {
 					s.state.ServerCastGo++
 					s.state.Reason = "server_spell_go_health_effect_unverified"
+				} else if s.spellKindLocked(spell) == spellcatalog.Interrupt {
+					s.state.Reason = "interrupt_cast_confirmed"
 				} else {
 					s.state.ServerAssistGo++
 					if spellFamily(spell, smite) {

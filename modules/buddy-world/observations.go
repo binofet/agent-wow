@@ -44,6 +44,7 @@ type observations struct {
 	equipmentRevision   uint64
 	discovery           clientDiscoveryAnchor
 	discoverySequence   uint64
+	castRevision        uint64
 }
 
 func (s observations) clone() observations {
@@ -218,6 +219,9 @@ func creatureSnapshot(p *observed, s *observations, now time.Time) *worldv1.Crea
 	r.CombatReachKnown = p.known[0x42] && validFloat(r.CombatReach) && r.CombatReach >= 0 && r.CombatReach <= 50
 	r.Level = p.fields[0x36]
 	r.LevelKnown = p.known[0x36] && r.Level > 0 && r.Level <= 80
+	if r.Alive && sameCreatureCastMap(p, &s.players[0]) {
+		r.ActiveCast = p.cast.snapshot(now)
+	}
 	if t := p.trajectory; t.known {
 		r.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: t.duration, AgeMs: uint64(t.elapsed) + age(now, t.at), DestinationKnown: t.destinationKnown, DestinationX: t.destination[0], DestinationY: t.destination[1], DestinationZ: t.destination[2], Cyclic: t.cyclic, TransportRelative: t.relative, TransportGuid: t.transport, TransportSeat: int32(t.seat), Stopped: t.stopped, Flags: t.flags}
 	}

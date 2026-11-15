@@ -47,3 +47,42 @@ func TestUnfamiliarIDsUseMechanicsAndExposeUnsupportedEffects(t *testing.T) {
 		}
 	}
 }
+
+func TestInterruptSpellMetadata(t *testing.T) {
+	for _, id := range []uint32{1766, 2139, 6552} {
+		spell, ok := Default().Lookup(id)
+		if !ok || !spell.InterruptsCasting() || spell.IsHealing() ||
+			spell.Capability() != (Capability{Kind: Interrupt, Target: "enemy"}) {
+			t.Fatalf("spell %d has incorrect interrupt metadata: %+v", id, spell.Capability())
+		}
+	}
+	shieldBash, _ := Default().Lookup(72)
+	if !shieldBash.InterruptsCasting() || shieldBash.Capability().Blocked == "" {
+		t.Fatal("Shield Bash must report its interrupt and retain its special requirements")
+	}
+	fakeInterrupt := Spell{Effects: []Effect{{Kind: 6, Aura: 68}}}
+	if fakeInterrupt.InterruptsCasting() {
+		t.Fatal("an aura number is not an interrupt effect")
+	}
+}
+
+func TestHealingSpellMetadata(t *testing.T) {
+	for _, id := range []uint32{2054, 139, 11642, 12039, 12491, 16561} {
+		spell, ok := Default().Lookup(id)
+		if !ok || !spell.IsHealing() || spell.InterruptsCasting() {
+			t.Fatalf("spell %d has incorrect healing metadata", id)
+		}
+	}
+	for _, effect := range []Effect{{Kind: 136}, {Kind: 27, Aura: 8}} {
+		spell := Spell{Effects: []Effect{effect}}
+		if !spell.IsHealing() {
+			t.Fatalf("effect %+v does not classify as healing", effect)
+		}
+	}
+	for _, id := range []uint32{0, 585, 2006, 2645, 1766} {
+		spell, _ := Default().Lookup(id)
+		if spell.IsHealing() {
+			t.Fatalf("spell %d spuriously classified as healing", id)
+		}
+	}
+}

@@ -55,6 +55,7 @@ type Kind string
 
 const (
 	Heal         Kind = "heal"
+	Interrupt    Kind = "interrupt"
 	Damage       Kind = "damage"
 	Buff         Kind = "buff"
 	Resurrect    Kind = "resurrect"
@@ -67,6 +68,33 @@ type Capability struct {
 	Kind    Kind
 	Target  string
 	Blocked string
+}
+
+// InterruptsCasting reports a native interrupt effect, including spells with
+// additional effects or equipment requirements. The caller checks cast eligibility.
+func (s Spell) InterruptsCasting() bool {
+	for _, effect := range s.Effects {
+		if effect.Kind == 68 { // SPELL_EFFECT_INTERRUPT_CAST
+			return true
+		}
+	}
+	return false
+}
+
+// IsHealing reports a direct or periodic health restore. The caster may be an
+// enemy, and the spell may heal that caster, an ally, or an area.
+func (s Spell) IsHealing() bool {
+	for _, effect := range s.Effects {
+		switch effect.Kind {
+		case 10, 67, 75, 136: // Regular, maximum health, mechanical, or percent heal.
+			return true
+		case 6, 27, 35, 65, 119, 128, 129, 143: // Apply aura, including area auras.
+			if effect.Aura == 8 { // SPELL_AURA_PERIODIC_HEAL
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ProvidesWaterBreathing recognizes single-unit water breathing auras even
@@ -153,6 +181,8 @@ func (s Spell) Capability() Capability {
 		switch e.Kind {
 		case 10:
 			k = Heal
+		case 68:
+			k = Interrupt
 		case 2:
 			k = Damage
 		case 18, 113:
@@ -199,6 +229,9 @@ func (s Spell) Capability() Capability {
 	}
 	if (kind == Heal || kind == Buff) && target != "ally" && target != "self" {
 		return fail("non_friendly_support_target")
+	}
+	if kind == Interrupt && target != "enemy" {
+		return fail("non_hostile_interrupt_target")
 	}
 	if (kind == Damage || kind == WeaponStrike) && target != "enemy" {
 		return fail("non_hostile_damage_target")

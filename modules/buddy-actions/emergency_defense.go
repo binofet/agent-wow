@@ -5,6 +5,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
 
 // An expired cast remains unconfirmed. Pause fresh spell selection without
@@ -14,6 +15,11 @@ func (s *Service) expirePendingCastLocked(ctx context.Context) {
 		return
 	}
 	s.state.CastPending = false
+	if s.spellKindLocked(s.pendingSpell) == spellcatalog.Interrupt {
+		s.pendingSpell, s.pendingTarget = 0, 0
+		s.state.Reason = "interrupt_result_unconfirmed"
+		return
+	}
 	s.stopLocked(ctx)
 	s.stopAutoAttackLocked(ctx)
 	if s.fargodeep.active {
@@ -110,5 +116,5 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if s.potentialCleanseLocked() && s.cleanseTickLocked(ctx, w) {
 		return true
 	}
-	return s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
+	return s.interruptHealLocked(ctx, w) || s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }

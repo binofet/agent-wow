@@ -48,6 +48,7 @@ type observed struct {
 	attackVictim                uint64
 	attackAt                    time.Time
 	trajectory                  observedTrajectory
+	cast                        observedCreatureCast
 	mainhandKnown               bool
 	mainhand                    uint64
 	offhandKnown                bool
