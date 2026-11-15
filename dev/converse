@@ -66,6 +66,10 @@ PARTY_MAINTENANCE_IDENTITY = {"version": 1, "ownerGuid": 3, "mode": "training_st
 QUEST_REWARD_PREFERENCES = {18: {5: 5580, 8: 1159, 4: 2224},
                             21: {5: 11192, 8: 11192, 4: 2186},
                             33: {5: 80, 8: 80, 4: 6070}}
+PICK_LOCK_ORDER = re.compile(
+    r"(?:(?:can|could|would|will) you |please )?(?:"
+    r"(?:pick(?: the lock on)?|lockpick|unlock|open) (?:this |that |the )?(?:locked )?chest"
+    r"|pick (?:this |that |the )?lock)(?: please)?[.!?]?", re.IGNORECASE)
 NUMERIC_ARGS = ("quest_id", "item_entry", "gold_copper")
 LEGACY_EMOTES = {"WAVE": 101, "BOW": 17, "CHEER": 21}
 DEVELOPMENT_PEERS = {1:"Arlen", 4:"Mira", 5:"Rook", 8:"Nixwick", 87:"Lotharen"}
@@ -311,6 +315,9 @@ def spell_toolkit_context(raw, actions, guid):
             for key in ("castTimeMs","flatCost","requiredSubclassMask"):
                 item[key]=integer(row.get(key,0))
             item.update(requiresStealth=row.get("requiresStealth") is True,requiresBehind=row.get("requiresBehind") is True)
+            range_yards = row.get("rangeYards", 0)
+            if type(range_yards) in (int, float) and 0 < range_yards <= 100:
+                item["rangeYards"] = range_yards
         clean.append(item)
     # Keep all supported named controls even for an unusually large spellbook.
     clean.sort(key=lambda row: (not (row.get("automaticBuffSupported") or row.get("capability") == "resurrect"),
@@ -1659,7 +1666,7 @@ class RPC:
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
                           "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist",
-                          "buddy-actions.resurrect_once",
+                          "buddy-actions.resurrect_once", "buddy-actions.pick_lock",
                           "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
                           "buddy-actions.behavior", "buddy-actions.reload_behavior"):
             raise ConversationError("Unsupported chat method")
@@ -2690,6 +2697,102 @@ class BuddyControls:
         except (ConversationError, TypeError, AttributeError):
             return "I couldn't confirm a resurrection attempt."
 
+    def pick_chest(self, owner_guid):
+        session = self.actions.get("sessionId")
+        if not self.actions_available or not session or integer(self.actions.get("selfGuid", 0)) != self.character_guid:
+            return "I couldn't verify my current body to pick the chest."
+        # The dedicated chest RPC handles Pick Lock's object target. The generic
+        # spell selector's blockedReason does not describe that native action.
+        spell = next((row for row in self.spell_toolkit.get("spells", [])
+                      if row.get("spellId") == 1804 and row.get("rangeYards")), None)
+        if spell is None:
+            return "I couldn't verify my learned Pick Lock spell or its range."
+
+        def position(entity, map_id):
+            coords = tuple(entity.get(axis, 0) for axis in ("x", "y", "z"))
+            if (entity.get("present") is True and entity.get("positionKnown") is True
+                    and entity.get("mapKnown") is True and entity.get("mapId", 0) == map_id
+                    and all(type(value) in (float, int) and math.isfinite(value) for value in coords)):
+                return coords
+            return None
+
+        try:
+            world = self.rpc.call("buddy-world.snapshot", {})
+            own, owner = world.get("self", {}), world.get("owner", {})
+            map_id = own.get("mapId", 0)
+            if integer(own.get("guid", 0)) != self.character_guid or own.get("mapKnown") is not True:
+                return "I couldn't verify my position near the chest."
+            # Action state tracks our latest controlled pose. Object and owner
+            # observations can arrive with an older copy of our own location.
+            pose = self.actions.get("position", {})
+            origin = position(dict(pose, present=True, positionKnown=pose.get("known")), map_id)
+            if origin is None:
+                origin = position(own, map_id)
+            if origin is None:
+                return "I couldn't verify my position near the chest."
+            reference = position(owner, map_id) if integer(owner.get("guid", 0)) == owner_guid else None
+            reference = reference if reference is not None else origin
+            candidates = []
+            for chest in world.get("questObjects", []):
+                point = position(chest, map_id)
+                if (point is None or chest.get("typeKnown") is not True or chest.get("gameObjectType") != 3
+                        or chest.get("flagsKnown") is not True or chest.get("flags") != 2
+                        or chest.get("stateKnown") is not True or chest.get("state") != 1):
+                    continue
+                guid, entry = integer(chest.get("guid", 0)), integer(chest.get("entry", 0))
+                if guid >> 48 != 0xf110 or (guid >> 24 & 0xffffff) != entry:
+                    continue
+                record = game_catalog.lookup("gameobjects", entry)
+                if record and record.get("type") == 3 and game_catalog.pick_lock_requirement(record.get("lockId")) is not None:
+                    candidates.append((math.dist(reference, point), math.dist(origin, point), guid))
+            if not candidates:
+                return "I don't see a ready locked chest that Pick Lock can open."
+            _, distance, target = min(candidates)
+            if distance > spell["rangeYards"]:
+                return f"I see the locked chest. I need to get within {spell['rangeYards']:g} yards of it."
+            for _ in range(3):
+                reply = self.pick_lock_attempt(session, target, spell)
+                if reply is not None:
+                    return reply
+            return "The lock didn't give after three attempts."
+        except CapabilityUnavailable:
+            return "Pick Lock isn't installed on this controller."
+        except (ConversationError, AttributeError, TypeError, ValueError):
+            reason = (getattr(self.rpc, "last_failure", None) or {}).get("reason", "")
+            requirement = re.fullmatch(r"Lockpicking ([0-9]+) required; observed skill ([0-9]+)", reason)
+            if requirement:
+                return f"That chest needs Lockpicking {requirement[1]}. I'm at {requirement[2]}."
+            return "I couldn't start picking the chest. I need to be in range and out of combat."
+
+    def pick_lock_attempt(self, session, target, spell):
+        result = self.rpc.call("buddy-actions.pick_lock", {"sessionId": session, "targetGuid": str(target)})
+        deadline = time.monotonic() + min(spell.get("castTimeMs", 5000), 6000) / 1000 + 0.75
+        while True:
+            if result.get("sessionId") != session or integer(result.get("selfGuid", 0)) != self.character_guid:
+                return "My connection changed before I could confirm the attempt."
+            self.actions = result
+            operation = result.get("lastSpellOperation", {})
+            if (operation.get("capability") != "pick_lock" or operation.get("spellId") != 1804
+                    or integer(operation.get("targetGuid", 0)) != target):
+                return "I couldn't confirm a Pick Lock attempt on that chest."
+            phase = operation.get("phase")
+            if phase == "confirmed_loot_window" and operation.get("effectObserved") is True:
+                return "I picked the lock. The game opened the chest."
+            if phase == "server_rejected_no_replay":
+                # Correlated SPELL_FAILED_TRY_AGAIN permits a fresh attempt.
+                if result.get("lastCastFailure") == 132 and operation.get("transportWritten") is True:
+                    return None
+                return "The game rejected the Pick Lock cast."
+            if operation.get("transportWritten") is not True:
+                return "I couldn't confirm sending the Pick Lock cast."
+            if time.monotonic() >= deadline:
+                return "I sent the Pick Lock cast. I'm still waiting for the chest to open."
+            time.sleep(0.25)
+            try:
+                result = self.rpc.call("buddy-actions.status", {}, timeout=0.5)
+            except ConversationError:
+                return "I sent the Pick Lock cast. I lost the connection before I saw the result."
+
     def execute(self, action, quest_id=0, item_entry=0, gold_copper=0, problem_text="", report_source="owner",
                 owner_text="", known_players=None, owner_guid=3):
         if action in ("ENABLE_LOOTING", "DISABLE_LOOTING"):
@@ -3172,6 +3275,11 @@ class Conversation:
         request_text = selected[-1]["text"].strip()
         address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
         request = request_text[address.end():] if address else request_text
+        if not peer and isinstance(self.controls, BuddyControls) and PICK_LOCK_ORDER.fullmatch(request):
+            if self.character_class == "rogue" and self.same_body():
+                text = self.controls.pick_chest(self.player_guid)
+                self.send_reply({"text": text, "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
+            return
         if (not peer and isinstance(self.controls, BuddyControls)
                 and self.controls.resurrection_available()
                 and self.controls.spell_toolkit.get("targetedResurrectionSupported") is True

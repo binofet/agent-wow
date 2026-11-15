@@ -9,6 +9,16 @@ def catalog():
     return json.loads((Path(__file__).resolve().parent.parent/'pkg/gamecatalog/catalog.json').read_text())
 
 
+@functools.lru_cache(maxsize=1)
+def lockpicking_requirements():
+    path = Path(__file__).resolve().parent.parent / "pkg/gamecatalog/lockpicking.json"
+    return json.loads(path.read_text())["requirements"]
+
+
+def pick_lock_requirement(lock_id):
+    return lockpicking_requirements().get(str(lock_id))
+
+
 def lookup(kind, identifier):
     if kind not in ('items','quests','gameobjects'):raise ValueError('Unknown catalog namespace')
     if not str(identifier).isdigit() or not 0<int(identifier)<=0xffffffff:return None

@@ -108,6 +108,90 @@ class ConversationTests(unittest.TestCase):
         self.assertIn("waiting for the game", reply["text"])
         self.assertEqual(reply["recipient"], "Joel")
 
+    def test_owner_chat_chooses_the_nearest_locked_chest_to_joel_without_a_model(self):
+        base_guid = (0xf110 << 48) | (74447 << 24)
+        body = {"sessionId": "aw-body", "selfGuid": "5",
+                "position": {"known": True, "mapKnown": True, "mapId": 34}}
+        pose = {"present": True, "mapKnown": True, "positionKnown": True, "mapId": 34}
+        chest = dict(pose, entry=74447, typeKnown=True, gameObjectType=3,
+                     flagsKnown=True, flags=2, stateKnown=True, state=1)
+        world = {
+            "self": dict(pose, guid="5", x=104), "owner": dict(pose, guid="3", x=4.5),
+            "questObjects": [dict(chest, guid=str(base_guid+1), x=1.0),
+                             dict(chest, guid=str(base_guid+2), x=4.0)],
+        }
+        toolkit = dict(body, spellbookKnown=True, spells=[{
+            "spellId": 1804, "name": "Pick Lock", "metadataKnown": True, "rangeYards": 5,
+            "castTimeMs": 5000, "blockedReason": "target_selector_26",
+        }])
+
+        class ChestRPC(FakeRPC):
+            def call(self, method, params, timeout=None):
+                if method in ("buddy-world.snapshot", "buddy-actions.pick_lock", "buddy-actions.status"):
+                    self.calls.append((method, params))
+                    if method == "buddy-world.snapshot":
+                        return world
+                    operation = {"capability": "pick_lock", "spellId": 1804, "targetGuid": str(base_guid+2),
+                                 "transportWritten": True}
+                    if method == "buddy-actions.pick_lock":
+                        return dict(body, castPending=True, lastSpellOperation=dict(operation, phase="waiting_server"))
+                    attempts = sum(name == "buddy-actions.pick_lock" for name, _ in self.calls)
+                    if attempts <= rejected:
+                        return dict(body, lastCastFailure=failure,
+                                    lastSpellOperation=dict(operation, phase="server_rejected_no_replay"))
+                    return dict(body, lastSpellOperation=dict(operation, effectObserved=True, phase="confirmed_loot_window"))
+                return super().call(method, params)
+
+        for rejected, failure, expected_attempts, text in (
+                (0, 132, 1, "game opened the chest"),
+                (2, 132, 3, "game opened the chest"),
+                (3, 132, 3, "after three attempts"),
+                (1, 131, 1, "game rejected")):
+            with self.subTest(rejected=rejected, failure=failure):
+                rpc = ChestRPC([
+                    poll(sessionId="chat"),
+                    poll([message(1, "Rook, pick this chest", sender=99, channel="PARTY")], sessionId="chat"),
+                    poll([message(2, "Rook, can you pick this chest?", channel="PARTY_LEADER")], sessionId="chat"),
+                    poll(latest=2, sessionId="chat"),
+                ])
+                controls = converse.BuddyControls(rpc, character_class="rogue", character_guid=5)
+                controls.refresh = lambda: None
+                controls.actions_available, controls.actions = True, body
+                controls.spell_toolkit = converse.spell_toolkit_context(toolkit, body, 5)
+                brain = FakeBrain()
+                loop = converse.Conversation(rpc, brain, controls=controls, character_name="Rook",
+                                             character_class="rogue", character_guid=5)
+                with patch.object(converse.time, "sleep", return_value=None):
+                    for _ in range(3):
+                        loop.tick()
+                self.assertEqual(brain.histories, [])
+                self.assertEqual([params for method, params in rpc.calls if method == "buddy-actions.pick_lock"],
+                                 [{"sessionId": "aw-body", "targetGuid": str(base_guid+2)}] * expected_attempts)
+                reply, = [params for method, params in rpc.calls if method == "buddy-chat.send"]
+                self.assertEqual(reply["channel"], "PARTY")
+                self.assertIn(text, reply["text"])
+
+    def test_pick_chest_does_not_substitute_a_different_chest_when_joels_is_out_of_range(self):
+        base_guid = (0xf110 << 48) | (74447 << 24)
+        pose = {"present": True, "mapKnown": True, "positionKnown": True}
+        chest = dict(pose, entry=74447, typeKnown=True, gameObjectType=3, flagsKnown=True, flags=2, stateKnown=True, state=1)
+
+        class ChestRPC(FakeRPC):
+            def call(self, method, params):
+                if method == "buddy-world.snapshot":
+                    return {"self": dict(pose, guid="5"), "owner": dict(pose, guid="3", x=8),
+                            "questObjects": [dict(chest, guid=str(base_guid+1), x=1),
+                                             dict(chest, guid=str(base_guid+2), x=8)]}
+                return super().call(method, params)
+
+        rpc = ChestRPC([])
+        controls = converse.BuddyControls(rpc, character_class="rogue", character_guid=5)
+        controls.actions_available = True
+        controls.actions = {"sessionId": "aw-body", "selfGuid": "5"}
+        controls.spell_toolkit = {"spells": [{"spellId": 1804, "rangeYards": 5}]}
+        self.assertIn("within 5 yards", controls.pick_chest(3))
+        self.assertFalse(any(method == "buddy-actions.pick_lock" for method, _ in rpc.calls))
+
     def test_only_joel_plain_chat_triggers_one_reply_per_burst(self):
         entries = [message(1, sender=99), message(2, self=True),
                    message(3, channel="WHISPER", text="Private"),
