@@ -63,7 +63,7 @@ func TestUnendingBreathRefreshesSwimmingAllyAndPreservesFollow(t *testing.T) {
 	advance(3 * time.Second)
 	s.Tick(ctx)
 	if len(buffCasts(f)) != 1 || s.buffOp.view.TargetGuid != ownerGUID || !s.state.Following || s.state.Moving || !s.swimming {
-		t.Fatal("did not refresh a wet Joel and retain the swim follow intent", s.buffOp, s.state, s.swimming)
+		t.Fatal("did not refresh a wet Joel and retain the swim follow intent", s.buffOp, s.state.Following, s.state.Moving, s.swimming)
 	}
 	confirmBuff(t, s, false)
 	advance(3 * time.Second)
