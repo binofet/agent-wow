@@ -140,11 +140,14 @@ func gearUsability(w *worldv1.SnapshotResponse, m itemMetadata, proficiency uint
 	if m.requiredSpell != 0 || m.requiredHonorRank != 0 || m.requiredCityRank != 0 || m.requiredReputationFaction != 0 || m.requiredReputationRank != 0 {
 		return "unverified_special_item_requirement"
 	}
+	if proficiency == 0 && m.requiredSkill == 0 {
+		return ""
+	}
 	skills, ok := ownedSkills(w)
 	if !ok {
 		return "complete_own_skill_baseline_required"
 	}
-	if skills[proficiency] == 0 {
+	if proficiency != 0 && skills[proficiency] == 0 {
 		if m.class == 2 {
 			return "actual_weapon_proficiency_required"
 		}
@@ -159,7 +162,10 @@ func gearUsability(w *worldv1.SnapshotResponse, m itemMetadata, proficiency uint
 func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64, bool, string) {
 	m := s.metadata[i.Entry]
 	slot, supported := armorSlot(m)
-	weapon := m.ordinaryMainhandWeapon()
+	weapon, ring := m.ordinaryMainhandWeapon(), m.ordinaryRing()
+	if ring {
+		slot, supported = firstFingerSlot, true
+	}
 	if weapon {
 		slot, supported = 15, true
 	}
@@ -170,7 +176,7 @@ func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64
 		return 0, 0, false, "only_ordinary_single_slot_armor_supported"
 	}
 	var reason string
-	if weapon {
+	if weapon || ring {
 		reason = gearUsability(s.view.w, m, m.weaponProficiency())
 	} else {
 		reason = armorUsability(s.view.w, m)
@@ -185,23 +191,56 @@ func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64
 	if !known {
 		return slot, 0, false, "complete_own_equipment_baseline_required"
 	}
+	slots := equipmentSlots(s.view.w, m, equipment, s.metadata)
+	if len(slots) == 0 {
+		return slot, 0, false, "ring_duplicate_or_equipment_unknown"
+	}
+	var firstBlocked string
+	var eligible *worldv1.EquipmentSlotState
+	for _, dest := range slots {
+		current := equipment[dest]
+		currentTemplate := s.metadata[current.Entry]
+		blocked := gearSlotBlockReason(m, i, equipment, dest, currentTemplate)
+		if blocked != "" {
+			if firstBlocked == "" {
+				firstBlocked = blocked
+			}
+			continue
+		}
+		var upgrade bool
+		if weapon {
+			upgrade = weaponUpgradeForSlot(s.view.w.GetSelf().GetClassId(), dest, m, i, currentTemplate, current)
+		} else {
+			upgrade = conservativeArmorUpgrade(m, i, currentTemplate, current)
+		}
+		if upgrade {
+			return dest, current.ItemGuid, true, ""
+		}
+		if eligible == nil {
+			eligible = current
+		}
+	}
+	if eligible != nil {
+		return eligible.Slot, eligible.ItemGuid, false, ""
+	}
+	return slots[0], equipment[slots[0]].ItemGuid, false, firstBlocked
+}
+
+func gearSlotBlockReason(m itemMetadata, i *worldv1.BackpackSlot, equipment [19]*worldv1.EquipmentSlotState, slot uint32, currentTemplate itemMetadata) string {
 	current := equipment[slot]
-	if weapon && equipment[16].ItemGuid != 0 && (m.inventoryType == 17 || current.ItemGuid != 0 && s.metadata[current.Entry].inventoryType == 17) {
-		return slot, equipment[15].ItemGuid, false, "two_hand_weapon_requires_known_empty_offhand"
+	if slot == mainhandSlot && equipment[offhandSlot].ItemGuid != 0 && (m.inventoryType == 17 || currentTemplate.inventoryType == 17) {
+		return "two_hand_weapon_requires_known_empty_offhand"
 	}
 	if current.ItemGuid != 0 && (!current.MetadataKnown || current.StackCount != 1) {
-		return slot, current.ItemGuid, false, "displaced_owned_item_metadata_required"
+		return "displaced_owned_item_metadata_required"
 	}
-	if current.ItemGuid != 0 && !s.metadata[current.Entry].known {
-		return slot, current.ItemGuid, false, "displaced_item_template_pending"
+	if current.ItemGuid != 0 && !currentTemplate.known {
+		return "displaced_item_template_pending"
 	}
 	if !i.EnhancementsKnown || current.ItemGuid != 0 && !current.EnhancementsKnown {
-		return slot, current.ItemGuid, false, "enhancement_context_pending"
+		return "enhancement_context_pending"
 	}
-	if weapon {
-		return slot, current.ItemGuid, conservativeWeaponUpgrade(m, i, s.metadata[current.Entry], current), ""
-	}
-	return slot, current.ItemGuid, conservativeArmorUpgrade(m, i, s.metadata[current.Entry], current), ""
+	return ""
 }
 
 func conservativeArmorUpgrade(candidate itemMetadata, carried *worldv1.BackpackSlot, current itemMetadata, equipped *worldv1.EquipmentSlotState) bool {
@@ -221,12 +260,13 @@ func conservativeArmorUpgrade(candidate itemMetadata, carried *worldv1.BackpackS
 	if equipped.ItemGuid == 0 {
 		return true
 	}
-	if !equipped.EnhancementsKnown || equipped.HasEnhancements || !comparableArmorBaseline(current) {
+	if !equipped.EnhancementsKnown || equipped.HasEnhancements || !comparableArmorBaseline(current) && !current.ordinaryRing() {
 		return false
 	}
 	a, aok := armorSlot(candidate)
 	b, bok := armorSlot(current)
-	if !aok || !bok || a != b || candidate.armor < current.armor {
+	sameSlot := aok && bok && a == b || candidate.ordinaryRing() && current.ordinaryRing()
+	if !sameSlot || candidate.armor < current.armor {
 		return false
 	}
 	better := candidate.armor > current.armor
@@ -273,7 +313,7 @@ func equipGearPacket(g uint64, slot uint32) []byte {
 		return nil
 	}
 	switch slot {
-	case 0, 2, 4, 5, 6, 7, 8, 9, 14, 15:
+	case 0, 2, 4, 5, 6, 7, 8, 9, firstFingerSlot, secondFingerSlot, 14, mainhandSlot, offhandSlot:
 		return append(binary.LittleEndian.AppendUint64(nil, g), byte(slot))
 	}
 	return nil
