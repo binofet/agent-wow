@@ -89,6 +89,8 @@ type Service struct {
 	capabilities                                             map[uint32]spellcatalog.Spell
 	capabilityRevision                                       uint64
 	spellReady                                               map[uint32]time.Time
+	fearBreakReady                                           time.Time
+	fearBreakAttempted                                       bool
 	supportOp                                                *supportAttempt
 	resurrectionBindings                                     map[uint64]bool
 	resurrectionOffer                                        *resurrectionOffer
@@ -988,6 +990,11 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
+	if !s.closed && !s.state.CastPending && s.hasObservedFearLocked() {
+		if w, err := s.snapshot(ctx); err == nil && s.breakControlLocked(ctx, w) {
+			return
+		}
+	}
 	if s.emergencyDefenseLocked(ctx) {
 		s.lastStep = s.now()
 		return
