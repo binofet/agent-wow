@@ -304,7 +304,12 @@ func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.CastPending = false
 	kind := s.spellKindLocked(s.pendingSpell)
 	self := s.lastWorld.GetSelf()
-	if kind == spellcatalog.Damage && (code == spellFailedInterrupted || code == spellFailedInterruptedCombat) &&
+	if code == spellFailedConfused || code == spellFailedFleeing ||
+		(s.clientControlLost || s.clientControlRestoring) && (code == spellFailedInterrupted || code == spellFailedInterruptedCombat) {
+		// The server rejected this cast because of our own temporary condition.
+		// Keep the normal GCD and reselect healing/offense once it wears off.
+		s.state.Reason = "server_cast_interrupted_by_control_loss"
+	} else if kind == spellcatalog.Damage && (code == spellFailedInterrupted || code == spellFailedInterruptedCombat) &&
 		s.pendingTarget != 0 && !s.independent && self.GetMapKnown() && maps.IsDungeon(self.GetMapId()) && !s.state.Practicing && !s.fargodeep.active {
 		// A correlated interruption settles the cast. The next defensive attempt
 		// still requires positive evidence of an active attacker and the normal GCD.

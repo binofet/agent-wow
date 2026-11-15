@@ -42,6 +42,8 @@ type sessionAPI interface {
 }
 
 type Service struct {
+	clientControlLost, clientControlRestoring bool
+
 	actionsv1.UnimplementedBuddyActionsServer
 	mu                                                       sync.Mutex
 	session                                                  sessionAPI
@@ -770,7 +772,7 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 }
 
 func (s *Service) movementLocked(ctx context.Context, op uint32, p position, moving bool) bool {
-	if s.session == nil {
+	if s.session == nil || s.clientControlLost || s.clientControlRestoring {
 		return false
 	}
 	clock, err := s.session.GetClock(ctx, &emptypb.Empty{})
@@ -982,6 +984,9 @@ func (s *Service) Tick(ctx context.Context) {
 			s.followNav.Reset()
 		}
 	}()
+	if s.controlRecoveryLocked(ctx) {
+		return
+	}
 	s.expirePendingCastLocked(ctx)
 	if s.emergencyDefenseLocked(ctx) {
 		s.lastStep = s.now()
@@ -1286,6 +1291,8 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	switch packet.Opcode {
+	case opcode.SMSGClientControlUpdate:
+		malformed = !s.clientControlPacketLocked(p)
 	case opcode.SMSGPartykilllog:
 		if len(p) != 16 {
 			malformed = true
@@ -1343,7 +1350,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 			break
 		}
 		if attacker == s.selfGUID {
-			if !s.autoStopping && dead == 0 && s.autoTarget != 0 {
+			if !s.autoStopping && dead == 0 && s.autoTarget != 0 && !s.clientControlLost && !s.clientControlRestoring {
 				s.failedAssistTarget = s.autoTarget
 				s.failedAssistCastTarget = 0
 			}
