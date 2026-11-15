@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ÇY
+¹[
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ö
 PlayerState
 guid (Rguid
@@ -214,7 +214,7 @@ flagsKnown
 created_by_guid (RcreatedByGuid
 state_known (R
 stateKnown
-state (Rstate"Ý
+state (Rstate"¤
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -264,7 +264,17 @@ trajectory,
 levelKnown
 level& (Rlevel(
 unit_flags_known' (RunitFlagsKnown.
-dynamic_flags_known( (RdynamicFlagsKnown"Ã
+dynamic_flags_known( (RdynamicFlagsKnownE
+active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
+activeCast"¨
+CreatureCast
+spell_id (RspellId
+
+cast_count (R	castCount!
+remaining_ms (RremainingMs
+target_guid (R
+targetGuid
+revision (Rrevision"Ã
 CreatureTrajectory
 known (Rknown
 duration_ms (R

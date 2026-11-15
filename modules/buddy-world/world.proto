@@ -239,6 +239,18 @@ message CreatureState {
   uint32 level = 38;
   bool unit_flags_known = 39;
   bool dynamic_flags_known = 40;
+  CreatureCast active_cast = 41;
+}
+
+// A cast observed in a normal server spell-start event. An expired cast or
+// a cast with a matching terminal event is omitted from the snapshot.
+message CreatureCast {
+  uint32 spell_id = 1;
+  uint32 cast_count = 2;
+  uint32 remaining_ms = 3;
+  uint64 target_guid = 4;
+  // Separates successive creature casts that reuse cast count zero.
+  uint64 revision = 5;
 }
 
 // Advertised server trajectory, separate from actual position observations.

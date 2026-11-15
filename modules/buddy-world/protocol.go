@@ -191,6 +191,8 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		return true, nil
 	case opcode.SMSGUpdateObject:
 		return true, updates(c, state, now)
+	case opcode.SMSGSpellStart, opcode.SMSGSpellGo, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
+		return state.observeCreatureCast(op, c, now)
 	case opcode.SMSGCompressedUpdateObject:
 		declared := c.u32()
 		if c.err != nil {
@@ -573,6 +575,9 @@ func updates(c *cursor, state *observations, now time.Time) error {
 			if typ != 1 {
 				if err := values(c, p, now); err != nil {
 					return err
+				}
+				if p != nil && p.cast.spell != 0 && observedCreatureDead(p) {
+					p.cast = observedCreatureCast{}
 				}
 			}
 			if newPlayer {
