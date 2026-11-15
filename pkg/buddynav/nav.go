@@ -450,6 +450,10 @@ func (p *planner) findPath(a, b Point) (*pathfinding.PathResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("destination: %w", err)
 	}
+	return p.findPathBetween(a, b, start, end)
+}
+
+func (p *planner) findPathBetween(a, b Point, start, end detour.DtPolyRef) (*pathfinding.PathResult, error) {
 	x, y := recast(a), recast(b)
 	var polys [512]detour.DtPolyRef
 	var count int

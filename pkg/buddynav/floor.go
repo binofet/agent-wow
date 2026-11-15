@@ -1,6 +1,6 @@
 package buddynav
 
-// Height-only VMAP_4.8 reader. Geometry, spawn transforms and triangle-ray
+// VMAP_4.8 reader. Geometry, spawn transforms and triangle-ray
 // conventions follow the public AzerothCore ModelInstance/WorldModel format.
 // The pinned AzerothGhost reader omits .vmo and inter-group LIQU framing, so
 // cannot currently read these independently extracted client assets correctly.
@@ -112,36 +112,9 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 			return 0, false, fmt.Errorf("collision query leaves bounded %s tiles", regionName)
 		}
 	}
-	var spawns []floorSpawn
-	global := false
-	if f.window != nil {
-		if !f.globalLoaded {
-			var err error
-			f.globalSpawns, f.globalTiled, err = readGlobalFloorSpawns(f.dir, f.mapID)
-			if err != nil {
-				return 0, false, fmt.Errorf("collision map tree unavailable: %w", err)
-			}
-			f.globalLoaded = true
-		}
-		global = !f.globalTiled
-		if global {
-			spawns = f.globalSpawns
-		}
-	}
-	if !global {
-		var ok bool
-		spawns, ok = f.tiles[name]
-		if !ok {
-			b, err := readBounded(filepath.Join(f.dir, name), 2<<20)
-			if err != nil {
-				return 0, false, fmt.Errorf("collision tile unavailable: %w", err)
-			}
-			spawns, err = parseFloorSpawns(b)
-			if err != nil {
-				return 0, false, err
-			}
-			f.tiles[name] = spawns
-		}
+	spawns, err := f.spawns(name)
+	if err != nil {
+		return 0, false, err
 	}
 	// Start close to the verified navigation layer. Terrain/collision more
 	// than 2yd below it or .5yd above it cannot substitute a roof/floor.
@@ -180,6 +153,36 @@ func (f *floorReader) heightContext(ctx context.Context, q Point, mesh, above, d
 	}
 	return origin.Z - best, hit, nil
 }
+
+func (f *floorReader) spawns(tile string) ([]floorSpawn, error) {
+	if f.window != nil {
+		if !f.globalLoaded {
+			var err error
+			f.globalSpawns, f.globalTiled, err = readGlobalFloorSpawns(f.dir, f.mapID)
+			if err != nil {
+				return nil, fmt.Errorf("collision map tree unavailable: %w", err)
+			}
+			f.globalLoaded = true
+		}
+		if !f.globalTiled {
+			return f.globalSpawns, nil
+		}
+	}
+	if spawns, ok := f.tiles[tile]; ok {
+		return spawns, nil
+	}
+	b, err := readBounded(filepath.Join(f.dir, tile), 2<<20)
+	if err != nil {
+		return nil, fmt.Errorf("collision tile unavailable: %w", err)
+	}
+	spawns, err := parseFloorSpawns(b)
+	if err != nil {
+		return nil, err
+	}
+	f.tiles[tile] = spawns
+	return spawns, nil
+}
+
 func allowedFloorTile(name string) bool {
 	return RegionNorthshire.allowsFloorTile(name)
 }
