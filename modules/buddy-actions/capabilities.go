@@ -146,29 +146,57 @@ func (s *Service) healingReserveLocked(p *worldv1.PlayerState) uint64 {
 	}
 	return reserve
 }
-func (s *Service) bestDamageLocked(p *worldv1.PlayerState, target position) spellcatalog.Spell {
+func directDamage(r spellcatalog.Spell) float64 {
+	var damage float64
+	for _, e := range r.Effects {
+		if e.Kind == 2 {
+			damage += float64(e.Points) + math.Max(0, float64(e.Dice)-1)/2
+		}
+	}
+	return damage
+}
+
+func (s *Service) bestDamageLocked(p *worldv1.PlayerState, target position, finishHealth uint32, targetGUID uint64) spellcatalog.Spell {
 	var best spellcatalog.Spell
 	var choices []contract.Spell
 	eligible := map[uint32]spellcatalog.Spell{}
 	score := float64(-1)
+	targetRange := distance(s.pos, target)
+	interruptedHere := targetGUID != 0 && s.state.LastCastTargetGuid == targetGUID &&
+		(s.state.LastCastFailure == spellFailedInterrupted || s.state.LastCastFailure == spellFailedInterruptedCombat)
 	for _, r := range s.candidatesLocked(spellcatalog.Damage) {
-		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p)+s.healingReserveLocked(p) || s.now().Before(s.spellReady[r.ID]) || distance(s.pos, target) > r.MaxHostile-2 || distance(s.pos, target) < r.MinHostile {
+		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p)+s.healingReserveLocked(p) ||
+			s.now().Before(s.spellReady[r.ID]) || targetRange > r.MaxHostile-2 || targetRange < r.MinHostile {
 			continue
 		}
-		damage := float64(0)
-		for _, e := range r.Effects {
-			if e.Kind == 2 {
-				damage += float64(e.Points) + math.Max(0, float64(e.Dice)-1)/2
-			}
+		damage := directDamage(r)
+		periodic := periodicDamage(r)
+		if periodic > 0 && targetGUID != 0 && s.hasOwnDamageAuraLocked(targetGUID, r.Family) {
+			continue
 		}
-		value := damage / math.Max(1.5, float64(r.CastMs)/1000)
-		if value > score {
+		if periodic > 0 && (targetGUID == 0 || finishHealth != 0) && damage == 0 {
+			continue // A late or position-only cast needs immediate damage.
+		}
+		amount := damage
+		if finishHealth == 0 && targetGUID != 0 {
+			amount += periodic
+		}
+		value := amount / math.Max(1.5, float64(r.CastMs)/1000)
+		if interruptedHere && r.CastMs != 0 {
+			value *= 0.5 // A long cast just failed on this target.
+		}
+		// Prefer the fastest affordable spell expected to finish this enemy.
+		// Otherwise keep the usual damage-per-second policy.
+		kills := finishHealth > 0 && damage >= float64(finishHealth)
+		bestKills := finishHealth > 0 && directDamage(best) >= float64(finishHealth)
+		if kills && !bestKills || kills && bestKills && (r.CastMs < best.CastMs || r.CastMs == best.CastMs && value > score) ||
+			!kills && !bestKills && value > score {
 			best, score = r, value
 		}
 		eligible[r.ID] = r
-		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: damage, CastMs: r.CastMs, Score: value})
+		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: amount, CastMs: r.CastMs, Score: value})
 	}
-	if len(choices) > 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
+	if len(choices) > 0 && finishHealth == 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
 		decision := s.behaviorDecisionLocked(contract.Input{Kind: "damage_spell", Self: combatant(p), Spells: choices})
 		if decision.SpellId != 0 {
 			if r, ok := eligible[decision.SpellId]; ok {

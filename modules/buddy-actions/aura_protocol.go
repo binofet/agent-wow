@@ -15,12 +15,12 @@ import (
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Player/Player.cpp
 // AFLAG_ANY_EFFECT_AMOUNT_SENT is not produced by that current writer.
 type observedBuffAura struct {
-	spell                   uint32
-	caster                  uint64
-	positive, durationKnown bool
-	duration                uint32
-	at                      time.Time
-	revision                uint64
+	spell                             uint32
+	caster                            uint64
+	positive, negative, durationKnown bool
+	duration                          uint32
+	at                                time.Time
+	revision                          uint64
 }
 
 func (a observedBuffAura) remaining(now time.Time) uint32 {
@@ -74,6 +74,7 @@ func decodeBuffAuras(p []byte, all bool) (uint64, []auraDelta, error) {
 				return 0, nil, bad
 			}
 			a.positive = flags&0x10 != 0 && flags&7 != 0
+			a.negative = flags&0x80 != 0 && flags&7 != 0
 			if flags&8 != 0 {
 				a.caster = guid
 			} else {
@@ -190,14 +191,24 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 			return true, errors.New("malformed aura world lifecycle frame")
 		}
 		s.buffAuras = nil
+		s.ownDamageAuras = nil
 		if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" {
 			s.buffUnconfirmedLocked("world_transfer_outcome_unconfirmed")
 		}
 		return false, nil
+	case opcode.SMSGDestroyObject:
+		if len(p) != 9 {
+			return true, errors.New("malformed object destruction frame")
+		}
+		s.clearOwnDamageAurasLocked(binary.LittleEndian.Uint64(p))
+		return true, nil
 	case opcode.SMSGAuraUpdate, opcode.SMSGAuraUpdateAll:
 		guid, updates, err := decodeBuffAuras(p, op == opcode.SMSGAuraUpdateAll)
 		if err == nil && guid>>48 == 0 {
 			s.applyBuffAurasLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
+		}
+		if err == nil && (guid>>48 == 0xf130 || guid>>48 == 0xf150) {
+			s.observeOwnDamageAurasLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
 		}
 		return true, err
 	}

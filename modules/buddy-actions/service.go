@@ -126,6 +126,7 @@ type Service struct {
 	spellbookRevision                    uint64
 	buffUntil, nextBuff                  time.Time
 	buffAuras                            map[uint64]*buffAuraSet
+	ownDamageAuras                       map[damageAuraSlot]observedBuffAura
 	buffAuraRevision, buffSequence       uint64
 	buffBindings                         map[buffKey]*buffBinding
 	buffOp                               *buffAttempt

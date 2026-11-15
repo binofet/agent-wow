@@ -141,7 +141,11 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if !known {
 		return fail("assist_target_outside_conservative_range")
 	}
-	r := s.bestDamageLocked(self, targetPosition)
+	finishHealth := uint32(0)
+	if target.HealthKnown && target.MaxHealth > 0 && uint64(target.Health)*100 <= uint64(target.MaxHealth)*25 {
+		finishHealth = target.Health
+	}
+	r := s.bestDamageLocked(self, targetPosition, finishHealth, target.Guid)
 	if self.ClassId != 4 && r.ID == 0 && !s.state.KnownAutoAttack {
 		return fail("no_affordable_learned_damage_spell_in_range")
 	}
@@ -288,6 +292,11 @@ func creaturePosition(c *worldv1.CreatureState) (position, bool, bool) {
 	}
 	return p, c.PositionKnown && finite(p), false
 }
+
+const (
+	spellFailedInterrupted       = 40
+	spellFailedInterruptedCombat = 41
+)
 
 func (s *Service) castFailedLocked(code uint32, reason string) {
 	s.state.LastCastFailure = code
