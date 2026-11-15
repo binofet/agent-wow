@@ -157,6 +157,10 @@ func (s *Service) castSupportLocked(ctx context.Context, r spellcatalog.Spell, t
 }
 
 func (s *Service) castTargetedSupportLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64, capability string) bool {
+	return s.castSupportPacketLocked(ctx, r, target, owner, capability, nil)
+}
+
+func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64, capability string, item *worldv1.EquipmentSlotState) bool {
 	s.castCount++
 	s.reserveSpellCooldownLocked(r)
 	until := s.now().Add(time.Duration(r.CastMs)*time.Millisecond + 3*time.Second)
@@ -165,8 +169,19 @@ func (s *Service) castTargetedSupportLocked(ctx context.Context, r spellcatalog.
 	s.pendingSpell = r.ID
 	s.pendingTarget = target
 	s.castUntil = until
-	s.nextHeal = s.now().Add(1500 * time.Millisecond)
-	s.nextAssist = s.nextHeal
+	if capability == fearBreakCapability {
+		s.state.LastCastFailure = 0
+		ready := s.now().Add(time.Duration(r.GcdMs) * time.Millisecond)
+		if s.nextHeal.Before(ready) {
+			s.nextHeal = ready
+		}
+		if s.nextAssist.Before(ready) {
+			s.nextAssist = ready
+		}
+	} else {
+		s.nextHeal = s.now().Add(1500 * time.Millisecond)
+		s.nextAssist = s.nextHeal
+	}
 	s.state.LastCastSpellId = r.ID
 	s.state.LastCastTargetGuid = target
 	payload := spellPacket(s.castCount, r.ID, target)
@@ -175,12 +190,19 @@ func (s *Service) castTargetedSupportLocked(ctx context.Context, r spellcatalog.
 	} else if target>>48 == 0xf110 {
 		binary.LittleEndian.PutUint32(payload[6:], 0x800)
 	}
-	if !s.sendLocked(ctx, opcode.CMSGCastSpell, payload) {
+	wire := uint32(opcode.CMSGCastSpell)
+	if item != nil {
+		wire, payload = opcode.CMSGUseItem, fearBreakItemPacket(item, s.castCount, r.ID)
+	}
+	if !s.sendLocked(ctx, wire, payload) {
 		s.supportOp.view.Phase = "transport_unconfirmed_no_retry"
 		return true
 	}
 	s.supportOp.view.TransportWritten = true
 	s.state.Reason = "support_spell_waiting_for_server"
+	if capability == fearBreakCapability {
+		s.state.Reason = "fear_break_waiting_for_server"
+	}
 	return true
 }
 
@@ -251,7 +273,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
 		}
-		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
+		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
 			return true, bad
 		}
 		if code == opcode.SMSGSpellStart {
@@ -273,7 +295,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	}
 	if rejected {
 		op.view.Phase = "server_rejected_no_replay"
-		if op.view.Capability == pickLockCapability && code == opcode.SMSGCastFailed {
+		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {

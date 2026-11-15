@@ -190,6 +190,7 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 		if op == opcode.SMSGNewWorld && len(p) != 20 || op == opcode.SMSGTransferPending && len(p) != 4 && len(p) != 12 {
 			return true, errors.New("malformed aura world lifecycle frame")
 		}
+		s.clientControlLost, s.clientControlRestoring = false, false
 		s.buffAuras = nil
 		s.ownDamageAuras = nil
 		if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" {

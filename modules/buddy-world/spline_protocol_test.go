@@ -59,6 +59,86 @@ func TestMonsterMoveLiteralStartThenExactCorpseStop(t *testing.T) {
 	}
 }
 
+func selfSplinePacket(t *testing.T, value string) []byte {
+	t.Helper()
+	return append([]byte{1, 1}, splineLiteral(t, value)[6:]...)
+}
+
+func TestSelfFearSplineWaitsForMatchingControlReturnAndArrival(t *testing.T) {
+	s := splineRig(t)
+	now := s.now()
+	s.now = func() time.Time { return now }
+	packet(t, s, opcode.SMSGUpdateObject, createFixture(1, vitalFields()))
+	active := selfSplinePacket(t, monsterLinearGolden)
+	r := packet(t, s, opcode.SMSGMonsterMove, active)
+	if r.Self.PositionKnown || r.Self.MovementFlagsKnown || r.Self.MovementFlags&splineMotionFlags == 0 {
+		t.Fatal("active movement published a stable self pose", r.Self)
+	}
+	revision := r.Self.PositionRevision
+	packet(t, s, opcode.SMSGClientControlUpdate, []byte{1, 1, 0})
+	now = now.Add(time.Second)
+	r = packet(t, s, opcode.SMSGClientControlUpdate, []byte{1, 3, 1})
+	if r.Self.PositionKnown || r.Self.PositionRevision != revision {
+		t.Fatal("another mover's control packet restored self position", r.Self)
+	}
+	// Fleeing can launch multiple splines. Only the most recent path may settle.
+	binary.LittleEndian.PutUint32(active[32:], math.Float32bits(15))
+	packet(t, s, opcode.SMSGMonsterMove, active)
+	r = packet(t, s, opcode.SMSGClientControlUpdate, []byte{1, 1, 1})
+	if r.MalformedPackets != 0 || r.Self.PositionKnown || r.Self.PositionRevision != revision {
+		t.Fatal("restored control before the active spline elapsed", r)
+	}
+	now = now.Add(time.Second)
+	r, _ = s.Snapshot(context.Background(), nil)
+	if !r.Self.PositionKnown || !r.Self.MovementFlagsKnown || r.Self.MovementFlags&splineMotionFlags != 0 || r.Self.PositionRevision != revision+1 || r.Self.X != 15 || r.Self.Y != 24 || r.Self.Z != 34 {
+		t.Fatal("elapsed spline did not reestablish position and movement", r.Self)
+	}
+	r, _ = s.Snapshot(context.Background(), nil)
+	if r.Self.PositionRevision != revision+1 {
+		t.Fatal("read settled the same spline twice", r.Self)
+	}
+}
+
+func TestSelfFearSplineStopUseObservedLocation(t *testing.T) {
+	s := splineRig(t)
+	packet(t, s, opcode.SMSGClientControlUpdate, []byte{1, 1, 0})
+	packet(t, s, opcode.SMSGMonsterMove, selfSplinePacket(t, monsterLinearGolden))
+	r := packet(t, s, opcode.SMSGMonsterMove, selfSplinePacket(t, monsterStopGolden))
+	if r.MalformedPackets != 0 || !r.Self.PositionKnown || !r.Self.MovementFlagsKnown || r.Self.MovementFlags&splineMotionFlags != 0 || r.Self.X != 11 || r.Self.Y != 22 || r.Self.Z != 33 {
+		t.Fatal("did not report the server's exact stop", r)
+	}
+}
+
+func TestSelfFearSplineCannotInferUnsafeOrSupersededPose(t *testing.T) {
+	for _, mode := range []string{"transport", "cyclic", "falling", "knockback"} {
+		t.Run(mode, func(t *testing.T) {
+			s := splineRig(t)
+			now := s.now()
+			s.now = func() time.Time { return now }
+			active := selfSplinePacket(t, monsterLinearGolden)
+			op := uint32(opcode.SMSGMonsterMove)
+			switch mode {
+			case "transport":
+				active = append([]byte{1, 1, 1, 5, 0}, active[2:]...)
+				op = opcode.SMSGMonsterMoveTransport
+			case "cyclic":
+				binary.LittleEndian.PutUint32(active[20:], 0x80000)
+			case "falling":
+				binary.LittleEndian.PutUint32(active[20:], 0x400)
+			}
+			packet(t, s, op, active)
+			if mode == "knockback" {
+				packet(t, s, opcode.SMSGMoveKnockBack, append([]byte{1, 1}, make([]byte, 20)...))
+			}
+			now = now.Add(2 * time.Second)
+			r := packet(t, s, opcode.SMSGClientControlUpdate, []byte{1, 1, 1})
+			if r.MalformedPackets != 0 || r.Self.PositionKnown || r.Self.MovementFlagsKnown {
+				t.Fatal("unsafe or superseded spline restored self pose", r)
+			}
+		})
+	}
+}
+
 // Source-framed variants exercise optional fields before the path. Facing
 // coordinates are not movement destinations, and animation precedes duration.
 func monsterSplineFixture(kind byte, flags uint32) []byte {
