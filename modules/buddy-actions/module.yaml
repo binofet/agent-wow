@@ -14,6 +14,7 @@ rpc:
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
   resurrect_once: /warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce
   accept_resurrection: /warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection
+  pick_lock: /warcraftbuddy.actions.v1.BuddyActions/PickLock
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
   buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
@@ -35,6 +36,7 @@ rpc:
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_LOOT_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_TRANSFER_PENDING: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -72,6 +74,7 @@ script_api:
   engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}
   resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
+  pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
   heal_once: {effect: mutation}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}

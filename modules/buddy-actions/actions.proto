@@ -305,6 +305,7 @@ message State {
 }
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
+message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
@@ -336,4 +337,5 @@ service BuddyActions {
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc ResurrectOnce(ResurrectOnceRequest) returns (State);
   rpc AcceptResurrection(AcceptResurrectionRequest) returns (State);
+  rpc PickLock(PickLockRequest) returns (State);
 }

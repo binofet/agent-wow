@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v7.36.2
-// source: actions.proto
+// source: modules/buddy-actions/actions.proto
 
 package actionsv1
 
@@ -48,6 +48,7 @@ const (
 	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 	BuddyActions_ResurrectOnce_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
 	BuddyActions_AcceptResurrection_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
+	BuddyActions_PickLock_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -83,6 +84,7 @@ type BuddyActionsClient interface {
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error)
 	AcceptResurrection(ctx context.Context, in *AcceptResurrectionRequest, opts ...grpc.CallOption) (*State, error)
+	PickLock(ctx context.Context, in *PickLockRequest, opts ...grpc.CallOption) (*State, error)
 }
 
 type buddyActionsClient struct {
@@ -363,6 +365,16 @@ func (c *buddyActionsClient) AcceptResurrection(ctx context.Context, in *AcceptR
 	return out, nil
 }
 
+func (c *buddyActionsClient) PickLock(ctx context.Context, in *PickLockRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_PickLock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -396,6 +408,7 @@ type BuddyActionsServer interface {
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error)
 	AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error)
+	PickLock(context.Context, *PickLockRequest) (*State, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -486,6 +499,9 @@ func (UnimplementedBuddyActionsServer) ResurrectOnce(context.Context, *Resurrect
 }
 func (UnimplementedBuddyActionsServer) AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcceptResurrection not implemented")
+}
+func (UnimplementedBuddyActionsServer) PickLock(context.Context, *PickLockRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PickLock not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -994,6 +1010,24 @@ func _BuddyActions_AcceptResurrection_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_PickLock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PickLockRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).PickLock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_PickLock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).PickLock(ctx, req.(*PickLockRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1109,7 +1143,11 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "AcceptResurrection",
 			Handler:    _BuddyActions_AcceptResurrection_Handler,
 		},
+		{
+			MethodName: "PickLock",
+			Handler:    _BuddyActions_PickLock_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "actions.proto",
+	Metadata: "modules/buddy-actions/actions.proto",
 }

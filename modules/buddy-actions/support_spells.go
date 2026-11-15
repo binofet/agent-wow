@@ -152,10 +152,14 @@ func (s *Service) castResurrectionLocked(ctx context.Context, r spellcatalog.Spe
 }
 
 func (s *Service) castSupportLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64) bool {
+	return s.castTargetedSupportLocked(ctx, r, target, owner, string(r.Capability().Kind))
+}
+
+func (s *Service) castTargetedSupportLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64, capability string) bool {
 	s.castCount++
 	s.reserveSpellCooldownLocked(r)
 	until := s.now().Add(time.Duration(r.CastMs)*time.Millisecond + 3*time.Second)
-	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.ID, TargetGuid: target, Capability: string(r.Capability().Kind), Phase: "waiting_server"}, owner: owner, count: s.castCount, until: until}
+	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.ID, TargetGuid: target, Capability: capability, Phase: "waiting_server"}, owner: owner, count: s.castCount, until: until}
 	s.state.CastPending = true
 	s.pendingSpell = r.ID
 	s.pendingTarget = target
@@ -167,6 +171,8 @@ func (s *Service) castSupportLocked(ctx context.Context, r spellcatalog.Spell, t
 	payload := spellPacket(s.castCount, r.ID, target)
 	if target>>48 == 0xf101 {
 		binary.LittleEndian.PutUint32(payload[6:], 0x8000)
+	} else if target>>48 == 0xf110 {
+		binary.LittleEndian.PutUint32(payload[6:], 0x800)
 	}
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, payload) {
 		s.supportOp.view.Phase = "transport_unconfirmed_no_retry"
@@ -179,6 +185,10 @@ func (s *Service) castSupportLocked(ctx context.Context, r spellcatalog.Spell, t
 
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	bad := errors.New("malformed support spell event")
+	if code == opcode.SMSGLootResponse {
+		s.observePickLockLootLocked(p)
+		return true, nil
+	}
 	if code == opcode.SMSGResurrectRequest {
 		if len(p) < 14 {
 			return true, bad
@@ -219,7 +229,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if len(p) < 6 || p[0] != op.count || binary.LittleEndian.Uint32(p[1:]) != op.view.SpellId {
 			return false, nil
 		}
-		if len(p) != 6 {
+		if len(p) != 6 && op.view.Capability != pickLockCapability {
 			return true, bad
 		}
 		rejected = true
@@ -248,6 +258,8 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if op.view.EffectObserved {
 			if op.view.Capability == string(spellcatalog.Resurrect) {
 				op.view.Phase = "confirmed_alive"
+			} else if op.view.Capability == pickLockCapability {
+				op.view.Phase = "confirmed_loot_window"
 			} else {
 				op.view.Phase = "confirmed_effect"
 			}
@@ -257,6 +269,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	}
 	if rejected {
 		op.view.Phase = "server_rejected_no_replay"
+		if op.view.Capability == pickLockCapability && code == opcode.SMSGCastFailed {
+			s.state.LastCastFailure = uint32(p[5])
+		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {
 			delete(s.resurrectionBindings, op.owner)
 			s.nextHeal = s.now().Add(10 * time.Second)
