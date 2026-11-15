@@ -3,6 +3,9 @@ package buddyactions
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -19,7 +22,7 @@ import (
 func (s *Service) EnableDungeonTrace(directory string, mapID uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.independent || s.selfGUID != 1 || s.closed || s.dungeonTrace != nil {
+	if s.independent || s.selfGUID != 1 || s.closed || s.dungeonTraceEnabled() {
 		return errors.New("dungeon trace requires Arlen's single current companion session")
 	}
 	trace, err := dungeontrace.New(directory, s.sessionID, mapID)
@@ -30,17 +33,56 @@ func (s *Service) EnableDungeonTrace(directory string, mapID uint32) error {
 	return nil
 }
 
+func (s *Service) EnableAutomaticDungeonTrace(directory string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.independent || s.selfGUID != 1 || s.closed || s.dungeonTraceEnabled() {
+		return errors.New("dungeon trace requires Arlen's single current companion session")
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !filepath.IsAbs(directory) || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return errors.New("automatic dungeon trace requires an absolute private directory")
+	}
+	s.traceAutoDirectory = directory
+	return nil
+}
+
+func (s *Service) dungeonTraceEnabled() bool {
+	return s.dungeonTrace != nil || s.traceAutoDirectory != ""
+}
+
+func (s *Service) finishDungeonTraceLocked(at time.Time, reason string) {
+	if s.dungeonTrace == nil {
+		return
+	}
+	s.dungeonTrace.Close(at, reason)
+	if s.traceAutoDirectory != "" {
+		s.traceDraining = slices.DeleteFunc(s.traceDraining, func(trace *dungeontrace.Recorder) bool {
+			select {
+			case <-trace.Done():
+				return true
+			default:
+				return false
+			}
+		})
+		s.traceDraining = append(s.traceDraining, s.dungeonTrace)
+		s.dungeonTrace = nil
+	}
+}
+
 func (s *Service) FlushDungeonTrace(ctx context.Context) {
 	s.mu.Lock()
-	trace := s.dungeonTrace
-	if trace != nil {
-		trace.Close(s.now(), "observer_shutdown")
+	s.finishDungeonTraceLocked(s.now(), "observer_shutdown")
+	traces := slices.Clone(s.traceDraining)
+	if s.dungeonTrace != nil {
+		traces = append(traces, s.dungeonTrace)
 	}
 	s.mu.Unlock()
-	if trace != nil {
+	for _, trace := range traces {
 		select {
-		case <-ctx.Done():
 		case <-trace.Done():
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -73,19 +115,28 @@ func traceContractInScope(in contract.Input) bool {
 }
 
 func (s *Service) observeDungeonWorld(world *worldv1.SnapshotResponse) {
-	if s.dungeonTrace == nil {
+	if !s.dungeonTraceEnabled() {
 		return
 	}
 	s.traceLastWorld = s.now()
-	s.traceWorld(world, s.traceLastWorld)
-	s.tracePreviousWorld = world
+	if s.traceWorld(world, s.traceLastWorld) {
+		s.tracePreviousWorld = world
+	} else {
+		s.tracePreviousWorld = nil
+	}
 }
 
 // Existing action reads record their snapshots directly. The small fallback
 // read keeps instance boundaries observable if action intents are idle.
 func (s *Service) sampleDungeonTraceLocked(ctx context.Context) {
-	phase := s.dungeonTrace.Status().Phase
-	if s.closed || ctx.Err() != nil || (phase != "armed" && phase != "recording") {
+	if s.closed || ctx.Err() != nil {
+		return
+	}
+	phase := ""
+	if s.dungeonTrace != nil {
+		phase = s.dungeonTrace.Status().Phase
+	}
+	if phase != "armed" && phase != "recording" && s.traceVisitPending == "" && s.traceBoundary.known {
 		return
 	}
 	at := s.now()
@@ -95,7 +146,7 @@ func (s *Service) sampleDungeonTraceLocked(ctx context.Context) {
 		cancel()
 		s.observeDungeonWorld(world)
 	}
-	if s.session == nil || !s.dungeonTrace.Active() || at.Sub(s.traceLastParty) < 5*time.Second {
+	if s.session == nil || s.dungeonTrace == nil || !s.dungeonTrace.Active() || at.Sub(s.traceLastParty) < 5*time.Second {
 		return
 	}
 	s.traceLastParty = at

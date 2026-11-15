@@ -48,6 +48,9 @@ type Service struct {
 	mu                                                       sync.Mutex
 	session                                                  sessionAPI
 	dungeonTrace                                             *dungeontrace.Recorder
+	traceAutoDirectory                                       string
+	traceVisitPending                                        string
+	traceDraining                                            []*dungeontrace.Recorder
 	traceLastWorld, traceLastParty                           time.Time
 	tracePreviousWorld                                       *worldv1.SnapshotResponse
 	traceBoundary                                            dungeonTraceBoundary
@@ -587,9 +590,7 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dungeonTrace != nil {
-		s.dungeonTrace.Close(s.now(), "observer_logout")
-	}
+	s.finishDungeonTraceLocked(s.now(), "observer_logout")
 	s.closed = true
 	s.state.Buffing = false
 	s.buffUnconfirmedLocked("logout_buff_outcome_unconfirmed")
@@ -955,7 +956,7 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.dungeonTrace != nil {
+	if s.dungeonTraceEnabled() {
 		defer s.sampleDungeonTraceLocked(ctx)
 	}
 	s.buffTimeoutLocked()
@@ -1268,7 +1269,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	if packet == nil {
 		return &emptypb.Empty{}, nil
 	}
-	if s.dungeonTrace != nil {
+	if s.dungeonTraceEnabled() {
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload

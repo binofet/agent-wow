@@ -3,6 +3,7 @@
 package dungeontrace
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +84,56 @@ func New(directory, sessionID string, mapID uint32) (*Recorder, error) {
 	if !filepath.IsAbs(directory) || len(sessionID) == 0 || len(sessionID) > 128 {
 		return nil, errors.New("an absolute directory and a session ID are required")
 	}
+	root, err := openPrivateDirectory(directory)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := root.Lstat(Filename); !errors.Is(err, os.ErrNotExist) {
+		root.Close()
+		if err == nil {
+			return nil, errors.New("trace directory already contains a visit")
+		}
+		return nil, fmt.Errorf("inspect trace filename: %w", err)
+	}
+	return &Recorder{root: root, sessionID: sessionID, mapID: mapID,
+		status: Status{Phase: armed}, done: make(chan struct{})}, nil
+}
+
+// NewVisit starts a trace for an already verified map transition. Each trace
+// owns a new private subdirectory within the configured persistent directory.
+func NewVisit(directory, sessionID string, mapID uint32, at time.Time, reason string) (*Recorder, error) {
+	if len(sessionID) == 0 || len(sessionID) > 128 || mapID == 0 {
+		return nil, errors.New("a session ID and a dungeon map are required")
+	}
+	parent, err := openPrivateDirectory(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	name := fmt.Sprintf("map-%d-%s", mapID, rand.Text())
+	if err := parent.Mkdir(name, 0o700); err != nil {
+		return nil, fmt.Errorf("create private dungeon visit directory: %w", err)
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, fmt.Errorf("open private dungeon visit directory: %w", err)
+	}
+	r := &Recorder{root: root, sessionID: sessionID, mapID: mapID,
+		status: Status{Phase: armed}, done: make(chan struct{})}
+	r.mu.Lock()
+	r.startLocked(at, reason)
+	started := r.status
+	r.mu.Unlock()
+	if started.Phase == failed {
+		return nil, errors.New(started.Error)
+	}
+	return r, nil
+}
+
+func openPrivateDirectory(directory string) (*os.Root, error) {
+	if !filepath.IsAbs(directory) {
+		return nil, errors.New("an absolute trace directory is required")
+	}
 	info, err := os.Lstat(directory)
 	if err != nil {
 		return nil, fmt.Errorf("inspect trace directory: %w", err)
@@ -99,15 +150,7 @@ func New(directory, sessionID string, mapID uint32) (*Recorder, error) {
 		root.Close()
 		return nil, errors.New("trace directory changed during validation")
 	}
-	if _, err := root.Lstat(Filename); !errors.Is(err, os.ErrNotExist) {
-		root.Close()
-		if err == nil {
-			return nil, errors.New("trace directory already contains a visit")
-		}
-		return nil, fmt.Errorf("inspect trace filename: %w", err)
-	}
-	return &Recorder{root: root, sessionID: sessionID, mapID: mapID,
-		status: Status{Phase: armed}, done: make(chan struct{})}, nil
+	return root, nil
 }
 
 // ObserveMap uses the observing client's known map, never the map of a target
@@ -127,7 +170,7 @@ func (r *Recorder) ObserveMap(mapID uint32, known bool, at time.Time) {
 		if mapID != r.mapID {
 			r.sawOutside = true
 		} else if r.sawOutside {
-			r.startLocked(at)
+			r.startLocked(at, "observed_map_entry")
 		}
 	case recording:
 		if known && mapID != r.mapID {
@@ -143,7 +186,7 @@ func (r *Recorder) ObserveMap(mapID uint32, known bool, at time.Time) {
 	}
 }
 
-func (r *Recorder) startLocked(at time.Time) {
+func (r *Recorder) startLocked(at time.Time, reason string) {
 	f, err := r.root.OpenFile(Filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		r.root.Close()
@@ -156,7 +199,7 @@ func (r *Recorder) startLocked(at time.Time) {
 	r.mapKnown = true
 	r.queue = make(chan Row, queueDepth)
 	r.status.Phase = recording
-	first := r.rowLocked("start", at, reasonPayload("observed_map_entry"))
+	first := r.rowLocked("start", at, reasonPayload(reason))
 	go r.write(r.root, f, r.queue, first)
 	r.root = nil // The writer now owns it.
 }

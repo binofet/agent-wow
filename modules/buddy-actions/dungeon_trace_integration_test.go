@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,91 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
+
+func TestAutomaticDungeonTraceRecordsSeparateVisits(t *testing.T) {
+	s, f, _ := rig(t)
+	s.sessionID = "auto-test-body"
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnableAutomaticDungeonTrace(directory); err != nil {
+		t.Fatal(err)
+	}
+	packet := func(op, mapID uint32) {
+		size := 20
+		if op == opcode.SMSGTransferPending {
+			size = 4
+		}
+		payload := make([]byte, size)
+		binary.LittleEndian.PutUint32(payload, mapID)
+		if _, err := s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: op, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe := func(mapID uint32, revision uint64) {
+		f.world.Self.MapId, f.world.Owner.MapId = mapID, mapID
+		f.world.Self.PositionRevision = revision
+		s.observeDungeonWorld(f.world)
+	}
+	packet(opcode.SMSGLoginVerifyWorld, 48)
+	observe(48, 1) // Reconnecting inside records the visible remainder as a partial visit.
+	if s.dungeonTrace == nil || !s.dungeonTrace.Active() {
+		t.Fatal("matched dungeon login did not start a partial visit")
+	}
+	packet(opcode.SMSGTransferPending, 48)
+	packet(opcode.SMSGNewWorld, 48)
+	observe(48, 1)
+	if s.dungeonTrace != nil {
+		t.Fatal("old same-map snapshot started a second visit")
+	}
+	observe(48, 2)
+	if s.dungeonTrace == nil || !s.dungeonTrace.Active() {
+		t.Fatal("new same-map visit did not start")
+	}
+	packet(opcode.SMSGTransferPending, 1)
+	packet(opcode.SMSGNewWorld, 1)
+	observe(1, 3)
+	if s.dungeonTrace != nil {
+		t.Fatal("outdoor map began recording")
+	}
+	packet(opcode.SMSGTransferPending, 34)
+	observe(34, 4)
+	if s.dungeonTrace != nil {
+		t.Fatal("world snapshot started recording ahead of the server boundary")
+	}
+	packet(opcode.SMSGNewWorld, 34)
+	observe(34, 4)
+	if s.dungeonTrace == nil || !s.dungeonTrace.Active() {
+		t.Fatal("different dungeon visit did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.FlushDungeonTrace(ctx)
+	paths, err := filepath.Glob(filepath.Join(directory, "map-*", dungeontrace.Filename))
+	if err != nil || len(paths) != 3 {
+		t.Fatalf("want three distinct visit traces, got %v, %v", paths, err)
+	}
+	starts := map[string]int{}
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := bytes.Split(bytes.TrimSpace(content), []byte{'\n'})
+		var start, end dungeontrace.Row
+		if json.Unmarshal(lines[0], &start) != nil || json.Unmarshal(lines[len(lines)-1], &end) != nil || start.Sequence != 1 || start.Kind != "start" || end.Kind != "end" || start.MapID != end.MapID {
+			t.Fatalf("malformed visit %s: %s", path, content)
+		}
+		starts[string(start.Payload)]++
+		if !strings.HasPrefix(filepath.Base(filepath.Dir(path)), "map-") {
+			t.Fatal(path)
+		}
+	}
+	if starts[`{"reason":"observed_dungeon_login_partial_visit"}`] != 1 || starts[`{"reason":"observed_map_entry"}`] != 2 {
+		t.Fatal(starts)
+	}
+}
 
 func TestDungeonTraceRoundTripFromPacketAndDecisionHooks(t *testing.T) {
 	ctx := context.Background()

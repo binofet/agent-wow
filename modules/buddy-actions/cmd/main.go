@@ -61,11 +61,18 @@ func run() error {
 	service.UseAutomaticCorpseLoot()
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {
-		mapID, err := strconv.ParseUint(value, 10, 32)
-		if err != nil || mapID == 0 {
-			return errors.New("dungeon trace needs an explicit nonzero map ID")
+		const destination = "/var/lib/buddy-dungeon-trace"
+		var err error
+		if value == "auto" {
+			err = service.EnableAutomaticDungeonTrace(destination)
+		} else {
+			mapID, parseErr := strconv.ParseUint(value, 10, 32)
+			if parseErr != nil || mapID == 0 {
+				return errors.New("dungeon trace needs auto or a nonzero map ID")
+			}
+			err = service.EnableDungeonTrace(destination, uint32(mapID))
 		}
-		if err := service.EnableDungeonTrace("/var/lib/buddy-dungeon-trace", uint32(mapID)); err != nil {
+		if err != nil {
 			return err
 		}
 		defer func() {

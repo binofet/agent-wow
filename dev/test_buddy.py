@@ -84,6 +84,37 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return result
 
+    def test_dungeon_recording_defaults_only_for_default_party_arlen(self):
+        env = {}
+        buddy.trace_environment(env, independent=False)
+        directory = Path(env["BUDDY_DUNGEON_TRACE_DIR_HOST"])
+        self.assertEqual(directory, buddy.ROOT / "data" / "dungeon-traces")
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(env["BUDDY_DUNGEON_TRACE_MAP"], "auto")
+        (directory / "map-48-previous").mkdir()
+        again = {}
+        buddy.trace_environment(again, independent=False)
+        self.assertEqual(env, again)
+        independent = {}
+        buddy.trace_environment(independent, independent=True)
+        self.assertEqual(independent, {})
+        with mock.patch.object(buddy, "CHARACTER", "Mira"):
+            other = {}
+            buddy.trace_environment(other, independent=False)
+            self.assertEqual(other, {})
+            with self.assertRaises(buddy.BuddyError):
+                buddy.trace_environment(dict(env), independent=False)
+
+    def test_dungeon_recording_keeps_manual_map_and_single_use_storage(self):
+        directory = buddy.ROOT / "manual-trace"
+        directory.mkdir(mode=0o700)
+        env = {"BUDDY_DUNGEON_TRACE_MAP": "48", "BUDDY_DUNGEON_TRACE_DIR_HOST": str(directory)}
+        buddy.trace_environment(env, independent=False)
+        self.assertEqual(env["BUDDY_DUNGEON_TRACE_MAP"], "48")
+        (directory / "dungeon-trace.jsonl").touch()
+        with self.assertRaises(buddy.BuddyError):
+            buddy.trace_environment(env, independent=False)
+
     def stop_call(self, method, params, deadline):
         self.rpc_calls.append((method, copy.deepcopy(params), deadline))
         if self.rpc_hook is not None:
