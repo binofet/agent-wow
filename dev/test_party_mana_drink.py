@@ -49,6 +49,16 @@ class RestTests(unittest.TestCase):
         self.assertEqual(self.tick(), {8086: 'waiting_for_safe_rest', 8087: 'waiting_for_trade_or_creation', 8402: 'waiting_for_stop'})
         self.assertEqual(self.calls, [])
 
+    def test_stale_attack_history_does_not_block_dungeon_recovery(self):
+        target = dict(present=True, aliveKnown=True, alive=True, attackVictimKnown=True,
+                      attackVictimGuid='1', attackAgeMs='30000')
+        self.views[8086]['world']['nearbyCreatures'] = [target]
+        self.views[8086]['world']['self']['mapId'] = 34
+        self.assertEqual(self.tick()[8086], 'drink_dispatched')
+        self.rests.clear()
+        target['attackAgeMs'] = '400'
+        self.assertEqual(self.tick(101)[8086], 'waiting_for_safe_rest')
+
     def test_managed_follow_resumes_after_real_mana_recovery(self):
         trapped = self.views[8086]
         trapped['actions'].update(following=True, moving=True)
