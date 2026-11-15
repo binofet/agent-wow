@@ -1,0 +1,3 @@
+-- Optional WarcraftBuddyGearLoadouts configuration.
+-- characterGUID identifies the intended player. tank and dps map equipment
+-- slot numbers to item IDs; 0 means empty. names may supply fallback labels.

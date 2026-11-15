@@ -1,2 +1,0 @@
--- An optional WarcraftBuddyEquipmentSetup table enables one setup on the
--- named character. See EquipmentSetup.lua for the fields.
