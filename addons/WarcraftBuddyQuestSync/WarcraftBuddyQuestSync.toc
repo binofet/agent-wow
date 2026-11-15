@@ -5,5 +5,5 @@
 ## SavedVariablesPerCharacter: WarcraftBuddyQuestSyncDB
 Catalog.lua
 WarcraftBuddyQuestSync.lua
-EquipmentSetupConfig.lua
-EquipmentSetup.lua
+GearSwapConfig.lua
+GearSwap.lua
