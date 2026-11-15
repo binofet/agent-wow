@@ -136,6 +136,9 @@ type Service struct {
 	fargodeepSeen                        map[uint64]bool
 	spellbookKnown                       bool
 	spellbookRevision                    uint64
+	waterBreathSpellRevision             uint64
+	waterBreathSpell                     buffSpell
+	nextWaterBreathCheck                 time.Time
 	buffUntil, nextBuff                  time.Time
 	buffAuras                            map[uint64]*buffAuraSet
 	ownDamageAuras                       map[damageAuraSlot]observedBuffAura
@@ -1085,7 +1088,8 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	cleanse := s.potentialCleanseLocked()
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse {
+	waterBreath := s.dueWaterBreathLocked()
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
@@ -1122,7 +1126,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse {
+	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1169,7 +1173,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.buffTickLocked(ctx, snapshot) {
+	if s.waterBreathTickLocked(ctx, snapshot, waterBreath) || s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

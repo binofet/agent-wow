@@ -54,8 +54,14 @@ func (s *Service) buffUnconfirmedLocked(reason string) {
 		s.pendingSpell, s.pendingTarget = 0, 0
 		s.state.CastPending = false
 	}
-	// The binding was reserved before SendPacket and remains blocked across
-	// toggles. Other cast/DE/item uncertainty is never cleared here.
+	// Reapplying water breathing is harmless. A fresh observed aura will
+	// suppress the retry even when the original cast receipt was lost.
+	if buffMetadata(op.view.SpellId).waterBreathing {
+		binding := s.buffBindings[op.key]
+		binding.blocked = false
+		binding.until = s.now().Add(5 * time.Second)
+		s.state.BuffReason = "water_breath_outcome_unconfirmed_cooldown"
+	}
 }
 func (s *Service) buffTimeoutLocked() {
 	if s.state.Buffing && !s.now().Before(s.buffUntil) {
@@ -209,6 +215,15 @@ func (s *Service) buffTargetLocked(w *worldv1.SnapshotResponse, members map[uint
 			return false
 		}
 	}
+	if !s.buffBindingAllowsLocked(guid, r) {
+		return false
+	}
+	budget := manaBudget(w.Self, uint64(r.manaPercent))
+	reserve := (uint64(w.Self.MaxPower)*35 + 99) / 100
+	return budget > 0 && uint64(w.Self.Power) >= budget+reserve
+}
+
+func (s *Service) buffBindingAllowsLocked(guid uint64, r buffSpell) bool {
 	if b := s.buffBindings[buffKey{guid, r.family}]; b != nil {
 		if s.now().Before(b.until) {
 			return false
@@ -223,10 +238,30 @@ func (s *Service) buffTargetLocked(w *worldv1.SnapshotResponse, members map[uint
 			}
 		}
 	}
-	budget := manaBudget(w.Self, uint64(r.manaPercent))
-	reserve := (uint64(w.Self.MaxPower)*35 + 99) / 100
-	return budget > 0 && uint64(w.Self.Power) >= budget+reserve
+	return true
 }
+
+func (s *Service) buffMembersLocked(ctx context.Context) map[uint64]bool {
+	members := map[uint64]bool{s.selfGUID: true}
+	if !s.independent {
+		for g, on := range s.healingPartyLocked(ctx) {
+			members[g] = on
+		}
+	}
+	return members
+}
+
+func (s *Service) buffTargets(members map[uint64]bool) []uint64 {
+	targets := []uint64{s.selfGUID}
+	for guid, on := range members {
+		if guid != s.selfGUID && on {
+			targets = append(targets, guid)
+		}
+	}
+	sort.Slice(targets[1:], func(i, j int) bool { return targets[i+1] < targets[j+1] })
+	return targets
+}
+
 func (s *Service) buffTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
 	s.buffTimeoutLocked()
 	if !s.state.Buffing {
@@ -236,29 +271,18 @@ func (s *Service) buffTickLocked(ctx context.Context, w *worldv1.SnapshotRespons
 	if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" || s.now().Before(s.nextBuff) {
 		return false
 	}
-	members := map[uint64]bool{s.selfGUID: true}
-	if !s.independent {
-		for g, on := range s.healingPartyLocked(ctx) {
-			members[g] = on
-		}
-	}
+	members := s.buffMembersLocked(ctx)
 	if !s.buffContextLocked(w, members) || !s.refreshPositionLocked(w) {
 		s.state.BuffReason = "buff_waiting_for_healthy_idle_out_of_combat_context"
 		return false
 	}
-	targets := []uint64{s.selfGUID}
-	for guid, on := range members {
-		if guid != s.selfGUID && on {
-			targets = append(targets, guid)
-		}
-	}
-	sort.Slice(targets[1:], func(i, j int) bool { return targets[i+1] < targets[j+1] })
+	targets := s.buffTargets(members)
 	families := []uint32{}
 	seenFamilies := map[uint32]bool{}
 	for id, known := range s.knownSpells {
 		if known {
 			r := buffMetadata(id)
-			if r.id != 0 && !seenFamilies[r.family] {
+			if r.id != 0 && !r.waterBreathing && !seenFamilies[r.family] {
 				seenFamilies[r.family] = true
 				families = append(families, r.family)
 			}
@@ -282,53 +306,54 @@ func (s *Service) buffTickLocked(ctx context.Context, w *worldv1.SnapshotRespons
 			}
 			// Re-read membership first, then the actual own/target observations. No
 			// callback remains between this final guard and the reserved normal cast.
-			freshMembers := map[uint64]bool{s.selfGUID: true}
-			if !s.independent {
-				for g, on := range s.healingPartyLocked(ctx) {
-					freshMembers[g] = on
-				}
-			}
+			freshMembers := s.buffMembersLocked(ctx)
 			fresh, err := s.snapshot(ctx)
 			if err != nil || fresh.Self == nil || fresh.Self.ClassId != w.Self.ClassId || !s.buffContextLocked(fresh, freshMembers) || !s.refreshPositionLocked(fresh) || !s.buffTargetLocked(fresh, freshMembers, r, target) {
 				s.state.BuffReason = "buff_context_changed_before_cast"
 				return false
 			}
-			if s.buffBindings == nil {
-				s.buffBindings = make(map[buffKey]*buffBinding)
-			}
-			key := buffKey{target, r.family}
-			if len(s.buffBindings) >= 512 && s.buffBindings[key] == nil {
-				s.state.BuffReason = "buff_binding_capacity_no_retry"
-				return false
-			}
-			s.buffBindings[key] = &buffBinding{blocked: true}
-			s.buffSequence++
-			s.castCount++
-			s.buffOp = &buffAttempt{view: actionsv1.BuffOperation{Sequence: s.buffSequence, SpellId: r.id, TargetGuid: target, Phase: "waiting_server"}, key: key, baseline: s.buffAuraRevision, count: s.castCount, until: s.now().Add(8 * time.Second)}
-			s.state.BuffAttempts++
-			gcd := s.now().Add(1500 * time.Millisecond)
-			if s.nextHeal.Before(gcd) {
-				s.nextHeal = gcd
-			}
-			if s.nextAssist.Before(gcd) {
-				s.nextAssist = gcd
-			}
-			s.nextBuff = s.now().Add(2 * time.Second)
-			s.state.CastPending = true
-			s.pendingSpell, s.pendingTarget = r.id, target
-			s.castUntil = s.buffOp.until
-			s.state.LastCastSpellId, s.state.LastCastTargetGuid = r.id, target
-			s.state.LastCastFailure = 0
-			if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, r.id, target)) {
-				s.buffUnconfirmedLocked("buff_transport_outcome_unconfirmed_no_retry")
-				s.state.Buffing = false
-				return true
-			}
-			s.buffOp.view.TransportWritten = true
-			s.state.BuffReason = "buff_transport_written_waiting_for_cast_and_aura"
-			return true
+			return s.startBuffLocked(ctx, r, target)
 		}
 	}
 	s.state.BuffReason = "buffs_already_observed_or_no_eligible_known_buff"
 	return false
+}
+
+func (s *Service) startBuffLocked(ctx context.Context, r buffSpell, target uint64) bool {
+	if s.buffBindings == nil {
+		s.buffBindings = make(map[buffKey]*buffBinding)
+	}
+	key := buffKey{target, r.family}
+	if len(s.buffBindings) >= 512 && s.buffBindings[key] == nil {
+		s.state.BuffReason = "buff_binding_capacity_no_retry"
+		return false
+	}
+	s.buffBindings[key] = &buffBinding{blocked: true}
+	s.buffSequence++
+	s.castCount++
+	s.buffOp = &buffAttempt{view: actionsv1.BuffOperation{Sequence: s.buffSequence, SpellId: r.id, TargetGuid: target, Phase: "waiting_server"}, key: key, baseline: s.buffAuraRevision, count: s.castCount, until: s.now().Add(8 * time.Second)}
+	s.state.BuffAttempts++
+	gcd := s.now().Add(1500 * time.Millisecond)
+	if s.nextHeal.Before(gcd) {
+		s.nextHeal = gcd
+	}
+	if s.nextAssist.Before(gcd) {
+		s.nextAssist = gcd
+	}
+	s.nextBuff = s.now().Add(2 * time.Second)
+	s.state.CastPending = true
+	s.pendingSpell, s.pendingTarget = r.id, target
+	s.castUntil = s.buffOp.until
+	s.state.LastCastSpellId, s.state.LastCastTargetGuid = r.id, target
+	s.state.LastCastFailure = 0
+	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, r.id, target)) {
+		s.buffUnconfirmedLocked("buff_transport_outcome_unconfirmed_no_retry")
+		if !r.waterBreathing {
+			s.state.Buffing = false
+		}
+		return true
+	}
+	s.buffOp.view.TransportWritten = true
+	s.state.BuffReason = "buff_transport_written_waiting_for_cast_and_aura"
+	return true
 }
