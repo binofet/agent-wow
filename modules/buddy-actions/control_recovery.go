@@ -2,8 +2,6 @@ package buddyactions
 
 import (
 	"context"
-
-	"github.com/agent-wow/agent-wow/pkg/movementflags"
 )
 
 const (
@@ -26,6 +24,7 @@ func (s *Service) clientControlPacketLocked(payload []byte) bool {
 		s.clientControlLost, s.clientControlRestoring = true, false
 		s.state.Moving = false
 		s.followNav.Reset()
+		s.swimFollow = swimFollowRoute{}
 		s.meleeNav.Reset()
 	} else if s.clientControlLost {
 		s.clientControlLost, s.clientControlRestoring = false, true
@@ -46,7 +45,7 @@ func (s *Service) controlRecoveryLocked(ctx context.Context) bool {
 	if err != nil || self.GetGuid() != s.selfGUID || !self.GetPresent() || !self.GetMapKnown() ||
 		!self.GetPositionKnown() || !finite(playerPosition(self)) || !self.GetUnitFlagsKnown() ||
 		self.GetUnitFlags()&unitFlagsForcedMovement != 0 || !self.GetMovementFlagsKnown() ||
-		!movementflags.GroundCompatible(self.GetMovementFlags(), self.GetExtraMovementFlags()) ||
+		!swimFollowCompatible(self.GetMovementFlags(), self.GetExtraMovementFlags()) ||
 		self.GetMovementFlags()&0xff != 0 {
 		s.state.Reason = "waiting_for_position_after_control_loss"
 		return true
