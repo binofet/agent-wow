@@ -69,6 +69,17 @@ type Capability struct {
 	Blocked string
 }
 
+// ProvidesWaterBreathing recognizes single-unit water breathing auras even
+// when their spells have requirements outside the ordinary buff handler.
+func (s Spell) ProvidesWaterBreathing() bool {
+	for _, e := range s.Effects {
+		if e.Kind == 6 && e.Aura == 82 && (e.A == 1 || e.A == 21) && e.B == 0 && e.Chain <= 1 && e.Radius == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // FriendlyDispelMask describes direct single-unit dispels. A selector of 25
 // can also target an enemy in game; the cleanse handler restricts it to allies.
 func (s Spell) FriendlyDispelMask() uint32 {
@@ -162,6 +173,11 @@ func (s Spell) Capability() Capability {
 			} else {
 				switch e.Aura {
 				case 22, 29, 42, 118:
+					k = Buff
+				case 58, 82: // Swim speed may accompany a friendly water-breathing buff.
+					if !s.ProvidesWaterBreathing() || (t != "self" && t != "ally") {
+						return fail(fmt.Sprintf("aura_%d_requires_handler", e.Aura))
+					}
 					k = Buff
 				default:
 					return fail(fmt.Sprintf("aura_%d_requires_handler", e.Aura))

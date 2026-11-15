@@ -6,7 +6,8 @@ import "github.com/agent-wow/agent-wow/pkg/spellcatalog"
 type buffSpell struct {
 	id, family, rank, class, manaPercent uint32
 	name                                 string
-	party                                bool
+	party, waterBreathing                bool
+	rangeYards                           float64
 }
 
 func buffMetadata(id uint32) buffSpell {
@@ -14,7 +15,7 @@ func buffMetadata(id uint32) buffSpell {
 	if !ok || r.Capability().Kind != spellcatalog.Buff || r.CastMs != 0 || r.Cost != 0 || r.CostPerLevel != 0 || r.Power != 0 {
 		return buffSpell{}
 	}
-	return buffSpell{id: r.ID, family: r.Family, rank: r.Rank, manaPercent: r.CostPercent, name: r.Name, party: r.Capability().Target == "ally"}
+	return buffSpell{id: r.ID, family: r.Family, rank: r.Rank, manaPercent: r.CostPercent, name: r.Name, party: r.Capability().Target == "ally", waterBreathing: r.ProvidesWaterBreathing(), rangeYards: r.MaxFriendly}
 }
 func highestBuff(known map[uint32]bool, family uint32) buffSpell {
 	var best buffSpell
