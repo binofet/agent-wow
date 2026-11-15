@@ -94,3 +94,43 @@ func conservativeWeaponUpgrade(candidate itemMetadata, carried *worldv1.Backpack
 	oldDPS, _ := current.physicalWeaponDPS()
 	return nextDPS > oldDPS
 }
+
+func weaponUpgradeForSlot(classID, slot uint32, candidate itemMetadata, carried *worldv1.BackpackSlot, current itemMetadata, equipped *worldv1.EquipmentSlotState) bool {
+	if conservativeWeaponUpgrade(candidate, carried, current, equipped) {
+		return true
+	}
+	if classID != 4 || slot != mainhandSlot && slot != offhandSlot ||
+		!candidate.oneHandDagger() || !current.oneHandDagger() || candidate.delay != current.delay ||
+		!carried.EnhancementsKnown || carried.HasEnhancements || !equipped.EnhancementsKnown || equipped.HasEnhancements ||
+		candidate.armor < current.armor {
+		return false
+	}
+	for i := range candidate.resistances {
+		if candidate.resistances[i] < current.resistances[i] {
+			return false
+		}
+	}
+	next, nextKnown := ordinaryWeaponStats(candidate)
+	old, oldKnown := ordinaryWeaponStats(current)
+	if !nextKnown || !oldKnown {
+		return false
+	}
+	var statCost float64
+	for i := range next {
+		loss := old[i] - next[i]
+		if loss <= 0 {
+			continue
+		}
+		switch i {
+		case 4, 38: // Strength, attack power. Rogues gain 1 AP per Strength; 14 AP gives 1 DPS.
+			statCost += float64(loss) / 14
+		case 19, 32: // Prefer raw weapon damage when it comfortably offsets a small crit-rating loss.
+			statCost += float64(loss) / 4
+		default:
+			return false
+		}
+	}
+	nextDPS, _ := candidate.physicalWeaponDPS()
+	oldDPS, _ := current.physicalWeaponDPS()
+	return nextDPS > oldDPS+statCost
+}
