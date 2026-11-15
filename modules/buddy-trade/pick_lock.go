@@ -18,6 +18,7 @@ const (
 	pickLockSpell       = 1804
 	lockpickingSkill    = 633
 	targetFlagTradeItem = 0x1000
+	spellFailedTryAgain = 132
 )
 
 type tradeServiceItem struct {
@@ -29,6 +30,7 @@ type tradePickLock struct {
 	item                     tradeServiceItem
 	count                    byte
 	queued, accepted, castGo bool
+	retry                    bool
 	until                    time.Time
 }
 
@@ -58,7 +60,7 @@ func (s *Service) prepareTradePickLock(ctx context.Context, w *worldv1.SnapshotR
 	s.mu.Lock()
 	item, revision := s.serviceItem, s.state.Revision
 	ready := s.state.Phase == "OPEN" && s.state.PartnerGuid == ownerGUID && !s.pendingCancel &&
-		s.partnerSpell == 0 && item.entry != 0 && item.count == 1 && !item.wrapped && s.pickLock.item != item
+		s.partnerSpell == 0 && item.entry != 0 && item.count == 1 && !item.wrapped && (s.pickLock.item != item || s.pickLock.retry)
 	if !s.pickLock.until.IsZero() && !s.now().Before(s.pickLock.until) {
 		s.pickLock.until = time.Time{}
 		if !s.pickLock.queued {
@@ -117,8 +119,12 @@ func (s *Service) tradePickLockPacketLocked(op uint32, p []byte) {
 	}
 	switch op {
 	case opcode.SMSGCastFailed:
-		if len(p) < 6 || binary.LittleEndian.Uint32(p[1:]) != pickLockSpell ||
-			p[0] != attempt.count && !(attempt.accepted && p[0] == 0) {
+		if len(p) < 6 || binary.LittleEndian.Uint32(p[1:]) != pickLockSpell {
+			return
+		}
+		waitingForStage := s.state.Phase == "OPEN" && !attempt.until.IsZero() && p[0] == attempt.count
+		waitingForCompletion := s.state.Phase == "ACCEPT_SENT" && attempt.accepted && attempt.queued && p[0] == 0
+		if !waitingForStage && !waitingForCompletion {
 			return
 		}
 		// The initial cast ends with DONT_REPORT after putting the spell in
@@ -126,7 +132,14 @@ func (s *Service) tradePickLockPacketLocked(op uint32, p []byte) {
 		if p[5] != 27 {
 			attempt.queued = false
 			attempt.until = time.Time{}
-			s.state.Reason = fmt.Sprintf("trade_pick_lock_server_rejected_%d", p[5])
+			// TRY_AGAIN is an explicit rejection before any lock effect. A new
+			// attempt still waits for an open trade and rechecks the same slot.
+			attempt.retry = p[5] == spellFailedTryAgain && len(p) == 6
+			if attempt.retry {
+				s.state.Reason = "trade_pick_lock_retry_pending"
+			} else {
+				s.state.Reason = fmt.Sprintf("trade_pick_lock_server_rejected_%d", p[5])
+			}
 		}
 	case opcode.SMSGSpellGo:
 		if attempt.accepted && tradePickLockCastGo(p, s.selfGUID) {

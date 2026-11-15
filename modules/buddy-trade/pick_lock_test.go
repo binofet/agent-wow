@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"testing"
+	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -108,5 +109,71 @@ func TestTradePickLockRejectsUnverifiedTargetsAndChangedTrade(t *testing.T) {
 				t.Fatal("cast on an unverified offer")
 			}
 		})
+	}
+}
+
+func TestTradePickLockRetriesOnlyCorrelatedTryAgain(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		failure   []byte
+		writeFail bool
+		removeBox bool
+		want      int
+	}{
+		{name: "try again", failure: []byte{1, 0x0c, 0x07, 0, 0, 132}, want: 2},
+		{name: "other error", failure: []byte{1, 0x0c, 0x07, 0, 0, 8}, want: 1},
+		{name: "other cast", failure: []byte{2, 0x0c, 0x07, 0, 0, 132}, want: 1},
+		{name: "malformed", failure: []byte{1, 0x0c, 0x07, 0, 0, 132, 0}, want: 1},
+		{name: "box removed", failure: []byte{1, 0x0c, 0x07, 0, 0, 132}, removeBox: true, want: 1},
+		{name: "ambiguous write", writeFail: true, want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, f := tradePickLockRig()
+			ctx := context.Background()
+			now := s.now()
+			s.now = func() time.Time { return now }
+			if tt.writeFail {
+				f.fail = opcode.CMSGCastSpell
+			}
+			packet(s, opcode.SMSGTradeStatusExtended, offeredLockbox(5))
+			s.Tick(ctx)
+			if tt.failure != nil {
+				packet(s, opcode.SMSGCastFailed, tt.failure)
+			}
+			if tt.removeBox {
+				packet(s, opcode.SMSGTradeStatusExtended, extended(true, 4632, 1, 0, 0))
+			}
+			now = now.Add(15 * time.Second)
+			s.Tick(ctx)
+			// A duplicate result for cast one cannot re-arm cast two.
+			if tt.failure != nil {
+				packet(s, opcode.SMSGCastFailed, tt.failure)
+			}
+			s.Tick(ctx)
+			if got := f.count(opcode.CMSGCastSpell); got != tt.want || f.count(opcode.CMSGAcceptTrade) != 0 {
+				t.Fatalf("got %d casts, want %d, %v", got, tt.want, s.snapshot())
+			}
+		})
+	}
+}
+
+func TestTradePickLockFinalRetryWaitsForReopenedTrade(t *testing.T) {
+	s, f := tradePickLockRig()
+	ctx := context.Background()
+	packet(s, opcode.SMSGTradeStatusExtended, offeredLockbox(5))
+	s.Tick(ctx)
+	packet(s, opcode.SMSGTradeStatusExtended, extended(false, 0, 0, 0, 1804))
+	statusPacket(s, 4)
+	s.Tick(ctx)
+	packet(s, opcode.SMSGCastFailed, []byte{0, 0x0c, 0x07, 0, 0, 132})
+	s.Tick(ctx)
+	if f.count(opcode.CMSGCastSpell) != 1 || s.snapshot().Phase != "ACCEPT_SENT" {
+		t.Fatal("retried before the server reopened trade", s.snapshot())
+	}
+	statusPacket(s, 7)
+	packet(s, opcode.SMSGTradeStatusExtended, extended(false, 0, 0, 0, 0))
+	s.Tick(ctx)
+	if f.count(opcode.CMSGCastSpell) != 2 || f.count(opcode.CMSGAcceptTrade) != 1 {
+		t.Fatal("did not retry on the reopened trade with fresh acceptance still required", s.snapshot())
 	}
 }
