@@ -656,12 +656,18 @@ func (s *Service) Tick(ctx context.Context) {
 				s.beginRelease(ctx)
 				return
 			}
-			item := s.items[s.index]
-			if !ownKnownFreeSlot(observed, s.selfGUID) {
+			free := ownKnownFreeSlots(observed, s.selfGUID)
+			if free == 0 {
 				s.pauseForCapacity()
 				s.beginRelease(ctx)
 				return
 			}
+			if s.automatic && !s.questGather && !s.questLootFits(observed, free) {
+				s.state.Reason = "last_bag_slot_reserved_for_quest_loot"
+				s.beginRelease(ctx)
+				return
+			}
+			item := s.items[s.index]
 			s.itemCountBefore, s.itemCountKnown = 0, false
 			if s.unconfirmedItems[item.id] {
 				counts, known := completeOwnItemCounts(observed, s.selfGUID)

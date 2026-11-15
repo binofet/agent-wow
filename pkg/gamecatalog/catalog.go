@@ -48,6 +48,31 @@ var containers []byte
 var once sync.Once
 var defaultCatalog *Catalog
 
+//go:embed catalog.json
+var contentCatalog []byte
+
+var questItemsOnce sync.Once
+var questItems map[uint32]questObjectives
+
+type questObjectives struct {
+	RequiredItems []QuestItem `json:"requiredItems"`
+}
+
+// RequiredQuestItems lists the item objectives in the pinned quest data. A
+// caller must observe the quest and its progress in the character's own log.
+func RequiredQuestItems(questID uint32) []QuestItem {
+	questItemsOnce.Do(func() {
+		var source struct {
+			Quests map[uint32]questObjectives `json:"quests"`
+		}
+		if err := json.Unmarshal(contentCatalog, &source); err != nil {
+			panic("invalid generated quest catalog: " + err.Error())
+		}
+		questItems = source.Quests
+	})
+	return append([]QuestItem(nil), questItems[questID].RequiredItems...)
+}
+
 func Default() *Catalog {
 	once.Do(func() {
 		var err error
