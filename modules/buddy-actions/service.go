@@ -127,6 +127,7 @@ type Service struct {
 	formation                            followFormation
 	followNav                            followNavigation
 	swimFollow                           swimFollowRoute
+	swimTrail                            swimTrail
 	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
 	swimming                             bool
 	meleeNav                             followNavigation
@@ -470,6 +471,7 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.formation.Reset()
 		s.followNav.Reset()
 		s.swimFollow = swimFollowRoute{}
+		s.swimTrail = swimTrail{}
 		if s.explicitStopLocked(ctx) {
 			s.state.Reason = "follow_disabled"
 		}
@@ -640,6 +642,9 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 		return nil, err
 	}
 	s.observeDungeonWorld(out)
+	if s.state.Following && s.navDataDir != "" {
+		s.swimTrail.observe(out, s.selfGUID)
+	}
 	s.lastWorld = out
 	s.updateClassLocked()
 	return out, nil

@@ -77,8 +77,18 @@ func (s *Service) swimFollowTickLocked(ctx context.Context, target position, now
 			if !valid {
 				return pause("swim_follow_replan_wait")
 			}
-		} else if !s.planSwimFollowLocked(ctx, target, now) {
-			return pause("swim_follow_route_unavailable")
+		} else {
+			previous := *route
+			if !s.planSwimFollowLocked(ctx, target, now) {
+				if !valid || previous.index >= len(previous.path) {
+					return pause("swim_follow_route_unavailable")
+				}
+				// The leader may already be under the rock and ahead of the
+				// latest observed swimmable trail. Preserve progress on the
+				// previously verified path while new observations arrive.
+				previous.nextPlan = route.nextPlan
+				*route = previous
+			}
 		}
 	}
 	if len(route.path) == 0 {
@@ -167,8 +177,12 @@ func (s *Service) planSwimFollowLocked(ctx context.Context, target position, now
 	if plan == nil {
 		plan = buddynav.PlanSwimContext
 	}
-	point := func(p position) buddynav.Point { return buddynav.Point{X: p.x, Y: p.y, Z: p.z} }
-	samples, err := plan(ctx, s.navDataDir, s.posMap, point(s.pos), point(target))
+	samples, err := plan(ctx, s.navDataDir, s.posMap, swimPoint(s.pos), swimPoint(target))
+	if disconnectedSwimRoute(err) {
+		if trail := s.swimRouteViaLeaderLocked(ctx, swimPoint(target), plan); len(trail) > 0 {
+			samples, err = trail, nil
+		}
+	}
 	if err != nil {
 		s.state.NavAvailable = false
 		s.state.NavReason = navigationDiagnostic(err, s.navDataDir)
