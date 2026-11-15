@@ -26,13 +26,18 @@ func injuredForHealing(p *worldv1.PlayerState, automatic bool) bool {
 // Health and positions are observed update-on-change values. An unchanged
 // stationary player stays known; a moving player's old position cannot grant range.
 func safeHealingPlayer(p *worldv1.PlayerState, mapID uint32) bool {
+	const incapacitated = uint32(0x00040000 | 0x00400000 | 0x00800000) // stunned, confused, fleeing
+	return healablePlayer(p, mapID) && p.UnitFlags&incapacitated == 0
+}
+
+func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
 	if p == nil || p.Guid == 0 || p.Guid>>48 != 0 || !p.Present || !p.MapKnown || p.MapId != mapID || !p.PositionKnown || !finite(playerPosition(p)) || !p.AliveKnown || !p.Alive || !p.UnitFlagsKnown || p.PlayerFlags&0x10 != 0 || p.DynamicFlags&0x20 != 0 {
 		return false
 	}
 	if !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || p.MovementFlags&0xff != 0 && p.PositionAgeMs > 2000 {
 		return false
 	}
-	const unsafe = uint32(0x1 | 0x4 | 0x00040000 | 0x00100000 | 0x00400000 | 0x00800000 | 0x01000000 | 0x02000000 | 0x08000000)
+	const unsafe = uint32(0x1 | 0x4 | 0x00100000 | 0x01000000 | 0x02000000 | 0x08000000)
 	return p.UnitFlags&unsafe == 0
 }
 

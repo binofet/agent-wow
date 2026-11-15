@@ -18,9 +18,20 @@ type Effect struct {
 	PerLevel                                           float64
 }
 type Reagent struct{ ID, Count uint32 }
+type DispelType uint32
+
+const (
+	DispelMagic DispelType = iota + 1
+	DispelCurse
+	DispelDisease
+	DispelPoison
+	ordinaryDispelMask = 1<<DispelMagic | 1<<DispelCurse | 1<<DispelDisease | 1<<DispelPoison
+)
+
 type Spell struct {
 	ID, Family, Rank, Level                                        uint32
 	Name                                                           string
+	DispelType                                                     DispelType
 	Attrs                                                          [8]uint32
 	Stances, StancesNot, TargetMask, Focus, Facing                 uint32
 	Conditions                                                     [8]uint32
@@ -49,12 +60,37 @@ const (
 	Resurrect    Kind = "resurrect"
 	Stealth      Kind = "stealth"
 	WeaponStrike Kind = "weapon_strike"
+	Cleanse      Kind = "cleanse"
 )
 
 type Capability struct {
 	Kind    Kind
 	Target  string
 	Blocked string
+}
+
+// FriendlyDispelMask describes direct single-unit dispels. A selector of 25
+// can also target an enemy in game; the cleanse handler restricts it to allies.
+func (s Spell) FriendlyDispelMask() uint32 {
+	if len(s.Effects) == 0 || s.TargetMask != 0 {
+		return 0
+	}
+	var mask uint32
+	for _, e := range s.Effects {
+		if e.Kind != 38 || (e.A != 21 && e.A != 25) || e.A != s.Effects[0].A ||
+			e.B != 0 || e.Chain != 0 || e.Radius != 0 || e.Aura != 0 || e.Trigger != 0 || e.PeriodMs != 0 {
+			return 0
+		}
+		switch DispelType(e.Misc) {
+		case DispelMagic, DispelCurse, DispelDisease, DispelPoison:
+			mask |= 1 << e.Misc
+		case 7: // DISPEL_ALL, limited by the realm to these four types.
+			mask |= ordinaryDispelMask
+		default:
+			return 0
+		}
+	}
+	return mask
 }
 
 // Capabilities match effects/target selectors, never names, classes or spell IDs.
@@ -77,6 +113,9 @@ func (s Spell) Capability() Capability {
 		if v != 0 && i != 0 && i != 2 {
 			return fail("aura_state_requirement")
 		}
+	}
+	if s.ItemClass == -1 && s.Power == 0 && s.MaxFriendly > 0 && s.FriendlyDispelMask() != 0 {
+		return Capability{Kind: Cleanse, Target: "ally"}
 	}
 	kind := Kind("")
 	target := ""
@@ -156,8 +195,9 @@ func (s Spell) Capability() Capability {
 
 type span struct{ start, end int }
 type Catalog struct {
-	data  []byte
-	index map[uint32]span
+	data        []byte
+	index       map[uint32]span
+	dispelTypes map[uint32]DispelType
 }
 
 // New indexes compact line records once. Individual records are decoded on
@@ -204,11 +244,18 @@ func (c *Catalog) Lookup(id uint32) (Spell, bool) {
 	if json.Unmarshal(c.data[p.start:p.end], &s) != nil || s.ID != id {
 		return Spell{}, false
 	}
+	if kind := c.dispelTypes[id]; kind != 0 {
+		s.DispelType = kind
+	}
 	return s, true
 }
 
 //go:embed spells.jsonl
 var records []byte
+
+//go:embed dispel-types.json
+var dispelTypes []byte
+
 var once sync.Once
 var defaultCatalog *Catalog
 
@@ -217,6 +264,9 @@ func Default() *Catalog {
 		var err error
 		defaultCatalog, err = New(records)
 		if err != nil {
+			panic(err)
+		}
+		if err := json.Unmarshal(dispelTypes, &defaultCatalog.dispelTypes); err != nil {
 			panic(err)
 		}
 	})

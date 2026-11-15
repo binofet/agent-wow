@@ -14,10 +14,11 @@ import (
 )
 
 type supportAttempt struct {
-	view  actionsv1.SpellOperation
-	owner uint64
-	count byte
-	until time.Time
+	view        actionsv1.SpellOperation
+	owner       uint64
+	count       byte
+	until       time.Time
+	cleanseAura uint32
 }
 type resurrectionOffer struct {
 	caster   uint64
@@ -185,6 +186,9 @@ func (s *Service) castTargetedSupportLocked(ctx context.Context, r spellcatalog.
 
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	bad := errors.New("malformed support spell event")
+	if code == opcode.SMSGSpelldispellog {
+		return true, s.observeCleanseLocked(p)
+	}
 	if code == opcode.SMSGLootResponse {
 		s.observePickLockLootLocked(p)
 		return true, nil

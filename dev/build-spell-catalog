@@ -14,8 +14,8 @@ def dbc(path, fields):
 def signed(n):return n if n<0x80000000 else n-0x100000000
 def floating(n):return struct.unpack('<f',struct.pack('<I',n))[0]
 
-def build(folder,ranks):
-    rows,strings=dbc(folder/'Spell.dbc',234)
+def build(folder,ranks,spell_table=None):
+    rows,strings=spell_table if spell_table is not None else dbc(folder/'Spell.dbc',234)
     casts={r[0]:r for r in dbc(folder/'SpellCastTimes.dbc',4)[0]}
     ranges={r[0]:r for r in dbc(folder/'SpellRange.dbc',40)[0]}
     chains={r['spell_id']:(r['first_spell_id'],r['rank']) for r in sql.sql_rows(ranks)}
@@ -40,14 +40,21 @@ def build(folder,ranks):
         # Keep false/zero defaults implicit; retain arrays to make constraints explicit.
         yield {k:v for k,v in value.items() if v or k in ('id','itemClass')}
 
+def dispel_types(rows):
+    # Spell.dbc field 2 (m_dispelType). WotLK DispelType 1..4 are the
+    # ordinary dispellable Magic, Curse, Disease and Poison categories.
+    return {r[0]:r[2] for r in sorted(rows,key=lambda r:r[0]) if 1<=r[2]<=4}
+
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--dbc-dir',type=Path,required=True);p.add_argument('--source',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
     manifest=json.loads((a.source/'manifest.json').read_text());rank=a.source/'spell_ranks.sql'
     for name in ('spell_ranks','spell_custom_attr'):
         if hashlib.sha256((a.source/(name+'.sql')).read_bytes()).hexdigest()!=manifest['files'][name]['sha256']:raise ValueError(name+' source checksum mismatch')
     a.output.mkdir(parents=True,exist_ok=True);count=0
+    spell_table=dbc(a.dbc_dir/'Spell.dbc',234)
     with (a.output/'spells.jsonl').open('w') as out:
-        for value in build(a.dbc_dir,rank):out.write(json.dumps(value,ensure_ascii=False,separators=(',',':'))+'\n');count+=1
+        for value in build(a.dbc_dir,rank,spell_table):out.write(json.dumps(value,ensure_ascii=False,separators=(',',':'))+'\n');count+=1
+    (a.output/'dispel-types.json').write_text(json.dumps(dispel_types(spell_table[0]),separators=(',',':'))+'\n')
     proof=dict(build=12340,records=count,sourceCommit=manifest['commit'],rankSource=manifest['files']['spell_ranks'],customAttributesSource=manifest['files']['spell_custom_attr'],
         dbcSHA256={name:hashlib.sha256((a.dbc_dir/name).read_bytes()).hexdigest() for name in ('Spell.dbc','SpellCastTimes.dbc','SpellRange.dbc')})
     (a.output/'provenance.json').write_text(json.dumps(proof,indent=2)+'\n');print(json.dumps(dict(records=count,bytes=(a.output/'spells.jsonl').stat().st_size)))

@@ -107,5 +107,8 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if s.state.Healing && s.now().Before(s.healingUntil) && (s.urgentSelfHealLocked(ctx, w) || s.triageHealLocked(ctx, w, true)) {
 		return true
 	}
+	if s.potentialCleanseLocked() && s.cleanseTickLocked(ctx, w) {
+		return true
+	}
 	return s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }
