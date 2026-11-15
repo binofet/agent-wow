@@ -258,6 +258,10 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 		}
 		cancel()
 		if err != nil {
+			if len(ownerFallback) == 1 && swimFallbackError(err) && s.swimFollowTickLocked(ctx, ownerFallback[0], now) {
+				f.Reset()
+				return true
+			}
 			return fail("follow_navigation_unavailable", err)
 		}
 		f.path = append([]position(nil), path...)

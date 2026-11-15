@@ -46,11 +46,65 @@ func PlanSwimContext(ctx context.Context, dataDir string, mapID uint32, start, d
 	if err != nil {
 		return nil, err
 	}
+	if start.X == dest.X && start.Y == dest.Y {
+		return p.planVerticalSwim(ctx, start, dest)
+	}
 	_, err = rerouteBounded(ctx, p, func() ([]Point, error) {
 		points, err = planSwimWithin(ctx, p, window.contains, start, dest)
 		return nil, err
 	})
 	return points, err
+}
+
+// Detour collapses a straight path with identical XY positions. A vertical
+// swim still needs exact water at that XY and collision checks along the dive.
+func (p *planner) planVerticalSwim(ctx context.Context, start, dest Point) ([]SwimPoint, error) {
+	upper := start
+	if dest.Z > start.Z {
+		upper = dest
+	}
+	ref, surface, err := p.swimEndpoint(upper)
+	if err != nil {
+		return nil, err
+	}
+	var flags uint16
+	if st := p.mesh.GetPolyFlags(ref, &flags); detour.DtStatusFailed(st) || flags&8 == 0 || upper.Z > surface {
+		return nil, errors.New("vertical swimming requires an observed water column")
+	}
+
+	surfacePoint := upper
+	surfacePoint.Z = surface
+	p.routeSurfaces = []routeSurface{{from: surfacePoint, to: surfacePoint, ref: ref}}
+	sample, err := swimSample(ctx, p, surfacePoint, surfacePoint, surfacePoint)
+	if err != nil {
+		return nil, err
+	}
+	if !sample.Swimming {
+		return nil, errors.New("vertical swimming requires deeper than wading water")
+	}
+	// Prove that both endpoints connect to the known water surface; a ray
+	// only between the endpoints could attest a room beneath the pool.
+	lower := start
+	if dest.Z < start.Z {
+		lower = dest
+	}
+	a, b := sample.Point, lower
+	a.Z, b.Z = a.Z+swimBodyRayHeight, b.Z+swimBodyRayHeight
+	clear, err := p.swimSegmentClear(ctx, a, b)
+	if err != nil {
+		return nil, err
+	}
+	if !clear {
+		return nil, errors.New("vertical swim intersects solid collision")
+	}
+	n := max(1, int(math.Ceil(distance(start, dest))))
+	path := make([]SwimPoint, n+1)
+	for i := range path {
+		q := start
+		q.Z += (dest.Z - start.Z) * float32(i) / float32(n)
+		path[i] = SwimPoint{Point: q, Swimming: true}
+	}
+	return path, nil
 }
 
 type swimBackend interface {

@@ -16,6 +16,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/dungeontrace"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -125,6 +126,9 @@ type Service struct {
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
 	followNav                            followNavigation
+	swimFollow                           swimFollowRoute
+	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
+	swimming                             bool
 	meleeNav                             followNavigation
 	recovery                             deathRecovery
 	fargodeep                            fargodeepEncounter
@@ -465,6 +469,7 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		}
 		s.formation.Reset()
 		s.followNav.Reset()
+		s.swimFollow = swimFollowRoute{}
 		if s.explicitStopLocked(ctx) {
 			s.state.Reason = "follow_disabled"
 		}
@@ -676,6 +681,10 @@ func distance(a, b position) float64 {
 }
 
 func safePlayers(snapshot *worldv1.SnapshotResponse, selfGUID uint64) string {
+	return safePlayerMovement(snapshot, selfGUID, false)
+}
+
+func safePlayerMovement(snapshot *worldv1.SnapshotResponse, selfGUID uint64, swimFollow bool) string {
 	if snapshot == nil || snapshot.Self == nil || snapshot.Owner == nil {
 		return "players_unknown"
 	}
@@ -703,10 +712,14 @@ func safePlayers(snapshot *worldv1.SnapshotResponse, selfGUID uint64) string {
 	}
 	// Passive water-walk/slow-fall/hover status is compatible with ground
 	// movement. Actual transports, swimming, falling and flight remain excluded.
-	if !movementflags.GroundCompatible(a.MovementFlags, a.ExtraMovementFlags) || !movementflags.GroundCompatible(b.MovementFlags, b.ExtraMovementFlags) {
+	compatible := movementflags.GroundCompatible
+	if swimFollow {
+		compatible = swimFollowCompatible
+	}
+	if !compatible(a.MovementFlags, a.ExtraMovementFlags) || !compatible(b.MovementFlags, b.ExtraMovementFlags) {
 		return "unsupported_movement_state"
 	}
-	if b.MovementFlags&0xff != 0 && b.PositionAgeMs > 2000 {
+	if b.MovementFlags&(0xff|swimAscendingFlag|swimDescendingFlag) != 0 && b.PositionAgeMs > 2000 {
 		return "owner_moving_position_stale"
 	}
 	if !a.UnitFlagsKnown || !b.UnitFlagsKnown {
@@ -745,6 +758,8 @@ func (s *Service) refreshPositionLocked(snapshot *worldv1.SnapshotResponse) bool
 
 func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
 	s.posMap = p.MapId
+	s.swimming = p.MovementFlagsKnown && p.MovementFlags&swimMovementFlag != 0
+	s.swimFollow = swimFollowRoute{}
 	s.posEstimated = false
 	s.posAt = s.now().Add(-time.Duration(min(p.PositionAgeMs, uint64(24*time.Hour/time.Millisecond))) * time.Millisecond)
 	s.posRevision++
@@ -775,6 +790,10 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 }
 
 func (s *Service) movementLocked(ctx context.Context, op uint32, p position, moving bool) bool {
+	return s.writeMovementLocked(ctx, op, p, moving, nil)
+}
+
+func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position, moving bool, swim *swimMovement) bool {
 	if s.session == nil || s.clientControlLost || s.clientControlRestoring {
 		return false
 	}
@@ -868,17 +887,41 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 			return false
 		}
 	}
-	if moving && !s.recoveryOwnsLocked() && (!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags)) {
+	if moving && swim != nil && (!s.state.Following || !s.now().Before(s.followUntil) || safePlayerMovement(w, s.selfGUID, true) != "") {
+		s.state.Reason = "swim_follow_observation_changed"
+		return false
+	}
+	if moving && swim == nil && !s.recoveryOwnsLocked() && (s.swimming || !w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags)) {
 		s.state.Reason = "movement_current_ground_mode_unsupported"
 		return false
 	}
 	follow, heal, assist := s.state.Following, s.state.Healing, s.state.Assisting
-	payload := movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)
+	var passive uint32
 	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {
-		// These actual passive status bits add no optional MovementInfo tail.
-		// Retain them rather than pretending the ordinary move removed an aura.
+		passive = w.Self.MovementFlags & movementflags.PassiveModifiers
+	}
+	var payload []byte
+	isSwimming := swim != nil && swim.wet
+	if !moving && op == opcode.MSGMoveStop {
+		// STOP uses the actual medium at the rebased position after a correction.
+		isSwimming = s.swimming
+	}
+	if isSwimming {
+		flags := passive | swimMovementFlag
+		var pitch float32
+		if moving {
+			flags |= swim.flags
+			pitch = swim.pitch
+		}
+		payload = swimMovementPacket(s.selfGUID, clock.ClientTimeMs, p, pitch, flags)
+		if payload == nil {
+			s.state.Reason = "swim_movement_packet_invalid"
+			return false
+		}
+	} else {
+		payload = movementPacket(s.selfGUID, clock.ClientTimeMs, p, moving)
 		at := len(packedGUID(s.selfGUID))
-		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&movementflags.PassiveModifiers
+		flags := binary.LittleEndian.Uint32(payload[at:]) | passive
 		binary.LittleEndian.PutUint32(payload[at:], flags)
 	}
 	if snapshotErr == nil && w.Self.AliveKnown && !w.Self.Alive && w.Self.PlayerFlags&ghostFlag != 0 {
@@ -901,6 +944,7 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 		return false
 	}
 	s.pos = p
+	s.swimming = isSwimming
 	s.state.Moving = moving
 	s.posEstimated = true
 	s.posAt = s.now()
@@ -1124,7 +1168,17 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if reason := safeFollowPlayers(snapshot, s.selfGUID, s.state.Following && s.navDataDir != ""); reason != "" {
+	swimFollow := s.state.Following && s.navDataDir != "" && (s.swimming ||
+		snapshot.GetSelf().GetMovementFlags()&swimMovementFlag != 0 ||
+		snapshot.GetOwner().GetMovementFlags()&swimMovementFlag != 0 ||
+		len(s.swimFollow.path) != 0)
+	reason := ""
+	if swimFollow {
+		reason = safePlayerMovement(snapshot, s.selfGUID, true)
+	} else {
+		reason = safeFollowPlayers(snapshot, s.selfGUID, s.state.Following && s.navDataDir != "")
+	}
+	if reason != "" {
 		// Unknown or temporarily unsafe observations pause enabled intent. A
 		// normal jump, AFK or visibility loss must not silently revoke it.
 		// No local motion is attempted until fresh safe context is available.
@@ -1190,7 +1244,11 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.navDataDir != "" {
 		formationUsed = true
-		s.followFormationLocked(ctx, snapshot, now)
+		if swimFollow {
+			s.swimFollowTickLocked(ctx, playerPosition(snapshot.Owner), now)
+		} else {
+			s.followFormationLocked(ctx, snapshot, now)
+		}
 		return
 	}
 	target := playerPosition(snapshot.Owner)
