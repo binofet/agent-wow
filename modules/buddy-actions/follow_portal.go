@@ -105,7 +105,7 @@ func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool 
 func (s *Service) portalCatchUpTarget(ctx context.Context, ground position) (position, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
-	if _, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, ground); err == nil {
+	if path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, ground); err == nil && len(path) != 0 {
 		return ground, true
 	}
 	dx, dy := float64(ground.x-s.pos.x), float64(ground.y-s.pos.y)
@@ -123,11 +123,11 @@ func (s *Service) portalCatchUpTarget(ctx context.Context, ground position) (pos
 			bend.x += float32(ahead*dx - side*dy)
 			bend.y += float32(ahead*dy + side*dx)
 			approach, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, bend)
-			if err != nil {
+			if err != nil || len(approach) == 0 {
 				continue
 			}
 			bend = approach[len(approach)-1]
-			if _, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, bend, ground); err == nil {
+			if path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, bend, ground); err == nil && len(path) != 0 {
 				return bend, true
 			}
 		}
