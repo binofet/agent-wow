@@ -78,6 +78,7 @@ type Service struct {
 	selfDefenseRevision                                      uint64
 	selfDefenseMap                                           uint32
 	engage                                                   engageIntent
+	thermaplugg                                              thermapluggButtons
 	interactionToken                                         string
 	interactionUntil                                         time.Time
 	harvestGuardAt                                           time.Time
@@ -658,12 +659,16 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 }
 
 func (s *Service) readWorldSnapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
-	if s.session == nil {
-		return nil, errors.New("session callback unavailable")
-	}
 	query := &worldv1.SnapshotRequest{}
 	if len(creatureGUID) != 0 {
 		query.CreatureGuid = creatureGUID[0]
+	}
+	return s.readWorldSnapshotRequest(ctx, query)
+}
+
+func (s *Service) readWorldSnapshotRequest(ctx context.Context, query *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+	if s.session == nil {
+		return nil, errors.New("session callback unavailable")
 	}
 	request, err := anypb.New(query)
 	if err != nil {
@@ -868,6 +873,10 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			s.state.Reason = "party_defense_target_left_bounded_approach"
 			return false
 		}
+	}
+	if moving && s.thermaplugg.approaching && !s.thermapluggMovementAllowedLocked(ctx, w) {
+		s.state.Reason = "thermaplugg_button_approach_changed"
+		return false
 	}
 	if moving && s.engage.executing && !s.engageCurrentLocked(ctx) {
 		s.state.Reason = "engage_npc_authority_changed_before_movement"
@@ -1174,7 +1183,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.partyDefenseLocked(ctx, snapshot) {
+	if s.thermapluggButtonsTickLocked(ctx, snapshot) || s.partyDefenseLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
