@@ -51,6 +51,7 @@ func TestSelfDefenseWithoutOwnerUsesOnlyActualSelfAttackerAndKnownClassAbility(t
 	for class, expected := range map[uint32]uint32{4: sinisterStrike, 5: smite, 8: fireball, 9: shadowBolt} {
 		t.Run(fmt.Sprint(class), func(t *testing.T) {
 			s, f, target, _ := selfDefenseRig(t, class)
+			f.world.Self.Level, target.Level = 25, 31
 			s.Tick(context.Background())
 			got := state(t, s)
 			if !got.Assisting || !got.CastPending || got.AssistAttempts != 1 || lastCast(f) != expected || got.LastCastTargetGuid != target.Guid || got.Moving || countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
@@ -141,7 +142,6 @@ func TestSelfDefenseRejectsMissingStaleForeignUnsafeOrUnattackableEvidence(t *te
 		"active spline":      func(s *Service, f *fakeSession, c *worldv1.CreatureState) { c.MovementFlags = 0x08000000 },
 		"immune":             func(s *Service, f *fakeSession, c *worldv1.CreatureState) { c.UnitFlags = 0x100 },
 		"feign death":        func(s *Service, f *fakeSession, c *worldv1.CreatureState) { c.UnitFlags_2 = 1 },
-		"known high level":   func(s *Service, f *fakeSession, c *worldv1.CreatureState) { c.Level = 9 },
 		"no spell":           func(s *Service, f *fakeSession, c *worldv1.CreatureState) { learnSpells(s, lesserHeal) },
 		"silenced":           func(s *Service, f *fakeSession, c *worldv1.CreatureState) { f.world.Self.UnitFlags |= 0x2000 },
 		"heal mana reserve":  func(s *Service, f *fakeSession, c *worldv1.CreatureState) { f.world.Self.Power = 32 },

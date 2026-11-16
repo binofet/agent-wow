@@ -128,7 +128,7 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 	if target.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || target.UnitFlags_2&1 != 0 || target.DynamicFlags&0x20 != 0 {
 		return fail("assist_target_not_attackable")
 	}
-	if self.LevelKnown && target.LevelKnown && uint64(target.Level) > uint64(self.Level)+3 {
+	if s.rejectOverlevelTargetLocked(w, target) {
 		return fail("assist_target_level_exceeds_self_plus_three")
 	}
 	if !s.engage.executing && s.failedAssistTarget == target.Guid && (!defense || s.failedAssistCastTarget != target.Guid ||

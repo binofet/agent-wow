@@ -72,6 +72,7 @@ func TestDefensiveRetryUsesNewCastAfterCorrelatedFailureCooldownAndCurrentWitnes
 				} else {
 					advance(2 * time.Second)
 				}
+				f.onClock = func() { target.Level = f.world.Self.Level + 6 }
 				s.Tick(context.Background())
 				if countPackets(f, opcode.CMSGCastSpell) != 2 || s.state.AssistAttempts != 2 || !s.state.CastPending ||
 					s.castCount == oldCount || s.pendingTarget != target.Guid || s.failedAssistTarget != target.Guid ||
@@ -128,7 +129,7 @@ func TestDefensiveRetryRejectsMissingCurrentAttackOrPartyAuthority(t *testing.T)
 
 func TestDefensiveRetryRechecksWitnessAndResourcesAfterFacing(t *testing.T) {
 	for _, party := range []bool{false, true} {
-		for _, mode := range []string{"attack_stopped", "foreign_victim", "range", "mana", "immune", "level", "offline_victim"} {
+		for _, mode := range []string{"attack_stopped", "foreign_victim", "range", "mana", "immune", "offline_victim"} {
 			if !party && mode == "offline_victim" {
 				continue
 			}
@@ -138,6 +139,7 @@ func TestDefensiveRetryRechecksWitnessAndResourcesAfterFacing(t *testing.T) {
 					rig = partyDefenseRig
 				}
 				s, f, c, advance := rig(t, 8)
+				f.world.Self.Level, c.Level = 25, 31
 				s.Tick(context.Background())
 				rejectDefensiveCast(t, s, opcode.SMSGCastFailed)
 				advance(6 * time.Second)
@@ -153,8 +155,6 @@ func TestDefensiveRetryRechecksWitnessAndResourcesAfterFacing(t *testing.T) {
 						f.world.Self.Power = 0
 					case "immune":
 						c.UnitFlags |= 0x100
-					case "level":
-						c.Level = 9
 					case "offline_victim":
 						for _, m := range f.party.Group.Members {
 							if m.Guid == c.AttackVictimGuid {

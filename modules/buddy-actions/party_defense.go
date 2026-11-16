@@ -29,6 +29,20 @@ func ongoingAttack(c *worldv1.CreatureState, victim *worldv1.PlayerState) bool {
 	return c.TargetKnown && c.TargetGuid == victim.Guid && c.UnitFlagsKnown && c.UnitFlags&0x80000 != 0
 }
 
+func (s *Service) rejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
+	self := w.Self
+	if !self.LevelKnown || !target.LevelKnown || uint64(target.Level) <= uint64(self.Level)+3 {
+		return false
+	}
+	if s.selfDefenseTarget == target.Guid && ongoingAttack(target, self) {
+		return false
+	}
+	// Party defense binds the victim only after checking current membership.
+	// The write path checks that membership and the attack again after facing.
+	return s.partyDefenseTarget != target.Guid || s.partyDefenseVictim == 0 ||
+		!ongoingAttack(target, observedHealingPlayer(w, s.partyDefenseVictim))
+}
+
 func partyDefenseCreature(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureState {
 	if w == nil || len(w.NearbyCreatures) > 32 {
 		return nil
@@ -49,7 +63,7 @@ func partyDefenseEligible(w *worldv1.SnapshotResponse, c *worldv1.CreatureState,
 		return false
 	}
 	victim := observedHealingPlayer(w, c.AttackVictimGuid)
-	if !safeHealingPlayer(victim, w.Self.MapId) || !victim.HealthKnown || victim.Health == 0 || !ongoingAttack(c, victim) {
+	if !healablePlayer(victim, w.Self.MapId) || !victim.HealthKnown || victim.Health == 0 || !ongoingAttack(c, victim) {
 		return false
 	}
 	kind := c.Guid >> 48
@@ -163,7 +177,7 @@ func (s *Service) defenseOffenseAllowedLocked(w *worldv1.SnapshotResponse, targe
 	c := partyDefenseCreature(w, target)
 	p, known, _ := creaturePosition(c)
 	self := w.Self
-	if !known || !self.ClassKnown || c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || c.UnitFlags_2&1 != 0 || c.DynamicFlags&0x20 != 0 || self.LevelKnown && c.LevelKnown && uint64(c.Level) > uint64(self.Level)+3 {
+	if !known || !self.ClassKnown || c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || c.UnitFlags_2&1 != 0 || c.DynamicFlags&0x20 != 0 || s.rejectOverlevelTargetLocked(w, c) {
 		return false
 	}
 	limit := float64(28)
