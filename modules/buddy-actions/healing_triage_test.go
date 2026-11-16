@@ -36,20 +36,12 @@ func healingCastTarget(f *fakeSession) uint64 {
 	return 0
 }
 
-func enableTriage(t *testing.T, s *Service) {
-	t.Helper()
-	learn(s)
-	if _, err := s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestHealingTriageSelfWorksWithoutOwnerOrPartyAndDoesNotInventHealth(t *testing.T) {
 	s, f, _ := rig(t)
 	f.world.Self.Health = 30
 	f.world.Self.PlayerFlags = 2 // AFK does not forfeit actual self-preservation.
 	f.world.Owner, f.party = nil, nil
-	enableTriage(t, s)
+	learn(s)
 	s.Tick(context.Background())
 	if healingCastTarget(f) != 1 || state(t, s).LastCastTargetGuid != 1 || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("missing independent self heal", state(t, s), f.packets)
@@ -95,7 +87,7 @@ func TestHealingTriageUrgentSelfThenLowestObservedRatioAndJoelTie(t *testing.T) 
 				f.world.Owner, f.party = nil, nil
 				want = 1
 			}
-			enableTriage(t, s)
+			learn(s)
 			s.Tick(context.Background())
 			if healingCastTarget(f) != want {
 				t.Fatal(mode, want, state(t, s), f.packets)
@@ -104,8 +96,41 @@ func TestHealingTriageUrgentSelfThenLowestObservedRatioAndJoelTie(t *testing.T) 
 	}
 }
 
+func TestStandingHealingStillProtectsInjuredPartyAfterHours(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name        string
+		playerFlags uint32
+		unitFlags   uint32
+	}{
+		{name: "ready"},
+		{name: "away", playerFlags: 2},
+		{name: "stunned", unitFlags: 0x40000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, advance := rig(t)
+			f.world.Owner.Health = 100
+			teammate := triagePlayer(f, 4, 100)
+			teammate.PlayerFlags, teammate.UnitFlags = tc.playerFlags, tc.unitFlags
+			f.world.NearbyPlayers = []*worldv1.PlayerState{teammate}
+			triageMember(f, 4)
+			learn(s)
+			s.Tick(ctx)
+			if countPackets(f, opcode.CMSGCastSpell) != 0 {
+				t.Fatal("full health teammate was healed", f.packets)
+			}
+			advance(5 * time.Hour)
+			teammate.Health = 40
+			s.Tick(ctx)
+			if countPackets(f, opcode.CMSGCastSpell) != 1 || healingCastTarget(f) != 4 || lastCast(f) != lesserHeal {
+				t.Fatal("learned healing did not protect the injured teammate", state(t, s), f.packets)
+			}
+		})
+	}
+}
+
 func TestHealingTriageRequiresActualCurrentOnlinePartyAndPublicTarget(t *testing.T) {
-	for _, mode := range []string{"not_member", "offline", "party_unavailable", "unknown_group", "not_grouped", "missing_self", "foreign_self", "duplicate_member", "duplicate_observation", "unobserved", "dead", "health_unknown", "health_overflow", "different_map", "stale_moving", "far", "ghost", "afk", "npc_guid", "oversized"} {
+	for _, mode := range []string{"not_member", "offline", "party_unavailable", "unknown_group", "not_grouped", "missing_self", "foreign_self", "duplicate_member", "duplicate_observation", "unobserved", "dead", "health_unknown", "health_overflow", "different_map", "stale_moving", "far", "ghost", "npc_guid", "oversized"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := rig(t)
 			f.world.Owner.Health = 100
@@ -147,8 +172,6 @@ func TestHealingTriageRequiresActualCurrentOnlinePartyAndPublicTarget(t *testing
 				p.X = 36
 			case "ghost":
 				p.PlayerFlags = 0x10
-			case "afk":
-				p.PlayerFlags = 2
 			case "npc_guid":
 				p.Guid = 0xf130000001000004
 			case "oversized":
@@ -156,7 +179,7 @@ func TestHealingTriageRequiresActualCurrentOnlinePartyAndPublicTarget(t *testing
 					f.world.NearbyPlayers = append(f.world.NearbyPlayers, p)
 				}
 			}
-			enableTriage(t, s)
+			learn(s)
 			s.Tick(context.Background())
 			if countPackets(f, opcode.CMSGCastSpell) != 0 {
 				t.Fatal(mode, state(t, s), f.packets)
@@ -171,7 +194,9 @@ func TestHealingTriagePartyLossAndUrgentSelfDuringStopAreRechecked(t *testing.T)
 			s, f, _ := rig(t)
 			learn(s)
 			toggle(t, s, true)
+			f.world.Owner.Health = 100
 			s.Tick(context.Background())
+			f.world.Owner.Health = 50
 			f.onClock = func() {
 				switch mode {
 				case "leave":
@@ -201,7 +226,7 @@ func TestHealingTriageAutomaticThresholdManualInjuryAndActualRankCost(t *testing
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := rig(t)
 			f.world.Owner.Health = 85
-			enableTriage(t, s)
+			learn(s)
 			want := false
 			switch mode {
 			case "automatic84":
@@ -236,10 +261,10 @@ func TestHealingTriageAutomaticThresholdManualInjuryAndActualRankCost(t *testing
 	}
 }
 
-func TestHealingTriageKeepsLeasePendingCooldownAndNoRetryGates(t *testing.T) {
+func TestHealingTriageKeepsInteractionPendingAndCooldownGates(t *testing.T) {
 	s, f, advance := rig(t)
 	f.world.Self.Health, f.world.Owner = 20, nil
-	enableTriage(t, s)
+	learn(s)
 	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training"})
 	if err != nil {
 		t.Fatal(err)
@@ -257,20 +282,20 @@ func TestHealingTriageKeepsLeasePendingCooldownAndNoRetryGates(t *testing.T) {
 	}
 	advance(6 * time.Second)
 	s.Tick(context.Background())
-	if !state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 1 {
+	if countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("timeout changed intent or skipped backoff", state(t, s))
 	}
 	advance(5 * time.Second)
 	s.Tick(context.Background())
-	if !state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 2 || state(t, s).ServerCastGo != 0 {
+	if countPackets(f, opcode.CMSGCastSpell) != 2 || state(t, s).ServerCastGo != 0 {
 		t.Fatal("fresh injured player did not permit healing after backoff", state(t, s))
 	}
 	s, f, _ = rig(t)
 	f.world.Self.Health, f.world.Owner, f.failSend = 20, nil, true
-	enableTriage(t, s)
+	learn(s)
 	s.Tick(context.Background())
 	s.Tick(context.Background())
-	if state(t, s).Healing || countPackets(f, opcode.CMSGCastSpell) != 1 || state(t, s).ServerCastGo != 0 {
+	if countPackets(f, opcode.CMSGCastSpell) != 1 || state(t, s).ServerCastGo != 0 {
 		t.Fatal("ambiguous write replayed or confirmed", state(t, s))
 	}
 }

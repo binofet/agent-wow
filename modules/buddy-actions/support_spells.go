@@ -96,7 +96,7 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 
 func (s *Service) resurrectionTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
 	s.supportSnapshotLocked(w)
-	if !s.state.Healing || s.independent || s.closed || s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist) || safeSelfCombat(w, s.selfGUID) != "" || w.Self.UnitFlags&(0x80000|0x2000) != 0 || !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
+	if s.independent || s.closed || s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist) || safeSelfCombat(w, s.selfGUID) != "" || w.Self.UnitFlags&(0x80000|0x2000) != 0 || !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
 		return false
 	}
 	spells := s.candidatesLocked(spellcatalog.Resurrect)

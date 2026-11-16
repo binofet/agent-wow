@@ -28,7 +28,7 @@ class RPC:
         self.inv["inventoryBags"][0]["slots"][2]={"slot":2}
         self.inv["items"]=[item for item in self.inv["items"] if item["item"]["slot"] != 2]
         self.calls,self.x,self.following,self.owner_x=[],0.,True,10.
-        self.assisting,self.healing,self.looting,self.buffing=False,False,False,False
+        self.assisting,self.looting,self.buffing=False,False,False
         self.owner_present,self.combat,self.owner_combat,self.moving,self.resting=True,False,False,False,True
         self.owner_moving,self.trade,self.interaction,self.lease=False,"IDLE","",None
         self.vendor_x,self.vendor_present,self.box,self.block=20.,True,False,None
@@ -57,7 +57,7 @@ class RPC:
         if method=='buddy-party.state':return dict(sessionId=self.inv['sessionId'],group=dict(known=True,inGroup=True,groupGuid='7',leaderGuid='3',
             members=[dict(guid=self.inv['selfGuid'],self=True,online=True),dict(guid='3',online=self.owner_present)]+
                 [dict(guid=p['guid'],online=True) for p in self.extra_players]))
-        if method=="buddy-actions.status":return dict(sessionId=self.inv['sessionId'],selfGuid=self.inv['selfGuid'],following=self.following,healing=self.healing,assisting=self.assisting,buffing=self.buffing,moving=self.moving,interactionOwner=self.interaction,
+        if method=="buddy-actions.status":return dict(sessionId=self.inv['sessionId'],selfGuid=self.inv['selfGuid'],following=self.following,assisting=self.assisting,buffing=self.buffing,moving=self.moving,interactionOwner=self.interaction,
             followLeaseRemainingMs=self.follow_lease,position=dict(known=True,mapKnown=True,mapId=0,x=self.x,y=0.,z=0.))
         if method=="buddy-trade.state":return dict(sessionId=self.inv["sessionId"],phase=self.trade)
         if method=="buddy-quests.state":return dict(sessionId=self.inv["sessionId"])
@@ -69,7 +69,6 @@ class RPC:
             if not self.following:self.moving=False
             return dict(following=self.following,moving=self.moving)
         if method=="buddy-actions.assist":self.assisting=params["enabled"];return dict(assisting=self.assisting)
-        if method=="buddy-actions.healing":self.healing=params["enabled"];return dict(healing=self.healing)
         if method=="buddy-actions.buffs":self.buffing=params['enabled'];return dict(buffing=self.buffing)
         if method=="buddy-loot.enable":self.looting=params["enabled"];return dict(enabled=self.looting)
         if method=="buddy-actions.acquire_interaction":
@@ -141,13 +140,13 @@ class TownTests(unittest.TestCase):
 
     def test_leased_normal_follow_handoff_equips_while_joel_walks_before_bags_or_services(self):
         actor,rpc,clock,saved,calls=self.gear_rig()
-        rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
+        rpc.assisting=rpc.looting=rpc.buffing=True
         # A carried bag is independently eligible, but the verified upgrade
         # has priority and never requires a merchant or a town/rest flag.
         original=actor.worker
         def work(kind,target):
             self.assertFalse(rpc.moving)
-            self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+            self.assertFalse(any((rpc.following,rpc.assisting,rpc.looting,rpc.buffing)))
             rpc.owner_x+=4
             actor.guard()  # Ordinary leader motion cannot starve own equipment.
             return original(kind,target)
@@ -158,7 +157,7 @@ class TownTests(unittest.TestCase):
         self.assertEqual(actor.status['gearCandidateCount'],1)
         self.assertEqual(actor.status['taskQueue'],m.TASK_PRIORITY)
         self.assertEqual(actor.status['blockedReason'],'')
-        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.looting,rpc.buffing)))
         self.assertFalse(any(name in ('buddy-actions.acquire_interaction','buddy-actions.travel_vendor','buddy-mail.list') for name,_ in rpc.calls))
         self.assertEqual(saved[-1]['attempts'][0]['phase'],'complete')
 
@@ -340,7 +339,7 @@ class TownTests(unittest.TestCase):
         rpc.call=call
         clock,saved,calls=[100.],[],[]
         def work(kind,target):
-            self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+            self.assertFalse(any((rpc.following,rpc.assisting,rpc.looting)))
             self.assertIsNone(rpc.lease);calls.append((kind,target))
             return result or dict(phase='complete',newConfirmedOperations=1)
         actor=m.Supervisor(4,rpc,save=lambda value:saved.append(copy.deepcopy(value)),now=lambda:clock[0],worker=work)
@@ -353,10 +352,10 @@ class TownTests(unittest.TestCase):
     def test_mira_party_unused_gear_precedes_sale_under_existing_control_custody(self):
         with patch.object(m.disenchant,'pending',return_value=False):
             actor,rpc,clock,_,calls=self.mira()
-            rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
+            rpc.assisting=rpc.looting=rpc.buffing=True
             self.run_tick(actor,clock);self.run_tick(actor,clock)
         self.assertEqual(calls,[('disenchant',0x4000000000001234)])
-        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting,rpc.buffing)))
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.looting,rpc.buffing)))
         self.assertFalse(any(name=='buddy-actions.travel_vendor' for name,_ in rpc.calls))
 
     def test_mira_unknown_disposition_keeps_gear_but_does_not_block_gray_sale(self):
@@ -370,10 +369,10 @@ class TownTests(unittest.TestCase):
     def test_mira_unconfirmed_destruction_never_restores_controls_or_starts_sale(self):
         with patch.object(m.disenchant,'pending',return_value=True):
             actor,rpc,clock,_,calls=self.mira(dict(phase='unconfirmed',reason='actual_materials_pending'))
-            rpc.assisting=rpc.healing=rpc.looting=True
+            rpc.assisting=rpc.looting=True
             self.run_tick(actor,clock);self.run_tick(actor,clock)
         self.assertEqual(calls,[('disenchant',0)])
-        self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+        self.assertFalse(any((rpc.following,rpc.assisting,rpc.looting)))
         self.assertEqual(actor.status['controlsRestore'],'unconfirmed_no_automatic_control_restore')
 
     def test_mira_own_upgrade_and_existing_profession_work_keep_priority(self):
@@ -412,7 +411,7 @@ class TownTests(unittest.TestCase):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temp:
                 actor,rpc,clock,saved,_=self.rig()
                 rpc.inv=gear_fakes.initial();rpc.inv['selfGuid']='1'
-                rpc.assisting=rpc.healing=rpc.looting=True
+                rpc.assisting=rpc.looting=True
                 actor.worker=actor.run_worker
                 root=Path(temp).resolve();path=root/'data/autonomy/town-maintenance/1-8086/gear.json'
                 reads=[0];writes=[];late_guards=[];guard=actor.guard
@@ -445,10 +444,10 @@ class TownTests(unittest.TestCase):
                 if mode=='metadata_changed':
                     self.assertFalse(writes);self.assertFalse(rows)
                     self.assertEqual(saved[-1]['attempts'][0]['phase'],'blocked')
-                    self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+                    self.assertTrue(all((rpc.following,rpc.assisting,rpc.looting)))
                 else:
                     self.assertEqual(len(writes),1);self.assertEqual(rows[0]['phase'],'unconfirmed')
-                    self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+                    self.assertFalse(any((rpc.following,rpc.assisting,rpc.looting)))
 
     def test_gear_metadata_revision_retries_read_only_abort_but_never_replays_issued_request(self):
         gear_fakes=load('town_gear_metadata_retry_fakes','test_party_gear.py')
@@ -695,29 +694,29 @@ class TownTests(unittest.TestCase):
                 self.assertEqual(m.c.read_json(folder/"follow-revoked.json")["controls"],["assist","follow"])
                 record["identity"]["characterGuid"]=4;m.c.write_json(folder/"status.json",record)
                 self.assertFalse(m.c.party_town_snapshot(1,revoke_follow=True)["active"])
-    def test_real_normal_follow_assist_healing_loot_all_pause_before_worker_and_restore(self):
+    def test_real_normal_follow_assist_and_loot_pause_before_worker_and_restore(self):
         actor,rpc,clock,saved,_=self.rig()
-        rpc.assisting=rpc.healing=rpc.looting=True
+        rpc.assisting=rpc.looting=True
         ran=[]
         def worker(kind,target):
-            self.assertFalse(any((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+            self.assertFalse(any((rpc.following,rpc.assisting,rpc.looting)))
             self.assertIsNone(rpc.lease)
             ran.append(True)
             return dict(phase="complete",newConfirmedOperations=1)
         actor.worker=worker
         self.run_tick(actor,clock);self.run_tick(actor,clock)
         self.assertEqual(ran,[True])
-        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
-        self.assertEqual(saved[-1]["attempts"][0]["heldControls"],dict(follow=True,assist=True,healing=True,loot=True))
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.looting)))
+        self.assertEqual(saved[-1]["attempts"][0]["heldControls"],dict(follow=True,assist=True,loot=True))
     def test_no_qualified_upkeep_never_turns_off_any_enabled_control(self):
-        actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.healing=rpc.looting=True;rpc.inv["items"]=[]
+        actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.looting=True;rpc.inv["items"]=[]
         self.run_tick(actor,clock);self.run_tick(actor,clock)
-        self.assertTrue(all((rpc.following,rpc.assisting,rpc.healing,rpc.looting)))
+        self.assertTrue(all((rpc.following,rpc.assisting,rpc.looting)))
         self.assertFalse(any(method in {row[1] for row in m.CONTROLS} for method,_ in rpc.calls))
     def test_new_explicit_control_commands_win_and_unrelated_held_controls_restore(self):
-        for control,attribute in (("assist","assisting"),("healing","healing"),("loot","looting"),("follow","following"),('buffs','buffing')):
+        for control,attribute in (("assist","assisting"),("loot","looting"),("follow","following"),('buffs','buffing')):
             for new_value in (False,True):
-                actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.healing=rpc.looting=rpc.buffing=True
+                actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.looting=rpc.buffing=True
                 revoked=set();actor.revoked_controls=lambda:revoked
                 def worker(kind,target):
                     revoked.add(control);setattr(rpc,attribute,new_value)
@@ -726,11 +725,11 @@ class TownTests(unittest.TestCase):
                 self.run_tick(actor,clock);self.run_tick(actor,clock)
                 self.assertEqual(getattr(rpc,attribute),new_value,(control,new_value))
                 for other,_,field,_ in m.CONTROLS:
-                    name={"enabled":"looting","assisting":"assisting","following":"following","healing":"healing",'buffing':'buffing'}[field]
+                    name={"enabled":"looting","assisting":"assisting","following":"following",'buffing':'buffing'}[field]
                     if other!=control:self.assertTrue(getattr(rpc,name),(control,other))
     def test_uncertain_pause_or_worker_outcome_never_automatically_restores_controls(self):
         for mode in ("pause_lost","pause_refused","worker_lost","worker_exception","body_changed"):
-            actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.healing=rpc.looting=True;rpc.vendor_x=3
+            actor,rpc,clock,_,_=self.rig();rpc.assisting=rpc.looting=True;rpc.vendor_x=3
             original=rpc.call
             def call(method,params):
                 result=original(method,params)
@@ -749,9 +748,10 @@ class TownTests(unittest.TestCase):
             self.assertEqual(enables,[],mode)
     def test_conversation_toggle_revokes_only_its_owned_town_control(self):
         for action,control in (("ENABLE_ASSIST","assist"),("DISABLE_ASSIST","assist"),
-                               ("ENABLE_HEALING","healing"),("DISABLE_HEALING","healing")):
+                               ("ENABLE_BUFFS","buffs"),("DISABLE_BUFFS","buffs")):
             _,rpc,_,_,_=self.rig()
             controls=m.c.BuddyControls(rpc);controls.actions_available=controls.loot_available=True
+            controls.spell_toolkit=dict(available=True,spells=[dict(automaticBuffSupported=True)])
             with patch.object(m.c,"party_town_snapshot",return_value={}) as marker:
                 controls.execute(action)
                 marker.assert_called_once_with(1,revoke_control=control)

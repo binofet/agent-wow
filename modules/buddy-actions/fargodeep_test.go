@@ -21,8 +21,6 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 	s, f, _, advance := selfDefenseRig(t, class)
 	s.selfGUID = guid
 	f.world.Self.Guid = guid
-	s.state.Healing = class == 5
-	s.healingUntil = s.now().Add(time.Hour)
 	f.world.Self.UnitFlags = 0
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -9820, 124, 5
 	f.world.Self.Level = 6

@@ -42,7 +42,7 @@ func legacyActionDescriptor(t *testing.T, name string) protoreflect.MessageDescr
 
 func populatedBuffState() *actionsv1.State {
 	return &actionsv1.State{
-		Following: true, Healing: true, Moving: true, CastPending: true,
+		Following: true, Moving: true, CastPending: true,
 		Reason: "legacy fields remain observations", TransportWrites: 123,
 		Position:   &actionsv1.ClientPosition{Known: true, MapKnown: true, X: -6423, Y: 533, Z: 385, Revision: 86},
 		ClassKnown: true, ClassId: 9, ClassName: "warlock", KnownShadowBolt: true,
@@ -124,6 +124,13 @@ func TestBuffStateDescriptorUsesUnoccupiedRangeAndRoundTrips(t *testing.T) {
 			continue
 		}
 		current := d.Fields().ByNumber(old.Number())
+		switch old.Name() {
+		case "healing", "healing_lease_remaining_ms":
+			if current != nil || !d.ReservedRanges().Has(old.Number()) {
+				t.Errorf("retired healing field %s must have a reserved tag", old.Name())
+			}
+			continue
+		}
 		if current == nil || !proto.Equal(protodesc.ToFieldDescriptorProto(old), protodesc.ToFieldDescriptorProto(current)) {
 			t.Errorf("legacy field%d changed", old.Number())
 		}

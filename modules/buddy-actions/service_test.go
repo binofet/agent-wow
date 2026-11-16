@@ -16,7 +16,9 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -153,7 +155,7 @@ func TestDisabledControllerDoesNotPollOrWrite(t *testing.T) {
 	if len(f.packets) != 0 {
 		t.Fatal("disabled writes")
 	}
-	if got := state(t, s); got.Following || got.Healing || got.KnownLesserHeal {
+	if got := state(t, s); got.Following || got.KnownLesserHeal {
 		t.Fatalf("initial %+v", got)
 	}
 }
@@ -223,15 +225,19 @@ func TestStationaryOldPositionIsKnownButLateControllerStops(t *testing.T) {
 }
 
 func TestFollowStopCorrectionAndLease(t *testing.T) {
-	for _, mode := range []string{"explicit", "correction", "lease", "lost"} {
+	for _, mode := range []string{"explicit", "correction", "healer_correction", "lease", "lost"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := rig(t)
+			if mode == "healer_correction" {
+				f.world.Owner.Health = 100
+				learn(s)
+			}
 			toggle(t, s, true)
 			s.Tick(context.Background())
 			switch mode {
 			case "explicit":
 				toggle(t, s, false)
-			case "correction":
+			case "correction", "healer_correction":
 				f.world.Self.PositionRevision++
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
@@ -243,7 +249,8 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 			}
-			if got := state(t, s); got.Moving || (got.Following != (mode == "correction")) {
+			stillFollowing := mode == "correction" || mode == "healer_correction"
+			if got := state(t, s); got.Moving || got.Following != stillFollowing {
 				t.Fatalf("failed to stop %+v", got)
 			}
 			if mode == "lost" && !s.state.MotionUnconfirmed {
@@ -277,7 +284,9 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 	s, f, advance := rig(t)
 	learn(s)
 	toggle(t, s, true)
+	f.world.Owner.Health = 100
 	s.Tick(context.Background())
+	f.world.Owner.Health = 50
 	advance(200 * time.Millisecond)
 	result, err := s.HealOnce(context.Background(), &emptypb.Empty{})
 	if err != nil {
@@ -294,7 +303,7 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 		t.Fatal("cast retried while pending")
 	}
 	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: []byte{1, 2, 8, 0, 0, 49}})
-	if got := state(t, s); got.CastPending || got.Healing || got.LastCastFailure != 49 || got.ServerCastGo != 0 {
+	if got := state(t, s); got.CastPending || got.LastCastFailure != 49 || got.ServerCastGo != 0 {
 		t.Fatalf("failure %+v", got)
 	}
 	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
@@ -309,7 +318,7 @@ func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
 	advance(6 * time.Second)
 	s.Tick(context.Background())
-	if got := state(t, s); got.CastPending || got.Reason != "cast_result_timeout_backoff" || got.ServerCastGo != 0 {
+	if got := state(t, s); got.CastPending || got.ServerCastGo != 0 {
 		t.Fatalf("timeout %+v", got)
 	}
 	if len(f.packets) != 1 {
@@ -332,7 +341,9 @@ func TestHealAbortsIfMovementStopCannotBeWritten(t *testing.T) {
 	s, f, _ := rig(t)
 	learn(s)
 	toggle(t, s, true)
+	f.world.Owner.Health = 100
 	s.Tick(context.Background())
+	f.world.Owner.Health = 50
 	f.failClock = true
 	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
 	if result.CastPending || len(f.packets) != 1 || result.Reason != "movement_stop_unconfirmed_heal_aborted" {
@@ -384,7 +395,7 @@ func TestBeforeLogoutStopsAndRejectsNewControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := state(t, s); got.Following || got.Healing || got.Moving {
+	if got := state(t, s); got.Following || got.Moving {
 		t.Fatalf("logout %+v", got)
 	}
 	if _, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err == nil {
@@ -406,7 +417,7 @@ func TestConcurrentStatusControlsAndPackets(t *testing.T) {
 			defer wg.Done()
 			for n := 0; n < 20; n++ {
 				_, _ = s.Status(context.Background(), &emptypb.Empty{})
-				_, _ = s.Healing(context.Background(), &actionsv1.ToggleRequest{})
+				_, _ = s.Follow(context.Background(), &actionsv1.ToggleRequest{})
 				_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: []byte{0}})
 			}
 		}()
@@ -480,15 +491,14 @@ func TestGeneratedGRPCControlsAndState(t *testing.T) {
 	if err != nil || !response.Following || response.Moving || response.FollowLeaseRemainingMs != 14400000 {
 		t.Fatalf("follow %+v err%v", response, err)
 	}
-	response, err = client.Healing(ctx, &actionsv1.ToggleRequest{Enabled: true})
-	if err != nil || !response.Healing {
-		t.Fatalf("healing %+v err%v", response, err)
+	if err := connection.Invoke(ctx, "/warcraftbuddy.actions.v1.BuddyActions/Healing", &actionsv1.ToggleRequest{Enabled: true}, &actionsv1.State{}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("retired healing toggle still routes: %v", err)
 	}
 	if _, err := client.BeforeLogout(ctx, &emptypb.Empty{}); err != nil {
 		t.Fatal(err)
 	}
 	response, err = client.Status(ctx, &emptypb.Empty{})
-	if err != nil || response.Following || response.Healing {
+	if err != nil || response.Following {
 		t.Fatalf("closed %+v err%v", response, err)
 	}
 }

@@ -78,7 +78,7 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	// Existing native missions retain their bound-target/quarantine scheduler.
 	// Ordinary enabled controls already reach defense below, before owner gates.
 	if s.state.Practicing || s.fargodeep.active || s.state.InteractionOwner == "" &&
-		(s.state.Following && s.now().Before(s.followUntil) || s.state.Healing && s.now().Before(s.healingUntil) ||
+		(s.state.Following && s.now().Before(s.followUntil) || s.hasLearnedHealingLocked() ||
 			s.state.Assisting && s.now().Before(s.assistUntil) || s.state.Buffing) {
 		return false
 	}
@@ -110,7 +110,7 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 			return true
 		}
 	}
-	if s.state.Healing && s.now().Before(s.healingUntil) && (s.urgentSelfHealLocked(ctx, w) || s.triageHealLocked(ctx, w, true)) {
+	if s.hasLearnedHealingLocked() && (s.urgentSelfHealLocked(ctx, w) || s.triageHealLocked(ctx, w, true)) {
 		return true
 	}
 	if s.potentialCleanseLocked() && s.cleanseTickLocked(ctx, w) {

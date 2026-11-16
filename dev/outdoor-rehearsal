@@ -247,7 +247,6 @@ def main():
     for guid,_,port in roster:
         rpc(port,'buddy-actions.recovery',{'enabled':True})
         if port != TANK: rpc(port,'buddy-actions.assist',{'enabled':True})
-        if guid == 1: rpc(port,'buddy-actions.healing',{'enabled':True})
     count=0
     while count<args.pulls and time.monotonic()<deadline:
         try:

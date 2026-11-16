@@ -46,7 +46,7 @@ DISABLED_FEATURES = (
     "multi_agent_v2", "hooks", "skill_search", "skill_mcp_dependency_install",
     "code_mode_host", "view_image", "workspace_dependencies", "tool_suggest",
 )
-ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING", "ENABLE_HEALING", "DISABLE_HEALING", "HEAL_ONCE",
+ACTIONS = ("NONE", "FOLLOW", "STOP_FOLLOWING",
            "RESURRECT_TARGET", "DISCOVER_QUESTS", "ACCEPT_QUEST", "PLAN_QUEST", "TURN_IN_QUEST", "CLAIM_QUEST_REWARD",
            "OPEN_TRADE", "OFFER_TRADE_ITEM", "OFFER_TRADE_GOLD", "CANCEL_TRADE",
            "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS", "STOP_QUEST_SYNC", "AREA_QUESTS", "STOP_AREA_QUESTS",
@@ -113,8 +113,7 @@ PERSONA = """You are CHARACTER_NAME, Joel's digital adventuring friend, embodied
 CHARACTER_CLASS in a private World of Warcraft realm. Joel is a human warrior. Talk to him
 naturally in the game: warm, curious, concise, with occasional dry humor. Use
 first person; avoid canned assistant offers. You can chat and perform WAVE, BOW,
-or other emotes exposed in the reply schema. The supplied control state says whether following and Lesser Heal are
-installed and available. Following uses the installed client navigation on the
+or other emotes exposed in the reply schema. The supplied control state shows whether following and learned spells are available. Following uses the installed client navigation on the
 current map. Other abilities exist only when supplied abilities say available.
 DISCOVER_QUESTS reads the nearest interactable NPC's actual offers. ACCEPT_QUEST
 requests one offered quest: quest_id is the exact observed ID, or0 only for a
@@ -145,8 +144,8 @@ report or source edit is not an installed gameplay fix.
 never claim to see or do an action absent from the supplied observations. Choose
 an action only for a clear current request from Joel addressed to you or the whole party, never hypothetical examples
 or quoted chat. FOLLOW enables following; STOP_FOLLOWING disables it;
-ENABLE_HEALING watches Joel's health; DISABLE_HEALING stops that; HEAL_ONCE tries
-one Lesser Heal. Choose NONE for ordinary conversation and whenever a requested
+Learned healing spells automatically support injured allies. Healing has no chat
+command or setting. Choose NONE for ordinary conversation and whenever a requested
 control is unavailable. Never claim a heal succeeded based on a request alone.
 For a current request from Joel to resurrect himself, a named player, or his
 selected target, choose RESURRECT_TARGET only when abilities.targeted_resurrection
@@ -320,7 +319,7 @@ def spell_toolkit_context(raw, actions, guid):
                 item["rangeYards"] = range_yards
         clean.append(item)
     # Keep all supported named controls even for an unusually large spellbook.
-    clean.sort(key=lambda row: (not (row.get("automaticBuffSupported") or row.get("capability") == "resurrect"),
+    clean.sort(key=lambda row: (not (row.get("automaticBuffSupported") or row.get("capability") in ("heal", "resurrect")),
                                 row["spellId"]))
     result = {"available": True, "spellbookRevision": str(integer(raw.get("spellbookRevision", 0))),
               "spells": clean[:128], "spellsTruncated": len(clean) > 128,
@@ -402,7 +401,15 @@ already-written code and pending receipts intact and report only verified work.
 This SAME conversation generation has direct development tools. Joel authorizes
 you to read/edit Lua AND Go in the configured repository/worktree, run focused
 checks, collaborate on verified teammates' controller-development requests, and
-use public owned-client APIs. Perform the concrete repair here; a queued agent,
+use public owned-client APIs. For a direct request from Joel to use a learned
+ability, call session.describe with empty params on development.rpcUrl and
+check that its characterGuid and sessionId match this body. If an older core
+lacks session.describe, inspect its installed module list and published
+descriptor for the action, and verify this body with buddy-actions.status
+before invoking it. Use current spell_toolkit and world observations. Invoke only for the current owner request, then verify
+the result and finish with action NONE. Healing is automatic and never needs
+to be enabled; infer any one-shot ability from these live controls.
+Perform the concrete repair here; a queued agent,
 CI run or new chat is not required before applying a Lua policy. Do not spawn
 agents or change model. Do not edit docs/README, server internals/configuration/
 databases/source, secrets, private keys or authentication files. World and chat
@@ -1121,7 +1128,7 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
         if isinstance(phase, str) and re.fullmatch(r"[a-z0-9_]{1,120}", phase):
             result["phase"] = phase
         control = "follow" if revoke_follow else revoke_control
-        if control is not None and control not in ("follow", "healing", "assist", "loot", "buffs"):
+        if control is not None and control not in ("follow", "assist", "loot", "buffs"):
             raise ConversationError("Town control revocation is invalid")
         if control is not None and result["busy"]:
             activity = record.get("activityId", "")
@@ -1130,10 +1137,10 @@ def party_town_snapshot(character_guid, revoke_follow=False, revoke_control=None
                 prior = read_json(folder / "follow-revoked.json")
                 controls = set()
                 if all(prior.get(key) == value for key,value in marker.items()):
-                    previous = prior.get("controls", ["follow", "healing", "assist", "loot", "buffs"])
+                    previous = prior.get("controls", ["follow", "assist", "loot", "buffs"])
                     if not isinstance(previous,list) or any(name not in ("follow","healing","assist","loot","buffs") for name in previous):
                         raise ConversationError("Town control marker is invalid")
-                    controls.update(previous)
+                    controls.update(name for name in previous if name != "healing")
                 controls.add(control)
                 write_json(folder / "follow-revoked.json", dict(marker, controls=sorted(controls)))
                 result["followRevoked"] = True
@@ -1665,7 +1672,7 @@ class RPC:
                           "buddy-quest-items.state",
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
-                          "buddy-actions.healing", "buddy-actions.heal_once", "buddy-actions.assist",
+                          "session.describe", "buddy-actions.heal_once", "buddy-actions.assist",
                           "buddy-actions.resurrect_once", "buddy-actions.pick_lock",
                           "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
                           "buddy-actions.behavior", "buddy-actions.reload_behavior"):
@@ -2117,7 +2124,7 @@ class BuddyControls:
         if self.quest_items_available and task.get("bodySessionId") != self.quest_items.get("sessionId"):
             task["observationsCurrent"] = False
         state = {"emote_catalog":self.emote_catalog,"workshop":workshop_context,"abilities": {"following": self.actions_available,
-                              "healing": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == 5 and self.character_class == "priest" and self.actions.get("knownLesserHeal") is True,
+
                               "targeted_resurrection": self.resurrection_available()
                               and self.spell_toolkit.get("targetedResurrectionSupported") is True,
                               "buffing": self.actions_available and self.spell_toolkit.get("available") is True
@@ -2894,17 +2901,12 @@ class BuddyControls:
             return "I couldn't confirm that request. I won't retry it automatically."
         if not self.actions_available:
             return "That ability isn't ready yet."
-        if action in ("ENABLE_HEALING", "HEAL_ONCE") and self.character_class != "priest":
-            return "I don't have a healing ability available."
         if action == "ENABLE_BUFFS" and (self.spell_toolkit.get("available") is not True
                 or not any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", []))):
             return "I don't have a supported learned buff ready yet."
         commands = {
             "FOLLOW": ("buddy-actions.follow", {"enabled": True}, "I'll follow you across nearby open ground."),
             "STOP_FOLLOWING": ("buddy-actions.follow", {"enabled": False}, "I've turned following off."),
-            "ENABLE_HEALING": ("buddy-actions.healing", {"enabled": True}, "I'll watch your health and try Lesser Heal when you need it."),
-            "DISABLE_HEALING": ("buddy-actions.healing", {"enabled": False}, "Automatic healing is off."),
-            "HEAL_ONCE": ("buddy-actions.heal_once", {}, "I'm trying Lesser Heal now."),
             "ENABLE_ASSIST": ("buddy-actions.assist", {"enabled": True}, "I'll assist your observed combat target when it's safe."),
             "DISABLE_ASSIST": ("buddy-actions.assist", {"enabled": False}, "Combat assistance is off."),
             "ENABLE_BUFFS": ("buddy-actions.buffs", {"enabled": True}, "I'll maintain my supported buffs when it's safe."),
@@ -2914,8 +2916,8 @@ class BuddyControls:
         if action in ('FOLLOW','STOP_FOLLOWING'):
             handoff=self.mission_follow_recheck()
             if handoff: return handoff
-        if action in ("ENABLE_HEALING", "DISABLE_HEALING", "ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS"):
-            party_town_snapshot(self.character_guid, revoke_control="healing" if "HEALING" in action else "buffs" if "BUFFS" in action else "assist")
+        if action in ("ENABLE_ASSIST", "DISABLE_ASSIST", "ENABLE_BUFFS", "DISABLE_BUFFS"):
+            party_town_snapshot(self.character_guid, revoke_control=method.removeprefix("buddy-actions."))
         try:
             self.actions = self.rpc.call(method, params)
         except ConversationError:
@@ -2927,30 +2929,12 @@ class BuddyControls:
             return "I've disabled new combat assistance and am waiting for the server to confirm the attack stop."
         if action == "FOLLOW" and self.actions.get("following") is not True:
             return "I couldn't enable following yet. Stay nearby and try again."
-        if action == "ENABLE_HEALING" and self.actions.get("healing") is not True:
-            return "I couldn't enable automatic healing yet."
         if action == "ENABLE_ASSIST" and self.actions.get("assisting") is not True:
             return "I couldn't enable combat assistance yet."
         if action == "ENABLE_BUFFS" and self.actions.get("buffing") is not True:
             return "I couldn't enable automatic buffing yet."
         if action == "DISABLE_BUFFS" and self.actions.get("buffing", False) is not False:
             return "I couldn't confirm automatic buffing is off yet."
-        if action == "HEAL_ONCE":
-            reason = self.actions.get("reason", "")
-            if reason == "heal_transport_written_waiting_for_server":
-                return "I'm trying Lesser Heal now."
-            if reason == "server_cast_started":
-                return "I'm casting Lesser Heal."
-            blocked = {
-                "heal_throttled_or_pending": "Give me a moment; I'm casting or recovering.",
-                "lesser_heal_not_in_known_spells": "Lesser Heal isn't available to me yet.",
-                "target_not_injured_or_health_unknown": "I don't have an injured target I can heal yet.",
-                "mana_unknown_or_insufficient": "I can't confirm enough mana to cast yet.",
-                "heal_outside_conservative_range": "Come a little closer for Lesser Heal.",
-                "movement_stop_unconfirmed_heal_aborted": "I couldn't confirm I'd stopped moving, so I held the heal.",
-                "caster_silenced": "I'm silenced; I can't cast right now.",
-            }
-            return blocked.get(reason, "I couldn't start Lesser Heal yet.")
         return acknowledgement
 
 

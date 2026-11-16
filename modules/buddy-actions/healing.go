@@ -16,6 +16,23 @@ import (
 
 const urgentSelfHealPercent = 50
 
+// Healing is a standing role for companions with a learned healing spell.
+func (s *Service) hasLearnedHealingLocked() bool {
+	return s.hasLearnedSupportSpellLocked(spellcatalog.Heal)
+}
+
+func (s *Service) hasLearnedSupportSpellLocked(kind spellcatalog.Kind) bool {
+	if s.independent {
+		return false
+	}
+	for _, spell := range s.learnedContractsLocked() {
+		if spell.Capability().Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func injuredForHealing(p *worldv1.PlayerState, automatic bool) bool {
 	if p == nil || !p.HealthKnown || p.MaxHealth == 0 || p.Health == 0 || p.Health >= p.MaxHealth {
 		return false
@@ -121,7 +138,7 @@ func healingTiePriority(guid, self uint64) int {
 func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotResponse, automatic, urgentOnly bool) *worldv1.PlayerState {
 	self := w.Self
 	eligible := func(p *worldv1.PlayerState) bool {
-		return safeHealingPlayer(p, self.MapId) && injuredForHealing(p, automatic) && (p.Guid == s.selfGUID || p.PlayerFlags&2 == 0 && distance(s.pos, playerPosition(p)) <= 35)
+		return healablePlayer(p, self.MapId) && injuredForHealing(p, automatic) && (p.Guid == s.selfGUID || distance(s.pos, playerPosition(p)) <= 35)
 	}
 	urgent := eligible(self) && uint64(self.Health)*100 < uint64(self.MaxHealth)*urgentSelfHealPercent
 	if urgent {
@@ -186,8 +203,12 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_caster_health_unconfirmed"
 		return false
 	}
-	if !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
+	if !s.refreshPositionLocked(w) {
+		// Give an authoritative correction its own tick before starting a cast or route.
 		s.stopLocked(ctx)
+		return true
+	}
+	if s.state.MotionUnconfirmed {
 		return false
 	}
 	if s.state.CastPending || s.now().Before(s.nextHeal) {
@@ -218,7 +239,6 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		return false
 	}
 	if !s.stopLocked(ctx) {
-		s.state.Healing = false
 		s.state.Reason = "movement_stop_unconfirmed_heal_aborted"
 		return false
 	}
@@ -241,7 +261,7 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 	} else {
 		target = observedHealingPlayer(fresh, target.Guid)
 	}
-	if !safeHealingPlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && (target.PlayerFlags&2 != 0 || distance(s.pos, playerPosition(target)) > 35) || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
+	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && distance(s.pos, playerPosition(target)) > 35 || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
 		s.state.Reason = "healing_target_changed_before_cast"
 		return false
 	}
@@ -266,6 +286,8 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.ID, target.Guid
 	s.state.LastCastFailure = 0
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.ID, target.Guid)) {
+		// The packet may have reached the server. Reassess after the cast window.
+		s.nextHeal = s.castUntil
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0
 		return false

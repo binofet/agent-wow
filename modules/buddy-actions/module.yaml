@@ -9,7 +9,6 @@ grpc:
   descriptor_set: module.pb
 rpc:
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
-  healing: /warcraftbuddy.actions.v1.BuddyActions/Healing
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
   resurrect_once: /warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce
@@ -72,13 +71,12 @@ script_api:
   behavior: {effect: read}
   spell_toolkit: {effect: read}
   follow: {effect: mutation}
-  healing: {effect: mutation}
   assist: {effect: mutation}
   engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}
   resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
-  heal_once: {effect: mutation}
+  heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}

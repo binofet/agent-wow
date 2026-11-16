@@ -90,7 +90,7 @@ func TestSmiteRequiresCombatProofHealthyOwnerManaAndAttackableTarget(t *testing.
 			s, f, _ := assistRig(t)
 			change(s, f)
 			s.Tick(context.Background())
-			if state(t, s).AssistAttempts != 0 || len(f.packets) != 0 {
+			if state(t, s).AssistAttempts != 0 || lastCast(f) == smite {
 				t.Fatal("unsafe offensive cast", state(t, s))
 			}
 		})
@@ -99,7 +99,6 @@ func TestSmiteRequiresCombatProofHealthyOwnerManaAndAttackableTarget(t *testing.
 func TestHealingTakesPriorityAndSmiteSharesCooldown(t *testing.T) {
 	s, f, advance := assistRig(t)
 	f.world.Owner.Health = 50
-	_, _ = s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 	s.Tick(context.Background())
 	if state(t, s).HealAttempts != 1 || state(t, s).AssistAttempts != 0 {
 		t.Fatal(state(t, s))
@@ -117,17 +116,21 @@ func TestHealingTakesPriorityAndSmiteSharesCooldown(t *testing.T) {
 		t.Fatal(state(t, s))
 	}
 }
-func TestSmiteFailurePausesSameTargetWithoutDisablingHealing(t *testing.T) {
-	s, _, advance := assistRig(t)
-	_, _ = s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
+func TestSmiteFailurePausesSameTargetAndHealingStillRuns(t *testing.T) {
+	s, f, advance := assistRig(t)
 	s.Tick(context.Background())
 	p := []byte{1, 0x49, 2, 0, 0, 49}
 	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCastFailed, Payload: p})
 	advance(6 * time.Second)
 	s.Tick(context.Background())
 	st := state(t, s)
-	if !st.Healing || !st.Assisting || st.CastPending || st.AssistAttempts != 1 || st.ServerAssistGo != 0 {
+	if !st.Assisting || st.CastPending || st.AssistAttempts != 1 || st.ServerAssistGo != 0 {
 		t.Fatal(st)
+	}
+	f.world.Owner.Health = 40
+	s.Tick(context.Background())
+	if lastCast(f) != lesserHeal || healingCastTarget(f) != ownerGUID {
+		t.Fatal("offense failure stopped automatic healing", state(t, s), f.packets)
 	}
 }
 func TestAssistStopsAfterLeaseExpiryAndCastTimeout(t *testing.T) {

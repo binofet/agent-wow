@@ -524,7 +524,7 @@ class ProfilePartyTests(unittest.TestCase):
         self.assertEqual(converse.addressed_names("Arlen and Mira, follow",["Arlen","Mira"]),{"arlen","mira"})
         self.assertEqual(converse.addressed_names("Arlen, heal Joel. Mira, attack.",["Arlen","Mira"]),{"arlen","mira"})
 
-    def test_class_persona_capability_truth_and_nonpriest_heal_gate(self):
+    def test_class_persona_and_assist_capability(self):
         for name,role,class_id,known in (("Mira","mage",8,"knownFireball"),("Rook","rogue",4,"knownAutoAttack")):
             persona=converse.character_persona(name,role)
             self.assertIn("You are "+name,persona)
@@ -535,10 +535,7 @@ class ProfilePartyTests(unittest.TestCase):
             controls.actions_available=True
             controls.actions={"classKnown":True,"classId":class_id,known:True,"knownLesserHeal":True}
             self.assertTrue(controls.context()["abilities"]["assisting"])
-            self.assertFalse(controls.context()["abilities"]["healing"])
-            rpc.calls.clear()
-            self.assertIn("don't have",controls.execute("HEAL_ONCE"))
-            self.assertFalse(rpc.calls)
+            self.assertNotIn("healing", controls.context()["abilities"])
             controls.actions["classKnown"]=False
             self.assertFalse(controls.context()["abilities"]["assisting"])
 
@@ -552,7 +549,7 @@ class ProfilePartyTests(unittest.TestCase):
         controls.actions_available=True
         controls.actions={"classKnown":True,"classId":9,"knownShadowBolt":True}
         self.assertTrue(controls.context()["abilities"]["assisting"])
-        self.assertFalse(controls.context()["abilities"]["healing"])
+        self.assertNotIn("healing", controls.context()["abilities"])
         for change in ({"knownShadowBolt":False},{"knownShadowBolt":None},{"classKnown":False},{"classId":8}):
             with self.subTest(change=change):
                 controls.actions={"classKnown":True,"classId":9,"knownShadowBolt":True,**change}
@@ -816,25 +813,20 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(rpc.calls, [])
         controls.actions_available = True
         controls.execute("FOLLOW")
-        controls.execute("HEAL_ONCE")
-        self.assertEqual(rpc.calls, [("buddy-actions.follow", {"enabled": True}), ("buddy-actions.heal_once", {})])
+        self.assertEqual(rpc.calls, [("buddy-actions.follow", {"enabled": True})])
         with self.assertRaises(converse.ConversationError):
             converse.validate_reply({"text": "hello", "emote": "NONE", "action": "session.logout"})
 
-    def test_blocked_heal_is_never_described_as_a_cast_attempt(self):
-        class RPC:
-            def __init__(self):
-                self.reason = "mana_unknown_or_insufficient"
-            def call(self, method, params):
-                return {"reason": self.reason}
-        rpc = RPC()
-        controls = converse.BuddyControls(rpc)
-        controls.actions_available = True
-        self.assertIn("mana", controls.execute("HEAL_ONCE"))
-        rpc.reason = "heal_transport_written_waiting_for_server"
-        self.assertEqual(controls.execute("HEAL_ONCE"), "I'm trying Lesser Heal now.")
-        rpc.reason = "unknown_blocker"
-        self.assertEqual(controls.execute("HEAL_ONCE"), "I couldn't start Lesser Heal yet.")
+    def test_healing_requests_use_reflected_controls_without_chat_commands(self):
+        for action in ("HEAL_ONCE", "ENABLE_HEALING", "DISABLE_HEALING"):
+            with self.subTest(action=action):
+                self.assertNotIn(action, converse.REPLY_SCHEMA["properties"]["action"]["enum"])
+                with self.assertRaises(converse.ConversationError):
+                    converse.validate_reply({"text": "Ready", "emote": "NONE", "action": action})
+        persona = converse.character_persona("Arlen", "priest", developer=True)
+        self.assertIn("call session.describe", persona)
+        self.assertIn("Healing is automatic", persona)
+        self.assertNotIn("HEAL_ONCE", persona)
 
     def test_rogue_uncertain_attack_stop_is_not_reported_stopped(self):
         class RPC:
@@ -2415,8 +2407,8 @@ class MissionHandoffTests(unittest.TestCase):
                 if method=='buddy-actions.status':return copy.deepcopy(case.actions)
                 if method=='buddy-actions.follow':return dict(case.actions,following=params['enabled'])
                 return {}
-        self.actions=dict(sessionId='aw-current',selfGuid='1',following=False,healing=True,assisting=True,buffing=True,
-            healingLeaseRemainingMs='14400000',assistLeaseRemainingMs='14400000',buffLeaseRemainingMs='14400000')
+        self.actions=dict(sessionId='aw-current',selfGuid='1',following=False,assisting=True,buffing=True,
+            assistLeaseRemainingMs='14400000',buffLeaseRemainingMs='14400000')
         self.professions=dict(sessionId='aw-current')
         self.rpc=RPC();self.controls=converse.BuddyControls(self.rpc)
         self.controls.actions_available=True;self.controls.actions=self.actions

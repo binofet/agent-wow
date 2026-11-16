@@ -193,9 +193,6 @@ func TestPartyDefenseRogueUsesVerifiedNavWithoutOwnerAndStopsOnProofLoss(t *test
 func TestPartyDefenseKeepsHealingPriorityAndBoundedClassMana(t *testing.T) {
 	s, f, _, _ := partyDefenseRig(t, 5)
 	f.world.NearbyPlayers[0].Health = 40
-	if _, err := s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	s.Tick(context.Background())
 	if s.state.HealAttempts != 1 || s.state.AssistAttempts != 0 || s.state.LastCastTargetGuid != 4 {
 		t.Fatal(s.stateLocked(), f.packets)

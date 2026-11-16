@@ -46,62 +46,62 @@ type Service struct {
 	clientControlLost, clientControlRestoring bool
 
 	actionsv1.UnimplementedBuddyActionsServer
-	mu                                                       sync.Mutex
-	session                                                  sessionAPI
-	dungeonTrace                                             *dungeontrace.Recorder
-	traceAutoDirectory                                       string
-	traceVisitPending                                        string
-	traceDraining                                            []*dungeontrace.Recorder
-	traceLastWorld, traceLastParty                           time.Time
-	tracePreviousWorld                                       *worldv1.SnapshotResponse
-	traceBoundary                                            dungeonTraceBoundary
-	sessionID                                                string
-	selfGUID                                                 uint64
-	independent                                              bool
-	automaticCorpseLoot                                      bool
-	now                                                      func() time.Time
-	state                                                    actionsv1.State
-	closed                                                   bool
-	followUntil, healingUntil, lastStep, nextHeal, castUntil time.Time
-	pos                                                      position
-	posKnown                                                 bool
-	positionRevision                                         uint64
-	castCount                                                byte
-	lastWorld                                                *worldv1.SnapshotResponse
-	posMap                                                   uint32
-	posEstimated                                             bool
-	posAt                                                    time.Time
-	posRevision                                              uint64
-	movementSequence                                         uint64
-	partyDefenseTarget, partyDefenseVictim                   uint64
-	selfDefenseTarget                                        uint64
-	selfDefenseRevision                                      uint64
-	selfDefenseMap                                           uint32
-	engage                                                   engageIntent
-	thermaplugg                                              thermapluggButtons
-	interactionToken                                         string
-	interactionUntil                                         time.Time
-	harvestGuardAt                                           time.Time
-	assistUntil, nextAssist                                  time.Time
-	pendingSpell                                             uint32
-	lastInterrupt                                            enemyCastIdentity
-	pendingTarget, failedAssistTarget                        uint64
-	failedAssistCastTarget                                   uint64
-	weaponQueries                                            map[uint32]bool
-	weapons                                                  map[uint32]weaponProof
-	weaponOrder                                              []uint32
-	knownSpells                                              map[uint32]bool
-	spellData, capabilityCatalog                             *spellcatalog.Catalog
-	capabilities                                             map[uint32]spellcatalog.Spell
-	capabilityRevision                                       uint64
-	spellReady                                               map[uint32]time.Time
-	fearBreakReady                                           time.Time
-	fearBreakAttempted                                       bool
-	supportOp                                                *supportAttempt
-	resurrectionBindings                                     map[uint64]bool
-	resurrectionOffer                                        *resurrectionOffer
-	behavior                                                 *behavior.Runtime
-	behaviorRejection                                        string
+	mu                                         sync.Mutex
+	session                                    sessionAPI
+	dungeonTrace                               *dungeontrace.Recorder
+	traceAutoDirectory                         string
+	traceVisitPending                          string
+	traceDraining                              []*dungeontrace.Recorder
+	traceLastWorld, traceLastParty             time.Time
+	tracePreviousWorld                         *worldv1.SnapshotResponse
+	traceBoundary                              dungeonTraceBoundary
+	sessionID                                  string
+	selfGUID                                   uint64
+	independent                                bool
+	automaticCorpseLoot                        bool
+	now                                        func() time.Time
+	state                                      actionsv1.State
+	closed                                     bool
+	followUntil, lastStep, nextHeal, castUntil time.Time
+	pos                                        position
+	posKnown                                   bool
+	positionRevision                           uint64
+	castCount                                  byte
+	lastWorld                                  *worldv1.SnapshotResponse
+	posMap                                     uint32
+	posEstimated                               bool
+	posAt                                      time.Time
+	posRevision                                uint64
+	movementSequence                           uint64
+	partyDefenseTarget, partyDefenseVictim     uint64
+	selfDefenseTarget                          uint64
+	selfDefenseRevision                        uint64
+	selfDefenseMap                             uint32
+	engage                                     engageIntent
+	thermaplugg                                thermapluggButtons
+	interactionToken                           string
+	interactionUntil                           time.Time
+	harvestGuardAt                             time.Time
+	assistUntil, nextAssist                    time.Time
+	pendingSpell                               uint32
+	lastInterrupt                              enemyCastIdentity
+	pendingTarget, failedAssistTarget          uint64
+	failedAssistCastTarget                     uint64
+	weaponQueries                              map[uint32]bool
+	weapons                                    map[uint32]weaponProof
+	weaponOrder                                []uint32
+	knownSpells                                map[uint32]bool
+	spellData, capabilityCatalog               *spellcatalog.Catalog
+	capabilities                               map[uint32]spellcatalog.Spell
+	capabilityRevision                         uint64
+	spellReady                                 map[uint32]time.Time
+	fearBreakReady                             time.Time
+	fearBreakAttempted                         bool
+	supportOp                                  *supportAttempt
+	resurrectionBindings                       map[uint64]bool
+	resurrectionOffer                          *resurrectionOffer
+	behavior                                   *behavior.Runtime
+	behaviorRejection                          string
 
 	improvedSinister1, improvedSinister2 bool
 	autoTarget                           uint64
@@ -196,9 +196,6 @@ func (s *Service) stateLocked() *actionsv1.State {
 	now := s.now()
 	if s.state.Following && now.Before(s.followUntil) {
 		out.FollowLeaseRemainingMs = uint64(s.followUntil.Sub(now).Milliseconds())
-	}
-	if s.state.Healing && now.Before(s.healingUntil) {
-		out.HealingLeaseRemainingMs = uint64(s.healingUntil.Sub(now).Milliseconds())
 	}
 	if s.state.Assisting && now.Before(s.assistUntil) {
 		out.AssistLeaseRemainingMs = uint64(s.assistUntil.Sub(now).Milliseconds())
@@ -487,36 +484,6 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	return s.stateLocked(), nil
 }
 
-func (s *Service) Healing(ctx context.Context, r *actionsv1.ToggleRequest) (*actionsv1.State, error) {
-	if r == nil {
-		return nil, status.Error(codes.InvalidArgument, "toggle request is required")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, status.FromContextError(err).Err()
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, status.Error(codes.FailedPrecondition, "session is closing")
-	}
-	if r.Enabled && s.independent {
-		return nil, status.Error(codes.FailedPrecondition, "owner healing is unavailable in independent mode")
-	}
-	s.state.Healing = r.Enabled
-	if r.Enabled && s.state.MotionUnconfirmed {
-		s.state.Healing = false
-		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
-		return s.stateLocked(), nil
-	}
-	if r.Enabled {
-		s.healingUntil = s.now().Add(lease)
-		s.state.Reason = "healing_enabled_waiting_for_safe_observations"
-	} else {
-		s.state.Reason = "healing_disabled"
-	}
-	return s.stateLocked(), nil
-}
-
 func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*actionsv1.State, error) {
 	if r == nil {
 		return nil, status.Error(codes.InvalidArgument, "toggle request is required")
@@ -617,7 +584,6 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.HarvestGuardGuids = nil
 	s.interactionToken = ""
 	s.state.Following = false
-	s.state.Healing = false
 	s.state.Assisting = false
 	s.state.Practicing = false
 	s.fargodeep.active = false
@@ -792,7 +758,6 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	}
 	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
-		s.state.Healing = false
 		s.state.Assisting = false
 		s.state.Practicing = false
 		s.state.PracticePhase = "transport_error_no_retry"
@@ -916,7 +881,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "movement_current_ground_mode_unsupported"
 		return false
 	}
-	follow, heal, assist := s.state.Following, s.state.Healing, s.state.Assisting
+	follow, assist := s.state.Following, s.state.Assisting
 	var passive uint32
 	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {
 		passive = w.Self.MovementFlags & movementflags.PassiveModifiers
@@ -958,7 +923,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	if !s.sendLocked(ctx, op, payload) {
 		if s.state.InteractionHarvest {
-			s.state.Following, s.state.Healing, s.state.Assisting = follow, heal, assist
+			s.state.Following, s.state.Assisting = follow, assist
 		}
 		s.state.MotionUnconfirmed = true
 		s.publishClientMovementLocked(ctx, nil, p, false)
@@ -1002,7 +967,6 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 	s.state.MotionUnconfirmed = !written
 	if !written {
 		s.state.Following = false
-		s.state.Healing = false
 		s.state.Assisting = false
 		s.stopAutoAttackLocked(ctx)
 	}
@@ -1101,16 +1065,24 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	cleanse := s.potentialCleanseLocked()
+	healer := s.hasLearnedHealingLocked()
+	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
+	support := healer || resurrector
 	waterBreath := s.dueWaterBreathLocked()
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
 		return
 	}
+	if s.state.MotionUnconfirmed && healer {
+		// A new authoritative stationary pose can settle an ambiguous stop.
+		if world, err := s.snapshot(ctx); err == nil && safeSelfCombat(world, s.selfGUID) == "" {
+			s.refreshPositionLocked(world)
+		}
+	}
 	if s.state.MotionUnconfirmed {
 		s.state.Following = false
-		s.state.Healing = false
 		s.state.Assisting = false
 		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
 		s.stopAutoAttackLocked(ctx)
@@ -1128,10 +1100,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.stopLocked(ctx)
 		s.state.Reason = "follow_lease_expired"
 	}
-	if s.state.Healing && !now.Before(s.healingUntil) {
-		s.state.Healing = false
-		s.state.Reason = "healing_lease_expired"
-	}
 	if s.state.Assisting && !now.Before(s.assistUntil) {
 		s.state.Assisting = false
 		s.stopLocked(ctx)
@@ -1139,7 +1107,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1159,7 +1127,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.state.Healing && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
+	if healer && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
 		s.lastStep = now
 		return
 	}
@@ -1167,7 +1135,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.resurrectionTickLocked(ctx, snapshot) {
+	if resurrector && s.resurrectionTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1217,7 +1185,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.stopAutoAttackLocked(ctx)
 		if reason == "player_identity_mismatch" {
 			s.state.Following = false
-			s.state.Healing = false
 			s.state.Assisting = false
 		}
 		s.lastStep = now

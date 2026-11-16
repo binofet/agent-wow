@@ -93,10 +93,9 @@ func TestInteractionLeasePausesAndResumesIntentExclusively(t *testing.T) {
 	s, f, advance := rig(t)
 	f.world.Owner.Health = 100
 	toggle(t, s, true)
-	_, _ = s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 	s.Tick(context.Background())
 	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000})
-	if err != nil || len(lease.Token) != 32 || !lease.State.Following || !lease.State.Healing || lease.State.Moving || lease.State.InteractionOwner != "loot" {
+	if err != nil || len(lease.Token) != 32 || !lease.State.Following || lease.State.Moving || lease.State.InteractionOwner != "loot" {
 		t.Fatalf("acquire %+v err%v", lease, err)
 	}
 	if len(f.packets) != 2 {
@@ -133,7 +132,7 @@ func TestInteractionLeasePausesAndResumesIntentExclusively(t *testing.T) {
 	}
 	advance(200 * time.Millisecond)
 	s.Tick(context.Background())
-	if !state(t, s).Moving || !state(t, s).Following || !state(t, s).Healing {
+	if !state(t, s).Moving || !state(t, s).Following {
 		t.Fatalf("intent not resumed %+v", state(t, s))
 	}
 }

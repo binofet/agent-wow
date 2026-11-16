@@ -47,7 +47,7 @@ func denseRouteLeg(from, to position) []position {
 
 func TestRouteLegReadOnlyWithLiveIntentsAndNoOwner(t *testing.T) {
 	s, f, req := routeLegRig(t)
-	s.state.Following, s.state.Healing, s.state.Assisting, s.state.Buffing = true, true, true, true
+	s.state.Following, s.state.Assisting, s.state.Buffing = true, true, true
 	s.state.CastPending, s.state.Traveling = true, true
 	s.state.InteractionOwner, s.interactionToken = "professions", "existing-token"
 	s.interactionUntil = s.now().Add(-time.Second) // A query must not expire it.

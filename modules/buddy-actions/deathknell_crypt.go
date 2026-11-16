@@ -93,7 +93,7 @@ func (s *Service) cryptExitContextLocked(ctx context.Context, r *actionsv1.ExitC
 	if !s.independent {
 		return "crypt_exit_independent_mode_required"
 	}
-	if s.state.Following || s.state.Healing || s.state.Assisting || s.state.Practicing || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 {
+	if s.state.Following || s.state.Assisting || s.state.Practicing || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.AutoAttacking || s.autoTarget != 0 {
 		return "crypt_exit_controller_not_idle"
 	}
 	w, err := s.snapshot(ctx)

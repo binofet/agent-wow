@@ -57,7 +57,7 @@ func newFixture(t *testing.T) (*Service, *supplyFixture) {
 	for n, id := range []uint32{356, 393, 186, 333, 185, 197} {
 		w.SelfSkills[n] = &worldv1.SkillState{Slot: uint32(n), SkillId: id, Value: 1, MaxValue: 75}
 	}
-	f := &supplyFixture{world: w, actions: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true}, Following: true, Healing: true, Assisting: true}, loot: &lootv1.State{SessionId: "body", Phase: "disabled"}, trade: &tradev1.State{SessionId: "body", Phase: "IDLE"}, professions: &professionsv1.State{SessionId: "body", SelfGuid: 6}, items: map[uint32]*tradev1.ItemDetails{}, leaseToken: "fresh-secret-trade-token"}
+	f := &supplyFixture{world: w, actions: &actionsv1.State{Position: &actionsv1.ClientPosition{Known: true, MapKnown: true}, Following: true, Assisting: true}, loot: &lootv1.State{SessionId: "body", Phase: "disabled"}, trade: &tradev1.State{SessionId: "body", Phase: "IDLE"}, professions: &professionsv1.State{SessionId: "body", SelfGuid: 6}, items: map[uint32]*tradev1.ItemDetails{}, leaseToken: "fresh-secret-trade-token"}
 	for _, id := range []uint32{35, 6256, 7005, 2901, 6217, 4470, 4471, 2320} {
 		f.items[id] = &tradev1.ItemDetails{ItemId: id, Available: true, AllowableClass: math.MaxUint32, AllowableRace: math.MaxUint32}
 	}
