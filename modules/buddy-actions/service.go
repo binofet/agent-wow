@@ -127,6 +127,7 @@ type Service struct {
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
 	followNav                            followNavigation
+	followPortal                         dungeonPortalFollow
 	swimFollow                           swimFollowRoute
 	swimTrail                            swimTrail
 	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
@@ -462,6 +463,7 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		if !s.state.Following {
 			s.formation.Reset()
 			s.followNav.Reset()
+			s.followPortal = dungeonPortalFollow{}
 		}
 		s.state.Following = true
 		s.followUntil = s.now().Add(lease)
@@ -474,6 +476,7 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		}
 		s.formation.Reset()
 		s.followNav.Reset()
+		s.followPortal = dungeonPortalFollow{}
 		s.swimFollow = swimFollowRoute{}
 		s.swimTrail = swimTrail{}
 		if s.explicitStopLocked(ctx) {
@@ -870,7 +873,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "engage_npc_authority_changed_before_movement"
 		return false
 	}
-	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) {
+	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -1141,6 +1144,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	// A missing owner cannot block this body's already-authorized healing or
 	// defense. In-flight casts and exclusive interactions retain priority.
+	s.observeDungeonPortalLocked(snapshot, now)
 	if s.state.CastPending {
 		s.stopLocked(ctx)
 		s.lastStep = now
@@ -1180,6 +1184,10 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.waterBreathTickLocked(ctx, snapshot, waterBreath) || s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
+		return
+	}
+	if s.followDungeonPortalLocked(ctx, snapshot, now) {
+		formationUsed = true
 		return
 	}
 	swimFollow := s.state.Following && s.navDataDir != "" && (s.swimming ||
