@@ -19,24 +19,30 @@ const (
 	RecoveryMaxLegLength      = LegMaxLength
 	recoveryCorridorLength    = 2400.0
 	recoveryCorridorNodes     = 16384
+	reclaimDetourRadius       = 30.0
+	reclaimDetourMaxDistance  = 32.0
 )
 
 // PlanRecoveryLegContext returns one physically verified short leg toward an
 // observed corpse on the actual current map. A complete Detour corridor to the
 // actual corpse supplies guidance only; no unsampled corridor is returned for
 // movement. Every returned leg uses the unchanged normal floor/ray/water/step
-// sampler, at most 256 points and 180yd. No direct-line or guessed-height route
-// is available when the complete corridor, local assets or physical proof fail.
-// All corridor/leg attempts share one second and the same nine-tile/24MiB cache.
-func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, start, corpse Point) (points []Point, err error) {
-	return PlanLegContext(ctx, dataDir, mapID, start, corpse)
+// sampler, at most 256 points and 180yd. If a ledge blocks the guide, a complete
+// physical path to a point inside reclaim range can end the approach.
+// All attempts share one second and the same nine-tile/24MiB cache.
+func PlanRecoveryLegContext(ctx context.Context, dataDir string, mapID uint32, start, corpse Point) ([]Point, error) {
+	return planLegContext(ctx, dataDir, mapID, start, corpse, true)
 }
 
 // PlanLegContext returns one short, physically verified leg toward a finite
 // same-map destination. The complete long corridor supplies guidance only;
 // every returned segment still passes the normal floor, obstacle, water and
 // step checks. It grants no movement or interaction authority.
-func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point) (points []Point, err error) {
+func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point) ([]Point, error) {
+	return planLegContext(ctx, dataDir, mapID, start, destination, false)
+}
+
+func planLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point, reclaimDetour bool) (points []Point, err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	defer func() {
@@ -75,13 +81,53 @@ func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, de
 	}
 	p.query = guide
 	defer func() { p.query = normal }()
-	return recoveryLeg(ctx, p, w, start, destination, func(goal Point) ([]Point, error) {
+	physical := func(goal Point) ([]Point, error) {
 		p.query = normal
 		defer func() { p.query = guide }()
 		return rerouteBounded(ctx, p, func() ([]Point, error) {
 			return planWithin(ctx, p, w.contains, fmt.Sprintf("map %d recovery tile window", mapID), start, goal)
 		})
-	})
+	}
+	points, err = recoveryLeg(ctx, p, w, start, destination, physical)
+	var ledge *physicalDiscontinuity
+	if reclaimDetour && errors.As(err, &ledge) {
+		if path := planReclaimDetour(ctx, w, start, destination, physical); path != nil {
+			return path, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	return points, err
+}
+
+// The candidate height is a search seed. The normal planner must bind the
+// endpoint to a real surface and prove the entire path before it can be used.
+func planReclaimDetour(ctx context.Context, w mapWindow, start, corpse Point, physical func(Point) ([]Point, error)) []Point {
+	heading := math.Atan2(float64(start.Y-corpse.Y), float64(start.X-corpse.X))
+	for _, turn := range [...]float64{0, -math.Pi / 3, math.Pi / 3} {
+		if ctx.Err() != nil {
+			return nil
+		}
+		angle := heading + turn
+		goal := Point{
+			X: corpse.X + float32(reclaimDetourRadius*math.Cos(angle)),
+			Y: corpse.Y + float32(reclaimDetourRadius*math.Sin(angle)),
+			Z: corpse.Z,
+		}
+		if !w.contains(goal) {
+			continue
+		}
+		path, err := physical(goal)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil && validRecoveryLeg(path, w, start, goal, corpse) &&
+			distance(path[len(path)-1], corpse) <= reclaimDetourMaxDistance {
+			return path
+		}
+	}
+	return nil
 }
 
 func newRecoveryWindow(mapID uint32, start, corpse Point) (mapWindow, error) {
