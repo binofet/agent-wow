@@ -45,9 +45,12 @@ func TestStandingPartyRestoresDutiesAndResumesAfterFollowStop(t *testing.T) {
 func TestStandingPartyHealsWhenInCombatWithoutChatOrAnEnableCall(t *testing.T) {
 	ctx := context.Background()
 	s, f, _ := rig(t)
+	_, _, attacker, _ := partyDefenseRig(t, 5)
 	s.UseStandingPartyRole(true)
 	learn(s)
-	f.world.Self.UnitFlags |= 0x80000
+	s.state.Following, s.state.Healing, s.state.Assisting = false, false, false
+	attacker.AttackVictimGuid = ownerGUID
+	f.world.NearbyCreatures = append(f.world.NearbyCreatures, attacker)
 	f.world.Owner.UnitFlags |= 0x80000
 	f.world.Owner.Health = 25
 	s.Tick(ctx)

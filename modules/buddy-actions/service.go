@@ -1063,6 +1063,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
+	s.standingPartyTickLocked(ctx, s.now())
 	if s.emergencyDefenseLocked(ctx) {
 		s.lastStep = s.now()
 		return
@@ -1102,7 +1103,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	s.standingPartyTickLocked(ctx, s.now())
 	cleanse := s.potentialCleanseLocked()
 	waterBreath := s.dueWaterBreathLocked()
 	if !s.state.Following && !s.state.Healing && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {

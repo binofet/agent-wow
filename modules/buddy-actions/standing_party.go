@@ -22,7 +22,7 @@ func (s *Service) UseStandingPartyRole(healer bool) {
 
 func (s *Service) standingPartyTickLocked(ctx context.Context, now time.Time) {
 	role := &s.standingParty
-	if !role.assigned || s.state.InteractionOwner != "" || s.state.Practicing || s.state.Traveling {
+	if s.closed || !role.assigned || s.state.InteractionOwner != "" || s.state.Practicing || s.state.Traveling {
 		return
 	}
 	if !now.Before(role.checkPartyAfter) {
