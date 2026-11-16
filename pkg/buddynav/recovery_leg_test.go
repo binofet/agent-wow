@@ -193,3 +193,75 @@ func TestPhysicalRecoveryLegsFromRecordedSurfacePosesToFargodeep(t *testing.T) {
 		}
 	}
 }
+
+func TestReclaimDetourTriesAnotherCandidateAfterInvalidPhysicalPath(t *testing.T) {
+	start := Point{-9438, -1326, 55}
+	corpse := Point{-9355, -1317, 55}
+	window, err := newRecoveryWindow(0, start, corpse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	path := planReclaimDetour(context.Background(), window, start, corpse, func(goal Point) ([]Point, error) {
+		attempts++
+		if goal.Z != corpse.Z || math.Abs(distance(goal, corpse)-reclaimDetourRadius) > .002 {
+			t.Fatalf("candidate is outside the expected search ring: %+v", goal)
+		}
+		if attempts == 1 {
+			return []Point{start, goal}, nil // A complete route still needs dense physical samples.
+		}
+		points := []Point{start}
+		steps := int(math.Ceil(distance(start, goal)))
+		for i := 1; i < steps; i++ {
+			fraction := float32(i) / float32(steps)
+			points = append(points, Point{start.X + (goal.X-start.X)*fraction,
+				start.Y + (goal.Y-start.Y)*fraction, start.Z})
+		}
+		return append(points, goal), nil
+	})
+	if attempts != 2 || len(path) < 3 || distance(path[len(path)-1], corpse) > reclaimDetourMaxDistance {
+		t.Fatalf("expected a verified second candidate, got %d attempts and %d points", attempts, len(path))
+	}
+
+	attempts = 0
+	path = planReclaimDetour(context.Background(), window, start, corpse, func(Point) ([]Point, error) {
+		attempts++
+		return nil, errors.New("no physically verified path")
+	})
+	if path != nil || attempts != 3 {
+		t.Fatalf("expected a bounded refusal, got %d attempts and %d points", attempts, len(path))
+	}
+}
+
+func TestPhysicalRecoveryReachesReclaimRangeAroundRecordedElwynnLedge(t *testing.T) {
+	dir := os.Getenv("BUDDY_NAV_ELWYNN_RECLAIM_TEST_DATA_DIR")
+	if dir == "" {
+		t.Skip("set the directory of the extracted Elwynn client navigation assets")
+	}
+	start := Point{-9438.349, -1326.4215, 49.09255}
+	corpse := Point{-9354.959, -1316.518, 59.032883}
+	ctx := context.Background()
+	_, err := PlanLegContext(ctx, dir, 0, start, corpse)
+	var ledge *physicalDiscontinuity
+	if !errors.As(err, &ledge) || distance(ledge.from, Point{-9427.166, -1316.5166, 50.7083}) > 2 {
+		t.Fatalf("ordinary route did not reproduce the recorded ledge: %v", err)
+	}
+	path, err := PlanRecoveryLegContext(ctx, dir, 0, start, corpse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := path[len(path)-1]
+	if d := distance(end, corpse); d > reclaimDetourMaxDistance {
+		t.Fatalf("verified endpoint is %.3f yards from the corpse", d)
+	}
+	// Recovery can stop up to 0.75 yards early. Check each point in that
+	// suffix so an endpoint just inside the radius cannot strand the ghost.
+	var length float64
+	for i := len(path) - 1; i > 0; i-- {
+		if length <= .75 && distance(path[i], corpse) > 35 {
+			t.Fatalf("possible recovery stop %v is outside reclaim range", path[i])
+		}
+		length += distance(path[i], path[i-1])
+	}
+	t.Logf("ledge=%v; detour length %.3f, %d points, endpoint %+v, corpse distance %.3f", ledge, length, len(path), end, distance(end, corpse))
+}
