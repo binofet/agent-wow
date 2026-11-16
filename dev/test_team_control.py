@@ -20,7 +20,7 @@ def initial(guid=1,sid='aw-111'):
                 healthKnown=True,health=100,maxHealth=100,unitFlagsKnown=True,unitFlags=0,
                 movementFlagsKnown=True,movementFlags=0,positionKnown=True,x=0.,y=0.,z=0.)
     state={name:dict(sessionId=sid) for name in m.READS}
-    state['actions'].update(selfGuid=str(guid),following=True,healing=guid==1,assisting=True,buffing=True,
+    state['actions'].update(selfGuid=str(guid),following=True,assisting=True,buffing=True,
         recovery=dict(enabled=True),position=dict(known=True,mapKnown=True,mapId=0,x=0.,y=0.,z=0.))
     state['loot']['enabled']=True;state['trade']['phase']='IDLE'
     state['world']=dict(self=player,owner=dict(player,guid='3',x=10.))
@@ -88,7 +88,7 @@ class FakeAdapter:
         if op=='start':
             for name in m.READS:self.rpc.scene[name]['sessionId']='aw-222'
             self.rpc.scene['party']['sessionId']='aw-222';self.rpc.scene['sessionId']='aw-222'
-            a=self.rpc.scene['actions'];a.update(following=False,healing=False,assisting=False,buffing=False,recovery=dict(enabled=False))
+            a=self.rpc.scene['actions'];a.update(following=False,assisting=False,buffing=False,recovery=dict(enabled=False))
             self.rpc.scene['loot']['enabled']=False
             if self.on_start:self.on_start()
             return self.status()

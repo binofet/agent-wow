@@ -31,7 +31,6 @@ ROSTER = {1: ("Arlen", 8086), 4: ("Mira", 8087), 5: ("Rook", 8088), 8: ("Nixwick
 MUTATIONS = {"buddy-inventory.move", "buddy-inventory.equip", "buddy-inventory.equip_gear", "buddy-inventory.sell", "buddy-mail.claim_bag_attachment"}
 CONTROLS = (("loot", "buddy-loot.enable", "enabled", "loot"),
             ("assist", "buddy-actions.assist", "assisting", "actions"),
-            ("healing", "buddy-actions.healing", "healing", "actions"),
             ("buffs", "buddy-actions.buffs", "buffing", "actions"),
             ("follow", "buddy-actions.follow", "following", "actions"))
 TASK_PRIORITY = ['combat_or_recovery', 'existing_game_operation', 'usable_gear', 'bag_space_or_service', 'idle_gathering_quests_or_training']
@@ -619,9 +618,9 @@ def main(argv=None):
             if any(marker.get(key) != value for key,value in dict(identity=expected,instance=record["instance"],activityId=actor.activity_id).items()):
                 return set()
             controls=marker.get("controls",[row[0] for row in CONTROLS])
-            if not isinstance(controls,list) or any(name not in {row[0] for row in CONTROLS} for name in controls):
+            if not isinstance(controls,list) or any(name != "healing" and name not in {row[0] for row in CONTROLS} for name in controls):
                 return {row[0] for row in CONTROLS}
-            return set(controls)
+            return {name for name in controls if name != "healing"}
         def save(value):
             if len(json.dumps(value)) > 65536: raise Error("Town ledger exceeds its bound")
             c.write_json(folder/"operations.json",value)

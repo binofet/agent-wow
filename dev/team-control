@@ -32,7 +32,7 @@ ROSTER = {1: ('Arlen', 8086, 'default', 'priest'), 4: ('Mira', 8087, 'mira', 'ma
           5: ('Rook', 8088, 'rook', 'rogue'), 8: ('Nixwick', 8402, 'nixwick', 'warlock')}
 IDENTITY = {'version': 1, 'ownerGuid': 3, 'subjects': [1, 4, 5, 8], 'mode': 'authenticated_team_control'}
 READS = ('actions', 'loot', 'professions', 'inventory', 'trade', 'quests', 'training', 'quest-items', 'mail')
-CONTROLS = (('assist', 'buddy-actions.assist', 'assisting'), ('heal', 'buddy-actions.healing', 'healing'),
+CONTROLS = (('assist', 'buddy-actions.assist', 'assisting'),
             ('buff', 'buddy-actions.buffs', 'buffing'), ('loot', 'buddy-loot.enable', 'enabled'),
             ('recovery', 'buddy-actions.recovery', 'enabled'), ('follow', 'buddy-actions.follow', 'following'))
 TERMINAL = {'COMPLETE', 'FAILED', 'OUTCOME_UNCONFIRMED', 'NEEDS_GM_HELP'}
@@ -144,7 +144,7 @@ def scene(rpc, guid):
 
 def intents(s):
     a = s['actions']
-    return {'assist': a.get('assisting', False), 'heal': a.get('healing', False), 'buff': a.get('buffing', False),
+    return {'assist': a.get('assisting', False), 'buff': a.get('buffing', False),
             'loot': s['loot'].get('enabled', False), 'recovery': a.get('recovery', {}).get('enabled', False),
             'follow': a.get('following', False)}
 
