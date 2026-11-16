@@ -469,8 +469,6 @@ func TestBuffExactCastCorrelationAndExplicitDisable(t *testing.T) {
 func TestBuffHealingAndLeaseExpiryPriority(t *testing.T) {
 	s, f, advance := buffRig(t, 5, 1243, 2050)
 	f.world.Owner.Health = 20
-	s.state.Healing = true
-	s.healingUntil = s.now().Add(time.Hour)
 	s.Tick(context.Background())
 	casts := buffCasts(f)
 	if len(casts) != 1 || binary.LittleEndian.Uint32(casts[0].Payload[1:]) != 2050 || s.state.BuffAttempts != 0 {
@@ -488,8 +486,6 @@ func TestBuffSharedGlobalCooldownWithHealingAndOffense(t *testing.T) {
 	s, f, advance := buffRig(t, 5, 1243, 2050)
 	s.Tick(context.Background())
 	confirmBuff(t, s, false)
-	s.state.Healing = true
-	s.healingUntil = s.now().Add(time.Hour)
 	f.world.Owner.Health = 20
 	advance(1499 * time.Millisecond)
 	s.Tick(context.Background())

@@ -24,10 +24,6 @@ func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T)
 			_, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 			return err
 		},
-		"healing": func() error {
-			_, err := s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
-			return err
-		},
 		"assist": func() error {
 			_, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 			return err
@@ -42,13 +38,13 @@ func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T)
 	}
 	s.Tick(context.Background())
 	got := state(t, s)
-	if got.Following || got.Healing || got.Assisting || got.CastPending || len(f.packets) != 0 {
+	if got.Following || got.Assisting || got.CastPending || len(f.packets) != 0 {
 		t.Fatal("independent mode acquired owner control", got, f.packets)
 	}
 	if s.lastWorld.Owner != nil || s.lastWorld.OwnerTarget != nil || f.world.Owner == nil || f.world.OwnerTarget == nil {
 		t.Fatal("mixed-version snapshot did not isolate owner observations")
 	}
-	for _, toggle := range []func(context.Context, *actionsv1.ToggleRequest) (*actionsv1.State, error){s.Follow, s.Healing, s.Assist} {
+	for _, toggle := range []func(context.Context, *actionsv1.ToggleRequest) (*actionsv1.State, error){s.Follow, s.Assist} {
 		if _, err := toggle(context.Background(), &actionsv1.ToggleRequest{}); err != nil {
 			t.Fatalf("explicit disable unavailable: %v", err)
 		}

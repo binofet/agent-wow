@@ -261,7 +261,7 @@ func (s *Service) idleLocked(leased bool) string {
 	if !p.AliveKnown || !p.Alive || !p.HealthKnown || p.Health == 0 || !p.UnitFlagsKnown || p.UnitFlags&unsafe != 0 || !p.MapKnown || !p.PositionKnown || !finite(p.X) || !finite(p.Y) || !finite(p.Z) || !p.MovementFlagsKnown || !movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) || !p.ChannelObjectKnown || p.ChannelObjectGuid != 0 || !p.ChannelSpellKnown || p.ChannelSpellId != 0 {
 		return "alive_safe_ground_nonchanneling_character_required"
 	}
-	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) || a.Moving || a.Traveling || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Following || a.Healing || a.Assisting || a.Practicing {
+	if a == nil || a.Position == nil || !a.Position.Known || !a.Position.MapKnown || a.Position.MapId != p.MapId || !finite(a.Position.X) || !finite(a.Position.Y) || !finite(a.Position.Z) || a.Moving || a.Traveling || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Following || a.Assisting || a.Practicing {
 		return "controller_must_be_confirmed_idle"
 	}
 	if !leased && a.InteractionOwner != "" || leased && (a.InteractionOwner != "trade" || a.InteractionLeaseRemainingMs < 11000) {
@@ -703,7 +703,7 @@ func (s *Service) run(op *operation) {
 }
 
 func safeLeaseState(a *actionsv1.State) bool {
-	return a != nil && a.InteractionOwner == "trade" && a.InteractionLeaseRemainingMs >= 11000 && !a.Moving && !a.Traveling && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && !a.Following && !a.Healing && !a.Assisting && !a.Practicing
+	return a != nil && a.InteractionOwner == "trade" && a.InteractionLeaseRemainingMs >= 11000 && !a.Moving && !a.Traveling && !a.MotionUnconfirmed && !a.CastPending && !a.AutoAttacking && !a.AutoAttackRequested && !a.AutoAttackUnconfirmed && !a.Following && !a.Assisting && !a.Practicing
 }
 func (s *Service) evidenceLocked(v view) {
 	op := s.last

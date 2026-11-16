@@ -356,8 +356,8 @@ func (s *Service) readinessForApproachLocked(recipe recipeSpec, own *operation, 
 		if s.state.StopPrepared {
 			return "normal_stop_prepared_no_new_disenchant_this_session"
 		}
-		if s.actions.Following || s.actions.Healing || s.actions.Assisting || s.actions.Buffing || s.actions.FollowLeaseRemainingMs != 0 || s.actions.HealingLeaseRemainingMs != 0 || s.actions.AssistLeaseRemainingMs != 0 || s.actions.BuffLeaseRemainingMs != 0 {
-			return "disable_follow_heal_assist_and_buff_before_selected_item_disenchanting"
+		if s.actions.Following || s.actions.Assisting || s.actions.Buffing || s.actions.FollowLeaseRemainingMs != 0 || s.actions.AssistLeaseRemainingMs != 0 || s.actions.BuffLeaseRemainingMs != 0 {
+			return "disable_follow_assist_and_buff_before_selected_item_disenchanting"
 		}
 		t := s.deTrade
 		if !settledDisenchantTrade(t, s.state.SessionId) {

@@ -22,7 +22,7 @@ func loadBehavior(t *testing.T, s *Service, source string) string {
 
 func TestBehaviorLiveReloadChangesTriageWithoutChangingBodyOrGrantingTargets(t *testing.T) {
 	s, f, _ := rig(t)
-	enableTriage(t, s)
+	learn(s)
 	f.world.Self.Health = 100
 	f.world.Owner.Health = 60
 	mira := triagePlayer(f, 4, 15)
@@ -112,7 +112,7 @@ func TestShippedLuaPolicyUsesGeneratedContractForActualSpellChoices(t *testing.T
 
 func TestShippedLuaPolicyPreservesNativeHealTargetTie(t *testing.T) {
 	s, f, _ := rig(t)
-	enableTriage(t, s)
+	learn(s)
 	f.world.Self.Health = 60
 	f.world.Owner.Health = 120
 	f.world.Owner.MaxHealth = 200

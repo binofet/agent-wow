@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
@@ -15,7 +14,6 @@ import (
 func resRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	s, f, advance := rig(t)
 	s.setKnownSpell(2006, true)
-	s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 	f.world.Owner.Alive = false
 	f.world.Owner.Health = 0
 	f.world.Owner.UnitFlags &^= 0x80000
@@ -144,7 +142,6 @@ func TestLearnedUnfamiliarHealAdaptsWithoutIDOrClassBranch(t *testing.T) {
 	}
 	s.spellData = c
 	s.setKnownSpell(987654, true)
-	s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 	f.world.Owner.Health = 30
 	s.Tick(context.Background())
 	if lastCast(f) != 987654 {

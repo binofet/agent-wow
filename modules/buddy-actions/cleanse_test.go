@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -112,9 +111,6 @@ func TestAutoCleanseSkipsNonmembersUnlearnedOrIneligibleAurasAndYieldsToHeal(t *
 				f.world.Owner.X = 100
 			case "urgent heal":
 				f.world.Self.Health = 25
-				if _, err := s.Healing(ctx, &actionsv1.ToggleRequest{Enabled: true}); err != nil {
-					t.Fatal(err)
-				}
 				spell = lesserHeal
 			}
 			s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, debuff, harmful)})

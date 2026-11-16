@@ -210,8 +210,9 @@ message SpellToolkitState {
   bool targeted_resurrection_supported = 8;
 }
 message State {
+  reserved 2, 14;
+  reserved "healing", "healing_lease_remaining_ms";
   bool following = 1;
-  bool healing = 2;
   bool moving = 3;
   bool known_lesser_heal = 4;
   bool cast_pending = 5;
@@ -224,7 +225,6 @@ message State {
   uint32 last_cast_failure = 11;
   uint64 malformed_packets = 12;
   uint64 follow_lease_remaining_ms = 13;
-  uint64 healing_lease_remaining_ms = 14;
   // Installed client navigation availability and remaining controller limits.
   string limitation = 15;
   // A failed movement-stop write blocks further movement/healing until an
@@ -309,7 +309,6 @@ message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
   rpc Follow(ToggleRequest) returns (State);
-  rpc Healing(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);
   rpc HealOnce(google.protobuf.Empty) returns (State);

@@ -18,8 +18,8 @@ func harvestRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
 	f.world.Owner.Health = 100
-	s.state.Following, s.state.Healing, s.state.Assisting = true, true, true
-	s.followUntil, s.healingUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease), s.now().Add(lease)
+	s.state.Following, s.state.Assisting = true, true
+	s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
 	return s, f, advance
 }
 
@@ -38,7 +38,7 @@ func harvestLease(t *testing.T, s *Service, owner string) *actionsv1.Interaction
 
 func harvestIntents(t *testing.T, s *Service) {
 	t.Helper()
-	if !s.state.Following || !s.state.Healing || !s.state.Assisting {
+	if !s.state.Following || !s.state.Assisting {
 		t.Fatal("harvest changed enabled defense intent", &s.state)
 	}
 }
@@ -136,8 +136,8 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		s, f, attacker, _ := selfDefenseRig(t, 8)
 		f.world.Self.UnitFlags, f.world.NearbyCreatures = 0, nil
 		f.party = &partyv1.StateResponse{SessionId: "this-body", Group: &partyv1.Group{Known: true}}
-		s.state.Following, s.state.Healing = true, true
-		s.followUntil, s.healingUntil = s.now().Add(lease), s.now().Add(lease)
+		s.state.Following = true
+		s.followUntil = s.now().Add(lease)
 		harvestLease(t, s, "professions")
 		f.world.NearbyCreatures = []*worldv1.CreatureState{attacker}
 		s.Tick(context.Background())
@@ -152,7 +152,7 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		harvestLease(t, s, "professions")
 		f.world.Owner.Health = 40
 		s.Tick(context.Background())
-		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 || !s.state.Healing {
+		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 {
 			t.Fatal("harvest suppressed actual healing", &s.state, f.packets)
 		}
 	})
@@ -166,7 +166,7 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		s.pos.x, s.posEstimated = 20, true
 		f.world.Owner.Health = 40
 		s.Tick(context.Background())
-		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 || !s.state.Healing {
+		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 {
 			t.Fatal("raw own pose hid healing within client range", &s.state, f.packets)
 		}
 	})
@@ -256,8 +256,8 @@ func TestHarvestExplorationGuardRechecksAfterPlanningWithoutDisablingDefense(t *
 		if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "exploration", Token: r.Token}); err != nil {
 			t.Fatal(err)
 		}
-		s.state.Following, s.state.Healing, s.state.Assisting = true, true, true
-		s.followUntil, s.healingUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease), s.now().Add(lease)
+		s.state.Following, s.state.Assisting = true, true
+		s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
 		r.Token = harvestLease(t, s, "exploration").Token
 		inject := func() {
 			attacker := harvestAttacker(1)

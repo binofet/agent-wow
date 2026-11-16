@@ -114,8 +114,8 @@ func (s *Service) onDisenchantTemplatePacketLocked(p *modv1.WorldPacket) bool {
 
 func (s *Service) disenchantControllersLocked() string {
 	a := s.actions
-	if a == nil || a.Following || a.Healing || a.Assisting || a.Buffing || a.FollowLeaseRemainingMs != 0 || a.HealingLeaseRemainingMs != 0 || a.AssistLeaseRemainingMs != 0 || a.BuffLeaseRemainingMs != 0 {
-		return "follow_heal_assist_buff_toggles_and_leases_must_be_off_for_selected_item_loss"
+	if a == nil || a.Following || a.Assisting || a.Buffing || a.FollowLeaseRemainingMs != 0 || a.AssistLeaseRemainingMs != 0 || a.BuffLeaseRemainingMs != 0 {
+		return "follow_assist_buff_toggles_and_leases_must_be_off_for_selected_item_loss"
 	}
 	if s.loot == nil || s.loot.SessionId != s.state.SessionId || !s.ordinaryLootIdleLocked(disenchantSkill) {
 		return "actual_same_session_ordinary_loot_must_be_idle_and_disabled"

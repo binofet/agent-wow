@@ -52,7 +52,7 @@ func TestEmergencyPartyDefenseDoesNotDependOnOwnerAssist(t *testing.T) {
 	for _, class := range []uint32{5, 8, 4} {
 		t.Run(fmt.Sprint(class), func(t *testing.T) {
 			s, f, target, _ := partyDefenseRig(t, class)
-			s.state.Assisting, s.state.Following, s.state.Healing, s.state.Buffing = false, false, false, false
+			s.state.Assisting, s.state.Following, s.state.Buffing = false, false, false
 			s.Tick(context.Background())
 			if s.state.Assisting || s.state.AssistAttempts != 1 || s.state.LastCastTargetGuid != target.Guid || lastCast(f) == 0 {
 				t.Fatal(s.stateLocked(), f.packets)
@@ -103,15 +103,15 @@ func TestEmergencyDefenseKeepsWitnessAndUncertaintyGuards(t *testing.T) {
 
 func TestExpiredCastKeepsIntentAndRequiresFreshDefenseSelection(t *testing.T) {
 	s, f, target, advance := selfDefenseRig(t, 8)
-	s.state.Following, s.state.Healing = true, true
-	s.followUntil, s.healingUntil = s.now().Add(time.Hour), s.now().Add(time.Hour)
+	s.state.Following = true
+	s.followUntil = s.now().Add(time.Hour)
 	s.Tick(context.Background())
 	if !s.state.CastPending || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal(s.stateLocked())
 	}
 	advance(10 * time.Second)
 	s.Tick(context.Background())
-	if s.state.CastPending || !s.state.Following || !s.state.Healing || !s.state.Assisting || s.state.ServerAssistGo != 0 || countPackets(f, opcode.CMSGCastSpell) != 1 {
+	if s.state.CastPending || !s.state.Following || !s.state.Assisting || s.state.ServerAssistGo != 0 || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("timeout revoked intent or retried old cast", s.stateLocked(), f.packets)
 	}
 	// New offense still needs a current actual attacker after the cooldown.
@@ -169,13 +169,13 @@ func TestEmergencySelfDefenseRechecksWitnessAndResourcesAfterFacing(t *testing.T
 	}
 }
 
-func TestEmergencyDefenseDoesNotExtendExpiredHealingIntent(t *testing.T) {
-	s, f, _, _ := selfDefenseRig(t, 5)
-	s.state.Assisting, s.state.Healing = false, true
-	s.healingUntil = s.now().Add(-time.Second)
+func TestEmergencyDefenseHealsAfterPriorAuthorizationWouldHaveExpired(t *testing.T) {
+	s, f, _, advance := selfDefenseRig(t, 5)
+	s.state.Assisting = false
+	advance(5 * time.Hour)
 	f.world.Self.Health = 10
 	s.Tick(context.Background())
-	if lastCast(f) == lesserHeal || s.state.HealAttempts != 0 {
-		t.Fatal("emergency defense extended expired heal authority", s.stateLocked(), f.packets)
+	if lastCast(f) != lesserHeal || s.state.HealAttempts != 1 || healingCastTarget(f) != 1 {
+		t.Fatal("emergency defense displaced an urgent heal", s.stateLocked(), f.packets)
 	}
 }

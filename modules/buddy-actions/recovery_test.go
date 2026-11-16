@@ -118,8 +118,8 @@ func countOpcode(f *fakeSession, op uint32) int {
 
 func TestRecoveryNormalReleaseRouteReclaimNeedsActualAliveAndRest(t *testing.T) {
 	s, f, advance := recoveryRig(t)
-	s.state.Following, s.state.Healing, s.state.Assisting = true, true, true
-	s.followUntil, s.healingUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease), s.now().Add(lease)
+	s.state.Following, s.state.Assisting = true, true
+	s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
 	s.Tick(context.Background())
 	s.Tick(context.Background())
 	if countOpcode(f, opcode.CMSGRepopRequest) != 1 || !s.recovery.state.ReleaseWritten || s.state.InteractionOwner != "recovery" {
@@ -185,7 +185,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAliveAndRest(t *testing.T) 
 	f.world.Self.Health = 100
 	f.mu.Unlock()
 	s.Tick(context.Background())
-	if s.recovery.state.Active || !s.recovery.state.Rested || s.recovery.state.Phase != "complete" || s.state.InteractionOwner != "" || !s.state.Following || !s.state.Healing || !s.state.Assisting {
+	if s.recovery.state.Active || !s.recovery.state.Rested || s.recovery.state.Phase != "complete" || s.state.InteractionOwner != "" || !s.state.Following || !s.state.Assisting {
 		t.Fatal(s.stateLocked())
 	}
 }

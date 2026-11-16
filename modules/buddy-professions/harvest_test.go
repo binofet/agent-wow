@@ -50,7 +50,7 @@ func TestSkinHarvestApproachableDoesNotRelaxReadyOrProof(t *testing.T) {
 			defer s.mu.Unlock()
 			c := s.view.raw.RequestedCreature
 			c.X = s.actions.Position.X + 10
-			s.actions.Following, s.actions.Healing, s.actions.Assisting = true, true, true
+			s.actions.Following, s.actions.Assisting = true, true
 			s.loot = &lootv1.State{SessionId: "body", Enabled: true, Phase: "idle"}
 			switch mode {
 			case "outside":
@@ -94,7 +94,7 @@ func TestHerbHarvestDiscoveryNeedsFullTemplateAndRangeEligibility(t *testing.T) 
 			s.view.raw.RequestedGameObjects = nil
 			s.view.raw.NearbyGatheringObjects = []*worldv1.GameObjectState{g}
 			s.loot = &lootv1.State{SessionId: "body", Enabled: true, Phase: "idle"}
-			s.actions.Following, s.actions.Healing, s.actions.Assisting = true, true, true
+			s.actions.Following, s.actions.Assisting = true, true
 			switch mode {
 			case "outside":
 				g.X = s.actions.Position.X + 40.01

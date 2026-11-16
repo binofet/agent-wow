@@ -230,7 +230,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 			s.endRecoveryLocked(ctx, "alive_in_combat", "actual_alive_receipt_defense_priority")
 			return false
 		}
-		if s.state.Healing && !s.state.CastPending {
+		if s.hasLearnedHealingLocked() && !s.state.CastPending {
 			s.triageHealLocked(ctx, w, true)
 		}
 		manaReady := p.PowerKnown && (p.PowerType != 0 || p.MaxPower > 0 && uint64(p.Power)*100 >= uint64(p.MaxPower)*75)

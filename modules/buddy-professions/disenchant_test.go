@@ -543,7 +543,7 @@ func TestDisenchantCasterReceiptsRequireActualOwnActorAndItem(t *testing.T) {
 }
 
 func TestDisenchantTargetGatesExplicitSourceTemplateAndControllers(t *testing.T) {
-	for _, mode := range []string{"ready", "armor", "stack", "equipped", "template_missing", "quality", "class", "container", "minus_one", "pure_below", "attempted", "follow", "heal_lease", "assist", "trade_foreign", "trade_partner", "trade_accept", "junk_unknown"} {
+	for _, mode := range []string{"ready", "armor", "stack", "equipped", "template_missing", "quality", "class", "container", "minus_one", "pure_below", "attempted", "follow", "cast_pending", "assist", "trade_foreign", "trade_partner", "trade_accept", "junk_unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _ := disenchantBehaviorFixture(t)
 			s.mu.Lock()
@@ -571,8 +571,8 @@ func TestDisenchantTargetGatesExplicitSourceTemplateAndControllers(t *testing.T)
 				s.deAttempted[disenchantBehaviorTarget] = true
 			case "follow":
 				s.actions.Following = true
-			case "heal_lease":
-				s.actions.HealingLeaseRemainingMs = 1
+			case "cast_pending":
+				s.actions.CastPending = true
 			case "assist":
 				s.actions.Assisting = true
 			case "trade_foreign":

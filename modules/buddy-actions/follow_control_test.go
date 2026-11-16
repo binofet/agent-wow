@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -102,9 +101,6 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	s, f, advance := formationRig(t, 1, 5)
 	learn(s)
 	toggle(t, s, true)
-	if _, err := s.Healing(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
 	for i := 0; i < 6; i++ {
 		s.Tick(context.Background())
 		advance(200 * time.Millisecond)

@@ -22,7 +22,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Healing_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Healing"
 	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
 	BuddyActions_EngageNPC_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
 	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
@@ -56,7 +55,6 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
-	Healing(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
 	HealOnce(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
@@ -99,16 +97,6 @@ func (c *buddyActionsClient) Follow(ctx context.Context, in *ToggleRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_Follow_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *buddyActionsClient) Healing(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(State)
-	err := c.cc.Invoke(ctx, BuddyActions_Healing_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +368,6 @@ func (c *buddyActionsClient) PickLock(ctx context.Context, in *PickLockRequest, 
 // for forward compatibility.
 type BuddyActionsServer interface {
 	Follow(context.Context, *ToggleRequest) (*State, error)
-	Healing(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
 	HealOnce(context.Context, *emptypb.Empty) (*State, error)
@@ -421,9 +408,6 @@ type UnimplementedBuddyActionsServer struct{}
 
 func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Follow not implemented")
-}
-func (UnimplementedBuddyActionsServer) Healing(context.Context, *ToggleRequest) (*State, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Healing not implemented")
 }
 func (UnimplementedBuddyActionsServer) Assist(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Assist not implemented")
@@ -538,24 +522,6 @@ func _BuddyActions_Follow_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).Follow(ctx, req.(*ToggleRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _BuddyActions_Healing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ToggleRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BuddyActionsServer).Healing(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: BuddyActions_Healing_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BuddyActionsServer).Healing(ctx, req.(*ToggleRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1038,10 +1004,6 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Follow",
 			Handler:    _BuddyActions_Follow_Handler,
-		},
-		{
-			MethodName: "Healing",
-			Handler:    _BuddyActions_Healing_Handler,
 		},
 		{
 			MethodName: "Assist",

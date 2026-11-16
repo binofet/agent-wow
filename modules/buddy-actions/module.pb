@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-Èb
+Óa
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -241,10 +241,9 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuidF
-targeted_resurrection_supported (RtargetedResurrectionSupported"¯
+targeted_resurrection_supported (RtargetedResurrectionSupported"“
 State
-	following (R	following
-healing (Rhealing
+	following (R	following
 moving (Rmoving*
 known_lesser_heal (RknownLesserHeal!
 cast_pending (RcastPending
@@ -256,8 +255,7 @@ session_id (	R	sessionId
  (RserverCastGo*
 last_cast_failure (RlastCastFailure+
 malformed_packets (RmalformedPackets9
-follow_lease_remaining_ms (RfollowLeaseRemainingMs;
-healing_lease_remaining_ms (RhealingLeaseRemainingMs
+follow_lease_remaining_ms (RfollowLeaseRemainingMs
 
 limitation (	R
 limitation-
@@ -335,7 +333,7 @@ session_idj (	R	sessionId
 	self_guidk (RselfGuidZ
 last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationG
 
-engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJFGJId"é
+engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJJJFGJIdRhealingRhealing_lease_remaining_ms"é
 ResurrectOnceRequest
 
 session_id (	R	sessionId
@@ -353,10 +351,9 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2‚
+targetGuid2ç
 BuddyActionsR
-Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateS
-Healing'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
+Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
 	EngageNPC*.warcraftbuddy.actions.v1.EngageNPCRequest.warcraftbuddy.actions.v1.StateC
 HealOnce.google.protobuf.Empty.warcraftbuddy.actions.v1.StateA

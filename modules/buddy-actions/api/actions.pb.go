@@ -2127,20 +2127,18 @@ func (x *SpellToolkitState) GetTargetedResurrectionSupported() bool {
 type State struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Following       bool                   `protobuf:"varint,1,opt,name=following,proto3" json:"following,omitempty"`
-	Healing         bool                   `protobuf:"varint,2,opt,name=healing,proto3" json:"healing,omitempty"`
 	Moving          bool                   `protobuf:"varint,3,opt,name=moving,proto3" json:"moving,omitempty"`
 	KnownLesserHeal bool                   `protobuf:"varint,4,opt,name=known_lesser_heal,json=knownLesserHeal,proto3" json:"known_lesser_heal,omitempty"`
 	CastPending     bool                   `protobuf:"varint,5,opt,name=cast_pending,json=castPending,proto3" json:"cast_pending,omitempty"`
 	Reason          string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
 	// Observation of transport writes is not server movement/healing acceptance.
-	TransportWrites         uint64 `protobuf:"varint,7,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	HealAttempts            uint64 `protobuf:"varint,8,opt,name=heal_attempts,json=healAttempts,proto3" json:"heal_attempts,omitempty"`
-	ServerCastStarts        uint64 `protobuf:"varint,9,opt,name=server_cast_starts,json=serverCastStarts,proto3" json:"server_cast_starts,omitempty"`
-	ServerCastGo            uint64 `protobuf:"varint,10,opt,name=server_cast_go,json=serverCastGo,proto3" json:"server_cast_go,omitempty"`
-	LastCastFailure         uint32 `protobuf:"varint,11,opt,name=last_cast_failure,json=lastCastFailure,proto3" json:"last_cast_failure,omitempty"`
-	MalformedPackets        uint64 `protobuf:"varint,12,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	FollowLeaseRemainingMs  uint64 `protobuf:"varint,13,opt,name=follow_lease_remaining_ms,json=followLeaseRemainingMs,proto3" json:"follow_lease_remaining_ms,omitempty"`
-	HealingLeaseRemainingMs uint64 `protobuf:"varint,14,opt,name=healing_lease_remaining_ms,json=healingLeaseRemainingMs,proto3" json:"healing_lease_remaining_ms,omitempty"`
+	TransportWrites        uint64 `protobuf:"varint,7,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	HealAttempts           uint64 `protobuf:"varint,8,opt,name=heal_attempts,json=healAttempts,proto3" json:"heal_attempts,omitempty"`
+	ServerCastStarts       uint64 `protobuf:"varint,9,opt,name=server_cast_starts,json=serverCastStarts,proto3" json:"server_cast_starts,omitempty"`
+	ServerCastGo           uint64 `protobuf:"varint,10,opt,name=server_cast_go,json=serverCastGo,proto3" json:"server_cast_go,omitempty"`
+	LastCastFailure        uint32 `protobuf:"varint,11,opt,name=last_cast_failure,json=lastCastFailure,proto3" json:"last_cast_failure,omitempty"`
+	MalformedPackets       uint64 `protobuf:"varint,12,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	FollowLeaseRemainingMs uint64 `protobuf:"varint,13,opt,name=follow_lease_remaining_ms,json=followLeaseRemainingMs,proto3" json:"follow_lease_remaining_ms,omitempty"`
 	// Installed client navigation availability and remaining controller limits.
 	Limitation string `protobuf:"bytes,15,opt,name=limitation,proto3" json:"limitation,omitempty"`
 	// A failed movement-stop write blocks further movement/healing until an
@@ -2255,13 +2253,6 @@ func (x *State) GetFollowing() bool {
 	return false
 }
 
-func (x *State) GetHealing() bool {
-	if x != nil {
-		return x.Healing
-	}
-	return false
-}
-
 func (x *State) GetMoving() bool {
 	if x != nil {
 		return x.Moving
@@ -2335,13 +2326,6 @@ func (x *State) GetMalformedPackets() uint64 {
 func (x *State) GetFollowLeaseRemainingMs() uint64 {
 	if x != nil {
 		return x.FollowLeaseRemainingMs
-	}
-	return 0
-}
-
-func (x *State) GetHealingLeaseRemainingMs() uint64 {
-	if x != nil {
-		return x.HealingLeaseRemainingMs
 	}
 	return 0
 }
@@ -3208,10 +3192,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tself_guid\x18\a \x01(\x04R\bselfGuid\x12F\n" +
-	"\x1ftargeted_resurrection_supported\x18\b \x01(\bR\x1dtargetedResurrectionSupported\"\xf8\x1d\n" +
+	"\x1ftargeted_resurrection_supported\x18\b \x01(\bR\x1dtargetedResurrectionSupported\"\xd2\x1d\n" +
 	"\x05State\x12\x1c\n" +
-	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x18\n" +
-	"\ahealing\x18\x02 \x01(\bR\ahealing\x12\x16\n" +
+	"\tfollowing\x18\x01 \x01(\bR\tfollowing\x12\x16\n" +
 	"\x06moving\x18\x03 \x01(\bR\x06moving\x12*\n" +
 	"\x11known_lesser_heal\x18\x04 \x01(\bR\x0fknownLesserHeal\x12!\n" +
 	"\fcast_pending\x18\x05 \x01(\bR\vcastPending\x12\x16\n" +
@@ -3223,8 +3206,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	" \x01(\x04R\fserverCastGo\x12*\n" +
 	"\x11last_cast_failure\x18\v \x01(\rR\x0flastCastFailure\x12+\n" +
 	"\x11malformed_packets\x18\f \x01(\x04R\x10malformedPackets\x129\n" +
-	"\x19follow_lease_remaining_ms\x18\r \x01(\x04R\x16followLeaseRemainingMs\x12;\n" +
-	"\x1ahealing_lease_remaining_ms\x18\x0e \x01(\x04R\x17healingLeaseRemainingMs\x12\x1e\n" +
+	"\x19follow_lease_remaining_ms\x18\r \x01(\x04R\x16followLeaseRemainingMs\x12\x1e\n" +
 	"\n" +
 	"limitation\x18\x0f \x01(\tR\n" +
 	"limitation\x12-\n" +
@@ -3302,7 +3284,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\tself_guid\x18k \x01(\x04R\bselfGuid\x12Z\n" +
 	"\x14last_spell_operation\x18l \x01(\v2(.warcraftbuddy.actions.v1.SpellOperationR\x12lastSpellOperation\x12G\n" +
 	"\n" +
-	"engage_npc\x18m \x01(\v2(.warcraftbuddy.actions.v1.EngageNPCStateR\tengageNpcJ\x04\bF\x10GJ\x04\bI\x10d\"\x8e\x01\n" +
+	"engage_npc\x18m \x01(\v2(.warcraftbuddy.actions.v1.EngageNPCStateR\tengageNpcJ\x04\b\x02\x10\x03J\x04\b\x0e\x10\x0fJ\x04\bF\x10GJ\x04\bI\x10dR\ahealingR\x1ahealing_lease_remaining_ms\"\x8e\x01\n" +
 	"\x14ResurrectOnceRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -3320,10 +3302,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
-	"targetGuid2\xe2\x13\n" +
+	"targetGuid2\x8d\x13\n" +
 	"\fBuddyActions\x12R\n" +
-	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12S\n" +
-	"\aHealing\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +
+	"\x06Follow\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12R\n" +
 	"\x06Assist\x12'.warcraftbuddy.actions.v1.ToggleRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12X\n" +
 	"\tEngageNPC\x12*.warcraftbuddy.actions.v1.EngageNPCRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12C\n" +
 	"\bHealOnce\x12\x16.google.protobuf.Empty\x1a\x1f.warcraftbuddy.actions.v1.State\x12A\n" +
@@ -3413,63 +3394,61 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	19, // 13: warcraftbuddy.actions.v1.State.last_spell_operation:type_name -> warcraftbuddy.actions.v1.SpellOperation
 	2,  // 14: warcraftbuddy.actions.v1.State.engage_npc:type_name -> warcraftbuddy.actions.v1.EngageNPCState
 	0,  // 15: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 16: warcraftbuddy.actions.v1.BuddyActions.Healing:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,  // 17: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	1,  // 18: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
-	28, // 19: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
-	28, // 20: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
-	0,  // 21: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	28, // 22: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
-	3,  // 23: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
-	28, // 24: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
-	8,  // 25: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
-	9,  // 26: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
-	10, // 27: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
-	11, // 28: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 29: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 30: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	11, // 31: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	12, // 32: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
-	13, // 33: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
-	15, // 34: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	0,  // 35: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	5,  // 36: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
-	0,  // 37: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	29, // 38: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	28, // 39: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	25, // 40: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
-	26, // 41: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
-	27, // 42: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
-	24, // 43: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	24, // 44: warcraftbuddy.actions.v1.BuddyActions.Healing:output_type -> warcraftbuddy.actions.v1.State
-	24, // 45: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	24, // 46: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
-	24, // 47: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	24, // 48: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	24, // 49: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
-	23, // 50: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
-	4,  // 51: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	4,  // 52: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	16, // 53: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	24, // 54: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	24, // 55: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	24, // 56: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	24, // 57: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	24, // 58: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
-	24, // 59: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
-	24, // 60: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
-	14, // 61: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
-	24, // 62: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	24, // 63: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	24, // 64: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
-	24, // 65: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
-	28, // 66: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	28, // 67: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	24, // 68: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
-	24, // 69: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
-	24, // 70: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
-	43, // [43:71] is the sub-list for method output_type
-	15, // [15:43] is the sub-list for method input_type
+	0,  // 16: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	1,  // 17: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
+	28, // 18: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
+	28, // 19: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
+	0,  // 20: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	28, // 21: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
+	3,  // 22: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
+	28, // 23: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
+	8,  // 24: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
+	9,  // 25: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
+	10, // 26: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
+	11, // 27: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 28: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 29: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	11, // 30: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	12, // 31: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
+	13, // 32: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
+	15, // 33: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	0,  // 34: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	5,  // 35: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
+	0,  // 36: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	29, // 37: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	28, // 38: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	25, // 39: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
+	26, // 40: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
+	27, // 41: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
+	24, // 42: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	24, // 43: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	24, // 44: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
+	24, // 45: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	24, // 46: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	24, // 47: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
+	23, // 48: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
+	4,  // 49: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	4,  // 50: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	16, // 51: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	24, // 52: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	24, // 53: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	24, // 54: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	24, // 55: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	24, // 56: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	24, // 57: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
+	24, // 58: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
+	14, // 59: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
+	24, // 60: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	24, // 61: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	24, // 62: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
+	24, // 63: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
+	28, // 64: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	28, // 65: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	24, // 66: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
+	24, // 67: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
+	24, // 68: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
+	42, // [42:69] is the sub-list for method output_type
+	15, // [15:42] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name

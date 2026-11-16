@@ -56,7 +56,7 @@ func TestPassiveOwnerStillGetsActualSupportedBuffAndHealing(t *testing.T) {
 	s2, f2, _ := rig(t)
 	f2.world.Owner.MovementFlags = 0x70000000
 	f2.world.Owner.Health = 30
-	enableTriage(t, s2)
+	learn(s2)
 	s2.Tick(context.Background())
 	if healingCastTarget(f2) != 3 || countPackets(f2, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("normal injured owner did not get actual heal cast", s2.stateLocked())

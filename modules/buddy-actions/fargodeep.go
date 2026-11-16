@@ -347,7 +347,7 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 			}
 		}
 	}
-	if w.Self.ClassId == 5 && (!s.state.Healing || !s.now().Before(s.healingUntil) || !s.state.KnownLesserHeal) {
+	if w.Self.ClassId == 5 && (!s.hasLearnedHealingLocked()) {
 		return fail("priest_healing_intent_required")
 	}
 	if s.state.CastPending {
@@ -556,7 +556,7 @@ func (s *Service) fargodeepActionAllowedLocked(ctx context.Context, targetGUID u
 	}
 	cost, reserve := manaBudget(self, uint64(rank.manaPercent)), uint64(0)
 	if self.ClassId == 5 {
-		if !s.state.Healing || !s.now().Before(s.healingUntil) || !s.state.KnownLesserHeal {
+		if !s.hasLearnedHealingLocked() {
 			return refuse()
 		}
 		reserve = manaBudget(self, uint64(s.selectedSpellLocked(lesserHeal).manaPercent))
