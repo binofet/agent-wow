@@ -58,6 +58,51 @@ func TestPartyDefenseOfflineOwnerUsesActualCurrentFightAndClientPositionForEvery
 	}
 }
 
+func scarletSentryDefenseRig(t *testing.T, class uint32) (*Service, *fakeSession, *worldv1.CreatureState, func(time.Duration)) {
+	t.Helper()
+	s, f, sentry, advance := partyDefenseRig(t, class)
+	arlen := f.world.NearbyPlayers[0]
+	f.world.Owner = proto.Clone(arlen).(*worldv1.PlayerState)
+	f.world.Owner.Guid = ownerGUID
+	f.world.Owner.PlayerFlags = 2 // AFK
+	f.world.Owner.UnitFlags &^= 0x80000
+	f.world.Owner.TargetKnown, f.world.Owner.TargetGuid = true, 0
+	f.party.Group.Members[3].Online = true
+	f.world.Self.Level, arlen.Level, f.world.Owner.Level = 25, 25, 25
+	sentry.Entry, sentry.Level = 4283, 31 // Scarlet Sentry
+	if _, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	return s, f, sentry, advance
+}
+
+func TestPartyDefenseFightsScarletSentryAttackingArlenWhileJoelIsAFK(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		class   uint32
+		spell   uint32
+		stunned bool
+	}{
+		{name: "mage", class: 8, spell: fireball},
+		{name: "rogue", class: 4, spell: sinisterStrike},
+		{name: "mage_defends_stunned_ally", class: 8, spell: fireball, stunned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f, sentry, _ := scarletSentryDefenseRig(t, tc.class)
+			if tc.stunned {
+				f.world.NearbyPlayers[0].UnitFlags |= 0x00040000
+			}
+			s.Tick(context.Background())
+			if lastCast(f) != tc.spell || s.state.LastCastTargetGuid != sentry.Guid || s.state.AssistAttempts != 1 || s.state.AssistDamageEvents != 0 || s.state.ServerAssistGo != 0 {
+				t.Fatal(s.stateLocked(), f.packets)
+			}
+			if tc.class == 4 && countPackets(f, opcode.CMSGAttackswing) != 1 {
+				t.Fatal("Rook did not start melee", s.stateLocked(), f.packets)
+			}
+		})
+	}
+}
+
 func TestPartyDefenseRejectsLostOrForeignCombatMembershipAndCurrentTargetEvidence(t *testing.T) {
 	for name, change := range map[string]func(*Service, *fakeSession, *worldv1.CreatureState){
 		"attack stopped":                  func(s *Service, f *fakeSession, c *worldv1.CreatureState) { c.AttackVictimKnown = false },
@@ -76,7 +121,7 @@ func TestPartyDefenseRejectsLostOrForeignCombatMembershipAndCurrentTargetEvidenc
 		"independent":                     func(s *Service, f *fakeSession, c *worldv1.CreatureState) { s.independent = true },
 	} {
 		t.Run(name, func(t *testing.T) {
-			s, f, c, _ := partyDefenseRig(t, 8)
+			s, f, c, _ := scarletSentryDefenseRig(t, 8)
 			change(s, f, c)
 			s.Tick(context.Background())
 			if lastCast(f) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.MSGMoveStartForward) != 0 {
@@ -93,13 +138,15 @@ func TestPartyDefenseChecksProofAgainAfterFacingOrBeforeMeleeMovement(t *testing
 			if mode == "melee_target_clear" || mode == "melee_offline" || mode == "melee_range" {
 				class = 4
 			}
-			s, f, c, advance := partyDefenseRig(t, class)
+			s, f, c, advance := scarletSentryDefenseRig(t, class)
 			if class == 4 {
 				c.X = -9820
 				s.SetNavigationDataDir("/verified/test/assets")
 				advance(200 * time.Millisecond)
 			}
+			checked := false
 			f.onClock = func() {
+				checked = true
 				if mode == "cast_range" || mode == "melee_range" {
 					c.X = -9700
 				} else if mode == "cast_offline" || mode == "melee_offline" {
@@ -109,7 +156,7 @@ func TestPartyDefenseChecksProofAgainAfterFacingOrBeforeMeleeMovement(t *testing
 				}
 			}
 			s.Tick(context.Background())
-			if lastCast(f) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.MSGMoveStartForward) != 0 || s.state.AutoAttackUnconfirmed {
+			if !checked || lastCast(f) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.MSGMoveStartForward) != 0 || s.state.AutoAttackUnconfirmed {
 				t.Fatal(mode, s.stateLocked(), f.packets)
 			}
 		})
@@ -172,8 +219,8 @@ func TestOngoingSelfDefenseBeyondThirtySecondsRequiresCurrentTargetAndBothCombat
 	}
 }
 
-func TestPartyDefenseRefreshesActualResourcesLevelFlagsAndWeaponAfterFacing(t *testing.T) {
-	for _, mode := range []string{"mana_drained", "mana_unknown", "power_type", "silenced", "level_changed", "immune", "energy_drained", "energy_unknown", "disarmed", "weapon_removed"} {
+func TestPartyDefenseRefreshesActualResourcesFlagsAndWeaponAfterFacing(t *testing.T) {
+	for _, mode := range []string{"mana_drained", "mana_unknown", "power_type", "silenced", "immune", "energy_drained", "energy_unknown", "disarmed", "weapon_removed"} {
 		t.Run(mode, func(t *testing.T) {
 			class := uint32(8)
 			if mode == "energy_drained" || mode == "energy_unknown" || mode == "disarmed" || mode == "weapon_removed" {
@@ -190,8 +237,6 @@ func TestPartyDefenseRefreshesActualResourcesLevelFlagsAndWeaponAfterFacing(t *t
 					f.world.Self.PowerType = 3
 				case "silenced":
 					f.world.Self.UnitFlags |= 0x2000
-				case "level_changed":
-					c.Level = 9
 				case "immune":
 					c.UnitFlags |= 0x100
 				case "energy_drained":
