@@ -3,9 +3,11 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"math"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -25,12 +27,21 @@ var dungeonEntrances = [...]dungeonPortal{
 	{trigger: 322, source: 90, destination: 0, center: position{x: -312.205, y: -4.63256, z: -148.657}, radius: 14},
 }
 
+const (
+	portalApproachDistance = 45
+	portalCatchUpWindow    = 75 * time.Second
+)
+
 type dungeonPortalFollow struct {
 	portal                dungeonPortal
 	ground                position
 	seenAt, lostAt        time.Time
 	approaching, notified bool
 	movementInProgress    bool
+	catchingUp            bool
+	catchUpTarget         position
+	catchUpTargetKnown    bool
+	nextCatchUpPlan       time.Time
 }
 
 func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now time.Time) {
@@ -59,8 +70,10 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	for _, portal := range dungeonEntrances {
 		if owner.MapId == portal.source && distance(ground, portal.center) < portal.radius {
 			s.followPortal = dungeonPortalFollow{
-				portal: portal, ground: ground,
-				seenAt: now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+				portal:     portal,
+				ground:     ground,
+				seenAt:     now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+				catchingUp: distance(playerPosition(w.Self), ground) > portalApproachDistance,
 			}
 			return
 		}
@@ -70,21 +83,61 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
 	f := s.followPortal
 	p, owner := w.GetSelf(), w.GetOwner()
+	maxAge, maxDistance := 20*time.Second, float64(portalApproachDistance)
+	if f.catchingUp {
+		maxAge, maxDistance = portalCatchUpWindow, buddynav.MaxRouteLength
+	}
 	return s.state.Following && now.Before(s.followUntil) && !s.independent &&
-		f.portal.trigger != 0 && !now.Before(f.seenAt) && now.Sub(f.seenAt) <= 20*time.Second &&
+		f.portal.trigger != 0 && !now.Before(f.seenAt) && now.Sub(f.seenAt) <= maxAge &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
 		safeQuestCharacter(w, s.selfGUID) == "" && p.MapId == f.portal.source &&
-		distance(playerPosition(p), f.ground) <= 45
+		distance(playerPosition(p), f.ground) <= maxDistance
 }
 
 func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool {
 	return s.followPortal.movementInProgress && s.portalSourceReadyLocked(w, s.now())
 }
 
+// A single query can find a partial corridor between two floors that become
+// connected after taking a turn. Use an intermediate point only when the
+// physical planner verifies both the approach to it and the route to the portal.
+func (s *Service) portalCatchUpTarget(ctx context.Context, ground position) (position, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	if _, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, ground); err == nil {
+		return ground, true
+	}
+	dx, dy := float64(ground.x-s.pos.x), float64(ground.y-s.pos.y)
+	directionLength := math.Hypot(dx, dy)
+	if directionLength <= portalApproachDistance {
+		return position{}, false
+	}
+	dx, dy = dx/directionLength, dy/directionLength
+	for _, ahead := range []float64{8, 12, 16} {
+		for _, side := range []float64{-6, 6} {
+			if ctx.Err() != nil {
+				return position{}, false
+			}
+			bend := s.pos
+			bend.x += float32(ahead*dx - side*dy)
+			bend.y += float32(ahead*dy + side*dx)
+			approach, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, bend)
+			if err != nil {
+				continue
+			}
+			bend = approach[len(approach)-1]
+			if _, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, bend, ground); err == nil {
+				return bend, true
+			}
+		}
+	}
+	return position{}, false
+}
+
 // Called after combat, casting and exclusive interactions have yielded.
-// Disappearance at the entrance is a cue to try normal entry once. The realm
-// decides instance eligibility and which copy this party is allowed to enter.
+// Disappearance at the portal is a cue to try the normal transfer once. The
+// realm decides eligibility and which copy this party is allowed to enter.
 func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, now time.Time) bool {
 	f := &s.followPortal
 	if f.portal.trigger == 0 || !s.state.Following {
@@ -147,8 +200,29 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.followNav.Reset()
 		f.approaching = true
 	}
+	if f.catchingUp && !f.catchUpTargetKnown {
+		if now.Before(f.nextCatchUpPlan) {
+			return true
+		}
+		f.nextCatchUpPlan = now.Add(750 * time.Millisecond)
+		target, ok := s.portalCatchUpTarget(ctx, f.ground)
+		if !ok {
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_instance_catch_up_route_unavailable"
+			return true
+		}
+		f.catchUpTarget, f.catchUpTargetKnown = target, true
+	}
+	if f.catchUpTargetKnown && f.catchUpTarget != f.ground && followAtTarget(s.pos, f.catchUpTarget, .1) {
+		f.catchUpTarget = f.ground
+		s.followNav.Reset()
+	}
+	target := f.ground
+	if f.catchUpTargetKnown {
+		target = f.catchUpTarget
+	}
 	f.movementInProgress = true
-	s.followFormationStepLocked(ctx, f.ground, .1)
+	s.followFormationStepLocked(ctx, target, .1)
 	f.movementInProgress = false
 	return true
 }

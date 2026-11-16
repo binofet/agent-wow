@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -51,9 +52,54 @@ func TestFollowDungeonPortalUsesOrdinaryEntryAfterOwnerDisappears(t *testing.T) 
 			advance(250 * time.Millisecond)
 			s.Tick(ctx)
 			if s.state.Reason != "follow_instance_transfer_observed" || !s.state.Following {
-				t.Fatalf("transfer did not preserve follow: %+v", s.state)
+				t.Fatalf("transfer did not preserve follow: %+v", &s.state)
 			}
 		})
+	}
+}
+
+func TestFollowDungeonPortalCatchesUpThroughVerifiedBend(t *testing.T) {
+	s, f, advance := rig(t)
+	ctx := context.Background()
+	portal := dungeonEntrances[3]
+	start := portal.center
+	start.y -= 200
+	putAtPortal(f.world.Self, portal.source, start)
+	putAtPortal(f.world.Owner, portal.source, portal.center)
+	s.navDataDir = "fixture"
+	bend := position{x: start.x + 6, y: start.y + 8, z: start.z}
+	s.planMapPath = func(_ context.Context, _ string, _ uint32, from, to position) ([]position, error) {
+		if distance(from, start) < .1 && distance(to, portal.center) < .1 {
+			return nil, errors.New("direct ground corridor unavailable")
+		}
+		return []position{from, to}, nil
+	}
+	toggle(t, s, true)
+	s.Tick(ctx)
+	lostAt := s.now()
+	f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
+	var visitedBend, advancedFromBend bool
+	for range 155 {
+		advance(250 * time.Millisecond)
+		s.Tick(ctx)
+		if distance(s.pos, bend) < .1 {
+			visitedBend = true
+		}
+		if visitedBend && s.pos.y > bend.y+10 {
+			advancedFromBend = true
+		}
+	}
+	writes := 0
+	for _, packet := range f.packets {
+		if packet.Opcode == opcode.CMSGAreatrigger {
+			writes++
+			if !bytes.Equal(packet.Payload, binary.LittleEndian.AppendUint32(nil, portal.trigger)) {
+				t.Fatalf("wrong portal packet: %x", packet.Payload)
+			}
+		}
+	}
+	if !visitedBend || !advancedFromBend || writes != 1 || s.now().Sub(lostAt) <= 20*time.Second {
+		t.Fatalf("portal progression incomplete: bend=%t, advanced=%t, writes=%d, position=%+v, reason=%s", visitedBend, advancedFromBend, writes, s.pos, s.state.Reason)
 	}
 }
 
