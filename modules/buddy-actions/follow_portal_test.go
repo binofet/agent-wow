@@ -103,6 +103,41 @@ func TestFollowDungeonPortalCatchesUpThroughVerifiedBend(t *testing.T) {
 	}
 }
 
+func TestFollowScarletGraveyardFromLastObservedOwnerPosition(t *testing.T) {
+	ctx := context.Background()
+	s, f, advance := rig(t)
+	s.navDataDir = "fixture"
+	// Joel's last observed position before the real transfer was near the
+	// trigger boundary and below its center. Start the companion outside it.
+	ground := position{x: 2917.7122, y: -801.5376, z: 160.33275}
+	start := ground
+	start.x -= 3
+	putAtPortal(f.world.Self, 0, start)
+	putAtPortal(f.world.Owner, 0, ground)
+	toggle(t, s, true)
+	s.Tick(ctx)
+	f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
+	for range 16 {
+		advance(250 * time.Millisecond)
+		s.Tick(ctx)
+	}
+	if countPackets(f, opcode.MSGMoveStartForward) == 0 || countPackets(f, opcode.CMSGAreatrigger) != 1 {
+		t.Fatalf("Graveyard approach or transfer failed: %s, pose %+v, packets %+v", s.state.Reason, s.pos, f.packets)
+	}
+	for _, packet := range f.packets {
+		if packet.Opcode == opcode.CMSGAreatrigger && !bytes.Equal(packet.Payload, binary.LittleEndian.AppendUint32(nil, 45)) {
+			t.Fatalf("wrong Graveyard trigger: %x", packet.Payload)
+		}
+	}
+	f.world.Self.MapId = 189
+	f.world.Self.PositionRevision++
+	advance(250 * time.Millisecond)
+	s.Tick(ctx)
+	if s.state.Reason != "follow_instance_transfer_observed" || !s.state.Following {
+		t.Fatalf("Graveyard transfer did not preserve follow: %+v", &s.state)
+	}
+}
+
 func TestFollowDungeonPortalDoesNotEnterWithoutCurrentAuthority(t *testing.T) {
 	for name, change := range map[string]func(*Service, *fakeSession){
 		"owner still visible": func(_ *Service, f *fakeSession) { f.world.Owner.Present = true },

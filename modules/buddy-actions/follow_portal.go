@@ -25,6 +25,7 @@ var dungeonEntrances = [...]dungeonPortal{
 	{trigger: 228, source: 1, destination: 43, center: position{x: -753.596008, y: -2212.780029, z: 21.5403}, radius: 13},
 	{trigger: 324, source: 0, destination: 90, center: position{x: -5161.33, y: 939.623, z: 258.288}, radius: 10},
 	{trigger: 322, source: 90, destination: 0, center: position{x: -312.205, y: -4.63256, z: -148.657}, radius: 14},
+	{trigger: 45, source: 0, destination: 189, center: position{x: 2924.38, y: -798.429, z: 161.611}, radius: 8}, // Scarlet Monastery Graveyard
 }
 
 const (
