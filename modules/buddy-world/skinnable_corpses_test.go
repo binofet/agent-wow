@@ -21,6 +21,7 @@ func skinnableFields() map[int]uint32 {
 func TestSkinnableCorpseActualCreateZeroFlagsAndExactLookup(t *testing.T) {
 	for _, compressedPacket := range []bool{false, true} {
 		s := NewIndependentService(1)
+		s.now = func() time.Time { return time.Unix(1000, 0) }
 		packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 		data, op := objectFixture(npcGUID, 3, skinnableFields()), uint32(opcode.SMSGUpdateObject)
 		if compressedPacket {

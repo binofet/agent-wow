@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 
@@ -27,10 +28,13 @@ class EncounterTacticsTests(unittest.TestCase):
             controlObserved={'102': dict(known=True), '103': dict(known=True)},
         )
 
+    def evaluate(self, frame, source=None):
+        return json.loads(subprocess.check_output(
+            [str(BINARY), '-source', str(source or ROOT / 'behaviors/encounter-tactics.lua')],
+            input=json.dumps(frame), text=True, timeout=5))
+
     def tick(self):
-        out = json.loads(subprocess.check_output(
-            [str(BINARY), '-source', str(ROOT / 'behaviors/encounter-tactics.lua')],
-            input=json.dumps(self.frame), text=True, timeout=5))
+        out = self.evaluate(self.frame)
         self.frame.update(bindings=out['bindings'], defeated=out['defeated'])
         return out
 
@@ -88,3 +92,58 @@ class EncounterTacticsTests(unittest.TestCase):
         result = self.tick()
         self.assertEqual(result['phase'], 'waiting_for_control_observation_moon')
         self.assertNotIn('focus', result)
+
+    @staticmethod
+    def enemy(health, **facts):
+        return dict(present=True, aliveKnown=True, alive=True, attackable=True, health=health) | facts
+
+    def test_queue_preserves_next_pull_and_switches_among_active_targets(self):
+        near, runner, next_pull = '17379391034265436410', '17379391034265436411', '17379391034265436412'
+        targets = {near: self.enemy(800), runner: self.enemy(200), next_pull: self.enemy(40)}
+        frame = dict(kind='combat_queue', targets=targets, partyDPS=100)
+        first = self.evaluate(frame)
+        self.assertEqual([row['targetGuid'] for row in first['queue']], [next_pull, runner, near])
+        self.assertNotIn('focusGuid', first)
+        targets[near]['engaged'] = targets[runner]['engaged'] = True
+        frame.update(ownerFocus=near, currentFocus=near, switchSeconds=1)
+        self.assertEqual(self.evaluate(frame)['focusGuid'], near)
+        frame.pop('ownerFocus')
+        self.assertEqual(self.evaluate(frame)['focusGuid'], runner)
+        frame['switchSeconds'] = 6
+        self.assertEqual(self.evaluate(frame)['focusGuid'], near)
+        targets[runner]['protected'] = True
+        frame['explicitOrder'] = [runner, near]
+        result = self.evaluate(frame)
+        self.assertEqual(result['queue'][0], dict(targetGuid=runner, engaged=True, protected=True))
+        self.assertEqual(result['focusGuid'], near)
+
+    def test_pull_marks_use_the_queue_for_the_pack(self):
+        targets = {'100': self.enemy(800, distance=5, x=5, y=0, z=0),
+                   '101': self.enemy(100, distance=7, x=7, y=0, z=0),
+                   '102': self.enemy(1, distance=24, x=24, y=0, z=0)}
+        frame = dict(kind='assign_pull_marks', targets=targets, ownerZ=0)
+        self.assertEqual(self.evaluate(frame)['assignments'][0], dict(mark='skull', targetGuid='101'))
+        targets['100']['selected'] = True
+        self.assertEqual(self.evaluate(frame)['assignments'][0], dict(mark='skull', targetGuid='100'))
+
+    def test_editing_lua_changes_the_next_decision_with_the_same_runner(self):
+        frame = dict(kind='combat_queue', targets={'9': self.enemy(200, engaged=True, incomingDPS=40),
+                                                 '10': self.enemy(100, engaged=True, incomingDPS=10)})
+        original = (ROOT / 'behaviors/encounter-tactics.lua').read_text()
+        with tempfile.TemporaryDirectory() as workspace:
+            script = Path(workspace) / 'encounter-tactics.lua'
+            script.write_text(original)
+            self.assertEqual(self.evaluate(frame, script)['focusGuid'], '9')
+            script.write_text(original.replace('row.score = row.rate / row.seconds', 'row.score = 1 / row.seconds'))
+            self.assertEqual(self.evaluate(frame, script)['focusGuid'], '10')
+
+    def test_pull_marks_respect_taken_icons_and_the_new_skull_position(self):
+        targets = {'100': self.enemy(500, distance=3, x=0, y=0, z=0),
+                   '101': self.enemy(100, distance=10, x=12, y=0, z=0),
+                   '102': self.enemy(450, distance=11, x=-12, y=0, z=0),
+                   '103': self.enemy(20, distance=4, x=1, y=0, z=0, polymorph=True)}
+        frame = dict(kind='assign_pull_marks', targets=targets, ownerZ=0, occupiedMarks={'moon': '103'})
+        self.assertEqual(self.evaluate(frame)['assignments'], [
+            dict(mark='skull', targetGuid='101'), dict(mark='x', targetGuid='100')])
+        frame['occupiedMarks']['skull'] = '999'
+        self.assertFalse(self.evaluate(frame)['assignments'])
