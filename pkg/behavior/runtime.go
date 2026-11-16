@@ -218,6 +218,16 @@ func newVM() *lua.LState {
 	for _, k := range remove {
 		global.RawSet(k, lua.LNil)
 	}
+	// A single-byte lookup lets policies validate wire identifiers without
+	// opening the pattern, string allocation, or multi-return library APIs.
+	L.SetGlobal("byte_at", L.NewFunction(func(L *lua.LState) int {
+		value, index := L.CheckString(1), L.CheckInt(2)
+		if index < 1 || index > len(value) {
+			return 0
+		}
+		L.Push(lua.LNumber(value[index-1]))
+		return 1
+	}))
 	// Only constant-time numeric helpers; no string/pattern, sort, random,
 	// coroutine, protected-call, loading, environment or metatable APIs.
 	lua.OpenMath(L)
