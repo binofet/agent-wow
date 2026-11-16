@@ -58,6 +58,13 @@ func run() error {
 	if identity.Independent() {
 		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	}
+	switch role := os.Getenv("BUDDY_STANDING_PARTY_ROLE"); role {
+	case "":
+	case "companion", "healer":
+		service.UseStandingPartyRole(role == "healer")
+	default:
+		return errors.New("BUDDY_STANDING_PARTY_ROLE must be companion or healer")
+	}
 	service.UseAutomaticCorpseLoot()
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {

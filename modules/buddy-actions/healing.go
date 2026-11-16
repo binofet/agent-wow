@@ -42,8 +42,7 @@ func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
 }
 
 // A module invocation is routed through this body's session. Only a complete
-// current server group with this exact online self authorizes another player.
-// Joel is subject to the same membership rule; self-healing needs no group.
+// current server group with this exact online self supplies party membership.
 func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
 	if s.session == nil {
 		return nil
@@ -108,6 +107,14 @@ func observedHealingPlayer(w *worldv1.SnapshotResponse, guid uint64) *worldv1.Pl
 	return found
 }
 
+func observedHealingAlly(self, target *worldv1.PlayerState, members map[uint64]bool) bool {
+	if online, isMember := members[target.Guid]; isMember {
+		return online
+	}
+	team := observedPlayerTeam(self)
+	return team != 0 && team == observedPlayerTeam(target)
+}
+
 func healingTiePriority(guid, self uint64) int {
 	if guid == ownerGUID {
 		return 0
@@ -121,7 +128,7 @@ func healingTiePriority(guid, self uint64) int {
 func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotResponse, automatic, urgentOnly bool) *worldv1.PlayerState {
 	self := w.Self
 	eligible := func(p *worldv1.PlayerState) bool {
-		return safeHealingPlayer(p, self.MapId) && injuredForHealing(p, automatic) && (p.Guid == s.selfGUID || p.PlayerFlags&2 == 0 && distance(s.pos, playerPosition(p)) <= 35)
+		return healablePlayer(p, self.MapId) && injuredForHealing(p, automatic) && (p.Guid == s.selfGUID || p.PlayerFlags&2 == 0 && distance(s.pos, playerPosition(p)) <= 35)
 	}
 	urgent := eligible(self) && uint64(self.Health)*100 < uint64(self.MaxHealth)*urgentSelfHealPercent
 	if urgent {
@@ -152,7 +159,7 @@ func (s *Service) healingTargetLocked(ctx context.Context, w *worldv1.SnapshotRe
 	}
 	members := s.healingPartyLocked(ctx)
 	for _, p := range players {
-		if !eligible(p) || p.Guid == s.selfGUID || !members[p.Guid] || observedHealingPlayer(w, p.Guid) != p {
+		if !eligible(p) || p.Guid == s.selfGUID || !observedHealingAlly(self, p, members) || observedHealingPlayer(w, p.Guid) != p {
 			continue
 		}
 		scriptTargets = append(scriptTargets, p)
@@ -204,7 +211,7 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 	}
 	target := s.healingTargetLocked(ctx, w, automatic, urgentOnly)
 	if target == nil {
-		s.state.Reason = "no_observed_injured_party_member_in_range"
+		s.state.Reason = "no_observed_injured_ally_in_range"
 		return false
 	}
 	heal := s.bestHealLocked(w.Self, target)
@@ -223,7 +230,7 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		return false
 	}
 	// STOP may read a server correction; bind the actual cast to a new own
-	// snapshot and current membership rather than replaying the selection.
+	// snapshot and current relationship rather than replaying the selection.
 	fresh, err := s.snapshot(ctx)
 	if err != nil || safeSelfCombat(fresh, s.selfGUID) != "" || !s.refreshPositionLocked(fresh) || s.state.MotionUnconfirmed {
 		s.state.Reason = "healing_observations_changed_before_cast"
@@ -241,12 +248,12 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 	} else {
 		target = observedHealingPlayer(fresh, target.Guid)
 	}
-	if !safeHealingPlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && (target.PlayerFlags&2 != 0 || distance(s.pos, playerPosition(target)) > 35) || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
+	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && (target.PlayerFlags&2 != 0 || distance(s.pos, playerPosition(target)) > 35) || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
 		s.state.Reason = "healing_target_changed_before_cast"
 		return false
 	}
-	if target.Guid != s.selfGUID && !s.healingPartyLocked(ctx)[target.Guid] {
-		s.state.Reason = "healing_target_no_longer_in_current_party"
+	if target.Guid != s.selfGUID && !observedHealingAlly(fresh.Self, target, s.healingPartyLocked(ctx)) {
+		s.state.Reason = "healing_target_no_longer_an_observed_ally"
 		return false
 	}
 	heal = s.bestHealLocked(fresh.Self, target)

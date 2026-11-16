@@ -165,6 +165,50 @@ func TestHealingTriageRequiresActualCurrentOnlinePartyAndPublicTarget(t *testing
 	}
 }
 
+func TestHealingTriageCanHealNearbySameFactionPlayersWithoutParty(t *testing.T) {
+	s, f, _ := rig(t)
+	f.world.Owner, f.party = nil, nil
+	f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+	ally := proto.Clone(f.world.Self).(*worldv1.PlayerState)
+	ally.Guid, ally.Health, ally.X, ally.RaceId = 4, 30, 15, 3
+	ally.UnitFlags = 0x00040000 // Stun does not prevent receiving a heal.
+	hostile := proto.Clone(ally).(*worldv1.PlayerState)
+	hostile.Guid, hostile.Health, hostile.RaceId = 5, 10, 2
+	unknown := proto.Clone(ally).(*worldv1.PlayerState)
+	unknown.Guid, unknown.Health, unknown.RaceKnown = 6, 5, false
+	f.world.NearbyPlayers = []*worldv1.PlayerState{hostile, unknown, ally}
+	enableTriage(t, s)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 1 || healingCastTarget(f) != ally.Guid {
+		t.Fatal("expected a heal on the nearby same-faction player", state(t, s), f.packets)
+	}
+}
+
+func TestHealingTriageRechecksNearbyFactionAfterStopping(t *testing.T) {
+	s, f, _ := rig(t)
+	f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+	f.world.Owner.Health = 100
+	ally := triagePlayer(f, 4, 20)
+	ally.RaceKnown, ally.RaceId = true, 3
+	f.world.NearbyPlayers = []*worldv1.PlayerState{ally}
+	learn(s)
+	toggle(t, s, true)
+	s.Tick(context.Background())
+	if !state(t, s).Moving {
+		t.Fatal("expected movement before the heal")
+	}
+	rechecked := false
+	f.onClock = func() {
+		rechecked = true
+		ally.RaceKnown = false
+	}
+	s.HealOnce(context.Background(), &emptypb.Empty{})
+	if !rechecked || countPackets(f, opcode.CMSGCastSpell) != 0 ||
+		state(t, s).Reason != "healing_target_no_longer_an_observed_ally" {
+		t.Fatal("lost faction observation must prevent dispatch", state(t, s), f.packets)
+	}
+}
+
 func TestHealingTriagePartyLossAndUrgentSelfDuringStopAreRechecked(t *testing.T) {
 	for _, mode := range []string{"leave", "range", "mana_unknown", "self_urgent"} {
 		t.Run(mode, func(t *testing.T) {

@@ -562,6 +562,11 @@ def start(*, deadline=None):
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
     trace_environment(environment, independent)
+    if not independent:
+        if (CHARACTER, CHARACTER_GUID) in (("Arlen", 1), ("Mira", 4), ("Rook", 5), ("Nixwick", 8)):
+            environment["BUDDY_STANDING_PARTY_ROLE"] = "healer" if CHARACTER == "Arlen" else "companion"
+        elif PROFILE == "default" and CHARACTER == "Arlen" and CHARACTER_GUID is None:
+            environment["BUDDY_STANDING_PARTY_ROLE"] = "healer"
     environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
                        AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
                        AGENT_WOW_WORLDRPC_HOST=RPC_HOST, AGENT_WOW_WORLDRPC_PORT=str(RPC_PORT))

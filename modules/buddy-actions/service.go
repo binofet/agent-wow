@@ -43,6 +43,7 @@ type sessionAPI interface {
 }
 
 type Service struct {
+	standingParty                             standingPartyRole
 	clientControlLost, clientControlRestoring bool
 
 	actionsv1.UnimplementedBuddyActionsServer
@@ -472,6 +473,7 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		s.state.Reason = "follow_enabled_waiting_for_safe_observations"
 	} else {
 		s.state.Following = false
+		s.standingParty.resumeFollowAfter = s.now().Add(2 * time.Second)
 		if s.fargodeep.active {
 			s.stopFargodeepLocked(ctx, "explicit_follow_stop")
 		}
@@ -1061,6 +1063,7 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
+	s.standingPartyTickLocked(ctx, s.now())
 	if s.emergencyDefenseLocked(ctx) {
 		s.lastStep = s.now()
 		return
