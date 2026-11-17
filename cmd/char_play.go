@@ -55,6 +55,7 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
 	var moduleTimeout time.Duration
 	var policyFile, policyObservation string
+	var policyContext []string
 	command := &cobra.Command{
 		Use: "play <name|guid>", Short: "Enter the world and serve a local gameplay RPC API",
 		Long: `Enter the world as the selected character. This creates a persistent connection with the world server and exposes a
@@ -74,15 +75,25 @@ local RPC API for gameplay actions.`,
 			if moduleTimeout <= 0 {
 				return errors.New("--module-timeout must be greater than zero")
 			}
+			policy := config.Get().Policy
+			if cmd.Flags().Changed("policy-file") {
+				policy.File = policyFile
+			}
+			if cmd.Flags().Changed("policy-observation") {
+				policy.Observation = policyObservation
+			}
+			if cmd.Flags().Changed("policy-context") {
+				policy.Context = policyContext
+			}
 			var source string
-			if (policyFile == "") != (policyObservation == "") {
+			if (policy.File == "") != (policy.Observation == "") || policy.File == "" && len(policy.Context) != 0 {
 				return errors.New("--policy-file and --policy-observation must be supplied together")
 			}
-			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_HEALING_OWNED")); owned && policyFile == "" {
+			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_HEALING_OWNED")); owned && policy.File == "" {
 				return errors.New("Lua-owned healing requires a policy file and observation feed")
 			}
-			if policyFile != "" {
-				body, err := os.ReadFile(policyFile)
+			if policy.File != "" {
+				body, err := os.ReadFile(policy.File)
 				if err != nil {
 					return err
 				}
@@ -116,8 +127,8 @@ local RPC API for gameplay actions.`,
 			}
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
-			if policyFile != "" {
-				if err := runtime.StartObservedPolicy(ctx, source, policyObservation); err != nil {
+			if policy.File != "" {
+				if err := runtime.StartObservedPolicy(ctx, source, policy.Observation, policy.Context...); err != nil {
 					return err
 				}
 			}
@@ -127,6 +138,7 @@ local RPC API for gameplay actions.`,
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
 	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
 	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")
+	command.Flags().StringSliceVar(&policyContext, "policy-context", nil, "Additional reflected reads for the same Lua decision, as phase=module.alias")
 	return command
 }
 

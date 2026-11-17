@@ -19,6 +19,13 @@ type Server struct {
 	Port int    `mapstructure:"port"`
 }
 
+// Policy binds a character process to a Lua bundle and reflected read feeds.
+type Policy struct {
+	File        string   `mapstructure:"file"`
+	Observation string   `mapstructure:"observation"`
+	Context     []string `mapstructure:"context"`
+}
+
 // Config contains the settings shared by client packages.
 type Config struct {
 	ConfigDir     string     `mapstructure:"config_dir"`
@@ -28,6 +35,7 @@ type Config struct {
 	RealmFilePath string     `mapstructure:"realm_file_path"`
 	AuthServer    Server     `mapstructure:"authserver"`
 	WorldRPC      Server     `mapstructure:"worldrpc"`
+	Policy        Policy     `mapstructure:"policy"`
 	LogLevel      slog.Level `mapstructure:"log_level"`
 }
 
@@ -53,6 +61,9 @@ func Init(configFile string) error {
 	v.SetDefault("authserver.port", 3724)
 	v.SetDefault("worldrpc.host", "localhost")
 	v.SetDefault("worldrpc.port", 8086)
+	v.SetDefault("policy.file", "")
+	v.SetDefault("policy.observation", "")
+	v.SetDefault("policy.context", []string{})
 	v.SetDefault("log_level", "info")
 
 	if configFile != "" {

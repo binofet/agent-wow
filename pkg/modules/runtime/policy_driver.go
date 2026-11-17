@@ -16,36 +16,46 @@ import (
 
 var policyPhase = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// StartObservedPolicy connects a reflected observation to a Lua policy. It
-// forwards the typed observation without assigning any gameplay priorities.
-func (m *Manager) StartObservedPolicy(ctx context.Context, source, binding string) error {
-	phase, method, ok := strings.Cut(binding, "=")
-	if !ok || !policyPhase.MatchString(phase) {
-		return fmt.Errorf("policy observation must be phase=module.alias")
-	}
+type policyFeed struct {
+	phase, method string
+}
+
+// StartObservedPolicy connects reflected read feeds to a single Lua writer.
+// The final feed supplies the decision phase. Earlier feeds update context.
+func (m *Manager) StartObservedPolicy(ctx context.Context, source, binding string, contextBindings ...string) error {
 	catalog, _, err := m.observedSession()
 	if err != nil {
 		return err
 	}
-	feed, err := catalog.Catalog.ForMethod(method)
-	if err != nil {
-		return err
-	}
-	if feed.Methods[0].Effect != moddisc.EffectRead {
-		return fmt.Errorf("policy observation %q must be a reflected read", method)
-	}
-	if _, err := m.readPolicyObservation(ctx, catalog.SessionID, method); err != nil {
-		return err
+	var feeds []policyFeed
+	phases := make(map[string]bool)
+	for _, entry := range append(append([]string(nil), contextBindings...), binding) {
+		phase, method, ok := strings.Cut(entry, "=")
+		if !ok || !policyPhase.MatchString(phase) || phases[phase] {
+			return fmt.Errorf("policy observation must use a unique phase=module.alias binding")
+		}
+		phases[phase] = true
+		feed, err := catalog.Catalog.ForMethod(method)
+		if err != nil {
+			return err
+		}
+		if feed.Methods[0].Effect != moddisc.EffectRead {
+			return fmt.Errorf("policy observation %q must be a reflected read", method)
+		}
+		if _, err := m.readPolicyObservation(ctx, catalog.SessionID, method); err != nil {
+			return err
+		}
+		feeds = append(feeds, policyFeed{phase: phase, method: method})
 	}
 	host, err := m.StartPolicy(ctx, source)
 	if err != nil {
 		return err
 	}
-	go host.runObservation(ctx, catalog.SessionID, phase, method)
+	go host.runObservation(ctx, catalog.SessionID, feeds)
 	return nil
 }
 
-func (p *SessionPolicy) runObservation(parent context.Context, sid, phase, method string) {
+func (p *SessionPolicy) runObservation(parent context.Context, sid string, feeds []policyFeed) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	stop := context.AfterFunc(p.lifetime, cancel)
@@ -56,8 +66,9 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid, phase, metho
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var lastProblem string
+	phase := feeds[len(feeds)-1].phase
 	for ctx.Err() == nil {
-		err := p.stepObservation(ctx, sid, phase, method)
+		err := p.stepObservation(ctx, sid, feeds)
 		if err != nil && ctx.Err() == nil {
 			if message := err.Error(); message != lastProblem {
 				p.manager.logger.Warn("Lua observation step failed", "phase", phase, "error", message)
@@ -75,11 +86,25 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid, phase, metho
 	}
 }
 
-func (p *SessionPolicy) stepObservation(ctx context.Context, sid, phase, method string) error {
-	observed, err := p.manager.readPolicyObservation(ctx, sid, method)
-	if err != nil {
-		return err
+func (p *SessionPolicy) stepObservation(ctx context.Context, sid string, feeds []policyFeed) error {
+	var sequence uint64
+	var phase string
+	for _, feed := range feeds {
+		phase = feed.phase
+		observed, err := p.manager.readPolicyObservation(ctx, sid, feed.method)
+		if err != nil {
+			return err
+		}
+		sequence, err = p.enqueueObservation(ctx, phase, observed)
+		if err != nil {
+			return err
+		}
 	}
+	_, _, err := p.Step(ctx, map[string]any{"kind": phase, "observationSequence": strconv.FormatUint(sequence, 10)}, nil)
+	return err
+}
+
+func (p *SessionPolicy) enqueueObservation(ctx context.Context, phase string, observed map[string]any) (uint64, error) {
 	event := behavior.Event{Kind: phase + "_observation", Value: observed}
 	sequence, err := p.Enqueue(event)
 	if errors.Is(err, behavior.ErrEventBackpressure) {
@@ -89,15 +114,11 @@ func (p *SessionPolicy) stepObservation(ctx context.Context, sid, phase, method 
 		drainErr := p.vm.Drain(ctx)
 		p.advance.Unlock()
 		if drainErr != nil {
-			return drainErr
+			return 0, drainErr
 		}
 		sequence, err = p.Enqueue(event)
 	}
-	if err != nil {
-		return err
-	}
-	_, _, err = p.Step(ctx, map[string]any{"kind": phase, "observationSequence": strconv.FormatUint(sequence, 10)}, nil)
-	return err
+	return sequence, err
 }
 
 func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string) (map[string]any, error) {
