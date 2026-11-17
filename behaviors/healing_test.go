@@ -2,6 +2,7 @@ package behaviors
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"strconv"
@@ -22,6 +23,11 @@ func healingPolicy(t *testing.T) string {
 func newHealingSession(t *testing.T, source string) *behavior.Session {
 	t.Helper()
 	session, err := behavior.NewSession(context.Background(), "healer-session", source)
+	// Cold VM initialization can lose the fixed 5ms budget on a race build.
+	// Retry loading once. Observations and decisions keep their original budget.
+	if errors.Is(err, context.DeadlineExceeded) {
+		session, err = behavior.NewSession(context.Background(), "healer-session", source)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +95,7 @@ func requireHeal(t *testing.T, decision behavior.Decision, target string, spell 
 }
 
 func TestHealingPatientAndRankPolicy(t *testing.T) {
-	source := healingPolicy(t)
+	session := newHealingSession(t, healingPolicy(t))
 	lesserHeal := healRank(2050, 1, 1, 35, 30, 1500, 0, 40, false)
 	heal := healRank(2054, 16, 1, 120, 85, 3000, 0, 40, false)
 	flashHeal := healRank(2061, 20, 1, 90, 95, 1500, 0, 40, false)
@@ -194,7 +200,6 @@ func TestHealingPatientAndRankPolicy(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			session := newHealingSession(t, source)
 			spells := test.spells
 			if spells == nil {
 				spells = ordinary
