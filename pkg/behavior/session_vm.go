@@ -27,35 +27,43 @@ func newSessionVM(parent context.Context, source string) (*sessionVM, error) {
 	if len(source) == 0 || len(source) > MaxSourceBytes {
 		return nil, fmt.Errorf("policy source must contain 1..%d bytes", MaxSourceBytes)
 	}
-	ctx, cancel := context.WithTimeout(parent, EvaluationLimit)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return nil, err
 	}
 
 	state := newVM()
 	vm := &sessionVM{state: state, callbacks: make(map[string]*lua.LFunction, 4)}
-	if err := vm.load(ctx, source); err != nil {
+	if err := vm.load(parent, source); err != nil {
 		vm.close()
 		return nil, fmt.Errorf("load session policy: %w", err)
 	}
 	return vm, nil
 }
 
-func (v *sessionVM) load(ctx context.Context, source string) error {
+func (v *sessionVM) load(parent context.Context, source string) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
 	state := v.state
-	top := state.GetTop()
-	state.SetContext(ctx)
-	defer state.SetTop(top)
-	defer state.RemoveContext()
-
+	// Load parses and compiles bounded source synchronously. Gopher Lua only
+	// consults its context when executing bytecode.
 	chunk, err := state.Load(strings.NewReader(source), "session policy")
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if parent.Err() != nil {
+		return parent.Err()
 	}
 	if err != nil {
 		return err
 	}
+
+	ctx, cancel := context.WithTimeout(parent, EvaluationLimit)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	top := state.GetTop()
+	state.SetContext(ctx)
+	defer state.SetTop(top)
+	defer state.RemoveContext()
 	err = state.CallByParam(lua.P{Fn: chunk, NRet: 1, Protect: true})
 	if ctx.Err() != nil {
 		return ctx.Err()
