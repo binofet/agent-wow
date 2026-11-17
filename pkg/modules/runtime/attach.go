@@ -13,7 +13,9 @@ import (
 type PolicySnapshot struct {
 	Revision         string   `json:"revision"`
 	Generation       string   `json:"generation"`
-	StateVersion     uint64   `json:"stateVersion"`
+	StateVersion     uint64   `json:"stateVersion,omitempty"`
+	Cursor           string   `json:"cursor,omitempty"`
+	Faulted          bool     `json:"faulted,omitempty"`
 	PendingActionIDs []string `json:"pendingActionIds,omitempty"`
 }
 

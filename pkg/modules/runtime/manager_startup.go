@@ -30,14 +30,13 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 	if session.SendPacket == nil || session.Clock == nil {
 		return errors.New("session callbacks are required")
 	}
-	if len(m.order) == 0 {
-		return nil
-	}
 	dir, err := os.MkdirTemp("", "aw-")
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.dir = dir
+	m.mu.Unlock()
 	// Runtime failure cancels startup without inheriting its deadline after success.
 	startup, cancel := context.WithCancel(ctx)
 	defer cancel()

@@ -48,8 +48,7 @@ func (m *Manager) observedSession() (SessionCatalog, PolicyObserver, error) {
 			return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "module invocation unavailable in current session state")
 		}
 	}
-	// Startup assigns dir before publishing any healthy instance under mu.
-	// Do not read that startup-only field while modules are still starting.
+	// The session identity is available only after the directory is published.
 	if m.dir == "" {
 		return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable")
 	}

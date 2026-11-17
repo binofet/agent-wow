@@ -113,6 +113,17 @@ func (s *Session) leave() { <-s.step }
 func (s *Session) Status() SessionStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.statusLocked()
+}
+
+// Inspect ties the revision and pending receipts to the same observation.
+func (s *Session) Inspect() (SessionStatus, []ActionReceipt) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.statusLocked(), s.outstandingLocked()
+}
+
+func (s *Session) statusLocked() SessionStatus {
 	out := SessionStatus{
 		SessionID: s.id, Revision: s.rev, Epoch: s.epoch, Cursor: s.cursor, Buffered: len(s.queue),
 		Pending: len(s.pending), Swapping: s.swapping, Closed: s.closed,
