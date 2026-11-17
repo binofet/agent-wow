@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Service) stopAutoAttackLocked(ctx context.Context) bool {
-	if s.autoStopping || s.state.AutoAttackUnconfirmed {
+	if s.encounterSwing.target != 0 || s.autoStopping || s.state.AutoAttackUnconfirmed {
 		return false
 	}
 	if s.autoTarget == 0 && !s.state.AutoAttacking {

@@ -62,12 +62,17 @@ func (s *Service) RenewPolicyEncounterLease(ctx context.Context, request *wrappe
 	visit := request.GetValue()
 	if visit == 0 {
 		s.hostEncounterVisit, s.hostEncounterUntil = 0, time.Time{}
+		s.stopEncounterMeleeLocked(ctx)
 		return &emptypb.Empty{}, nil
 	}
 	if s.closed || !s.encounterVisit.bound || s.encounterVisit.revision != visit {
 		return nil, status.Error(codes.FailedPrecondition, "current observed encounter visit required")
 	}
 	if !s.hostEncounterActiveLocked() {
+		if s.encounterSwing.target != 0 {
+			s.stopEncounterMeleeLocked(ctx)
+			return nil, status.Error(codes.FailedPrecondition, "previous encounter swing awaits server stop")
+		}
 		if s.crowdControl.active {
 			return nil, status.Error(codes.FailedPrecondition, "native crowd control approach still owns movement")
 		}

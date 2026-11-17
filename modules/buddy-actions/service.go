@@ -113,6 +113,7 @@ type Service struct {
 	fearBreakAttempted                         bool
 	supportOp                                  *supportAttempt
 	meleeOp                                    *meleeAttempt
+	encounterSwing                             encounterMeleeSwing
 	meleeAcknowledgedVisit                     uint64
 	resurrectionBindings                       map[uint64]bool
 	resurrectionOffer                          *resurrectionOffer
@@ -275,6 +276,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	s.expireInteractionLocked()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if s.encounterSwing.target != 0 {
+		return nil, status.Error(codes.FailedPrecondition, "encounter melee owns the body until the server stops its swing")
 	}
 	if s.state.InteractionOwner != "" {
 		if !s.now().Before(s.interactionUntil) {
@@ -617,9 +621,13 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.endMeleeOperationLocked()
 	s.meleeAcknowledgedVisit = 0
 	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
-	s.autoStopping = false
-	s.state.AutoAttackUnconfirmed = false
-	s.stopAutoAttackLocked(ctx)
+	if s.encounterSwing.target != 0 {
+		s.stopEncounterMeleeLocked(ctx)
+	} else {
+		s.autoStopping = false
+		s.state.AutoAttackUnconfirmed = false
+		s.stopAutoAttackLocked(ctx)
+	}
 	s.state.InteractionOwner = ""
 	s.state.InteractionHarvest = false
 	s.state.HarvestGuardGuids = nil
@@ -1048,6 +1056,9 @@ func (s *Service) Tick(ctx context.Context) {
 	s.expireSelfChannelLocked()
 	s.expireExplicitCastLocked()
 	s.expireMeleeOperationLocked()
+	if !s.closed && !s.hostEncounterActiveLocked() {
+		s.stopEncounterMeleeLocked(ctx)
+	}
 	if !s.closed && s.autoTarget != 0 {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}
@@ -1104,6 +1115,10 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
+	if s.encounterSwing.target != 0 {
+		s.lastStep = s.now()
+		return
+	}
 	if s.emergencyDefenseLocked(ctx) {
 		s.endCrowdControlLocked(ctx, "emergency_defense")
 		s.lastStep = s.now()
@@ -1524,8 +1539,9 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			malformed = true
 			break
 		}
+		leasedSwing := s.encounterSwing.target != 0
 		if attacker == s.selfGUID && s.acceptOwnMeleeAttackLocked(target, false) {
-			if !s.autoStopping && dead == 0 && s.autoTarget != 0 && !s.clientControlLost && !s.clientControlRestoring {
+			if !leasedSwing && !s.autoStopping && dead == 0 && s.autoTarget != 0 && !s.clientControlLost && !s.clientControlRestoring {
 				s.failedAssistTarget = s.autoTarget
 				s.failedAssistCastTarget = 0
 			}

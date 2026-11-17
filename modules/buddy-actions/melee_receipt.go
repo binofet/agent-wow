@@ -17,6 +17,30 @@ type meleeAttempt struct {
 	until time.Time
 }
 
+// A policy swing outlives the receipt for its START. Until the matching STOP
+// or a verified world entry, the native controller may neither adopt it nor
+// start another attack, even if either transport outcome was ambiguous.
+type encounterMeleeSwing struct {
+	target, visit uint64
+	stopIssued    bool
+}
+
+func (s *Service) stopEncounterMeleeLocked(ctx context.Context) {
+	swing := &s.encounterSwing
+	if swing.target == 0 || swing.stopIssued || !s.encounterVisit.bound || swing.visit != s.encounterVisit.revision || ctx.Err() != nil {
+		return
+	}
+	swing.stopIssued = true
+	s.endMeleeOperationLocked()
+	s.autoStopping = true
+	s.state.AutoAttackRequested = false
+	s.state.AutoAttackUnconfirmed = true
+	s.state.Reason = "encounter_melee_stop_waiting_for_server"
+	if !s.sendLocked(ctx, opcode.CMSGAttackstop, nil) {
+		s.state.Reason = "encounter_melee_stop_unconfirmed"
+	}
+}
+
 func (s *Service) reserveMeleeOperationLocked(token string, target uint64, enabled bool) *meleeAttempt {
 	op := &meleeAttempt{
 		view: actionsv1.MeleeOperation{
@@ -67,7 +91,9 @@ func (s *Service) meleeWorldBoundaryLocked(code uint32, p []byte) {
 
 func (s *Service) clearPreviousVisitMeleeLocked() {
 	op := s.meleeOp
-	if op == nil || op.view.VisitId != s.encounterVisit.revision || s.autoTarget != op.view.TargetGuid ||
+	if s.encounterSwing.target != 0 && s.encounterSwing.visit == s.encounterVisit.revision {
+		s.encounterSwing = encounterMeleeSwing{}
+	} else if op == nil || op.view.VisitId != s.encounterVisit.revision || s.autoTarget != op.view.TargetGuid ||
 		(s.state.AutoAttackTargetGuid != 0 && s.state.AutoAttackTargetGuid != op.view.TargetGuid) {
 		return
 	}
@@ -84,6 +110,17 @@ func (s *Service) clearPreviousVisitMeleeLocked() {
 // outstanding operation, its visit, direction and complete GUID pair.
 // The caller has already checked the complete frame and the attacker GUID.
 func (s *Service) acceptOwnMeleeAttackLocked(target uint64, enabled bool) bool {
+	swing := s.encounterSwing
+	if swing.target != 0 {
+		if target != swing.target || !s.encounterVisit.bound || swing.visit != s.encounterVisit.revision || enabled && swing.stopIssued {
+			return false
+		}
+		if op := s.pendingMeleeOperationLocked(); !enabled && op != nil && op.view.Enabled {
+			// A STOP proves the swing is no longer active but cannot prove an
+			// earlier START ever landed.
+			s.endMeleeOperationLocked()
+		}
+	}
 	op := s.pendingMeleeOperationLocked()
 	if op != nil {
 		if target == 0 || target != op.view.TargetGuid || enabled != op.view.Enabled {
@@ -99,6 +136,9 @@ func (s *Service) acceptOwnMeleeAttackLocked(target uint64, enabled bool) bool {
 		} else {
 			op.view.Phase = "confirmed_attack_stop"
 		}
+	}
+	if !enabled && swing.target != 0 {
+		s.encounterSwing = encounterMeleeSwing{}
 	}
 	s.meleeAcknowledgedVisit = 0
 	if enabled && !s.closed && s.encounterVisit.bound {

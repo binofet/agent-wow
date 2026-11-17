@@ -150,7 +150,11 @@ func (s *Service) blockProtectedOffenseLocked(ctx context.Context, target uint64
 	}
 	s.state.Reason = "observed_target_protection_blocks_offense"
 	if s.autoTarget != 0 && (s.autoTarget == target || s.targetProtection.overflow) {
-		s.stopAutoAttackLocked(ctx)
+		if s.encounterSwing.target != 0 {
+			s.stopEncounterMeleeLocked(ctx)
+		} else {
+			s.stopAutoAttackLocked(ctx)
+		}
 	}
 	return true
 }

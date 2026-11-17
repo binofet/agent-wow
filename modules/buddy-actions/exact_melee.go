@@ -49,11 +49,11 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 	var requested []uint64
 	if r.Stop {
 		// A legacy own server-acknowledged attack can also be stopped exactly.
-		if !s.state.AutoAttacking || s.state.AutoAttackTargetGuid != target || s.autoTarget != target || s.meleeAcknowledgedVisit != r.VisitId {
+		if !s.state.AutoAttacking || s.state.AutoAttackTargetGuid != target || s.autoTarget != target || s.meleeAcknowledgedVisit != r.VisitId || s.encounterSwing.stopIssued {
 			return nil, status.Error(codes.FailedPrecondition, "exact active own melee target is not acknowledged")
 		}
 	} else {
-		if !s.exactMeleeStartAvailableLocked(target) {
+		if s.encounterSwing.target != 0 || !s.exactMeleeStartAvailableLocked(target) {
 			return nil, status.Error(codes.FailedPrecondition, "current body and available stationary melee custody required")
 		}
 		if !s.independent {
@@ -86,12 +86,18 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 	var payload []byte
 	if r.Stop {
 		code = opcode.CMSGAttackstop
+		if s.encounterSwing.target == target {
+			s.encounterSwing.stopIssued = true
+		}
 		s.autoStopping = true
 		s.state.AutoAttackRequested = false
 		s.state.AutoAttackUnconfirmed = true
 		s.state.Reason = "exact_melee_stop_waiting_for_server"
 	} else {
 		code, payload = opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, target)
+		if s.hostEncounterKey != "" {
+			s.encounterSwing = encounterMeleeSwing{target: target, visit: r.VisitId}
+		}
 		s.autoTarget = target
 		s.state.AutoAttackRequested = true
 		s.state.Reason = "exact_melee_start_waiting_for_server"
