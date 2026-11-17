@@ -31,6 +31,9 @@ func (s *Service) healCasterReadyLocked(w *worldv1.SnapshotResponse) string {
 	if self.MaxHealth == 0 || self.Health > self.MaxHealth || !self.PowerKnown || self.PowerType != 0 {
 		return "healing_caster_vitals_unknown"
 	}
+	if !s.spellbookKnown {
+		return "healing_spellbook_unknown"
+	}
 	if s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed ||
 		s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) ||
 		s.recovery.state.Active || s.crowdControl.active || self.ChannelSpellId != 0 || self.UnitFlags&0x2000 != 0 {

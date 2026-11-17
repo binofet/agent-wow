@@ -73,7 +73,7 @@ func TestHostStandingHealingOwnsExactTargetAndRank(t *testing.T) {
 }
 
 func TestExactHealRejectsObservationChangesWithoutSubstitution(t *testing.T) {
-	for _, name := range []string{"membership lost", "out of range", "unknown rank"} {
+	for _, name := range []string{"membership lost", "out of range", "unknown rank", "new channel"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := rig(t)
 			s.sessionID = f.party.SessionId
@@ -91,6 +91,8 @@ func TestExactHealRejectsObservationChangesWithoutSubstitution(t *testing.T) {
 				f.onClock = func() { f.world.Owner.X = 41 }
 			case "unknown rank":
 				req.SpellId = 2052
+			case "new channel":
+				f.onClock = func() { f.world.Self.ChannelSpellId = 12051 }
 			}
 			if _, err := s.CastHeal(ctx, req); status.Code(err) != codes.FailedPrecondition || countPackets(f, opcode.CMSGCastSpell) != 0 {
 				t.Fatal("changed or unknown facts allowed a cast", err, f.packets)

@@ -151,6 +151,18 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 			t.Fatalf("%s returned wrong fixture identity: %s (%v)", full, body, err)
 		}
 	}
+	if methods["buddy-actions.healing_options"].Effect != moddisc.EffectRead {
+		t.Fatal("healing_options must be published as a read")
+	}
+	body, err := m.InvokeJSON(ctx, "buddy-actions.healing_options", nil)
+	var healingView struct {
+		SessionID string                `json:"sessionId"`
+		Caster    struct{ Guid string } `json:"caster"`
+		HostOwned bool                  `json:"hostOwned"`
+	}
+	if err != nil || json.Unmarshal(body, &healingView) != nil || healingView.SessionID != catalog.SessionID || healingView.Caster.Guid != "11" || healingView.HostOwned {
+		t.Fatalf("healing_options returned wrong fixture identity or default authority: %s (%v)", body, err)
+	}
 
 	const service = "/warcraftbuddy.actions.v1.BuddyActions/"
 	for _, tc := range []struct {

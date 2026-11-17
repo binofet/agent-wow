@@ -256,6 +256,10 @@ func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerStat
 		s.state.Reason = "healing_observations_changed_before_cast"
 		return false
 	}
+	if exact && s.healCasterReadyLocked(fresh) != "" {
+		s.state.Reason = "healing_caster_changed_before_cast"
+		return false
+	}
 	freshBudget := spellCost(heal, fresh.Self)
 	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || !exact && freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
 		s.state.Reason = "healing_caster_changed_before_cast"
@@ -281,6 +285,10 @@ func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerStat
 	}
 	if heal.ID == 0 || exact && !s.healRankEligibleLocked(fresh.Self, target, heal, s.pos) {
 		s.state.Reason = "healing_spell_or_resources_changed_before_cast"
+		return false
+	}
+	if ctx.Err() != nil {
+		s.state.Reason = "healing_request_cancelled_before_cast"
 		return false
 	}
 	now := s.now()
