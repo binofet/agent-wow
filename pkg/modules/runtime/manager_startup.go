@@ -77,7 +77,7 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		inst.launch = l
 		inst.server = grpc.NewServer()
 		modv1.RegisterSessionServer(inst.server, modcb.New(m.ctx, name, modcb.Handlers{
-			SendPacket:   m.session.SendPacket,
+			SendPacket:   m.modulePacketWriter(filepath.Base(dir), name),
 			Clock:        m.session.Clock,
 			InvokeModule: m.invokeModule,
 		}))
@@ -111,4 +111,13 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		go func() { defer m.wg.Done(); m.pollHealth(name, inst) }()
 	}
 	return m.Err()
+}
+
+func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
+	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		// The callback server supplies module identity. A callback without a
+		// matched policy dispatch cannot claim a Lua generation or action ID.
+		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		return m.session.SendPacket(modsession.WithWriteOrigin(ctx, origin), opcode, payload)
+	}
 }
