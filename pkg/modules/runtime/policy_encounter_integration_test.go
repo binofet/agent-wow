@@ -2,7 +2,9 @@ package modrt
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -99,4 +101,81 @@ return {
 		t.Fatal("ownership change replayed a cast", write)
 	default:
 	}
+}
+
+type packagedEncounterCombatWorld struct {
+	packagedHostileWorld
+}
+
+func (w *packagedEncounterCombatWorld) Snapshot(ctx context.Context, req *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+	view, err := w.packagedHostileWorld.Snapshot(ctx, &worldv1.SnapshotRequest{CreatureGuid: policyWolfGUID})
+	if err != nil {
+		return nil, err
+	}
+	view.VisitRevision, view.ObservedPackets = 1, 10
+	view.RequestedCreature.DynamicFlagsKnown = true
+	view.NearbyCreatures = []*worldv1.CreatureState{view.RequestedCreature}
+	if req.GetCreatureGuid() != policyWolfGUID {
+		view.RequestedCreature = nil
+	}
+	return view, nil
+}
+
+func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
+	world := &packagedEncounterCombatWorld{}
+	runner := &policySpellRunner{world: world, hostOwnsEncounter: true}
+	manager, ctx, writes := startPackagedPolicySpellWith(t, runner, fixtureSmite)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGLoginVerifyWorld, make([]byte, 20))
+
+	source, err := exec.CommandContext(ctx, "../../../dev/encounter-bundle").CombinedOutput()
+	if err != nil {
+		t.Fatalf("assemble encounter policy: %s %v", source, err)
+	}
+	policyCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	if err := manager.StartObservedPolicy(policyCtx, string(source), "encounter="+encounterObservationMethod); err != nil {
+		t.Fatal(err)
+	}
+	poll := time.NewTicker(25 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		raw, err := manager.InvokeJSON(ctx, encounterObservationMethod, nil)
+		view := &actionsv1.EncounterObservationResponse{}
+		if err != nil || protojson.Unmarshal(raw, view) != nil {
+			t.Fatalf("observe native encounter: %s %v", raw, err)
+		}
+		if view.GetHostOwned() {
+			break
+		}
+		select {
+		case unexpected := <-writes:
+			t.Fatalf("unengaged creature provoked a write: %+v", unexpected)
+		case <-ctx.Done():
+			t.Fatal("actual encounter bundle did not claim the playable visit")
+		case <-poll.C:
+		}
+	}
+	world.attacker.Store(true)
+	manager.mu.Lock()
+	policy := manager.policy
+	manager.mu.Unlock()
+	boot := policy.vm.Status()
+	expected := binary.LittleEndian.AppendUint32([]byte{1}, fixtureSmite)
+	expected = append(expected, 0, 2, 0, 0, 0)
+	expected = append(expected, spellFixturePackedGUID(policyWolfGUID)...)
+	cast := checkPackagedWrite(t, ctx, writes, opcode.CMSGCastSpell, expected, modsession.WriteOrigin{
+		SessionID: boot.SessionID, Module: actionsModule, Writer: "lua",
+		PolicyRevision: boot.Revision, Generation: boot.Epoch, ActionID: "1",
+	})
+	stop()
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellGo, fixtureHostileGo(cast.body[0], fixtureSmite))
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellnonmeleedamagelog, fixtureHostileDamage(policyWolfGUID))
+	if err := policy.vm.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if op := packagedHostileEffect(t, ctx, manager); !op.GetEffectObserved() || op.GetTargetGuid() != policyWolfGUID ||
+		policy.vm.Status().Pending != 0 {
+		t.Fatalf("the selected attacker's damage did not settle the Lua action: %v", op)
+	}
+	noPackagedWrites(t, writes)
 }
