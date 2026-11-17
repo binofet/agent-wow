@@ -52,6 +52,8 @@ const (
 	BuddyActions_Polymorph_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
 	BuddyActions_Sap_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
 	BuddyActions_CastSelf_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
+	BuddyActions_HealingOptions_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
+	BuddyActions_CastHeal_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -91,6 +93,8 @@ type BuddyActionsClient interface {
 	Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error)
 	Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error)
 	CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error)
+	HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error)
+	CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error)
 }
 
 type buddyActionsClient struct {
@@ -411,6 +415,26 @@ func (c *buddyActionsClient) CastSelf(ctx context.Context, in *CastSelfRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HealingOptionsResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_HealingOptions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastHeal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -448,6 +472,8 @@ type BuddyActionsServer interface {
 	Polymorph(context.Context, *PolymorphRequest) (*State, error)
 	Sap(context.Context, *SapRequest) (*State, error)
 	CastSelf(context.Context, *CastSelfRequest) (*State, error)
+	HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error)
+	CastHeal(context.Context, *CastHealRequest) (*State, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -550,6 +576,12 @@ func (UnimplementedBuddyActionsServer) Sap(context.Context, *SapRequest) (*State
 }
 func (UnimplementedBuddyActionsServer) CastSelf(context.Context, *CastSelfRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CastSelf not implemented")
+}
+func (UnimplementedBuddyActionsServer) HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HealingOptions not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastHeal(context.Context, *CastHealRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastHeal not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -1130,6 +1162,42 @@ func _BuddyActions_CastSelf_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_HealingOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).HealingOptions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_HealingOptions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).HealingOptions(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_CastHeal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastHealRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastHeal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastHeal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastHeal(ctx, req.(*CastHealRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1260,6 +1328,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CastSelf",
 			Handler:    _BuddyActions_CastSelf_Handler,
+		},
+		{
+			MethodName: "HealingOptions",
+			Handler:    _BuddyActions_HealingOptions_Handler,
+		},
+		{
+			MethodName: "CastHeal",
+			Handler:    _BuddyActions_CastHeal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

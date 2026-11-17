@@ -95,12 +95,7 @@ func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Sp
 		if target.Guid != s.selfGUID && (r.Capability().Target == "self" || distance(s.pos, playerPosition(target)) > r.MaxFriendly || distance(s.pos, playerPosition(target)) < r.MinFriendly) {
 			continue
 		}
-		amount := float64(0)
-		for _, e := range r.Effects {
-			if e.Kind == 10 {
-				amount += float64(e.Points) + math.Max(0, float64(e.Dice)-1)/2
-			}
-		}
+		amount := directHealing(r)
 		if amount > score || amount == score && (best.ID == 0 || r.Rank > best.Rank) {
 			best, score = r, amount
 		}
@@ -117,6 +112,16 @@ func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Sp
 		}
 	}
 	return best
+}
+
+func directHealing(spell spellcatalog.Spell) float64 {
+	var total float64
+	for _, effect := range spell.Effects {
+		if effect.Kind == 10 {
+			total += float64(effect.Points) + math.Max(0, float64(effect.Dice)-1)/2
+		}
+	}
+	return total
 }
 func (s *Service) reserveSpellCooldownLocked(r spellcatalog.Spell) {
 	if s.spellReady == nil {

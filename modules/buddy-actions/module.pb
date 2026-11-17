@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-≈s
+∂}
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -398,7 +398,56 @@ session_id (	R	sessionId
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
-spell_id (RspellId"é
+spell_id (RspellId"â
+CastHealRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+target_guid (R
+targetGuid
+spell_id (RspellId"–
+HealingRank
+spell_id (RspellId
+rank (H Rrankà
+cost (HRcostà
+amount (Ramount
+cast_ms (HRcastMsà
+level (HRlevelà 
+	min_range (HRminRangeà 
+	max_range (HRmaxRangeà
+	self_only	 (RselfOnlyB
+_rankB
+_costB
+
+_cast_msB
+_levelB
+
+_min_rangeB
+
+_max_range"«
+HealingPatient
+guid (Rguid
+health (Rhealth
+
+max_health (R	maxHealth
+distance (H Rdistanceà
+is_owner (RisOwner!
+under_attack (RunderAttackB
+	_distance"[
+HealingCaster
+guid (Rguid
+ready (Rready
+mana (H RmanaàB
+_mana"¥
+HealingOptionsResponse
+
+session_id (	R	sessionId?
+caster (2'.warcraftbuddy.actions.v1.HealingCasterRcaster
+
+host_owned (R	hostOwnedD
+patients (2(.warcraftbuddy.actions.v1.HealingPatientRpatients=
+spells (2%.warcraftbuddy.actions.v1.HealingRankRspells
+reason (	Rreason"é
 ResurrectOnceRequest
 
 session_id (	R	sessionId
@@ -416,7 +465,7 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2È
+targetGuid2ù
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
@@ -449,4 +498,6 @@ targetGuid2È
 CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.v1.StateX
 	Polymorph*.warcraftbuddy.actions.v1.PolymorphRequest.warcraftbuddy.actions.v1.StateL
 Sap$.warcraftbuddy.actions.v1.SapRequest.warcraftbuddy.actions.v1.StateV
-CastSelf).warcraftbuddy.actions.v1.CastSelfRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+CastSelf).warcraftbuddy.actions.v1.CastSelfRequest.warcraftbuddy.actions.v1.StateZ
+HealingOptions.google.protobuf.Empty0.warcraftbuddy.actions.v1.HealingOptionsResponseV
+CastHeal).warcraftbuddy.actions.v1.CastHealRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

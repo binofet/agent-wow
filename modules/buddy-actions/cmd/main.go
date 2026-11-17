@@ -58,6 +58,15 @@ func run() error {
 	if identity.Independent() {
 		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	}
+	if value := os.Getenv("BUDDY_HOST_HEALING_OWNED"); value != "" {
+		owned, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("BUDDY_HOST_HEALING_OWNED must be true or false")
+		}
+		if owned {
+			service.UseHostStandingHealing()
+		}
+	}
 	service.UseAutomaticCorpseLoot()
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {

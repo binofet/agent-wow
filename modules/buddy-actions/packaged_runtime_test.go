@@ -158,6 +158,7 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 	}{
 		{"create_item", "CreateItem", `"selfGuid":"11","spellId":5505`, "exact learned item-creation rank required"},
 		{"cast_self", "CastSelf", `"selfGuid":"11","spellId":12051`, "learned spell with a supported self target required"},
+		{"cast_heal", "CastHeal", `"selfGuid":"99","targetGuid":"11","spellId":2050`, "current owned body required"},
 		{"polymorph", "Polymorph", `"targetGuid":"17379390962022744065","spellId":118`, "exact learned crowd-control rank required"},
 		{"sap", "Sap", `"targetGuid":"17379390962022744065","spellId":6770`, "exact learned crowd-control rank required"},
 		{"resurrect_once", "ResurrectOnce", `"selfGuid":"11","targetGuid":"12"`, "current living caster observation required"},

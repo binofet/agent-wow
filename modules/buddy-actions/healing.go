@@ -195,6 +195,9 @@ func (s *Service) triageHealLocked(ctx context.Context, w *worldv1.SnapshotRespo
 }
 
 func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotResponse, automatic, urgentOnly bool) bool {
+	if automatic && s.hostStandingHealing {
+		return false
+	}
 	if reason := safeSelfCombat(w, s.selfGUID); reason != "" {
 		s.state.Reason = reason
 		return false
@@ -234,6 +237,10 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "mana_unknown_or_insufficient"
 		return false
 	}
+	return s.castHealLocked(ctx, target, heal, automatic, urgentOnly, false)
+}
+
+func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerState, heal spellcatalog.Spell, automatic, urgentOnly, exact bool) bool {
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
@@ -250,18 +257,18 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		return false
 	}
 	freshBudget := spellCost(heal, fresh.Self)
-	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
+	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || !exact && freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
 		s.state.Reason = "healing_caster_changed_before_cast"
 		return false
 	}
 	// A newly urgent own injury takes priority even if an ally was selected
 	// before the movement-stop/observation round trip.
-	if injuredForHealing(fresh.Self, true) && uint64(fresh.Self.Health)*100 < uint64(fresh.Self.MaxHealth)*urgentSelfHealPercent {
+	if !exact && injuredForHealing(fresh.Self, true) && uint64(fresh.Self.Health)*100 < uint64(fresh.Self.MaxHealth)*urgentSelfHealPercent {
 		target = fresh.Self
 	} else {
 		target = observedHealingPlayer(fresh, target.Guid)
 	}
-	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && distance(s.pos, playerPosition(target)) > 35 || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
+	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || !exact && target.Guid != s.selfGUID && distance(s.pos, playerPosition(target)) > 35 || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
 		s.state.Reason = "healing_target_changed_before_cast"
 		return false
 	}
@@ -269,8 +276,10 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_target_no_longer_in_current_party"
 		return false
 	}
-	heal = s.bestHealLocked(fresh.Self, target)
-	if heal.ID == 0 {
+	if !exact {
+		heal = s.bestHealLocked(fresh.Self, target)
+	}
+	if heal.ID == 0 || exact && !s.healRankEligibleLocked(fresh.Self, target, heal, s.pos) {
 		s.state.Reason = "healing_spell_or_resources_changed_before_cast"
 		return false
 	}

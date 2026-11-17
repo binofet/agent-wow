@@ -344,6 +344,39 @@ message PolymorphRequest { string session_id = 1; uint32 spell_id = 2; uint64 ta
 message SapRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_guid = 3; bool approach = 4; bool cancel = 5; }
 message CreateItemRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
 message CastSelfRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
+message CastHealRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message HealingRank {
+  uint32 spell_id = 1;
+  optional uint32 rank = 2;
+  optional uint32 cost = 3;
+  double amount = 4;
+  optional uint32 cast_ms = 5;
+  optional uint32 level = 6;
+  optional double min_range = 7;
+  optional double max_range = 8;
+  bool self_only = 9;
+}
+message HealingPatient {
+  uint64 guid = 1;
+  uint32 health = 2;
+  uint32 max_health = 3;
+  optional double distance = 4;
+  bool is_owner = 5;
+  bool under_attack = 6;
+}
+message HealingCaster {
+  uint64 guid = 1;
+  bool ready = 2;
+  optional uint32 mana = 3;
+}
+message HealingOptionsResponse {
+  string session_id = 1;
+  HealingCaster caster = 2;
+  bool host_owned = 3;
+  repeated HealingPatient patients = 4;
+  repeated HealingRank spells = 5;
+  string reason = 6;
+}
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
@@ -382,4 +415,6 @@ service BuddyActions {
   rpc Polymorph(PolymorphRequest) returns (State);
   rpc Sap(SapRequest) returns (State);
   rpc CastSelf(CastSelfRequest) returns (State);
+  rpc HealingOptions(google.protobuf.Empty) returns (HealingOptionsResponse);
+  rpc CastHeal(CastHealRequest) returns (State);
 }

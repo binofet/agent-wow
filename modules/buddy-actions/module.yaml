@@ -16,6 +16,8 @@ rpc:
   pick_lock: /warcraftbuddy.actions.v1.BuddyActions/PickLock
   create_item: /warcraftbuddy.actions.v1.BuddyActions/CreateItem
   cast_self: /warcraftbuddy.actions.v1.BuddyActions/CastSelf
+  healing_options: /warcraftbuddy.actions.v1.BuddyActions/HealingOptions
+  cast_heal: /warcraftbuddy.actions.v1.BuddyActions/CastHeal
   polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
   sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
@@ -86,6 +88,8 @@ script_api:
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
   create_item: {effect: mutation, description: Cast one exact learned direct item creation spell on self and report inventory confirmation}
   cast_self: {effect: mutation, description: Cast one exact learned spell on the current body and report cast or channel observations}
+  healing_options: {effect: read, description: Observe injured eligible patients and available learned heal ranks}
+  cast_heal: {effect: mutation, description: Cast the exact learned heal on the selected observed eligible player}
   polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}

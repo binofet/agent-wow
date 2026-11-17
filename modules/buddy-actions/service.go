@@ -58,6 +58,7 @@ type Service struct {
 	sessionID                                  string
 	selfGUID                                   uint64
 	independent                                bool
+	hostStandingHealing                        bool
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time
 	state                                      actionsv1.State
