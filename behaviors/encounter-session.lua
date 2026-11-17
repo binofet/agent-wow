@@ -29,6 +29,11 @@ local function alive(unit)
     return unit and unit.present == true and unit.aliveKnown == true and unit.alive == true
 end
 
+local function host_can_decide(obs)
+    return obs.hostOwned == true or obs.hostRequested == true or
+        (obs.hostOwned == nil and not obs.worldObservationRevision)
+end
+
 local function on_event(event)
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
@@ -38,7 +43,7 @@ local function on_event(event)
         state.sequence = event.sequence
         if obs.worldObservationRevision then
             state.observation = nil
-            if healing and obs.hostOwned == true and obs.healing and obs.healing.hostOwned == true and
+            if healing and host_can_decide(obs) and obs.healing and obs.healing.hostOwned == true and
                obs.healing.sessionId == obs.sessionId then
                 if not healing.on_event({kind="healing_observation", sequence=event.sequence, value=obs.healing}) then
                     return false
@@ -112,7 +117,7 @@ end
 
 local function proposal(obs, kind, target, spell)
     return {capability=kind, sessionId=obs.sessionId, selfGuid=obs.selfGuid,
-            targetGuid=target, spellId=spell, observationSequence=state.sequence}
+            targetGuid=target, spellId=spell, visitId=obs.visitId, observationSequence=state.sequence}
 end
 
 local function known_runner(target)
@@ -264,7 +269,7 @@ local function decide_encounter(frame)
     end
 
     local self = players[obs.selfGuid]
-    if obs.hostOwned == false or obs.worldObservationRevision and obs.hostOwned ~= true or
+    if not host_can_decide(obs) or
        frame.input.observationSequence ~= state.sequence or state.settledAt == state.sequence or
        #frame.pending ~= 0 or not members[obs.selfGuid] or not alive(self) or not same_map(self, obs.mapId) then
         return out
@@ -333,7 +338,7 @@ local function decide(frame)
         -- A separate mana tick cannot supersede a bound encounter decision.
         if encounter and bound_plan(encounter) then return out end
         expected = input.observationSequence
-    elseif encounter and encounter.hostOwned ~= false and input.observationSequence == state.sequence and
+    elseif encounter and host_can_decide(encounter) and input.observationSequence == state.sequence and
            state.settledAt ~= state.sequence then
         expected = (input.observationSequences or {}).self_mana
     end

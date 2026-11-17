@@ -292,8 +292,11 @@ func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome
 		if effect.ChannelStarted && effect.ChannelEnded {
 			return behavior.ActionSettledUnverified
 		}
-	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified", "transport_unconfirmed_no_retry",
+	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified",
 		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed":
+		// Actions only publishes these phases after retiring native cast custody.
+		return behavior.ActionSettledUnverified
+	case "transport_unconfirmed_no_retry":
 		return behavior.ActionUnknown
 	}
 	return ""
