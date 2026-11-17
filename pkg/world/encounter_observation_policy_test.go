@@ -69,9 +69,9 @@ local encounter_intent = {
 		}
 		return result
 	}
-	observe := func() string {
+	enqueue := func(kind string, message proto.Message) string {
 		t.Helper()
-		raw, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(obs)
+		raw, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(message)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,12 +79,13 @@ local encounter_intent = {
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
 		}
-		seq, err := host.Enqueue(behavior.Event{Kind: "encounter_observation", Value: value})
+		seq, err := host.Enqueue(behavior.Event{Kind: kind, Value: value})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return key(seq)
 	}
+	observe := func() string { return enqueue("encounter_observation", obs) }
 	expect := func(result behavior.Decision, phase string, focus any) {
 		t.Helper()
 		if got := result.Output; got["phase"] != phase || got["focusGuid"] != focus || got["action"] != nil {
@@ -167,4 +168,33 @@ local encounter_intent = {
 	fresh := decide(observe())
 	expect(fresh, "apply_control", nil)
 	expectQueue(fresh, next, nextCC)
+
+	// The same Lua writer can consume a secondary feed from this tick.
+	// A leftover mana sample from a previous batch cannot authorize a cast.
+	obs.HostOwned = proto.Bool(true)
+	obs.Spells["118"].Ready = false
+	mana := &actionsv1.SelfManaObservationResponse{SessionId: session, SelfGuid: 4, HostOwned: true, SpellbookKnown: true,
+		Caster: &actionsv1.SelfManaCaster{Guid: 4, Present: true, AliveKnown: true, Alive: true,
+			MapKnown: true, PositionKnown: true, ClassKnown: true, ClassId: 8, PowerKnown: true,
+			PowerType: proto.Uint32(0), Power: proto.Uint32(40), MaxPower: proto.Uint32(128),
+			CombatKnown: true, InCombat: proto.Bool(false), MovementKnown: true, Moving: proto.Bool(false),
+			ChannelKnown: true, ChannelSpellId: proto.Uint32(0)},
+		Activity: &actionsv1.SelfManaActivity{Known: true, Idle: proto.Bool(true)},
+		Threat:   &actionsv1.SelfManaThreat{Known: true, AttackingSelf: proto.Bool(false), AttackingParty: proto.Bool(false)},
+		Spells: []*actionsv1.SelfManaSpell{{SpellId: 12051, FamilyId: 12051, Rank: proto.Uint32(1),
+			MetadataKnown: true, SelfCastSupported: true, Channeled: true, ReadyKnown: true, Ready: proto.Bool(true)}},
+	}
+	manaSequence := enqueue("self_mana_observation", mana)
+	seq = observe()
+	expect(decide(seq), "apply_control", nil)
+	decision, err := host.Decide(ctx, map[string]any{"kind": "encounter", "observationSequence": seq,
+		"observationSequences": map[string]any{"encounter": seq, "self_mana": manaSequence}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, _ = decision.Output["action"].(map[string]any)
+	if action["capability"] != "cast_self" || action["spellId"] != float64(12051) ||
+		action["observationSequence"] != manaSequence || action["targetGuid"] != "4" {
+		t.Fatalf("current mana observation did not authorize exact cast: %+v", decision.Output)
+	}
 }
