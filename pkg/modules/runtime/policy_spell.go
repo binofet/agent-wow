@@ -282,9 +282,12 @@ func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome
 		}
 	case "server_rejected_no_replay", "server_cast_go_no_target_hit":
 		return behavior.ActionFailed
+	case "channel_ended_effect_unverified":
+		if effect.ChannelStarted && effect.ChannelEnded {
+			return behavior.ActionSettledUnverified
+		}
 	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified", "transport_unconfirmed_no_retry",
-		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed",
-		"channel_ended_effect_unverified":
+		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed":
 		return behavior.ActionUnknown
 	}
 	return ""

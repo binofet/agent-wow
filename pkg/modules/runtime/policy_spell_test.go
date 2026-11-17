@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -68,5 +70,19 @@ func TestPolicySpellCallbackBindsScopeAndWrite(t *testing.T) {
 	}
 	if len(writes) != 2 || writes[0] != (modsession.WriteOrigin{SessionID: "s1", Module: actionsModule, Writer: "module"}) || writes[1] != origin {
 		t.Fatalf("got transport writes %+v", writes)
+	}
+}
+
+func TestPolicySelfChannelEndsWithoutInventingManaGain(t *testing.T) {
+	effect := &actionsv1.SpellOperation{
+		Capability: "cast_self", SpellId: 12051, Phase: "channel_ended_effect_unverified",
+		TransportWritten: true, ServerCastGo: true, ChannelStarted: true,
+	}
+	if got := spellEffectOutcome(effect); got != "" {
+		t.Fatalf("channel still active: %s", got)
+	}
+	effect.ChannelEnded = true
+	if got := spellEffectOutcome(effect); got != behavior.ActionSettledUnverified || effect.EffectObserved {
+		t.Fatalf("ended channel: %s, effect observed: %v", got, effect.EffectObserved)
 	}
 }

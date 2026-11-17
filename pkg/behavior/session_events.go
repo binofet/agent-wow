@@ -31,10 +31,11 @@ const (
 	ActionConfirmed         ActionOutcome = "confirmed"
 	ActionFailed            ActionOutcome = "failed"
 	ActionNotDispatched     ActionOutcome = "not_dispatched"
+	ActionSettledUnverified ActionOutcome = "settled_unverified"
 )
 
 func (o ActionOutcome) terminal() bool {
-	return o == ActionConfirmed || o == ActionFailed || o == ActionNotDispatched
+	return o == ActionConfirmed || o == ActionFailed || o == ActionNotDispatched || o == ActionSettledUnverified
 }
 
 // ActionReceipt binds an observation to a harness reservation in this Session.
@@ -67,7 +68,7 @@ func (p pendingAction) accepts(next ActionOutcome) bool {
 		return p.queued == ActionReserved
 	case ActionUnknown:
 		return p.queued == ActionReserved || p.queued == ActionTransportAccepted
-	case ActionConfirmed, ActionFailed:
+	case ActionConfirmed, ActionFailed, ActionSettledUnverified:
 		return !p.queued.terminal()
 	case ActionNotDispatched:
 		return p.queued == ActionReserved || (p.queued == ActionUnknown && !p.accepted)
