@@ -44,7 +44,7 @@ func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMe
 	host := m.policy
 	m.mu.Unlock()
 	if host == nil {
-		return fault(-32000, status.Error(codes.FailedPrecondition, "no session policy is attached"))
+		return fault(-32601, status.Error(codes.NotFound, "no session policy is attached"))
 	}
 	if reload {
 		source := host.builtin
