@@ -3,6 +3,7 @@ package modrt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -79,7 +80,19 @@ func (p *SessionPolicy) stepObservation(ctx context.Context, sid, phase, method 
 	if err != nil {
 		return err
 	}
-	sequence, err := p.Enqueue(behavior.Event{Kind: phase + "_observation", Value: observed})
+	event := behavior.Event{Kind: phase + "_observation", Value: observed}
+	sequence, err := p.Enqueue(event)
+	if errors.Is(err, behavior.ErrEventBackpressure) {
+		// Apply buffered events before retrying the unwritten observation.
+		// This does not re-run an action or skip an earlier receipt.
+		p.advance.Lock()
+		drainErr := p.vm.Drain(ctx)
+		p.advance.Unlock()
+		if drainErr != nil {
+			return drainErr
+		}
+		sequence, err = p.Enqueue(event)
+	}
 	if err != nil {
 		return err
 	}
