@@ -17,11 +17,12 @@ import (
 // all calls to Decide and Reload. Observations and receipts may arrive during
 // reload and while an admitted action is executing.
 type SessionPolicy struct {
-	vm         *behavior.Session
-	body       string
-	lifetime   context.Context
-	advance    sync.Mutex
-	dispatches sync.WaitGroup
+	vm           *behavior.Session
+	manager      *Manager
+	body         string
+	lifetime     context.Context
+	advance      sync.Mutex
+	dispatchDone chan struct{}
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -38,7 +39,7 @@ func (m *Manager) StartPolicy(ctx context.Context, source string) (*SessionPolic
 	if err != nil {
 		return nil, err
 	}
-	host := &SessionPolicy{vm: vm, body: catalog.CharacterGUID, lifetime: m.ctx}
+	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx}
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
 		filepath.Base(m.dir) != catalog.SessionID || strconv.FormatUint(m.session.Identity.CharacterGUID, 10) != host.body {
@@ -56,8 +57,11 @@ func (p *SessionPolicy) close() {
 	// A dispatch registers under advance. Once lifetime is canceled, no
 	// further Step can register after this barrier.
 	p.advance.Lock()
+	done := p.dispatchDone
 	p.advance.Unlock()
-	p.dispatches.Wait()
+	if done != nil {
+		<-done
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	_ = p.vm.Drain(ctx)
@@ -95,6 +99,10 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		p.advance.Unlock()
 		return nil, nil, behavior.ErrSessionClosed
 	}
+	if p.dispatchDone != nil {
+		p.advance.Unlock()
+		return nil, nil, status.Error(codes.FailedPrecondition, "policy action dispatch is in progress")
+	}
 	decision, err := p.vm.Decide(ctx, input)
 	if err != nil {
 		p.advance.Unlock()
@@ -115,15 +123,20 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		return decision.Output, nil, errors.Join(err, errors.New("policy action cannot be dispatched"))
 	}
 	s := p.vm.Status()
-	id, err := p.vm.ReserveAction(decision)
+	id, err := p.reserve(decision)
 	if err == nil {
-		p.dispatches.Add(1)
+		p.dispatchDone = make(chan struct{})
 	}
 	p.advance.Unlock()
 	if err != nil {
 		return decision.Output, nil, err
 	}
-	defer p.dispatches.Done()
+	defer func() {
+		p.advance.Lock()
+		close(p.dispatchDone)
+		p.dispatchDone = nil
+		p.advance.Unlock()
+	}()
 	origin := modsession.WriteOrigin{SessionID: s.SessionID, Module: dispatch.Module, Writer: "lua", PolicyRevision: s.Revision, Generation: s.Epoch, ActionID: strconv.FormatUint(id, 10)}
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -133,6 +146,16 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	_, err = p.Enqueue(behavior.Event{Kind: "action_result", Receipt: receipt})
 	return decision.Output, receipt, err
+}
+
+func (p *SessionPolicy) reserve(decision behavior.Decision) (uint64, error) {
+	m := p.manager
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing || m.preparing || m.prepared || m.err != nil {
+		return 0, status.Error(codes.FailedPrecondition, "session is leaving the world")
+	}
+	return p.vm.ReserveAction(decision)
 }
 
 // Enqueue records a game observation or a result for a reserved action.

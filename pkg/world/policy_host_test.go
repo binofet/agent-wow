@@ -12,6 +12,8 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/modules/runtime"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestPolicyReloadRetainsActualWorldWriteReceipt(t *testing.T) {
@@ -116,6 +118,11 @@ return {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	// A second Step must wait for the dispatcher, independent of Lua's
+	// pending-action guard. Reload and observation remain available.
+	if _, _, err := host.Step(ctx, map[string]any{"act": true}, nil); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("second Step entered the active dispatcher: %v", err)
+	}
 	v2 := strings.Replace(policy, `technique = "smite"`, `technique = "shadow_word_pain"`, 1)
 	revision, err := host.Reload(ctx, v2, old.Revision)
 	if err != nil {
@@ -160,6 +167,21 @@ return {
 	})
 	if err != nil || receipt == nil || receipt.ActionID != 2 || receipt.Outcome != behavior.ActionTransportAccepted {
 		t.Fatalf("updated policy failed to dispatch: %+v %v", receipt, err)
+	}
+	if _, err := host.Enqueue(behavior.Event{Kind: "fixture_effect", Receipt: &behavior.ActionReceipt{
+		SessionID: identity.SessionID, ActionID: 2, Outcome: behavior.ActionConfirmed,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	_, receipt, err = host.Step(ctx, map[string]any{"act": true}, func(map[string]any) (modrt.PolicyDispatch, error) {
+		m.BeginLogout()
+		return modrt.PolicyDispatch{Module: "buddy-actions", Send: func(context.Context) (behavior.ActionOutcome, map[string]any) {
+			t.Error("the cast was sent after logout began")
+			return behavior.ActionNotDispatched, nil
+		}}, nil
+	})
+	if receipt != nil || status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("logout did not fence the proposed cast: %+v %v", receipt, err)
 	}
 	writes := trace.Snapshot()
 	if writes.Dropped != 0 || len(writes.Attempts) != 2 || writes.Attempts[0].Origin.ActionID != "1" ||
