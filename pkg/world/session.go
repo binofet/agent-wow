@@ -42,6 +42,8 @@ type Session struct {
 	cancel       context.CancelFunc
 	workers      sync.WaitGroup
 	cleanupErr   error
+
+	gameplayTrace *GameplayTrace
 }
 
 // Options injects a session-owned module runtime and separate startup budgets.
@@ -50,6 +52,9 @@ type Options struct {
 	Modules       modrt.Runtime
 	ModuleTimeout time.Duration
 	EntryTimeout  time.Duration
+	// GameplayTrace observes queued gameplay packets at the transport boundary.
+	// Core protocol maintenance and packets canceled before writing are excluded.
+	GameplayTrace *GameplayTrace
 }
 type writeRequest struct {
 	ctx   context.Context
@@ -105,7 +110,7 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 		opts.Modules = modrt.New(nil, nil, logger)
 	}
 	lifetime, stop := context.WithCancel(context.Background())
-	s := &Session{conn: conn, logger: logger, state: State{Status: EnteringWorld, Realm: realm, Character: character}, done: make(chan struct{}), abort: make(chan struct{}), logout: make(chan chan *logoutOperation), modules: opts.Modules, started: time.Now(), startLogin: make(chan struct{}), startupDone: make(chan struct{}), closed: make(chan struct{}), writes: make(chan writeRequest), ctx: lifetime, cancel: stop}
+	s := &Session{conn: conn, logger: logger, gameplayTrace: opts.GameplayTrace, state: State{Status: EnteringWorld, Realm: realm, Character: character}, done: make(chan struct{}), abort: make(chan struct{}), logout: make(chan chan *logoutOperation), modules: opts.Modules, started: time.Now(), startLogin: make(chan struct{}), startupDone: make(chan struct{}), closed: make(chan struct{}), writes: make(chan writeRequest), ctx: lifetime, cancel: stop}
 	ready := make(chan struct{})
 	go s.run(ready, timing)
 	startup, endStartup := context.WithTimeout(ctx, opts.ModuleTimeout)
