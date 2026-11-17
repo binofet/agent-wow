@@ -17,6 +17,8 @@ func (s *Service) stopAutoAttackLocked(ctx context.Context) bool {
 	if s.autoTarget == 0 && !s.state.AutoAttacking {
 		return true
 	}
+	// An independently authorized legacy stop supersedes any typed operation.
+	s.endMeleeOperationLocked()
 	s.autoStopping = true
 	s.state.AutoAttackRequested = false
 	s.state.AutoAttackUnconfirmed = true

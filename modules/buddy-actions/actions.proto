@@ -324,6 +324,7 @@ message State {
   reserved 113;
   bool crowd_control_approach_supported = 114;
   CrowdControlState crowd_control = 115;
+  MeleeOperation last_melee_operation = 116;
 }
 message ProtectedTarget {
   uint64 target_guid = 1;
@@ -348,6 +349,21 @@ message CreateItemRequest { string session_id = 1; uint64 self_guid = 2; uint32 
 message CastSelfRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
 message CastHealRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message CastOffenseRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message MeleeRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  bool stop = 4;
+  uint64 visit_id = 5;
+}
+message MeleeOperation {
+  uint64 self_guid = 1;
+  uint64 target_guid = 2;
+  bool enabled = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  uint64 visit_id = 6;
+}
 message HealingRank {
   uint32 spell_id = 1;
   optional uint32 rank = 2;
@@ -550,5 +566,6 @@ service BuddyActions {
   rpc EncounterObservation(google.protobuf.Empty) returns (EncounterObservationResponse);
   rpc CastHeal(CastHealRequest) returns (State);
   rpc CastOffense(CastOffenseRequest) returns (State);
+  rpc Melee(MeleeRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

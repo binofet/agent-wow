@@ -41,6 +41,7 @@ type policySpell struct {
 	spell          uint32
 	target         uint64
 	encounterVisit uint64
+	melee          *policyMelee
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -52,6 +53,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "melee_start" || capability == "melee_stop" {
+		return p.resolveMelee(action, capability)
+	}
 	sessionID, _ := action["sessionId"].(string)
 	self, _ := action["selfGuid"].(string)
 	target, _ := action["targetGuid"].(string)
@@ -76,11 +80,6 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	default:
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "unsupported policy spell capability")
 	}
-	inst, md, err := p.manager.lookup(actionsModule, method, true)
-	if err != nil {
-		return PolicyDispatch{}, err
-	}
-	req := dynamicpb.NewMessage(md.Descriptor().Input())
 	values := map[protoreflect.Name]protoreflect.Value{
 		"session_id": protoreflect.ValueOfString(sessionID),
 		"spell_id":   protoreflect.ValueOfUint32(uint32(spell)),
@@ -92,17 +91,26 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		selfGUID, _ := strconv.ParseUint(self, 10, 64)
 		values["self_guid"] = protoreflect.ValueOfUint64(selfGUID)
 	}
+	op := &policySpell{vm: p.vm, capability: capability, spell: uint32(spell), target: targetGUID}
+	return p.preparePolicyDispatch(method, values, op)
+}
+
+func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoreflect.Name]protoreflect.Value, op *policySpell) (PolicyDispatch, error) {
+	inst, md, err := p.manager.lookup(actionsModule, method, true)
+	if err != nil {
+		return PolicyDispatch{}, err
+	}
+	req := dynamicpb.NewMessage(md.Descriptor().Input())
 	for name, value := range values {
 		field := req.Descriptor().Fields().ByName(name)
 		if field == nil || field.IsList() || field.IsMap() || !fieldMatchesValue(field.Kind(), value) {
-			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy spell request descriptor")
+			return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy action request descriptor")
 		}
 		req.Set(field, value)
 	}
 	if md.Descriptor().Output().FullName() != (&actionsv1.State{}).ProtoReflect().Descriptor().FullName() {
-		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy spell result descriptor")
+		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy action result descriptor")
 	}
-	op := &policySpell{vm: p.vm, capability: capability, spell: uint32(spell), target: targetGUID}
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return PolicyDispatch{}, err
@@ -125,6 +133,8 @@ func fieldMatchesValue(kind protoreflect.Kind, value protoreflect.Value) bool {
 		return kind == protoreflect.Uint32Kind
 	case uint64:
 		return kind == protoreflect.Uint64Kind
+	case bool:
+		return kind == protoreflect.BoolKind
 	default:
 		return false
 	}
@@ -136,7 +146,10 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
-	if op.capability == "offense" || op.capability == "sap" {
+	switch {
+	case op.melee != nil:
+		bridge = modcb.PolicyMeleeService
+	case op.capability == "offense" || op.capability == "sap":
 		bridge = modcb.PolicyHostileSpellService
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -181,7 +194,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	spells.mu.Lock()
 	op := spells.active[token]
 	if op == nil || !op.admitted || op.attempted || op.origin.SessionID != sessionID ||
-		op.origin.Module != module || code != opcode.CMSGCastSpell || !op.matchesPacket(payload) {
+		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
 		return status.Error(codes.PermissionDenied, "invalid policy spell callback")
 	}
@@ -193,6 +206,16 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	op.written = err == nil
 	spells.mu.Unlock()
 	return err
+}
+
+func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.melee != nil {
+		if op.melee.stop {
+			return code == opcode.CMSGAttackstop && len(payload) == 0
+		}
+		return code == opcode.CMSGAttackswing && len(payload) == 8 && binary.LittleEndian.Uint64(payload) == op.target
+	}
+	return code == opcode.CMSGCastSpell && op.matchesPacket(payload)
 }
 
 func (op *policySpell) matchesPacket(body []byte) bool {
@@ -219,6 +242,9 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 }
 
 func (op *policySpell) payload(phase string, written, castGo, observed bool) map[string]any {
+	if op.melee != nil {
+		return op.meleePayload(phase, written, observed)
+	}
 	return map[string]any{
 		"capability": op.capability, "spell_id": op.spell,
 		"target_guid": strconv.FormatUint(op.target, 10), "phase": phase,
@@ -244,24 +270,30 @@ func (p *SessionPolicy) recordSpellTransport(op *policySpell, receipt *behavior.
 }
 
 func (m *Manager) recordSpellEffect(module string, trailer metadata.MD) {
-	token, body, ok := modcb.PolicySpellEffect(trailer)
-	if module != actionsModule || !ok {
+	if module != actionsModule {
 		return
 	}
-	var native actionsv1.SpellOperation
-	if err := proto.Unmarshal(body, &native); err != nil {
-		m.logger.Warn("invalid native spell receipt", "error", err)
-		return
+	if token, body, ok := modcb.PolicySpellEffect(trailer); ok {
+		m.recordPolicyEffect(token, body, false)
 	}
+	if token, body, ok := modcb.PolicyMeleeEffect(trailer); ok {
+		m.recordPolicyEffect(token, body, true)
+	}
+}
+
+func (m *Manager) recordPolicyEffect(token string, body []byte, melee bool) {
 	spells := &m.policySpells
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op := spells.active[token]
-	if op == nil || !op.attempted || op.effect != nil || native.SpellId != op.spell ||
-		native.TargetGuid != op.target || native.Capability != op.capability {
+	if op == nil || !op.attempted || op.effect != nil || (op.melee != nil) != melee {
 		return
 	}
-	outcome := spellEffectOutcome(&native)
+	outcome, payload, err := op.decodeEffect(body)
+	if err != nil {
+		m.logger.Warn("invalid native policy action receipt", "error", err)
+		return
+	}
 	if outcome == "" {
 		return
 	}
@@ -272,7 +304,7 @@ func (m *Manager) recordSpellEffect(module string, trailer metadata.MD) {
 	id, _ := strconv.ParseUint(op.origin.ActionID, 10, 64)
 	op.effect = &behavior.ActionReceipt{
 		SessionID: op.origin.SessionID, ActionID: id, Outcome: outcome,
-		Payload: op.payload(native.Phase, native.TransportWritten, native.ServerCastGo, native.EffectObserved),
+		Payload: payload,
 	}
 	if op.transport != nil {
 		delete(spells.active, token)
@@ -283,6 +315,20 @@ func (m *Manager) recordSpellEffect(module string, trailer metadata.MD) {
 			m.logger.Warn("could not enqueue native spell receipt", "error", err)
 		}
 	}
+}
+
+func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[string]any, error) {
+	if op.melee != nil {
+		return op.decodeMeleeEffect(body)
+	}
+	var native actionsv1.SpellOperation
+	if err := proto.Unmarshal(body, &native); err != nil {
+		return "", nil, err
+	}
+	if native.SpellId != op.spell || native.TargetGuid != op.target || native.Capability != op.capability {
+		return "", nil, nil
+	}
+	return spellEffectOutcome(&native), op.payload(native.Phase, native.TransportWritten, native.ServerCastGo, native.EffectObserved), nil
 }
 
 func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome {

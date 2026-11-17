@@ -112,6 +112,8 @@ type Service struct {
 	fearBreakReady                             time.Time
 	fearBreakAttempted                         bool
 	supportOp                                  *supportAttempt
+	meleeOp                                    *meleeAttempt
+	meleeAcknowledgedVisit                     uint64
 	resurrectionBindings                       map[uint64]bool
 	resurrectionOffer                          *resurrectionOffer
 	behavior                                   *behavior.Runtime
@@ -191,6 +193,7 @@ func (s *Service) UseAutomaticCorpseLoot() {
 
 func (s *Service) stateLocked() *actionsv1.State {
 	s.expireInteractionLocked()
+	s.expireMeleeOperationLocked()
 	s.updateClassLocked()
 	s.buffTimeoutLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
@@ -205,6 +208,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
 	if s.supportOp != nil {
 		out.LastSpellOperation = proto.Clone(&s.supportOp.view).(*actionsv1.SpellOperation)
+	}
+	if s.meleeOp != nil {
+		out.LastMeleeOperation = proto.Clone(&s.meleeOp.view).(*actionsv1.MeleeOperation)
 	}
 	out.BuffReason = s.state.BuffReason
 	if s.buffOp != nil {
@@ -608,6 +614,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.finishItemCreationLocked("logout_outcome_unconfirmed")
 	s.finishSelfChannelLocked("logout_outcome_unconfirmed")
 	s.endExplicitCastLocked("outcome_unconfirmed_no_retry")
+	s.endMeleeOperationLocked()
+	s.meleeAcknowledgedVisit = 0
 	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
@@ -1039,6 +1047,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.cancelProtectedCastLocked(ctx)
 	s.expireSelfChannelLocked()
 	s.expireExplicitCastLocked()
+	s.expireMeleeOperationLocked()
 	if !s.closed && s.autoTarget != 0 {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}
@@ -1410,10 +1419,15 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			op.reportPolicySpellEffect(ctx, s.supportOp == op && s.state.CastPending)
 		}()
 	}
+	if op := s.meleeOp; op != nil && op.token != "" {
+		defer op.reportPolicyMeleeEffect(ctx)
+	}
 	if s.dungeonTraceEnabled() {
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload
+	s.expireMeleeOperationLocked()
+	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)
 	s.expireCrowdControlLocked()
 	if packet.Opcode == opcode.SMSGCreatureQueryResponse {
@@ -1485,7 +1499,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			target := binary.LittleEndian.Uint64(p[8:])
 			if target == 0 {
 				malformed = true
-			} else {
+			} else if s.acceptOwnMeleeAttackLocked(target, true) {
 				s.state.AutoAttacking = true
 				s.state.AutoAttackTargetGuid = target
 				if !s.autoStopping {
@@ -1510,12 +1524,11 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			malformed = true
 			break
 		}
-		if attacker == s.selfGUID {
+		if attacker == s.selfGUID && s.acceptOwnMeleeAttackLocked(target, false) {
 			if !s.autoStopping && dead == 0 && s.autoTarget != 0 && !s.clientControlLost && !s.clientControlRestoring {
 				s.failedAssistTarget = s.autoTarget
 				s.failedAssistCastTarget = 0
 			}
-			_ = target
 			s.autoTarget = 0
 			s.autoStopping = false
 			s.state.AutoAttacking = false
