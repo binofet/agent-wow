@@ -58,7 +58,13 @@ func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMe
 		return m.describe(params)
 	case "session.attach":
 		return m.attach(ctx, params)
+	case "session.policy_source", "session.reload_policy":
+		return m.editPolicy(ctx, full, params)
 	}
+	return m.invokeJSON(ctx, full, params, false)
+}
+
+func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMessage, emitDefaults bool) (json.RawMessage, error) {
 	name, alias, _ := strings.Cut(full, ".")
 	fault := func(code int, err error) (json.RawMessage, error) {
 		return nil, &CallError{Code: code, Module: name, Method: alias, Err: err}
@@ -86,7 +92,7 @@ func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMe
 	if err := m.invoke(ctx, publicCall, "jsonrpc", name, inst, md, req, result); err != nil {
 		return fault(-32000, err)
 	}
-	body, err := (protojson.MarshalOptions{Resolver: inst.definition.Types()}).Marshal(result)
+	body, err := (protojson.MarshalOptions{Resolver: inst.definition.Types(), EmitUnpopulated: emitDefaults}).Marshal(result)
 	if err != nil {
 		return fault(-32000, status.Error(codes.Internal, err.Error()))
 	}

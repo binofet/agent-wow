@@ -20,6 +20,8 @@ type SessionPolicy struct {
 	vm           *behavior.Session
 	manager      *Manager
 	body         string
+	source       string // guarded by advance
+	builtin      string
 	lifetime     context.Context
 	advance      sync.Mutex
 	dispatchDone chan struct{}
@@ -39,7 +41,7 @@ func (m *Manager) StartPolicy(ctx context.Context, source string) (*SessionPolic
 	if err != nil {
 		return nil, err
 	}
-	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx}
+	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx, source: source, builtin: source}
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
 		filepath.Base(m.dir) != catalog.SessionID || strconv.FormatUint(m.session.Identity.CharacterGUID, 10) != host.body {
@@ -48,6 +50,7 @@ func (m *Manager) StartPolicy(ctx context.Context, source string) (*SessionPolic
 		return nil, status.Error(codes.FailedPrecondition, "session changed while starting policy")
 	}
 	m.policyObserver = host.observe
+	m.policy = host
 	m.mu.Unlock()
 	context.AfterFunc(m.ctx, host.close)
 	return host, nil
@@ -170,5 +173,9 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 	if p.lifetime.Err() != nil {
 		return "", behavior.ErrSessionClosed
 	}
-	return p.vm.Reload(ctx, source, expectedRevision)
+	revision, err := p.vm.Reload(ctx, source, expectedRevision)
+	if err == nil {
+		p.source = source
+	}
+	return revision, err
 }

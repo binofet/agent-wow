@@ -124,10 +124,36 @@ return {
 		t.Fatalf("second Step entered the active dispatcher: %v", err)
 	}
 	v2 := strings.Replace(policy, `technique = "smite"`, `technique = "shadow_word_pain"`, 1)
-	revision, err := host.Reload(ctx, v2, old.Revision)
-	if err != nil {
-		t.Fatal(err)
+	reload := func(body, expected, source string) (json.RawMessage, error) {
+		request, err := json.Marshal(map[string]string{
+			"sessionId": body, "characterGuid": identity.CharacterGUID, "expectedRevision": expected, "source": source,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.InvokeJSON(ctx, "session.reload_policy", request)
 	}
+	if _, err := reload("wrong-body", old.Revision, v2); err == nil {
+		t.Fatal("a different body accepted the edit")
+	}
+	if _, err := reload(identity.SessionID, "stale", v2); err == nil {
+		t.Fatal("a stale revision accepted the edit")
+	}
+	if _, err := reload(identity.SessionID, old.Revision, "return {"); err == nil {
+		t.Fatal("invalid Lua accepted")
+	}
+	body, err := reload(identity.SessionID, old.Revision, v2)
+	var resultRevision struct{ Revision string }
+	if err != nil || json.Unmarshal(body, &resultRevision) != nil || resultRevision.Revision == "" {
+		t.Fatalf("reload result: %s %v", body, err)
+	}
+	body, err = s.InvokeJSON(ctx, "session.policy_source", params)
+	var installed struct{ Revision, Source string }
+	if err != nil || json.Unmarshal(body, &installed) != nil ||
+		installed.Revision != resultRevision.Revision || installed.Source != v2 {
+		t.Fatalf("readback did not match installed Lua: %v", err)
+	}
+	revision := resultRevision.Revision
 	updated := view()
 	if updated.Revision != revision || updated.Revision == old.Revision || updated.Generation == old.Generation ||
 		len(updated.PendingActionIDs) != 1 || updated.PendingActionIDs[0] != "1" {

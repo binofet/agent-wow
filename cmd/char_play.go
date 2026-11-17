@@ -54,6 +54,7 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
 	var moduleTimeout time.Duration
+	var policyFile, policyObservation string
 	command := &cobra.Command{
 		Use: "play <name|guid>", Short: "Enter the world and serve a local gameplay RPC API",
 		Long: `Enter the world as the selected character. This creates a persistent connection with the world server and exposes a
@@ -72,6 +73,17 @@ local RPC API for gameplay actions.`,
 			}
 			if moduleTimeout <= 0 {
 				return errors.New("--module-timeout must be greater than zero")
+			}
+			var source string
+			if (policyFile == "") != (policyObservation == "") {
+				return errors.New("--policy-file and --policy-observation must be supplied together")
+			}
+			if policyFile != "" {
+				body, err := os.ReadFile(policyFile)
+				if err != nil {
+					return err
+				}
+				source = string(body)
 			}
 			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: config.Get().LogLevel}))
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -101,10 +113,17 @@ local RPC API for gameplay actions.`,
 			}
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
+			if policyFile != "" {
+				if err := runtime.StartObservedPolicy(ctx, source, policyObservation); err != nil {
+					return err
+				}
+			}
 			return servePlay(ctx, listener, session, logger)
 		},
 	}
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
+	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
+	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")
 	return command
 }
 

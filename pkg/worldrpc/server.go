@@ -85,7 +85,8 @@ func Handler(session Session) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		// A 128 KiB Lua source can occupy up to six JSON bytes per source byte.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {

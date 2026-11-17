@@ -1672,7 +1672,7 @@ class RPC:
                           "buddy-quest-items.state",
                           "buddy-inventory.state",
                           "buddy-actions.status", "buddy-actions.follow",
-                          "session.describe", "buddy-actions.heal_once", "buddy-actions.assist",
+                          "session.describe", "session.policy_source", "session.reload_policy", "buddy-actions.heal_once", "buddy-actions.assist",
                           "buddy-actions.resurrect_once", "buddy-actions.pick_lock",
                           "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
                           "buddy-actions.behavior", "buddy-actions.reload_behavior"):
@@ -1686,9 +1686,10 @@ class RPC:
             request_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
             if method == "buddy-trade.lookup_items":
                 request_timeout = min(request_timeout, .45)
+            response_limit = (1024 if method == "session.policy_source" else 256) * 1024
             with self.opener.open(request, timeout=request_timeout) as response:
-                raw = response.read(256 * 1024 + 1)
-            if len(raw) > 256 * 1024:
+                raw = response.read(response_limit + 1)
+            if len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
         except (OSError, ValueError, urllib.error.URLError):
@@ -1730,6 +1731,17 @@ def checked_developer_workspace(path):
     if (path / git(path,"--git-common-dir")).resolve() != (ROOT / git(ROOT,"--git-common-dir")).resolve():
         raise ConversationError("Developer workspace belongs to another repository")
     return path
+
+def registered_developer_workspace(guid, name):
+    registry = read_json(ROOT / "data/self-edit/workspaces.json")
+    matches = [row for row in registry.get("characters", [])
+               if row.get("guid") == guid and row.get("name") == name.casefold()]
+    if not matches:
+        return None
+    if len(matches) != 1 or not isinstance(matches[0].get("workspace"), str):
+        raise ConversationError("Companion workspace registration is invalid")
+    return Path(matches[0]["workspace"])
+
 
 def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None):
     command = [str(binary), "exec", "--ephemeral", "--ignore-user-config",
@@ -2975,7 +2987,7 @@ class Conversation:
         try: RPC(url)
         except (ConversationError,TypeError,AttributeError): return {"enabled":False}
         binding=["--guid",str(self.character_guid),"--rpc-url",url,"--session-id",sid]
-        base=["python3","-B",str(Path(workspace)/"dev/self-edit")]
+        base=["python3","-B",str(ROOT/"dev/self-edit")]
         return dict(enabled=True,directDevelopment=True,workspace=str(workspace),rpcUrl=url,
             selfGuid=str(self.character_guid),ownerGuid=str(self.player_guid),sessionId=sid,
             policyCommands={"show":base+["show"]+binding,
@@ -3584,7 +3596,7 @@ def main(argv=None):
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
-                        help="Enable same-brain Lua/Go development on owner/verified-peer turns in this repository/worktree")
+                        help="Override the registered in-game Lua development worktree")
     parser.add_argument("--poll-seconds", type=float, default=1)
     parser.add_argument("--reply-timeout", type=float, default=120)
     parser.add_argument("--max-replies", type=int, default=200)
@@ -3637,8 +3649,11 @@ def main(argv=None):
                 record.pop("error", None)
             write_json(state / "status.json", record)
         rpc = RPC(args.rpc_url)
+        workspace = args.developer_workspace
+        if workspace is None:
+            workspace = registered_developer_workspace(args.character_guid, args.character_name)
         brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           args.developer_workspace, args.model, args.reasoning_effort)
+                           workspace, args.model, args.reasoning_effort)
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
         record["requestedReasoningEffort"] = brain.reasoning_effort
