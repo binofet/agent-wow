@@ -42,7 +42,7 @@ func (s *Service) EngageNPC(ctx context.Context, r *actionsv1.EngageNPCRequest) 
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
-	if s.hostEncounterOwned {
+	if s.hostEncounterKey != "" {
 		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if !r.Enabled {

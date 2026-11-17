@@ -75,7 +75,7 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
-	if s.hostEncounterOwned {
+	if s.hostEncounterKey != "" {
 		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if !r.Enabled {

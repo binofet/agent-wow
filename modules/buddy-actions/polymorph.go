@@ -38,7 +38,14 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	if s.closed || session != s.sessionID {
 		return nil, status.Error(codes.FailedPrecondition, "current crowd control body required")
 	}
-	if !policySap && (cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind)) {
+	if !supplied && !cancel && s.hostEncounterActiveLocked() {
+		return nil, status.Error(codes.FailedPrecondition, "current Lua encounter owns crowd control")
+	}
+	leasedPolicy := supplied && s.hostEncounterKey != ""
+	if leasedPolicy && (!s.hasPolicyEncounterAccessLocked(ctx) || approach || cancel || s.crowdControl.active) {
+		return nil, status.Error(codes.FailedPrecondition, "active policy encounter lease and immediate crowd control required")
+	}
+	if !policySap && !leasedPolicy && (cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind)) {
 		return s.requestCrowdControlApproachLocked(ctx, rank, target, kind, class, approach, cancel)
 	}
 	if !s.crowdControlIdleLocked() {
@@ -109,6 +116,9 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	// current spell range and line of sight even when the creature is moving.
 	if !s.casterRequirementsLocked(spell) {
 		return nil, status.Error(codes.FailedPrecondition, "observed caster stance or aura requirements not satisfied")
+	}
+	if supplied && !s.admitsPolicyEncounterLocked(ctx, w) {
+		return nil, status.Error(codes.FailedPrecondition, "active policy lease for the current encounter visit required")
 	}
 	s.castSupportLocked(ctx, spell, c.Guid, 0)
 	return s.stateLocked(), nil

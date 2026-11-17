@@ -61,7 +61,9 @@ type Service struct {
 	independent                                bool
 	hostStandingHealing                        bool
 	hostSelfMana                               bool
-	hostEncounterOwned                         bool
+	hostEncounterKey                           string
+	hostEncounterVisit                         uint64
+	hostEncounterUntil                         time.Time
 	encounterVisit                             encounterVisit
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time
@@ -514,7 +516,7 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
-	if s.hostEncounterOwned {
+	if s.hostEncounterKey != "" {
 		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if r.Enabled && s.independent {
@@ -1126,7 +1128,7 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.closed {
 		return
 	}
-	nativeEncounter := !s.hostEncounterOwned
+	nativeEncounter := !s.hostEncounterActiveLocked()
 	if s.fargodeep.active && (!s.state.Assisting || !s.now().Before(s.assistUntil) || !s.now().Before(s.fargodeep.until)) {
 		s.stopFargodeepLocked(ctx, "authorization_expired")
 	}

@@ -2,6 +2,8 @@ package modrt
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -64,6 +66,13 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 			"AGENT_WOW_CHARACTER_GUID": strconv.FormatUint(session.Identity.CharacterGUID, 10), "AGENT_WOW_CHARACTER_NAME": session.Identity.CharacterName,
 			"AGENT_WOW_REALM_ID": strconv.Itoa(int(session.Identity.RealmID)), "AGENT_WOW_REALM_NAME": session.Identity.RealmName, "AGENT_WOW_CLIENT_BUILD": "12340",
 		}}
+		if name == actionsModule {
+			var key [32]byte
+			if _, err := rand.Read(key[:]); err != nil {
+				return err
+			}
+			l.Environment[modcb.PolicyEncounterKeyEnv] = hex.EncodeToString(key[:])
+		}
 		listener, err := net.Listen("unix", filepath.Join(socketDir, "session.sock"))
 		if err != nil {
 			return err

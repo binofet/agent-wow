@@ -66,7 +66,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	defer s.mu.Unlock()
 
 	identity := &actionsv1.EncounterObservationResponse{
-		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterOwned),
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false), HostRequested: proto.Bool(s.hostEncounterKey != ""),
 	}
 	if s.closed {
 		identity.Reason = "session_closing"
@@ -79,16 +79,14 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		identity.Reason = "world_observation_unavailable"
 		return identity, nil
 	}
-	self, visit := w.GetSelf(), s.encounterVisit
-	if s.selfGUID == 0 || self.GetGuid() != s.selfGUID || !self.Present || !self.MapKnown ||
-		!visit.bound || w.VisitRevision == 0 || w.VisitRevision != visit.revision || self.MapId != visit.mapID {
+	if !s.matchesCurrentEncounterVisitLocked(w) {
 		identity.Reason = "world_visit_unbound"
 		return identity, nil
 	}
 
 	out := &actionsv1.EncounterObservationResponse{
-		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterOwned),
-		VisitId: w.VisitRevision, MapId: proto.Uint32(self.MapId), WorldObservationRevision: w.ObservedPackets,
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,
+		VisitId: w.VisitRevision, MapId: proto.Uint32(w.Self.MapId), WorldObservationRevision: w.ObservedPackets,
 		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
 		Players:    make(map[string]*actionsv1.EncounterPlayer),
 		Targets:    make(map[string]*actionsv1.EncounterCreature),

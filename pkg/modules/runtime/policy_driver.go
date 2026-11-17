@@ -16,6 +16,8 @@ import (
 
 var policyPhase = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
+const policyObservationInterval = 250 * time.Millisecond
+
 type policyFeed struct {
 	phase, method string
 }
@@ -60,10 +62,15 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid string, feeds
 	defer cancel()
 	stop := context.AfterFunc(p.lifetime, cancel)
 	defer stop()
+	if feeds[len(feeds)-1].method == encounterObservationMethod {
+		// A canceled observation loop will never publish another current
+		// decision. Use the host context to release while Actions still lives.
+		defer p.manager.renewPolicyEncounterLease(context.Background(), 0)
+	}
 
 	// Observe at most once per interval. The module's data stays live between
 	// decisions, and delayed RPCs never overlap ticks or advance twice.
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(policyObservationInterval)
 	defer ticker.Stop()
 	var lastProblem string
 	phase := feeds[len(feeds)-1].phase
@@ -103,7 +110,17 @@ func (p *SessionPolicy) stepObservation(ctx context.Context, sid string, feeds [
 		}
 		sequences[feed.phase] = strconv.FormatUint(sequence, 10)
 	}
-	phase := feeds[len(feeds)-1].phase
+	primary := feeds[len(feeds)-1]
+	phase := primary.phase
+	if primary.method == encounterObservationMethod {
+		observed := observations[len(observations)-1]
+		if observed["selfGuid"] != p.body {
+			return errors.New("encounter observation did not identify the current body")
+		}
+		encoded, _ := observed["visitId"].(string)
+		visit, _ := strconv.ParseUint(encoded, 10, 64)
+		ctx = context.WithValue(ctx, policyEncounterVisitKey{}, policyEncounterObservation{visit: visit, sequence: sequences[phase].(string)})
+	}
 	_, _, err := p.Step(ctx, map[string]any{
 		"kind": phase, "observationSequence": sequences[phase], "observationSequences": sequences,
 	}, nil)
@@ -139,7 +156,11 @@ func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string)
 	if observed["sessionId"] != sid {
 		return nil, fmt.Errorf("policy observation %q did not identify the current session", method)
 	}
-	if owned, present := observed["hostOwned"]; present && owned != true {
+	if method == encounterObservationMethod {
+		if observed["hostRequested"] != true {
+			return nil, fmt.Errorf("policy observation %q requires the session encounter lease", method)
+		}
+	} else if owned, present := observed["hostOwned"]; present && owned != true {
 		return nil, fmt.Errorf("policy observation %q reports the native writer still owns the action", method)
 	}
 	return observed, nil

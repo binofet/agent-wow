@@ -192,7 +192,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 	if s.closed || s.independent {
 		return nil, status.Error(codes.FailedPrecondition, "companion encounter unavailable")
 	}
-	if s.hostEncounterOwned {
+	if s.hostEncounterKey != "" {
 		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if !r.Enabled {

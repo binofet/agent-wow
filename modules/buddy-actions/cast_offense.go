@@ -34,6 +34,9 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !supplied && s.hostEncounterActiveLocked() {
+		return nil, status.Error(codes.FailedPrecondition, "current Lua encounter owns hostile casts")
+	}
 	s.expireInteractionLocked()
 	s.expireExplicitCastLocked()
 	if r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.offenseCustodyAvailableLocked() ||
@@ -71,6 +74,9 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
+	}
+	if supplied && !s.admitsPolicyEncounterLocked(ctx, w) {
+		return nil, status.Error(codes.FailedPrecondition, "active policy lease for the current encounter visit required")
 	}
 
 	now := s.now()

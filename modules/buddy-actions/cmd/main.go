@@ -84,7 +84,9 @@ func run() error {
 			return errors.New("BUDDY_HOST_ENCOUNTER_OWNED must be true or false")
 		}
 		if owned {
-			service.UseHostEncounterWriter()
+			if err := service.UseHostEncounterWriter(os.Getenv(modcb.PolicyEncounterKeyEnv)); err != nil {
+				return err
+			}
 		}
 	}
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
@@ -112,6 +114,7 @@ func run() error {
 
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)
+	modcb.RegisterEncounterLeaseServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)

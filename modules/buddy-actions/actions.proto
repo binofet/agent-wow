@@ -450,6 +450,7 @@ message EncounterObservationResponse {
   uint64 world_observation_revision = 17;
   uint64 spellbook_revision = 18;
   bool spellbook_known = 19;
+  optional bool host_requested = 20;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;

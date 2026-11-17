@@ -74,11 +74,12 @@ func (p policySpellParty) State(context.Context, *emptypb.Empty) (*partyv1.State
 // The module manager starts its ordinary callback servers. Only Actions runs
 // as a packaged executable. Its World and Party dependencies serve fixed input.
 type policySpellRunner struct {
-	binary           string
-	action           *exec.Cmd
-	peers            map[string]*grpc.Server
-	world            worldv1.BuddyWorldServer
-	hostOwnsSelfMana bool
+	binary            string
+	action            *exec.Cmd
+	peers             map[string]*grpc.Server
+	world             worldv1.BuddyWorldServer
+	hostOwnsSelfMana  bool
+	hostOwnsEncounter bool
 }
 
 func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) error {
@@ -100,6 +101,9 @@ func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) err
 		}
 		if r.hostOwnsSelfMana {
 			cmd.Env = append(cmd.Env, "BUDDY_HOST_SELF_MANA_OWNED=true")
+		}
+		if r.hostOwnsEncounter {
+			cmd.Env = append(cmd.Env, "BUDDY_HOST_ENCOUNTER_OWNED=true")
 		}
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {

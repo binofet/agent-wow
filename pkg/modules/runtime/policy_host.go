@@ -17,14 +17,15 @@ import (
 // all calls to Decide and Reload. Observations and receipts may arrive during
 // reload and while an admitted action is executing.
 type SessionPolicy struct {
-	vm           *behavior.Session
-	manager      *Manager
-	body         string
-	source       string // guarded by advance
-	builtin      string
-	lifetime     context.Context
-	advance      sync.Mutex
-	dispatchDone chan struct{}
+	vm                 *behavior.Session
+	manager            *Manager
+	body               string
+	source             string // guarded by advance
+	builtin            string
+	lifetime           context.Context
+	advance            sync.Mutex
+	dispatchDone       chan struct{}
+	encounterLeaseHeld bool // guarded by advance
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -119,8 +120,9 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	}
 	action, ok := decision.Output["action"].(map[string]any)
 	if !ok {
+		err = p.renewEncounterWriter(ctx, decision.Output, nil, PolicyDispatch{})
 		p.advance.Unlock()
-		return decision.Output, nil, nil
+		return decision.Output, nil, err
 	}
 	if resolve == nil {
 		resolve = p.resolveKnownSpell
@@ -129,6 +131,10 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	if err != nil || dispatch.Module == "" || dispatch.Send == nil {
 		p.advance.Unlock()
 		return decision.Output, nil, errors.Join(err, errors.New("policy action cannot be dispatched"))
+	}
+	if err := p.renewEncounterWriter(ctx, decision.Output, action, dispatch); err != nil {
+		p.advance.Unlock()
+		return decision.Output, nil, err
 	}
 	s := p.vm.Status()
 	id, err := p.reserve(decision)

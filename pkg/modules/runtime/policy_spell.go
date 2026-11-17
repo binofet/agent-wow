@@ -36,17 +36,18 @@ type policySpellRegistry struct {
 }
 
 type policySpell struct {
-	vm         *behavior.Session
-	capability string
-	spell      uint32
-	target     uint64
-	token      string
-	origin     modsession.WriteOrigin
-	admitted   bool
-	attempted  bool
-	written    bool
-	transport  *behavior.ActionReceipt
-	effect     *behavior.ActionReceipt
+	vm             *behavior.Session
+	capability     string
+	spell          uint32
+	target         uint64
+	encounterVisit uint64
+	token          string
+	origin         modsession.WriteOrigin
+	admitted       bool
+	attempted      bool
+	written        bool
+	transport      *behavior.ActionReceipt
+	effect         *behavior.ActionReceipt
 }
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
@@ -154,7 +155,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.mu.Unlock()
 
 	state := &actionsv1.State{}
-	err = m.invoke(modcb.WithPolicySpell(ctx, op.token), publicCall, "lua", actionsModule, inst, md, req, state)
+	call := modcb.WithPolicySpell(ctx, op.token)
+	if op.encounterVisit != 0 {
+		call = modcb.WithPolicyEncounterAccess(call, inst.launch.Environment[modcb.PolicyEncounterKeyEnv], op.encounterVisit)
+	}
+	err = m.invoke(call, publicCall, "lua", actionsModule, inst, md, req, state)
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
