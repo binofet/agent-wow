@@ -99,7 +99,11 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		out.Party, online = s.encounterParty(state)
 	}
 	players := s.encounterPlayers(w, online, out)
-	s.encounterCreatures(w, players, out)
+	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
+	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
+		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid
+	}
+	s.encounterCreatures(w, players, online, out)
 	s.encounterSpells(w, online, out)
 
 	// The policy event uses this same JSON representation. Refuse an
@@ -168,10 +172,12 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 	return players
 }
 
-func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[uint64]*worldv1.PlayerState, out *actionsv1.EncounterObservationResponse) {
+func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[uint64]*worldv1.PlayerState, online map[uint64]bool, out *actionsv1.EncounterObservationResponse) {
 	if len(w.NearbyCreatures) > 32 {
 		return
 	}
+	from := position{w.Self.X, w.Self.Y, w.Self.Z, w.Self.Orientation}
+	meleeCaster := out.MeleeKnown && safeSelfCombat(w, s.selfGUID) == "" && w.Self.PositionKnown && finite(from)
 	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
 		for _, c := range rows {
 			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId ||
@@ -202,6 +208,9 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 			if c.AliveKnown {
 				view.Alive = proto.Bool(c.Alive)
 			}
+			view.MeleeReady = view.Attackable && engaged && meleeCaster && !s.autoStopping &&
+				!s.state.AutoAttackUnconfirmed && s.pendingMeleeOperationLocked() == nil &&
+				s.exactMeleeStartAvailableLocked(c.Guid) && s.exactMeleeReadyAtLocked(w, c, c.Guid, online, from)
 			out.Targets[key] = view
 		}
 	}

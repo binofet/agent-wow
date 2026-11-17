@@ -467,6 +467,8 @@ message EncounterObservationResponse {
   uint64 spellbook_revision = 18;
   bool spellbook_known = 19;
   optional bool host_requested = 20;
+  bool melee_known = 21;
+  uint64 active_melee_target_guid = 22;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -509,6 +511,7 @@ message EncounterCreature {
   bool unit_flags_known = 20;
   uint32 unit_flags = 21;
   uint32 faction_template = 22;
+  bool melee_ready = 23;
 }
 message EncounterEngagement {
   uint64 victim_guid = 1;

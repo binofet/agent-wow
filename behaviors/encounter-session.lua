@@ -167,6 +167,7 @@ local function owns_current_observation(obs, frame, self)
     if frame.input.kind ~= "encounter" or frame.input.observationSequence ~= state.sequence or
        not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
        not same_map(self, obs.mapId) then return false end
+    if obs.meleeKnown == true then return true end
     for _, spell in pairs(obs.spells or {}) do
         if spell.capability == "offense" and spell.known == true then return true end
     end
@@ -375,7 +376,11 @@ local function decide_encounter(frame)
     local focus = out.focusGuid and obs.targets[out.focusGuid]
     if focus and focus.positionKnown == true and (fallback or not focus.trajectory or focus.trajectory.stopped == true) then
         local spell = damage_spell(obs, focus)
-        if spell then out.action = proposal(obs, "offense", out.focusGuid, spell) end
+        if spell then
+            out.action = proposal(obs, "offense", out.focusGuid, spell)
+        elseif focus.meleeReady == true then
+            out.action = proposal(obs, "melee_start", out.focusGuid)
+        end
     end
     return out
 end

@@ -121,7 +121,11 @@ func (s *Service) exactMeleeStartObservedLocked(w *worldv1.SnapshotResponse, tar
 	if safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || !s.exactMeleeStartAvailableLocked(target) {
 		return false
 	}
-	self, creature := w.Self, w.RequestedCreature
+	return s.exactMeleeReadyAtLocked(w, w.RequestedCreature, target, online, s.pos)
+}
+
+func (s *Service) exactMeleeReadyAtLocked(w *worldv1.SnapshotResponse, creature *worldv1.CreatureState, target uint64, online map[uint64]bool, from position) bool {
+	self := w.Self
 	if !exactMeleeStance(self) || self.MovementFlags&0xff != 0 ||
 		self.UnitFlags&(0x20000|0x200000) != 0 || !self.ChannelObjectKnown || self.ChannelObjectGuid != 0 ||
 		!self.ChannelSpellKnown || self.ChannelSpellId != 0 || !self.BaseAttackTimeKnown || self.BaseAttackTimeMs == 0 || !s.weaponReady(self) ||
@@ -134,11 +138,11 @@ func (s *Service) exactMeleeStartObservedLocked(w *worldv1.SnapshotResponse, tar
 		return false
 	}
 	limit := exactMeleeRange(self.CombatReach, creature.CombatReach)
-	if limit == 0 || distance(s.pos, to) > limit {
+	if limit == 0 || distance(from, to) > limit {
 		return false
 	}
-	dx, dy := float64(to.x-s.pos.x), float64(to.y-s.pos.y)
-	return dx == 0 && dy == 0 || math.Abs(math.Remainder(math.Atan2(dy, dx)-float64(s.pos.o), 2*math.Pi)) <= math.Pi/2
+	dx, dy := float64(to.x-from.x), float64(to.y-from.y)
+	return dx == 0 && dy == 0 || math.Abs(math.Remainder(math.Atan2(dy, dx)-float64(from.o), 2*math.Pi)) <= math.Pi/2
 }
 
 func exactMeleeStance(self *worldv1.PlayerState) bool {

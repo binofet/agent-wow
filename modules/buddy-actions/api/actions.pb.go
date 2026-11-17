@@ -4541,6 +4541,8 @@ type EncounterObservationResponse struct {
 	SpellbookRevision        uint64                          `protobuf:"varint,18,opt,name=spellbook_revision,json=spellbookRevision,proto3" json:"spellbook_revision,omitempty"`
 	SpellbookKnown           bool                            `protobuf:"varint,19,opt,name=spellbook_known,json=spellbookKnown,proto3" json:"spellbook_known,omitempty"`
 	HostRequested            *bool                           `protobuf:"varint,20,opt,name=host_requested,json=hostRequested,proto3,oneof" json:"host_requested,omitempty"`
+	MeleeKnown               bool                            `protobuf:"varint,21,opt,name=melee_known,json=meleeKnown,proto3" json:"melee_known,omitempty"`
+	ActiveMeleeTargetGuid    uint64                          `protobuf:"varint,22,opt,name=active_melee_target_guid,json=activeMeleeTargetGuid,proto3" json:"active_melee_target_guid,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -4713,6 +4715,20 @@ func (x *EncounterObservationResponse) GetHostRequested() bool {
 		return *x.HostRequested
 	}
 	return false
+}
+
+func (x *EncounterObservationResponse) GetMeleeKnown() bool {
+	if x != nil {
+		return x.MeleeKnown
+	}
+	return false
+}
+
+func (x *EncounterObservationResponse) GetActiveMeleeTargetGuid() uint64 {
+	if x != nil {
+		return x.ActiveMeleeTargetGuid
+	}
+	return 0
 }
 
 type EncounterParty struct {
@@ -4916,6 +4932,7 @@ type EncounterCreature struct {
 	UnitFlagsKnown   bool                     `protobuf:"varint,20,opt,name=unit_flags_known,json=unitFlagsKnown,proto3" json:"unit_flags_known,omitempty"`
 	UnitFlags        uint32                   `protobuf:"varint,21,opt,name=unit_flags,json=unitFlags,proto3" json:"unit_flags,omitempty"`
 	FactionTemplate  uint32                   `protobuf:"varint,22,opt,name=faction_template,json=factionTemplate,proto3" json:"faction_template,omitempty"`
+	MeleeReady       bool                     `protobuf:"varint,23,opt,name=melee_ready,json=meleeReady,proto3" json:"melee_ready,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -5102,6 +5119,13 @@ func (x *EncounterCreature) GetFactionTemplate() uint32 {
 		return x.FactionTemplate
 	}
 	return 0
+}
+
+func (x *EncounterCreature) GetMeleeReady() bool {
+	if x != nil {
+		return x.MeleeReady
+	}
+	return false
 }
 
 type EncounterEngagement struct {
@@ -5964,7 +5988,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x06threat\x18\x06 \x01(\v2(.warcraftbuddy.actions.v1.SelfManaThreatR\x06threat\x12?\n" +
 	"\x06spells\x18\a \x03(\v2'.warcraftbuddy.actions.v1.SelfManaSpellR\x06spells\x12\x1d\n" +
 	"\n" +
-	"host_owned\x18\b \x01(\bR\thostOwned\"\x9a\r\n" +
+	"host_owned\x18\b \x01(\bR\thostOwned\"\xf4\r\n" +
 	"\x1cEncounterObservationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -5990,7 +6014,10 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x1aworld_observation_revision\x18\x11 \x01(\x04R\x18worldObservationRevision\x12-\n" +
 	"\x12spellbook_revision\x18\x12 \x01(\x04R\x11spellbookRevision\x12'\n" +
 	"\x0fspellbook_known\x18\x13 \x01(\bR\x0espellbookKnown\x12*\n" +
-	"\x0ehost_requested\x18\x14 \x01(\bH\x02R\rhostRequested\x88\x01\x01\x1ae\n" +
+	"\x0ehost_requested\x18\x14 \x01(\bH\x02R\rhostRequested\x88\x01\x01\x12\x1f\n" +
+	"\vmelee_known\x18\x15 \x01(\bR\n" +
+	"meleeKnown\x127\n" +
+	"\x18active_melee_target_guid\x18\x16 \x01(\x04R\x15activeMeleeTargetGuid\x1ae\n" +
 	"\fPlayersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12?\n" +
 	"\x05value\x18\x02 \x01(\v2).warcraftbuddy.actions.v1.EncounterPlayerR\x05value:\x028\x01\x1ag\n" +
@@ -6025,7 +6052,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x10faction_template\x18\n" +
 	" \x01(\rR\x0ffactionTemplateB\t\n" +
 	"\a_map_idB\b\n" +
-	"\x06_alive\"\xd1\x05\n" +
+	"\x06_alive\"\xf2\x05\n" +
 	"\x11EncounterCreature\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x14\n" +
 	"\x05entry\x18\x02 \x01(\rR\x05entry\x12\x18\n" +
@@ -6056,7 +6083,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x10unit_flags_known\x18\x14 \x01(\bR\x0eunitFlagsKnown\x12\x1d\n" +
 	"\n" +
 	"unit_flags\x18\x15 \x01(\rR\tunitFlags\x12)\n" +
-	"\x10faction_template\x18\x16 \x01(\rR\x0ffactionTemplateB\t\n" +
+	"\x10faction_template\x18\x16 \x01(\rR\x0ffactionTemplate\x12\x1f\n" +
+	"\vmelee_ready\x18\x17 \x01(\bR\n" +
+	"meleeReadyB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_alive\"M\n" +
 	"\x13EncounterEngagement\x12\x1f\n" +
