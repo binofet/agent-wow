@@ -370,12 +370,12 @@ func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 				if op := native(); op.GetEffectObserved() || op.GetPhase() == "confirmed_heal" {
 					t.Fatalf("zero effective healing confirmed the cast: %v", op)
 				}
-				check(transport+"/unknown:1", 1)
+				check(transport+"/settled_unverified:1", 0)
 				// The first correlated zero-effective result consumed the native
 				// receipt. A later same-tuple log cannot turn it into a success.
 				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGSpellheallog,
 					packagedHealLog(policyPriestGUID, policyPriestGUID, policyLesserHeal, 40, 5))
-				check(transport+"/unknown:1", 1)
+				check(transport+"/settled_unverified:1", 0)
 				return
 			}
 			if op := native(); !op.GetEffectObserved() || op.GetPhase() != "confirmed_heal" {
