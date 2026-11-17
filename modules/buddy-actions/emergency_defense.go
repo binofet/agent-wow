@@ -92,7 +92,8 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if !s.refreshPositionLocked(w) {
 		return true
 	}
-	if s.state.InteractionOwner != "" {
+	preempted := s.state.InteractionOwner != ""
+	if preempted {
 		stopped := s.stopLocked(ctx)
 		s.state.InteractionOwner, s.interactionToken = "", ""
 		s.state.InteractionHarvest = false
@@ -115,6 +116,9 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	}
 	if s.potentialCleanseLocked() && s.cleanseTickLocked(ctx, w) {
 		return true
+	}
+	if s.hostEncounterOwned {
+		return preempted
 	}
 	return s.interruptHealLocked(ctx, w) || s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }

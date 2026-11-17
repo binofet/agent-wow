@@ -192,6 +192,9 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 	if s.closed || s.independent {
 		return nil, status.Error(codes.FailedPrecondition, "companion encounter unavailable")
 	}
+	if s.hostEncounterOwned {
+		return s.inactiveNativeEncounterLocked(r.Enabled)
+	}
 	if !r.Enabled {
 		if s.fargodeep.session != "" && (r.SessionId != s.fargodeep.session || r.TargetGuid != 0 && r.TargetGuid != s.fargodeep.target || r.EngagerGuid != 0 && r.EngagerGuid != s.fargodeep.engager) {
 			return nil, status.Error(codes.FailedPrecondition, "encounter binding changed")

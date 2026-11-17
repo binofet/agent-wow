@@ -316,6 +316,16 @@ func TestPlayArgumentValidation(t *testing.T) {
 	}
 }
 
+func TestPlayRequiresObservationForHostEncounterOwnership(t *testing.T) {
+	t.Setenv("BUDDY_HOST_ENCOUNTER_OWNED", "true")
+	command := characterCommands{}.command()
+	command.SetArgs([]string{"play", "Mira"})
+	command.SetErr(io.Discard)
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "Lua-owned encounters require a policy file and observation feed") {
+		t.Fatalf("expected host policy requirement, got %v", err)
+	}
+}
+
 func TestPlayDoesNotAnnounceEndedSession(t *testing.T) {
 	listener, err := worldrpc.Listen(context.Background(), "127.0.0.1:0")
 	if err != nil {

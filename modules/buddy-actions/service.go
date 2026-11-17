@@ -61,6 +61,7 @@ type Service struct {
 	independent                                bool
 	hostStandingHealing                        bool
 	hostSelfMana                               bool
+	hostEncounterOwned                         bool
 	encounterVisit                             encounterVisit
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time
@@ -512,6 +513,9 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	}
+	if s.hostEncounterOwned {
+		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if r.Enabled && s.independent {
 		return nil, status.Error(codes.FailedPrecondition, "owner assistance is unavailable in independent mode")
@@ -1122,10 +1126,11 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.closed {
 		return
 	}
+	nativeEncounter := !s.hostEncounterOwned
 	if s.fargodeep.active && (!s.state.Assisting || !s.now().Before(s.assistUntil) || !s.now().Before(s.fargodeep.until)) {
 		s.stopFargodeepLocked(ctx, "authorization_expired")
 	}
-	if s.state.Practicing {
+	if nativeEncounter && s.state.Practicing {
 		s.practiceTickLocked(ctx)
 		return
 	}
@@ -1136,7 +1141,9 @@ func (s *Service) Tick(ctx context.Context) {
 	waterBreath := s.dueWaterBreathLocked()
 	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
 		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
+		if nativeEncounter {
+			s.stopAutoAttackLocked(ctx)
+		}
 		s.lastStep = s.now()
 		return
 	}
@@ -1204,20 +1211,20 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.interruptHealLocked(ctx, snapshot) {
+	if nativeEncounter && s.interruptHealLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
-	if s.fargodeepTickLocked(ctx, snapshot) {
+	if nativeEncounter && s.fargodeepTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
-	if s.selfDefenseLocked(ctx, snapshot) {
+	if nativeEncounter && s.selfDefenseLocked(ctx, snapshot) {
 		s.endCrowdControlLocked(ctx, "self_defense")
 		s.lastStep = now
 		return
 	}
-	if s.thermapluggButtonsTickLocked(ctx, snapshot) || s.partyDefenseLocked(ctx, snapshot) {
+	if s.thermapluggButtonsTickLocked(ctx, snapshot) || nativeEncounter && s.partyDefenseLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1226,7 +1233,7 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.crowdControlTickLocked(ctx) {
 		return
 	}
-	if s.engageTickLocked(ctx) {
+	if nativeEncounter && s.engageTickLocked(ctx) {
 		s.lastStep = now
 		return
 	}
@@ -1269,7 +1276,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if s.autoTarget != 0 {
+	if nativeEncounter && s.autoTarget != 0 {
 		t := snapshot.OwnerTarget
 		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || !s.defendsVictimLocked(ctx, t.AttackVictimGuid) {
 			s.stopLocked(ctx)
@@ -1292,7 +1299,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0)
 	}
-	if s.state.Assisting && s.assistLocked(ctx, snapshot) {
+	if nativeEncounter && s.state.Assisting && s.assistLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

@@ -42,6 +42,9 @@ func (s *Service) EngageNPC(ctx context.Context, r *actionsv1.EngageNPCRequest) 
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
+	if s.hostEncounterOwned {
+		return s.inactiveNativeEncounterLocked(r.Enabled)
+	}
 	if !r.Enabled {
 		s.engage.active, s.engage.phase = false, "disabled"
 		s.stopLocked(ctx)

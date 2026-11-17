@@ -78,6 +78,15 @@ func run() error {
 			service.UseHostSelfMana()
 		}
 	}
+	if value := os.Getenv("BUDDY_HOST_ENCOUNTER_OWNED"); value != "" {
+		owned, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("BUDDY_HOST_ENCOUNTER_OWNED must be true or false")
+		}
+		if owned {
+			service.UseHostEncounterWriter()
+		}
+	}
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {
 		const destination = "/var/lib/buddy-dungeon-trace"

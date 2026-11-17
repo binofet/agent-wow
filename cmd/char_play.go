@@ -92,6 +92,9 @@ local RPC API for gameplay actions.`,
 			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_HEALING_OWNED")); owned && policy.File == "" {
 				return errors.New("Lua-owned healing requires a policy file and observation feed")
 			}
+			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_ENCOUNTER_OWNED")); owned && policy.File == "" {
+				return errors.New("Lua-owned encounters require a policy file and observation feed")
+			}
 			if policy.File != "" {
 				body, err := os.ReadFile(policy.File)
 				if err != nil {

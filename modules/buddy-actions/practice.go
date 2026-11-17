@@ -75,6 +75,9 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
+	if s.hostEncounterOwned {
+		return s.inactiveNativeEncounterLocked(r.Enabled)
+	}
 	if !r.Enabled {
 		s.autoStopping, s.state.AutoAttackUnconfirmed = false, false
 		s.stopPracticeLocked(ctx, "disabled")
