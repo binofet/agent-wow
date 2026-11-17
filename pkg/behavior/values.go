@@ -16,9 +16,9 @@ import (
 const maxExactInteger = 1<<53 - 1
 
 type budget struct {
-	nodes, bytes, depth int
-	nodeLimit           int
-	ctx                 context.Context
+	nodes, bytes, depth  int
+	nodeLimit, byteLimit int
+	ctx                  context.Context
 }
 
 func (b *budget) take(s string) error {
@@ -28,7 +28,11 @@ func (b *budget) take(s string) error {
 	if limit == 0 {
 		limit = MaxNodes
 	}
-	if b.nodes > limit || b.bytes > MaxJSONBytes || b.depth > MaxDepth {
+	byteLimit := b.byteLimit
+	if byteLimit == 0 {
+		byteLimit = MaxJSONBytes
+	}
+	if b.nodes > limit || b.bytes > byteLimit || b.depth > MaxDepth {
 		return errors.New("policy value exceeds node, byte or depth bounds")
 	}
 	if !utf8.ValidString(s) {
@@ -41,11 +45,15 @@ func (b *budget) take(s string) error {
 }
 
 func jsonSize(value any) error {
+	return boundedJSONSize(value, MaxJSONBytes)
+}
+
+func boundedJSONSize(value any, maxBytes int) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	if len(data) > MaxJSONBytes {
+	if len(data) > maxBytes {
 		return errors.New("policy JSON exceeds byte bound")
 	}
 	return nil
