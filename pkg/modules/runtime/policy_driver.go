@@ -33,6 +33,9 @@ func (m *Manager) StartObservedPolicy(ctx context.Context, source, binding strin
 	if feed.Methods[0].Effect != moddisc.EffectRead {
 		return fmt.Errorf("policy observation %q must be a reflected read", method)
 	}
+	if _, err := m.readPolicyObservation(ctx, catalog.SessionID, method); err != nil {
+		return err
+	}
 	host, err := m.StartPolicy(ctx, source)
 	if err != nil {
 		return err
@@ -72,16 +75,9 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid, phase, metho
 }
 
 func (p *SessionPolicy) stepObservation(ctx context.Context, sid, phase, method string) error {
-	body, err := p.manager.invokeJSON(ctx, method, nil, true)
+	observed, err := p.manager.readPolicyObservation(ctx, sid, method)
 	if err != nil {
 		return err
-	}
-	var observed map[string]any
-	if err := json.Unmarshal(body, &observed); err != nil {
-		return err
-	}
-	if observed["sessionId"] != sid {
-		return fmt.Errorf("policy observation %q did not identify the current session", method)
 	}
 	sequence, err := p.Enqueue(behavior.Event{Kind: phase + "_observation", Value: observed})
 	if err != nil {
@@ -89,4 +85,22 @@ func (p *SessionPolicy) stepObservation(ctx context.Context, sid, phase, method 
 	}
 	_, _, err = p.Step(ctx, map[string]any{"kind": phase, "observationSequence": strconv.FormatUint(sequence, 10)}, nil)
 	return err
+}
+
+func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string) (map[string]any, error) {
+	body, err := m.invokeJSON(ctx, method, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	var observed map[string]any
+	if err := json.Unmarshal(body, &observed); err != nil {
+		return nil, err
+	}
+	if observed["sessionId"] != sid {
+		return nil, fmt.Errorf("policy observation %q did not identify the current session", method)
+	}
+	if owned, present := observed["hostOwned"]; present && owned != true {
+		return nil, fmt.Errorf("policy observation %q reports the native writer still owns the action", method)
+	}
+	return observed, nil
 }

@@ -78,6 +78,9 @@ local RPC API for gameplay actions.`,
 			if (policyFile == "") != (policyObservation == "") {
 				return errors.New("--policy-file and --policy-observation must be supplied together")
 			}
+			if os.Getenv("BUDDY_HOST_HEALING_OWNED") == "true" && policyFile == "" {
+				return errors.New("Lua-owned healing requires a policy file and observation feed")
+			}
 			if policyFile != "" {
 				body, err := os.ReadFile(policyFile)
 				if err != nil {
