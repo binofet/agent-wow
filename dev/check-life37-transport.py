@@ -67,12 +67,24 @@ def verify(fixture_bytes, capture, policy_revision, generation):
 
     actors = fixture["actors"]
     require(isinstance(actors, dict) and actors, "fixture needs actors")
-    sessions = {}
+    fixture_sessions = set()
     for actor_guid, actor in actors.items():
         session_id = actor["sessionId"]
-        require(decimal_uint64(actor_guid) and nonempty_string(session_id) and session_id not in sessions,
+        require(decimal_uint64(actor_guid) and nonempty_string(session_id) and session_id not in fixture_sessions,
                 "invalid or duplicate fixture actor/session identity")
-        sessions[session_id] = 0
+        fixture_sessions.add(session_id)
+    session_aliases = {session: session for session in fixture_sessions}
+    action_aliases = None
+    if mode == "instrumented_controller":
+        session_aliases = capture["sessionAliases"]
+        action_aliases = capture["actionAliases"]
+        require(isinstance(session_aliases, dict) and session_aliases.keys() == fixture_sessions
+                and all(nonempty_string(value) for value in session_aliases.values())
+                and len(set(session_aliases.values())) == len(fixture_sessions),
+                "invalid runtime session bindings")
+        require(isinstance(action_aliases, dict), "invalid runtime action bindings")
+        require(capture["policyRevision"] == policy_revision, "capture policy revision mismatch")
+    sessions = dict.fromkeys(session_aliases.values(), 0)
 
     summaries = capture["sessions"]
     require(isinstance(summaries, dict) and summaries.keys() == sessions.keys(),
@@ -84,7 +96,7 @@ def verify(fixture_bytes, capture, policy_revision, generation):
     expected_frames, captured_frames = fixture["frames"], capture["frames"]
     require(isinstance(expected_frames, list) and expected_frames and isinstance(captured_frames, list)
             and len(expected_frames) == len(captured_frames), "capture frame count mismatch")
-    frame_ids, action_ids = set(), set()
+    frame_ids, action_ids, reserved = set(), set(), set()
     casts = []
     for expected_frame, captured_frame in zip(expected_frames, captured_frames):
         frame_id = expected_frame["id"]
@@ -102,12 +114,20 @@ def verify(fixture_bytes, capture, policy_revision, generation):
                     and decimal_uint64(target_guid) and type(spell_id) is int and 0 < spell_id < 2**32,
                     f"{frame_id}: invalid or duplicate fixture action")
             action_ids.add(action_id)
-            session_id = actors[actor_guid]["sessionId"]
+            session_id = session_aliases[actors[actor_guid]["sessionId"]]
             detail = f"{frame_id}/{action_id}"
+            reservation = action_id
+            if action_aliases is not None:
+                binding = action_aliases[action_id]
+                reservation = binding["actionId"]
+                require(binding["sessionId"] == session_id and decimal_uint64(reservation)
+                        and (session_id, reservation) not in reserved,
+                        f"{detail}: invalid or duplicate runtime reservation")
+                reserved.add((session_id, reservation))
             origin = attempt["origin"]
             require(isinstance(origin, dict) and origin.get("module") == "buddy-actions"
                     and origin.get("writer") == "lua", f"{detail}: legacy or unknown writer provenance")
-            require(origin.get("sessionId") == session_id and origin.get("actionId") == action_id
+            require(origin.get("sessionId") == session_id and origin.get("actionId") == reservation
                     and attempt["characterGuid"] == actor_guid, f"{detail}: wrong action, session, or character")
             require(origin.get("generation") == generation and origin.get("policyRevision") == policy_revision,
                     f"{detail}: stale or unknown generation or policy revision")
@@ -122,10 +142,13 @@ def verify(fixture_bytes, capture, policy_revision, generation):
             except ValueError as exc:
                 raise ValueError(f"{detail}: {exc}") from exc
             require(spell == spell_id and target == target_guid, f"{detail}: packet spell or target differs")
-            casts.append({"actionId": action_id, "sessionId": session_id, "sequence": sequence,
+            casts.append({"actionId": action_id, "reservationId": reservation,
+                          "sessionId": session_id, "sequence": sequence,
                           "castCount": count, "spellId": spell, "targetGuid": target})
 
     require(casts, "fixture contains no positive transport attempts")
+    if action_aliases is not None:
+        require(action_aliases.keys() == action_ids, "capture has unexplained runtime action bindings")
     for session_id, count in sessions.items():
         terminal = summaries[session_id]["attemptCount"]
         require(type(terminal) is int and terminal == count, f"{session_id}: terminal attempt count mismatch")
