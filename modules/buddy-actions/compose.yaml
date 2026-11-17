@@ -9,6 +9,7 @@ services:
     environment:
       BUDDY_INDEPENDENT: ${BUDDY_INDEPENDENT:-false}
       BUDDY_HOST_HEALING_OWNED: ${BUDDY_HOST_HEALING_OWNED:-false}
+      BUDDY_HOST_SELF_MANA_OWNED: ${BUDDY_HOST_SELF_MANA_OWNED:-false}
       BUDDY_NAV_DATA_DIR: /var/lib/buddy-nav
       BUDDY_DUNGEON_TRACE_MAP: "${BUDDY_DUNGEON_TRACE_MAP:-}"
     volumes:

@@ -63,6 +63,10 @@ func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
 // current server group with this exact online self authorizes another player.
 // Joel is subject to the same membership rule; self-healing needs no group.
 func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
+	return s.onlineHealingGroup(s.readPartyStateLocked(ctx).GetGroup())
+}
+
+func (s *Service) readPartyStateLocked(ctx context.Context) *partyv1.StateResponse {
 	if s.session == nil {
 		return nil
 	}
@@ -77,7 +81,10 @@ func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
 	if result.Result.UnmarshalTo(state) != nil || len(state.SessionId) == 0 || len(state.SessionId) > 128 {
 		return nil
 	}
-	g := state.Group
+	return state
+}
+
+func (s *Service) onlineHealingGroup(g *partyv1.Group) map[uint64]bool {
 	if g == nil || !g.Known || !g.InGroup || len(g.Members) < 2 || len(g.Members) > 40 {
 		return nil
 	}

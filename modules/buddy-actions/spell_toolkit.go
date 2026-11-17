@@ -40,6 +40,37 @@ func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	}
 	return out, nil
 }
+
+// Read the cooldown section only after the same complete spellbook packet has
+// been validated. The client learns the remaining durations, not game time.
+func (s *Service) observeInitialCooldownsLocked(p []byte) {
+	end := 3 + int(binary.LittleEndian.Uint16(p[1:]))*6
+	s.spellCooldownBaselineKnown = true
+	if s.spellReady == nil {
+		s.spellReady = make(map[uint32]time.Time)
+	}
+	if s.categoryReady == nil {
+		s.categoryReady = make(map[uint32]time.Time)
+	}
+	now := s.now()
+	for at := end + 2; at < len(p); at += 16 {
+		id := binary.LittleEndian.Uint32(p[at:])
+		category := uint32(binary.LittleEndian.Uint16(p[at+6:]))
+		spellMs, categoryMs := binary.LittleEndian.Uint32(p[at+8:]), binary.LittleEndian.Uint32(p[at+12:])
+		expires := now.Add(time.Duration(max(spellMs, categoryMs)) * time.Millisecond)
+		if id != 0 && expires.After(s.spellReady[id]) {
+			s.spellReady[id] = expires
+		}
+		if categoryEnd := now.Add(time.Duration(categoryMs) * time.Millisecond); category != 0 && categoryMs != 0 && categoryEnd.After(s.categoryReady[category]) {
+			s.categoryReady[category] = categoryEnd
+		}
+	}
+}
+
+func (s *Service) spellOnCooldownLocked(spell spellcatalog.Spell) bool {
+	now := s.now()
+	return now.Before(s.spellReady[spell.ID]) || now.Before(s.categoryReady[spell.Category])
+}
 func (s *Service) applySpellbookLocked(known map[uint32]bool) {
 	revision := s.spellbookRevision
 	changed := !s.spellbookKnown || len(known) != len(s.knownSpells)

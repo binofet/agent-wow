@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-∂}
+ñã
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -447,7 +447,72 @@ session_id (	R	sessionId?
 host_owned (R	hostOwnedD
 patients (2(.warcraftbuddy.actions.v1.HealingPatientRpatients=
 spells (2%.warcraftbuddy.actions.v1.HealingRankRspells
-reason (	Rreason"é
+reason (	Rreason"©
+SelfManaCaster
+guid (Rguid
+present (Rpresent
+alive_known (R
+aliveKnown
+alive (Ralive
+	map_known (RmapKnown%
+position_known (RpositionKnown
+class_known (R
+classKnown
+class_id (RclassId
+power_known	 (R
+powerKnown"
+
+power_type
+ (H R	powerTypeà
+power (HRpowerà 
+	max_power (HRmaxPowerà!
+combat_known (RcombatKnown 
+	in_combat (HRinCombatà%
+movement_known (RmovementKnown
+moving (HRmovingà#
+channel_known (RchannelKnown-
+channel_spell_id (HRchannelSpellIdàB
+_power_typeB
+_powerB
+
+_max_powerB
+
+_in_combatB	
+_movingB
+_channel_spell_id"J
+SelfManaActivity
+known (Rknown
+idle (H RidleàB
+_idle"ß
+SelfManaThreat
+known (Rknown*
+attacking_self (H RattackingSelfà,
+attacking_party (HRattackingPartyàB
+_attacking_selfB
+_attacking_party"§
+SelfManaSpell
+spell_id (RspellId
+	family_id (RfamilyId
+rank (H Rrankà%
+metadata_known (RmetadataKnown.
+self_cast_supported (RselfCastSupported
+	channeled (R	channeled
+ready_known (R
+readyKnown
+ready (HRreadyàB
+_rankB
+_ready"Æ
+SelfManaObservationResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid'
+spellbook_known (RspellbookKnown@
+caster (2(.warcraftbuddy.actions.v1.SelfManaCasterRcasterF
+activity (2*.warcraftbuddy.actions.v1.SelfManaActivityRactivity@
+threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
+spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
+
+host_owned (R	hostOwned"é
 ResurrectOnceRequest
 
 session_id (	R	sessionId
@@ -465,7 +530,7 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2ù
+targetGuid2É
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
@@ -500,4 +565,5 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 Sap$.warcraftbuddy.actions.v1.SapRequest.warcraftbuddy.actions.v1.StateV
 CastSelf).warcraftbuddy.actions.v1.CastSelfRequest.warcraftbuddy.actions.v1.StateZ
 HealingOptions.google.protobuf.Empty0.warcraftbuddy.actions.v1.HealingOptionsResponseV
-CastHeal).warcraftbuddy.actions.v1.CastHealRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+CastHeal).warcraftbuddy.actions.v1.CastHealRequest.warcraftbuddy.actions.v1.Stated
+SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

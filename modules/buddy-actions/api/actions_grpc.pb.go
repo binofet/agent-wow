@@ -21,39 +21,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
-	BuddyActions_EngageNPC_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
-	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
-	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
-	BuddyActions_Buffs_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
-	BuddyActions_SpellToolkit_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
-	BuddyActions_ReloadBehavior_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
-	BuddyActions_Behavior_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
-	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
-	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
-	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
-	BuddyActions_ApproachQuest_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
-	BuddyActions_TravelQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
-	BuddyActions_TravelTrainer_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
-	BuddyActions_TravelVendor_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
-	BuddyActions_TravelTo_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
-	BuddyActions_PlanRouteLeg_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
-	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
-	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
-	BuddyActions_FargodeepEncounter_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
-	BuddyActions_Recovery_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
-	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
-	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
-	BuddyActions_ResurrectOnce_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
-	BuddyActions_AcceptResurrection_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
-	BuddyActions_PickLock_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
-	BuddyActions_CreateItem_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
-	BuddyActions_Polymorph_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
-	BuddyActions_Sap_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
-	BuddyActions_CastSelf_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
-	BuddyActions_HealingOptions_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
-	BuddyActions_CastHeal_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
+	BuddyActions_Follow_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
+	BuddyActions_Assist_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_EngageNPC_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
+	BuddyActions_HealOnce_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
+	BuddyActions_Status_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_Buffs_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
+	BuddyActions_SpellToolkit_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
+	BuddyActions_ReloadBehavior_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
+	BuddyActions_Behavior_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
+	BuddyActions_AcquireInteraction_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
+	BuddyActions_ReleaseInteraction_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_ApproachLoot_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
+	BuddyActions_ApproachQuest_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
+	BuddyActions_TravelQuest_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_TravelTrainer_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
+	BuddyActions_TravelVendor_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
+	BuddyActions_TravelTo_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
+	BuddyActions_PlanRouteLeg_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
+	BuddyActions_ExitCrypt_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
+	BuddyActions_Practice_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
+	BuddyActions_FargodeepEncounter_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
+	BuddyActions_Recovery_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
+	BuddyActions_OnPacket_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
+	BuddyActions_BeforeLogout_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_ResurrectOnce_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
+	BuddyActions_AcceptResurrection_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
+	BuddyActions_PickLock_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
+	BuddyActions_CreateItem_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
+	BuddyActions_Polymorph_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
+	BuddyActions_Sap_FullMethodName                 = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
+	BuddyActions_CastSelf_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
+	BuddyActions_HealingOptions_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
+	BuddyActions_CastHeal_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
+	BuddyActions_SelfManaObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -95,6 +96,7 @@ type BuddyActionsClient interface {
 	CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error)
 	HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error)
 	CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error)
+	SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error)
 }
 
 type buddyActionsClient struct {
@@ -435,6 +437,16 @@ func (c *buddyActionsClient) CastHeal(ctx context.Context, in *CastHealRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SelfManaObservationResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_SelfManaObservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -474,6 +486,7 @@ type BuddyActionsServer interface {
 	CastSelf(context.Context, *CastSelfRequest) (*State, error)
 	HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error)
 	CastHeal(context.Context, *CastHealRequest) (*State, error)
+	SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -582,6 +595,9 @@ func (UnimplementedBuddyActionsServer) HealingOptions(context.Context, *emptypb.
 }
 func (UnimplementedBuddyActionsServer) CastHeal(context.Context, *CastHealRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CastHeal not implemented")
+}
+func (UnimplementedBuddyActionsServer) SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SelfManaObservation not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -1198,6 +1214,24 @@ func _BuddyActions_CastHeal_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_SelfManaObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SelfManaObservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SelfManaObservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SelfManaObservation(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1336,6 +1370,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CastHeal",
 			Handler:    _BuddyActions_CastHeal_Handler,
+		},
+		{
+			MethodName: "SelfManaObservation",
+			Handler:    _BuddyActions_SelfManaObservation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

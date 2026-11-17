@@ -377,6 +377,55 @@ message HealingOptionsResponse {
   repeated HealingRank spells = 5;
   string reason = 6;
 }
+message SelfManaCaster {
+  uint64 guid = 1;
+  bool present = 2;
+  bool alive_known = 3;
+  bool alive = 4;
+  bool map_known = 5;
+  bool position_known = 6;
+  bool class_known = 7;
+  uint32 class_id = 8;
+  bool power_known = 9;
+  optional uint32 power_type = 10;
+  optional uint32 power = 11;
+  optional uint32 max_power = 12;
+  bool combat_known = 13;
+  optional bool in_combat = 14;
+  bool movement_known = 15;
+  optional bool moving = 16;
+  bool channel_known = 17;
+  optional uint32 channel_spell_id = 18;
+}
+message SelfManaActivity {
+  bool known = 1;
+  optional bool idle = 2;
+}
+message SelfManaThreat {
+  bool known = 1;
+  optional bool attacking_self = 2;
+  optional bool attacking_party = 3;
+}
+message SelfManaSpell {
+  uint32 spell_id = 1;
+  uint32 family_id = 2;
+  optional uint32 rank = 3;
+  bool metadata_known = 4;
+  bool self_cast_supported = 5;
+  bool channeled = 6;
+  bool ready_known = 7;
+  optional bool ready = 8;
+}
+message SelfManaObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  bool spellbook_known = 3;
+  SelfManaCaster caster = 4;
+  SelfManaActivity activity = 5;
+  SelfManaThreat threat = 6;
+  repeated SelfManaSpell spells = 7;
+  bool host_owned = 8;
+}
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
@@ -417,4 +466,5 @@ service BuddyActions {
   rpc CastSelf(CastSelfRequest) returns (State);
   rpc HealingOptions(google.protobuf.Empty) returns (HealingOptionsResponse);
   rpc CastHeal(CastHealRequest) returns (State);
+  rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

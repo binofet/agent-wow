@@ -19,6 +19,13 @@ func isChanneledSpell(spell spellcatalog.Spell) bool {
 	return spell.Attrs[1]&(0x4|0x40) != 0
 }
 
+func (s *Service) selfCastBusyLocked() bool {
+	return s.state.CastPending || s.state.Moving || s.state.Traveling || s.state.MotionUnconfirmed ||
+		s.state.AutoAttackUnconfirmed || s.state.InteractionOwner != "" || s.state.Practicing ||
+		s.engage.active || s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
+		s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist)
+}
+
 // Use target selectors and packet requirements from the learned spell's DBC
 // row. The native client does not choose a spell or interpret its effects.
 func supportsSelfCast(spell spellcatalog.Spell) bool {
@@ -53,11 +60,7 @@ func (s *Service) CastSelf(ctx context.Context, r *actionsv1.CastSelfRequest) (*
 	if !s.spellbookKnown || !learned || !supportsSelfCast(spell) {
 		return nil, status.Error(codes.FailedPrecondition, "learned spell with a supported self target required")
 	}
-	now := s.now()
-	if s.state.CastPending || s.state.Moving || s.state.Traveling || s.state.MotionUnconfirmed ||
-		s.state.AutoAttackUnconfirmed || s.state.InteractionOwner != "" || s.state.Practicing ||
-		s.engage.active || s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
-		now.Before(s.nextHeal) || now.Before(s.nextAssist) || now.Before(s.spellReady[spell.ID]) {
+	if s.selfCastBusyLocked() || s.spellOnCooldownLocked(spell) {
 		return nil, status.Error(codes.FailedPrecondition, "current idle cast custody and spell ready required")
 	}
 	w, err := s.snapshot(ctx)

@@ -60,6 +60,7 @@ type Service struct {
 	selfGUID                                   uint64
 	independent                                bool
 	hostStandingHealing                        bool
+	hostSelfMana                               bool
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time
 	state                                      actionsv1.State
@@ -102,6 +103,8 @@ type Service struct {
 	capabilities                               map[uint32]spellcatalog.Spell
 	capabilityRevision                         uint64
 	spellReady                                 map[uint32]time.Time
+	spellCooldownBaselineKnown                 bool
+	categoryReady                              map[uint32]time.Time
 	fearBreakReady                             time.Time
 	fearBreakAttempted                         bool
 	supportOp                                  *supportAttempt
@@ -1522,6 +1525,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			malformed = true
 		} else {
 			s.applySpellbookLocked(known)
+			s.observeInitialCooldownsLocked(p)
 		}
 	case opcode.SMSGLearnedSpell, opcode.SMSGRemovedSpell, opcode.SMSGSupercededSpell:
 		remove, add, err := spellKnowledgePacket(packet.Opcode, p)
