@@ -19,6 +19,10 @@ type controlTemplate struct {
 }
 
 func (s *Service) sapReadyLocked(ctx context.Context, w *worldv1.SnapshotResponse, spell spellcatalog.Spell) (bool, string, error) {
+	return s.sapReadinessLocked(ctx, w, spell, true)
+}
+
+func (s *Service) sapReadinessLocked(ctx context.Context, w *worldv1.SnapshotResponse, spell spellcatalog.Spell, allowQueries bool) (bool, string, error) {
 	self, target := w.Self, w.RequestedCreature
 	if self.UnitFlags&0x80000 != 0 {
 		return false, "sap_caster_in_combat", status.Error(codes.FailedPrecondition, "out-of-combat rogue and exact out-of-combat creature required")
@@ -33,6 +37,9 @@ func (s *Service) sapReadyLocked(ctx context.Context, w *worldv1.SnapshotRespons
 		return false, "sap_stealth_unavailable", status.Error(codes.FailedPrecondition, "observed or available learned Stealth required")
 	}
 	if spell.ItemClass >= 0 && !s.weaponReady(self) {
+		if !allowQueries {
+			return false, "sap_weapon_not_confirmed", status.Error(codes.FailedPrecondition, "policy Sap requires a verified equipped weapon")
+		}
 		s.requestWeaponLocked(ctx, self)
 		s.state.Reason = "sap_weapon_not_confirmed"
 		return false, s.state.Reason, nil
@@ -53,6 +60,9 @@ func (s *Service) sapReadyLocked(ctx context.Context, w *worldv1.SnapshotRespons
 	case 1, 2, 3, 7: // Beast, dragonkin, demon, humanoid.
 		return true, "", nil
 	case 0:
+		if !allowQueries {
+			return false, "sap_target_type_pending", status.Error(codes.FailedPrecondition, "policy Sap requires an observed eligible creature type")
+		}
 		s.queryControlTemplateLocked(ctx, target, now)
 		s.state.Reason = "sap_target_type_pending"
 		return false, s.state.Reason, nil

@@ -63,9 +63,11 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 
 	method := capability
 	switch capability {
-	case "polymorph":
+	case "polymorph", "sap":
 	case "heal":
 		method = "cast_heal"
+	case "offense":
+		method = "cast_offense"
 	case "cast_self":
 		if target != self {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "self cast target must be the current body")
@@ -85,7 +87,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability != "cast_self" {
 		values["target_guid"] = protoreflect.ValueOfUint64(targetGUID)
 	}
-	if capability != "polymorph" {
+	if capability != "polymorph" && capability != "sap" {
 		selfGUID, _ := strconv.ParseUint(self, 10, 64)
 		values["self_guid"] = protoreflect.ValueOfUint64(selfGUID)
 	}
@@ -132,8 +134,12 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	if origin.Writer != "lua" || origin.Module != actionsModule || origin.ActionID == "" {
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
+	bridge := modcb.PolicySpellService
+	if op.capability == "offense" || op.capability == "sap" {
+		bridge = modcb.PolicyHostileSpellService
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	ready, err := grpc_health_v1.NewHealthClient(inst.conn).Check(probeCtx, &grpc_health_v1.HealthCheckRequest{Service: modcb.PolicySpellService})
+	ready, err := grpc_health_v1.NewHealthClient(inst.conn).Check(probeCtx, &grpc_health_v1.HealthCheckRequest{Service: bridge})
 	cancel()
 	if err != nil || ready.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 		return behavior.ActionNotDispatched, op.payload("policy_spell_bridge_unavailable", false, false, false)

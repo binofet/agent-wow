@@ -15,17 +15,17 @@ import (
 )
 
 type supportAttempt struct {
-	view             actionsv1.SpellOperation
-	owner            uint64
-	count            byte
-	until            time.Time
-	controlAura      observedBuffAura
-	controlSlot      uint8
-	creation         *itemCreation
-	selfChannel      bool
-	healLogEligible  bool
-	cleanseAura      uint32
-	policySpellToken string
+	view              actionsv1.SpellOperation
+	owner             uint64
+	count             byte
+	until             time.Time
+	controlAura       observedBuffAura
+	controlSlot       uint8
+	creation          *itemCreation
+	selfChannel       bool
+	effectLogEligible bool
+	cleanseAura       uint32
+	policySpellToken  string
 }
 type resurrectionOffer struct {
 	caster   uint64

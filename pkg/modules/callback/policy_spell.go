@@ -12,6 +12,10 @@ import (
 // dispatch token on its cast callback. Older binaries have no such service.
 const PolicySpellService = "agentwow.policy-spell.v1"
 
+// PolicyHostileSpellService identifies Actions builds with the exact offense
+// RPC and the policy-only Sap path that requires observed Stealth.
+const PolicyHostileSpellService = "agentwow.policy-hostile-spell.v1"
+
 const (
 	policySpellKey   = "agentwow-policy-spell"
 	policyReceiptKey = "agentwow-policy-spell-receipt-bin"

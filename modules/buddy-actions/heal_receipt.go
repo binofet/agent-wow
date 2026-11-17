@@ -18,50 +18,55 @@ func (s *Service) reserveHealReceiptLocked(token string, heal spellcatalog.Spell
 		direct = e.Kind == 10 && (e.A == 1 || e.A == 21) && e.B == 0 &&
 			e.Aura == 0 && e.Trigger == 0 && e.PeriodMs == 0 && e.Chain <= 1 && e.Radius == 0
 	}
+	return s.reserveExplicitCastLocked(token, heal.ID, target, string(spellcatalog.Heal), direct)
+}
+
+func (s *Service) reserveExplicitCastLocked(token string, spell uint32, target uint64, capability string, effectLogEligible bool) *supportAttempt {
 	op := &supportAttempt{
 		view: actionsv1.SpellOperation{
-			SpellId: heal.ID, TargetGuid: target, Capability: string(spellcatalog.Heal), Phase: "waiting_server",
+			SpellId: spell, TargetGuid: target, Capability: capability, Phase: "waiting_server",
 		},
-		count: s.castCount, until: s.castUntil, policySpellToken: token, healLogEligible: direct,
+		count: s.castCount, until: s.castUntil, policySpellToken: token, effectLogEligible: effectLogEligible,
 	}
 	s.supportOp = op
 	return op
 }
 
-func (s *Service) pendingHealReceiptLocked() *supportAttempt {
+func (s *Service) pendingExplicitCastLocked() *supportAttempt {
 	op := s.supportOp
-	if op != nil && op.view.Capability == string(spellcatalog.Heal) && s.state.CastPending &&
+	if op != nil && (op.view.Capability == string(spellcatalog.Heal) || op.view.Capability == offenseCapability) && s.state.CastPending &&
 		s.castCount == op.count && s.pendingSpell == op.view.SpellId && s.pendingTarget == op.view.TargetGuid {
 		return op
 	}
 	return nil
 }
 
-func (s *Service) endHealReceiptLocked(phase string) {
-	if op := s.pendingHealReceiptLocked(); op != nil {
+func (s *Service) endExplicitCastLocked(phase string) {
+	if op := s.pendingExplicitCastLocked(); op != nil {
 		op.view.Phase = phase
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0
 	}
 }
 
-func (s *Service) expireHealReceiptLocked() {
-	if op := s.pendingHealReceiptLocked(); op != nil && !s.now().Before(op.until) {
-		s.endHealReceiptLocked("outcome_unconfirmed_no_retry")
+func (s *Service) expireExplicitCastLocked() {
+	if op := s.pendingExplicitCastLocked(); op != nil && !s.now().Before(op.until) {
+		s.endExplicitCastLocked("outcome_unconfirmed_no_retry")
 	}
 }
 
-func (s *Service) healReceiptPacketLocked(code uint32, p []byte) (bool, error) {
-	s.expireHealReceiptLocked()
-	op := s.pendingHealReceiptLocked()
+func (s *Service) explicitCastPacketLocked(code uint32, p []byte) (bool, error) {
+	s.expireExplicitCastLocked()
+	op := s.pendingExplicitCastLocked()
 	if op == nil {
 		return code == opcode.SMSGSpellheallog, nil
 	}
-	bad := errors.New("malformed exact heal event")
+	healing := op.view.Capability == string(spellcatalog.Heal)
+	bad := errors.New("malformed exact cast event")
 	switch code {
 	case opcode.SMSGTransferPending, opcode.SMSGNewWorld:
 		if code == opcode.SMSGNewWorld && len(p) == 20 || code == opcode.SMSGTransferPending && (len(p) == 4 || len(p) == 12) {
-			s.endHealReceiptLocked("world_transfer_outcome_unconfirmed")
+			s.endExplicitCastLocked("world_transfer_outcome_unconfirmed")
 		}
 		return false, nil // The normal lifecycle handler also consumes this event.
 	case opcode.SMSGCastFailed, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther:
@@ -87,10 +92,14 @@ func (s *Service) healReceiptPacketLocked(code uint32, p []byte) (bool, error) {
 		}
 		if op.view.ServerCastGo {
 			// A rejection after GO cannot establish the absence of an effect.
-			s.endHealReceiptLocked("server_cast_go_effect_unverified")
-		} else {
+			s.endExplicitCastLocked("server_cast_go_effect_unverified")
+		} else if healing {
 			op.view.Phase = "server_rejected_no_replay"
 			s.castFailedLocked(uint32(p[n+5]), "server_cast_failed_healing_paused")
+		} else {
+			s.endExplicitCastLocked("server_rejected_no_replay")
+			s.state.LastCastFailure = uint32(p[n+5])
+			s.state.Reason = "server_offense_cast_rejected"
 		}
 		return true, nil
 	case opcode.SMSGSpellStart, opcode.SMSGSpellGo:
@@ -110,21 +119,30 @@ func (s *Service) healReceiptPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		if !goEvent {
-			s.state.ServerCastStarts++
+			if healing {
+				s.state.ServerCastStarts++
+			} else {
+				s.state.ServerAssistStarts++
+			}
 			s.state.Reason = "server_cast_started"
 			return true, nil
 		}
 		op.view.ServerCastGo = true
-		s.state.ServerCastGo++
-		s.state.Reason = "server_spell_go_health_effect_unverified"
+		if healing {
+			s.state.ServerCastGo++
+			s.state.Reason = "server_spell_go_health_effect_unverified"
+		} else {
+			s.state.ServerAssistGo++
+			s.state.Reason = "server_offensive_spell_go_damage_effect_unverified"
+		}
 		hits := offset + 8
-		if !op.healLogEligible || len(p) < hits+10 || p[hits] != 1 ||
+		if !op.effectLogEligible || len(p) < hits+10 || p[hits] != 1 ||
 			binary.LittleEndian.Uint64(p[hits+1:]) != op.view.TargetGuid || p[hits+9] != 0 {
-			s.endHealReceiptLocked("server_cast_go_effect_unverified")
+			s.endExplicitCastLocked("server_cast_go_effect_unverified")
 		}
 		return true, nil
 	case opcode.SMSGSpellheallog:
-		if !op.view.ServerCastGo {
+		if !healing || !op.view.ServerCastGo {
 			return true, nil
 		}
 		target, caster, spell, effective, err := decodeHealReceipt(p)
@@ -135,11 +153,11 @@ func (s *Service) healReceiptPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		if effective == 0 {
-			s.endHealReceiptLocked("server_cast_go_effect_unverified")
+			s.endExplicitCastLocked("server_cast_go_effect_unverified")
 			return true, nil
 		}
 		op.view.EffectObserved = true
-		s.endHealReceiptLocked("confirmed_heal")
+		s.endExplicitCastLocked("confirmed_heal")
 		s.state.Reason = "server_heal_effect_confirmed"
 		return true, nil
 	}

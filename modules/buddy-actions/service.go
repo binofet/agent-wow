@@ -588,7 +588,7 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	}
 	s.expireCrowdControlLocked()
 	s.expireSelfChannelLocked()
-	s.expireHealReceiptLocked()
+	s.expireExplicitCastLocked()
 	s.observeItemCreationLocked(w)
 	s.supportSnapshotLocked(w)
 	return s.stateLocked(), nil
@@ -605,7 +605,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.finishCrowdControlLocked("logout_outcome_unconfirmed")
 	s.finishItemCreationLocked("logout_outcome_unconfirmed")
 	s.finishSelfChannelLocked("logout_outcome_unconfirmed")
-	s.endHealReceiptLocked("outcome_unconfirmed_no_retry")
+	s.endExplicitCastLocked("outcome_unconfirmed_no_retry")
 	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
@@ -1036,7 +1036,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.buffTimeoutLocked()
 	s.cancelProtectedCastLocked(ctx)
 	s.expireSelfChannelLocked()
-	s.expireHealReceiptLocked()
+	s.expireExplicitCastLocked()
 	if !s.closed && s.autoTarget != 0 {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}
@@ -1419,7 +1419,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		return &emptypb.Empty{}, nil
 	}
 	malformed := false
-	if handled, err := s.healReceiptPacketLocked(packet.Opcode, p); handled {
+	if handled, err := s.explicitCastPacketLocked(packet.Opcode, p); handled {
 		if err != nil {
 			s.state.MalformedPackets++
 		}
@@ -1522,11 +1522,12 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 			s.state.AutoAttackUnconfirmed = false
 		}
 	case opcode.SMSGSpellnonmeleedamagelog:
-		caster, _, spell, damage, err := decodeSpellDamage(p)
+		caster, target, spell, damage, err := decodeSpellDamage(p)
 		if err != nil {
 			malformed = true
 		} else if caster == s.selfGUID {
 			s.offensiveDamageLocked(spell, damage)
+			s.observeOffenseDamageLocked(target, spell, damage)
 		}
 	case opcode.SMSGInitialSpells:
 		known, err := completeSpellbook(p)

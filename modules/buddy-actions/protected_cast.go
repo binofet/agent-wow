@@ -13,6 +13,9 @@ func (s *Service) cancelProtectedCastLocked(ctx context.Context) {
 	if s.closed || !s.state.CastPending || s.protectedCastCancelAttempted || !now.Before(s.castUntil) || ctx.Err() != nil {
 		return
 	}
+	if op := s.pendingExplicitCastLocked(); op != nil && op.view.ServerCastGo {
+		return // Waiting for an effect receipt does not leave the cast interruptible.
+	}
 	// An overflow may inhibit new offense, but only a matching observed aura
 	// authorizes interruption of this already-dispatched cast.
 	s.targetProtection.expire(now)

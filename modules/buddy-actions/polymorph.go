@@ -4,6 +4,7 @@ import (
 	"context"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,6 +24,11 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	if session == "" || rank == 0 || target>>48 != 0xf130 || target&0xffffff == 0 || approach && cancel {
 		return nil, status.Error(codes.InvalidArgument, "current session, exact spell rank and NPC GUID required")
 	}
+	token, supplied := modcb.IncomingPolicySpell(ctx)
+	policySap := kind == spellcatalog.Sap && supplied
+	if policySap && (token == "" || approach || cancel) {
+		return nil, status.Error(codes.InvalidArgument, "policy Sap requires an immediate exact cast")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
@@ -32,14 +38,19 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	if s.closed || session != s.sessionID {
 		return nil, status.Error(codes.FailedPrecondition, "current crowd control body required")
 	}
-	if cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind) {
+	if !policySap && (cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind)) {
 		return s.requestCrowdControlApproachLocked(ctx, rank, target, kind, class, approach, cancel)
 	}
 	if !s.crowdControlIdleLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "current session and idle casting custody required")
 	}
+	if policySap && (s.crowdControl.active || s.state.Following || s.state.Buffing || s.questApproaching ||
+		s.clientControlLost || s.clientControlRestoring) {
+		return nil, status.Error(codes.FailedPrecondition, "policy Sap requires idle casting custody")
+	}
 	spell, learned := s.learnedContractsLocked()[rank]
-	if !s.spellbookKnown || !learned || spell.Capability().Kind != kind || s.now().Before(s.spellReady[spell.ID]) {
+	if !s.spellbookKnown || !learned || spell.Capability().Kind != kind || s.now().Before(s.spellReady[spell.ID]) ||
+		policySap && s.spellOnCooldownLocked(spell) {
 		return nil, status.Error(codes.FailedPrecondition, "exact learned crowd-control rank required")
 	}
 	// This is the last dependency read before writing. Use only the requested
@@ -64,11 +75,14 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	observed := position{c.X, c.Y, c.Z, c.Orientation}
 	observedKnown := c.PositionKnown && finite(observed)
 	if kind == spellcatalog.Sap {
+		if policySap && (!s.stealthedLocked() || !self.ChannelSpellKnown || self.ChannelObjectGuid != 0) {
+			return nil, status.Error(codes.FailedPrecondition, "policy Sap requires observed Stealth and no active channel")
+		}
 		pos, known, estimated := creaturePosition(c)
 		if !known || estimated && (c.GetTrajectory().GetDurationMs() == 0 || !observedKnown) {
 			return nil, status.Error(codes.FailedPrecondition, "selected NPC position is not observed within crowd-control range")
 		}
-		ready, _, err := s.sapReadyLocked(ctx, w, spell)
+		ready, _, err := s.sapReadinessLocked(ctx, w, spell, !policySap)
 		if err != nil {
 			return nil, err
 		}

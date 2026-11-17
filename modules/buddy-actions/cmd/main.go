@@ -116,6 +116,7 @@ func run() error {
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 	readiness.SetServingStatus(modcb.PolicySpellService, grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicyHostileSpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	go service.Run(ctx)
 	go func() {
 		<-ctx.Done()

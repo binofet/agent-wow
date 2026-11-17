@@ -347,6 +347,7 @@ message SapRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_g
 message CreateItemRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
 message CastSelfRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
 message CastHealRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message CastOffenseRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message HealingRank {
   uint32 spell_id = 1;
   optional uint32 rank = 2;
@@ -547,5 +548,6 @@ service BuddyActions {
   rpc HealingOptions(google.protobuf.Empty) returns (HealingOptionsResponse);
   rpc EncounterObservation(google.protobuf.Empty) returns (EncounterObservationResponse);
   rpc CastHeal(CastHealRequest) returns (State);
+  rpc CastOffense(CastOffenseRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

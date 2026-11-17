@@ -55,6 +55,7 @@ const (
 	BuddyActions_HealingOptions_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
 	BuddyActions_EncounterObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/EncounterObservation"
 	BuddyActions_CastHeal_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
+	BuddyActions_CastOffense_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/CastOffense"
 	BuddyActions_SelfManaObservation_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
 )
 
@@ -98,6 +99,7 @@ type BuddyActionsClient interface {
 	HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error)
 	EncounterObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EncounterObservationResponse, error)
 	CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error)
+	CastOffense(ctx context.Context, in *CastOffenseRequest, opts ...grpc.CallOption) (*State, error)
 	SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error)
 }
 
@@ -449,6 +451,16 @@ func (c *buddyActionsClient) CastHeal(ctx context.Context, in *CastHealRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) CastOffense(ctx context.Context, in *CastOffenseRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastOffense_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SelfManaObservationResponse)
@@ -499,6 +511,7 @@ type BuddyActionsServer interface {
 	HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error)
 	EncounterObservation(context.Context, *emptypb.Empty) (*EncounterObservationResponse, error)
 	CastHeal(context.Context, *CastHealRequest) (*State, error)
+	CastOffense(context.Context, *CastOffenseRequest) (*State, error)
 	SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
@@ -611,6 +624,9 @@ func (UnimplementedBuddyActionsServer) EncounterObservation(context.Context, *em
 }
 func (UnimplementedBuddyActionsServer) CastHeal(context.Context, *CastHealRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CastHeal not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastOffense(context.Context, *CastOffenseRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastOffense not implemented")
 }
 func (UnimplementedBuddyActionsServer) SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelfManaObservation not implemented")
@@ -1248,6 +1264,24 @@ func _BuddyActions_CastHeal_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_CastOffense_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastOffenseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastOffense(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastOffense_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastOffense(ctx, req.(*CastOffenseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_SelfManaObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -1408,6 +1442,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CastHeal",
 			Handler:    _BuddyActions_CastHeal_Handler,
+		},
+		{
+			MethodName: "CastOffense",
+			Handler:    _BuddyActions_CastOffense_Handler,
 		},
 		{
 			MethodName: "SelfManaObservation",

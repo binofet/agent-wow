@@ -8,11 +8,16 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/modules/callback"
+	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestPolicySpellCallbackBindsScopeAndWrite(t *testing.T) {
@@ -84,5 +89,40 @@ func TestPolicySelfChannelEndsWithoutInventingManaGain(t *testing.T) {
 	effect.ChannelEnded = true
 	if got := spellEffectOutcome(effect); got != behavior.ActionSettledUnverified || effect.EffectObserved {
 		t.Fatalf("ended channel: %s, effect observed: %v", got, effect.EffectObserved)
+	}
+}
+
+func TestPolicyHostileSpellsRequireExactActionsBridge(t *testing.T) {
+	manager := New(nil, nil, nil)
+	t.Cleanup(manager.cancel)
+	probes := 0
+	conn, err := grpc.NewClient("passthrough:///unused", grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(func(_ context.Context, method string, req, _ any, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
+			if method != grpc_health_v1.Health_Check_FullMethodName {
+				t.Fatalf("stale Actions received a mutation: %s", method)
+			}
+			probe := req.(*grpc_health_v1.HealthCheckRequest)
+			if probe.GetService() != modcb.PolicyHostileSpellService {
+				t.Fatalf("unexpected readiness service %q", probe.GetService())
+			}
+			probes++
+			return status.Error(codes.NotFound, "unknown service")
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx := modsession.WithWriteOrigin(context.Background(), modsession.WriteOrigin{
+		SessionID: "test", Module: actionsModule, Writer: "lua", ActionID: "1",
+	})
+	for _, capability := range []string{"sap", "offense"} {
+		op := &policySpell{capability: capability}
+		outcome, payload := manager.invokePolicySpell(ctx, &instance{conn: conn}, moddisc.Method{}, &emptypb.Empty{}, op)
+		if outcome != behavior.ActionNotDispatched || payload["phase"] != "policy_spell_bridge_unavailable" || op.admitted {
+			t.Fatalf("%s with stale Actions: %s %+v", capability, outcome, payload)
+		}
+	}
+	if probes != 2 {
+		t.Fatalf("got %d readiness probes", probes)
 	}
 }
