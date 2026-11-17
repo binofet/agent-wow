@@ -363,6 +363,15 @@ local function decide_encounter(frame)
        usable_spell(obs, support.spellId, "heal") then
         out.action = proposal(obs, "heal", support.targetGuid, support.spellId); return out
     end
+    local active_melee = guid(obs.activeMeleeTargetGuid)
+    if active_melee then
+        local held = targets[active_melee]
+        if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
+           not held.engaged or active_melee ~= out.focusGuid then
+            out.action = proposal(obs, "melee_stop", active_melee)
+        end
+        return out
+    end
     if obs.targetProtectionOverflow == true then return out end
     if control and control.casterGuid == obs.selfGuid then
         for _, row in ipairs(plan.controls or {}) do

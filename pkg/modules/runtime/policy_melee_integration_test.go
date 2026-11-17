@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
-	"github.com/agent-wow/agent-wow/pkg/modules/runner"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
@@ -25,29 +23,22 @@ import (
 
 type policyMeleeWorld struct {
 	policySpellWorld
-	combat atomic.Bool
-}
-
-type policyMeleeRunner struct {
-	policySpellRunner
-}
-
-func (r *policyMeleeRunner) Up(ctx context.Context, launch modrunner.Launch) error {
-	if launch.Manifest.Name == "buddy-actions" {
-		launch.Environment = maps.Clone(launch.Environment)
-		launch.Environment["BUDDY_HOST_ENCOUNTER_OWNED"] = "true"
-	}
-	return r.policySpellRunner.Up(ctx, launch)
+	combat       atomic.Bool
+	exposeNearby bool
 }
 
 const policyMeleeVisit = 1
 
 func (w *policyMeleeWorld) Snapshot(ctx context.Context, req *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
+	targetRequested := req.GetCreatureGuid() == policyWolfGUID
+	if w.exposeNearby && !targetRequested {
+		req = &worldv1.SnapshotRequest{CreatureGuid: policyWolfGUID}
+	}
 	view, err := w.policySpellWorld.Snapshot(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	view.VisitRevision = policyMeleeVisit
+	view.VisitRevision, view.ObservedPackets = policyMeleeVisit, 10
 	self := view.Self
 	self.ClassId, self.PowerType = 4, 3 // Rogue with energy.
 	self.LevelKnown, self.Level = true, 10
@@ -67,16 +58,23 @@ func (w *policyMeleeWorld) Snapshot(ctx context.Context, req *worldv1.SnapshotRe
 		creature.MaxHealth = 100
 		creature.LevelKnown, creature.Level = true, 10
 		creature.CombatReachKnown, creature.CombatReach = true, 1.5
+		creature.DynamicFlagsKnown = true
 		if inCombat {
 			creature.UnitFlags = 0x80000
 			creature.AttackVictimKnown, creature.AttackVictimGuid, creature.AttackAgeMs = true, self.Guid, 10
 			creature.TargetKnown, creature.TargetGuid = true, self.Guid
 		}
+		if w.exposeNearby {
+			view.NearbyCreatures = []*worldv1.CreatureState{creature}
+		}
+		if !targetRequested {
+			view.RequestedCreature = nil
+		}
 	}
 	return view, nil
 }
 
-func policyMeleeFixture(t *testing.T) (*Manager, context.Context, <-chan policySpellWrite) {
+func policyMeleeFixture(t *testing.T, observed bool) (*Manager, context.Context, <-chan policySpellWrite, *policyMeleeWorld) {
 	t.Helper()
 	binDir := os.Getenv("BUDDY_ACTIONS_PACKAGED_BIN_DIR")
 	if binDir == "" {
@@ -86,8 +84,8 @@ func policyMeleeFixture(t *testing.T) (*Manager, context.Context, <-chan policyS
 	if err != nil {
 		t.Fatal(err)
 	}
-	world := &policyMeleeWorld{}
-	runner := &policyMeleeRunner{policySpellRunner{binary: binaryPath, peers: make(map[string]*grpc.Server), world: world}}
+	world := &policyMeleeWorld{exposeNearby: observed}
+	runner := &policySpellRunner{binary: binaryPath, peers: make(map[string]*grpc.Server), world: world, hostOwnsEncounter: observed}
 	manager := New(packagedPolicySpellRegistry(t), runner, nil)
 	t.Cleanup(func() {
 		if err := manager.Close(); err != nil {
@@ -126,12 +124,12 @@ func policyMeleeFixture(t *testing.T) (*Manager, context.Context, <-chan policyS
 	// hosted operation. Both query packets and no spell write are checked.
 	primePackagedSap(t, ctx, manager, writes, catalog.SessionID)
 	noPackagedWrites(t, writes)
-	world.combat.Store(true)
-	return manager, ctx, writes
+	world.combat.Store(!observed)
+	return manager, ctx, writes, world
 }
 
 func TestPackagedActionsPolicyExactMelee(t *testing.T) {
-	manager, ctx, writes := policyMeleeFixture(t)
+	manager, ctx, writes, _ := policyMeleeFixture(t, false)
 	policy, err := manager.StartPolicy(ctx, fmt.Sprintf(`
 local receipts = ""
 local settled = {}

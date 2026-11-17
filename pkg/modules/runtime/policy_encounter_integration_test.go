@@ -121,18 +121,13 @@ func (w *packagedEncounterCombatWorld) Snapshot(ctx context.Context, req *worldv
 	return view, nil
 }
 
-func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
-	world := &packagedEncounterCombatWorld{}
-	runner := &policySpellRunner{world: world, hostOwnsEncounter: true}
-	manager, ctx, writes := startPackagedPolicySpellWith(t, runner, fixtureSmite)
-	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGLoginVerifyWorld, make([]byte, 20))
-
+func startPackagedEncounterBundle(t *testing.T, ctx context.Context, manager *Manager, writes <-chan policySpellWrite) context.CancelFunc {
+	t.Helper()
 	source, err := exec.CommandContext(ctx, "../../../dev/encounter-bundle").CombinedOutput()
 	if err != nil {
 		t.Fatalf("assemble encounter policy: %s %v", source, err)
 	}
 	policyCtx, stop := context.WithCancel(ctx)
-	defer stop()
 	if err := manager.StartObservedPolicy(policyCtx, string(source), "encounter="+encounterObservationMethod); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +150,17 @@ func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
 		case <-poll.C:
 		}
 	}
+	return stop
+}
+
+func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
+	world := &packagedEncounterCombatWorld{}
+	runner := &policySpellRunner{world: world, hostOwnsEncounter: true}
+	manager, ctx, writes := startPackagedPolicySpellWith(t, runner, fixtureSmite)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGLoginVerifyWorld, make([]byte, 20))
+
+	stop := startPackagedEncounterBundle(t, ctx, manager, writes)
+	defer stop()
 	world.attacker.Store(true)
 	manager.mu.Lock()
 	policy := manager.policy
@@ -176,6 +182,33 @@ func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
 	if op := packagedHostileEffect(t, ctx, manager); !op.GetEffectObserved() || op.GetTargetGuid() != policyWolfGUID ||
 		policy.vm.Status().Pending != 0 {
 		t.Fatalf("the selected attacker's damage did not settle the Lua action: %v", op)
+	}
+	noPackagedWrites(t, writes)
+}
+
+func TestPackagedActionsEncounterBundleUsesMeleeWithoutDamageSpell(t *testing.T) {
+	manager, ctx, writes, world := policyMeleeFixture(t, true)
+	stop := startPackagedEncounterBundle(t, ctx, manager, writes)
+	defer stop()
+	world.combat.Store(true)
+	manager.mu.Lock()
+	policy := manager.policy
+	manager.mu.Unlock()
+	boot := policy.vm.Status()
+	origin := modsession.WriteOrigin{
+		SessionID: boot.SessionID, Module: actionsModule, Writer: "lua",
+		PolicyRevision: boot.Revision, Generation: boot.Epoch, ActionID: "1",
+	}
+	checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, policyWolfGUID), origin)
+	start := binary.LittleEndian.AppendUint64(nil, policyMageGUID)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstart, binary.LittleEndian.AppendUint64(start, policyWolfGUID))
+	world.combat.Store(false)
+	origin.ActionID = "2"
+	checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackstop, nil, origin)
+	ack := append(spellFixturePackedGUID(policyMageGUID), spellFixturePackedGUID(policyWolfGUID)...)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstop, binary.LittleEndian.AppendUint32(ack, 0))
+	if err := policy.vm.Drain(ctx); err != nil || policy.vm.Status().Pending != 0 {
+		t.Fatalf("exact stop did not settle the Lua ledger: %v", err)
 	}
 	noPackagedWrites(t, writes)
 }
