@@ -122,8 +122,8 @@ local encounter_intent = {
 	expect(engaged, "engaged_focus", key(skull))
 	expectQueue(engaged, skull, moon)
 
-	// An owned hypothetical feed uses the same ABI; production still emits
-	// hostOwned=false. Only the exact fresh nested observation can heal.
+	// Ownership is explicit on the feed. Only the exact fresh nested
+	// observation can heal.
 	obs.Players["3"].Health = 20
 	obs.Spells["2050"] = &actionsv1.EncounterSpell{Known: true, Ready: true, Capability: "heal"}
 	obs.Healing = &actionsv1.HealingOptionsResponse{SessionId: session, HostOwned: true,

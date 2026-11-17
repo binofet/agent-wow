@@ -13,7 +13,7 @@ local state = {bindings={}, defeated={}, controls={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
-local terminal = {confirmed=true, failed=true, not_dispatched=true}
+local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 local icons = {star=1, circle=2, diamond=3, triangle=4, moon=5, square=6, x=7, skull=8}
 
 local function guid(value)
@@ -335,7 +335,7 @@ local function decide(frame)
         expected = input.observationSequence
     elseif encounter and encounter.hostOwned ~= false and input.observationSequence == state.sequence and
            state.settledAt ~= state.sequence then
-        expected = encounter.selfManaSequence
+        expected = (input.observationSequences or {}).self_mana
     end
     if not guid(expected) or expected ~= mana_sequence then return out end
     local view = mana_observation

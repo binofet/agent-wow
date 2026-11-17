@@ -95,16 +95,18 @@ func (p *SessionPolicy) stepObservation(ctx context.Context, sid string, feeds [
 		}
 		observations[i] = observed
 	}
-	var sequence uint64
+	sequences := make(map[string]any, len(feeds))
 	for i, feed := range feeds {
-		var err error
-		sequence, err = p.enqueueObservation(ctx, feed.phase, observations[i])
+		sequence, err := p.enqueueObservation(ctx, feed.phase, observations[i])
 		if err != nil {
 			return err
 		}
+		sequences[feed.phase] = strconv.FormatUint(sequence, 10)
 	}
 	phase := feeds[len(feeds)-1].phase
-	_, _, err := p.Step(ctx, map[string]any{"kind": phase, "observationSequence": strconv.FormatUint(sequence, 10)}, nil)
+	_, _, err := p.Step(ctx, map[string]any{
+		"kind": phase, "observationSequence": sequences[phase], "observationSequences": sequences,
+	}, nil)
 	return err
 }
 

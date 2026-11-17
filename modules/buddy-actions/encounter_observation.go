@@ -66,7 +66,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	defer s.mu.Unlock()
 
 	identity := &actionsv1.EncounterObservationResponse{
-		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false),
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterOwned),
 	}
 	if s.closed {
 		identity.Reason = "session_closing"
@@ -87,7 +87,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	}
 
 	out := &actionsv1.EncounterObservationResponse{
-		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false),
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterOwned),
 		VisitId: w.VisitRevision, MapId: proto.Uint32(self.MapId), WorldObservationRevision: w.ObservedPackets,
 		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
 		Players:    make(map[string]*actionsv1.EncounterPlayer),
