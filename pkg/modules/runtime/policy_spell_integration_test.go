@@ -399,6 +399,34 @@ func TestPackagedActionsPolicySpellAttribution(t *testing.T) {
 	}
 }
 
+func TestPackagedActionsTransferSettlesPriorVisitCast(t *testing.T) {
+	manager, ctx, writes := startPackagedPolicySpell(t)
+	policy, err := manager.StartPolicy(ctx, spellFixturePolicy("transfer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := policy.vm.Status()
+	_, receipt, err := policy.Step(ctx, map[string]any{"cast": true}, nil)
+	if err != nil || receipt == nil || receipt.Outcome != behavior.ActionTransportAccepted {
+		t.Fatalf("prior visit cast = %+v, %v", receipt, err)
+	}
+	readPolicySpellCast(t, ctx, writes, modsession.WriteOrigin{
+		SessionID: current.SessionID, Module: "buddy-actions", Writer: "lua",
+		PolicyRevision: current.Revision, Generation: current.Epoch, ActionID: "1",
+	})
+
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGTransferPending, make([]byte, 4))
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGNewWorld, make([]byte, 20))
+	out, other, err := policy.Step(ctx, nil, nil)
+	last, _ := out["last"].(map[string]any)
+	if err != nil || other != nil || out["results"] != "/transport_accepted:1/settled_unverified:1" ||
+		last["phase"] != "world_transfer_outcome_unconfirmed" || last["effect_observed"] != false ||
+		policy.vm.Status().Pending != 0 {
+		t.Fatalf("retired visit left a pending cast or invented an effect: %+v %+v %v", out, other, err)
+	}
+	noPackagedWrites(t, writes)
+}
+
 func TestPackagedActionsPublicSpellHasModuleOrigin(t *testing.T) {
 	manager, ctx, writes := startPackagedPolicySpell(t)
 	policy, err := manager.StartPolicy(ctx, spellFixturePolicy("idle"))
