@@ -74,9 +74,11 @@ func (p policySpellParty) State(context.Context, *emptypb.Empty) (*partyv1.State
 // The module manager starts its ordinary callback servers. Only Actions runs
 // as a packaged executable. Its World and Party dependencies serve fixed input.
 type policySpellRunner struct {
-	binary string
-	action *exec.Cmd
-	peers  map[string]*grpc.Server
+	binary           string
+	action           *exec.Cmd
+	peers            map[string]*grpc.Server
+	world            worldv1.BuddyWorldServer
+	hostOwnsSelfMana bool
 }
 
 func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) error {
@@ -96,6 +98,9 @@ func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) err
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
 		}
+		if r.hostOwnsSelfMana {
+			cmd.Env = append(cmd.Env, "BUDDY_HOST_SELF_MANA_OWNED=true")
+		}
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
 			return err
@@ -107,7 +112,11 @@ func (r *policySpellRunner) Up(ctx context.Context, launch modrunner.Launch) err
 	server := grpc.NewServer()
 	switch name {
 	case "buddy-world":
-		worldv1.RegisterBuddyWorldServer(server, policySpellWorld{})
+		world := r.world
+		if world == nil {
+			world = policySpellWorld{}
+		}
+		worldv1.RegisterBuddyWorldServer(server, world)
 	case "buddy-party":
 		partyv1.RegisterBuddyPartyServer(server, policySpellParty{sessionID: launch.Environment["AGENT_WOW_SESSION_ID"]})
 	default:
@@ -233,6 +242,11 @@ type policySpellWrite struct {
 
 func startPackagedPolicySpell(t *testing.T) (*Manager, context.Context, <-chan policySpellWrite) {
 	t.Helper()
+	return startPackagedPolicySpellWith(t, &policySpellRunner{}, policySheepID)
+}
+
+func startPackagedPolicySpellWith(t *testing.T, runner *policySpellRunner, learnedSpell uint32) (*Manager, context.Context, <-chan policySpellWrite) {
+	t.Helper()
 	binDir := os.Getenv("BUDDY_ACTIONS_PACKAGED_BIN_DIR")
 	if binDir == "" {
 		t.Skip("set BUDDY_ACTIONS_PACKAGED_BIN_DIR to the directory containing a native buddy-actions build")
@@ -244,7 +258,8 @@ func startPackagedPolicySpell(t *testing.T) (*Manager, context.Context, <-chan p
 	if info, err := os.Stat(binaryPath); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
 		t.Fatalf("packaged Actions executable %s is unavailable: %v", binaryPath, err)
 	}
-	runner := &policySpellRunner{binary: binaryPath, peers: make(map[string]*grpc.Server)}
+	runner.binary = binaryPath
+	runner.peers = make(map[string]*grpc.Server)
 	manager := New(packagedPolicySpellRegistry(t), runner, nil)
 	t.Cleanup(func() {
 		if err := manager.Close(); err != nil {
@@ -271,7 +286,8 @@ func startPackagedPolicySpell(t *testing.T) (*Manager, context.Context, <-chan p
 		t.Fatal(err)
 	}
 	// Only the packet queue can establish the packaged module's learned spell.
-	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGInitialSpells, []byte{0, 1, 0, 118, 0, 0, 0, 0, 0, 0, 0})
+	book := binary.LittleEndian.AppendUint32([]byte{0, 1, 0}, learnedSpell)
+	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGInitialSpells, append(book, 0, 0, 0, 0))
 	return manager, ctx, writes
 }
 

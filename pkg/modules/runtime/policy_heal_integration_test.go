@@ -151,16 +151,16 @@ return {
 }`, policyPriestGUID, policyPriestGUID, policyLesserHeal, label)
 }
 
-// Wraps the actual shipped heal policy to record receipts for assertions. The
+// Wraps the shipped policy to record receipts for assertions. The
 // native observation driver and base Lua policy still select the action.
-func packagedObservedHealPolicy(t *testing.T, label string) string {
+func packagedObservedPolicy(t *testing.T, file, label string) string {
 	t.Helper()
-	source, err := os.ReadFile(filepath.Join("..", "..", "..", "behaviors", "healing.lua"))
+	source, err := os.ReadFile(filepath.Join("..", "..", "..", "behaviors", file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf(`
-local healing = (function()
+local policy = (function()
 %s
 end)()
 local results, last = "", nil
@@ -170,25 +170,25 @@ return {
       results = results .. "/" .. event.receipt.outcome .. ":" .. event.receipt.action_id
       last = event.receipt.payload
     end
-    return healing.on_event(event)
+    return policy.on_event(event)
   end,
   decide = function(frame)
     if frame.input.fixtureRead == true then
       return {results = results, last = last, revisionLabel = %q}
     end
-    return healing.decide(frame)
+    return policy.decide(frame)
   end,
   export_state = function()
-    return {version = 1, data = {base = healing.export_state(), results = results, last = last}}
+    return {version = 1, data = {base = policy.export_state(), results = results, last = last}}
   end,
   import_state = function(checkpoint)
     results, last = checkpoint.data.results, checkpoint.data.last
-    return healing.import_state(checkpoint.data.base)
+    return policy.import_state(checkpoint.data.base)
   end,
 }`, source, label)
 }
 
-func waitForPackagedHealTransport(t *testing.T, ctx context.Context, policy *SessionPolicy) {
+func waitForPackagedSpellTransport(t *testing.T, ctx context.Context, policy *SessionPolicy) {
 	t.Helper()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -199,7 +199,7 @@ func waitForPackagedHealTransport(t *testing.T, ctx context.Context, policy *Ses
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("no transport acceptance for observed heal: %+v", receipts)
+			t.Fatalf("no transport acceptance for observed spell: %+v", receipts)
 		case <-ticker.C:
 		}
 	}
@@ -239,7 +239,7 @@ func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 			manager, ctx, writes, world := startPackagedPolicyHeal(t)
 			var policy *SessionPolicy
 			if positive {
-				if err := manager.StartObservedPolicy(ctx, packagedObservedHealPolicy(t, "before"),
+				if err := manager.StartObservedPolicy(ctx, packagedObservedPolicy(t, "healing.lua", "before"),
 					"healing=buddy-actions.healing_options"); err != nil {
 					t.Fatal(err)
 				}
@@ -292,13 +292,13 @@ func TestPackagedActionsPolicyExactHeal(t *testing.T) {
 
 			var revision string
 			if positive {
-				waitForPackagedHealTransport(t, ctx, policy)
+				waitForPackagedSpellTransport(t, ctx, policy)
 				if op := native(); !op.GetTransportWritten() || op.GetServerCastGo() || op.GetEffectObserved() {
 					t.Fatalf("observed policy cast was not in flight at reload: %v", op)
 				}
 				params, err := json.Marshal(map[string]string{
 					"sessionId": old.SessionID, "characterGuid": fmt.Sprint(policyPriestGUID),
-					"expectedRevision": old.Revision, "source": packagedObservedHealPolicy(t, "after"),
+					"expectedRevision": old.Revision, "source": packagedObservedPolicy(t, "healing.lua", "after"),
 				})
 				if err != nil {
 					t.Fatal(err)
