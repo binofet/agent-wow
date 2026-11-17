@@ -163,6 +163,16 @@ local function damage_spell(obs, target)
     return selected
 end
 
+local function owns_current_observation(obs, frame, self)
+    if frame.input.kind ~= "encounter" or frame.input.observationSequence ~= state.sequence or
+       not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
+       not same_map(self, obs.mapId) then return false end
+    for _, spell in pairs(obs.spells or {}) do
+        if spell.capability == "offense" and spell.known == true then return true end
+    end
+    return false
+end
+
 local function observe_targets(obs, members)
     local targets, auras = {}, {}
     local players = obs.players or {}
@@ -328,6 +338,9 @@ local function decide_encounter(frame)
     end
 
     local self = players[obs.selfGuid]
+    if owns_current_observation(obs, frame, self) then
+        out.encounterOwnership = {visitId=obs.visitId, observationSequence=state.sequence}
+    end
     if not host_can_decide(obs) or fallback and obs.hostOwned ~= true or
        frame.input.observationSequence ~= state.sequence or state.settledAt == state.sequence or
        #frame.pending ~= 0 or not alive(self) or not same_map(self, obs.mapId) then

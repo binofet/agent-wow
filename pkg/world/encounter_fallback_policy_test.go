@@ -126,6 +126,23 @@ func (p *fallbackPolicyTest) expectNoAction(seq string) map[string]any {
 	return out
 }
 
+func TestEncounterClaimsOnlyCurrentPlayableObservation(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	obs := fallbackObservation()
+	seq := p.observe(obs)
+	if got := p.expectNoAction("0"); got["encounterOwnership"] != nil {
+		t.Fatalf("stale observation claimed the encounter: %+v", got)
+	}
+	claim, _ := p.expectNoAction(seq)["encounterOwnership"].(map[string]any)
+	if claim["visitId"] != "1" || claim["observationSequence"] != seq {
+		t.Fatalf("playable observation did not claim its visit: %+v", claim)
+	}
+	obs.SpellbookKnown = false
+	if got := p.expectNoAction(p.observe(obs)); got["encounterOwnership"] != nil {
+		t.Fatalf("unknown spellbook claimed encounter ownership: %+v", got)
+	}
+}
+
 func TestEncounterFallbackRequiresExactThreatAndActionCustody(t *testing.T) {
 	p := newFallbackPolicyTest(t, "")
 	obs := fallbackObservation()
