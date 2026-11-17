@@ -228,9 +228,15 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 		return
 	}
 	self := w.Self
-	polyCaster := safeSelfCombat(w, s.selfGUID) == "" && s.crowdControlIdleLocked() && !s.crowdControl.active &&
-		self.ClassKnown && self.ClassId == 8 && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
-	polyReady := false
+	currentCaster := safeSelfCombat(w, s.selfGUID) == ""
+	controlCaster := currentCaster && s.crowdControlIdleLocked() && !s.crowdControl.active &&
+		self.ClassKnown && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
+	polyCaster := controlCaster && self.ClassId == 8
+	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 && self.ChannelObjectGuid == 0 &&
+		!s.state.Following && !s.state.Buffing && !s.questApproaching && !s.clientControlLost &&
+		!s.clientControlRestoring && s.stealthedLocked()
+	offenseCaster := currentCaster && s.offenseCustodyAvailableLocked() && observedOffenseCaster(self)
+	polyReady, sapReady := false, false
 	for id, spell := range s.learnedContractsLocked() {
 		view := &actionsv1.EncounterSpell{Known: true}
 		switch spell.Capability().Kind {
@@ -244,12 +250,26 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			polyReady = polyReady || view.Ready
 		case spellcatalog.Sap:
 			view.Capability = "sap"
+			// The exact cast still checks the selected NPC's observed type and range.
+			view.Ready = sapCaster && self.PowerKnown && int32(self.PowerType) == spell.Power &&
+				uint64(self.Power) >= spellCost(spell, self) && !s.spellOnCooldownLocked(spell) &&
+				(spell.ItemClass < 0 || s.weaponReady(self)) && casterRequirementsObserved(spell, self)
+			sapReady = sapReady || view.Ready
+		case spellcatalog.Damage:
+			if !s.offenseRankSupportedLocked(spell) {
+				continue
+			}
+			view.Capability = "offense"
+			view.Ready = offenseCaster && s.offenseRankReadyLocked(self, spell)
 		default:
 			continue
 		}
 		out.Spells[encounterGUID(uint64(id))] = view
 	}
 	if polyReady {
-		out.ControlCapabilities = []*actionsv1.EncounterControlCapability{{Guid: s.selfGUID, Technique: "polymorph", Ready: true}}
+		out.ControlCapabilities = append(out.ControlCapabilities, &actionsv1.EncounterControlCapability{Guid: s.selfGUID, Technique: "polymorph", Ready: true})
+	}
+	if sapReady {
+		out.ControlCapabilities = append(out.ControlCapabilities, &actionsv1.EncounterControlCapability{Guid: s.selfGUID, Technique: "sap", Ready: true})
 	}
 }

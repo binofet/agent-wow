@@ -36,11 +36,8 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 	defer s.mu.Unlock()
 	s.expireInteractionLocked()
 	s.expireExplicitCastLocked()
-	if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || s.clientControlLost || s.clientControlRestoring ||
-		s.state.CastPending || s.state.Moving || s.state.Traveling || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed ||
-		s.state.AutoAttackRequested || s.state.AutoAttacking || s.autoTarget != 0 || s.autoStopping || s.state.InteractionOwner != "" ||
-		s.state.Practicing || s.engage.active || s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
-		s.now().Before(s.nextAssist) || s.now().Before(s.nextHeal) || s.targetProtection.blocks(target, s.now()) {
+	if r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.offenseCustodyAvailableLocked() ||
+		s.targetProtection.blocks(target, s.now()) {
 		return nil, status.Error(codes.FailedPrecondition, "current body and available attack custody required")
 	}
 	spell := s.learnedContractsLocked()[r.SpellId]
@@ -62,9 +59,7 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 		return nil, status.Error(codes.FailedPrecondition, "fresh living caster observation required")
 	}
 	self, hostile := w.Self, w.RequestedCreature
-	if !self.ClassKnown || self.ClassId == 0 || self.MovementFlags&0xff != 0 || self.UnitFlags&0x2000 != 0 ||
-		!self.ChannelSpellKnown || self.ChannelSpellId != 0 || !self.ChannelObjectKnown || self.ChannelObjectGuid != 0 ||
-		!s.offenseRankReadyLocked(self, spell) {
+	if !observedOffenseCaster(self) || !s.offenseRankReadyLocked(self, spell) {
 		return nil, status.Error(codes.FailedPrecondition, "stationary caster with ready resources required")
 	}
 	if !exactOffenseTarget(w, hostile, target, online) || s.targetProtection.blocks(target, s.now()) {
@@ -106,6 +101,21 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 	return s.stateLocked(), nil
 }
 
+func (s *Service) offenseCustodyAvailableLocked() bool {
+	return !s.closed && !s.clientControlLost && !s.clientControlRestoring &&
+		!s.state.CastPending && !s.state.Moving && !s.state.Traveling && !s.state.MotionUnconfirmed &&
+		!s.state.AutoAttackUnconfirmed && !s.state.AutoAttackRequested && !s.state.AutoAttacking &&
+		s.autoTarget == 0 && !s.autoStopping && s.state.InteractionOwner == "" && !s.state.Practicing &&
+		!s.engage.active && !s.fargodeep.active && !s.crowdControl.active && !s.recovery.state.Active &&
+		!s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal)
+}
+
+func observedOffenseCaster(self *worldv1.PlayerState) bool {
+	return self != nil && self.ClassKnown && self.ClassId != 0 && self.MovementFlags&0xff == 0 &&
+		self.UnitFlags&0x2000 == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0 &&
+		self.ChannelObjectKnown && self.ChannelObjectGuid == 0
+}
+
 func (s *Service) offenseRankSupportedLocked(spell spellcatalog.Spell) bool {
 	return s.spellbookKnown && spell.ID != 0 && s.knownSpells[spell.ID] && spell.Capability().Kind == spellcatalog.Damage &&
 		spell.TargetMask&^uint32(2) == 0 && !spell.Behind && spell.Facing&^uint32(1) == 0
@@ -115,7 +125,7 @@ func (s *Service) offenseRankSupportedLocked(spell spellcatalog.Spell) bool {
 // mechanics. The caller retains responsibility for custody and target gates.
 func (s *Service) offenseRankReadyLocked(self *worldv1.PlayerState, spell spellcatalog.Spell) bool {
 	return s.offenseRankSupportedLocked(spell) && self != nil && self.PowerKnown && int32(self.PowerType) == spell.Power &&
-		!s.spellOnCooldownLocked(spell) && s.casterRequirementsLocked(spell) &&
+		!s.spellOnCooldownLocked(spell) && casterRequirementsObserved(spell, self) &&
 		uint64(self.Power) >= spellCost(spell, self)
 }
 
