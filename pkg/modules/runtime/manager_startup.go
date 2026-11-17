@@ -114,6 +114,9 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
 	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			return m.writePolicySpell(ctx, token, sessionID, module, opcode, payload)
+		}
 		// The callback server supplies module identity. A callback without a
 		// matched policy dispatch cannot claim a Lua generation or action ID.
 		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}

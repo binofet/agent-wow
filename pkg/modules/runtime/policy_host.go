@@ -89,13 +89,15 @@ func (p *SessionPolicy) observe(_ context.Context, sessionID, guid string) (Poli
 type PolicyDispatch struct {
 	Module string
 	Send   func(context.Context) (behavior.ActionOutcome, map[string]any)
+	spell  *policySpell
 }
 
 // Step advances the policy and dispatches at most one admitted action. Resolve
 // only validates and prepares the typed action. Send is the first game write.
 // Mutable world observations must arrive through Enqueue in source order.
-// If event ingress is full, the returned receipt must be retried via Enqueue
-// before accepting the next event. The action itself must never be resent.
+// A nil resolver uses the production known-spell adapter. It retains receipts
+// during backpressure. A custom resolver's caller must requeue its receipt
+// after backpressure without resending the action.
 func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve func(map[string]any) (PolicyDispatch, error)) (map[string]any, *behavior.ActionReceipt, error) {
 	p.advance.Lock()
 	if p.lifetime.Err() != nil {
@@ -105,6 +107,10 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	if p.dispatchDone != nil {
 		p.advance.Unlock()
 		return nil, nil, status.Error(codes.FailedPrecondition, "policy action dispatch is in progress")
+	}
+	if err := p.flushSpellReceipts(ctx); err != nil {
+		p.advance.Unlock()
+		return nil, nil, err
 	}
 	decision, err := p.vm.Decide(ctx, input)
 	if err != nil {
@@ -117,8 +123,7 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 		return decision.Output, nil, nil
 	}
 	if resolve == nil {
-		p.advance.Unlock()
-		return decision.Output, nil, errors.New("no typed policy action resolver")
+		resolve = p.resolveKnownSpell
 	}
 	dispatch, err := resolve(action)
 	if err != nil || dispatch.Module == "" || dispatch.Send == nil {
@@ -147,7 +152,11 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	defer stop()
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
-	_, err = p.Enqueue(behavior.Event{Kind: "action_result", Receipt: receipt})
+	if dispatch.spell != nil {
+		err = p.recordSpellTransport(dispatch.spell, receipt)
+	} else {
+		_, err = p.Enqueue(behavior.Event{Kind: "action_result", Receipt: receipt})
+	}
 	return decision.Output, receipt, err
 }
 
@@ -163,6 +172,12 @@ func (p *SessionPolicy) reserve(decision behavior.Decision) (uint64, error) {
 
 // Enqueue records a game observation or a result for a reserved action.
 func (p *SessionPolicy) Enqueue(event behavior.Event) (uint64, error) {
+	spells := &p.manager.policySpells
+	spells.mu.Lock()
+	defer spells.mu.Unlock()
+	if err := spells.flush(p.vm); err != nil {
+		return 0, err
+	}
 	return p.vm.Enqueue(event)
 }
 
@@ -172,6 +187,11 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 	defer p.advance.Unlock()
 	if p.lifetime.Err() != nil {
 		return "", behavior.ErrSessionClosed
+	}
+	// A faulted VM may need a replacement to consume an ingress batch.
+	// Keep backpressured receipts intact for the recovered VM.
+	if err := p.flushSpellReceipts(ctx); err != nil && !errors.Is(err, behavior.ErrSessionFault) {
+		return "", err
 	}
 	revision, err := p.vm.Reload(ctx, source, expectedRevision)
 	if err == nil {

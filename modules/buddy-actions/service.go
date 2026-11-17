@@ -19,6 +19,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/buddynav"
 	"github.com/agent-wow/agent-wow/pkg/dungeontrace"
 	"github.com/agent-wow/agent-wow/pkg/harvestguard"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -776,7 +777,11 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
 		return false
 	}
-	if _, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
+	sendCtx := ctx
+	if op == opcode.CMSGCastSpell {
+		sendCtx = modcb.ForwardPolicySpell(ctx)
+	}
+	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
 		s.state.Following = false
 		s.state.Assisting = false
 		s.state.Practicing = false
@@ -1378,11 +1383,16 @@ func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResp
 	return s.triageHealLocked(ctx, snapshot, false)
 }
 
-func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
+func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if packet == nil {
 		return &emptypb.Empty{}, nil
+	}
+	if op := s.supportOp; op != nil && op.policySpellToken != "" {
+		defer func() {
+			op.reportPolicySpellEffect(ctx, s.supportOp == op && s.state.CastPending)
+		}()
 	}
 	if s.dungeonTraceEnabled() {
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())

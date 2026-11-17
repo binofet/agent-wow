@@ -50,6 +50,7 @@ type Manager struct {
 	healthInterval, timeHealth            time.Duration
 	policyObserver                        PolicyObserver
 	policy                                *SessionPolicy
+	policySpells                          policySpellRegistry
 }
 
 // New constructs a manager. Nil arguments select no modules, the Compose runner, and discarded logs.

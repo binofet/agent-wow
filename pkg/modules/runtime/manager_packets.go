@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -66,12 +68,14 @@ func (m *Manager) packetWorker(name string, inst *instance) {
 			m.mu.Unlock()
 			ctx, cancel := context.WithTimeout(m.ctx, packetTimeout)
 			md, _ := inst.definition.Packet(uint16(packet.Opcode))
-			err := m.invoke(ctx, packetCall, "worldserver", name, inst, md, packet, &emptypb.Empty{})
+			var trailers metadata.MD
+			err := m.invoke(ctx, packetCall, "worldserver", name, inst, md, packet, &emptypb.Empty{}, grpc.Trailer(&trailers))
 			cancel()
 			if err != nil {
 				m.fail(name, fmt.Errorf("packet 0x%x: %w", packet.Opcode, err))
 				return
 			}
+			m.recordSpellEffect(name, trailers)
 			m.mu.Lock()
 			m.pendingPackets--
 			if m.pendingPackets == 0 {

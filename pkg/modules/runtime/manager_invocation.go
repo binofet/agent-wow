@@ -9,6 +9,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -126,7 +127,7 @@ func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv
 	return &modv1.InvokeModuleResponse{Result: packed}, nil
 }
 
-func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string, inst *instance, md moddisc.Method, req, result proto.Message) (err error) {
+func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string, inst *instance, md moddisc.Method, req, result proto.Message, opts ...grpc.CallOption) (err error) {
 	started := time.Now()
 	defer func() {
 		m.logger.Debug("module call", "caller", caller, "module", name, "method", md.Path(), "duration", time.Since(started), "status", status.Code(err).String())
@@ -150,7 +151,7 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
-	err = inst.conn.Invoke(ctx, md.Path(), req, result)
+	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)
 	}

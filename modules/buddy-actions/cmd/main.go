@@ -14,6 +14,7 @@ import (
 	buddyactions "github.com/agent-wow/agent-wow/modules/buddy-actions"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -96,6 +97,7 @@ func run() error {
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicySpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	go service.Run(ctx)
 	go func() {
 		<-ctx.Done()

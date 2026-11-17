@@ -1,0 +1,62 @@
+package modcb
+
+import (
+	"context"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
+)
+
+// PolicySpellService advertises that the running Actions binary requires the
+// dispatch token on its cast callback. Older binaries have no such service.
+const PolicySpellService = "agentwow.policy-spell.v1"
+
+const (
+	policySpellKey   = "agentwow-policy-spell"
+	policyReceiptKey = "agentwow-policy-spell-receipt-bin"
+)
+
+// WithPolicySpell sends one host-issued token on a typed Actions RPC.
+func WithPolicySpell(ctx context.Context, token string) context.Context {
+	return metadata.NewOutgoingContext(ctx, metadata.Pairs(policySpellKey, token))
+}
+
+// IncomingPolicySpell distinguishes a legacy call from malformed attribution.
+func IncomingPolicySpell(ctx context.Context) (token string, supplied bool) {
+	values := metadata.ValueFromIncomingContext(ctx, policySpellKey)
+	if len(values) == 1 && len(values[0]) == 64 {
+		return values[0], true
+	}
+	return "", len(values) != 0
+}
+
+// PolicySpellToken returns the token for the operation reserved in Actions.
+func PolicySpellToken(ctx context.Context) string {
+	token, _ := IncomingPolicySpell(ctx)
+	return token
+}
+
+// ForwardPolicySpell carries only the token to the cast's SendPacket callback.
+func ForwardPolicySpell(ctx context.Context) context.Context {
+	if token, supplied := IncomingPolicySpell(ctx); supplied {
+		return WithPolicySpell(ctx, token)
+	}
+	return ctx
+}
+
+// ReportPolicySpellEffect returns a typed native observation in the response
+// to the packet delivery that produced it. Setting trailers performs no IO.
+func ReportPolicySpellEffect(ctx context.Context, token string, effect proto.Message) bool {
+	body, err := proto.Marshal(effect)
+	return err == nil && grpc.SetTrailer(ctx, metadata.Pairs(policySpellKey, token, policyReceiptKey, string(body))) == nil
+}
+
+// PolicySpellEffect reads the optional typed observation from packet delivery.
+func PolicySpellEffect(trailer metadata.MD) (token string, body []byte, ok bool) {
+	tokens, bodies := trailer.Get(policySpellKey), trailer.Get(policyReceiptKey)
+	if len(tokens) != 1 || len(tokens[0]) != 64 || len(bodies) != 1 || len(bodies[0]) > 2048 {
+		return "", nil, false
+	}
+	return tokens[0], []byte(bodies[0]), true
+}

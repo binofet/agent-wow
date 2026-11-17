@@ -9,20 +9,22 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
 
 type supportAttempt struct {
-	view        actionsv1.SpellOperation
-	owner       uint64
-	count       byte
-	until       time.Time
-	controlAura observedBuffAura
-	controlSlot uint8
-	creation    *itemCreation
-	selfChannel bool
-	cleanseAura uint32
+	view             actionsv1.SpellOperation
+	owner            uint64
+	count            byte
+	until            time.Time
+	controlAura      observedBuffAura
+	controlSlot      uint8
+	creation         *itemCreation
+	selfChannel      bool
+	cleanseAura      uint32
+	policySpellToken string
 }
 type resurrectionOffer struct {
 	caster   uint64
@@ -169,6 +171,9 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 	s.reserveSpellCooldownLocked(r)
 	until := s.now().Add(time.Duration(r.CastMs)*time.Millisecond + 3*time.Second)
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.ID, TargetGuid: target, Capability: capability, Phase: "waiting_server"}, owner: owner, count: s.castCount, until: until}
+	if item == nil {
+		s.supportOp.policySpellToken = modcb.PolicySpellToken(ctx)
+	}
 	s.state.CastPending = true
 	s.pendingSpell = r.ID
 	s.pendingTarget = target
@@ -208,6 +213,29 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 		s.state.Reason = "fear_break_waiting_for_server"
 	}
 	return true
+}
+
+// A callback reports only outcomes established by the native parser. Spell GO
+// during a pending operation does not by itself settle its effect.
+func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPending bool) {
+	switch op.view.Phase {
+	case "confirmed_aura", "confirmed_heal", "confirmed_effect", "confirmed_alive", "confirmed_loot_window", "confirmed_item":
+		if !op.view.ServerCastGo || !op.view.EffectObserved {
+			return
+		}
+	case "server_cast_go_effect_unverified":
+		if castPending {
+			return
+		}
+	case "server_rejected_no_replay", "server_cast_go_no_target_hit",
+		"outcome_unconfirmed_no_retry", "channel_ended_effect_unverified", "world_transfer_outcome_unconfirmed",
+		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed":
+	default:
+		return
+	}
+	if modcb.ReportPolicySpellEffect(ctx, op.policySpellToken, &op.view) {
+		op.policySpellToken = ""
+	}
 }
 
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
