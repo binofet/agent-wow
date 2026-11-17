@@ -109,7 +109,7 @@ local function same_map(unit, map)
 end
 
 local function usable_spell(obs, spell, capability)
-    local observed = type(spell) == "number" and spell > 0 and spell % 1 == 0 and
+    local observed = type(spell) == "number" and spell > 0 and spell <= 4294967295 and spell % 1 == 0 and
         (obs.spells or {})[tostring(spell)]
     return observed and observed.known == true and observed.ready == true and
         (not obs.worldObservationRevision or observed.capability == capability)
@@ -127,14 +127,17 @@ local function known_runner(target)
            target.health > 0 and target.health * 4 <= target.maxHealth
 end
 
+local function current_visit(obs)
+    return type(obs.mapId) == "number" and type(obs.visitId) == "string" and #obs.visitId > 0 and
+        #obs.visitId <= 80 and (not obs.worldObservationRevision or guid(obs.visitId))
+end
+
 local function bound_plan(obs)
     local plan, group = obs.plan or intent.plan or {}, (obs.party or {}).group or {}
-    if type(plan.id) ~= "string" or #plan.id == 0 or #plan.id > 80 or
-       type(obs.visitId) ~= "string" or #obs.visitId == 0 or #obs.visitId > 80 or
-       obs.worldObservationRevision and (not guid(obs.visitId) or type(obs.mapId) ~= "number") or
+    if type(plan.id) ~= "string" or #plan.id == 0 or #plan.id > 80 or not current_visit(obs) or
        not group.known or not group.inGroup or not guid(group.groupGuid) or not guid(group.leaderGuid) or
        plan.groupGuid ~= group.groupGuid or plan.leaderGuid ~= group.leaderGuid then return end
-    return plan, group
+    return plan
 end
 
 local function active_aura(aura, row)
@@ -142,64 +145,76 @@ local function active_aura(aura, row)
         (not aura.durationKnown or type(aura.remainingMs) == "number" and aura.remainingMs > 0)
 end
 
-local function decide_encounter(frame)
-    local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
-    local obs = observation
-    if not obs or obs.sessionId ~= frame.session_id or not guid(obs.selfGuid) then return out end
-    local plan, group = bound_plan(obs)
-    if not plan then out.phase = "waiting_for_bound_group"; return out end
-    local party, players = obs.party or {}, obs.players or {}
-    local feed = party.raidTargets or {}
-    if state.visitId ~= obs.visitId or state.planId ~= plan.id then
-        state.visitId, state.planId, state.groupGuid, state.mapId = obs.visitId, plan.id, group.groupGuid, obs.mapId
-        state.leaderGuid = group.leaderGuid
-        state.bindings, state.defeated, state.controls = {}, {}, {}
-        state.started, state.focusGuid, state.markRevision = false, nil, nil
-    elseif state.groupGuid ~= group.groupGuid or state.mapId ~= obs.mapId or state.leaderGuid ~= group.leaderGuid then
-        out.phase = "encounter_identity_changed"; return out
+local function damage_spell(obs, target)
+    local damage = obs.damage or intent.damage
+    if damage then
+        if (damage.scope == "focus" or damage.scope == "runner" and known_runner(target)) and
+           usable_spell(obs, damage.spellId, "offense") then return damage.spellId end
+        return
     end
+    local selected
+    for key, spell in pairs(obs.spells or {}) do
+        local id = guid(key) and tonumber(key)
+        -- Rows carry readiness but no relative rank preference. Use a
+        -- stable numeric tie-break among exact eligible offensive spells.
+        if id and id <= 4294967295 and spell.capability == "offense" and spell.known == true and
+           spell.ready == true and (not selected or id < selected) then selected = id end
+    end
+    return selected
+end
 
-    local members, targets, protected = {}, {}, {}
-    for _, member in ipairs(group.members or {}) do members[member.guid] = member.online == true end
+local function observe_targets(obs, members)
+    local targets, auras = {}, {}
+    local players = obs.players or {}
     local in_combat = false
     for target, npc in pairs(obs.targets or {}) do
         if guid(target) and same_map(npc, obs.mapId) then
             local attack = (obs.engagement or {})[target]
-            local victim = attack and attack.victimGuid
-            local engaged = npc.engaged == true and victim and members[victim] and
+            local victim = attack and guid(attack.victimGuid)
+            local engaged = npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
                             same_map(players[victim], obs.mapId) and alive(players[victim])
-            local is_protected = npc.protected == true
-            targets[target] = copy_target(npc, engaged == true, is_protected)
+            targets[target] = copy_target(npc, engaged == true, npc.protected == true or state.controls[target] == true)
             if engaged and alive(npc) then in_combat = true end
-            if is_protected then protected[target] = true end
         end
     end
-    local auras = {}
     for _, aura in ipairs(obs.protectedAuras or {}) do
-        local target = aura.targetGuid
-        if guid(target) then
-            protected[target] = true
-            if not auras[target] then auras[target] = {} end
-            auras[target][#auras[target]+1] = aura
+        local target = targets[aura.targetGuid]
+        if target then
+            target.protected = true
+            local rows = auras[aura.targetGuid] or {}
+            rows[#rows+1] = aura
+            auras[aura.targetGuid] = rows
         end
     end
+    for guid, aura in pairs(obs.controlObserved or {}) do
+        if targets[guid] and aura.active == true then
+            targets[guid].protected = true
+            local rows = auras[guid] or {}
+            rows[#rows+1] = aura
+            auras[guid] = rows
+        end
+    end
+    return targets, auras, in_combat
+end
+
+local function marked_plan(frame, obs, plan, targets, auras, in_combat)
+    local party = obs.party
+    local group, feed = party.group, party.raidTargets or {}
     local confirmed, pending = {}, {}
     for _, row in ipairs(plan.controls or {}) do
         local target = state.bindings[row.mark]
-        if feed.complete and feed.groupGuid == group.groupGuid then
-            -- The marked policy rejects changed bindings. Use the feed to
-            -- project the first aura for a mark that has not been bound yet.
+        if feed.groupGuid == group.groupGuid then
             for _, mark in ipairs(feed.marks or {}) do
-                if mark.icon == icons[row.mark] and not target then target = mark.targetGuid end
+                if mark.icon == icons[row.mark] then
+                    -- Preserve observed reservations while a full current
+                    -- list is unavailable, without rebinding the authored plan.
+                    if targets[mark.targetGuid] then targets[mark.targetGuid].protected = true end
+                    target = target or mark.targetGuid
+                end
             end
         end
         if guid(target) then
-            local observed, legacy = auras[target] or {}, (obs.controlObserved or {})[target]
-            if legacy and legacy.active == true then
-                protected[target] = true
-                observed[#observed+1] = legacy
-            end
-            for _, aura in ipairs(observed) do
+            for _, aura in ipairs(auras[target] or {}) do
                 if active_aura(aura, row) then
                     local remaining = aura.durationKnown and aura.remainingMs or nil
                     local earlier = confirmed[target]
@@ -211,73 +226,119 @@ local function decide_encounter(frame)
             if row.casterGuid == obs.selfGuid and #frame.pending > 0 then pending[target] = true end
         end
     end
-    local revision = guid(feed.revision)
-    local prior = state.markRevision
-    local stale = not revision or prior and (#revision < #prior or #revision == #prior and revision < prior)
+    local revision, prior = guid(feed.revision), state.markRevision
+    local stale = feed.complete ~= true or feed.groupGuid ~= group.groupGuid or
+        not revision or prior and (#revision < #prior or #revision == #prior and revision < prior)
     local marked = tactics.decide({
         plan=plan, party=stale and {group=group} or party, targets=targets,
         bindings=state.bindings, defeated=state.defeated,
         capabilities=obs.controlCapabilities, controlObserved=confirmed, controlPending=pending, inCombat=in_combat,
     })
     state.bindings, state.defeated = marked.bindings, marked.defeated
-    if not stale and feed.complete and feed.groupGuid == group.groupGuid then
-        state.markRevision = revision
-    end
-    local skull = state.bindings.skull
+    if not stale then state.markRevision = revision end
     for _, row in ipairs(plan.controls or {}) do
         local target = state.bindings[row.mark]
         if target then state.controls[target] = true end
     end
-    for target in pairs(state.controls) do protected[target] = true end
-    for target in pairs(protected) do
+    local all_control_observed = true
+    for target in pairs(state.controls) do
         if targets[target] then targets[target].protected = true end
+        if alive(targets[target]) and not confirmed[target] then all_control_observed = false end
     end
-    if skull and targets[skull] and targets[skull].engaged and alive(targets[skull]) then
-        state.started = true
+    return marked, stale, all_control_observed
+end
+
+local function decide_encounter(frame)
+    local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
+    local obs = observation
+    if not obs or obs.sessionId ~= frame.session_id or not guid(obs.selfGuid) or not current_visit(obs) then return out end
+    local plan = bound_plan(obs)
+    local group, players = (obs.party or {}).group or {}, obs.players or {}
+    if state.visitId == obs.visitId and state.mapId ~= obs.mapId then
+        out.phase = "encounter_identity_changed"; return out
     end
-    local order = {}
-    for _, mark in ipairs(plan.killOrder or {}) do
-        local target = state.bindings[mark]
-        if target and not protected[target] then order[#order+1] = target end
+    if state.visitId ~= obs.visitId or plan and state.planId ~= plan.id then
+        state.visitId, state.mapId = obs.visitId, obs.mapId
+        state.planId, state.groupGuid, state.leaderGuid = plan and plan.id, group.groupGuid, group.leaderGuid
+        state.bindings, state.defeated, state.controls = {}, {}, {}
+        state.started, state.focusGuid, state.markRevision = false, nil, nil
+    end
+    if plan and (state.groupGuid ~= group.groupGuid or state.leaderGuid ~= group.leaderGuid) then
+        out.phase = "encounter_identity_changed"
+        plan = nil
+    elseif not plan then
+        out.phase = "waiting_for_bound_group"
+    end
+
+    local members = {}
+    if group.known == true and group.inGroup == true and guid(group.groupGuid) then
+        for _, member in ipairs(group.members or {}) do
+            if guid(member.guid) then members[member.guid] = member.online == true end
+        end
+    end
+    local targets, auras, in_combat = observe_targets(obs, members)
+    local marked, stale, all_control_observed
+    if plan then
+        marked, stale, all_control_observed = marked_plan(frame, obs, plan, targets, auras, in_combat)
+        out.phase = marked.phase
+    end
+    local has_binding = false
+    for _ in pairs(state.bindings) do has_binding = true; break end
+    local fallback = not plan or stale or not has_binding or marked.phase == "waiting_for_actual_group_leader"
+    local order, queue_targets = {}, targets
+    if fallback and (in_combat or not plan) then
+        queue_targets = {}
+        for target, npc in pairs(targets) do
+            if npc.engaged then queue_targets[target] = npc end
+        end
+    else
+        for _, mark in ipairs(plan.killOrder or {}) do
+            local target = state.bindings[mark]
+            if target and (not targets[target] or not targets[target].protected) then order[#order+1] = target end
+        end
     end
     local leader = players[group.leaderGuid]
     local leader_alive = alive(leader)
     local queue = tactics.decide({
-        kind="combat_queue", targets=targets, explicitOrder=order, currentFocus=state.focusGuid,
-        ownerFocus=leader_alive and obs.observedOwnerFocus or nil,
+        kind="combat_queue", targets=queue_targets, explicitOrder=order,
+        currentFocus=not fallback and state.focusGuid or nil,
+        ownerFocus=not fallback and leader_alive and obs.observedOwnerFocus or nil,
         partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds,
     })
-    out.queue, out.phase = queue.queue, marked.phase
+    out.queue = queue.queue
     for _, row in ipairs(queue.queue) do
         if row.protected then out.protected[#out.protected+1] = row.targetGuid end
     end
-    local marks_valid = not stale and (marked.phase == "focus" or marked.phase == "encounter_complete"
-        or marked.phase == "apply_control")
-    local skull_dead = skull and (state.defeated[skull] or false)
-    local all_control_observed = true
-    for target in pairs(state.controls) do
-        if alive(targets[target]) and not confirmed[target] then all_control_observed = false end
-    end
-    -- Live leader setup requires the marked policy's exact observations. A
-    -- leader who dies stays the party leader; the surviving witnessed fight
-    -- can proceed without turning any reserved control into a DPS target.
-    local order_ready = marked.phase == "focus" or marked.phase == "encounter_complete"
-    if marks_valid and order_ready and state.started and skull and (skull_dead or queue.focusGuid == skull) and
-       all_control_observed and (leader_alive or leader and leader.aliveKnown == true and leader.alive == false and skull_dead) then
-        out.focusGuid, state.focusGuid = queue.focusGuid, queue.focusGuid
-        out.phase = out.focusGuid and "engaged_focus" or "waiting_for_engaged_focus"
+    local skull = plan and state.bindings.skull
+    if skull and alive(targets[skull]) and targets[skull].engaged then state.started = true end
+    local control
+    if fallback then
+        if queue.focusGuid then out.focusGuid, out.phase = queue.focusGuid, "engaged_defense" end
+    else
+        local skull_dead = skull and state.defeated[skull]
+        local order_ready = marked.phase == "focus" or marked.phase == "encounter_complete"
+        -- A dead but witnessed leader stays the leader. Continue only after
+        -- the marked Skull's death is also witnessed.
+        if order_ready and state.started and skull and (skull_dead or queue.focusGuid == skull) and
+           all_control_observed and (leader_alive or leader and leader.aliveKnown == true and leader.alive == false and skull_dead) then
+            out.focusGuid, state.focusGuid = queue.focusGuid, queue.focusGuid
+            out.phase = out.focusGuid and "engaged_focus" or "waiting_for_engaged_focus"
+        end
+        control = leader_alive and marked.phase == "apply_control" and marked.control
     end
 
     local self = players[obs.selfGuid]
-    if not host_can_decide(obs) or
+    if not host_can_decide(obs) or fallback and obs.hostOwned ~= true or
        frame.input.observationSequence ~= state.sequence or state.settledAt == state.sequence or
-       #frame.pending ~= 0 or not members[obs.selfGuid] or not alive(self) or not same_map(self, obs.mapId) then
+       #frame.pending ~= 0 or not alive(self) or not same_map(self, obs.mapId) then
         return out
     end
+    if not fallback and not members[obs.selfGuid] then return out end
     local support
     local heal_sequence = obs.healingSequence
     if obs.worldObservationRevision and obs.healing and obs.healing.hostOwned == true then heal_sequence = state.sequence end
-    if healing and state.healingSequence and heal_sequence == state.healingSequence then
+    if plan and members[obs.selfGuid] and (not fallback or in_combat) and healing and
+       state.healingSequence and heal_sequence == state.healingSequence then
         local result = healing.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
             input={kind="healing", observationSequence=state.healingSequence}})
         support = result.action
@@ -289,7 +350,6 @@ local function decide_encounter(frame)
         out.action = proposal(obs, "heal", support.targetGuid, support.spellId); return out
     end
     if obs.targetProtectionOverflow == true then return out end
-    local control = marks_valid and leader_alive and marked.control
     if control and control.casterGuid == obs.selfGuid then
         for _, row in ipairs(plan.controls or {}) do
             if control.mark == row.mark and (row.technique == "polymorph" or row.technique == "sap") and
@@ -300,11 +360,9 @@ local function decide_encounter(frame)
         end
     end
     local focus = out.focusGuid and obs.targets[out.focusGuid]
-    local damage = obs.damage or intent.damage or {}
-    if focus and focus.positionKnown == true and (not focus.trajectory or focus.trajectory.stopped == true) and
-       usable_spell(obs, damage.spellId, "offense") and
-       (damage.scope == "focus" or damage.scope == "runner" and known_runner(focus)) then
-        out.action = proposal(obs, "offense", out.focusGuid, damage.spellId)
+    if focus and focus.positionKnown == true and (fallback or not focus.trajectory or focus.trajectory.stopped == true) then
+        local spell = damage_spell(obs, focus)
+        if spell then out.action = proposal(obs, "offense", out.focusGuid, spell) end
     end
     return out
 end
