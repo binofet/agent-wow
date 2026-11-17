@@ -219,7 +219,7 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 		}
 		waitFor("2", "")
 		err := m.StartObservedPolicy(ctx, "", "encounter="+alias)
-		if err == nil || !strings.Contains(err.Error(), "native writer still owns") {
+		if err == nil || !strings.Contains(err.Error(), "requires the session encounter lease") {
 			t.Fatalf("encounter dispatch started before native custody was transferred: %v", err)
 		}
 	})
