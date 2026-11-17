@@ -164,19 +164,21 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, err
 		}
 		p := &players[0]
+		if err := position(p, x, y, z, o, now); err != nil {
+			return true, err
+		}
 		clearCastingContext(p)
 		clearInventoryContext(p)
 		p.offhandKnown, p.offhand = false, 0
-		if op == opcode.SMSGNewWorld || !p.mapKnown || p.mapID != mapID {
-			markAbsent(&players[1], now)
-			state.nearbyPlayers = make(map[uint64]*observed)
-			state.creatures = make(map[uint64]*observed)
-			state.gameObjects = make(map[uint64]*observed)
-			state.corpses = make(map[uint64]*observed)
-		}
+		markAbsent(&players[1], now)
+		state.nearbyPlayers = make(map[uint64]*observed)
+		state.creatures = make(map[uint64]*observed)
+		state.gameObjects = make(map[uint64]*observed)
+		state.corpses = make(map[uint64]*observed)
 		p.mapID, p.mapKnown, p.present = mapID, true, true
 		p.movementKnown = false
-		return true, position(p, x, y, z, o, now)
+		state.visitRevision++
+		return true, nil
 	case opcode.SMSGTransferPending:
 		// A transfer has variable transport data. Stop using the old world now.
 		if len(payload) < 4 {

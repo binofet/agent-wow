@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"sort"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -44,7 +45,7 @@ func (s *Service) healCasterReadyLocked(w *worldv1.SnapshotResponse) string {
 
 func (s *Service) healRankAvailableLocked(self *worldv1.PlayerState, r spellcatalog.Spell) bool {
 	return r.ID != 0 && r.Capability().Kind == spellcatalog.Heal && r.Power == 0 && self.PowerKnown && self.PowerType == 0 &&
-		uint64(self.Power) >= spellCost(r, self) && !s.now().Before(s.spellReady[r.ID]) && s.casterRequirementsLocked(r)
+		uint64(self.Power) >= spellCost(r, self) && !s.now().Before(s.spellReady[r.ID]) && casterRequirementsObserved(r, self)
 }
 
 func (s *Service) healRankEligibleLocked(self, patient *worldv1.PlayerState, r spellcatalog.Spell, caster position) bool {
@@ -75,23 +76,27 @@ func observedHealingAttack(w *worldv1.SnapshotResponse, patient *worldv1.PlayerS
 func (s *Service) HealingOptions(ctx context.Context, _ *emptypb.Empty) (*actionsv1.HealingOptionsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := &actionsv1.HealingOptionsResponse{SessionId: s.sessionID, HostOwned: s.hostStandingHealing,
-		Caster: &actionsv1.HealingCaster{Guid: s.selfGUID}}
 	w, err := s.snapshot(ctx)
 	if err != nil {
-		out.Reason = "healing_observations_unavailable"
-		return out, nil
+		return &actionsv1.HealingOptionsResponse{SessionId: s.sessionID, HostOwned: s.hostStandingHealing,
+			Caster: &actionsv1.HealingCaster{Guid: s.selfGUID}, Reason: "healing_observations_unavailable"}, nil
 	}
+	return s.healingOptionsLocked(w, func() map[uint64]bool { return s.healingPartyLocked(ctx) }), nil
+}
+
+func (s *Service) healingOptionsLocked(w *worldv1.SnapshotResponse, onlineMembers func() map[uint64]bool) *actionsv1.HealingOptionsResponse {
+	out := &actionsv1.HealingOptionsResponse{SessionId: s.sessionID, HostOwned: s.hostStandingHealing,
+		Caster: &actionsv1.HealingCaster{Guid: s.selfGUID}}
 	self := w.GetSelf()
 	if self.GetGuid() == s.selfGUID && self.GetPowerKnown() && self.GetPowerType() == 0 {
 		out.Caster.Mana = proto.Uint32(self.Power)
 	}
 	out.Reason = s.healCasterReadyLocked(w)
 	if out.Reason != "" {
-		return out, nil
+		return out
 	}
 	out.Caster.Ready = true
-	for _, r := range s.candidatesLocked(spellcatalog.Heal) {
+	for _, r := range s.learnedContractsLocked() {
 		if s.healRankAvailableLocked(self, r) {
 			out.Spells = append(out.Spells, &actionsv1.HealingRank{SpellId: r.ID, Rank: proto.Uint32(r.Rank),
 				Level: proto.Uint32(r.Level), Cost: proto.Uint32(uint32(spellCost(r, self))), Amount: directHealing(r),
@@ -99,13 +104,24 @@ func (s *Service) HealingOptions(ctx context.Context, _ *emptypb.Empty) (*action
 				SelfOnly: r.Capability().Target == "self"})
 		}
 	}
+	// Preserve the legacy observation order for existing readers.
+	sort.Slice(out.Spells, func(i, j int) bool {
+		a, b := out.Spells[i], out.Spells[j]
+		if a.GetLevel() != b.GetLevel() {
+			return a.GetLevel() > b.GetLevel()
+		}
+		if a.GetRank() != b.GetRank() {
+			return a.GetRank() > b.GetRank()
+		}
+		return a.SpellId < b.SpellId
+	})
 	caster := playerPosition(self)
 	if s.posKnown && s.posMap == self.MapId && s.positionRevision == self.PositionRevision {
 		caster = s.pos
 	}
 	var members map[uint64]bool
 	if !s.independent && (w.Owner != nil || len(w.NearbyPlayers) != 0) {
-		members = s.healingPartyLocked(ctx)
+		members = onlineMembers()
 	}
 	for _, players := range [][]*worldv1.PlayerState{{self, w.Owner}, w.NearbyPlayers} {
 		for _, p := range players {
@@ -121,7 +137,7 @@ func (s *Service) HealingOptions(ctx context.Context, _ *emptypb.Empty) (*action
 				Distance: proto.Float64(rangeYards), IsOwner: p.Guid == ownerGUID, UnderAttack: observedHealingAttack(w, p)})
 		}
 	}
-	return out, nil
+	return out
 }
 
 // CastHeal does not reread the policy or choose a substitute when a fact has

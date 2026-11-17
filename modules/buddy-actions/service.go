@@ -61,6 +61,7 @@ type Service struct {
 	independent                                bool
 	hostStandingHealing                        bool
 	hostSelfMana                               bool
+	encounterVisit                             encounterVisit
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time
 	state                                      actionsv1.State
@@ -1404,6 +1405,7 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload
+	s.observeEncounterVisitLocked(packet.Opcode, p)
 	s.expireCrowdControlLocked()
 	if packet.Opcode == opcode.SMSGCreatureQueryResponse {
 		s.observeControlTemplateLocked(p)

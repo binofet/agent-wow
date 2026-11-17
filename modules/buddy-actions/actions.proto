@@ -2,6 +2,8 @@ syntax = "proto3";
 package warcraftbuddy.actions.v1;
 option go_package = "github.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1";
 import "api/module/v1/session.proto";
+import "modules/buddy-party/party.proto";
+import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
@@ -426,6 +428,84 @@ message SelfManaObservationResponse {
   repeated SelfManaSpell spells = 7;
   bool host_owned = 8;
 }
+message EncounterObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  optional uint32 map_id = 4;
+  // False while native Actions still owns gameplay decisions.
+  optional bool host_owned = 5;
+  string reason = 6;
+  EncounterParty party = 7;
+  map<string, EncounterPlayer> players = 8;
+  map<string, EncounterCreature> targets = 9;
+  map<string, EncounterEngagement> engagement = 10;
+  repeated ProtectedTarget protected_auras = 11;
+  bool target_protection_overflow = 12;
+  map<string, EncounterSpell> spells = 13;
+  repeated EncounterControlCapability control_capabilities = 14;
+  uint64 observed_owner_focus = 15;
+  HealingOptionsResponse healing = 16;
+  uint64 world_observation_revision = 17;
+  uint64 spellbook_revision = 18;
+  bool spellbook_known = 19;
+}
+message EncounterParty {
+  warcraftbuddy.party.v1.Group group = 1;
+  warcraftbuddy.party.v1.RaidTargetState raid_targets = 2;
+  uint64 revision = 3;
+}
+message EncounterPlayer {
+  uint64 guid = 1;
+  bool present = 2;
+  bool map_known = 3;
+  optional uint32 map_id = 4;
+  bool alive_known = 5;
+  optional bool alive = 6;
+  bool health_known = 7;
+  uint32 health = 8;
+  uint32 max_health = 9;
+  uint32 faction_template = 10;
+}
+message EncounterCreature {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  bool present = 3;
+  bool map_known = 4;
+  optional uint32 map_id = 5;
+  bool alive_known = 6;
+  optional bool alive = 7;
+  bool health_known = 8;
+  uint32 health = 9;
+  uint32 max_health = 10;
+  // Build-12340 unit flags permit an attack. This is not faction hostility.
+  bool attackable = 11;
+  bool engaged = 12;
+  bool protected = 13;
+  bool position_known = 14;
+  uint64 position_revision = 15;
+  float x = 16;
+  float y = 17;
+  float z = 18;
+  warcraftbuddy.world.v1.CreatureTrajectory trajectory = 19;
+  bool unit_flags_known = 20;
+  uint32 unit_flags = 21;
+  uint32 faction_template = 22;
+}
+message EncounterEngagement {
+  uint64 victim_guid = 1;
+  uint64 age_ms = 2;
+}
+message EncounterSpell {
+  bool known = 1;
+  bool ready = 2;
+  string capability = 3;
+}
+message EncounterControlCapability {
+  uint64 guid = 1;
+  string technique = 2;
+  bool ready = 3;
+}
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
@@ -465,6 +545,7 @@ service BuddyActions {
   rpc Sap(SapRequest) returns (State);
   rpc CastSelf(CastSelfRequest) returns (State);
   rpc HealingOptions(google.protobuf.Empty) returns (HealingOptionsResponse);
+  rpc EncounterObservation(google.protobuf.Empty) returns (EncounterObservationResponse);
   rpc CastHeal(CastHealRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

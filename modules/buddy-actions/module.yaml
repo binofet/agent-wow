@@ -18,6 +18,7 @@ rpc:
   cast_self: /warcraftbuddy.actions.v1.BuddyActions/CastSelf
   healing_options: /warcraftbuddy.actions.v1.BuddyActions/HealingOptions
   self_mana_observation: /warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation
+  encounter_observation: /warcraftbuddy.actions.v1.BuddyActions/EncounterObservation
   cast_heal: /warcraftbuddy.actions.v1.BuddyActions/CastHeal
   polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
   sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
@@ -92,6 +93,7 @@ script_api:
   cast_self: {effect: mutation, description: Cast one exact learned spell on the current body and report cast or channel observations}
   healing_options: {effect: read, description: Observe injured eligible patients and available learned heal ranks}
   self_mana_observation: {effect: read, description: 'Observe current caster resources, activity, nearby attackers and learned spell mechanics'}
+  encounter_observation: {effect: read, description: Observe the current encounter body and map visit with party marks and learned spell facts}
   cast_heal: {effect: mutation, description: Cast the exact learned heal on the selected observed eligible player}
   polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}

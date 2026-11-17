@@ -2574,6 +2574,9 @@ type SnapshotResponse struct {
 	// Actual same-map non-bones corpses, bounded by the existing 32-entry cache.
 	// Consumers must establish current group membership before targeting one.
 	PlayerCorpses []*CorpseState `protobuf:"bytes,46,rep,name=player_corpses,json=playerCorpses,proto3" json:"player_corpses,omitempty"`
+	// Session-local world visit. Advances on each valid login verification or
+	// new-world packet, including a same-map transfer. Zero while unbound.
+	VisitRevision uint64 `protobuf:"varint,47,opt,name=visit_revision,json=visitRevision,proto3" json:"visit_revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2930,6 +2933,13 @@ func (x *SnapshotResponse) GetPlayerCorpses() []*CorpseState {
 	return nil
 }
 
+func (x *SnapshotResponse) GetVisitRevision() uint64 {
+	if x != nil {
+		return x.VisitRevision
+	}
+	return 0
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -3237,7 +3247,7 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\rR\x05value\x12\x1b\n" +
 	"\tmax_value\x18\x05 \x01(\rR\bmaxValue\x12'\n" +
 	"\x0ftemporary_bonus\x18\x06 \x01(\x05R\x0etemporaryBonus\x12'\n" +
-	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\x9e\x17\n" +
+	"\x0fpermanent_bonus\x18\a \x01(\x05R\x0epermanentBonus\"\xc5\x17\n" +
 	"\x10SnapshotResponse\x127\n" +
 	"\x04self\x18\x01 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
 	"\x05owner\x18\x02 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner\x12'\n" +
@@ -3289,7 +3299,8 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"\n" +
 	"own_corpse\x18, \x01(\v2#.warcraftbuddy.world.v1.CorpseStateR\townCorpse\x12R\n" +
 	"\x10discovery_anchor\x18- \x01(\v2'.warcraftbuddy.world.v1.DiscoveryAnchorR\x0fdiscoveryAnchor\x12J\n" +
-	"\x0eplayer_corpses\x18. \x03(\v2#.warcraftbuddy.world.v1.CorpseStateR\rplayerCorpses2\x90\x02\n" +
+	"\x0eplayer_corpses\x18. \x03(\v2#.warcraftbuddy.world.v1.CorpseStateR\rplayerCorpses\x12%\n" +
+	"\x0evisit_revision\x18/ \x01(\x04R\rvisitRevision2\x90\x02\n" +
 	"\n" +
 	"BuddyWorld\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12^\n" +

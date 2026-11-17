@@ -35,10 +35,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	if cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind) {
 		return s.requestCrowdControlApproachLocked(ctx, rank, target, kind, class, approach, cancel)
 	}
-	if s.closed || session != s.sessionID || s.state.CastPending || s.state.Moving || s.state.MotionUnconfirmed ||
-		s.state.AutoAttacking || s.state.AutoAttackRequested || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.autoStopping ||
-		s.state.InteractionOwner != "" || s.state.Practicing || s.engage.active || s.fargodeep.active || s.state.Traveling || s.recovery.state.Active ||
-		s.state.Assisting || s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist) {
+	if !s.crowdControlIdleLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "current session and idle casting custody required")
 	}
 	spell, learned := s.learnedContractsLocked()[rank]
@@ -101,6 +98,13 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	}
 	s.castSupportLocked(ctx, spell, c.Guid, 0)
 	return s.stateLocked(), nil
+}
+
+func (s *Service) crowdControlIdleLocked() bool {
+	return !s.closed && !s.state.CastPending && !s.state.Moving && !s.state.MotionUnconfirmed &&
+		!s.state.AutoAttacking && !s.state.AutoAttackRequested && !s.state.AutoAttackUnconfirmed && s.autoTarget == 0 && !s.autoStopping &&
+		s.state.InteractionOwner == "" && !s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.state.Traveling && !s.recovery.state.Active &&
+		!s.state.Assisting && !s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)
 }
 
 func (s *Service) pendingCrowdControlLocked() *supportAttempt {

@@ -47,7 +47,10 @@ func (s *Service) candidatesLocked(kind spellcatalog.Kind) []spellcatalog.Spell 
 }
 
 func (s *Service) casterRequirementsLocked(r spellcatalog.Spell) bool {
-	p := s.lastWorld.GetSelf()
+	return casterRequirementsObserved(r, s.lastWorld.GetSelf())
+}
+
+func casterRequirementsObserved(r spellcatalog.Spell, p *worldv1.PlayerState) bool {
 	for _, test := range []struct {
 		index   int
 		present bool

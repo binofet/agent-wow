@@ -29,6 +29,7 @@ const (
 // so malformed packet rollback never mutates previously committed observations.
 type observations struct {
 	players             [2]observed
+	visitRevision       uint64
 	nearbyPlayers       map[uint64]*observed
 	creatures           map[uint64]*observed
 	items               map[uint64]*observed

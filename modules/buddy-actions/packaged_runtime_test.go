@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/runner"
 	"github.com/agent-wow/agent-wow/pkg/modules/runtime"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -163,6 +165,64 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 	if err != nil || json.Unmarshal(body, &healingView) != nil || healingView.SessionID != catalog.SessionID || healingView.Caster.Guid != "11" || healingView.HostOwned {
 		t.Fatalf("healing_options returned wrong fixture identity or default authority: %s (%v)", body, err)
 	}
+
+	t.Run("encounter_observation", func(t *testing.T) {
+		const alias = "buddy-actions.encounter_observation"
+		if method := methods[alias]; method.Effect != moddisc.EffectRead ||
+			method.Path != "/warcraftbuddy.actions.v1.BuddyActions/EncounterObservation" {
+			t.Fatalf("wrong encounter catalog entry: %+v", method)
+		}
+		type observation struct {
+			SessionID string  `json:"sessionId"`
+			SelfGUID  string  `json:"selfGuid"`
+			VisitID   string  `json:"visitId"`
+			MapID     *uint32 `json:"mapId"`
+			HostOwned *bool   `json:"hostOwned"`
+			Reason    string  `json:"reason"`
+		}
+		read := func() observation {
+			t.Helper()
+			raw, err := m.InvokeJSON(ctx, alias, nil)
+			var out observation
+			if err != nil || json.Unmarshal(raw, &out) != nil || out.SessionID != catalog.SessionID ||
+				out.SelfGUID != "11" || out.HostOwned == nil || *out.HostOwned {
+				t.Fatalf("invalid encounter observation identity or custody: %s (%v)", raw, err)
+			}
+			return out
+		}
+		waitFor := func(visit, reason string) {
+			t.Helper()
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				out := read()
+				mapMatches := (visit == "" && out.MapID == nil) || (visit != "" && out.MapID != nil && *out.MapID == 0)
+				if out.VisitID == visit && out.Reason == reason && mapMatches {
+					return
+				}
+				if !time.Now().Before(deadline) {
+					t.Fatalf("encounter observation did not reach visit %q reason %q: %+v", visit, reason, out)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		waitFor("", "world_visit_unbound")
+		if err := m.Publish(opcode.SMSGLoginVerifyWorld, make([]byte, 20)); err != nil {
+			t.Fatal(err)
+		}
+		waitFor("1", "")
+		if err := m.Publish(opcode.SMSGTransferPending, make([]byte, 4)); err != nil {
+			t.Fatal(err)
+		}
+		waitFor("", "world_visit_unbound")
+		if err := m.Publish(opcode.SMSGNewWorld, make([]byte, 20)); err != nil {
+			t.Fatal(err)
+		}
+		waitFor("2", "")
+		err := m.StartObservedPolicy(ctx, "", "encounter="+alias)
+		if err == nil || !strings.Contains(err.Error(), "native writer still owns") {
+			t.Fatalf("encounter dispatch started before native custody was transferred: %v", err)
+		}
+	})
 
 	const service = "/warcraftbuddy.actions.v1.BuddyActions/"
 	for _, tc := range []struct {

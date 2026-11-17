@@ -1,0 +1,255 @@
+package buddyactions
+
+import (
+	"context"
+	"encoding/binary"
+	"math"
+	"strconv"
+	"time"
+
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+type encounterVisit struct {
+	revision uint64
+	mapID    uint32
+	bound    bool
+}
+
+// World and Actions have separate packet queues. The same validated entry
+// packets must advance both visit revisions before combining world and aura data.
+func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
+	switch op {
+	case opcode.SMSGTransferPending:
+		if len(payload) >= 4 {
+			s.encounterVisit.bound = false
+		}
+	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld:
+		if !validEncounterWorldEntry(payload) {
+			return
+		}
+		s.encounterVisit.revision++
+		s.encounterVisit.mapID = binary.LittleEndian.Uint32(payload)
+		s.encounterVisit.bound = true
+		if op == opcode.SMSGLoginVerifyWorld {
+			s.targetProtection.reset()
+		}
+	}
+}
+
+func validEncounterWorldEntry(payload []byte) bool {
+	if len(payload) != 20 {
+		return false
+	}
+	for offset := 4; offset < len(payload); offset += 4 {
+		value := float64(math.Float32frombits(binary.LittleEndian.Uint32(payload[offset:])))
+		// Match buddy-world's position validation, including the NaN case.
+		if !(math.Abs(value) < 1e6) {
+			return false
+		}
+	}
+	return true
+}
+
+// EncounterObservation projects this body's server observations. The Lua
+// policy owns encounter bindings, ordering and decisions about dispatch.
+func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*actionsv1.EncounterObservationResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	identity := &actionsv1.EncounterObservationResponse{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false),
+	}
+	if s.closed {
+		identity.Reason = "session_closing"
+		return identity, nil
+	}
+	call, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	w, err := s.readWorldSnapshot(call)
+	if err != nil {
+		identity.Reason = "world_observation_unavailable"
+		return identity, nil
+	}
+	self, visit := w.GetSelf(), s.encounterVisit
+	if s.selfGUID == 0 || self.GetGuid() != s.selfGUID || !self.Present || !self.MapKnown ||
+		!visit.bound || w.VisitRevision == 0 || w.VisitRevision != visit.revision || self.MapId != visit.mapID {
+		identity.Reason = "world_visit_unbound"
+		return identity, nil
+	}
+
+	out := &actionsv1.EncounterObservationResponse{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false),
+		VisitId: w.VisitRevision, MapId: proto.Uint32(self.MapId), WorldObservationRevision: w.ObservedPackets,
+		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
+		Players:    make(map[string]*actionsv1.EncounterPlayer),
+		Targets:    make(map[string]*actionsv1.EncounterCreature),
+		Engagement: make(map[string]*actionsv1.EncounterEngagement),
+		Spells:     make(map[string]*actionsv1.EncounterSpell),
+	}
+	state := s.readPartyStateLocked(ctx)
+	var online map[uint64]bool
+	if state.GetSessionId() == s.sessionID {
+		out.Party, online = s.encounterParty(state)
+	}
+	players := s.encounterPlayers(w, online, out)
+	s.encounterCreatures(w, players, out)
+	s.encounterSpells(w, online, out)
+
+	// The policy event uses this same JSON representation. Refuse an
+	// oversized composite view as a whole, since dropping arbitrary rows
+	// could hide a target, observed victim or protection.
+	body, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(out)
+	if err != nil || len(body) > behavior.MaxJSONBytes-512 {
+		identity.Reason = "encounter_observation_bounds"
+		return identity, nil
+	}
+	return out, nil
+}
+
+func (s *Service) encounterParty(state *partyv1.StateResponse) (*actionsv1.EncounterParty, map[uint64]bool) {
+	group := state.GetGroup()
+	if !group.GetKnown() {
+		return nil, nil
+	}
+	if !group.InGroup {
+		return &actionsv1.EncounterParty{Group: group, Revision: state.Revision}, nil
+	}
+	online := s.onlineHealingGroup(group)
+	if online == nil || group.GroupGuid == 0 || group.LeaderGuid == 0 {
+		return nil, nil
+	}
+	if _, found := online[group.LeaderGuid]; !found {
+		return nil, nil
+	}
+	out := &actionsv1.EncounterParty{Group: group, Revision: state.Revision}
+	if marks := state.RaidTargets; marks != nil && marks.GroupGuid == group.GroupGuid &&
+		marks.Revision != 0 && marks.Revision <= state.Revision && marks.ListRevision <= marks.Revision && len(marks.Marks) <= 8 {
+		out.RaidTargets = marks
+	}
+	return out, online
+}
+
+func encounterGUID(guid uint64) string {
+	return strconv.FormatUint(guid, 10)
+}
+
+func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint64]bool, out *actionsv1.EncounterObservationResponse) map[uint64]*worldv1.PlayerState {
+	players := map[uint64]*worldv1.PlayerState{s.selfGUID: w.Self}
+	for member, isOnline := range online {
+		if member == s.selfGUID || !isOnline {
+			continue
+		}
+		if p := observedHealingPlayer(w, member); p.GetPresent() && p.GetMapKnown() && p.MapId == w.Self.MapId {
+			players[member] = p
+		}
+	}
+	for guid, p := range players {
+		view := &actionsv1.EncounterPlayer{
+			Guid: guid, Present: p.Present, MapKnown: p.MapKnown, MapId: proto.Uint32(p.MapId),
+			AliveKnown: p.AliveKnown, HealthKnown: p.HealthKnown, Health: p.Health, MaxHealth: p.MaxHealth,
+			FactionTemplate: p.FactionTemplate,
+		}
+		if p.AliveKnown {
+			view.Alive = proto.Bool(p.Alive)
+		}
+		out.Players[encounterGUID(guid)] = view
+	}
+	leader := players[out.GetParty().GetGroup().GetLeaderGuid()]
+	if leader.GetTargetKnown() {
+		out.ObservedOwnerFocus = leader.TargetGuid
+	}
+	return players
+}
+
+func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[uint64]*worldv1.PlayerState, out *actionsv1.EncounterObservationResponse) {
+	if len(w.NearbyCreatures) > 32 {
+		return
+	}
+	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
+		for _, c := range rows {
+			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId ||
+				c.Guid>>48 != 0xf130 || c.Guid&0xffffff == 0 {
+				continue
+			}
+			key := encounterGUID(c.Guid)
+			if out.Targets[key] != nil {
+				continue
+			}
+			victim := players[c.AttackVictimGuid]
+			engaged := c.Alive && c.AliveKnown && victim.GetAliveKnown() && victim.GetAlive() && ongoingAttack(c, victim)
+			if engaged {
+				out.Engagement[key] = &actionsv1.EncounterEngagement{VictimGuid: victim.Guid, AgeMs: c.AttackAgeMs}
+			}
+			view := &actionsv1.EncounterCreature{
+				Guid: c.Guid, Entry: c.Entry, Present: c.Present, MapKnown: c.MapKnown, MapId: proto.Uint32(c.MapId),
+				AliveKnown: c.AliveKnown, HealthKnown: c.HealthKnown, Health: c.Health, MaxHealth: c.MaxHealth,
+				Attackable: c.AliveKnown && c.Alive && c.HealthKnown && c.Health != 0 && c.UnitFlagsKnown && c.DynamicFlagsKnown &&
+					c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && c.DynamicFlags&0x20 == 0,
+				Engaged: engaged, UnitFlagsKnown: c.UnitFlagsKnown, UnitFlags: c.UnitFlags, FactionTemplate: c.FactionTemplate,
+				PositionKnown: c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
+				Trajectory:    c.Trajectory,
+			}
+			if view.PositionKnown {
+				view.X, view.Y, view.Z, view.PositionRevision = c.X, c.Y, c.Z, c.PositionRevision
+			}
+			if c.AliveKnown {
+				view.Alive = proto.Bool(c.Alive)
+			}
+			out.Targets[key] = view
+		}
+	}
+	protection := &actionsv1.State{}
+	s.targetProtection.snapshot(protection, s.now())
+	out.TargetProtectionOverflow = protection.TargetProtectionOverflow
+	for _, aura := range protection.ProtectedTargets {
+		if c := out.Targets[encounterGUID(aura.TargetGuid)]; c != nil {
+			c.Protected = true
+			out.ProtectedAuras = append(out.ProtectedAuras, aura)
+		}
+	}
+}
+
+func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64]bool, out *actionsv1.EncounterObservationResponse) {
+	out.Healing = s.healingOptionsLocked(w, func() map[uint64]bool { return online })
+	heals := make(map[uint32]bool, len(out.Healing.Spells))
+	for _, rank := range out.Healing.Spells {
+		heals[rank.SpellId] = true
+	}
+	if !s.spellbookKnown {
+		return
+	}
+	self := w.Self
+	polyCaster := safeSelfCombat(w, s.selfGUID) == "" && s.crowdControlIdleLocked() && !s.crowdControl.active &&
+		self.ClassKnown && self.ClassId == 8 && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
+	polyReady := false
+	for id, spell := range s.learnedContractsLocked() {
+		view := &actionsv1.EncounterSpell{Known: true}
+		switch spell.Capability().Kind {
+		case spellcatalog.Heal:
+			view.Ready = heals[id]
+			view.Capability = "heal"
+		case spellcatalog.Polymorph:
+			view.Ready = polyCaster && self.PowerKnown && int32(self.PowerType) == spell.Power &&
+				uint64(self.Power) >= spellCost(spell, self) && !s.now().Before(s.spellReady[id]) && casterRequirementsObserved(spell, self)
+			view.Capability = "polymorph"
+			polyReady = polyReady || view.Ready
+		case spellcatalog.Sap:
+			view.Capability = "sap"
+		default:
+			continue
+		}
+		out.Spells[encounterGUID(uint64(id))] = view
+	}
+	if polyReady {
+		out.ControlCapabilities = []*actionsv1.EncounterControlCapability{{Guid: s.selfGUID, Technique: "polymorph", Ready: true}}
+	}
+}
