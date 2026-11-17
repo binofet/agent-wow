@@ -87,19 +87,23 @@ func (p *SessionPolicy) runObservation(parent context.Context, sid string, feeds
 }
 
 func (p *SessionPolicy) stepObservation(ctx context.Context, sid string, feeds []policyFeed) error {
-	var sequence uint64
-	var phase string
-	for _, feed := range feeds {
-		phase = feed.phase
+	observations := make([]map[string]any, len(feeds))
+	for i, feed := range feeds {
 		observed, err := p.manager.readPolicyObservation(ctx, sid, feed.method)
 		if err != nil {
 			return err
 		}
-		sequence, err = p.enqueueObservation(ctx, phase, observed)
+		observations[i] = observed
+	}
+	var sequence uint64
+	for i, feed := range feeds {
+		var err error
+		sequence, err = p.enqueueObservation(ctx, feed.phase, observations[i])
 		if err != nil {
 			return err
 		}
 	}
+	phase := feeds[len(feeds)-1].phase
 	_, _, err := p.Step(ctx, map[string]any{"kind": phase, "observationSequence": strconv.FormatUint(sequence, 10)}, nil)
 	return err
 }
