@@ -21,6 +21,7 @@ type supportAttempt struct {
 	controlAura observedBuffAura
 	controlSlot uint8
 	creation    *itemCreation
+	selfChannel bool
 	cleanseAura uint32
 }
 type resurrectionOffer struct {
@@ -211,6 +212,9 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	bad := errors.New("malformed support spell event")
+	if code == opcode.MSGChannelStart || code == opcode.MSGChannelUpdate {
+		return true, s.observeSelfChannelLocked(code, p)
+	}
 	if code == opcode.SMSGSpelldispellog {
 		return true, s.observeCleanseLocked(p)
 	}
@@ -252,7 +256,11 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return true, nil
 	}
 	op := s.supportOp
-	if op == nil || op.view.Phase != "waiting_server" || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
+	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
+		return false, nil
+	}
+	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
+		!(op.view.Capability == selfCastCapability && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -279,7 +287,13 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
 		}
-		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
+		if op.view.Capability == selfCastCapability {
+			source, _, _ := readGUID(p)
+			if source != s.selfGUID {
+				return false, nil
+			}
+		}
+		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
 			return true, bad
 		}
 		if code == opcode.SMSGSpellStart {
@@ -302,6 +316,12 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.ServerCastGo = true
+		if op.selfChannel {
+			if op.view.ChannelEnded {
+				s.finishSelfChannelLocked("channel_ended_effect_unverified")
+			}
+			return true, nil
+		}
 		op.view.Phase = "server_cast_go_effect_unverified"
 		if op.creation != nil {
 			op.view.Phase = "waiting_created_item"

@@ -15,6 +15,7 @@ rpc:
   accept_resurrection: /warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection
   pick_lock: /warcraftbuddy.actions.v1.BuddyActions/PickLock
   create_item: /warcraftbuddy.actions.v1.BuddyActions/CreateItem
+  cast_self: /warcraftbuddy.actions.v1.BuddyActions/CastSelf
   polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
   sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
@@ -59,6 +60,8 @@ packets:
   SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  MSG_CHANNEL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  MSG_CHANNEL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_FAILURE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -82,6 +85,7 @@ script_api:
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
   create_item: {effect: mutation, description: Cast one exact learned direct item creation spell on self and report inventory confirmation}
+  cast_self: {effect: mutation, description: Cast one exact learned spell on the current body and report cast or channel observations}
   polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}

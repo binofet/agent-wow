@@ -157,6 +157,7 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 		alias, method, params, want string
 	}{
 		{"create_item", "CreateItem", `"selfGuid":"11","spellId":5505`, "exact learned item-creation rank required"},
+		{"cast_self", "CastSelf", `"selfGuid":"11","spellId":12051`, "learned spell with a supported self target required"},
 		{"polymorph", "Polymorph", `"targetGuid":"17379390962022744065","spellId":118`, "exact learned crowd-control rank required"},
 		{"sap", "Sap", `"targetGuid":"17379390962022744065","spellId":6770`, "exact learned crowd-control rank required"},
 		{"resurrect_once", "ResurrectOnce", `"selfGuid":"11","targetGuid":"12"`, "current living caster observation required"},

@@ -577,6 +577,7 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 		s.lastWorld = nil
 	}
 	s.expireCrowdControlLocked()
+	s.expireSelfChannelLocked()
 	s.observeItemCreationLocked(w)
 	s.supportSnapshotLocked(w)
 	return s.stateLocked(), nil
@@ -592,6 +593,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.targetProtection.reset()
 	s.finishCrowdControlLocked("logout_outcome_unconfirmed")
 	s.finishItemCreationLocked("logout_outcome_unconfirmed")
+	s.finishSelfChannelLocked("logout_outcome_unconfirmed")
 	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
@@ -1017,6 +1019,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.buffTimeoutLocked()
 	s.cancelProtectedCastLocked(ctx)
+	s.expireSelfChannelLocked()
 	if !s.closed && s.autoTarget != 0 {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}

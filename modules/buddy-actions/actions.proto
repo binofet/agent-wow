@@ -164,6 +164,8 @@ message KnownSpell {
   bool requires_stealth = 18;
   bool requires_behind = 19;
   uint32 created_item_entry = 20;
+  bool self_cast_supported = 21;
+  bool channeled = 22;
 }
 message SpellOperation {
   uint32 spell_id = 1;
@@ -179,6 +181,9 @@ message SpellOperation {
   uint64 baseline_inventory_revision = 11;
   uint64 observed_inventory_revision = 12;
   bool inventory_confirmed = 13;
+  bool channel_started = 14;
+  bool channel_ended = 15;
+  uint32 channel_remaining_ms = 16;
 }
 message ObservedAura {
   uint32 slot = 1;
@@ -338,6 +343,7 @@ message CrowdControlState {
 message PolymorphRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_guid = 3; bool approach = 4; bool cancel = 5; }
 message SapRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_guid = 3; bool approach = 4; bool cancel = 5; }
 message CreateItemRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
+message CastSelfRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
@@ -375,4 +381,5 @@ service BuddyActions {
   rpc CreateItem(CreateItemRequest) returns (State);
   rpc Polymorph(PolymorphRequest) returns (State);
   rpc Sap(SapRequest) returns (State);
+  rpc CastSelf(CastSelfRequest) returns (State);
 }

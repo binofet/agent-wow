@@ -88,6 +88,8 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.FlatCost = r.Cost
 			v.PowerType = r.Power
 			v.CastTimeMs = r.CastMs
+			v.SelfCastSupported = supportsSelfCast(r)
+			v.Channeled = isChanneledSpell(r)
 			v.Capability = string(cap.Kind)
 			if cap.Kind == spellcatalog.CreateItem {
 				v.CreatedItemEntry = r.CreatedItem()

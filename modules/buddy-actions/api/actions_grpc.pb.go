@@ -51,6 +51,7 @@ const (
 	BuddyActions_CreateItem_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
 	BuddyActions_Polymorph_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
 	BuddyActions_Sap_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
+	BuddyActions_CastSelf_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -89,6 +90,7 @@ type BuddyActionsClient interface {
 	CreateItem(ctx context.Context, in *CreateItemRequest, opts ...grpc.CallOption) (*State, error)
 	Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error)
 	Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error)
+	CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error)
 }
 
 type buddyActionsClient struct {
@@ -399,6 +401,16 @@ func (c *buddyActionsClient) Sap(ctx context.Context, in *SapRequest, opts ...gr
 	return out, nil
 }
 
+func (c *buddyActionsClient) CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastSelf_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -435,6 +447,7 @@ type BuddyActionsServer interface {
 	CreateItem(context.Context, *CreateItemRequest) (*State, error)
 	Polymorph(context.Context, *PolymorphRequest) (*State, error)
 	Sap(context.Context, *SapRequest) (*State, error)
+	CastSelf(context.Context, *CastSelfRequest) (*State, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -534,6 +547,9 @@ func (UnimplementedBuddyActionsServer) Polymorph(context.Context, *PolymorphRequ
 }
 func (UnimplementedBuddyActionsServer) Sap(context.Context, *SapRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Sap not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastSelf(context.Context, *CastSelfRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastSelf not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -1096,6 +1112,24 @@ func _BuddyActions_Sap_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_CastSelf_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastSelfRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastSelf(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastSelf_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastSelf(ctx, req.(*CastSelfRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1222,6 +1256,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Sap",
 			Handler:    _BuddyActions_Sap_Handler,
+		},
+		{
+			MethodName: "CastSelf",
+			Handler:    _BuddyActions_CastSelf_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

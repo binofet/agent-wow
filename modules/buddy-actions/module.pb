@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-µp
+Ås
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -167,7 +167,7 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"Ü
+verified_legs (RverifiedLegs"ª
 
 KnownSpell
 spell_id (RspellId%
@@ -196,7 +196,9 @@ power_type (R	powerType.
 required_subclass_mask (RrequiredSubclassMask)
 requires_stealth (RrequiresStealth'
 requires_behind (RrequiresBehind,
-created_item_entry (RcreatedItemEntry"¹
+created_item_entry (RcreatedItemEntry.
+self_cast_supported (RselfCastSupported
+	channeled (R	channeled"¹
 SpellOperation
 spell_id (RspellId
 target_guid (R
@@ -214,7 +216,10 @@ capability
  (RitemPushObserved>
 baseline_inventory_revision (RbaselineInventoryRevision>
 observed_inventory_revision (RobservedInventoryRevision/
-inventory_confirmed (RinventoryConfirmed"à
+inventory_confirmed (RinventoryConfirmed'
+channel_started (RchannelStarted#
+channel_ended (RchannelEnded0
+channel_remaining_ms (RchannelRemainingMs"à
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -388,6 +393,11 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
+spell_id (RspellId"h
+CastSelfRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
 spell_id (RspellId"Ž
 ResurrectOnceRequest
 
@@ -406,7 +416,7 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2‘
+targetGuid2é
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
@@ -438,4 +448,5 @@ targetGuid2‘
 
 CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.v1.StateX
 	Polymorph*.warcraftbuddy.actions.v1.PolymorphRequest.warcraftbuddy.actions.v1.StateL
-Sap$.warcraftbuddy.actions.v1.SapRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+Sap$.warcraftbuddy.actions.v1.SapRequest.warcraftbuddy.actions.v1.StateV
+CastSelf).warcraftbuddy.actions.v1.CastSelfRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
