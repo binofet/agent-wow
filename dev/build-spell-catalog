@@ -23,6 +23,10 @@ def build(folder,ranks,spell_table=None):
     def string(at):return strings[at:strings.index(0,at)].decode('utf-8')
     for r in sorted(rows,key=lambda r:r[0]):
         chain,rank=chains.get(r[0],(r[0],1));cast=casts.get(r[28]);reach=ranges.get(r[46])
+        direct_creation = (
+            sum(bool(kind) for kind in r[71:74]) == 1
+            and not (r[16] or r[18] or any(r[52+i] and r[60+i] for i in range(8)))
+        )
         value=dict(id=r[0],name=string(r[136]),family=chain,rank=rank,level=r[39],behind=bool(custom.get(r[0],0)&0x20000),
             attrs=list(r[4:12]),stances=r[12],stancesNot=r[14],targetMask=r[16],
             focus=r[18],facing=r[19],conditions=list(r[20:28]),familySet=r[208],familyFlags=list(r[209:212]),power=signed(r[41]),cost=r[42],costPerLevel=r[43],
@@ -36,7 +40,9 @@ def build(folder,ranks,spell_table=None):
             reagents=[dict(id=r[52+i],count=r[60+i]) for i in range(8) if r[52+i] and r[60+i]],
             totems=[v for v in r[50:52] if v],effects=[dict(kind=r[71+i],a=r[86+i],b=r[89+i],aura=r[95+i],
                 points=signed(r[80+i])+1,dice=signed(r[74+i]),perLevel=floating(r[77+i]),misc=signed(r[110+i]),
-                trigger=r[116+i],periodMs=r[98+i],chain=r[104+i],radius=r[92+i]) for i in range(3) if r[71+i]])
+                trigger=r[116+i],periodMs=r[98+i],chain=r[104+i],radius=r[92+i],
+                **({'itemType': r[107+i]} if direct_creation and r[71+i] == 24 and r[86+i] == 1 and r[107+i] else {}))
+                for i in range(3) if r[71+i]])
         # Keep false/zero defaults implicit; retain arrays to make constraints explicit.
         yield {k:v for k,v in value.items() if v or k in ('id','itemClass')}
 
