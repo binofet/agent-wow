@@ -357,13 +357,18 @@ local function decide_encounter(frame)
             input={kind="healing", observationSequence=state.healingSequence}})
         support = result.action
     end
+    local active_melee = guid(obs.activeMeleeTargetGuid)
     if support and support.capability == "heal" and support.sessionId == obs.sessionId and
        support.selfGuid == obs.selfGuid and guid(support.targetGuid) and members[support.targetGuid] and
        alive(players[support.targetGuid]) and same_map(players[support.targetGuid], obs.mapId) and
        usable_spell(obs, support.spellId, "heal") then
-        out.action = proposal(obs, "heal", support.targetGuid, support.spellId); return out
+        if active_melee then
+            out.action = proposal(obs, "melee_stop", active_melee)
+        else
+            out.action = proposal(obs, "heal", support.targetGuid, support.spellId)
+        end
+        return out
     end
-    local active_melee = guid(obs.activeMeleeTargetGuid)
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or

@@ -138,10 +138,18 @@ local encounter_intent = {
 	// handing the encounter's action authority to Lua.
 	expect(decide(observe()), "engaged_focus", key(skull))
 	obs.HostOwned = proto.Bool(true)
+	obs.ActiveMeleeTargetGuid = skull
 	seq := observe()
 	expect(decide("1"), "engaged_focus", key(skull))
+	release := decide(seq)
+	action, _ := release.Output["action"].(map[string]any)
+	if action["capability"] != "melee_stop" || action["targetGuid"] != key(skull) || action["observationSequence"] != seq {
+		t.Fatalf("urgent healing did not request release of the active swing: %+v", release.Output)
+	}
+	obs.ActiveMeleeTargetGuid = 0
+	seq = observe()
 	proposal := decide(seq)
-	action, _ := proposal.Output["action"].(map[string]any)
+	action, _ = proposal.Output["action"].(map[string]any)
 	if action["capability"] != "heal" || action["sessionId"] != session || action["selfGuid"] != "4" ||
 		action["targetGuid"] != "3" || action["spellId"] != float64(2050) || action["observationSequence"] != seq {
 		t.Fatalf("unexpected heal proposal: %+v", proposal.Output)

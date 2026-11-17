@@ -15,6 +15,13 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+const inertEncounterPolicy = `local state = {}; return {
+      decide = function() return {} end,
+      on_event = function() return true end,
+      export_state = function() return {version = 1, data = state} end,
+      import_state = function(checkpoint) state = checkpoint.data; return true end,
+    }`
+
 type policyEncounterWorld struct{ policySpellWorld }
 
 func (w policyEncounterWorld) Snapshot(ctx context.Context, req *worldv1.SnapshotRequest) (*worldv1.SnapshotResponse, error) {
@@ -78,13 +85,8 @@ return {
 	if view := observe(); !view.GetHostOwned() || view.GetVisitId() != initial.GetVisitId() {
 		t.Fatal("the observed policy never acquired the current encounter", view)
 	}
-	inert := `local state = {}; return {
-      decide = function() return {} end,
-      on_event = function() return true end,
-      export_state = function() return {version = 1, data = state} end,
-      import_state = function(checkpoint) state = checkpoint.data; return true end,
-    }`
-	if _, err := policy.Reload(ctx, inert, boot.Revision); err != nil {
+
+	if _, err := policy.Reload(ctx, inertEncounterPolicy, boot.Revision); err != nil {
 		t.Fatal(err)
 	}
 	poll := time.NewTicker(25 * time.Millisecond)
@@ -187,28 +189,59 @@ func TestPackagedActionsEncounterBundleDefendsWithoutMarks(t *testing.T) {
 }
 
 func TestPackagedActionsEncounterBundleUsesMeleeWithoutDamageSpell(t *testing.T) {
-	manager, ctx, writes, world := policyMeleeFixture(t, true)
-	stop := startPackagedEncounterBundle(t, ctx, manager, writes)
-	defer stop()
-	world.combat.Store(true)
-	manager.mu.Lock()
-	policy := manager.policy
-	manager.mu.Unlock()
-	boot := policy.vm.Status()
-	origin := modsession.WriteOrigin{
-		SessionID: boot.SessionID, Module: actionsModule, Writer: "lua",
-		PolicyRevision: boot.Revision, Generation: boot.Epoch, ActionID: "1",
+	for _, name := range []string{"attacker_disengages", "reload_releases_ownership"} {
+		t.Run(name, func(t *testing.T) {
+			manager, ctx, writes, world := policyMeleeFixture(t, true)
+			stop := startPackagedEncounterBundle(t, ctx, manager, writes)
+			defer stop()
+			world.combat.Store(true)
+			manager.mu.Lock()
+			policy := manager.policy
+			manager.mu.Unlock()
+			boot := policy.vm.Status()
+			origin := modsession.WriteOrigin{
+				SessionID: boot.SessionID, Module: actionsModule, Writer: "lua",
+				PolicyRevision: boot.Revision, Generation: boot.Epoch, ActionID: "1",
+			}
+			checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, policyWolfGUID), origin)
+			start := binary.LittleEndian.AppendUint64(nil, policyMageGUID)
+			deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstart, binary.LittleEndian.AppendUint64(start, policyWolfGUID))
+			acknowledgeStop := func(target uint64) {
+				ack := append(spellFixturePackedGUID(policyMageGUID), spellFixturePackedGUID(target)...)
+				deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstop, binary.LittleEndian.AppendUint32(ack, 0))
+			}
+			switch name {
+			case "attacker_disengages":
+				world.combat.Store(false)
+				origin.ActionID = "2"
+				checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackstop, nil, origin)
+			case "reload_releases_ownership":
+				if _, err := policy.Reload(ctx, inertEncounterPolicy, boot.Revision); err != nil {
+					t.Fatal(err)
+				}
+				checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackstop, nil, modsession.WriteOrigin{
+					SessionID: boot.SessionID, Module: actionsModule, Writer: "module",
+				})
+				acknowledgeStop(policyWolfGUID + 1)
+				raw, err := manager.InvokeJSON(ctx, "buddy-actions.status", nil)
+				state := &actionsv1.State{}
+				if err != nil || protojson.Unmarshal(raw, state) != nil ||
+					!state.GetAutoAttackUnconfirmed() || state.GetAutoAttackTargetGuid() != policyWolfGUID {
+					t.Fatalf("foreign stop prematurely cleared retiring melee: %s %v", raw, err)
+				}
+				world.combat.Store(false)
+			}
+			acknowledgeStop(policyWolfGUID)
+			poll := time.NewTicker(25 * time.Millisecond)
+			defer poll.Stop()
+			for policy.vm.Status().Pending != 0 {
+				select {
+				case <-ctx.Done():
+					t.Fatal("the matching stop did not settle the Lua ledger")
+				case <-poll.C:
+				}
+			}
+			noPackagedWrites(t, writes)
+		})
 	}
-	checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, policyWolfGUID), origin)
-	start := binary.LittleEndian.AppendUint64(nil, policyMageGUID)
-	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstart, binary.LittleEndian.AppendUint64(start, policyWolfGUID))
-	world.combat.Store(false)
-	origin.ActionID = "2"
-	checkPackagedWrite(t, ctx, writes, opcode.CMSGAttackstop, nil, origin)
-	ack := append(spellFixturePackedGUID(policyMageGUID), spellFixturePackedGUID(policyWolfGUID)...)
-	deliverPolicySpellPacket(t, ctx, manager, opcode.SMSGAttackstop, binary.LittleEndian.AppendUint32(ack, 0))
-	if err := policy.vm.Drain(ctx); err != nil || policy.vm.Status().Pending != 0 {
-		t.Fatalf("exact stop did not settle the Lua ledger: %v", err)
-	}
-	noPackagedWrites(t, writes)
 }
