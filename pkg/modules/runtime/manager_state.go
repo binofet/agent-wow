@@ -48,6 +48,7 @@ type Manager struct {
 	pendingPackets                        int
 	packetsIdle                           chan struct{}
 	healthInterval, timeHealth            time.Duration
+	policyObserver                        PolicyObserver
 }
 
 // New constructs a manager. Nil arguments select no modules, the Compose runner, and discarded logs.
