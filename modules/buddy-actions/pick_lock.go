@@ -24,7 +24,7 @@ func (s *Service) PickLock(ctx context.Context, r *actionsv1.PickLockRequest) (*
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.state.CastPending || s.state.InteractionOwner != "" || s.state.Traveling || s.state.MotionUnconfirmed {
+	if s.closed || s.crowdControl.active || s.state.CastPending || s.state.InteractionOwner != "" || s.state.Traveling || s.state.MotionUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "character is busy")
 	}
 	spell, known := s.learnedContractsLocked()[pickLockSpell]

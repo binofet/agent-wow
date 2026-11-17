@@ -18,6 +18,9 @@ type supportAttempt struct {
 	owner       uint64
 	count       byte
 	until       time.Time
+	controlAura observedBuffAura
+	controlSlot uint8
+	creation    *itemCreation
 	cleanseAura uint32
 }
 type resurrectionOffer struct {
@@ -215,6 +218,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		s.observePickLockLootLocked(p)
 		return true, nil
 	}
+	if code == opcode.SMSGItemPushResult {
+		return true, s.observeCreatedItemPushLocked(p)
+	}
 	if code == opcode.SMSGResurrectRequest {
 		if len(p) < 14 {
 			return true, bad
@@ -279,8 +285,28 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if code == opcode.SMSGSpellStart {
 			return true, nil
 		}
+		if spellcatalog.Kind(op.view.Capability).BreaksOnDamage() {
+			source, _, _ := readGUID(p)
+			if source != s.selfGUID {
+				return false, nil
+			}
+			op.view.ServerCastGo = true
+			// The parser validated the complete target body. Direct
+			// single-unit crowd control must also hit that exact unit.
+			hits := off + 8
+			if len(p) < hits+10 || p[hits] != 1 || binary.LittleEndian.Uint64(p[hits+1:]) != op.view.TargetGuid || p[hits+9] != 0 {
+				s.finishCrowdControlLocked("server_cast_go_no_target_hit")
+			} else {
+				s.confirmCrowdControlLocked()
+			}
+			return true, nil
+		}
 		op.view.ServerCastGo = true
 		op.view.Phase = "server_cast_go_effect_unverified"
+		if op.creation != nil {
+			op.view.Phase = "waiting_created_item"
+			return true, nil
+		}
 		if op.view.EffectObserved {
 			if op.view.Capability == string(spellcatalog.Resurrect) {
 				op.view.Phase = "confirmed_alive"
@@ -294,6 +320,10 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	if rejected {
+		if spellcatalog.Kind(op.view.Capability).BreaksOnDamage() {
+			s.finishCrowdControlLocked("server_rejected_no_replay")
+			return true, nil
+		}
 		op.view.Phase = "server_rejected_no_replay"
 		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])

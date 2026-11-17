@@ -17,7 +17,7 @@ type enemyCastIdentity struct {
 
 func (s *Service) enemyHealInOurFight(w *worldv1.SnapshotResponse, enemy *worldv1.CreatureState, online map[uint64]bool) bool {
 	cast := enemy.GetActiveCast()
-	if cast.GetRevision() == 0 || cast.GetRemainingMs() == 0 ||
+	if cast.GetRevision() == 0 || cast.GetRemainingMs() == 0 || s.targetProtection.blocks(enemy.GetGuid(), s.now()) ||
 		(s.lastInterrupt == enemyCastIdentity{enemy.GetGuid(), cast.GetRevision()}) {
 		return false
 	}

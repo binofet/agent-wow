@@ -108,6 +108,9 @@ func (s *Service) selfAttackerLocked(w *worldv1.SnapshotResponse) *worldv1.Creat
 
 func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, defense bool) bool {
 	fail := func(reason string) bool { s.state.Reason = reason; s.stopAutoAttackLocked(ctx); return false }
+	if s.blockProtectedOffenseLocked(ctx, target.Guid) {
+		return false
+	}
 	self, owner := w.Self, w.Owner
 	s.updateClassLocked()
 	if !self.ClassKnown || self.ClassId == 0 {
@@ -199,6 +202,9 @@ func (s *Service) faceEnemyLocked(ctx context.Context, target position) bool {
 	return true
 }
 func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target uint64, throttle time.Duration) bool {
+	if s.blockProtectedOffenseLocked(ctx, target) {
+		return false
+	}
 	rank := spellRankFor(spell)
 	if rank.id == 0 || !s.knownSpells[spell] {
 		s.state.Reason = "offensive_rank_not_in_known_spells"
@@ -241,6 +247,7 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	s.castUntil = now.Add(max(5*time.Second, rank.castTime+1500*time.Millisecond))
 	s.pendingSpell = spell
 	s.pendingTarget = target
+	s.protectedCastCancelAttempted = false
 	s.state.CastPending = true
 	s.state.AssistAttempts++
 	s.state.LastCastFailure = 0

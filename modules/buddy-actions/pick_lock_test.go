@@ -32,6 +32,11 @@ func TestPickLockBindsLearnedSpellAndLootWindowToExactObservedChest(t *testing.T
 		t.Fatal("unqualified rogue sent a cast")
 	}
 	f.world.SelfSkills[0].Value = 1
+	s.crowdControl = crowdControlIntent{active: true, target: sheepTarget, phase: "ready"}
+	if _, err := s.PickLock(ctx, req); err == nil || len(f.packets) != 0 {
+		t.Fatal("Pick Lock interrupted another prepared action", err, f.packets)
+	}
+	s.crowdControl = crowdControlIntent{}
 	result, err := s.PickLock(ctx, req)
 	if err != nil || !result.GetLastSpellOperation().GetTransportWritten() {
 		t.Fatal("qualified rogue could not send Pick Lock", result, err)

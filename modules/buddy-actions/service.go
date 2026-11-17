@@ -66,7 +66,8 @@ type Service struct {
 	pos                                        position
 	posKnown                                   bool
 	positionRevision                           uint64
-	castCount                                  byte
+	castCount, cancelCastCount                 byte
+	protectedCastCancelAttempted               bool
 	lastWorld                                  *worldv1.SnapshotResponse
 	posMap                                     uint32
 	posEstimated                               bool
@@ -78,6 +79,10 @@ type Service struct {
 	selfDefenseRevision                        uint64
 	selfDefenseMap                             uint32
 	engage                                     engageIntent
+	crowdControl                               crowdControlIntent
+	crowdControlSight                          func(context.Context, string, uint32, position, position) (bool, error)
+	controlTemplates                           map[uint32]controlTemplate
+	targetProtection                           targetProtection
 	thermaplugg                                thermapluggButtons
 	interactionToken                           string
 	interactionUntil                           time.Time
@@ -184,6 +189,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())
+	out.CrowdControlApproachSupported = true
+	out.CrowdControl = s.crowdControl.snapshot(s.now())
+	s.targetProtection.snapshot(out, s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
 	if s.supportOp != nil {
@@ -276,6 +284,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	if r.Token != "" {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease expired; acquire a new lease")
+	}
+	if s.crowdControl.active {
+		return nil, status.Error(codes.FailedPrecondition, "crowd control approach is active")
 	}
 	if s.fargodeep.active {
 		return nil, status.Error(codes.FailedPrecondition, "coordinated encounter is active")
@@ -565,6 +576,8 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	if err != nil {
 		s.lastWorld = nil
 	}
+	s.expireCrowdControlLocked()
+	s.observeItemCreationLocked(w)
 	s.supportSnapshotLocked(w)
 	return s.stateLocked(), nil
 }
@@ -576,6 +589,10 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.closed = true
 	s.state.Buffing = false
 	s.buffUnconfirmedLocked("logout_buff_outcome_unconfirmed")
+	s.targetProtection.reset()
+	s.finishCrowdControlLocked("logout_outcome_unconfirmed")
+	s.finishItemCreationLocked("logout_outcome_unconfirmed")
+	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
 	s.stopAutoAttackLocked(ctx)
@@ -788,7 +805,17 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	// every ordinary movement write to the actual current map and position
 	// revision. A STOP is rebased to the fresh observation instead of replaying
 	// an old map's coordinates.
-	w, snapshotErr := s.snapshot(ctx)
+	var w *worldv1.SnapshotResponse
+	var snapshotErr error
+	if moving && s.crowdControl.executing {
+		w, snapshotErr = s.snapshot(ctx, s.crowdControl.target)
+		if snapshotErr != nil || !s.crowdControlMovementValidLocked(w) {
+			s.state.Reason = "crowd_control_observation_changed_before_movement"
+			return false
+		}
+	} else {
+		w, snapshotErr = s.snapshot(ctx)
+	}
 	// An owned corpse approach rechecks party and corpse authority after the
 	// clock callback. STOP remains available after that authority is revoked.
 	if moving && s.lootApproachGuard != nil {
@@ -847,7 +874,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "engage_npc_authority_changed_before_movement"
 		return false
 	}
-	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
+	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -989,6 +1016,24 @@ func (s *Service) Tick(ctx context.Context) {
 		defer s.sampleDungeonTraceLocked(ctx)
 	}
 	s.buffTimeoutLocked()
+	s.cancelProtectedCastLocked(ctx)
+	if !s.closed && s.autoTarget != 0 {
+		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
+	}
+	s.expireCrowdControlLocked()
+	if s.crowdControl.active && !s.now().Before(s.crowdControl.until) {
+		s.endCrowdControlLocked(ctx, "expired")
+	}
+	if s.pendingCrowdControlLocked() != nil {
+		return
+	}
+	if op := s.itemCreationPendingLocked(); op != nil {
+		var w *worldv1.SnapshotResponse
+		if op.view.ServerCastGo && op.view.ItemPushObserved {
+			w, _ = s.snapshot(ctx)
+		}
+		s.observeItemCreationLocked(w)
+	}
 	if !s.closed && s.acceptResurrectionLocked(ctx) {
 		return
 	}
@@ -1003,6 +1048,9 @@ func (s *Service) Tick(ctx context.Context) {
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
+		}
+		if s.crowdControl.active {
+			s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "death_recovery", nil
 		}
 		s.lastStep = s.now()
 		return
@@ -1026,6 +1074,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.expirePendingCastLocked(ctx)
 	if s.emergencyDefenseLocked(ctx) {
+		s.endCrowdControlLocked(ctx, "emergency_defense")
 		s.lastStep = s.now()
 		return
 	}
@@ -1069,7 +1118,7 @@ func (s *Service) Tick(ctx context.Context) {
 	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
 	support := healer || resurrector
 	waterBreath := s.dueWaterBreathLocked()
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.lastStep = s.now()
@@ -1107,7 +1156,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1148,11 +1197,17 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.selfDefenseLocked(ctx, snapshot) {
+		s.endCrowdControlLocked(ctx, "self_defense")
 		s.lastStep = now
 		return
 	}
 	if s.thermapluggButtonsTickLocked(ctx, snapshot) || s.partyDefenseLocked(ctx, snapshot) {
 		s.lastStep = now
+		return
+	}
+	// A prepared approach yields to standing support and actual defense. An
+	// already dispatched CC cast is settled above before any new action.
+	if s.crowdControlTickLocked(ctx) {
 		return
 	}
 	if s.engageTickLocked(ctx) {
@@ -1329,6 +1384,11 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload
+	s.expireCrowdControlLocked()
+	if packet.Opcode == opcode.SMSGCreatureQueryResponse {
+		s.observeControlTemplateLocked(p)
+		return &emptypb.Empty{}, nil
+	}
 	malformed := false
 	if handled, err := s.supportPacketLocked(packet.Opcode, p); handled {
 		if err != nil {

@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-îa
+µp
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"M
@@ -167,7 +167,7 @@ corpseGuidW
 alive_observed (RaliveObserved
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
-verified_legs (RverifiedLegs"®
+verified_legs (RverifiedLegs"Ü
 
 KnownSpell
 spell_id (RspellId%
@@ -195,7 +195,8 @@ power_type (R	powerType.
 required_item_class (RrequiredItemClass4
 required_subclass_mask (RrequiredSubclassMask)
 requires_stealth (RrequiresStealth'
-requires_behind (RrequiresBehind"þ
+requires_behind (RrequiresBehind,
+created_item_entry (RcreatedItemEntry"¹
 SpellOperation
 spell_id (RspellId
 target_guid (R
@@ -206,7 +207,14 @@ capability
 phase (	Rphase+
 transport_written (RtransportWritten$
 server_cast_go (RserverCastGo'
-effect_observed (ReffectObserved"à
+effect_observed (ReffectObserved,
+created_item_entry (RcreatedItemEntry,
+created_item_count	 (RcreatedItemCount,
+item_push_observed
+ (RitemPushObserved>
+baseline_inventory_revision (RbaselineInventoryRevision>
+observed_inventory_revision (RobservedInventoryRevision/
+inventory_confirmed (RinventoryConfirmed"à
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -241,7 +249,7 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuidF
-targeted_resurrection_supported (RtargetedResurrectionSupported"Ò
+targeted_resurrection_supported (RtargetedResurrectionSupported"Å 
 State
 	following (R	following
 moving (Rmoving*
@@ -333,7 +341,54 @@ session_idj (	R	sessionId
 	self_guidk (RselfGuidZ
 last_spell_operationl (2(.warcraftbuddy.actions.v1.SpellOperationRlastSpellOperationG
 
-engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcJJJFGJIdRhealingRhealing_lease_remaining_ms"Ž
+engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcV
+protected_targetsn (2).warcraftbuddy.actions.v1.ProtectedTargetRprotectedTargets:
+protected_target_revisiono (RprotectedTargetRevision<
+target_protection_overflowp (RtargetProtectionOverflowG
+ crowd_control_approach_supportedr (RcrowdControlApproachSupportedP
+crowd_controls (2+.warcraftbuddy.actions.v1.CrowdControlStateRcrowdControlJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"ˆ
+ProtectedTarget
+target_guid (R
+targetGuid
+caster_guid (R
+casterGuid
+spell_id (RspellId%
+duration_known (RdurationKnown!
+remaining_ms (RremainingMs
+revision (Rrevision
+slot (Rslot
+
+capability (	R
+capability"«
+CrowdControlState
+active (Ractive
+target_guid (R
+targetGuid
+spell_id (RspellId
+phase (	Rphase,
+lease_remaining_ms (RleaseRemainingMs"¡
+PolymorphRequest
+
+session_id (	R	sessionId
+spell_id (RspellId
+target_guid (R
+targetGuid
+approach (Rapproach
+cancel (Rcancel"›
+
+SapRequest
+
+session_id (	R	sessionId
+spell_id (RspellId
+target_guid (R
+targetGuid
+approach (Rapproach
+cancel (Rcancel"j
+CreateItemRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId"Ž
 ResurrectOnceRequest
 
 session_id (	R	sessionId
@@ -351,7 +406,7 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2
+targetGuid2‘
 BuddyActionsR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
@@ -379,4 +434,8 @@ targetGuid2
 BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
 ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
 AcceptResurrection3.warcraftbuddy.actions.v1.AcceptResurrectionRequest.warcraftbuddy.actions.v1.StateV
-PickLock).warcraftbuddy.actions.v1.PickLockRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
+PickLock).warcraftbuddy.actions.v1.PickLockRequest.warcraftbuddy.actions.v1.StateZ
+
+CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.v1.StateX
+	Polymorph*.warcraftbuddy.actions.v1.PolymorphRequest.warcraftbuddy.actions.v1.StateL
+Sap$.warcraftbuddy.actions.v1.SapRequest.warcraftbuddy.actions.v1.StateBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3

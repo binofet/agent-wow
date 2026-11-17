@@ -48,6 +48,9 @@ const (
 	BuddyActions_ResurrectOnce_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
 	BuddyActions_AcceptResurrection_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
 	BuddyActions_PickLock_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
+	BuddyActions_CreateItem_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
+	BuddyActions_Polymorph_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
+	BuddyActions_Sap_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
@@ -83,6 +86,9 @@ type BuddyActionsClient interface {
 	ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error)
 	AcceptResurrection(ctx context.Context, in *AcceptResurrectionRequest, opts ...grpc.CallOption) (*State, error)
 	PickLock(ctx context.Context, in *PickLockRequest, opts ...grpc.CallOption) (*State, error)
+	CreateItem(ctx context.Context, in *CreateItemRequest, opts ...grpc.CallOption) (*State, error)
+	Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error)
+	Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error)
 }
 
 type buddyActionsClient struct {
@@ -363,6 +369,36 @@ func (c *buddyActionsClient) PickLock(ctx context.Context, in *PickLockRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) CreateItem(ctx context.Context, in *CreateItemRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CreateItem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Polymorph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Sap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
@@ -396,6 +432,9 @@ type BuddyActionsServer interface {
 	ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error)
 	AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error)
 	PickLock(context.Context, *PickLockRequest) (*State, error)
+	CreateItem(context.Context, *CreateItemRequest) (*State, error)
+	Polymorph(context.Context, *PolymorphRequest) (*State, error)
+	Sap(context.Context, *SapRequest) (*State, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -486,6 +525,15 @@ func (UnimplementedBuddyActionsServer) AcceptResurrection(context.Context, *Acce
 }
 func (UnimplementedBuddyActionsServer) PickLock(context.Context, *PickLockRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PickLock not implemented")
+}
+func (UnimplementedBuddyActionsServer) CreateItem(context.Context, *CreateItemRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateItem not implemented")
+}
+func (UnimplementedBuddyActionsServer) Polymorph(context.Context, *PolymorphRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Polymorph not implemented")
+}
+func (UnimplementedBuddyActionsServer) Sap(context.Context, *SapRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Sap not implemented")
 }
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
@@ -994,6 +1042,60 @@ func _BuddyActions_PickLock_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_CreateItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateItemRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CreateItem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CreateItem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CreateItem(ctx, req.(*CreateItemRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Polymorph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolymorphRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Polymorph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Polymorph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Polymorph(ctx, req.(*PolymorphRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Sap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Sap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Sap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Sap(ctx, req.(*SapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1108,6 +1210,18 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PickLock",
 			Handler:    _BuddyActions_PickLock_Handler,
+		},
+		{
+			MethodName: "CreateItem",
+			Handler:    _BuddyActions_CreateItem_Handler,
+		},
+		{
+			MethodName: "Polymorph",
+			Handler:    _BuddyActions_Polymorph_Handler,
+		},
+		{
+			MethodName: "Sap",
+			Handler:    _BuddyActions_Sap_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

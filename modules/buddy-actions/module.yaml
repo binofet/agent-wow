@@ -14,6 +14,9 @@ rpc:
   resurrect_once: /warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce
   accept_resurrection: /warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection
   pick_lock: /warcraftbuddy.actions.v1.BuddyActions/PickLock
+  create_item: /warcraftbuddy.actions.v1.BuddyActions/CreateItem
+  polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
+  sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
   buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
@@ -37,6 +40,8 @@ packets:
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LOOT_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ITEM_PUSH_RESULT: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_CREATURE_QUERY_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLDISPELLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -76,6 +81,9 @@ script_api:
   resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
+  create_item: {effect: mutation, description: Cast one exact learned direct item creation spell on self and report inventory confirmation}
+  polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
+  sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}

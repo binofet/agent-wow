@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"sort"
 	"time"
+
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Player::SendInitialSpells: complete active own spellbook + fixed16B cooldowns.
@@ -87,6 +89,9 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.PowerType = r.Power
 			v.CastTimeMs = r.CastMs
 			v.Capability = string(cap.Kind)
+			if cap.Kind == spellcatalog.CreateItem {
+				v.CreatedItemEntry = r.CreatedItem()
+			}
 			v.TargetRule = cap.Target
 			v.BlockedReason = cap.Blocked
 			v.SelfOnly = cap.Target == "self"

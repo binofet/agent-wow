@@ -27,6 +27,9 @@ func (s *Service) stopAutoAttackLocked(ctx context.Context) bool {
 }
 
 func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) bool {
+	if s.blockProtectedOffenseLocked(ctx, target.Guid) {
+		return false
+	}
 	self := w.Self
 	if !s.state.KnownAutoAttack {
 		s.state.Reason = "auto_attack_not_in_known_spells"
@@ -95,6 +98,9 @@ func (s *Service) rogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResp
 		return true
 	}
 	if s.autoTarget == 0 {
+		if s.blockProtectedOffenseLocked(ctx, target.Guid) {
+			return false
+		}
 		s.autoTarget = target.Guid
 		s.state.AutoAttackRequested = true
 		if !s.sendLocked(ctx, opcode.CMSGAttackswing, binary.LittleEndian.AppendUint64(nil, target.Guid)) {

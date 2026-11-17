@@ -193,6 +193,12 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 		s.clientControlLost, s.clientControlRestoring = false, false
 		s.buffAuras = nil
 		s.ownDamageAuras = nil
+		s.targetProtection.reset()
+		s.finishCrowdControlLocked("world_transfer_outcome_unconfirmed")
+		s.finishItemCreationLocked("map_changed_outcome_unconfirmed")
+		if s.crowdControl.active {
+			s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "world_transfer", nil
+		}
 		if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" {
 			s.buffUnconfirmedLocked("world_transfer_outcome_unconfirmed")
 		}
@@ -202,11 +208,15 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 			return true, errors.New("malformed object destruction frame")
 		}
 		s.clearOwnDamageAurasLocked(binary.LittleEndian.Uint64(p))
-		return true, nil
+		return true, s.protectedDestroyLocked(p)
 	case opcode.SMSGAuraUpdate, opcode.SMSGAuraUpdateAll:
 		guid, updates, err := decodeBuffAuras(p, op == opcode.SMSGAuraUpdateAll)
 		if err == nil && guid>>48 == 0 {
 			s.applyBuffAurasLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
+		}
+		if err == nil && guid>>48 == 0xf130 {
+			s.observeTargetProtectionLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
+			s.crowdControlAuraLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
 		}
 		if err == nil && (guid>>48 == 0xf130 || guid>>48 == 0xf150) {
 			s.observeOwnDamageAurasLocked(guid, updates, op == opcode.SMSGAuraUpdateAll)
