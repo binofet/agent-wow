@@ -6,6 +6,7 @@ import (
 
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -302,12 +303,23 @@ func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerStat
 	s.nextAssist = now.Add(3 * time.Second)
 	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.ID, target.Guid
 	s.state.LastCastFailure = 0
+	var receipt *supportAttempt
+	if token := modcb.PolicySpellToken(ctx); exact && token != "" {
+		receipt = s.reserveHealReceiptLocked(token, heal, target.Guid)
+	}
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.ID, target.Guid)) {
 		// The packet may have reached the server. Reassess after the cast window.
 		s.nextHeal = s.castUntil
-		s.state.CastPending = false
-		s.pendingSpell, s.pendingTarget = 0, 0
+		if receipt != nil {
+			receipt.view.Phase = "transport_unconfirmed_no_retry"
+		} else {
+			s.state.CastPending = false
+			s.pendingSpell, s.pendingTarget = 0, 0
+		}
 		return false
+	}
+	if receipt != nil {
+		receipt.view.TransportWritten = true
 	}
 	s.state.Reason = "heal_transport_written_waiting_for_server"
 	return true

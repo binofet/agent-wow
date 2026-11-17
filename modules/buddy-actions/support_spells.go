@@ -23,6 +23,7 @@ type supportAttempt struct {
 	controlSlot      uint8
 	creation         *itemCreation
 	selfChannel      bool
+	healLogEligible  bool
 	cleanseAura      uint32
 	policySpellToken string
 }

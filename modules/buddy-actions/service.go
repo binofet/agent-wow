@@ -580,6 +580,7 @@ func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.Stat
 	}
 	s.expireCrowdControlLocked()
 	s.expireSelfChannelLocked()
+	s.expireHealReceiptLocked()
 	s.observeItemCreationLocked(w)
 	s.supportSnapshotLocked(w)
 	return s.stateLocked(), nil
@@ -596,6 +597,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.finishCrowdControlLocked("logout_outcome_unconfirmed")
 	s.finishItemCreationLocked("logout_outcome_unconfirmed")
 	s.finishSelfChannelLocked("logout_outcome_unconfirmed")
+	s.endHealReceiptLocked("outcome_unconfirmed_no_retry")
 	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	s.autoStopping = false
 	s.state.AutoAttackUnconfirmed = false
@@ -1026,6 +1028,7 @@ func (s *Service) Tick(ctx context.Context) {
 	s.buffTimeoutLocked()
 	s.cancelProtectedCastLocked(ctx)
 	s.expireSelfChannelLocked()
+	s.expireHealReceiptLocked()
 	if !s.closed && s.autoTarget != 0 {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}
@@ -1404,6 +1407,12 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		return &emptypb.Empty{}, nil
 	}
 	malformed := false
+	if handled, err := s.healReceiptPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	if handled, err := s.supportPacketLocked(packet.Opcode, p); handled {
 		if err != nil {
 			s.state.MalformedPackets++
