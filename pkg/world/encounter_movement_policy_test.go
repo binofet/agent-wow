@@ -83,7 +83,7 @@ func TestEncounterMovementDerivesCasterRangeFromReflectedSpell(t *testing.T) {
 }
 
 func TestEncounterMovementFailedHostileCastRechecksMovingCoverBeforeRetry(t *testing.T) {
-	for _, capability := range []string{"offense", "polymorph", "sap"} {
+	for _, capability := range []string{"offense", "polymorph", "sap", "heal"} {
 		t.Run(capability, func(t *testing.T) {
 			vm := movementPolicy(t)
 			ctx := context.Background()
