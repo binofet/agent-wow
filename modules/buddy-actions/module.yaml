@@ -9,6 +9,7 @@ grpc:
   descriptor_set: module.pb
 rpc:
   approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
+  interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
@@ -83,6 +84,7 @@ lifecycle:
 
 script_api:
   approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
+  interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
   behavior: {effect: read}

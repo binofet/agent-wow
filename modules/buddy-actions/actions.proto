@@ -471,6 +471,7 @@ message EncounterObservationResponse {
   bool melee_known = 21;
   uint64 active_melee_target_guid = 22;
   TargetMovementState target_movement = 23;
+  EncounterSupport support = 24;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -587,6 +588,37 @@ message TargetMovementState {
   string phase = 6;
   bool ready = 7;
 }
+message EncounterSupport {
+  bool caster_in_combat = 1;
+  repeated ResurrectionOption resurrections = 2;
+  repeated InterruptOption interrupts = 3;
+}
+message ResurrectionOption {
+  uint64 patient_guid = 1;
+  uint64 cast_target_guid = 2;
+  uint32 spell_id = 3;
+  bool ready = 4;
+  bool can_approach = 5;
+  float range_yards = 6;
+}
+message InterruptOption {
+  uint64 target_guid = 1;
+  uint32 spell_id = 2;
+  uint32 enemy_spell_id = 3;
+  uint64 cast_revision = 4;
+  uint32 remaining_ms = 5;
+  bool healing = 6;
+  bool ready = 7;
+  bool can_approach = 8;
+  float range_yards = 9;
+}
+message InterruptCastRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint32 spell_id = 4;
+  uint64 cast_revision = 5;
+}
 message EncounterControlCapability {
   uint64 guid = 1;
   string technique = 2;
@@ -598,6 +630,7 @@ message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
+  rpc InterruptCast(InterruptCastRequest) returns (State);
   rpc Follow(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);
