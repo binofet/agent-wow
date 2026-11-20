@@ -10,6 +10,8 @@ local spells = assert(encounter_spells)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
+local movement = encounter_movement
+local commands = encounter_commands
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
@@ -37,6 +39,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if commands and not commands.on_event(event) then return false end
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if event.kind == "encounter_observation" then
@@ -70,7 +73,7 @@ end
 
 local function export_state()
     return {version=1, data={encounter=state, healing=healing and healing.export_state(),
-                            selfMana=self_mana and self_mana.export_state()}}
+                            selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -91,6 +94,7 @@ local function import_state(checkpoint)
         version=mana.version, data=mana.data, session_id=checkpoint.session_id,
         cursor=checkpoint.cursor, pending=checkpoint.pending
     })) then return false end
+    if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -309,12 +313,27 @@ local function decide_encounter(frame)
     end
     local leader = players[group.leaderGuid]
     local leader_alive = alive(leader)
+    local directive = commands and commands.queue_intent(obs) or {}
+    if directive.killOrder and #directive.killOrder > 0 then order = directive.killOrder end
     local queue = tactics.decide({
         kind="combat_queue", targets=queue_targets, explicitOrder=order,
         currentFocus=not fallback and state.focusGuid or nil,
-        ownerFocus=leader_alive and obs.observedOwnerFocus or nil,
+        ownerFocus=directive.focusGuid or leader_alive and obs.observedOwnerFocus or nil,
         partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds,
     })
+    local first_focus = queue.focusGuid
+    local reserved = false
+    for target in pairs(directive.controlTargets or {}) do
+        if targets[target] and target ~= first_focus then
+            targets[target].protected = true
+            reserved = true
+        end
+    end
+    if reserved then
+        queue = tactics.decide({kind="combat_queue", targets=targets, explicitOrder=order,
+            ownerFocus=directive.focusGuid or leader_alive and obs.observedOwnerFocus or nil,
+            partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds})
+    end
     out.queue = queue.queue
     out.nextPullGuid = queue.queue[1] and queue.queue[1].targetGuid
     for _, row in ipairs(queue.queue) do
@@ -349,6 +368,13 @@ local function decide_encounter(frame)
         return out
     end
     if not fallback and not members[obs.selfGuid] then return out end
+    local function position_for(target, spell, options)
+        if not movement or not obs.worldObservationRevision then return end
+        local rank = spell and (obs.spells or {})[tostring(spell)]
+        if not rank or rank.metadataKnown ~= true then return end
+        local result = movement.for_spell(obs, state.sequence, target, rank, options)
+        return result.action
+    end
     local interrupt = support_policy and support_policy.interrupt(obs)
     if interrupt then
         interrupt.observationSequence = state.sequence
@@ -372,7 +398,7 @@ local function decide_encounter(frame)
         if active_melee then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
-            out.action = proposal(obs, "heal", support.targetGuid, support.spellId)
+            out.action = position_for(support.targetGuid, support.spellId) or proposal(obs, "heal", support.targetGuid, support.spellId)
         end
         return out
     end
@@ -382,11 +408,20 @@ local function decide_encounter(frame)
         out.action = resurrection
         return out
     end
+    local command_action, command_status
+    if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid) end
+    out.controlStatus = command_status
+    if command_action then out.action = command_action; return out end
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
            not held.engaged or active_melee ~= out.focusGuid then
             out.action = proposal(obs, "melee_stop", active_melee)
+        elseif movement and obs.worldObservationRevision then
+            local approach = movement.decide(obs, state.sequence, active_melee,
+                {rangeYards=intent.meleeRange or 3.5, requireLos=true,
+                 behind=self.classKnown == true and self.classId == 4})
+            out.action = approach.action
         end
         return out
     end
@@ -396,17 +431,28 @@ local function decide_encounter(frame)
             if control.mark == row.mark and (row.technique == "polymorph" or row.technique == "sap") and
                row.casterGuid == obs.selfGuid and alive(targets[control.targetGuid]) and
                (obs.targets[control.targetGuid] or {}).positionKnown == true and usable_spell(obs, row.spellId, row.technique) then
-                out.action = proposal(obs, row.technique, control.targetGuid, row.spellId); return out
+                out.action = position_for(control.targetGuid, row.spellId, {behind=row.technique == "sap"}) or
+                    proposal(obs, row.technique, control.targetGuid, row.spellId); return out
             end
         end
     end
     local focus = out.focusGuid and obs.targets[out.focusGuid]
     if focus and focus.positionKnown == true then
-        local spell = damage_spell(obs, focus)
-        if spell then
-            out.action = proposal(obs, "offense", out.focusGuid, spell)
-        elseif focus.meleeReady == true then
-            out.action = proposal(obs, "melee_start", out.focusGuid)
+        local available = damage_spell(obs, focus, {require_ready=false})
+        local approach = available and position_for(out.focusGuid, available)
+        if approach then out.action = approach
+        else
+            local spell = damage_spell(obs, focus)
+            if spell then
+                out.action = proposal(obs, "offense", out.focusGuid, spell)
+            elseif obs.meleeKnown == true and movement and obs.worldObservationRevision then
+                local step = movement.decide(obs, state.sequence, out.focusGuid,
+                    {rangeYards=intent.meleeRange or 3.5, requireLos=true,
+                     behind=self.classKnown == true and self.classId == 4})
+                out.action = step.action or (step.ready and focus.meleeReady == true and proposal(obs, "melee_start", out.focusGuid) or nil)
+            elseif focus.meleeReady == true then
+                out.action = proposal(obs, "melee_start", out.focusGuid)
+            end
         end
     end
     return out

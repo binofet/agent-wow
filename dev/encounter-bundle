@@ -17,6 +17,8 @@ def main():
         ("encounter_healing", behaviors / "healing.lua"),
         ("encounter_self_mana", behaviors / "self-mana.lua"),
         ("encounter_support", behaviors / "support.lua"),
+        ("encounter_movement", behaviors / "encounter-movement.lua"),
+        ("encounter_commands", behaviors / "encounter-commands.lua"),
     ]
     if args.intent:
         modules.append(("encounter_intent", args.intent))

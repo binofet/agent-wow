@@ -226,6 +226,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 }
 
 func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module string, code uint32, payload []byte) error {
+	if handled, err := m.writePolicyReadQuery(ctx, token, sessionID, module, code, payload); handled {
+		return err
+	}
 	spells := &m.policySpells
 	spells.mu.Lock()
 	op := spells.active[token]

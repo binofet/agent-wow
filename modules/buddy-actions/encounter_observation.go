@@ -105,6 +105,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	}
 	s.encounterCreatures(w, players, online, out)
 	s.encounterSpells(w, online, out)
+	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.Support = s.encounterSupportLocked(ctx, w, online)
 
 	// The policy event uses this same JSON representation. Refuse an
