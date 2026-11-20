@@ -2,6 +2,24 @@
 -- combat target or interrupts autoswing. The encounter queue remains the one
 -- authority; positioning advances alongside its active attack.
 local M = {}
+-- Only the last native positioning result is cached. A rejected cast revokes
+-- that spatial evidence until an approach rechecks it; it never changes the
+-- encounter target queue or invents a successful cast.
+local invalid_target
+function M.on_event(event)
+    local receipt = event.receipt
+    if not receipt then return true end
+    local payload = receipt.payload or {}
+    local capability, target = payload.capability, payload.target_guid
+    if (receipt.outcome == "failed" or receipt.outcome == "not_dispatched") and
+       (capability == "offense" or capability == "polymorph" or capability == "sap") and
+       type(target) == "string" then
+        invalid_target = target
+    elseif capability == "approach_target" and receipt.outcome == "settled_unverified" and target == invalid_target then
+        invalid_target = nil
+    end
+    return true
+end
 local function number(value)
     return type(value) == "number" and value == value and value > -math.huge and value < math.huge
 end
@@ -40,7 +58,7 @@ function M.decide(obs,sequence,target,options)
         if options.behind then geometric = geometric and dx*math.cos(to.o)+dy*math.sin(to.o) < 0 end
     end
     local view = obs.targetMovement or {}
-    local validated = view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
+    local validated = invalid_target ~= target and view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
         view.rangeYards == radius and (view.requireLos == true) == (options.requireLos == true) and
         (view.behind == true) == (options.behind == true)
     if validated and (geometric or not unit) and (not self or self.moving ~= true) then
