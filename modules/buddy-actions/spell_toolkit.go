@@ -13,8 +13,11 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// Player::SendInitialSpells: complete active own spellbook + fixed16B cooldowns.
-// No partial initial packet, fabricated passive, or unknown metadata is promoted.
+// Player::SendInitialSpells writes an exact active spell count, followed by a
+// cooldown-map count. It can omit cooldown records marked needSendToClient=false
+// or whose spell metadata is missing, without updating that cooldown count.
+// Every serialized cooldown record must still be complete (16 bytes).
+// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Player/Player.cpp
 func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	bad := errors.New("malformed complete initial spellbook")
 	if len(p) < 5 || p[0] != 0 {
@@ -25,8 +28,10 @@ func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	if count > 4096 || len(p) < end+2 {
 		return nil, bad
 	}
-	n := int(binary.LittleEndian.Uint16(p[end:]))
-	if n > 4096 || len(p) != end+2+n*16 {
+	const cooldownRecordSize = 16
+	declaredCooldowns := int(binary.LittleEndian.Uint16(p[end:]))
+	cooldownBytes := len(p) - end - 2
+	if declaredCooldowns > 4096 || cooldownBytes%cooldownRecordSize != 0 || cooldownBytes/cooldownRecordSize > declaredCooldowns {
 		return nil, bad
 	}
 	out := make(map[uint32]bool, count)

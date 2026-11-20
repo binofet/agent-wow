@@ -41,6 +41,58 @@ func lastCast(f *fakeSession) uint32 {
 	return 0
 }
 
+func TestInitialSpellbookAcceptsOnlyWholeServerFilteredCooldowns(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		declaredCooldowns uint16
+		cooldownBytes     int
+		wantSpellbook     bool
+	}{
+		{"one filtered", 2, 16, true},
+		{"all filtered", 2, 0, true},
+		{"partial record", 2, 15, false},
+		{"extra record", 1, 32, false},
+		{"over count bound", 4097, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := rig(t)
+			p := buffInitial(autoAttack, fireball)
+			binary.LittleEndian.PutUint16(p[len(p)-2:], tc.declaredCooldowns)
+			p = append(p, make([]byte, tc.cooldownBytes)...)
+			if tc.cooldownBytes >= 16 {
+				binary.LittleEndian.PutUint32(p[len(p)-tc.cooldownBytes:], fireball)
+			}
+			known, err := initialSpellKnown(p, fireball)
+			if known != tc.wantSpellbook || (err == nil) != tc.wantSpellbook {
+				t.Fatalf("direct decoder known=%t error=%v", known, err)
+			}
+			_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInitialSpells, Payload: p})
+			if s.spellbookKnown != tc.wantSpellbook || s.state.KnownAutoAttack != tc.wantSpellbook || s.state.KnownFireball != tc.wantSpellbook {
+				t.Fatalf("spellbook=%t auto attack=%t fireball=%t", s.spellbookKnown, s.state.KnownAutoAttack, s.state.KnownFireball)
+			}
+			if s.spellCooldownBaselineKnown != tc.wantSpellbook {
+				t.Fatalf("cooldown baseline known=%t", s.spellCooldownBaselineKnown)
+			}
+		})
+	}
+}
+
+func TestInitialFilteredCooldownsKeepSerializedDurations(t *testing.T) {
+	s, _, _ := rig(t)
+	p := buffInitial(autoAttack, fireball)
+	binary.LittleEndian.PutUint16(p[len(p)-2:], 2) // One cooldown was filtered by the server.
+	p = binary.LittleEndian.AppendUint32(p, fireball)
+	p = binary.LittleEndian.AppendUint16(p, 0) // Cast item.
+	p = binary.LittleEndian.AppendUint16(p, 7) // Category.
+	p = binary.LittleEndian.AppendUint32(p, 1500)
+	p = binary.LittleEndian.AppendUint32(p, 3000)
+	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInitialSpells, Payload: p})
+	end := s.now().Add(3 * time.Second)
+	if !s.spellbookKnown || !s.spellCooldownBaselineKnown || !s.spellReady[fireball].Equal(end) || !s.categoryReady[7].Equal(end) {
+		t.Fatalf("spellbook=%t baseline=%t spell end=%v category end=%v", s.spellbookKnown, s.spellCooldownBaselineKnown, s.spellReady[fireball], s.categoryReady[7])
+	}
+}
+
 func TestMageUsesActualClassKnownFireballAndBaseManaWithoutHealReserve(t *testing.T) {
 	s, f, _ := assistRig(t)
 	f.world.Self.ClassId = 8
