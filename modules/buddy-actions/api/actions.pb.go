@@ -5011,6 +5011,9 @@ type EncounterPlayer struct {
 	Moving           bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
 	CombatKnown      bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
 	InCombat         bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
+	ComboKnown       bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
+	ComboTargetGuid  uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
+	ComboPoints      uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -5253,6 +5256,27 @@ func (x *EncounterPlayer) GetInCombat() bool {
 		return x.InCombat
 	}
 	return false
+}
+
+func (x *EncounterPlayer) GetComboKnown() bool {
+	if x != nil {
+		return x.ComboKnown
+	}
+	return false
+}
+
+func (x *EncounterPlayer) GetComboTargetGuid() uint64 {
+	if x != nil {
+		return x.ComboTargetGuid
+	}
+	return 0
+}
+
+func (x *EncounterPlayer) GetComboPoints() uint32 {
+	if x != nil {
+		return x.ComboPoints
+	}
+	return 0
 }
 
 type EncounterCreature struct {
@@ -5567,12 +5591,22 @@ type EncounterSpell struct {
 	CategoryCooldownMs uint32                     `protobuf:"varint,17,opt,name=category_cooldown_ms,json=categoryCooldownMs,proto3" json:"category_cooldown_ms,omitempty"`
 	GlobalCooldownMs   uint32                     `protobuf:"varint,18,opt,name=global_cooldown_ms,json=globalCooldownMs,proto3" json:"global_cooldown_ms,omitempty"`
 	// Exact rank resources, cooldown and requirements; excludes movement/custody.
-	Available         bool `protobuf:"varint,19,opt,name=available,proto3" json:"available,omitempty"`
-	SelfCastSupported bool `protobuf:"varint,20,opt,name=self_cast_supported,json=selfCastSupported,proto3" json:"self_cast_supported,omitempty"`
-	SelfAuraKnown     bool `protobuf:"varint,21,opt,name=self_aura_known,json=selfAuraKnown,proto3" json:"self_aura_known,omitempty"`
-	SelfAuraActive    bool `protobuf:"varint,22,opt,name=self_aura_active,json=selfAuraActive,proto3" json:"self_aura_active,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	Available              bool    `protobuf:"varint,19,opt,name=available,proto3" json:"available,omitempty"`
+	SelfCastSupported      bool    `protobuf:"varint,20,opt,name=self_cast_supported,json=selfCastSupported,proto3" json:"self_cast_supported,omitempty"`
+	SelfAuraKnown          bool    `protobuf:"varint,21,opt,name=self_aura_known,json=selfAuraKnown,proto3" json:"self_aura_known,omitempty"`
+	SelfAuraActive         bool    `protobuf:"varint,22,opt,name=self_aura_active,json=selfAuraActive,proto3" json:"self_aura_active,omitempty"`
+	WeaponStrike           bool    `protobuf:"varint,23,opt,name=weapon_strike,json=weaponStrike,proto3" json:"weapon_strike,omitempty"`
+	RequiresBehind         bool    `protobuf:"varint,24,opt,name=requires_behind,json=requiresBehind,proto3" json:"requires_behind,omitempty"`
+	RequiresStealth        bool    `protobuf:"varint,25,opt,name=requires_stealth,json=requiresStealth,proto3" json:"requires_stealth,omitempty"`
+	RequiresComboPoints    bool    `protobuf:"varint,26,opt,name=requires_combo_points,json=requiresComboPoints,proto3" json:"requires_combo_points,omitempty"`
+	ComboPointsGenerated   uint32  `protobuf:"varint,27,opt,name=combo_points_generated,json=comboPointsGenerated,proto3" json:"combo_points_generated,omitempty"`
+	WeaponDamageMultiplier float64 `protobuf:"fixed64,28,opt,name=weapon_damage_multiplier,json=weaponDamageMultiplier,proto3" json:"weapon_damage_multiplier,omitempty"`
+	WeaponBonusDamage      float64 `protobuf:"fixed64,29,opt,name=weapon_bonus_damage,json=weaponBonusDamage,proto3" json:"weapon_bonus_damage,omitempty"`
+	// Base weapon/combo estimate only; excludes AP, armor and combat modifiers.
+	DamageModelKnown bool `protobuf:"varint,30,opt,name=damage_model_known,json=damageModelKnown,proto3" json:"damage_model_known,omitempty"`
+	RequiresFacing   bool `protobuf:"varint,31,opt,name=requires_facing,json=requiresFacing,proto3" json:"requires_facing,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *EncounterSpell) Reset() {
@@ -5755,6 +5789,69 @@ func (x *EncounterSpell) GetSelfAuraKnown() bool {
 func (x *EncounterSpell) GetSelfAuraActive() bool {
 	if x != nil {
 		return x.SelfAuraActive
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetWeaponStrike() bool {
+	if x != nil {
+		return x.WeaponStrike
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetRequiresBehind() bool {
+	if x != nil {
+		return x.RequiresBehind
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetRequiresStealth() bool {
+	if x != nil {
+		return x.RequiresStealth
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetRequiresComboPoints() bool {
+	if x != nil {
+		return x.RequiresComboPoints
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetComboPointsGenerated() uint32 {
+	if x != nil {
+		return x.ComboPointsGenerated
+	}
+	return 0
+}
+
+func (x *EncounterSpell) GetWeaponDamageMultiplier() float64 {
+	if x != nil {
+		return x.WeaponDamageMultiplier
+	}
+	return 0
+}
+
+func (x *EncounterSpell) GetWeaponBonusDamage() float64 {
+	if x != nil {
+		return x.WeaponBonusDamage
+	}
+	return 0
+}
+
+func (x *EncounterSpell) GetDamageModelKnown() bool {
+	if x != nil {
+		return x.DamageModelKnown
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetRequiresFacing() bool {
+	if x != nil {
+		return x.RequiresFacing
 	}
 	return false
 }
@@ -7148,7 +7245,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\x8b\a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\xfb\a\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -7187,7 +7284,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0emovement_known\x18\x1b \x01(\bR\rmovementKnown\x12\x16\n" +
 	"\x06moving\x18\x1c \x01(\bR\x06moving\x12!\n" +
 	"\fcombat_known\x18\x1d \x01(\bR\vcombatKnown\x12\x1b\n" +
-	"\tin_combat\x18\x1e \x01(\bR\binCombatB\t\n" +
+	"\tin_combat\x18\x1e \x01(\bR\binCombat\x12\x1f\n" +
+	"\vcombo_known\x18\x1f \x01(\bR\n" +
+	"comboKnown\x12*\n" +
+	"\x11combo_target_guid\x18  \x01(\x04R\x0fcomboTargetGuid\x12!\n" +
+	"\fcombo_points\x18! \x01(\rR\vcomboPointsB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_alive\"\xc4\x06\n" +
 	"\x11EncounterCreature\x12\x12\n" +
@@ -7230,7 +7331,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13EncounterEngagement\x12\x1f\n" +
 	"\vvictim_guid\x18\x01 \x01(\x04R\n" +
 	"victimGuid\x12\x15\n" +
-	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\x8f\x06\n" +
+	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\xb3\t\n" +
 	"\x0eEncounterSpell\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x14\n" +
 	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x1e\n" +
@@ -7259,7 +7360,16 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\tavailable\x18\x13 \x01(\bR\tavailable\x12.\n" +
 	"\x13self_cast_supported\x18\x14 \x01(\bR\x11selfCastSupported\x12&\n" +
 	"\x0fself_aura_known\x18\x15 \x01(\bR\rselfAuraKnown\x12(\n" +
-	"\x10self_aura_active\x18\x16 \x01(\bR\x0eselfAuraActive\"^\n" +
+	"\x10self_aura_active\x18\x16 \x01(\bR\x0eselfAuraActive\x12#\n" +
+	"\rweapon_strike\x18\x17 \x01(\bR\fweaponStrike\x12'\n" +
+	"\x0frequires_behind\x18\x18 \x01(\bR\x0erequiresBehind\x12)\n" +
+	"\x10requires_stealth\x18\x19 \x01(\bR\x0frequiresStealth\x122\n" +
+	"\x15requires_combo_points\x18\x1a \x01(\bR\x13requiresComboPoints\x124\n" +
+	"\x16combo_points_generated\x18\x1b \x01(\rR\x14comboPointsGenerated\x128\n" +
+	"\x18weapon_damage_multiplier\x18\x1c \x01(\x01R\x16weaponDamageMultiplier\x12.\n" +
+	"\x13weapon_bonus_damage\x18\x1d \x01(\x01R\x11weaponBonusDamage\x12,\n" +
+	"\x12damage_model_known\x18\x1e \x01(\bR\x10damageModelKnown\x12'\n" +
+	"\x0frequires_facing\x18\x1f \x01(\bR\x0erequiresFacing\"^\n" +
 	"\x17EncounterPeriodicDamage\x12&\n" +
 	"\x0fdamage_per_tick\x18\x01 \x01(\x01R\rdamagePerTick\x12\x1b\n" +
 	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\xfd\x01\n" +

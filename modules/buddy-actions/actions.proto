@@ -528,6 +528,9 @@ message EncounterPlayer {
   bool moving = 28;
   bool combat_known = 29;
   bool in_combat = 30;
+  bool combo_known = 31;
+  uint64 combo_target_guid = 32;
+  uint32 combo_points = 33;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -587,6 +590,16 @@ message EncounterSpell {
   bool self_cast_supported = 20;
   bool self_aura_known = 21;
   bool self_aura_active = 22;
+  bool weapon_strike = 23;
+  bool requires_behind = 24;
+  bool requires_stealth = 25;
+  bool requires_combo_points = 26;
+  uint32 combo_points_generated = 27;
+  double weapon_damage_multiplier = 28;
+  double weapon_bonus_damage = 29;
+  // Base weapon/combo estimate only; excludes AP, armor and combat modifiers.
+  bool damage_model_known = 30;
+  bool requires_facing = 31;
 }
 message EncounterPeriodicDamage {
   double damage_per_tick = 1;

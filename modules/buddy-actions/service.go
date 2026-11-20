@@ -110,6 +110,7 @@ type Service struct {
 	capabilityRevision                         uint64
 	spellReady                                 map[uint32]time.Time
 	spellCooldownBaselineKnown                 bool
+	weaponCombo                                comboObservation
 	categoryReady                              map[uint32]time.Time
 	fearBreakReady                             time.Time
 	fearBreakAttempted                         bool
@@ -1454,6 +1455,12 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		s.traceOwnerPacket(packet.Opcode, packet.Payload, s.now())
 	}
 	p := packet.Payload
+	if handled, err := s.observeComboPacket(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	s.expireMeleeOperationLocked()
 	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)

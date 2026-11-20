@@ -47,6 +47,7 @@ rpc:
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
+  SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LOOT_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket

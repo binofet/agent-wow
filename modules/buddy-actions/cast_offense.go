@@ -16,7 +16,8 @@ import (
 
 const offenseCapability = "offense"
 
-// CastOffense is one stationary cast against the caller-selected creature. It does not choose a spell or victim or start an attack controller.
+// CastOffense executes one selected damage spell or instant weapon strike.
+// It never selects a target/rank or starts/stops an attack controller.
 func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseRequest) (*actionsv1.State, error) {
 	target := r.GetTargetGuid()
 	kind := target >> 48
@@ -38,11 +39,11 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 	}
 	s.expireInteractionLocked()
 	s.expireExplicitCastLocked()
-	if r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.offenseCustodyAvailableLocked() ||
+	spell := s.learnedContractsLocked()[r.SpellId]
+	if r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.offenseCustodyFor(spell) ||
 		s.targetProtection.blocks(target, s.now()) {
 		return nil, status.Error(codes.FailedPrecondition, "current body and available attack custody required")
 	}
-	spell := s.learnedContractsLocked()[r.SpellId]
 	if !s.offenseRankSupportedLocked(spell) {
 		return nil, status.Error(codes.FailedPrecondition, "exact learned hostile damage rank ready required")
 	}
@@ -61,14 +62,14 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 		return nil, status.Error(codes.FailedPrecondition, "fresh living caster observation required")
 	}
 	self, hostile := w.Self, w.RequestedCreature
-	if !observedOffenseCaster(self) || !s.offenseRankReadyLocked(self, spell) {
-		return nil, status.Error(codes.FailedPrecondition, "stationary caster with ready resources required")
+	if !s.offenseCasterFor(self, spell) || !s.offenseRankReadyLocked(self, spell) || !s.strikeTargetReady(target, spell) {
+		return nil, status.Error(codes.FailedPrecondition, "eligible caster with ready resources and exact combo target required")
 	}
 	if !exactOffenseTarget(w, hostile, target, online) || s.targetProtection.blocks(target, s.now()) {
 		return nil, status.Error(codes.FailedPrecondition, "selected creature must be observed, alive and attackable on the current map")
 	}
 	to, known, _ := creaturePosition(hostile)
-	if !known || !offenseLineInRange(s.pos, to, spell) {
+	if !known || !offenseLineInRange(s.pos, to, spell) || spell.Behind && !behindEnemy(s.pos, to) {
 		return nil, status.Error(codes.FailedPrecondition, "selected creature is outside observed spell range or facing")
 	}
 	if err := ctx.Err(); err != nil {
@@ -87,7 +88,7 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 		}
 		s.categoryReady[spell.Category] = now.Add(time.Duration(spell.CategoryCooldownMs) * time.Millisecond)
 	}
-	s.nextAssist = now.Add(max(1500*time.Millisecond, time.Duration(spell.GcdMs)*time.Millisecond))
+	s.nextAssist = now.Add(time.Duration(spell.GcdMs) * time.Millisecond)
 	s.nextHeal = s.nextAssist
 	s.castUntil = now.Add(max(5*time.Second, time.Duration(spell.CastMs)*time.Millisecond+1500*time.Millisecond))
 	s.pendingSpell, s.pendingTarget = spell.ID, target
@@ -122,8 +123,10 @@ func observedOffenseCaster(self *worldv1.PlayerState) bool {
 }
 
 func (s *Service) offenseRankSupportedLocked(spell spellcatalog.Spell) bool {
-	return s.spellbookKnown && spell.ID != 0 && s.knownSpells[spell.ID] && spell.Capability().Kind == spellcatalog.Damage &&
-		spell.TargetMask&^uint32(2) == 0 && !spell.Behind && spell.Facing&^uint32(1) == 0
+	kind := spell.Capability().Kind
+	return s.spellbookKnown && spell.ID != 0 && s.knownSpells[spell.ID] &&
+		(kind == spellcatalog.Damage || instantWeaponStrike(spell)) &&
+		spell.TargetMask&^uint32(2) == 0 && (instantWeaponStrike(spell) || !spell.Behind) && spell.Facing&^uint32(1) == 0
 }
 
 // offenseRankReadyLocked checks only the selected rank and current caster
@@ -131,7 +134,8 @@ func (s *Service) offenseRankSupportedLocked(spell spellcatalog.Spell) bool {
 func (s *Service) offenseRankReadyLocked(self *worldv1.PlayerState, spell spellcatalog.Spell) bool {
 	return s.offenseRankSupportedLocked(spell) && self != nil && self.PowerKnown && int32(self.PowerType) == spell.Power &&
 		!s.spellOnCooldownLocked(spell) && casterRequirementsObserved(spell, self) &&
-		uint64(self.Power) >= spellCost(spell, self)
+		uint64(self.Power) >= s.offenseSpellCost(spell, self) && (!instantWeaponStrike(spell) ||
+		s.strikeWeaponReady(self, spell) && (spell.Attrs[0]&0x20000 == 0 || s.stealthedLocked()))
 }
 
 func exactOffenseTarget(w *worldv1.SnapshotResponse, c *worldv1.CreatureState, target uint64, _ map[uint64]bool) bool {

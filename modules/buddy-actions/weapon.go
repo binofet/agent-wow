@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"math"
 	"unicode/utf8"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -14,6 +15,8 @@ import (
 type weaponProof struct {
 	entry, class, subclass, inventory uint32
 	valid                             bool
+	damageKnown                       bool
+	damageMin, damageMax              float64
 }
 
 // Full normal ItemHandler.cpp HandleItemQuerySingleOpcode response framing.
@@ -66,7 +69,18 @@ func decodeWeaponQuery(data []byte) (weaponProof, error) {
 	at += 84
 	stats := binary.LittleEndian.Uint32(data[at:])
 	at += 4
-	if stats > 10 || !skip(int(stats)*8+8+24+28+12+120+4) || !text(16384) || !skip(116) || at != len(data) {
+	if stats > 10 || !skip(int(stats)*8+8) || len(data)-at < 24 {
+		return weaponProof{}, bad
+	}
+	for i := 0; i < 2; i++ {
+		low, high := float64(math.Float32frombits(binary.LittleEndian.Uint32(data[at+i*12:]))), float64(math.Float32frombits(binary.LittleEndian.Uint32(data[at+i*12+4:])))
+		if math.IsNaN(low) || math.IsNaN(high) || math.IsInf(low, 0) || math.IsInf(high, 0) || low < 0 || high < low || high > 1e8 {
+			return weaponProof{}, bad
+		}
+		p.damageMin, p.damageMax = p.damageMin+low, p.damageMax+high
+	}
+	p.damageKnown = p.damageMax > 0
+	if !skip(24+28+12+120+4) || !text(16384) || !skip(116) || at != len(data) {
 		return weaponProof{}, bad
 	}
 	p.valid = true

@@ -194,6 +194,9 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		if p.AliveKnown {
 			view.Alive = proto.Bool(p.Alive)
 		}
+		if guid == s.selfGUID {
+			view.ComboKnown, view.ComboTargetGuid, view.ComboPoints = s.weaponCombo.known, s.weaponCombo.target, s.weaponCombo.points
+		}
 		out.Players[encounterGUID(guid)] = view
 	}
 	leader := players[out.GetParty().GetGroup().GetLeaderGuid()]
@@ -274,7 +277,6 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 && self.ChannelObjectGuid == 0 &&
 		!s.questApproaching && !s.clientControlLost &&
 		!s.clientControlRestoring && s.stealthedLocked()
-	offenseCaster := currentCaster && s.offenseCustodyAvailableLocked() && observedOffenseCaster(self)
 	polyReady, sapReady := false, false
 	for id, spell := range s.learnedContractsLocked() {
 		view := encounterSpellMechanics(spell, self)
@@ -298,13 +300,16 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 				(spell.ItemClass < 0 || s.weaponReady(self)) && casterRequirementsObserved(spell, self)
 			view.Ready = sapCaster && view.Available
 			sapReady = sapReady || view.Ready
-		case spellcatalog.Damage:
+		case spellcatalog.Damage, spellcatalog.WeaponStrike:
 			if !s.offenseRankSupportedLocked(spell) {
 				continue
 			}
 			view.Capability = "offense"
+			if instantWeaponStrike(spell) {
+				s.reflectWeaponStrike(view, spell, self)
+			}
 			view.Available = s.offenseRankReadyLocked(self, spell)
-			view.Ready = offenseCaster && view.Available
+			view.Ready = currentCaster && s.offenseCustodyFor(spell) && s.offenseCasterFor(self, spell) && view.Available
 		case spellcatalog.Stealth:
 			if !view.SelfCastSupported {
 				continue

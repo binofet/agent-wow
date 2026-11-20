@@ -76,6 +76,23 @@ type Capability struct {
 	Blocked string
 }
 
+// RequiresComboPoints is a mechanical spell attribute, not a rotation rule.
+func (s Spell) RequiresComboPoints() bool { return s.Attrs[1]&(0x100000|0x400000) != 0 }
+
+// DirectComboFinisher recognizes the ordinary rogue direct-damage finisher
+// with its self dummy effect. Other dummy/periodic finishers stay unsupported.
+func (s Spell) DirectComboFinisher() bool {
+	if s.FamilySet != 8 || s.FamilyFlags[0]&0x20000 == 0 || s.Attrs[1]&0x100000 == 0 ||
+		s.Power != 3 || s.ItemClass != 2 || len(s.Effects) != 2 {
+		return false
+	}
+	damage, dummy := s.Effects[0], s.Effects[1]
+	return damage.Kind == 2 && damage.A == 6 && dummy.Kind == 3 && dummy.A == 1 &&
+		damage.B == 0 && dummy.B == 0 && damage.Aura == 0 && dummy.Aura == 0 &&
+		damage.Trigger == 0 && dummy.Trigger == 0 && damage.Chain <= 1 && dummy.Chain <= 1 &&
+		damage.Radius == 0 && dummy.Radius == 0 && damage.PeriodMs == 0 && dummy.PeriodMs == 0
+}
+
 // InterruptsCasting reports a native interrupt effect, including spells with
 // additional effects or equipment requirements. The caller checks cast eligibility.
 func (s Spell) InterruptsCasting() bool {
@@ -172,6 +189,9 @@ func (s Spell) Capability() Capability {
 		if v != 0 && i != 0 && i != 2 {
 			return fail("aura_state_requirement")
 		}
+	}
+	if s.DirectComboFinisher() {
+		return Capability{Kind: WeaponStrike, Target: "enemy"}
 	}
 	if s.ItemClass == -1 && s.Power == 0 && s.MaxFriendly > 0 && s.FriendlyDispelMask() != 0 {
 		return Capability{Kind: Cleanse, Target: "ally"}

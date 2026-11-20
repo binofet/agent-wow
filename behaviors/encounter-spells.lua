@@ -4,7 +4,7 @@
 local M = {}
 M.tuning = {damage_window_ms=8000, minimum_dot_ticks=2, long_cooldown_ms=10000,
             cooldown_min_health_fraction=0.15, mana_reserve_fraction=0,
-            cast_pressure_weight=0.65}
+            cast_pressure_weight=0.65, finish_at_combo=5}
 M.class_profiles = {
     [2]={mana_reserve_fraction=0.15}, [5]={mana_reserve_fraction=0.15},
     [7]={mana_reserve_fraction=0.15}, [11]={mana_reserve_fraction=0.15},
@@ -46,6 +46,7 @@ end
 local function eligible(spell, capability, options)
     return type(spell) == "table" and spell.known == true and spell.capability == capability and
         (spell.ready == true or options.require_ready == false and spell.available == true) and
+        (options.instant_only ~= true or spell.metadataKnown == true and number(spell.castTimeMs) == 0) and
         (options.max_cost == nil or spell.metadataKnown ~= true or
          number(spell.cost) ~= nil and number(spell.cost) <= options.max_cost)
 end
@@ -80,8 +81,17 @@ function M.highest_rank(obs, capability, family, options)
 end
 
 local function in_range(obs, target, spell, options)
-    if options.require_ready == false then return true end
     local self = caster(obs)
+    if spell.requiresComboPoints == true and (self.comboKnown ~= true or
+       self.comboTargetGuid ~= (target or {}).guid or (number(self.comboPoints) or 0) < 1) then return false end
+    if options.require_ready == false then return true end
+    if spell.requiresBehind == true or spell.requiresFacing == true then
+        if self.positionKnown ~= true or not target or target.positionKnown ~= true or
+           type(self.orientation) ~= "number" or type(target.orientation) ~= "number" then return false end
+        local dx,dy = (self.x or 0)-(target.x or 0), (self.y or 0)-(target.y or 0)
+        if spell.requiresBehind == true and dx*math.cos(target.orientation)+dy*math.sin(target.orientation) >= -0.25 then return false end
+        if spell.requiresFacing == true and -dx*math.cos(self.orientation)-dy*math.sin(self.orientation) < 0 then return false end
+    end
     if self.positionKnown ~= true or not target or target.positionKnown ~= true then return true end
     local x, y, z = (self.x or 0)-(target.x or 0), (self.y or 0)-(target.y or 0), (self.z or 0)-(target.z or 0)
     local distance = math.sqrt(x*x+y*y+z*z)
@@ -111,6 +121,13 @@ local function family_weight(tuning, family)
     return value == nil and 1 or number(value) or 0
 end
 
+local function action_seconds(row)
+    local cast, gcd = (number(row.castTimeMs) or 0)/1000, (number(row.globalCooldownMs) or 0)/1000
+    -- A zero-GCD instant still needs a finite comparison window; this score
+    -- does not impose an execution cooldown. Rogue's catalog GCD is one second.
+    return math.max(cast,gcd,cast == 0 and gcd == 0 and 1 or 0)
+end
+
 function M.damage_spell(obs, target, override, options)
     options = options or {}
     if override then
@@ -127,16 +144,16 @@ function M.damage_spell(obs, target, override, options)
                     (number(self.maxPower) or 0) * (number(tuning.mana_reserve_fraction) or 0) or 0
     local rank_options = {}
     for key, value in pairs(options) do rank_options[key] = value end
-    if self.powerKnown == true and self.powerType == 0 then
+    if self.powerKnown == true then
         rank_options.max_cost = math.max(0, (number(self.power) or 0)-reserve)
     end
     local ranks, health = M.best_ranks(obs, "offense", rank_options), target_health(target)
-    local best, best_score, best_kills, best_time, fallback, filler_dps
+    local best, best_score, best_kills, best_time, best_finisher, fallback, filler_dps
     filler_dps = 0
     for _, candidate in pairs(ranks) do
         local row = candidate.row
         if row.metadataKnown == true then
-            local seconds = math.max(1.5, (number(row.castTimeMs) or 0)/1000)
+            local seconds = action_seconds(row)
             filler_dps = math.max(filler_dps, (number(row.directDamage) or 0)/seconds)
         end
     end
@@ -147,10 +164,13 @@ function M.damage_spell(obs, target, override, options)
                 if not fallback or id < fallback then fallback = id end
             else
                 local cost, direct = number(row.cost), number(row.directDamage) or 0
-                local cast_ms, gcd_ms = number(row.castTimeMs) or 0, number(row.globalCooldownMs) or 0
-                local seconds = math.max(1.5, cast_ms/1000, gcd_ms/1000)
+                local cast_ms = number(row.castTimeMs) or 0
+                local seconds = action_seconds(row)
                 local allowed = cost ~= nil and (self.powerKnown ~= true or self.powerType == row.powerType and
-                                (row.powerType ~= 0 or (number(self.power) or 0)-cost >= reserve))
+                                (number(self.power) or 0)-cost >= reserve)
+                local finisher = row.requiresComboPoints == true and self.comboKnown == true and
+                    self.comboTargetGuid == (target or {}).guid and (number(self.comboPoints) or 0) >= (number(tuning.finish_at_combo) or 5)
+                if row.requiresComboPoints == true and not finisher and row.damageModelKnown ~= true then allowed = false end
                 local periodic, window = 0, (number(tuning.damage_window_ms) or 8000)/1000
                 if health and filler_dps > 0 then window = math.min(window, health/filler_dps) end
                 if not own_periodic(target, candidate.family) then
@@ -172,10 +192,15 @@ function M.damage_spell(obs, target, override, options)
                     score = score*(number(tuning.cast_pressure_weight) or 0.65)
                 end
                 local kills = health and health > 0 and direct >= health or false
-                if allowed and score > 0 and (not best or kills and not best_kills or
-                   kills == best_kills and (kills and seconds < best_time or
-                   (not kills or seconds == best_time) and (score > best_score or score == best_score and id < best))) then
-                    best, best_score, best_kills, best_time = id, score, kills, seconds
+                local prefer = not best
+                if best then
+                    if finisher ~= best_finisher then prefer = finisher
+                    elseif kills ~= best_kills then prefer = kills
+                    elseif kills and seconds ~= best_time then prefer = seconds < best_time
+                    else prefer = score > best_score or score == best_score and id < best end
+                end
+                if allowed and score > 0 and prefer then
+                    best, best_score, best_kills, best_time, best_finisher = id, score, kills, seconds, finisher
                 end
             end
         end
