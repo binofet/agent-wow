@@ -25,6 +25,12 @@ type policyFeed struct {
 // StartObservedPolicy connects reflected read feeds to a single Lua writer.
 // The final feed supplies the decision phase. Earlier feeds update context.
 func (m *Manager) StartObservedPolicy(ctx context.Context, source, binding string, contextBindings ...string) error {
+	return m.StartObservedPolicyWithOptions(ctx, source, binding, behavior.SessionOptions{}, contextBindings...)
+}
+
+// StartObservedPolicyWithOptions uses the same configured callback budget for
+// initialization, observation decisions, and replacement policies.
+func (m *Manager) StartObservedPolicyWithOptions(ctx context.Context, source, binding string, options behavior.SessionOptions, contextBindings ...string) error {
 	catalog, _, err := m.observedSession()
 	if err != nil {
 		return err
@@ -49,7 +55,7 @@ func (m *Manager) StartObservedPolicy(ctx context.Context, source, binding strin
 		}
 		feeds = append(feeds, policyFeed{phase: phase, method: method})
 	}
-	host, err := m.StartPolicy(ctx, source)
+	host, err := m.StartPolicyWithOptions(ctx, source, options)
 	if err != nil {
 		return err
 	}

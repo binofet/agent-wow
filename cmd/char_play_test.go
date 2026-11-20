@@ -306,7 +306,7 @@ func TestPlayCommandListenerConfig(t *testing.T) {
 }
 
 func TestPlayArgumentValidation(t *testing.T) {
-	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}} {
+	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}, {"play", "Mira", "--policy-execution-limit", "-1ms"}} {
 		command := characterCommands{}.command()
 		command.SetArgs(args)
 		command.SetErr(io.Discard)

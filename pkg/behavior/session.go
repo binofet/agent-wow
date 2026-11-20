@@ -12,7 +12,19 @@ import (
 	"unicode/utf8"
 )
 
-const sessionCatchupLimit = 500 * time.Millisecond
+const (
+	sessionCatchupLimit = 500 * time.Millisecond
+	// DefaultSessionExecutionLimit bounds one persistent Lua callback. Sessions
+	// compose combat, healing, and mana policies and have a separate budget from
+	// the stateless evaluator. Caller deadlines may impose a shorter limit.
+	DefaultSessionExecutionLimit = 50 * time.Millisecond
+)
+
+// SessionOptions configures the persistent VM. A zero execution limit uses the
+// default. The limit applies to Lua execution, excluding host data conversion.
+type SessionOptions struct {
+	ExecutionLimit time.Duration
+}
 
 var (
 	ErrSessionClosed = errors.New("behavior session closed")
@@ -48,6 +60,7 @@ type Decision struct {
 // A Session is not a transport and never submits an action by itself.
 type Session struct {
 	id       string
+	options  SessionOptions
 	step     chan struct{} // VM execution, replacement, and close
 	mu       sync.Mutex    // ingress, status, and action reservation
 	vm       *sessionVM
@@ -73,10 +86,22 @@ type Session struct {
 // import_state functions. export_state returns {version, data}; the session
 // checkpoints this detached envelope after each committed policy call.
 func NewSession(ctx context.Context, sessionID, source string) (*Session, error) {
+	return NewSessionWithOptions(ctx, sessionID, source, SessionOptions{})
+}
+
+// NewSessionWithOptions starts a session with the supplied callback budget.
+// Reloads retain these options for every replacement VM.
+func NewSessionWithOptions(ctx context.Context, sessionID, source string, options SessionOptions) (*Session, error) {
+	if options.ExecutionLimit < 0 {
+		return nil, errors.New("session execution limit must not be negative")
+	}
+	if options.ExecutionLimit == 0 {
+		options.ExecutionLimit = DefaultSessionExecutionLimit
+	}
 	if sessionID == "" || len(sessionID) > 128 || !utf8.ValidString(sessionID) {
 		return nil, errors.New("behavior session needs a bounded session id")
 	}
-	vm, err := newSessionVM(ctx, source)
+	vm, err := newSessionVM(ctx, source, options.ExecutionLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +111,7 @@ func NewSession(ctx context.Context, sessionID, source string) (*Session, error)
 		return nil, fmt.Errorf("initial policy export: %w", err)
 	}
 	return &Session{
-		id: sessionID, step: make(chan struct{}, 1), vm: vm, state: state, rev: sourceRevision(source), epoch: 1,
+		id: sessionID, options: options, step: make(chan struct{}, 1), vm: vm, state: state, rev: sourceRevision(source), epoch: 1,
 		pending: make(map[uint64]pendingAction),
 	}, nil
 }

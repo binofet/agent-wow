@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -18,12 +19,13 @@ const maxSessionFrameBytes = 64 * 1024
 
 // sessionVM owns a Lua state and its persistent policy closures.
 type sessionVM struct {
-	mu        sync.Mutex
-	state     *lua.LState
-	callbacks map[string]*lua.LFunction
+	mu             sync.Mutex
+	state          *lua.LState
+	callbacks      map[string]*lua.LFunction
+	executionLimit time.Duration
 }
 
-func newSessionVM(parent context.Context, source string) (*sessionVM, error) {
+func newSessionVM(parent context.Context, source string, executionLimit time.Duration) (*sessionVM, error) {
 	if len(source) == 0 || len(source) > MaxSourceBytes {
 		return nil, fmt.Errorf("policy source must contain 1..%d bytes", MaxSourceBytes)
 	}
@@ -32,7 +34,7 @@ func newSessionVM(parent context.Context, source string) (*sessionVM, error) {
 	}
 
 	state := newVM()
-	vm := &sessionVM{state: state, callbacks: make(map[string]*lua.LFunction, 4)}
+	vm := &sessionVM{state: state, callbacks: make(map[string]*lua.LFunction, 4), executionLimit: executionLimit}
 	if err := vm.load(parent, source); err != nil {
 		vm.close()
 		return nil, fmt.Errorf("load session policy: %w", err)
@@ -55,19 +57,9 @@ func (v *sessionVM) load(parent context.Context, source string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(parent, EvaluationLimit)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	top := state.GetTop()
-	state.SetContext(ctx)
 	defer state.SetTop(top)
-	defer state.RemoveContext()
-	err = state.CallByParam(lua.P{Fn: chunk, NRet: 1, Protect: true})
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
+	err = v.execute(parent, chunk)
 	if err != nil {
 		return err
 	}
@@ -82,7 +74,21 @@ func (v *sessionVM) load(parent context.Context, source string) error {
 		}
 		v.callbacks[name] = callback
 	}
-	return ctx.Err()
+	return parent.Err()
+}
+
+// execute applies the watchdog to bytecode only. Input and output conversion
+// run under the caller's context in the owning load/call operation.
+func (v *sessionVM) execute(parent context.Context, fn *lua.LFunction, args ...lua.LValue) error {
+	ctx, cancel := context.WithTimeout(parent, v.executionLimit)
+	defer cancel()
+	v.state.SetContext(ctx)
+	defer v.state.RemoveContext()
+	err := v.state.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, args...)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func (v *sessionVM) close() {
@@ -159,11 +165,9 @@ func (v *sessionVM) object(ctx context.Context, name string, args ...map[string]
 }
 
 func (v *sessionVM) call(parent context.Context, name string, check func(context.Context, lua.LValue) error, args ...map[string]any) error {
-	ctx, cancel := context.WithTimeout(parent, EvaluationLimit)
-	defer cancel()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return err
 	}
 	state := v.state
@@ -172,9 +176,7 @@ func (v *sessionVM) call(parent context.Context, name string, check func(context
 	}
 
 	top := state.GetTop()
-	state.SetContext(ctx)
 	defer state.SetTop(top)
-	defer state.RemoveContext()
 
 	byteLimit, nodeLimit := MaxJSONBytes, MaxInputNodes
 	if name == "import_state" || name == "decide" {
@@ -182,7 +184,7 @@ func (v *sessionVM) call(parent context.Context, name string, check func(context
 	}
 	inputs := make([]lua.LValue, 0, len(args))
 	for _, arg := range args {
-		value, err := toLua(state, arg, &budget{nodeLimit: nodeLimit, byteLimit: byteLimit, ctx: ctx})
+		value, err := toLua(state, arg, &budget{nodeLimit: nodeLimit, byteLimit: byteLimit, ctx: parent})
 		if err != nil {
 			return fmt.Errorf("%s input: %w", name, err)
 		}
@@ -191,18 +193,17 @@ func (v *sessionVM) call(parent context.Context, name string, check func(context
 		}
 		inputs = append(inputs, value)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return err
 	}
-	err := state.CallByParam(lua.P{Fn: v.callbacks[name], NRet: 1, Protect: true}, inputs...)
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
+	// Start the watchdog only after serialization and VM admission. Host work
+	// remains bounded by the caller context and the existing data-size limits.
+	err := v.execute(parent, v.callbacks[name], inputs...)
 	if err == nil {
-		err = check(ctx, state.Get(-1))
+		err = check(parent, state.Get(-1))
 	}
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if parent.Err() != nil {
+		return parent.Err()
 	}
 	if err != nil {
 		return fmt.Errorf("%s: %w", name, err)

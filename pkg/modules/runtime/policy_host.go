@@ -31,6 +31,11 @@ type SessionPolicy struct {
 // StartPolicy binds a runtime owned by the local host. The reflected attach
 // method can inspect it, but cannot start or change it.
 func (m *Manager) StartPolicy(ctx context.Context, source string) (*SessionPolicy, error) {
+	return m.StartPolicyWithOptions(ctx, source, behavior.SessionOptions{})
+}
+
+// StartPolicyWithOptions binds a persistent VM with the configured Lua budget.
+func (m *Manager) StartPolicyWithOptions(ctx context.Context, source string, options behavior.SessionOptions) (*SessionPolicy, error) {
 	catalog, observer, err := m.observedSession()
 	if err != nil {
 		return nil, err
@@ -38,7 +43,7 @@ func (m *Manager) StartPolicy(ctx context.Context, source string) (*SessionPolic
 	if observer != nil {
 		return nil, status.Error(codes.AlreadyExists, "session already has a policy observer")
 	}
-	vm, err := behavior.NewSession(ctx, catalog.SessionID, source)
+	vm, err := behavior.NewSessionWithOptions(ctx, catalog.SessionID, source, options)
 	if err != nil {
 		return nil, err
 	}

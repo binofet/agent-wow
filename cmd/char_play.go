@@ -16,6 +16,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/internal/config"
 	"github.com/agent-wow/agent-wow/pkg/auth"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/char"
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/runtime"
@@ -53,7 +54,7 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 }
 
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
-	var moduleTimeout time.Duration
+	var moduleTimeout, policyExecutionLimit time.Duration
 	var policyFile, policyObservation string
 	var policyContext []string
 	command := &cobra.Command{
@@ -84,6 +85,12 @@ local RPC API for gameplay actions.`,
 			}
 			if cmd.Flags().Changed("policy-context") {
 				policy.Context = policyContext
+			}
+			if cmd.Flags().Changed("policy-execution-limit") {
+				policy.ExecutionLimit = policyExecutionLimit
+			}
+			if policy.ExecutionLimit < 0 {
+				return errors.New("--policy-execution-limit must not be negative")
 			}
 			var source string
 			if (policy.File == "") != (policy.Observation == "") || policy.File == "" && len(policy.Context) != 0 {
@@ -132,7 +139,7 @@ local RPC API for gameplay actions.`,
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
 			if policy.File != "" {
-				if err := runtime.StartObservedPolicy(ctx, source, policy.Observation, policy.Context...); err != nil {
+				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit}, policy.Context...); err != nil {
 					return err
 				}
 			}
@@ -140,6 +147,7 @@ local RPC API for gameplay actions.`,
 		},
 	}
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
+	command.Flags().DurationVar(&policyExecutionLimit, "policy-execution-limit", 0, "Timeout per persistent Lua callback (0 uses the default execution budget)")
 	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
 	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")
 	command.Flags().StringSliceVar(&policyContext, "policy-context", nil, "Additional reflected reads for the same Lua decision, as phase=module.alias")
