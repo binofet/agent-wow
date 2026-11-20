@@ -9,6 +9,7 @@ local tactics = assert(encounter_tactics)
 local spells = assert(encounter_spells)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
+local support_policy = encounter_support
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
@@ -339,7 +340,8 @@ local function decide_encounter(frame)
 
     local self = players[obs.selfGuid]
     if owns_current_observation(obs, frame, self) then
-        out.encounterOwnership = {visitId=obs.visitId, observationSequence=state.sequence}
+        out.encounterOwnership = {visitId=obs.visitId, observationSequence=state.sequence,
+            resurrection=support_policy ~= nil, interrupts=support_policy ~= nil}
     end
     if not host_can_decide(obs) or fallback and obs.hostOwned ~= true or
        frame.input.observationSequence ~= state.sequence or state.settledAt == state.sequence or
@@ -347,6 +349,12 @@ local function decide_encounter(frame)
         return out
     end
     if not fallback and not members[obs.selfGuid] then return out end
+    local interrupt = support_policy and support_policy.interrupt(obs)
+    if interrupt then
+        interrupt.observationSequence = state.sequence
+        out.action = interrupt
+        return out
+    end
     local support
     local heal_sequence = obs.healingSequence
     if obs.worldObservationRevision and obs.healing and obs.healing.hostOwned == true then heal_sequence = state.sequence end
@@ -366,6 +374,12 @@ local function decide_encounter(frame)
         else
             out.action = proposal(obs, "heal", support.targetGuid, support.spellId)
         end
+        return out
+    end
+    local resurrection = support_policy and support_policy.resurrect(obs)
+    if resurrection then
+        resurrection.observationSequence = state.sequence
+        out.action = resurrection
         return out
     end
     if active_melee then
