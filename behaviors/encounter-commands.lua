@@ -63,7 +63,8 @@ local function on_event(event)
         local target = selector(value)
         if not target or value.spellId ~= nil and not spell_id(value.spellId) then return true end
         local row = {technique=value.technique, targetGuid=target.targetGuid, mark=target.mark, spellId=value.spellId,
-                     behind=value.behind == nil and value.technique == "sap" or value.behind == true}
+                     behind=value.behind == nil and value.technique == "sap" or value.behind == true,
+                     maintain=value.maintain ~= false}
         row.id = type(value.id) == "string" and #value.id > 0 and #value.id <= 80 and value.id or request_id(row)
         cancel({id=row.id})
         if #state.requests < 8 then state.requests[#state.requests+1] = row end
@@ -121,7 +122,9 @@ local function refresh(obs)
         end
         local target = row.visitId == obs.visitId and (obs.targets or {})[row.boundGuid]
         local dead = target and target.present == true and target.aliveKnown == true and target.alive == false
-        if not dead and not (row.visitId == obs.visitId and observed_control(obs, row)) then requests[#requests+1] = row end
+        row.controlActive = row.visitId == obs.visitId and observed_control(obs, row) or false
+        if row.controlActive then row.controlPending = nil end
+        if not dead and not (row.controlActive and row.maintain == false) then requests[#requests+1] = row end
     end
     state.requests = requests
 end
@@ -187,7 +190,10 @@ local function control_action(obs, frame, focusGuid)
     for _, request in ipairs(state.requests) do
         local target = (obs.targets or {})[request.boundGuid]
         local spell = highest_spell(obs, request.technique, request.spellId)
-        if request.boundGuid == focusGuid then status.phase = "waiting_for_focus_change"
+        if request.controlActive then
+            status = {pending=true,requestId=request.id,technique=request.technique,
+                      targetGuid=request.boundGuid,phase="control_observed"}
+        elseif request.boundGuid == focusGuid then status.phase = "waiting_for_focus_change"
         elseif request.visitId ~= obs.visitId then status.phase = "waiting_for_visit"
         elseif alive(target) and target.mapKnown == true and target.mapId == obs.mapId and target.attackable == true and spell then
             status = {pending=true, requestId=request.id, technique=request.technique,
@@ -221,8 +227,7 @@ local function control_action(obs, frame, focusGuid)
                     status.phase = "approaching_control"
                     return moved.action,status
                 end
-            end
-            if self.moving == true or not separation or separation > range or
+            elseif self.moving == true or not separation or separation > range or
                not movement_ready(obs,request.boundGuid,range,request.behind == true) then
                 status.phase = "approaching_control"
                 local move = action(obs,frame,"approach_target",request.boundGuid)

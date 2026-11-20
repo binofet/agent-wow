@@ -101,7 +101,7 @@ func TestLuaControlCommandPersistsThroughApproachAndReloadUntilActualAura(t *tes
 	}
 	t.Cleanup(host.Close)
 	obs, target := commandObservation(), encounterGUID(sheepTarget)
-	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon"})
+	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon", "maintain": false})
 	seq := observeCommandPolicy(t, host, obs)
 	expectControlAction(t, commandDecision(t, host, seq, "2"), "approach_target", target)
 	// The binding and outstanding request survive a source revision while moving.
@@ -217,4 +217,37 @@ func TestLuaControlCommandKeepsRequestAfterReadOnlyPreparation(t *testing.T) {
 		t.Fatal("settlement reused stale evidence or forgot the request", out)
 	}
 	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "polymorph", target)
+}
+
+func TestLuaMaintainedControlReappliesAfterBreakUntilKillFocusOrDeath(t *testing.T) {
+	host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	obs, target := commandObservation(), encounterGUID(sheepTarget)
+	obs.Targets[target].X = 20
+	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: sheepTarget, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
+	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon"})
+	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "polymorph", target)
+	for i := 0; i < 2; i++ {
+		obs.ProtectedAuras = []*actionsv1.ProtectedTarget{{TargetGuid: sheepTarget, SpellId: 118, Capability: "polymorph", DurationKnown: true, RemainingMs: 20000}}
+		out := commandDecision(t, host, observeCommandPolicy(t, host, obs), "2")
+		if out["action"] != nil || out["control"].(map[string]any)["phase"] != "control_observed" {
+			t.Fatal("active aura did not hold the maintained request without casting", out)
+		}
+		obs.ProtectedAuras = nil
+		if i == 0 {
+			expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "polymorph", target)
+		} else {
+			out = commandDecision(t, host, observeCommandPolicy(t, host, obs), target)
+			if out["action"] != nil || out["control"].(map[string]any)["phase"] != "waiting_for_focus_change" {
+				t.Fatal("maintained request resheeped the current kill focus", out)
+			}
+		}
+	}
+	obs.Targets[target].Alive = proto.Bool(false)
+	if out := commandDecision(t, host, observeCommandPolicy(t, host, obs), target); out["control"] != nil {
+		t.Fatal("maintained request survived the witnessed death", out)
+	}
 }
