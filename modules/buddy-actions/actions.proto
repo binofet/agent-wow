@@ -7,6 +7,25 @@ import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+// Normal client UI selection only; does not change the Lua combat queue.
+message SelectTargetRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  // Zero clears selection. Nonzero must be an observed same-map unit/corpse.
+  uint64 target_guid = 3;
+}
+message SelectTargetResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  bool transport_written = 4;
+  // True only when a subsequent World read changed to the requested target.
+  // A successful transport write alone does not establish an observed effect.
+  bool selection_observed = 5;
+  bool observed_target_known = 6;
+  uint64 observed_target_guid = 7;
+  string phase = 8;
+}
 // Explicitly select one currently observed NPC; never selects another target.
 message EngageNPCRequest { bool enabled = 1; uint64 target_guid = 2; }
 message EngageNPCState {
@@ -634,6 +653,7 @@ message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2;
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
+  rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc InterruptCast(InterruptCastRequest) returns (State);
   rpc Follow(ToggleRequest) returns (State);
