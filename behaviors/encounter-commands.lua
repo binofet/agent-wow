@@ -206,7 +206,15 @@ local function control_action(obs, frame, focusGuid)
                 if stealth.row.selfAuraActive ~= true then
                     status.phase = "preparing_stealth"
                     if request.stealthPending then status.phase = "waiting_for_stealth_aura"; return nil,status end
+                    if stealth.row.available == true and stealth.row.ready ~= true then
+                        status.phase = "stopping_for_stealth"
+                        local stop = action(obs,frame,"stop_movement",request.boundGuid)
+                        stop.rangeYards = 0
+                        return stop,status
+                    end
                     if stealth.row.ready == true and stealth.row.selfCastSupported == true then
+                        local active = guid(obs.activeMeleeTargetGuid)
+                        if active then return action(obs,frame,"melee_stop",active),status end
                         request.stealthPending = stealth.id
                         return action(obs,frame,"cast_self",obs.selfGuid,stealth.id),status
                     end
@@ -236,6 +244,8 @@ local function control_action(obs, frame, focusGuid)
             end
             if spell.row.ready == true then
                 status.phase = "casting_control"
+                local active = guid(obs.activeMeleeTargetGuid)
+                if active then return action(obs,frame,"melee_stop",active),status end
                 request.controlPending = spell.id
                 return action(obs,frame,request.technique,request.boundGuid,spell.id),status
             end

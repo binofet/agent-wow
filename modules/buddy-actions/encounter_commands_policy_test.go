@@ -166,6 +166,11 @@ func TestLuaSapCommandPreparesStealthAndWaitsForObservedAura(t *testing.T) {
 		"1784": {Known: true, Capability: "stealth", Ready: true, Available: true, SelfCastSupported: true, Rank: 1},
 	}
 	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "sap", "targetGuid": target})
+	obs.Spells["1784"].Ready = false
+	obs.Players["1"].Moving = true
+	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "stop_movement", target)
+	obs.Spells["1784"].Ready = true
+	obs.Players["1"].Moving = false
 	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "cast_self", "1")
 	out := commandDecision(t, host, observeCommandPolicy(t, host, obs), "2")
 	if out["action"] != nil || out["control"].(map[string]any)["phase"] != "waiting_for_stealth_aura" {
@@ -250,4 +255,20 @@ func TestLuaMaintainedControlReappliesAfterBreakUntilKillFocusOrDeath(t *testing
 	if out := commandDecision(t, host, observeCommandPolicy(t, host, obs), target); out["control"] != nil {
 		t.Fatal("maintained request survived the witnessed death", out)
 	}
+}
+
+func TestLuaControlCommandStopsOwnSwingBeforeReservingCast(t *testing.T) {
+	host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	obs, target := commandObservation(), encounterGUID(sheepTarget)
+	obs.ActiveMeleeTargetGuid = 2
+	obs.Targets[target].X = 20
+	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: sheepTarget, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
+	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon"})
+	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "melee_stop", "2")
+	obs.ActiveMeleeTargetGuid = 0
+	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "polymorph", target)
 }
