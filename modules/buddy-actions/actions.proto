@@ -325,6 +325,7 @@ message State {
   bool crowd_control_approach_supported = 114;
   CrowdControlState crowd_control = 115;
   MeleeOperation last_melee_operation = 116;
+  TargetMovementState target_movement = 117;
 }
 message ProtectedTarget {
   uint64 target_guid = 1;
@@ -469,6 +470,7 @@ message EncounterObservationResponse {
   optional bool host_requested = 20;
   bool melee_known = 21;
   uint64 active_melee_target_guid = 22;
+  TargetMovementState target_movement = 23;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -486,6 +488,24 @@ message EncounterPlayer {
   uint32 health = 8;
   uint32 max_health = 9;
   uint32 faction_template = 10;
+  bool position_known = 11;
+  uint64 position_revision = 12;
+  float x = 13;
+  float y = 14;
+  float z = 15;
+  float orientation = 16;
+  bool class_known = 17;
+  uint32 class_id = 18;
+  bool race_known = 19;
+  uint32 race_id = 20;
+  bool level_known = 21;
+  uint32 level = 22;
+  bool power_known = 23;
+  uint32 power_type = 24;
+  uint32 power = 25;
+  uint32 max_power = 26;
+  bool movement_known = 27;
+  bool moving = 28;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -512,6 +532,9 @@ message EncounterCreature {
   uint32 unit_flags = 21;
   uint32 faction_template = 22;
   bool melee_ready = 23;
+  // Currently observed own periodic damage auras, grouped by catalog family.
+  repeated uint32 own_damage_families = 24;
+  float orientation = 25;
 }
 message EncounterEngagement {
   uint64 victim_guid = 1;
@@ -521,6 +544,48 @@ message EncounterSpell {
   bool known = 1;
   bool ready = 2;
   string capability = 3;
+  bool metadata_known = 4;
+  uint32 family_id = 5;
+  uint32 rank = 6;
+  uint32 level = 7;
+  string name = 8;
+  uint32 cast_time_ms = 9;
+  uint64 cost = 10;
+  int32 power_type = 11;
+  double min_range = 12;
+  double max_range = 13;
+  // Catalog base effect estimates, not observed damage or a tactical score.
+  double direct_damage = 14;
+  repeated EncounterPeriodicDamage periodic_damage = 15;
+  uint32 cooldown_ms = 16;
+  uint32 category_cooldown_ms = 17;
+  uint32 global_cooldown_ms = 18;
+  // Exact rank resources, cooldown and requirements; excludes movement/custody.
+  bool available = 19;
+}
+message EncounterPeriodicDamage {
+  double damage_per_tick = 1;
+  uint32 period_ms = 2;
+}
+// One caller-selected movement step, never a target or rotation controller.
+message ApproachTargetRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint64 visit_id = 4;
+  float range_yards = 5;
+  bool stop = 6;
+  bool require_los = 7;
+  bool behind = 8;
+}
+message TargetMovementState {
+  uint64 target_guid = 1;
+  uint64 visit_id = 2;
+  float range_yards = 3;
+  bool require_los = 4;
+  bool behind = 5;
+  string phase = 6;
+  bool ready = 7;
 }
 message EncounterControlCapability {
   uint64 guid = 1;
@@ -532,6 +597,7 @@ message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2;
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
+  rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc Follow(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);

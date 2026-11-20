@@ -21,6 +21,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyActions_ApproachTarget_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
 	BuddyActions_Follow_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
 	BuddyActions_Assist_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
 	BuddyActions_EngageNPC_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
@@ -64,6 +65,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
@@ -111,6 +113,16 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ApproachTarget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
@@ -487,6 +499,7 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
@@ -536,6 +549,9 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproachTarget not implemented")
+}
 func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Follow not implemented")
 }
@@ -666,6 +682,24 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_ApproachTarget_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachTargetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ApproachTarget(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ApproachTarget_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ApproachTarget(ctx, req.(*ApproachTargetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_Follow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1341,6 +1375,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ApproachTarget",
+			Handler:    _BuddyActions_ApproachTarget_Handler,
+		},
 		{
 			MethodName: "Follow",
 			Handler:    _BuddyActions_Follow_Handler,

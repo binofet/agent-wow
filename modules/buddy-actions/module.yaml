@@ -8,6 +8,7 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
@@ -81,6 +82,7 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
   behavior: {effect: read}
