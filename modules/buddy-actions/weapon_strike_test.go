@@ -3,6 +3,7 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -146,7 +148,23 @@ func TestWeaponStrikeReflectionAndLuaEnergyComboPositionChoices(t *testing.T) {
 	choose := func(want float64) {
 		t.Helper()
 		refresh()
-		enqueueSpellObservation(t, host, obs)
+		// The live protobuf JSON omits scalar zeros, including cast time and
+		// the caster's facing angle. EmitUnpopulated would mask this regression.
+		raw, err := protojson.Marshal(obs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Fatal(err)
+		}
+		row := value["spells"].(map[string]any)["53"].(map[string]any)
+		if _, present := row["castTimeMs"]; present {
+			t.Fatal("fixture did not exercise an omitted instant cast time", row)
+		}
+		if _, err := host.Enqueue(behavior.Event{Kind: "spell_observation", Value: value}); err != nil {
+			t.Fatal(err)
+		}
 		out, err := host.Decide(context.Background(), map[string]any{"target": target, "options": map[string]any{"instant_only": true}})
 		if err != nil || out.Output["spellId"] != want {
 			t.Fatal("wrong Lua weapon rotation", want, out.Output, err)
@@ -168,6 +186,44 @@ func TestWeaponStrikeReflectionAndLuaEnergyComboPositionChoices(t *testing.T) {
 	out, err := host.Decide(context.Background(), map[string]any{"target": target, "options": map[string]any{"instant_only": true}})
 	if err != nil || out.Output["spellId"] != nil {
 		t.Fatal("unknown position did not fall back to positioning", out.Output, err)
+	}
+}
+
+func TestLuaInstantFilterRequiresKnownMetadataAndRejectsCastTime(t *testing.T) {
+	for _, mode := range []string{"omitted_zero", "explicit_zero", "cast_time", "unknown_metadata", "invalid_cast_time"} {
+		t.Run(mode, func(t *testing.T) {
+			host, err := behavior.NewSession(context.Background(), "instant-filter", spellSelectorSource(t, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(host.Close)
+			row := map[string]any{"known": true, "ready": true, "capability": "offense", "metadataKnown": true,
+				"familyId": float64(1752), "cost": float64(45), "directDamage": float64(25)}
+			switch mode {
+			case "explicit_zero":
+				row["castTimeMs"] = float64(0)
+			case "cast_time":
+				row["castTimeMs"] = float64(1500)
+			case "unknown_metadata":
+				delete(row, "metadataKnown")
+			case "invalid_cast_time":
+				row["castTimeMs"] = "invalid"
+			}
+			if _, err := host.Enqueue(behavior.Event{Kind: "spell_observation", Value: map[string]any{"spells": map[string]any{"1752": row}}}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := host.Decide(context.Background(), map[string]any{"options": map[string]any{"instant_only": true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := any(nil)
+			if mode == "omitted_zero" || mode == "explicit_zero" {
+				want = float64(1752)
+			}
+			if out.Output["spellId"] != want {
+				t.Fatal("wrong instant eligibility", mode, out.Output)
+			}
+		})
 	}
 }
 

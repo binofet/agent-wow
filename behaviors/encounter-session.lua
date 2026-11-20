@@ -455,6 +455,14 @@ local function decide_encounter(frame)
     local focus = out.focusGuid and obs.targets[out.focusGuid]
     if focus and focus.positionKnown == true then
         local available = damage_spell(obs, focus, {require_ready=false})
+        local rank = available and (obs.spells or {})[tostring(available)]
+        -- Begin a legal swing before pursuing a positional weapon strike.
+        -- Subsequent observations keep autoswing active while moving behind.
+        if obs.meleeKnown == true and focus.meleeReady == true and
+           (not available or rank and rank.weaponStrike == true) then
+            out.action = proposal(obs, "melee_start", out.focusGuid)
+            return out
+        end
         local approach = available and position_for(out.focusGuid, available)
         if approach then out.action = approach
         else

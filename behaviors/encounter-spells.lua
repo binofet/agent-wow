@@ -46,7 +46,8 @@ end
 local function eligible(spell, capability, options)
     return type(spell) == "table" and spell.known == true and spell.capability == capability and
         (spell.ready == true or options.require_ready == false and spell.available == true) and
-        (options.instant_only ~= true or spell.metadataKnown == true and number(spell.castTimeMs) == 0) and
+        (options.instant_only ~= true or spell.metadataKnown == true and
+         number(spell.castTimeMs == nil and 0 or spell.castTimeMs) == 0) and
         (options.max_cost == nil or spell.metadataKnown ~= true or
          number(spell.cost) ~= nil and number(spell.cost) <= options.max_cost)
 end
@@ -86,11 +87,13 @@ local function in_range(obs, target, spell, options)
        self.comboTargetGuid ~= (target or {}).guid or (number(self.comboPoints) or 0) < 1) then return false end
     if options.require_ready == false then return true end
     if spell.requiresBehind == true or spell.requiresFacing == true then
-        if self.positionKnown ~= true or not target or target.positionKnown ~= true or
-           type(self.orientation) ~= "number" or type(target.orientation) ~= "number" then return false end
+        if self.positionKnown ~= true or not target or target.positionKnown ~= true then return false end
+        -- Known protobuf poses omit zero-valued orientation in ordinary JSON.
+        local self_o, target_o = self.orientation or 0, target.orientation or 0
+        if type(self_o) ~= "number" or type(target_o) ~= "number" then return false end
         local dx,dy = (self.x or 0)-(target.x or 0), (self.y or 0)-(target.y or 0)
-        if spell.requiresBehind == true and dx*math.cos(target.orientation)+dy*math.sin(target.orientation) >= -0.25 then return false end
-        if spell.requiresFacing == true and -dx*math.cos(self.orientation)-dy*math.sin(self.orientation) < 0 then return false end
+        if spell.requiresBehind == true and dx*math.cos(target_o)+dy*math.sin(target_o) >= -0.25 then return false end
+        if spell.requiresFacing == true and -dx*math.cos(self_o)-dy*math.sin(self_o) < 0 then return false end
     end
     if self.positionKnown ~= true or not target or target.positionKnown ~= true then return true end
     local x, y, z = (self.x or 0)-(target.x or 0), (self.y or 0)-(target.y or 0), (self.z or 0)-(target.z or 0)
