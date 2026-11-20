@@ -78,7 +78,8 @@ func readEncounterBundle(t *testing.T) string {
 		return string(data)
 	}
 	root := filepath.Join("..", "..", "behaviors")
-	source := "local encounter_tactics = (function()\n" + read(filepath.Join(root, "encounter-tactics.lua")) + "\nend)()\n"
+	source := "local encounter_tactics = (function()\n" + read(filepath.Join(root, "encounter-tactics.lua")) + "\nend)()\n" +
+		"local encounter_spells = (function()\n" + read(filepath.Join(root, "encounter-spells.lua")) + "\nend)()\n"
 	healing := os.Getenv("WB_LIFE37_HEALING_LUA")
 	if healing == "" {
 		healing = filepath.Join(root, "healing.lua")

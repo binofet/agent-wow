@@ -6,6 +6,7 @@
 -- encounter_intent may supply the authored plan and damage policy. The
 -- reflected game feed supplies observations; it never authors a plan.
 local tactics = assert(encounter_tactics)
+local spells = assert(encounter_spells)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
 local intent = encounter_intent or {}
@@ -146,22 +147,8 @@ local function active_aura(aura, row)
         (not aura.durationKnown or type(aura.remainingMs) == "number" and aura.remainingMs > 0)
 end
 
-local function damage_spell(obs, target)
-    local damage = obs.damage or intent.damage
-    if damage then
-        if (damage.scope == "focus" or damage.scope == "runner" and known_runner(target)) and
-           usable_spell(obs, damage.spellId, "offense") then return damage.spellId end
-        return
-    end
-    local selected
-    for key, spell in pairs(obs.spells or {}) do
-        local id = guid(key) and tonumber(key)
-        -- Rows carry readiness but no relative rank preference. Use a
-        -- stable numeric tie-break among exact eligible offensive spells.
-        if id and id <= 4294967295 and spell.capability == "offense" and spell.known == true and
-           spell.ready == true and (not selected or id < selected) then selected = id end
-    end
-    return selected
+local function damage_spell(obs, target, options)
+    return spells.damage_spell(obs, target, obs.damage or intent.damage, options)
 end
 
 local function owns_current_observation(obs, frame, self)

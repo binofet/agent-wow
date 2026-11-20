@@ -13,6 +13,7 @@ def main():
     behaviors = Path(__file__).resolve().parent.parent / "behaviors"
     modules = [
         ("encounter_tactics", behaviors / "encounter-tactics.lua"),
+        ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),
         ("encounter_self_mana", behaviors / "self-mana.lua"),
     ]
