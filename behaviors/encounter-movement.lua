@@ -69,6 +69,7 @@ function M.decide(obs,sequence,target,options)
     -- about distance; the next observation continues the approach.
     return {ready=false,phase="positioning",action=action(obs,sequence,target,options,false)}
 end
+function M.needs_position(target) return invalid_target == target end
 function M.for_spell(obs,sequence,target,spell,options)
     options = options or {}
     local range = spell and spell.maxRange

@@ -424,7 +424,14 @@ local function decide_encounter(frame)
             local strike = damage_spell(obs, obs.targets[active_melee], {instant_only=true})
             local rank = strike and (obs.spells or {})[tostring(strike)]
             if rank and rank.weaponStrike == true then
-                out.action = position_for(active_melee, strike) or proposal(obs, "offense", active_melee, strike)
+                -- An eligible instant strike already passed current range,
+                -- facing and behind facts. Keep running/swinging; only a
+                -- rejected cast requires spatial revalidation.
+                if movement and movement.needs_position(active_melee) then
+                    out.action = position_for(active_melee, strike)
+                else
+                    out.action = proposal(obs, "offense", active_melee, strike)
+                end
             elseif movement and obs.worldObservationRevision then
             local approach = movement.decide(obs, state.sequence, active_melee,
                 {rangeYards=intent.meleeRange or 3.5, requireLos=true,
