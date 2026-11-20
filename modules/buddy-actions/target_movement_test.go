@@ -56,7 +56,7 @@ func TestTargetMovementChasesWhileAutoswingAndDeadOwnerPersist(t *testing.T) {
 		}
 	}
 	if !s.state.Moving || s.targetMovement.nav.target.x <= 10 {
-		t.Fatalf("follow replaced chase route: %+v %+v", s.state, s.targetMovement)
+		t.Fatalf("follow replaced chase route: %+v %+v", &s.state, &s.targetMovement)
 	}
 }
 

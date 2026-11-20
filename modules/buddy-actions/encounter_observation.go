@@ -336,11 +336,13 @@ func (s *Service) reportPolledPolicyEffectsLocked(ctx context.Context) {
 		// Keep the native token until a packet callback/new operation retires
 		// it. A canceled observation read may lose its trailers; repeating a
 		// token is harmless because the host consumes each action once.
-		copy := *op
-		copy.reportPolicySpellEffect(ctx, s.state.CastPending)
+		token := op.policySpellToken
+		op.reportPolicySpellEffect(ctx, s.state.CastPending)
+		op.policySpellToken = token
 	}
 	if op := s.meleeOp; op != nil && op.token != "" {
-		copy := *op
-		copy.reportPolicyMeleeEffect(ctx)
+		token := op.token
+		op.reportPolicyMeleeEffect(ctx)
+		op.token = token
 	}
 }

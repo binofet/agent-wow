@@ -65,7 +65,7 @@ func TestSelectTargetWritesOnlyExactObservedSelectionAndClear(t *testing.T) {
 				t.Fatal("selection did not use the exact normal LE64 packet", packet)
 			}
 			if !s.state.Following || !s.state.Assisting || !s.state.AutoAttacking || s.autoTarget != 9 || f.world.Self.TargetKnown {
-				t.Fatal("UI selection changed combat intent or fabricated a World target", s.state)
+				t.Fatal("UI selection changed combat intent or fabricated a World target", &s.state)
 			}
 		})
 	}
@@ -132,7 +132,7 @@ func TestSelectTargetSeparatesObservedChangeFromTransportAndFailure(t *testing.T
 	s.state.Following, s.state.Assisting = true, true
 	out, err = s.SelectTarget(context.Background(), selectionRequest(3))
 	if err != nil || out.GetTransportWritten() || out.GetSelectionObserved() || out.GetPhase() != "transport_unconfirmed" || !s.state.Following || !s.state.Assisting {
-		t.Fatal("ambiguous selection transport changed unrelated gameplay intent", out, err, s.state)
+		t.Fatal("ambiguous selection transport changed unrelated gameplay intent", out, err, &s.state)
 	}
 }
 
