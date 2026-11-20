@@ -50,7 +50,10 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 		}
 		return nil
 	}
-	if err := p.manager.renewPolicyEncounterLease(ctx, current.visit); err != nil {
+	resurrection, _ := claim["resurrection"].(bool)
+	interrupts, _ := claim["interrupts"].(bool)
+	leaseCtx := modcb.WithPolicySupportOwnership(ctx, resurrection, interrupts)
+	if err := p.manager.renewPolicyEncounterLease(leaseCtx, current.visit); err != nil {
 		return err
 	}
 	p.encounterLeaseHeld = true
@@ -61,5 +64,5 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 }
 
 func (op *policySpell) hostile() bool {
-	return op.melee != nil || op.capability == "offense" || op.capability == "polymorph" || op.capability == "sap"
+	return op.melee != nil || op.capability == "offense" || op.capability == "polymorph" || op.capability == "sap" || op.capability == "interrupt"
 }

@@ -85,6 +85,7 @@ func (s *Service) RenewPolicyEncounterLease(ctx context.Context, request *wrappe
 		s.stopAutoAttackLocked(ctx)
 	}
 	s.hostEncounterVisit, s.hostEncounterUntil = visit, s.now().Add(encounterLeaseDuration)
+	s.hostResurrectionOwned, s.hostInterruptOwned = modcb.IncomingPolicySupportOwnership(ctx)
 	return &emptypb.Empty{}, nil
 }
 

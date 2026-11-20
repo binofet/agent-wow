@@ -40,6 +40,7 @@ type policySpell struct {
 	capability     string
 	spell          uint32
 	target         uint64
+	castTarget     uint64 // Resurrection may target the observed corpse owned by target.
 	encounterVisit uint64
 	melee          *policyMelee
 	token          string
@@ -73,6 +74,10 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		method = "cast_heal"
 	case "offense":
 		method = "cast_offense"
+	case "resurrect":
+		method = "resurrect_once"
+	case "interrupt":
+		method = "interrupt_cast"
 	case "cast_self":
 		if target != self {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "self cast target must be the current body")
@@ -92,6 +97,25 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		values["self_guid"] = protoreflect.ValueOfUint64(selfGUID)
 	}
 	op := &policySpell{vm: p.vm, capability: capability, spell: uint32(spell), target: targetGUID}
+	if capability == "resurrect" {
+		op.castTarget = targetGUID
+		if raw, supplied := action["castTargetGuid"]; supplied {
+			text, ok := raw.(string)
+			value, err := strconv.ParseUint(text, 10, 64)
+			if !ok || err != nil || value == 0 || text != strconv.FormatUint(value, 10) || value != targetGUID && value>>48 != 0xf101 {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "observed patient or owned corpse cast target required")
+			}
+			op.castTarget = value
+		}
+	}
+	if capability == "interrupt" {
+		text, _ := action["castRevision"].(string)
+		value, err := strconv.ParseUint(text, 10, 64)
+		if err != nil || value == 0 || text != strconv.FormatUint(value, 10) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact enemy cast revision required")
+		}
+		values["cast_revision"] = protoreflect.ValueOfUint64(value)
+	}
 	return p.preparePolicyDispatch(method, values, op)
 }
 
@@ -146,6 +170,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
+	if op.capability == "resurrect" || op.capability == "interrupt" {
+		bridge = modcb.PolicySupportSpellService
+	}
 	switch {
 	case op.melee != nil:
 		bridge = modcb.PolicyMeleeService
@@ -223,7 +250,15 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 		return false
 	}
 	mask := binary.LittleEndian.Uint32(body[6:])
-	if mask != 2 || len(body) < 11 {
+	target := op.target
+	if op.castTarget != 0 {
+		target = op.castTarget
+	}
+	wantMask := uint32(2)
+	if op.capability == "resurrect" && target>>48 == 0xf101 {
+		wantMask = 0x8000
+	}
+	if mask != wantMask || len(body) < 11 {
 		return false
 	}
 	body = body[10:]
@@ -238,7 +273,7 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 			n++
 		}
 	}
-	return guid == op.target && n == len(body)
+	return guid == target && n == len(body)
 }
 
 func (op *policySpell) payload(phase string, written, castGo, observed bool) map[string]any {
@@ -325,7 +360,11 @@ func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[st
 	if err := proto.Unmarshal(body, &native); err != nil {
 		return "", nil, err
 	}
-	if native.SpellId != op.spell || native.TargetGuid != op.target || native.Capability != op.capability {
+	target := op.target
+	if op.castTarget != 0 {
+		target = op.castTarget
+	}
+	if native.SpellId != op.spell || native.TargetGuid != target || native.Capability != op.capability {
 		return "", nil, nil
 	}
 	return spellEffectOutcome(&native), op.payload(native.Phase, native.TransportWritten, native.ServerCastGo, native.EffectObserved), nil
@@ -333,7 +372,7 @@ func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[st
 
 func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome {
 	switch effect.Phase {
-	case "confirmed_aura", "confirmed_effect", "confirmed_heal":
+	case "confirmed_aura", "confirmed_effect", "confirmed_heal", "confirmed_alive":
 		if effect.ServerCastGo && effect.EffectObserved {
 			return behavior.ActionConfirmed
 		}

@@ -115,6 +115,7 @@ type Service struct {
 	meleeOp                                    *meleeAttempt
 	encounterSwing                             encounterMeleeSwing
 	meleeAcknowledgedVisit                     uint64
+	hostResurrectionOwned, hostInterruptOwned  bool
 	resurrectionBindings                       map[uint64]bool
 	resurrectionOffer                          *resurrectionOffer
 	behavior                                   *behavior.Runtime
@@ -1233,11 +1234,11 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if resurrector && s.resurrectionTickLocked(ctx, snapshot) {
+	if (nativeEncounter || !s.hostResurrectionOwned) && resurrector && s.resurrectionTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
-	if nativeEncounter && s.interruptHealLocked(ctx, snapshot) {
+	if (nativeEncounter || !s.hostInterruptOwned) && s.interruptHealLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

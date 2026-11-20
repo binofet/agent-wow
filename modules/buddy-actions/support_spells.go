@@ -43,22 +43,32 @@ func (s *Service) spellKindLocked(id uint32) spellcatalog.Kind {
 
 // Only observed dead players or actual owned corpse objects can grant a target.
 func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner uint64, r spellcatalog.Spell, team uint8) uint64 {
-	if owner == s.selfGUID {
-		return 0
+	target, pos, ok := s.resurrectionBodyLocked(w, owner, team)
+	if ok && distance(s.pos, pos) >= r.MinFriendly && distance(s.pos, pos) <= r.MaxFriendly {
+		return target
+	}
+	return 0
+}
+
+// Resolve the real player/body independently of spell range. Lua can use the
+// resulting observed body to approach before requesting an exact resurrection.
+func (s *Service) resurrectionBodyLocked(w *worldv1.SnapshotResponse, owner uint64, team uint8) (uint64, position, bool) {
+	if owner == s.selfGUID || w.GetSelf() == nil {
+		return 0, position{}, false
 	}
 	p := observedHealingPlayer(w, owner)
 	playerTeam := observedPlayerTeam(p)
 	if team != 0 && p != nil && p.Present && (p.AliveKnown && p.Alive || playerTeam != 0 && playerTeam != team) {
-		return 0
+		return 0, position{}, false
 	}
-	if (team == 0 || playerTeam == team) && p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&ghostFlag == 0 && p.MapKnown && p.MapId == s.posMap && p.PositionKnown && finite(playerPosition(p)) && distance(s.pos, playerPosition(p)) <= r.MaxFriendly {
-		return owner
+	if (team == 0 || playerTeam == team) && p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&ghostFlag == 0 && p.MapKnown && p.MapId == w.Self.MapId && p.PositionKnown && finite(playerPosition(p)) {
+		return owner, playerPosition(p), true
 	}
 	var body *worldv1.CorpseState
 	for _, c := range w.PlayerCorpses {
-		if c != nil && c.OwnerGuid == owner && c.Present && c.Guid>>48 == 0xf101 && c.FlagsKnown && c.Flags&1 == 0 && c.MapKnown && c.MapId == s.posMap && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) {
+		if c != nil && c.OwnerGuid == owner && c.Present && c.Guid>>48 == 0xf101 && c.FlagsKnown && c.Flags&1 == 0 && c.MapKnown && c.MapId == w.Self.MapId && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) {
 			if body != nil {
-				return 0
+				return 0, position{}, false
 			}
 			body = c
 		}
@@ -69,14 +79,11 @@ func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner ui
 			corpseTeam = playerTeamForRace(body.RaceId)
 		}
 		if team != 0 && (corpseTeam != 0 && corpseTeam != team || corpseTeam == 0 && playerTeam != team) {
-			return 0
+			return 0, position{}, false
 		}
-		pos := position{body.X, body.Y, body.Z, body.Orientation}
-		if distance(s.pos, pos) <= r.MaxFriendly {
-			return body.Guid
-		}
+		return body.Guid, position{body.X, body.Y, body.Z, body.Orientation}, true
 	}
-	return 0
+	return 0, position{}, false
 }
 
 func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {

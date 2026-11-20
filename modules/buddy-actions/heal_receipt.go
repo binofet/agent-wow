@@ -34,7 +34,7 @@ func (s *Service) reserveExplicitCastLocked(token string, spell uint32, target u
 
 func (s *Service) pendingExplicitCastLocked() *supportAttempt {
 	op := s.supportOp
-	if op != nil && (op.view.Capability == string(spellcatalog.Heal) || op.view.Capability == offenseCapability) && s.state.CastPending &&
+	if op != nil && (op.view.Capability == string(spellcatalog.Heal) || op.view.Capability == offenseCapability || op.view.Capability == "interrupt") && s.state.CastPending &&
 		s.castCount == op.count && s.pendingSpell == op.view.SpellId && s.pendingTarget == op.view.TargetGuid {
 		return op
 	}

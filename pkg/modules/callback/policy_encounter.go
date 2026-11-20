@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	PolicyEncounterKeyEnv = "AGENT_WOW_POLICY_ENCOUNTER_KEY"
-	policyEncounterKey    = "agentwow-encounter-key"
-	policyEncounterVisit  = "agentwow-encounter-visit"
-	encounterLeaseService = "agentwow.policy.encounter.v1.Lease"
-	encounterLeaseMethod  = "/" + encounterLeaseService + "/Renew"
+	PolicyEncounterKeyEnv   = "AGENT_WOW_POLICY_ENCOUNTER_KEY"
+	policyEncounterKey      = "agentwow-encounter-key"
+	policyEncounterVisit    = "agentwow-encounter-visit"
+	policyResurrectionOwned = "agentwow-encounter-resurrection"
+	policyInterruptOwned    = "agentwow-encounter-interrupts"
+	encounterLeaseService   = "agentwow.policy.encounter.v1.Lease"
+	encounterLeaseMethod    = "/" + encounterLeaseService + "/Renew"
 )
 
 // The heartbeat is private to the host and Actions process. It is never
@@ -70,4 +72,20 @@ func IncomingPolicyEncounterVisit(ctx context.Context) uint64 {
 	}
 	visit, _ := strconv.ParseUint(visits[0], 10, 64)
 	return visit
+}
+
+// These are capabilities actually supplied by the evaluated policy, not
+// gameplay enable/disable preferences. Unsupported lanes retain native service.
+func WithPolicySupportOwnership(ctx context.Context, resurrection, interrupts bool) context.Context {
+	return metadata.AppendToOutgoingContext(ctx,
+		policyResurrectionOwned, strconv.FormatBool(resurrection),
+		policyInterruptOwned, strconv.FormatBool(interrupts))
+}
+
+func IncomingPolicySupportOwnership(ctx context.Context) (bool, bool) {
+	read := func(key string) bool {
+		values := metadata.ValueFromIncomingContext(ctx, key)
+		return len(values) == 1 && values[0] == "true"
+	}
+	return read(policyResurrectionOwned), read(policyInterruptOwned)
 }

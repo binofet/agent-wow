@@ -16,6 +16,9 @@ const PolicySpellService = "agentwow.policy-spell.v1"
 // RPC and the policy-only Sap path that requires observed Stealth.
 const PolicyHostileSpellService = "agentwow.policy-hostile-spell.v1"
 
+// PolicySupportSpellService identifies exact resurrection and interrupt bridges.
+const PolicySupportSpellService = "agentwow.policy-support-spell.v1"
+
 // PolicyMeleeService identifies Actions builds with exact, acknowledged start
 // and stop operations on the policy callback bridge.
 const PolicyMeleeService = "agentwow.policy-melee.v1"
