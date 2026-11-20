@@ -17,6 +17,7 @@ type SessionCatalog struct {
 	SessionID     string `json:"sessionId"`
 	CharacterGUID string `json:"characterGuid"`
 	moddisc.Catalog
+	HostMethods []HostMethod `json:"hostMethods"`
 }
 
 func (m *Manager) describe(params json.RawMessage) (json.RawMessage, error) {
@@ -52,5 +53,5 @@ func (m *Manager) observedSession() (SessionCatalog, PolicyObserver, error) {
 	if m.dir == "" {
 		return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable")
 	}
-	return SessionCatalog{SessionID: filepath.Base(m.dir), CharacterGUID: strconv.FormatUint(m.session.Identity.CharacterGUID, 10), Catalog: m.registry.Catalog()}, m.policyObserver, nil
+	return SessionCatalog{SessionID: filepath.Base(m.dir), CharacterGUID: strconv.FormatUint(m.session.Identity.CharacterGUID, 10), Catalog: m.registry.Catalog(), HostMethods: hostMethods()}, m.policyObserver, nil
 }

@@ -11,6 +11,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type policyEditRequest struct {
+	SessionID        string  `json:"sessionId"`
+	CharacterGUID    string  `json:"characterGuid"`
+	ExpectedRevision *string `json:"expectedRevision"`
+	Source           *string `json:"source"`
+	UseBuiltin       bool    `json:"useBuiltin"`
+}
+
 // The local control plane edits the existing host using the same revision
 // fence as native callers. It never starts a second policy or world session.
 func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMessage) (json.RawMessage, error) {
@@ -18,13 +26,8 @@ func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMe
 	fault := func(code int, err error) (json.RawMessage, error) {
 		return nil, &CallError{Code: code, Module: "session", Method: method, Err: err}
 	}
-	var request struct {
-		SessionID        string  `json:"sessionId"`
-		CharacterGUID    string  `json:"characterGuid"`
-		ExpectedRevision *string `json:"expectedRevision"`
-		Source           *string `json:"source"`
-		UseBuiltin       bool    `json:"useBuiltin"`
-	}
+	var request policyEditRequest
+
 	d := json.NewDecoder(bytes.NewReader(params))
 	d.DisallowUnknownFields()
 	reload := method == "reload_policy"
