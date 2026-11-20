@@ -351,7 +351,7 @@ local function decide_encounter(frame)
     local support
     local heal_sequence = obs.healingSequence
     if obs.worldObservationRevision and obs.healing and obs.healing.hostOwned == true then heal_sequence = state.sequence end
-    if plan and members[obs.selfGuid] and (not fallback or in_combat) and healing and
+    if members[obs.selfGuid] and healing and
        state.healingSequence and heal_sequence == state.healingSequence then
         local result = healing.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
             input={kind="healing", observationSequence=state.healingSequence}})
