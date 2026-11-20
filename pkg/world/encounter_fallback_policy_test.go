@@ -8,6 +8,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -278,4 +279,50 @@ local encounter_intent = {
 	obs.Party.RaidTargets = nil
 	obs.ProtectedAuras = nil
 	p.expectOffense(p.observe(obs), "engaged_defense", moon, 585)
+}
+
+func TestEncounterMarkedMovingTargetKeepsEligibleAttacks(t *testing.T) {
+	const intent = `
+local encounter_intent = {
+    plan={id="moving-pull", groupGuid="7", leaderGuid="3", killOrder={"skull"}},
+    damage={scope="focus", spellId=585}
+}
+`
+	for _, melee := range []bool{false, true} {
+		name := "ranged spell"
+		if melee {
+			name = "melee in reach"
+		}
+		t.Run(name, func(t *testing.T) {
+			p := newFallbackPolicyTest(t, intent)
+			obs := fallbackObservation()
+			obs.Party = &actionsv1.EncounterParty{
+				Group: fallbackRoster(true),
+				RaidTargets: &partyv1.RaidTargetState{GroupGuid: fallbackGroup, Complete: true, Revision: 1,
+					Marks: []*partyv1.RaidTarget{{Icon: 8, TargetGuid: fallbackNPC}}},
+			}
+			obs.Players[fallbackGUID(fallbackLeader)] = fallbackPlayer(fallbackLeader)
+			addFallbackTarget(obs, fallbackNPC, fallbackLeader, 100)
+			target := obs.Targets[fallbackGUID(fallbackNPC)]
+			target.Trajectory = &worldv1.CreatureTrajectory{Known: true, Stopped: false}
+			if melee {
+				obs.Spells["585"].Ready = false
+				target.MeleeReady = true
+				decision := p.decide(p.observe(obs))
+				action, _ := decision.Output["action"].(map[string]any)
+				if decision.Output["phase"] != "engaged_focus" || action["capability"] != "melee_start" || action["targetGuid"] != fallbackGUID(fallbackNPC) {
+					t.Fatalf("moving target lost ready melee: %+v", decision.Output)
+				}
+				target.MeleeReady = false
+				p.expectNoAction(p.observe(obs))
+			} else {
+				p.expectOffense(p.observe(obs), "engaged_focus", fallbackNPC, 585)
+			}
+			// Target motion grants neither a missing position nor protected-target damage.
+			target.PositionKnown = false
+			p.expectNoAction(p.observe(obs))
+			target.PositionKnown, target.Protected = true, true
+			p.expectNoAction(p.observe(obs))
+		})
+	}
 }

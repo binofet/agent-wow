@@ -388,7 +388,7 @@ local function decide_encounter(frame)
         end
     end
     local focus = out.focusGuid and obs.targets[out.focusGuid]
-    if focus and focus.positionKnown == true and (fallback or not focus.trajectory or focus.trajectory.stopped == true) then
+    if focus and focus.positionKnown == true then
         local spell = damage_spell(obs, focus)
         if spell then
             out.action = proposal(obs, "offense", out.focusGuid, spell)
