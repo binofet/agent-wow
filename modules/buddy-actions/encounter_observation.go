@@ -64,6 +64,15 @@ func validEncounterWorldEntry(payload []byte) bool {
 func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*actionsv1.EncounterObservationResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Expiry is native operation bookkeeping, independent of inbound traffic.
+	// Publish terminal receipts on this existing observation stream as well as
+	// OnPacket, so a quiet world cannot leave Lua's action ledger pending.
+	s.expireCrowdControlLocked()
+	s.expireSelfChannelLocked()
+	s.expireExplicitCastLocked()
+	s.expireMeleeOperationLocked()
+	s.supportSnapshotLocked(nil)
+	defer s.reportPolledPolicyEffectsLocked(ctx)
 
 	identity := &actionsv1.EncounterObservationResponse{
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(false), HostRequested: proto.Bool(s.hostEncounterKey != ""),
@@ -98,7 +107,9 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	if state.GetSessionId() == s.sessionID {
 		out.Party, online = s.encounterParty(state)
 	}
+	s.supportSnapshotLocked(w)
 	players := s.encounterPlayers(w, online, out)
+	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid
@@ -170,6 +181,15 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		}
 		if view.PositionKnown {
 			view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = p.X, p.Y, p.Z, p.Orientation, p.PositionRevision
+		}
+		if guid == s.selfGUID && s.matchesCurrentEncounterVisitLocked(w) && p.Present && p.MapKnown && view.PositionKnown &&
+			s.posKnown && finite(s.pos) && s.posMap == p.MapId && s.positionRevision == p.PositionRevision &&
+			!s.state.MotionUnconfirmed && !s.clientControlLost && !s.clientControlRestoring {
+			// Own movement is not echoed by the server. World retains the
+			// raw baseline; Actions knows the pose it actually wrote against
+			// that same map/revision. Lua must plan from that current pose.
+			view.X, view.Y, view.Z, view.Orientation = s.pos.x, s.pos.y, s.pos.z, s.pos.o
+			view.MovementKnown, view.Moving = true, s.state.Moving
 		}
 		if p.AliveKnown {
 			view.Alive = proto.Bool(p.Alive)
@@ -306,5 +326,21 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	}
 	if sapReady {
 		out.ControlCapabilities = append(out.ControlCapabilities, &actionsv1.EncounterControlCapability{Guid: s.selfGUID, Technique: "sap", Ready: true})
+	}
+}
+
+// No game packets are sent here. Tokens and native phase parsers correlate the
+// same terminal receipts consumed by the packet callback path exactly once.
+func (s *Service) reportPolledPolicyEffectsLocked(ctx context.Context) {
+	if op := s.supportOp; op != nil && op.policySpellToken != "" {
+		// Keep the native token until a packet callback/new operation retires
+		// it. A canceled observation read may lose its trailers; repeating a
+		// token is harmless because the host consumes each action once.
+		copy := *op
+		copy.reportPolicySpellEffect(ctx, s.state.CastPending)
+	}
+	if op := s.meleeOp; op != nil && op.token != "" {
+		copy := *op
+		copy.reportPolicyMeleeEffect(ctx)
 	}
 }

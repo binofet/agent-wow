@@ -11,6 +11,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -92,8 +93,13 @@ func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMe
 		return fault(-32602, status.Error(codes.InvalidArgument, err.Error()))
 	}
 	result := dynamicpb.NewMessage(md.Descriptor().Output())
-	if err := m.invoke(ctx, publicCall, "jsonrpc", name, inst, md, req, result); err != nil {
-		return fault(-32000, err)
+	var trailers metadata.MD
+	invokeErr := m.invoke(ctx, publicCall, "jsonrpc", name, inst, md, req, result, grpc.Trailer(&trailers))
+	// Native action expiry can occur without any inbound world packet. Read
+	// feeds carry the same correlated terminal receipt trailers as OnPacket.
+	m.recordSpellEffect(name, trailers)
+	if invokeErr != nil {
+		return fault(-32000, invokeErr)
 	}
 	body, err := (protojson.MarshalOptions{Resolver: inst.definition.Types(), EmitUnpopulated: emitDefaults}).Marshal(result)
 	if err != nil {
