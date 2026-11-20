@@ -141,3 +141,22 @@ func TestEncounterMovementFailedHostileCastRechecksMovingCoverBeforeRetry(t *tes
 		})
 	}
 }
+
+func TestEncounterMovementAcceptsProtobufJSONTrajectoryAge(t *testing.T) {
+	for _, age := range []string{"20", "28369"} {
+		t.Run(age, func(t *testing.T) {
+			vm := movementPolicy(t)
+			obs := movementObservation()
+			target := obs["targets"].(map[string]any)["99"].(map[string]any)
+			// Real protojson: CreatureTrajectory.age_ms is uint64, so the wire JSON
+			// value is a string even though duration_ms is a numeric uint32.
+			target["trajectory"] = map[string]any{"known": true, "durationMs": float64(77), "ageMs": age,
+				"destinationKnown": true, "destinationX": float64(25), "destinationY": float64(0), "destinationZ": float64(0)}
+			obs["targetMovement"] = map[string]any{"targetGuid": "99", "visitId": "1", "rangeYards": float64(30), "requireLos": true, "ready": true}
+			decision, err := vm.Decide(context.Background(), map[string]any{"obs": obs, "target": "99", "options": map[string]any{"rangeYards": float64(30), "requireLos": true}})
+			if err != nil || decision.Output["ready"] != true || decision.Output["action"] != nil {
+				t.Fatalf("server trajectory age caused infinite positioning despite native ready: %+v %v", decision.Output, err)
+			}
+		})
+	}
+}

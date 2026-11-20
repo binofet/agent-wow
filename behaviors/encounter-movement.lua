@@ -29,10 +29,13 @@ local function pose(unit)
     local x,y,z,o = unit.x,unit.y,unit.z,unit.orientation or 0
     local t = unit.trajectory
     if t and t.known == true and t.stopped ~= true then
+        -- Protobuf JSON encodes uint64 ages as decimal strings. Convert this
+        -- elapsed-time scalar; keep GUIDs as exact strings throughout policy.
+        local age = tonumber(t.ageMs)
         if t.cyclic == true or t.transportRelative == true or t.destinationKnown ~= true or
-           not number(t.durationMs) or t.durationMs <= 0 or not number(t.ageMs) or t.ageMs < 0 or
+           not number(t.durationMs) or t.durationMs <= 0 or not number(age) or age < 0 or
            not number(t.destinationX) or not number(t.destinationY) or not number(t.destinationZ) then return end
-        local fraction = math.min(1,t.ageMs/t.durationMs)
+        local fraction = math.min(1,age/t.durationMs)
         x,y,z = x+(t.destinationX-x)*fraction,y+(t.destinationY-y)*fraction,z+(t.destinationZ-z)*fraction
     end
     return {x=x,y=y,z=z,o=number(o) and o or 0}
