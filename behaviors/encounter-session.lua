@@ -401,7 +401,8 @@ local function decide_encounter(frame)
         if active_melee then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
-            out.action = position_for(support.targetGuid, support.spellId) or proposal(obs, "heal", support.targetGuid, support.spellId)
+            local needs_position = support.needsApproach or movement and movement.needs_position(support.targetGuid)
+            out.action = needs_position and position_for(support.targetGuid, support.spellId) or proposal(obs, "heal", support.targetGuid, support.spellId)
         end
         return out
     end
