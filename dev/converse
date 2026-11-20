@@ -2978,7 +2978,8 @@ class Conversation:
             selfGuid=str(self.character_guid),ownerGuid=str(self.player_guid),sessionId=sid,
             policyCommands={"show":base+["show"]+binding,
                 "apply":base+["apply"]+binding+["--source","<PATH>","--expected-revision","<HASH>"],
-                "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"]})
+                "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"],
+                "input":["python3","-B",str(ROOT/"dev/policy-input")]+binding+["--value","<JSON object>"]})
 
     def poll_shared_quest(self):
         # The standing three-character worker owns main-party shares. Nix's
