@@ -208,7 +208,7 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 			if c.AliveKnown {
 				view.Alive = proto.Bool(c.Alive)
 			}
-			view.MeleeReady = view.Attackable && engaged && meleeCaster && !s.autoStopping &&
+			view.MeleeReady = view.Attackable && meleeCaster && !s.autoStopping &&
 				!s.state.AutoAttackUnconfirmed && s.pendingMeleeOperationLocked() == nil &&
 				s.exactMeleeStartAvailableLocked(c.Guid) && s.exactMeleeReadyAtLocked(w, c, c.Guid, online, from)
 			out.Targets[key] = view

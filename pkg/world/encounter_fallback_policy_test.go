@@ -168,11 +168,9 @@ func TestEncounterFallbackRequiresExactThreatAndActionCustody(t *testing.T) {
 	if len(queue) == 0 {
 		t.Fatalf("defensive focus did not come from the queue: %+v", decision.Output)
 	}
-	for _, value := range queue {
-		row := value.(map[string]any)
-		if row["engaged"] != true {
-			t.Fatalf("unengaged target entered the defensive queue: %+v", queue)
-		}
+	// Idle targets stay in the planning queue without becoming combat focus.
+	if decision.Output["focusGuid"] != fallbackGUID(attacker) {
+		t.Fatal("idle candidate displaced an actual attacker")
 	}
 	id, err := p.host.ReserveAction(decision)
 	if err != nil {
@@ -210,11 +208,13 @@ func TestEncounterFallbackRequiresCurrentPartyVictim(t *testing.T) {
 	addFallbackTarget(obs, fallbackNPC, fallbackLeader, 900)
 	addFallbackTarget(obs, fallbackNPC+1, 17, 1)
 	p.expectOffense(p.observe(obs), "engaged_defense", fallbackNPC, 133)
+	// An already witnessed enemy remains our enemy if its original victim
+	// disconnects or leaves the map before it dies.
 	obs.Party.Group.Members[1].Online = false
-	p.expectNoAction(p.observe(obs))
+	p.expectOffense(p.observe(obs), "engaged_defense", fallbackNPC, 133)
 	obs.Party.Group.Members[1].Online = true
 	obs.Players[fallbackGUID(fallbackLeader)].MapId = proto.Uint32(1)
-	p.expectNoAction(p.observe(obs))
+	p.expectOffense(p.observe(obs), "engaged_defense", fallbackNPC, 133)
 }
 
 func TestEncounterFallbackPreservesBoundPlanAndControl(t *testing.T) {

@@ -16,8 +16,7 @@ import (
 
 const offenseCapability = "offense"
 
-// CastOffense is one stationary cast against the caller-selected current
-// attacker. It does not choose a spell or victim or start an attack controller.
+// CastOffense is one stationary cast against the caller-selected creature. It does not choose a spell or victim or start an attack controller.
 func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseRequest) (*actionsv1.State, error) {
 	target := r.GetTargetGuid()
 	kind := target >> 48
@@ -66,7 +65,7 @@ func (s *Service) CastOffense(ctx context.Context, r *actionsv1.CastOffenseReque
 		return nil, status.Error(codes.FailedPrecondition, "stationary caster with ready resources required")
 	}
 	if !exactOffenseTarget(w, hostile, target, online) || s.targetProtection.blocks(target, s.now()) {
-		return nil, status.Error(codes.FailedPrecondition, "selected attackable creature must be attacking this body or its current party")
+		return nil, status.Error(codes.FailedPrecondition, "selected creature must be observed, alive and attackable on the current map")
 	}
 	to, known, _ := creaturePosition(hostile)
 	if !known || !offenseLineInRange(s.pos, to, spell) {
@@ -135,17 +134,17 @@ func (s *Service) offenseRankReadyLocked(self *worldv1.PlayerState, spell spellc
 		uint64(self.Power) >= spellCost(spell, self)
 }
 
-func exactOffenseTarget(w *worldv1.SnapshotResponse, c *worldv1.CreatureState, target uint64, online map[uint64]bool) bool {
+func exactOffenseTarget(w *worldv1.SnapshotResponse, c *worldv1.CreatureState, target uint64, _ map[uint64]bool) bool {
 	if c == nil || c.Guid != target || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId ||
 		!c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || c.MaxHealth == 0 || c.Health > c.MaxHealth ||
 		!c.UnitFlagsKnown || c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 ||
 		c.UnitFlags_2&1 != 0 || c.DynamicFlags&0x20 != 0 {
 		return false
 	}
-	if ongoingAttack(c, w.Self) {
-		return true
-	}
-	return partyDefenseEligible(w, c, online)
+	// Who to fight is the caller's policy. A dead former victim, an idle
+	// creature, or a temporarily missing party feed does not make a legal
+	// selected attack impossible. The realm still validates faction rules.
+	return true
 }
 
 func offenseLineInRange(from, to position, spell spellcatalog.Spell) bool {

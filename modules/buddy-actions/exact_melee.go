@@ -139,7 +139,7 @@ func (s *Service) exactMeleeReadyAtLocked(w *worldv1.SnapshotResponse, creature 
 		return false
 	}
 	to, known, estimated := creaturePosition(creature)
-	if !known || estimated || !movementflags.GroundCompatible(creature.MovementFlags, 0) || creature.MovementFlags&0xff != 0 ||
+	if !known || estimated || !movementflags.GroundCompatible(creature.MovementFlags, 0) ||
 		!self.CombatReachKnown || !creature.CombatReachKnown {
 		return false
 	}

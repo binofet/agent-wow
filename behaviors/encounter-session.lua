@@ -9,7 +9,7 @@ local tactics = assert(encounter_tactics)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
 local intent = encounter_intent or {}
-local state = {bindings={}, defeated={}, controls={}}
+local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
@@ -90,6 +90,7 @@ local function import_state(checkpoint)
         cursor=checkpoint.cursor, pending=checkpoint.pending
     })) then return false end
     state = saved
+    state.engaged = state.engaged or {}
     observation = saved.observation
     mana_observation, mana_sequence = nil, nil
     return true
@@ -176,15 +177,19 @@ end
 
 local function observe_targets(obs, members)
     local targets, auras = {}, {}
+    state.engaged = state.engaged or {}
     local players = obs.players or {}
     local in_combat = false
     for target, npc in pairs(obs.targets or {}) do
         if guid(target) and same_map(npc, obs.mapId) then
             local attack = (obs.engagement or {})[target]
             local victim = attack and guid(attack.victimGuid)
-            local engaged = npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
-                            same_map(players[victim], obs.mapId) and alive(players[victim])
-            targets[target] = copy_target(npc, engaged == true, npc.protected == true or state.controls[target] == true)
+            local witnessed = npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
+                              same_map(players[victim], obs.mapId)
+            if witnessed then state.engaged[target] = true end
+            if npc.aliveKnown == true and npc.alive == false then state.engaged[target] = nil end
+            local engaged = state.engaged[target] == true
+            targets[target] = copy_target(npc, engaged, npc.protected == true or state.controls[target] == true)
             if engaged and alive(npc) then in_combat = true end
         end
     end
@@ -271,7 +276,7 @@ local function decide_encounter(frame)
     if state.visitId ~= obs.visitId or plan and state.planId ~= plan.id then
         state.visitId, state.mapId = obs.visitId, obs.mapId
         state.planId, state.groupGuid, state.leaderGuid = plan and plan.id, group.groupGuid, group.leaderGuid
-        state.bindings, state.defeated, state.controls = {}, {}, {}
+        state.bindings, state.defeated, state.controls, state.engaged = {}, {}, {}, {}
         state.started, state.focusGuid, state.markRevision = false, nil, nil
     end
     if plan and (state.groupGuid ~= group.groupGuid or state.leaderGuid ~= group.leaderGuid) then
@@ -297,10 +302,16 @@ local function decide_encounter(frame)
     for _ in pairs(state.bindings) do has_binding = true; break end
     local fallback = not plan or stale or not has_binding or marked.phase == "waiting_for_actual_group_leader"
     local order, queue_targets = {}, targets
-    if fallback and (in_combat or not plan) then
-        queue_targets = {}
-        for target, npc in pairs(targets) do
-            if npc.engaged then queue_targets[target] = npc end
+    if fallback then
+        -- Maintain the same full queue between pulls and during combat.
+        -- Marks change priority; engagement determines which rows may fight.
+        local marks = (obs.party or {}).raidTargets or {}
+        if marks.complete == true and marks.groupGuid == group.groupGuid then
+            for _, icon in ipairs({8, 7, 4, 1, 2, 3, 6, 5}) do
+                for _, row in ipairs(marks.marks or {}) do
+                    if row.icon == icon then order[#order+1] = row.targetGuid end
+                end
+            end
         end
     else
         for _, mark in ipairs(plan.killOrder or {}) do
@@ -313,10 +324,11 @@ local function decide_encounter(frame)
     local queue = tactics.decide({
         kind="combat_queue", targets=queue_targets, explicitOrder=order,
         currentFocus=not fallback and state.focusGuid or nil,
-        ownerFocus=not fallback and leader_alive and obs.observedOwnerFocus or nil,
+        ownerFocus=leader_alive and obs.observedOwnerFocus or nil,
         partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds,
     })
     out.queue = queue.queue
+    out.nextPullGuid = queue.queue[1] and queue.queue[1].targetGuid
     for _, row in ipairs(queue.queue) do
         if row.protected then out.protected[#out.protected+1] = row.targetGuid end
     end

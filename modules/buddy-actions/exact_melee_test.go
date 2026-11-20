@@ -85,7 +85,7 @@ func TestExactMeleeStartsOnceAndStopsAcknowledgedOwnTargetAfterLoss(t *testing.T
 func TestExactMeleeStartRejectsUnqualifiedRequestWithoutWrites(t *testing.T) {
 	for _, name := range []string{
 		"no token", "wrong visit", "wrong body", "unknown weapon", "unlearned", "unknown stance", "wrong stance", "control lost",
-		"nonfinite reach", "oversized reach", "too far", "behind caster", "movement", "moving target", "no attack", "foreign party", "protected",
+		"nonfinite reach", "oversized reach", "too far", "behind caster", "movement", "moving target", "protected",
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f, request, _ := exactMeleeFixture(t)

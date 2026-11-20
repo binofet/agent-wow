@@ -84,7 +84,7 @@ func TestExactOffenseUsesSelectedAttackerAndVerifiesCountBoundDamage(t *testing.
 }
 
 func TestExactOffenseRejectsUnqualifiedRequestWithoutWriting(t *testing.T) {
-	for _, name := range []string{"session", "body", "unlearned", "different target", "no attack", "foreign party", "out of range", "behind caster", "unknown channel", "insufficient mana", "protected target"} {
+	for _, name := range []string{"session", "body", "unlearned", "different target", "out of range", "behind caster", "unknown channel", "insufficient mana", "protected target"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, r, _ := exactOffenseFixture(t)
 			switch name {
@@ -154,5 +154,17 @@ func TestExactOffenseSettlesNoEffectWithoutReplay(t *testing.T) {
 				t.Fatal("wrong settlement or automatic replay", st, f.packets)
 			}
 		})
+	}
+}
+
+func TestExactOffenseLeavesTargetPriorityToLua(t *testing.T) {
+	for _, dead := range []bool{false, true} {
+		s, f, r, _ := exactOffenseFixture(t)
+		f.world.RequestedCreature.AttackVictimKnown = false
+		f.world.Owner.Alive = !dead
+		f.party = nil
+		if _, err := s.CastOffense(context.Background(), r); err != nil || len(f.packets) != 1 {
+			t.Fatalf("legal explicit target rejected after victim change: %v", err)
+		}
 	}
 }
