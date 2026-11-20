@@ -4845,6 +4845,8 @@ type EncounterPlayer struct {
 	MaxPower         uint32                 `protobuf:"varint,26,opt,name=max_power,json=maxPower,proto3" json:"max_power,omitempty"`
 	MovementKnown    bool                   `protobuf:"varint,27,opt,name=movement_known,json=movementKnown,proto3" json:"movement_known,omitempty"`
 	Moving           bool                   `protobuf:"varint,28,opt,name=moving,proto3" json:"moving,omitempty"`
+	CombatKnown      bool                   `protobuf:"varint,29,opt,name=combat_known,json=combatKnown,proto3" json:"combat_known,omitempty"`
+	InCombat         bool                   `protobuf:"varint,30,opt,name=in_combat,json=inCombat,proto3" json:"in_combat,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -5071,6 +5073,20 @@ func (x *EncounterPlayer) GetMovementKnown() bool {
 func (x *EncounterPlayer) GetMoving() bool {
 	if x != nil {
 		return x.Moving
+	}
+	return false
+}
+
+func (x *EncounterPlayer) GetCombatKnown() bool {
+	if x != nil {
+		return x.CombatKnown
+	}
+	return false
+}
+
+func (x *EncounterPlayer) GetInCombat() bool {
+	if x != nil {
+		return x.InCombat
 	}
 	return false
 }
@@ -5387,9 +5403,12 @@ type EncounterSpell struct {
 	CategoryCooldownMs uint32                     `protobuf:"varint,17,opt,name=category_cooldown_ms,json=categoryCooldownMs,proto3" json:"category_cooldown_ms,omitempty"`
 	GlobalCooldownMs   uint32                     `protobuf:"varint,18,opt,name=global_cooldown_ms,json=globalCooldownMs,proto3" json:"global_cooldown_ms,omitempty"`
 	// Exact rank resources, cooldown and requirements; excludes movement/custody.
-	Available     bool `protobuf:"varint,19,opt,name=available,proto3" json:"available,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Available         bool `protobuf:"varint,19,opt,name=available,proto3" json:"available,omitempty"`
+	SelfCastSupported bool `protobuf:"varint,20,opt,name=self_cast_supported,json=selfCastSupported,proto3" json:"self_cast_supported,omitempty"`
+	SelfAuraKnown     bool `protobuf:"varint,21,opt,name=self_aura_known,json=selfAuraKnown,proto3" json:"self_aura_known,omitempty"`
+	SelfAuraActive    bool `protobuf:"varint,22,opt,name=self_aura_active,json=selfAuraActive,proto3" json:"self_aura_active,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *EncounterSpell) Reset() {
@@ -5551,6 +5570,27 @@ func (x *EncounterSpell) GetGlobalCooldownMs() uint32 {
 func (x *EncounterSpell) GetAvailable() bool {
 	if x != nil {
 		return x.Available
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetSelfCastSupported() bool {
+	if x != nil {
+		return x.SelfCastSupported
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetSelfAuraKnown() bool {
+	if x != nil {
+		return x.SelfAuraKnown
+	}
+	return false
+}
+
+func (x *EncounterSpell) GetSelfAuraActive() bool {
+	if x != nil {
+		return x.SelfAuraActive
 	}
 	return false
 }
@@ -6927,7 +6967,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xcb\x06\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\x8b\a\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -6964,7 +7004,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05power\x18\x19 \x01(\rR\x05power\x12\x1b\n" +
 	"\tmax_power\x18\x1a \x01(\rR\bmaxPower\x12%\n" +
 	"\x0emovement_known\x18\x1b \x01(\bR\rmovementKnown\x12\x16\n" +
-	"\x06moving\x18\x1c \x01(\bR\x06movingB\t\n" +
+	"\x06moving\x18\x1c \x01(\bR\x06moving\x12!\n" +
+	"\fcombat_known\x18\x1d \x01(\bR\vcombatKnown\x12\x1b\n" +
+	"\tin_combat\x18\x1e \x01(\bR\binCombatB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_alive\"\xc4\x06\n" +
 	"\x11EncounterCreature\x12\x12\n" +
@@ -7007,7 +7049,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13EncounterEngagement\x12\x1f\n" +
 	"\vvictim_guid\x18\x01 \x01(\x04R\n" +
 	"victimGuid\x12\x15\n" +
-	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\x8d\x05\n" +
+	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\x8f\x06\n" +
 	"\x0eEncounterSpell\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x14\n" +
 	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x1e\n" +
@@ -7033,7 +7075,10 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"cooldownMs\x120\n" +
 	"\x14category_cooldown_ms\x18\x11 \x01(\rR\x12categoryCooldownMs\x12,\n" +
 	"\x12global_cooldown_ms\x18\x12 \x01(\rR\x10globalCooldownMs\x12\x1c\n" +
-	"\tavailable\x18\x13 \x01(\bR\tavailable\"^\n" +
+	"\tavailable\x18\x13 \x01(\bR\tavailable\x12.\n" +
+	"\x13self_cast_supported\x18\x14 \x01(\bR\x11selfCastSupported\x12&\n" +
+	"\x0fself_aura_known\x18\x15 \x01(\bR\rselfAuraKnown\x12(\n" +
+	"\x10self_aura_active\x18\x16 \x01(\bR\x0eselfAuraActive\"^\n" +
 	"\x17EncounterPeriodicDamage\x12&\n" +
 	"\x0fdamage_per_tick\x18\x01 \x01(\x01R\rdamagePerTick\x12\x1b\n" +
 	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\xfd\x01\n" +

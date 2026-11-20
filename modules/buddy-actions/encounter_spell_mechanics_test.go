@@ -9,6 +9,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -59,6 +60,27 @@ func TestEncounterSpellReflectsExistingRankMechanicsWithoutChoosing(t *testing.T
 	}
 	if len(f.packets) != 0 || len(f.movementObservations) != 0 {
 		t.Fatal("spell observation performed gameplay actions", f.packets)
+	}
+}
+
+func TestEncounterSpellReflectsStealthAuraAndSupportRanks(t *testing.T) {
+	s, f, obs := spellPolicyObservation(t)
+	f.world.Self.UnitFlagsKnown, f.world.Self.ClassId = true, 4
+	learnSpells(s, 1784, 6770, 2006, 2139)
+	s.encounterSpells(f.world, nil, obs)
+	stealth := obs.Spells["1784"]
+	if stealth == nil || stealth.Capability != "stealth" || !stealth.SelfCastSupported || !stealth.Ready || stealth.SelfAuraActive {
+		t.Fatal("learned Stealth preparation mechanics are not reflected", stealth)
+	}
+	for id, capability := range map[string]string{"2006": "resurrect", "2139": "interrupt", "6770": "sap"} {
+		if spell := obs.Spells[id]; spell == nil || spell.Capability != capability || !spell.MetadataKnown || spell.FamilyId == 0 {
+			t.Fatal("support rank metadata missing", id, spell)
+		}
+	}
+	emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(s.selfGUID, s.selfGUID, 1, 1784, 20000))
+	s.encounterSpells(f.world, nil, obs)
+	if !obs.Spells["1784"].SelfAuraKnown || !obs.Spells["1784"].SelfAuraActive {
+		t.Fatal("a self cast alone was not distinguished from the actual observed Stealth aura", obs.Spells["1784"])
 	}
 }
 

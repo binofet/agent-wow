@@ -89,11 +89,20 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 		if !known {
 			return nil, status.Error(codes.FailedPrecondition, "selected NPC position is not observed within crowd-control range")
 		}
-		ready, _, err := s.sapReadinessLocked(ctx, w, spell, !policySap)
+		if policySap && spell.ItemClass >= 0 && !s.weaponReady(self) {
+			return nil, status.Error(codes.FailedPrecondition, "policy Sap requires a verified equipped weapon")
+		}
+		// A caller-selected policy cast can acquire its missing creature-template
+		// observation through the ordinary bounded query. This chooses no target
+		// or action and still requires the reply before sending the actual Sap.
+		ready, reason, err := s.sapReadinessLocked(ctx, w, spell, true)
 		if err != nil {
 			return nil, err
 		}
 		if !ready {
+			if policySap {
+				return nil, status.Error(codes.FailedPrecondition, reason)
+			}
 			return s.stateLocked(), nil
 		}
 		if !s.stealthedLocked() {

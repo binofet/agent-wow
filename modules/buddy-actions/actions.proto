@@ -507,6 +507,8 @@ message EncounterPlayer {
   uint32 max_power = 26;
   bool movement_known = 27;
   bool moving = 28;
+  bool combat_known = 29;
+  bool in_combat = 30;
 }
 message EncounterCreature {
   uint64 guid = 1;
@@ -563,6 +565,9 @@ message EncounterSpell {
   uint32 global_cooldown_ms = 18;
   // Exact rank resources, cooldown and requirements; excludes movement/custody.
   bool available = 19;
+  bool self_cast_supported = 20;
+  bool self_aura_known = 21;
+  bool self_aura_active = 22;
 }
 message EncounterPeriodicDamage {
   double damage_per_tick = 1;

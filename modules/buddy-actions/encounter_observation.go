@@ -165,6 +165,7 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			LevelKnown: p.LevelKnown, Level: p.Level,
 			PowerKnown: p.PowerKnown, PowerType: p.PowerType, Power: p.Power, MaxPower: p.MaxPower,
 			MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0xff != 0,
+			CombatKnown: p.UnitFlagsKnown, InCombat: p.UnitFlags&0x80000 != 0,
 		}
 		if view.PositionKnown {
 			view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = p.X, p.Y, p.Z, p.Orientation, p.PositionRevision
@@ -256,6 +257,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	polyReady, sapReady := false, false
 	for id, spell := range s.learnedContractsLocked() {
 		view := encounterSpellMechanics(spell, self)
+		view.SelfAuraKnown, view.SelfAuraActive = s.encounterSelfAura(spell.Family)
 		switch spell.Capability().Kind {
 		case spellcatalog.Heal:
 			view.Available = s.healRankAvailableLocked(self, spell)
@@ -282,6 +284,17 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			view.Capability = "offense"
 			view.Available = s.offenseRankReadyLocked(self, spell)
 			view.Ready = offenseCaster && view.Available
+		case spellcatalog.Stealth:
+			if !view.SelfCastSupported {
+				continue
+			}
+			view.Capability = "stealth"
+			view.Available = self.UnitFlagsKnown && self.UnitFlags&0x80000 == 0 && s.encounterRankResourcesAvailable(spell, self)
+			view.Ready = currentCaster && !s.selfCastBusyLocked() && self.MovementFlagsKnown && self.MovementFlags&0xff == 0 && view.Available
+		case spellcatalog.Resurrect, spellcatalog.Interrupt:
+			view.Capability = string(spell.Capability().Kind)
+			view.Available = s.encounterRankResourcesAvailable(spell, self)
+			// Exact patient/enemy-cast readiness is reflected in support options.
 		default:
 			continue
 		}

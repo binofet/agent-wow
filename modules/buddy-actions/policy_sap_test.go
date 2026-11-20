@@ -48,7 +48,6 @@ func TestPolicySapRefusesWithoutPreparatoryWrites(t *testing.T) {
 		{"movement unsettled", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.MotionUnconfirmed = true }},
 		{"channel unknown", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) { f.world.Self.ChannelSpellKnown = false }},
 		{"channel active", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) { f.world.Self.ChannelSpellId = 7302 }},
-		{"eligible type unknown", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { delete(s.controlTemplates, 555) }},
 		{"weapon proof unknown", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { delete(s.weapons, 1000) }},
 		{"target in combat", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) {
 			f.lookupCreatures[sheepTarget].UnitFlags = 0x80000
@@ -84,6 +83,22 @@ func TestPolicySapRefusesWithoutPreparatoryWrites(t *testing.T) {
 			t.Fatalf("malformed attribution: error=%v packets=%v", err, f.packets)
 		}
 	})
+}
+
+func TestPolicySapAcquiresExactCreatureTypeBeforeCasting(t *testing.T) {
+	s, f, req := policySapFixture(t)
+	delete(s.controlTemplates, 555)
+	ctx := policySapContext(strings.Repeat("c", 64))
+	out, err := s.Sap(ctx, req)
+	if status.Code(err) != codes.FailedPrecondition || state(t, s).GetReason() != "sap_target_type_pending" || out.GetCastPending() ||
+		len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCreatureQuery || s.supportOp != nil {
+		t.Fatal("missing type must acquire only a read observation", out, err, f.packets)
+	}
+	emitPolymorph(s, opcode.SMSGCreatureQueryResponse, sapTemplateReply(555, 7))
+	out, err = s.Sap(ctx, req)
+	if err != nil || !out.GetCastPending() || len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGCastSpell {
+		t.Fatal("observed eligible type did not permit the selected exact cast", out, err, f.packets)
+	}
 }
 
 type policySapTransport struct {
