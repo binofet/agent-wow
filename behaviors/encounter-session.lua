@@ -373,6 +373,8 @@ local function decide_encounter(frame)
         if not movement or not obs.worldObservationRevision then return end
         local rank = spell and (obs.spells or {})[tostring(spell)]
         if not rank or rank.metadataKnown ~= true then return end
+        options = options or {}
+        if rank.requiresBehind == true then options.behind = true end
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
     end
@@ -418,11 +420,17 @@ local function decide_encounter(frame)
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
            not held.engaged or active_melee ~= out.focusGuid then
             out.action = proposal(obs, "melee_stop", active_melee)
-        elseif movement and obs.worldObservationRevision then
+        else
+            local strike = damage_spell(obs, obs.targets[active_melee], {instant_only=true})
+            local rank = strike and (obs.spells or {})[tostring(strike)]
+            if rank and rank.weaponStrike == true then
+                out.action = position_for(active_melee, strike) or proposal(obs, "offense", active_melee, strike)
+            elseif movement and obs.worldObservationRevision then
             local approach = movement.decide(obs, state.sequence, active_melee,
                 {rangeYards=intent.meleeRange or 3.5, requireLos=true,
                  behind=self.classKnown == true and self.classId == 4})
             out.action = approach.action
+            end
         end
         return out
     end
