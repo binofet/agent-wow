@@ -278,7 +278,7 @@ def remaining_time(deadline, expired):
 
 
 def configure(args):
-    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR
+    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR, BINARY
     global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", args.profile):
         raise BuddyError("Profile must be a short lowercase slug")
@@ -298,6 +298,7 @@ def configure(args):
     CONFIG_DIR = (args.config_dir or directory).absolute() if custom or args.config_dir else None
     DATA_DIR = (args.data_dir or ROOT / "data" / "buddies" / PROFILE).absolute() if custom or args.data_dir else None
     MODULE_DIR = args.module_dir.absolute() if args.module_dir else None
+    BINARY = (getattr(args, "binary", None) or ROOT / "bin" / "agent-wow").absolute()
     PID_FILE, LOG_FILE, LOCK_FILE = (directory / name for name in ("buddy.pid", "buddy-live.log", "buddy.lock"))
     RPC_PORT = args.rpc_port if args.rpc_port is not None else 8086
 
@@ -670,6 +671,7 @@ def main(argv=None):
     parser.add_argument("--character-name")
     parser.add_argument("--character-guid", type=int)
     parser.add_argument("--rpc-port", type=int)
+    parser.add_argument("--binary", type=Path, help="Client executable for this profile's tracked lifecycle")
     for flag in ("config", "config-dir", "data-dir", "module-dir"):
         parser.add_argument("--" + flag, type=Path)
     args = parser.parse_args(argv)

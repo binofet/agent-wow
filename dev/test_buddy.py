@@ -917,6 +917,29 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.assertEqual(record["argv"],buddy.command_line())
         self.assertFalse(buddy.ready_line(b'level=INFO msg="world session ready" event=ready pid=12345 character.name=Mira character.guid=11 rpc_url=http://127.0.0.1:8087/rpc\n',12345))
 
+    def test_explicit_binary_preserves_tracking_and_requires_matching_lifecycle_selection(self):
+        original_binary = buddy.BINARY
+        canary = buddy.ROOT / "canary-client"
+        canary.write_text("canary executable")
+        canary.chmod(0o700)
+        self.profile(binary=canary)
+        record = self.launch()
+        self.assertEqual(record["argv"][0], str(canary))
+        self.assertEqual(self.spawn_arguments[0][0][0], str(canary))
+        self.assertTrue(buddy.running_owned(record))
+        self.assertEqual(buddy.status(), 0)
+        self.profile()
+        self.assertEqual(buddy.BINARY, original_binary)
+        for action in (buddy.start, buddy.stop, buddy.status):
+            with self.assertRaisesRegex(buddy.BuddyError, "left untouched"):
+                action()
+        self.send_signal.assert_not_called()
+        self.profile(binary=canary)
+        self.assertEqual(buddy.load_record(), record)
+        self.send_signal.side_effect = self.confirmed_exit
+        self.assertEqual(buddy.stop(), 0)
+        self.send_signal.assert_called_once()
+
     def test_other_profile_record_is_never_signaled_even_with_matching_pid(self):
         self.profile()
         self.launch()
