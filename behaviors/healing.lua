@@ -58,10 +58,10 @@ local function within_range(spell, distance)
   return not spell.selfOnly and distance >= spell.minRange and distance <= spell.maxRange
 end
 
-local function can_reach(patient, selfGuid, spells)
+local function can_heal(patient, selfGuid, spells)
   if patient.guid == selfGuid then return true end
   for _, spell in ipairs(spells) do
-    if within_range(spell, patient.distance) then return true end
+    if not spell.selfOnly and spell.maxRange > 0 and patient.distance >= spell.minRange then return true end
   end
   return false
 end
@@ -71,13 +71,23 @@ local function choose_rank(patient, selfGuid, spells)
   local missing = patient.maxHealth - patient.health
   local self = patient.guid == selfGuid
   local urgent = patient.underAttack or patient.health * 100 < patient.maxHealth * 40
+  local current_range
   for _, spell in ipairs(spells) do
-    if self or within_range(spell, patient.distance) then
+    if not self and within_range(spell, patient.distance) then current_range = true end
+  end
+  for _, spell in ipairs(spells) do
+    if self or not spell.selfOnly and patient.distance >= spell.minRange and
+      (current_range and within_range(spell, patient.distance) or not current_range and spell.maxRange > 0) then
       local effective = math.min(spell.amount, missing)
       local denominator = math.max(1, spell.cost)
       if urgent then denominator = math.max(1500, spell.castMs) end
       local score = effective / denominator
-      if score > bestScore or (score == bestScore and prefer_rank(spell, best)) then
+      -- If no rank reaches yet, choose the longest available friendly reach
+      -- before comparing efficiency. That is the range the movement policy
+      -- should achieve; it must not silently substitute a different rank.
+      local longer = not self and not current_range and best and spell.maxRange ~= best.maxRange
+      if not best or longer and spell.maxRange > best.maxRange or not longer and
+        (score > bestScore or score == bestScore and prefer_rank(spell, best)) then
         best, bestScore = spell, score
       end
     end
@@ -92,8 +102,6 @@ local function choose_cast(view)
       type(view.patients) ~= "table" or type(view.spells) ~= "table" then
     return nil, nil
   end
-  local reach = view.maxReach or 35
-  if type(reach) ~= "number" or reach < 0 then return nil, nil end
   local spells = affordable_ranks(view.spells, caster.mana)
   if #spells == 0 then return nil, nil end
   local target
@@ -102,8 +110,8 @@ local function choose_cast(view)
         type(patient.health) == "number" and patient.health > 0 and
         type(patient.maxHealth) == "number" and patient.health * 100 < patient.maxHealth * 85 and
         (patient.guid == caster.guid or
-          (type(patient.distance) == "number" and patient.distance >= 0 and patient.distance <= reach)) and
-        prefer_patient(patient, target, caster.guid) and can_reach(patient, caster.guid, spells) then
+          (type(patient.distance) == "number" and patient.distance >= 0)) and
+        prefer_patient(patient, target, caster.guid) and can_heal(patient, caster.guid, spells) then
       target = patient
     end
   end
@@ -127,10 +135,15 @@ return {
     observation, sequence = nil, nil
     local target, rank = choose_cast(view)
     if not target then return {} end
-    return {action = {
+    local action = {
       capability = "heal", sessionId = frame.session_id, selfGuid = view.caster.guid,
       targetGuid = target.guid, spellId = rank.spellId,
-    }}
+    }
+    if target.guid ~= view.caster.guid and not within_range(rank, target.distance) then
+      action.needsApproach = true
+      action.rangeYards, action.minRangeYards, action.requireLos = rank.maxRange, rank.minRange, true
+    end
+    return {action = action}
   end,
   export_state = function()
     return {version = 1, data = {}}

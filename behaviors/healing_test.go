@@ -94,6 +94,19 @@ func requireHeal(t *testing.T, decision behavior.Decision, target string, spell 
 	}
 }
 
+func requireHealApproach(t *testing.T, decision behavior.Decision, target string, spell int, minRange, maxRange float64) {
+	t.Helper()
+	want := map[string]any{
+		"capability": "heal", "sessionId": "healer-session", "selfGuid": "1",
+		"targetGuid": target, "spellId": float64(spell), "needsApproach": true,
+		"rangeYards": maxRange, "minRangeYards": minRange, "requireLos": true,
+	}
+	action, _ := decision.Output["action"].(map[string]any)
+	if len(decision.Output) != 1 || !maps.Equal(action, want) {
+		t.Fatalf("heal catch-up proposal = %v, want %v", decision.Output, want)
+	}
+}
+
 func TestHealingPatientAndRankPolicy(t *testing.T) {
 	session := newHealingSession(t, healingPolicy(t))
 	lesserHeal := healRank(2050, 1, 1, 35, 30, 1500, 0, 40, false)
@@ -107,6 +120,7 @@ func TestHealingPatientAndRankPolicy(t *testing.T) {
 		mana     int
 		target   string
 		spell    int
+		approach float64
 	}{
 		{
 			name: "standing party heal and mana efficiency",
@@ -139,18 +153,18 @@ func TestHealingPatientAndRankPolicy(t *testing.T) {
 			mana: 100, target: "4", spell: 2061,
 		},
 		{
-			name: "rounded reach cannot admit a target past 35 yards",
+			name: "learned forty-yard heal reaches past the former thirty-five-yard cap",
 			patients: []any{patient("3", 10, 100, 35.001, true, true),
 				patient("4", 20, 100, 10, false, false)},
-			mana: 100, target: "4", spell: 2061,
+			mana: 100, target: "3", spell: 2061,
 		},
 		{
-			name: "short and long spell ranges fall through to a castable patient",
+			name: "outside range selects catch-up instead of ignoring the injured patient",
 			patients: []any{patient("3", 10, 100, 4.99, true, false),
 				patient("4", 20, 100, 10.01, false, false),
 				patient("5", 80, 100, 10, false, false)},
 			spells: []any{healRank(2050, 1, 1, 35, 30, 1500, 5, 10, false)},
-			mana:   30, target: "5", spell: 2050,
+			mana:   30, target: "4", spell: 2050, approach: 10,
 		},
 		{
 			name: "self-only spell remains available for caster",
@@ -205,9 +219,38 @@ func TestHealingPatientAndRankPolicy(t *testing.T) {
 				spells = ordinary
 			}
 			sequence := enqueueHealing(t, session, healingObservation(true, test.mana, test.patients, spells))
-			requireHeal(t, decideHealing(t, session, sequence), test.target, test.spell)
+			decision := decideHealing(t, session, sequence)
+			if test.approach > 0 {
+				requireHealApproach(t, decision, test.target, test.spell, 5, test.approach)
+			} else {
+				requireHeal(t, decision, test.target, test.spell)
+			}
 		})
 	}
+}
+
+func TestHealingCatchupTracksInjuredPatientAndThenHealsAfterMovement(t *testing.T) {
+	session := newHealingSession(t, healingPolicy(t))
+	spells := []any{healRank(2050, 1, 1, 35, 30, 1500, 0, 40, false)}
+	ally := patient("4", 20, 100, 60, false, true)
+	deadOwner := patient("3", 0, 100, 10, true, false)
+	view := healingObservation(true, 30, []any{deadOwner, ally}, spells)
+	requireHealApproach(t, decideHealing(t, session, enqueueHealing(t, session, view)), "4", 2050, 0, 40)
+	ally["distance"] = 36
+	requireHeal(t, decideHealing(t, session, enqueueHealing(t, session, view)), "4", 2050)
+	ally["health"] = 100
+	ally["distance"] = 60
+	requireHeal(t, decideHealing(t, session, enqueueHealing(t, session, view)), "", 0)
+}
+
+func TestHealingCatchupUsesLongestLearnedEligibleRange(t *testing.T) {
+	session := newHealingSession(t, healingPolicy(t))
+	spells := []any{
+		healRank(2050, 1, 1, 35, 30, 1500, 0, 40, false),
+		healRank(2054, 16, 1, 120, 30, 1500, 0, 30, false),
+	}
+	view := healingObservation(true, 30, []any{patient("4", 20, 100, 60, false, true)}, spells)
+	requireHealApproach(t, decideHealing(t, session, enqueueHealing(t, session, view)), "4", 2050, 0, 40)
 }
 
 func TestHealingOnlyProposesFromCurrentUnconsumedObservation(t *testing.T) {
