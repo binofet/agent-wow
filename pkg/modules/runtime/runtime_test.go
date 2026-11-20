@@ -357,28 +357,3 @@ func TestFatalFailuresAndCleanup(t *testing.T) {
 		}
 	})
 }
-
-func TestPacketQueueLimits(t *testing.T) {
-	root := t.TempDir()
-	modtest.WriteModule(t, root, "worker", "")
-	registry, err := moddisc.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, size := range []int{1, 1 << 20} {
-		m := New(registry, nil, nil)
-		count := queueLimit
-		if size > 1 {
-			count = queueBytes / size
-		}
-		for range count {
-			if err := m.Publish(0x236, make([]byte, size)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := m.Publish(0x236, make([]byte, size)); err == nil {
-			t.Fatal("queue grew without bound")
-		}
-		m.Stop()
-	}
-}

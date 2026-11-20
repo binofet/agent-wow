@@ -18,7 +18,9 @@ type instance struct {
 	launch                       modrunner.Launch
 	conn                         *grpc.ClientConn
 	server                       *grpc.Server
-	queue                        chan *modv1.WorldPacket
+	queue                        []*modv1.WorldPacket
+	queueHead                    int
+	queueReady                   chan struct{}
 	queuedBytes                  int
 	healthy, prepared, attempted bool
 }
@@ -71,7 +73,7 @@ func New(registry *moddisc.Registry, runner modrunner.Runner, logger *slog.Logge
 	// enough to consume them. Registration is fixed for the whole session.
 	for _, name := range m.order {
 		d, _ := registry.Lookup(name)
-		m.instances[name] = &instance{definition: d, queue: make(chan *modv1.WorldPacket, queueLimit)}
+		m.instances[name] = &instance{definition: d, queueReady: make(chan struct{}, 1)}
 	}
 	return m
 }
