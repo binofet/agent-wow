@@ -458,10 +458,16 @@ local function decide_encounter(frame)
         local rank = available and (obs.spells or {})[tostring(available)]
         -- Begin a legal swing before pursuing a positional weapon strike.
         -- Subsequent observations keep autoswing active while moving behind.
-        if obs.meleeKnown == true and focus.meleeReady == true and
-           (not available or rank and rank.weaponStrike == true) then
-            out.action = proposal(obs, "melee_start", out.focusGuid)
-            return out
+        if obs.meleeKnown == true and (not available or rank and rank.weaponStrike == true) then
+            if focus.meleeReady == true then
+                out.action = proposal(obs, "melee_start", out.focusGuid)
+                return out
+            elseif movement and obs.worldObservationRevision then
+                local step = movement.decide(obs, state.sequence, out.focusGuid,
+                    {rangeYards=intent.meleeRange or 3.5, requireLos=true})
+                out.action = step.action
+                return out
+            end
         end
         local approach = available and position_for(out.focusGuid, available)
         if approach then out.action = approach

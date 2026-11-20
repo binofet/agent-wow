@@ -28,7 +28,7 @@ func TestEncounterWeaponStartsSwingBeforeBehindAndStrikesFromSparseJSON(t *testi
 	addFallbackTarget(obs, fallbackNPC, fallbackSelf, 900)
 	target := obs.Targets[fallbackGUID(fallbackNPC)]
 	target.X, target.Orientation, target.MeleeReady = 3, float32(math.Pi), true
-	check := func(capability string, spell any) {
+	check := func(capability string, spell any) map[string]any {
 		t.Helper()
 		raw, err := protojson.Marshal(obs)
 		if err != nil {
@@ -47,7 +47,15 @@ func TestEncounterWeaponStartsSwingBeforeBehindAndStrikesFromSparseJSON(t *testi
 		if action["capability"] != capability || action["targetGuid"] != fallbackGUID(fallbackNPC) || action["spellId"] != spell {
 			t.Fatalf("want %s spell=%v on current attacker, got %+v", capability, spell, out)
 		}
+		return action
 	}
+	// First reach normal melee range; a positional opener must not delay the
+	// first swing until an entire route behind the enemy has completed.
+	target.X, target.MeleeReady = 20, false
+	if action := check("approach_target", nil); action["behind"] != false {
+		t.Fatal("idle rogue chased behind before starting autoswing", action)
+	}
+	target.X, target.MeleeReady = 3, true
 	// A stronger available Backstab must not postpone a currently legal swing
 	// while the rogue is face-to-face with an enemy attacking it.
 	check("melee_start", nil)
@@ -58,5 +66,7 @@ func TestEncounterWeaponStartsSwingBeforeBehindAndStrikesFromSparseJSON(t *testi
 	check("offense", float64(53))
 	// Once the target runs, chase it without dropping the acknowledged swing.
 	target.X, target.MeleeReady = 20, false
-	check("approach_target", nil)
+	if action := check("approach_target", nil); action["behind"] != true {
+		t.Fatal("active swing did not retain rogue positional preference", action)
+	}
 }
