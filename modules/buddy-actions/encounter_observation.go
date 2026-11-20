@@ -210,8 +210,9 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 	if len(w.NearbyCreatures) > 32 {
 		return
 	}
-	from := position{w.Self.X, w.Self.Y, w.Self.Z, w.Self.Orientation}
-	meleeCaster := out.MeleeKnown && safeSelfCombat(w, s.selfGUID) == "" && w.Self.PositionKnown && finite(from)
+	// This advertises admission to start autoattack, not physical hit readiness.
+	// Current positions/orientations remain available to Lua for approach/chase.
+	meleeCaster := out.MeleeKnown && s.exactMeleeCasterObservedLocked(w)
 	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
 		for _, c := range rows {
 			if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId ||
@@ -245,7 +246,7 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 			}
 			view.MeleeReady = view.Attackable && meleeCaster && !s.autoStopping &&
 				!s.state.AutoAttackUnconfirmed && s.pendingMeleeOperationLocked() == nil &&
-				s.exactMeleeStartAvailableLocked(c.Guid) && s.exactMeleeReadyAtLocked(w, c, c.Guid, online, from)
+				s.exactMeleeStartAvailableLocked(c.Guid) && exactOffenseTarget(w, c, c.Guid, nil)
 			out.Targets[key] = view
 		}
 	}

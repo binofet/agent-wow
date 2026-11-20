@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"math"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
-	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,7 +43,6 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 		return nil, status.Error(codes.FailedPrecondition, "prior melee state is unconfirmed")
 	}
 	s.expireInteractionLocked()
-	var online map[uint64]bool
 	var requested []uint64
 	if r.Stop {
 		// A legacy own server-acknowledged attack can also be stopped exactly.
@@ -54,13 +51,7 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 		}
 	} else {
 		if s.encounterSwing.target != 0 || !s.exactMeleeStartAvailableLocked(target) {
-			return nil, status.Error(codes.FailedPrecondition, "current body and available stationary melee custody required")
-		}
-		if !s.independent {
-			party := s.readPartyStateLocked(ctx)
-			if party.GetSessionId() == s.sessionID {
-				online = s.onlineHealingGroup(party.GetGroup())
-			}
+			return nil, status.Error(codes.FailedPrecondition, "current body and available melee custody required")
 		}
 		requested = []uint64{target}
 	}
@@ -71,8 +62,8 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 		self.GetGuid() != s.selfGUID || !self.GetPresent() || !self.GetMapKnown() || self.GetMapId() != visit.mapID {
 		return nil, status.Error(codes.FailedPrecondition, "current own world visit is not established")
 	}
-	if !r.Stop && !s.exactMeleeStartObservedLocked(w, target, online) {
-		return nil, status.Error(codes.FailedPrecondition, "armed stationary caster and current attacker in melee range and facing required")
+	if !r.Stop && !s.exactMeleeStartObservedLocked(w, target) {
+		return nil, status.Error(codes.FailedPrecondition, "living controllable caster and selected current attackable creature required")
 	}
 	if !s.admitsPolicyEncounterLocked(ctx, w) {
 		return nil, status.Error(codes.FailedPrecondition, "active Lua owner for the current encounter required")
@@ -117,54 +108,24 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 
 func (s *Service) exactMeleeStartAvailableLocked(target uint64) bool {
 	return s.spellbookKnown && s.state.KnownAutoAttack && !s.clientControlLost && !s.clientControlRestoring &&
-		!s.state.CastPending && !s.state.Moving && !s.state.Traveling && !s.state.MotionUnconfirmed &&
+		!s.state.CastPending && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackRequested && !s.state.AutoAttacking && s.autoTarget == 0 && s.state.InteractionOwner == "" &&
 		!s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.crowdControl.active && !s.recovery.state.Active &&
 		!s.targetProtection.blocks(target, s.now())
 }
 
-func (s *Service) exactMeleeStartObservedLocked(w *worldv1.SnapshotResponse, target uint64, online map[uint64]bool) bool {
-	if safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || !s.exactMeleeStartAvailableLocked(target) {
-		return false
-	}
-	return s.exactMeleeReadyAtLocked(w, w.RequestedCreature, target, online, s.pos)
+// Attack start is not a swing or a hit. AzerothCore HandleAttackSwingOpcode
+// and Unit::Attack admit a valid target regardless of range, facing, weapon,
+// or motion. Lua positions/chases independently; server hit receipts determine
+// whether damage actually landed.
+func (s *Service) exactMeleeStartObservedLocked(w *worldv1.SnapshotResponse, target uint64) bool {
+	return s.exactMeleeCasterObservedLocked(w) && s.exactMeleeStartAvailableLocked(target) &&
+		exactOffenseTarget(w, w.RequestedCreature, target, nil)
 }
 
-func (s *Service) exactMeleeReadyAtLocked(w *worldv1.SnapshotResponse, creature *worldv1.CreatureState, target uint64, online map[uint64]bool, from position) bool {
-	self := w.Self
-	if !exactMeleeStance(self) || self.MovementFlags&0xff != 0 ||
-		self.UnitFlags&(0x20000|0x200000) != 0 || !self.ChannelObjectKnown || self.ChannelObjectGuid != 0 ||
-		!self.ChannelSpellKnown || self.ChannelSpellId != 0 || !self.BaseAttackTimeKnown || self.BaseAttackTimeMs == 0 || !s.weaponReady(self) ||
-		!exactOffenseTarget(w, creature, target, online) {
-		return false
-	}
-	to, known, estimated := creaturePosition(creature)
-	if !known || estimated || !movementflags.GroundCompatible(creature.MovementFlags, 0) ||
-		!self.CombatReachKnown || !creature.CombatReachKnown {
-		return false
-	}
-	limit := exactMeleeRange(self.CombatReach, creature.CombatReach)
-	if limit == 0 || distance(from, to) > limit {
-		return false
-	}
-	dx, dy := float64(to.x-from.x), float64(to.y-from.y)
-	return dx == 0 && dy == 0 || math.Abs(math.Remainder(math.Atan2(dy, dx)-float64(from.o), 2*math.Pi)) <= math.Pi/2
-}
-
-func exactMeleeStance(self *worldv1.PlayerState) bool {
-	if !self.ClassKnown || self.ClassId == 0 || !self.ShapeshiftFormKnown {
-		return false
-	}
-	// The ordinary Warrior weapon stances (2457, 71, 2458) preserve melee.
-	form := self.ShapeshiftForm
-	return form == 0 || self.ClassId == 1 && (form == 17 || form == 18 || form == 19)
-}
-
-func exactMeleeRange(caster, target float32) float64 {
-	a, b := float64(caster), float64(target)
-	// World only sets CombatReachKnown for its supported 0..50 range.
-	if !(a > 0 && a <= 50 && b > 0 && b <= 50) {
-		return 0
-	}
-	return math.Max(5, a+b+4.0/3.0) - 0.5
+func (s *Service) exactMeleeCasterObservedLocked(w *worldv1.SnapshotResponse) bool {
+	self := w.GetSelf()
+	return self.GetGuid() == s.selfGUID && self.GetPresent() && self.GetMapKnown() &&
+		self.GetAliveKnown() && self.GetAlive() && self.GetHealthKnown() && self.GetHealth() > 0 &&
+		self.GetUnitFlagsKnown() && self.GetUnitFlags()&0x08000000 == 0 // Mounted players cannot start attacks.
 }

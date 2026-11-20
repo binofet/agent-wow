@@ -556,6 +556,7 @@ message EncounterCreature {
   bool unit_flags_known = 20;
   uint32 unit_flags = 21;
   uint32 faction_template = 22;
+  // Admission to start autoattack; range/facing determine hits, not attack start.
   bool melee_ready = 23;
   // Currently observed own periodic damage auras, grouped by catalog family.
   repeated uint32 own_damage_families = 24;
