@@ -43,6 +43,7 @@ type policySpell struct {
 	castTarget     uint64 // Resurrection may target the observed corpse owned by target.
 	encounterVisit uint64
 	melee          *policyMelee
+	movement       *policyMovement
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -54,6 +55,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "approach_target" || capability == "stop_movement" {
+		return p.resolveMovement(action, capability)
+	}
 	if capability == "melee_start" || capability == "melee_stop" {
 		return p.resolveMelee(action, capability)
 	}
@@ -144,6 +148,9 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 		Module: actionsModule,
 		spell:  op,
 		Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
+			if op.movement != nil {
+				return p.manager.invokePolicyMovement(ctx, inst, md, req, op)
+			}
 			return p.manager.invokePolicySpell(ctx, inst, md, req, op)
 		},
 	}, nil
@@ -159,6 +166,8 @@ func fieldMatchesValue(kind protoreflect.Kind, value protoreflect.Value) bool {
 		return kind == protoreflect.Uint64Kind
 	case bool:
 		return kind == protoreflect.BoolKind
+	case float32:
+		return kind == protoreflect.FloatKind
 	default:
 		return false
 	}
@@ -220,7 +229,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	spells := &m.policySpells
 	spells.mu.Lock()
 	op := spells.active[token]
-	if op == nil || !op.admitted || op.attempted || op.origin.SessionID != sessionID ||
+	if op == nil || !op.admitted || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
 		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
 		return status.Error(codes.PermissionDenied, "invalid policy spell callback")
@@ -230,12 +239,15 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 
 	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, op.origin), code, payload)
 	spells.mu.Lock()
-	op.written = err == nil
+	op.written = op.written || err == nil
 	spells.mu.Unlock()
 	return err
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.movement != nil {
+		return op.matchesMovementPacket(code, payload)
+	}
 	if op.melee != nil {
 		if op.melee.stop {
 			return code == opcode.CMSGAttackstop && len(payload) == 0
@@ -277,6 +289,9 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 }
 
 func (op *policySpell) payload(phase string, written, castGo, observed bool) map[string]any {
+	if op.movement != nil {
+		return op.movementPayload(phase, written)
+	}
 	if op.melee != nil {
 		return op.meleePayload(phase, written, observed)
 	}

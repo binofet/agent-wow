@@ -181,8 +181,8 @@ func TestSmiteUsesElapsedAdvertisedEndpointWithoutInventingObservation(t *testin
 	s, f, _ = assistRig(t)
 	f.world.OwnerTarget.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500, DestinationKnown: true, DestinationX: 12}
 	s.Tick(context.Background())
-	if state(t, s).AssistAttempts != 0 {
-		t.Fatal("cast on an unarrived path")
+	if state(t, s).AssistAttempts != 1 {
+		t.Fatal("finite current moving spline was refused")
 	}
 }
 

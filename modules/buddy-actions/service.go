@@ -90,6 +90,8 @@ type Service struct {
 	crowdControlSight                          func(context.Context, string, uint32, position, position) (bool, error)
 	controlTemplates                           map[uint32]controlTemplate
 	targetProtection                           targetProtection
+	targetMovement                             targetMovementIntent
+	targetMovementExecuting                    bool
 	thermaplugg                                thermapluggButtons
 	interactionToken                           string
 	interactionUntil                           time.Time
@@ -205,6 +207,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.EngageNpc = s.engage.snapshot(s.now())
 	out.CrowdControlApproachSupported = true
 	out.CrowdControl = s.crowdControl.snapshot(s.now())
+	out.TargetMovement = s.targetMovementSnapshotLocked()
 	s.targetProtection.snapshot(out, s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
@@ -911,7 +914,11 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "engage_npc_authority_changed_before_movement"
 		return false
 	}
-	if moving && s.partyDefenseTarget == 0 && !s.engage.executing && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
+	if moving && s.targetMovementExecuting && (!s.matchesCurrentEncounterVisitLocked(w) || !s.admitsPolicyEncounterLocked(ctx, w)) {
+		s.state.Reason = "target_movement_visit_changed"
+		return false
+	}
+	if moving && !s.targetMovementExecuting && s.partyDefenseTarget == 0 && !s.engage.executing && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -1174,17 +1181,16 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = s.now()
 		return
 	}
-	if s.state.MotionUnconfirmed && healer {
+	if s.state.MotionUnconfirmed {
 		// A new authoritative stationary pose can settle an ambiguous stop.
 		if world, err := s.snapshot(ctx); err == nil && safeSelfCombat(world, s.selfGUID) == "" {
 			s.refreshPositionLocked(world)
 		}
 	}
 	if s.state.MotionUnconfirmed {
-		s.state.Following = false
-		s.state.Assisting = false
-		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
-		s.stopAutoAttackLocked(ctx)
+		// Uncertain motion pauses physical writes, not the Lua encounter or
+		// standing intents. A fresh stopped pose above resumes the same plan.
+		s.state.Reason = "motion_unconfirmed_waiting_for_fresh_pose"
 		return
 	}
 	if s.state.AutoAttackUnconfirmed {
@@ -1265,6 +1271,12 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.waterBreathTickLocked(ctx, snapshot, waterBreath) || s.buffTickLocked(ctx, snapshot) {
+		s.lastStep = now
+		return
+	}
+	// A fresh exact Lua movement request owns its route. Standing support above
+	// may still act; native formation must not steer back toward the owner.
+	if s.targetMovementActiveLocked() {
 		s.lastStep = now
 		return
 	}

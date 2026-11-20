@@ -233,7 +233,7 @@ func newVM() *lua.LState {
 	lua.OpenMath(L)
 	L.Pop(1)
 	mathTable := L.GetGlobal("math").(*lua.LTable)
-	keepMath := map[string]bool{"abs": true, "ceil": true, "floor": true, "min": true, "max": true, "sqrt": true}
+	keepMath := map[string]bool{"abs": true, "ceil": true, "floor": true, "min": true, "max": true, "sqrt": true, "sin": true, "cos": true, "huge": true}
 	remove = nil
 	mathTable.ForEach(func(k, _ lua.LValue) {
 		if !keepMath[k.String()] {

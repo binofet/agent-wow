@@ -43,7 +43,7 @@ func TestPolicySapRefusesWithoutPreparatoryWrites(t *testing.T) {
 		{"other session", codes.FailedPrecondition, func(_ *Service, _ *fakeSession, r *actionsv1.SapRequest) { r.SessionId = "previous" }},
 		{"other learned kind", codes.FailedPrecondition, func(_ *Service, _ *fakeSession, r *actionsv1.SapRequest) { r.SpellId = 118 }},
 		{"rank unknown", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.setKnownSpell(6770, false) }},
-		{"following", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.Following = true }},
+		{"moving", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.Moving = true }},
 		{"other crowd control active", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.crowdControl.active = true }},
 		{"movement unsettled", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.MotionUnconfirmed = true }},
 		{"channel unknown", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) { f.world.Self.ChannelSpellKnown = false }},

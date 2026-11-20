@@ -51,7 +51,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	if !s.crowdControlIdleLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "current session and idle casting custody required")
 	}
-	if policySap && (s.crowdControl.active || s.state.Following || s.state.Buffing || s.questApproaching ||
+	if policySap && (s.crowdControl.active || s.questApproaching ||
 		s.clientControlLost || s.clientControlRestoring) {
 		return nil, status.Error(codes.FailedPrecondition, "policy Sap requires idle casting custody")
 	}
@@ -85,8 +85,8 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 		if policySap && (!s.stealthedLocked() || !self.ChannelSpellKnown || self.ChannelObjectGuid != 0) {
 			return nil, status.Error(codes.FailedPrecondition, "policy Sap requires observed Stealth and no active channel")
 		}
-		pos, known, estimated := creaturePosition(c)
-		if !known || estimated && (c.GetTrajectory().GetDurationMs() == 0 || !observedKnown) {
+		pos, known, _ := creaturePosition(c)
+		if !known {
 			return nil, status.Error(codes.FailedPrecondition, "selected NPC position is not observed within crowd-control range")
 		}
 		ready, _, err := s.sapReadinessLocked(ctx, w, spell, !policySap)
@@ -106,7 +106,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 			d := distance(s.pos, p)
 			return d >= spell.MinHostile && d <= spell.MaxHostile
 		}
-		if !inRange(pos) || estimated && !inRange(observed) {
+		if !inRange(pos) {
 			return nil, status.Error(codes.FailedPrecondition, "selected NPC is outside crowd-control spell range")
 		}
 	} else if !observedKnown {

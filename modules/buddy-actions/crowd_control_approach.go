@@ -98,27 +98,12 @@ func crowdControlTarget(w *worldv1.SnapshotResponse, guid uint64) bool {
 		c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && c.DynamicFlags&0x20 == 0
 }
 
-// A recent, finite server spline supplies an approach destination. Its old
-// start cannot authorize a cast while the spline is still moving. After the
-// advertised duration, only a short-lived completed endpoint may be used.
+// Current finite spline estimates support both approach and legal target casts.
 func crowdControlPose(c *worldv1.CreatureState) (position, bool, bool) {
-	start := position{c.X, c.Y, c.Z, c.Orientation}
-	if !c.PositionKnown || !finite(start) {
-		return position{}, false, false
-	}
-	if t := c.Trajectory; t != nil && t.Known && !t.Stopped {
-		end := position{t.DestinationX, t.DestinationY, t.DestinationZ, start.o}
-		if !t.DestinationKnown || t.TransportRelative || t.Cyclic || t.DurationMs == 0 ||
-			t.DurationMs > 10000 || t.AgeMs > uint64(t.DurationMs)+2000 || !finite(end) || distance(start, end) > crowdControlReach {
-			return position{}, false, false
-		}
-		if math.Hypot(float64(end.x-start.x), float64(end.y-start.y)) > .25 {
-			end.o = float32(math.Atan2(float64(end.y-start.y), float64(end.x-start.x)))
-		}
-		return end, true, t.AgeMs >= uint64(t.DurationMs)
-	}
-	p, known, estimated := creaturePosition(c)
-	return p, known, known && !estimated
+	p, known, _ := creaturePosition(c)
+	// A target may walk throughout a cast. Estimated current spline poses are
+	// suitable for range/LoS checks; only the caster must finish positioning.
+	return p, known, known
 }
 
 func (s *Service) crowdControlMovementValidLocked(w *worldv1.SnapshotResponse) bool {
