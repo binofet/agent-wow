@@ -85,7 +85,7 @@ func TestExactMeleeStartsOnceAndStopsAcknowledgedOwnTargetAfterLoss(t *testing.T
 func TestExactMeleeStartRejectsUnqualifiedRequestWithoutWrites(t *testing.T) {
 	for _, name := range []string{
 		"no token", "wrong visit", "wrong body", "unknown weapon", "unlearned", "unknown stance", "wrong stance", "control lost",
-		"nonfinite reach", "oversized reach", "too far", "behind caster", "movement", "moving target", "protected",
+		"nonfinite reach", "oversized reach", "too far", "behind caster", "unsupported movement", "unsupported target trajectory", "protected",
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f, request, _ := exactMeleeFixture(t)
@@ -117,10 +117,10 @@ func TestExactMeleeStartRejectsUnqualifiedRequestWithoutWrites(t *testing.T) {
 				target.X = 4.51
 			case "behind caster":
 				target.X = -3
-			case "movement":
-				self.MovementFlags = 1
-			case "moving target":
-				target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, DestinationKnown: true, DestinationX: 3}
+			case "unsupported movement":
+				self.MovementFlags = 0x2000
+			case "unsupported target trajectory":
+				target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, DestinationKnown: true, DestinationX: 3, TransportRelative: true}
 			case "no attack":
 				target.AttackVictimKnown = false
 			case "foreign party":
@@ -181,5 +181,77 @@ func TestExactMeleeWarriorWeaponStances(t *testing.T) {
 	f.world.Self.ShapeshiftForm = 17
 	if _, err := s.Melee(exactMeleeContext(), request); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
 		t.Fatal("unrelated class acquired a Warrior stance", err, f.packets)
+	}
+}
+
+func TestExactMeleeStartsWhileCasterAndTargetMoveWithoutStoppingEither(t *testing.T) {
+	for _, age := range []uint64{500, 1500} {
+		t.Run(encounterGUID(age), func(t *testing.T) {
+			s, f, request, _ := exactMeleeFixture(t)
+			s.state.Moving = true
+			f.world.Self.MovementFlags = 1
+			target := f.world.RequestedCreature
+			target.X = 3
+			target.MovementFlags = 0x08000001
+			target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: age, DestinationKnown: true, DestinationX: 4}
+			out, err := s.Melee(exactMeleeContext(), request)
+			if err != nil || !out.GetMoving() || !out.GetAutoAttackRequested() || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGAttackswing || !out.GetLastMeleeOperation().GetTransportWritten() {
+				t.Fatalf("ordinary movement prevented exact swing: %+v %v %v", out, err, f.packets)
+			}
+		})
+	}
+}
+
+func TestExactMeleeRejectsUnsupportedTrajectoryAndActualControlLoss(t *testing.T) {
+	for _, mode := range []string{"cyclic", "transport", "unknown endpoint", "nonfinite endpoint", "self falling", "self swimming", "self control lost"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, request, _ := exactMeleeFixture(t)
+			target := f.world.RequestedCreature
+			target.MovementFlags = 0x08000001
+			target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500, DestinationKnown: true, DestinationX: 3}
+			switch mode {
+			case "cyclic":
+				target.Trajectory.Cyclic = true
+			case "transport":
+				target.Trajectory.TransportRelative = true
+			case "unknown endpoint":
+				target.Trajectory.DestinationKnown = false
+			case "nonfinite endpoint":
+				target.Trajectory.DestinationX = float32(math.Inf(1))
+			case "self falling":
+				f.world.Self.MovementFlags = 0x2000
+			case "self swimming":
+				f.world.Self.MovementFlags = 0x200000
+			case "self control lost":
+				s.clientControlLost = true
+			}
+			if _, err := s.Melee(exactMeleeContext(), request); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
+				t.Fatalf("unsupported pose wrote: %v %v", err, f.packets)
+			}
+		})
+	}
+}
+
+func TestEncounterMeleeReadinessUsesWrittenPoseDuringMovement(t *testing.T) {
+	s, f, request, _ := exactMeleeFixture(t)
+	target := f.world.RequestedCreature
+	target.X = 13
+	target.DynamicFlagsKnown = true
+	f.world.NearbyCreatures = []*worldv1.CreatureState{target}
+	s.pos = position{x: 10}
+	s.posKnown = true
+	s.posMap = f.world.Self.MapId
+	s.positionRevision = f.world.Self.PositionRevision
+	s.state.Moving = true
+	f.world.Self.MovementFlags = 1
+	f.world.Self.X = 0 // The server's unchanged own entry baseline.
+	view := encounterTestRead(t, s, f).Targets[encounterGUID(request.TargetGuid)]
+	if view == nil || !view.MeleeReady {
+		t.Fatal("readiness used spawn instead of current written pose", view)
+	}
+	f.world.Self.PositionRevision++ // An actual correction invalidates the estimate.
+	view = encounterTestRead(t, s, f).Targets[encounterGUID(request.TargetGuid)]
+	if view == nil || view.MeleeReady {
+		t.Fatal("stale written pose hid a server correction", view)
 	}
 }

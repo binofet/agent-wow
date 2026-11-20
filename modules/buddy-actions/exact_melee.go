@@ -54,7 +54,7 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 		}
 	} else {
 		if s.encounterSwing.target != 0 || !s.exactMeleeStartAvailableLocked(target) {
-			return nil, status.Error(codes.FailedPrecondition, "current body and available stationary melee custody required")
+			return nil, status.Error(codes.FailedPrecondition, "current body and available melee custody required")
 		}
 		if !s.independent {
 			party := s.readPartyStateLocked(ctx)
@@ -72,7 +72,7 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 		return nil, status.Error(codes.FailedPrecondition, "current own world visit is not established")
 	}
 	if !r.Stop && !s.exactMeleeStartObservedLocked(w, target, online) {
-		return nil, status.Error(codes.FailedPrecondition, "armed stationary caster and current attacker in melee range and facing required")
+		return nil, status.Error(codes.FailedPrecondition, "armed controllable caster and selected creature in melee range and facing required")
 	}
 	if !s.admitsPolicyEncounterLocked(ctx, w) {
 		return nil, status.Error(codes.FailedPrecondition, "active Lua owner for the current encounter required")
@@ -117,7 +117,7 @@ func (s *Service) Melee(ctx context.Context, r *actionsv1.MeleeRequest) (*action
 
 func (s *Service) exactMeleeStartAvailableLocked(target uint64) bool {
 	return s.spellbookKnown && s.state.KnownAutoAttack && !s.clientControlLost && !s.clientControlRestoring &&
-		!s.state.CastPending && !s.state.Moving && !s.state.Traveling && !s.state.MotionUnconfirmed &&
+		!s.state.CastPending && !s.state.Traveling && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackRequested && !s.state.AutoAttacking && s.autoTarget == 0 && s.state.InteractionOwner == "" &&
 		!s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.crowdControl.active && !s.recovery.state.Active &&
 		!s.targetProtection.blocks(target, s.now())
@@ -132,14 +132,20 @@ func (s *Service) exactMeleeStartObservedLocked(w *worldv1.SnapshotResponse, tar
 
 func (s *Service) exactMeleeReadyAtLocked(w *worldv1.SnapshotResponse, creature *worldv1.CreatureState, target uint64, online map[uint64]bool, from position) bool {
 	self := w.Self
-	if !exactMeleeStance(self) || self.MovementFlags&0xff != 0 ||
+	if !exactMeleeStance(self) || !self.MovementFlagsKnown || !movementflags.GroundCompatible(self.MovementFlags, self.ExtraMovementFlags) ||
 		self.UnitFlags&(0x20000|0x200000) != 0 || !self.ChannelObjectKnown || self.ChannelObjectGuid != 0 ||
 		!self.ChannelSpellKnown || self.ChannelSpellId != 0 || !self.BaseAttackTimeKnown || self.BaseAttackTimeMs == 0 || !s.weaponReady(self) ||
 		!exactOffenseTarget(w, creature, target, online) {
 		return false
 	}
-	to, known, estimated := creaturePosition(creature)
-	if !known || estimated || !movementflags.GroundCompatible(creature.MovementFlags, 0) ||
+	to, known, _ := creaturePosition(creature)
+	targetFlags := creature.MovementFlags
+	if creature.GetTrajectory().GetKnown() {
+		// This is the NPC spline marker, not flight or loss of own control.
+		// creaturePosition validates its finite non-transport trajectory.
+		targetFlags &^= 0x08000000
+	}
+	if !known || !movementflags.GroundCompatible(targetFlags, 0) ||
 		!self.CombatReachKnown || !creature.CombatReachKnown {
 		return false
 	}

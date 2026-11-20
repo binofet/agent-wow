@@ -211,6 +211,13 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 		return
 	}
 	from := position{w.Self.X, w.Self.Y, w.Self.Z, w.Self.Orientation}
+	// The server does not echo own movement. Readiness must use the same
+	// current written pose exposed to Lua, not the old entry coordinates.
+	if s.matchesCurrentEncounterVisitLocked(w) && s.posKnown && finite(s.pos) &&
+		s.posMap == w.Self.MapId && s.positionRevision == w.Self.PositionRevision &&
+		!s.state.MotionUnconfirmed && !s.clientControlLost && !s.clientControlRestoring {
+		from = s.pos
+	}
 	meleeCaster := out.MeleeKnown && safeSelfCombat(w, s.selfGUID) == "" && w.Self.PositionKnown && finite(from)
 	for _, rows := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
 		for _, c := range rows {
