@@ -5,18 +5,18 @@ local M = {}
 -- Only the last native positioning result is cached. A rejected cast revokes
 -- that spatial evidence until an approach rechecks it; it never changes the
 -- encounter target queue or invents a successful cast.
-local invalid_target
+local invalid_target, checked_target
 function M.on_event(event)
     local receipt = event.receipt
     if not receipt then return true end
     local payload = receipt.payload or {}
     local capability, target = payload.capability, payload.target_guid
     if (receipt.outcome == "failed" or receipt.outcome == "not_dispatched") and
-       (capability == "offense" or capability == "polymorph" or capability == "sap") and
+       (capability == "offense" or capability == "polymorph" or capability == "sap" or capability == "heal") and
        type(target) == "string" then
-        invalid_target = target
+        invalid_target, checked_target = target, nil
     elseif capability == "approach_target" and receipt.outcome == "settled_unverified" and target == invalid_target then
-        invalid_target = nil
+        checked_target = target
     end
     return true
 end
@@ -29,10 +29,13 @@ local function pose(unit)
     local x,y,z,o = unit.x,unit.y,unit.z,unit.orientation or 0
     local t = unit.trajectory
     if t and t.known == true and t.stopped ~= true then
+        -- Protobuf JSON encodes uint64 ages as decimal strings. Convert this
+        -- elapsed-time scalar; keep GUIDs as exact strings throughout policy.
+        local age = tonumber(t.ageMs)
         if t.cyclic == true or t.transportRelative == true or t.destinationKnown ~= true or
-           not number(t.durationMs) or t.durationMs <= 0 or not number(t.ageMs) or t.ageMs < 0 or
+           not number(t.durationMs) or t.durationMs <= 0 or not number(age) or age < 0 or
            not number(t.destinationX) or not number(t.destinationY) or not number(t.destinationZ) then return end
-        local fraction = math.min(1,t.ageMs/t.durationMs)
+        local fraction = math.min(1,age/t.durationMs)
         x,y,z = x+(t.destinationX-x)*fraction,y+(t.destinationY-y)*fraction,z+(t.destinationZ-z)*fraction
     end
     return {x=x,y=y,z=z,o=number(o) and o or 0}
@@ -58,10 +61,11 @@ function M.decide(obs,sequence,target,options)
         if options.behind then geometric = geometric and dx*math.cos(to.o)+dy*math.sin(to.o) < 0 end
     end
     local view = obs.targetMovement or {}
-    local validated = invalid_target ~= target and view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
+    local validated = (invalid_target ~= target or checked_target == target) and view.targetGuid == target and view.visitId == obs.visitId and view.ready == true and
         view.rangeYards == radius and (view.requireLos == true) == (options.requireLos == true) and
         (view.behind == true) == (options.behind == true)
     if validated and (geometric or not unit) and (not self or self.moving ~= true) then
+        if invalid_target == target then invalid_target, checked_target = nil, nil end
         return {ready=true,phase="in_position"}
     end
     -- If already within range, request the same mechanic once to stop/face
