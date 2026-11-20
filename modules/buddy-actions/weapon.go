@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"time"
 	"unicode/utf8"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -110,4 +111,25 @@ func (s *Service) requestWeaponLocked(ctx context.Context, p *worldv1.PlayerStat
 	s.weaponQueries[entry] = true
 	// Reserve before writing; ambiguous query outcomes never cause a retry loop.
 	s.sendLocked(ctx, opcode.CMSGItemQuerySingle, binary.LittleEndian.AppendUint32(nil, entry))
+}
+
+// A persistent host must not depend on a retired native combat controller to
+// query its own equipment. This acquires item-template facts only, before the
+// writer/role branches. It never selects an action, spell, target or movement.
+func (s *Service) observeHostWeaponMetadataLocked(ctx context.Context) {
+	if s.closed || s.hostEncounterKey == "" || s.session == nil {
+		return
+	}
+	call, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	w, err := s.readWorldSnapshot(call)
+	p := w.GetSelf()
+	if err != nil || p.GetGuid() != s.selfGUID || !p.GetPresent() || p.GetMainhand() == nil {
+		return
+	}
+	entry := p.Mainhand.Entry
+	if proof, known := s.weapons[entry]; known && proof.valid {
+		return
+	}
+	s.requestWeaponLocked(call, p)
 }

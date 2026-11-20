@@ -14,6 +14,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func instantStrikeFixture(t *testing.T, id uint32) (*Service, *fakeSession, *actionsv1.CastOffenseRequest) {
@@ -192,5 +193,29 @@ func TestComboFinisherCatalogClassificationDoesNotAdmitOtherDummySpells(t *testi
 		if spell.Capability().Kind == spellcatalog.WeaponStrike {
 			t.Fatal("foreign dummy target admitted", id)
 		}
+	}
+}
+
+func TestFreshHostAcquiresOwnWeaponProofWithoutNativeCombatOrReconnect(t *testing.T) {
+	s, f, _ := rig(t)
+	s.sessionID = f.party.SessionId
+	self := f.world.Self
+	self.ClassId, self.PowerType, self.Power, self.MaxPower = 4, 3, 100, 100
+	self.ChannelSpellKnown, self.ChannelObjectKnown = true, true
+	self.Mainhand = &worldv1.EquippedWeapon{SlotKnown: true, ItemGuid: 11, MetadataKnown: true, Entry: 2092, DurabilityKnown: true, Durability: 10, MaxDurability: 10}
+	learnSpells(s, autoAttack, 1760, 6770, 1784)
+	activateEncounterWriter(t, s, f)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGItemQuerySingle) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("host startup did not acquire only actual own weapon metadata", f.packets)
+	}
+	emitPolymorph(s, opcode.SMSGItemQuerySingleResponse, weaponQueryFixture(2092, 15, 13))
+	out, err := s.EncounterObservation(context.Background(), &emptypb.Empty{})
+	if err != nil || !out.GetHostOwned() || !out.GetMeleeKnown() || !out.Spells["1760"].GetReady() || !s.weaponReady(self) || out.GetSessionId() != f.party.SessionId {
+		t.Fatal("ordinary item reply did not enable the same running host", out, err)
+	}
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGItemQuerySingle) != 1 {
+		t.Fatal("known weapon metadata was queried again", f.packets)
 	}
 }

@@ -1057,6 +1057,7 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.observeHostWeaponMetadataLocked(ctx)
 	if s.dungeonTraceEnabled() {
 		defer s.sampleDungeonTraceLocked(ctx)
 	}
