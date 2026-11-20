@@ -1886,8 +1886,29 @@ class BoundaryTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(converse.ConversationError):
                 converse.RPC(url)
         rpc = converse.RPC("http://127.0.0.1:8086/rpc")
-        with self.assertRaises(converse.ConversationError):
-            rpc.call("session.logout", {})
+        # Malformed syntax must fail before transport. session.logout is a
+        # valid public method and must never be sent to a live local character
+        # by this negative test.
+        with patch.object(rpc.opener, "open") as transport:
+            with self.assertRaises(converse.ConversationError):
+                rpc.call("session..logout", {})
+            transport.assert_not_called()
+
+    def test_full_reflected_catalog_has_its_own_response_budget(self):
+        catalog = {"methods": [], "messages": [{"name": "LargeSchema", "description": "x" * 400000}]}
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit):
+                return json.dumps({"jsonrpc": "2.0", "id": 1, "result": catalog}).encode()[:limit]
+        for method in ("session.describe", "session.policy_source"):
+            rpc = converse.RPC("http://127.0.0.1:8086/rpc")
+            with patch.object(rpc.opener, "open", return_value=Response()):
+                self.assertEqual(rpc.call(method, {}), catalog)
+        rpc = converse.RPC("http://127.0.0.1:8086/rpc")
+        with patch.object(rpc.opener, "open", return_value=Response()):
+            with self.assertRaisesRegex(converse.ConversationError, "response exceeds"):
+                rpc.call("buddy-world.snapshot", {})
 
     def test_rpc_validates_response_id_and_precise_restart_fault(self):
         class Response:
