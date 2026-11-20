@@ -18,12 +18,14 @@ const (
 	// compose combat, healing, and mana policies and have a separate budget from
 	// the stateless evaluator. Caller deadlines may impose a shorter limit.
 	DefaultSessionExecutionLimit = 50 * time.Millisecond
+	DefaultSessionValueBytes     = 8 * 1024 * 1024
 )
 
 // SessionOptions configures the persistent VM. A zero execution limit uses the
 // default. The limit applies to Lua execution, excluding host data conversion.
 type SessionOptions struct {
 	ExecutionLimit time.Duration
+	ValueBytes     int // observation, checkpoint and decision JSON budget; zero uses the default
 }
 
 var (
@@ -92,6 +94,12 @@ func NewSession(ctx context.Context, sessionID, source string) (*Session, error)
 // NewSessionWithOptions starts a session with the supplied callback budget.
 // Reloads retain these options for every replacement VM.
 func NewSessionWithOptions(ctx context.Context, sessionID, source string, options SessionOptions) (*Session, error) {
+	if options.ValueBytes < 0 {
+		return nil, errors.New("session value byte limit must not be negative")
+	}
+	if options.ValueBytes == 0 {
+		options.ValueBytes = DefaultSessionValueBytes
+	}
 	if options.ExecutionLimit < 0 {
 		return nil, errors.New("session execution limit must not be negative")
 	}
@@ -101,7 +109,7 @@ func NewSessionWithOptions(ctx context.Context, sessionID, source string, option
 	if sessionID == "" || len(sessionID) > 128 || !utf8.ValidString(sessionID) {
 		return nil, errors.New("behavior session needs a bounded session id")
 	}
-	vm, err := newSessionVM(ctx, source, options.ExecutionLimit)
+	vm, err := newSessionVMWithValues(ctx, source, options.ExecutionLimit, options.ValueBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +201,7 @@ func (s *Session) pendingFrameLocked() []any {
 // effect-dependent state from receipts rather than from proposing an action.
 func (s *Session) Decide(ctx context.Context, input map[string]any) (Decision, error) {
 	frame := map[string]any{"session_id": s.id, "cursor": "18446744073709551615", "input": objectOrEmpty(input)}
-	if err := validateInput(frame); err != nil {
+	if err := validateSessionInput(frame, s.options.ValueBytes); err != nil {
 		return Decision{}, fmt.Errorf("invalid behavior decision input: %w", err)
 	}
 	s.mu.Lock()

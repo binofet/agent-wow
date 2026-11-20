@@ -225,3 +225,13 @@ func fromLua(value lua.LValue, b *budget, path map[*lua.LTable]bool, depth int) 
 		return nil, fmt.Errorf("unsupported policy output type %s", value.Type())
 	}
 }
+
+// Persistent sessions carry world snapshots and checkpoints, independently of
+// the small stateless evaluator. Their memory budget is configured at startup.
+func sessionValueNodes(bytes int) int { return max(MaxInputNodes, bytes/16) }
+func validateSessionInput(input map[string]any, bytes int) error {
+	if _, err := toLua(nil, input, &budget{nodeLimit: sessionValueNodes(bytes), byteLimit: bytes}); err != nil {
+		return err
+	}
+	return boundedJSONSize(input, bytes)
+}

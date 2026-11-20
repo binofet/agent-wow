@@ -110,7 +110,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	// oversized composite view as a whole, since dropping arbitrary rows
 	// could hide a target, observed victim or protection.
 	body, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(out)
-	if err != nil || len(body) > behavior.MaxJSONBytes-512 {
+	if err != nil || len(body) > behavior.DefaultSessionValueBytes-512 {
 		identity.Reason = "encounter_observation_bounds"
 		return identity, nil
 	}

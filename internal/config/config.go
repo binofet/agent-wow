@@ -26,6 +26,7 @@ type Policy struct {
 	Observation    string        `mapstructure:"observation"`
 	Context        []string      `mapstructure:"context"`
 	ExecutionLimit time.Duration `mapstructure:"execution_limit"`
+	ValueBytes     int           `mapstructure:"value_bytes"`
 }
 
 // Config contains the settings shared by client packages.
@@ -67,6 +68,7 @@ func Init(configFile string) error {
 	v.SetDefault("policy.observation", "")
 	v.SetDefault("policy.context", []string{})
 	v.SetDefault("policy.execution_limit", 0)
+	v.SetDefault("policy.value_bytes", 0)
 	v.SetDefault("log_level", "info")
 
 	if configFile != "" {

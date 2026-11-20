@@ -56,6 +56,7 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
 	var moduleTimeout, policyExecutionLimit time.Duration
 	var policyFile, policyObservation string
+	var policyValueBytes int
 	var policyContext []string
 	command := &cobra.Command{
 		Use: "play <name|guid>", Short: "Enter the world and serve a local gameplay RPC API",
@@ -88,6 +89,12 @@ local RPC API for gameplay actions.`,
 			}
 			if cmd.Flags().Changed("policy-execution-limit") {
 				policy.ExecutionLimit = policyExecutionLimit
+			}
+			if cmd.Flags().Changed("policy-value-bytes") {
+				policy.ValueBytes = policyValueBytes
+			}
+			if policy.ValueBytes < 0 {
+				return errors.New("--policy-value-bytes must not be negative")
 			}
 			if policy.ExecutionLimit < 0 {
 				return errors.New("--policy-execution-limit must not be negative")
@@ -139,7 +146,7 @@ local RPC API for gameplay actions.`,
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
 			if policy.File != "" {
-				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit}, policy.Context...); err != nil {
+				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit, ValueBytes: policy.ValueBytes}, policy.Context...); err != nil {
 					return err
 				}
 			}
@@ -147,6 +154,7 @@ local RPC API for gameplay actions.`,
 		},
 	}
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
+	command.Flags().IntVar(&policyValueBytes, "policy-value-bytes", 0, "JSON bytes per persistent observation or checkpoint (0 uses 8 MiB)")
 	command.Flags().DurationVar(&policyExecutionLimit, "policy-execution-limit", 0, "Timeout per persistent Lua callback (0 uses the default execution budget)")
 	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
 	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")

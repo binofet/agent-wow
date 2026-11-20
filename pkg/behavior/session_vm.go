@@ -15,7 +15,7 @@ import (
 // A host frame can contain a full policy checkpoint or input plus a bounded
 // 256-row reservation ledger. Ordinary Lua inputs and outputs retain their
 // original JSON and node bounds.
-const maxSessionFrameBytes = 64 * 1024
+const maxSessionFrameBytes = DefaultSessionValueBytes + maxPendingActions*512
 
 // sessionVM owns a Lua state and its persistent policy closures.
 type sessionVM struct {
@@ -23,9 +23,14 @@ type sessionVM struct {
 	state          *lua.LState
 	callbacks      map[string]*lua.LFunction
 	executionLimit time.Duration
+	valueBytes     int
 }
 
 func newSessionVM(parent context.Context, source string, executionLimit time.Duration) (*sessionVM, error) {
+	return newSessionVMWithValues(parent, source, executionLimit, DefaultSessionValueBytes)
+}
+
+func newSessionVMWithValues(parent context.Context, source string, executionLimit time.Duration, valueBytes int) (*sessionVM, error) {
 	if len(source) == 0 || len(source) > MaxSourceBytes {
 		return nil, fmt.Errorf("policy source must contain 1..%d bytes", MaxSourceBytes)
 	}
@@ -34,7 +39,7 @@ func newSessionVM(parent context.Context, source string, executionLimit time.Dur
 	}
 
 	state := newVM()
-	vm := &sessionVM{state: state, callbacks: make(map[string]*lua.LFunction, 4), executionLimit: executionLimit}
+	vm := &sessionVM{state: state, callbacks: make(map[string]*lua.LFunction, 4), executionLimit: executionLimit, valueBytes: valueBytes}
 	if err := vm.load(parent, source); err != nil {
 		vm.close()
 		return nil, fmt.Errorf("load session policy: %w", err)
@@ -147,7 +152,7 @@ func requireSessionSuccess(_ context.Context, value lua.LValue) error {
 func (v *sessionVM) object(ctx context.Context, name string, args ...map[string]any) (map[string]any, error) {
 	var result map[string]any
 	err := v.call(ctx, name, func(ctx context.Context, value lua.LValue) error {
-		detached, err := fromLua(value, &budget{ctx: ctx}, make(map[*lua.LTable]bool), 0)
+		detached, err := fromLua(value, &budget{ctx: ctx, byteLimit: v.valueBytes, nodeLimit: sessionValueNodes(v.valueBytes)}, make(map[*lua.LTable]bool), 0)
 		if err != nil {
 			return err
 		}
@@ -156,7 +161,7 @@ func (v *sessionVM) object(ctx context.Context, name string, args ...map[string]
 		if !ok {
 			return errors.New("callback must return an object")
 		}
-		return jsonSize(result)
+		return boundedJSONSize(result, v.valueBytes)
 	}, args...)
 	if err != nil {
 		return nil, err
@@ -178,9 +183,9 @@ func (v *sessionVM) call(parent context.Context, name string, check func(context
 	top := state.GetTop()
 	defer state.SetTop(top)
 
-	byteLimit, nodeLimit := MaxJSONBytes, MaxInputNodes
+	byteLimit, nodeLimit := v.valueBytes, sessionValueNodes(v.valueBytes)
 	if name == "import_state" || name == "decide" {
-		byteLimit, nodeLimit = maxSessionFrameBytes, MaxInputNodes+maxPendingActions*8
+		byteLimit, nodeLimit = v.valueBytes+maxPendingActions*512, sessionValueNodes(v.valueBytes)+maxPendingActions*8
 	}
 	inputs := make([]lua.LValue, 0, len(args))
 	for _, arg := range args {

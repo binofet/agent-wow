@@ -10,7 +10,7 @@ import (
 
 const (
 	maxSessionEvents     = 256
-	maxSessionEventBytes = 512 * 1024
+	maxSessionEventBytes = 4 * DefaultSessionValueBytes
 	maxPendingActions    = 256
 )
 
@@ -86,6 +86,10 @@ type queuedEvent struct {
 }
 
 func prepareEvent(event Event) (queuedEvent, error) {
+	return prepareEventWithValues(event, DefaultSessionValueBytes)
+}
+
+func prepareEventWithValues(event Event, valueBytes int) (queuedEvent, error) {
 	if event.Kind == "" || len(event.Kind) > 128 {
 		return queuedEvent{}, errors.New("behavior event needs a bounded kind")
 	}
@@ -102,7 +106,7 @@ func prepareEvent(event Event) (queuedEvent, error) {
 	// Include the largest possible sequence in the budget before taking the
 	// ingress lock. JSON round-tripping detaches buffers supplied by the host.
 	body["sequence"] = "18446744073709551615"
-	if err := validateInput(body); err != nil {
+	if err := validateSessionInput(body, valueBytes); err != nil {
 		return queuedEvent{}, fmt.Errorf("invalid behavior event: %w", err)
 	}
 	raw, err := json.Marshal(body)
@@ -130,7 +134,7 @@ func objectOrEmpty(object map[string]any) map[string]any {
 // event and receipt ledger untouched. The adapter should retain and retry the
 // same event before admitting later traffic when ordering matters.
 func (s *Session) Enqueue(event Event) (uint64, error) {
-	row, err := prepareEvent(event)
+	row, err := prepareEventWithValues(event, s.options.ValueBytes)
 	if err != nil {
 		return 0, err
 	}
@@ -145,7 +149,7 @@ func (s *Session) Enqueue(event Event) (uint64, error) {
 			return 0, ErrInvalidReceipt
 		}
 	}
-	if len(s.queue) == maxSessionEvents || s.queueBytes+row.bytes > maxSessionEventBytes {
+	if len(s.queue) == maxSessionEvents || s.queueBytes+row.bytes > max(maxSessionEventBytes, 4*s.options.ValueBytes) {
 		return 0, ErrEventBackpressure
 	}
 	if s.tail == ^uint64(0) {
