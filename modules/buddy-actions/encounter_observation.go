@@ -159,6 +159,14 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			Guid: guid, Present: p.Present, MapKnown: p.MapKnown, MapId: proto.Uint32(p.MapId),
 			AliveKnown: p.AliveKnown, HealthKnown: p.HealthKnown, Health: p.Health, MaxHealth: p.MaxHealth,
 			FactionTemplate: p.FactionTemplate,
+			PositionKnown:   p.PositionKnown && finite(playerPosition(p)),
+			ClassKnown:      p.ClassKnown, ClassId: p.ClassId, RaceKnown: p.RaceKnown, RaceId: p.RaceId,
+			LevelKnown: p.LevelKnown, Level: p.Level,
+			PowerKnown: p.PowerKnown, PowerType: p.PowerType, Power: p.Power, MaxPower: p.MaxPower,
+			MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0xff != 0,
+		}
+		if view.PositionKnown {
+			view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = p.X, p.Y, p.Z, p.Orientation, p.PositionRevision
 		}
 		if p.AliveKnown {
 			view.Alive = proto.Bool(p.Alive)
@@ -199,11 +207,12 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 				Attackable: c.AliveKnown && c.Alive && c.HealthKnown && c.Health != 0 && c.UnitFlagsKnown && c.DynamicFlagsKnown &&
 					c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && c.DynamicFlags&0x20 == 0,
 				Engaged: engaged, UnitFlagsKnown: c.UnitFlagsKnown, UnitFlags: c.UnitFlags, FactionTemplate: c.FactionTemplate,
-				PositionKnown: c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
-				Trajectory:    c.Trajectory,
+				PositionKnown:     c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
+				Trajectory:        c.Trajectory,
+				OwnDamageFamilies: s.encounterOwnDamageFamilies(c.Guid),
 			}
 			if view.PositionKnown {
-				view.X, view.Y, view.Z, view.PositionRevision = c.X, c.Y, c.Z, c.PositionRevision
+				view.X, view.Y, view.Z, view.Orientation, view.PositionRevision = c.X, c.Y, c.Z, c.Orientation, c.PositionRevision
 			}
 			if c.AliveKnown {
 				view.Alive = proto.Bool(c.Alive)
@@ -245,29 +254,33 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	offenseCaster := currentCaster && s.offenseCustodyAvailableLocked() && observedOffenseCaster(self)
 	polyReady, sapReady := false, false
 	for id, spell := range s.learnedContractsLocked() {
-		view := &actionsv1.EncounterSpell{Known: true}
+		view := encounterSpellMechanics(spell, self)
 		switch spell.Capability().Kind {
 		case spellcatalog.Heal:
+			view.Available = s.healRankAvailableLocked(self, spell)
 			view.Ready = heals[id]
 			view.Capability = "heal"
 		case spellcatalog.Polymorph:
-			view.Ready = polyCaster && self.PowerKnown && int32(self.PowerType) == spell.Power &&
+			view.Available = self.PowerKnown && int32(self.PowerType) == spell.Power &&
 				uint64(self.Power) >= spellCost(spell, self) && !s.now().Before(s.spellReady[id]) && casterRequirementsObserved(spell, self)
+			view.Ready = polyCaster && view.Available
 			view.Capability = "polymorph"
 			polyReady = polyReady || view.Ready
 		case spellcatalog.Sap:
 			view.Capability = "sap"
 			// The exact cast still checks the selected NPC's observed type and range.
-			view.Ready = sapCaster && self.PowerKnown && int32(self.PowerType) == spell.Power &&
+			view.Available = self.PowerKnown && int32(self.PowerType) == spell.Power &&
 				uint64(self.Power) >= spellCost(spell, self) && !s.spellOnCooldownLocked(spell) &&
 				(spell.ItemClass < 0 || s.weaponReady(self)) && casterRequirementsObserved(spell, self)
+			view.Ready = sapCaster && view.Available
 			sapReady = sapReady || view.Ready
 		case spellcatalog.Damage:
 			if !s.offenseRankSupportedLocked(spell) {
 				continue
 			}
 			view.Capability = "offense"
-			view.Ready = offenseCaster && s.offenseRankReadyLocked(self, spell)
+			view.Available = s.offenseRankReadyLocked(self, spell)
+			view.Ready = offenseCaster && view.Available
 		default:
 			continue
 		}
