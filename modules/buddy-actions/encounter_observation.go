@@ -272,7 +272,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 		self.ClassKnown && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
 	polyCaster := controlCaster && self.ClassId == 8
 	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 && self.ChannelObjectGuid == 0 &&
-		!s.state.Following && !s.state.Buffing && !s.questApproaching && !s.clientControlLost &&
+		!s.questApproaching && !s.clientControlLost &&
 		!s.clientControlRestoring && s.stealthedLocked()
 	offenseCaster := currentCaster && s.offenseCustodyAvailableLocked() && observedOffenseCaster(self)
 	polyReady, sapReady := false, false

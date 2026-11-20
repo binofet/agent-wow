@@ -39,6 +39,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
