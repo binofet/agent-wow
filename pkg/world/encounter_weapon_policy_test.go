@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -55,7 +56,15 @@ func TestEncounterWeaponStartsSwingBeforeBehindAndStrikesFromSparseJSON(t *testi
 	if action := check("approach_target", nil); action["behind"] != false {
 		t.Fatal("idle rogue chased behind before starting autoswing", action)
 	}
-	target.X, target.MeleeReady = 3, true
+	// A moving rogue can use an in-range instant even before native melee
+	// readiness permits a swing start. Do not replace it with another chase.
+	target.X, target.MeleeReady = 3, false
+	target.Trajectory = &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500,
+		DestinationKnown: true, DestinationX: 4}
+	self.MovementKnown, self.Moving = true, true
+	check("offense", float64(1752))
+	target.Trajectory = nil
+	self.Moving, target.MeleeReady = false, true
 	// A stronger available Backstab must not postpone a currently legal swing
 	// while the rogue is face-to-face with an enemy attacking it.
 	check("melee_start", nil)
