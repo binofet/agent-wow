@@ -1659,23 +1659,10 @@ class RPC:
 
     def call(self, method, params, timeout=None):
         self.last_failure = None
-        if method not in ("buddy-chat.poll", "buddy-chat.send", "buddy-chat.emote", "buddy-chat.emotes", "buddy-chat.owner_feed",
-                          "buddy-party.state", "buddy-party.accept",
-                          "buddy-world.snapshot",
-                          "buddy-quests.discover", "buddy-quests.state", "buddy-quests.offer", "buddy-quests.accept",
-                          "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward", "buddy-quests.accept_shared",
-                          # Internal town and quest workers share this transport.
-                          "buddy-loot.state", "buddy-loot.enable",
-                          "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
-                          "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
-                          "buddy-quest-items.state",
-                          "buddy-inventory.state",
-                          "buddy-actions.status", "buddy-actions.follow",
-                          "session.describe", "session.policy_source", "session.reload_policy", "buddy-actions.heal_once", "buddy-actions.assist",
-                          "buddy-actions.resurrect_once", "buddy-actions.pick_lock",
-                          "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
-                          "buddy-actions.behavior", "buddy-actions.reload_behavior"):
-            raise ConversationError("Unsupported chat method")
+        # The running registry defines the public game surface. Do not keep a
+        # second feature allowlist that prevents models using new capabilities.
+        if not isinstance(method, str) or not re.fullmatch(r"(?:session|buddy-[a-z0-9-]+)\.[a-z][a-z0-9_]*", method):
+            raise ConversationError("Invalid public RPC method")
         self.request_id += 1
         body = json.dumps({"jsonrpc": "2.0", "id": self.request_id,
                            "method": method, "params": params}).encode()
