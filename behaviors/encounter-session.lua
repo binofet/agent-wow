@@ -463,6 +463,13 @@ local function decide_encounter(frame)
             if focus.meleeReady == true then
                 out.action = proposal(obs, "melee_start", out.focusGuid)
                 return out
+            end
+            local strike = damage_spell(obs, focus, {instant_only=true})
+            local instant = strike and (obs.spells or {})[tostring(strike)]
+            if instant and instant.weaponStrike == true and
+               (not movement or not movement.needs_position(out.focusGuid)) then
+                out.action = proposal(obs, "offense", out.focusGuid, strike)
+                return out
             elseif movement and obs.worldObservationRevision then
                 local step = movement.decide(obs, state.sequence, out.focusGuid,
                     {rangeYards=intent.meleeRange or 3.5, requireLos=true})
