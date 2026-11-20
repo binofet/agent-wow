@@ -42,13 +42,19 @@ func (s *Service) EngageNPC(ctx context.Context, r *actionsv1.EngageNPCRequest) 
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
+	if s.hostEncounterKey != "" {
+		return s.inactiveNativeEncounterLocked(r.Enabled)
+	}
 	if !r.Enabled {
 		s.engage.active, s.engage.phase = false, "disabled"
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		return s.stateLocked(), nil
 	}
-	if r.TargetGuid == 0 || s.state.InteractionOwner != "" || s.state.Practicing || s.fargodeep.active || s.state.Traveling || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
+	if s.targetProtection.blocks(r.TargetGuid, s.now()) {
+		return nil, status.Error(codes.FailedPrecondition, "target has observed break-on-damage control")
+	}
+	if r.TargetGuid == 0 || s.crowdControl.active || s.state.InteractionOwner != "" || s.state.Practicing || s.fargodeep.active || s.state.Traveling || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "engage requires one target and confirmed movement custody")
 	}
 	w, err := s.snapshot(ctx, r.TargetGuid)
@@ -70,7 +76,7 @@ func (s *Service) engageTargetValidLocked(w *worldv1.SnapshotResponse, target ui
 	return known && distance(s.pos, p) <= 35 && math.Abs(float64(p.z-s.pos.z)) <= 12
 }
 func (s *Service) engageCurrentLocked(ctx context.Context) bool {
-	if !s.engage.active || !s.now().Before(s.engage.until) || s.state.InteractionOwner != "" || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.CastPending {
+	if !s.engage.active || !s.now().Before(s.engage.until) || s.targetProtection.blocks(s.engage.target, s.now()) || s.state.InteractionOwner != "" || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.state.CastPending {
 		return false
 	}
 	w, err := s.snapshot(ctx, s.engage.target)
@@ -86,6 +92,11 @@ func (s *Service) engageOffenseAllowedLocked(ctx context.Context, target uint64,
 func (s *Service) engageTickLocked(ctx context.Context) bool {
 	if !s.engage.active {
 		return false
+	}
+	if s.blockProtectedOffenseLocked(ctx, s.engage.target) {
+		s.engage.active, s.engage.phase = false, "protected_target_requires_new_selection"
+		s.stopLocked(ctx)
+		return true
 	}
 	if !s.now().Before(s.engage.until) {
 		s.engage.active, s.engage.phase = false, "lease_expired"

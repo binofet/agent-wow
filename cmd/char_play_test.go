@@ -306,12 +306,27 @@ func TestPlayCommandListenerConfig(t *testing.T) {
 }
 
 func TestPlayArgumentValidation(t *testing.T) {
-	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}} {
+	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}, {"play", "Mira", "--policy-execution-limit", "-1ms"}} {
 		command := characterCommands{}.command()
 		command.SetArgs(args)
 		command.SetErr(io.Discard)
 		if err := command.Execute(); err == nil {
 			t.Fatal("accepted", args)
+		}
+	}
+}
+
+func TestPlayRequiresObservationForHostEncounterOwnership(t *testing.T) {
+	t.Setenv("BUDDY_HOST_ENCOUNTER_OWNED", "true")
+	for _, args := range [][]string{
+		{"play", "Mira"},
+		{"play", "Mira", "--policy-file", "self-mana.lua", "--policy-observation", "self_mana=buddy-actions.self_mana_observation"},
+	} {
+		command := characterCommands{}.command()
+		command.SetArgs(args)
+		command.SetErr(io.Discard)
+		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "Lua-owned encounters require a policy file and the encounter observation feed") {
+			t.Fatalf("expected encounter observation requirement, got %v", err)
 		}
 	}
 }

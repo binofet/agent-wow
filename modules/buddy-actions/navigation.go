@@ -171,6 +171,10 @@ func (s *Service) navigationStepLocked(ctx context.Context, path []position, ind
 }
 
 func (s *Service) navigationStepWithinLocked(ctx context.Context, path []position, index *int, inside func(position) bool) bool {
+	return s.navigationStepAtSpeedLocked(ctx, path, index, inside, 7)
+}
+
+func (s *Service) navigationStepAtSpeedLocked(ctx context.Context, path []position, index *int, inside func(position) bool, speed float64) bool {
 	for *index < len(path) && distance(s.pos, path[*index]) <= 0.05 {
 		*index++
 	}
@@ -190,7 +194,7 @@ func (s *Service) navigationStepWithinLocked(ctx context.Context, path []positio
 	if elapsed < 0.15 {
 		return true
 	}
-	remaining := 7 * elapsed
+	remaining := speed * elapsed
 	for *index < len(path) && remaining > 0.001 {
 		target := path[*index]
 		d := distance(p, target)
@@ -216,7 +220,7 @@ func (s *Service) navigationStepWithinLocked(ctx context.Context, path []positio
 	if p.o < 0 {
 		p.o += 2 * math.Pi
 	}
-	if !inside(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > 7*elapsed+0.01 {
+	if !inside(p) || math.Abs(float64(p.z-s.pos.z)) > 2 || distance(s.pos, p) > speed*elapsed+0.01 {
 		s.stopLocked(ctx)
 		return false
 	}

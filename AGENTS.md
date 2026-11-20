@@ -18,3 +18,9 @@
 - For a change to Go or the reflected API, release the client binary or image, `module.yaml`, `module.pb`, and required companion contracts as one version from the same tested source commit. For a Lua-only change, reload and verify the policy revision in the running client. For every exposed method, verify the manifest and descriptor agree with the binary. Preserve existing RPCs when rolling out an unrelated behavior fix. A binary-only swap can advertise a capability the live RPC registry cannot route.
 - After a rollout, verify the affected live client can route the exact public RPC. For Resurrection, check `buddy-actions.resurrect_once` on Arlen and distinguish a normal precondition response from “method not found.” For healing, verify that a learned heal lands naturally when a teammate needs it. A restart or capability flag alone does not prove the behavior works.
 - Record the source commit, artifact versions, live profile, and the checks that passed. If a live hotfix is necessary, use the same source integration path immediately so the next release preserves it. Keep unrelated in-progress work out of that release.
+
+## Recovering a stuck companion inside an instance
+
+- An online GM summon inside an instance can fail unless the GM is the target party leader. A sent command is not evidence that the character moved.
+- Use the existing managed launcher to log the stuck companion out normally. Move the authenticated GM to the requested player, issue the ordinary offline `.summon <companion>` command, then start the same companion profile again. This uses public game commands and preserves the party and instance binding.
+- Verify the new world position, proximity to the requested player, and resumed following. Preserve this recovery knowledge instead of repeating failed online summons or route resets.

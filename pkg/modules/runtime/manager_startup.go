@@ -2,6 +2,8 @@ package modrt
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -30,14 +32,13 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 	if session.SendPacket == nil || session.Clock == nil {
 		return errors.New("session callbacks are required")
 	}
-	if len(m.order) == 0 {
-		return nil
-	}
 	dir, err := os.MkdirTemp("", "aw-")
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.dir = dir
+	m.mu.Unlock()
 	// Runtime failure cancels startup without inheriting its deadline after success.
 	startup, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -65,6 +66,13 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 			"AGENT_WOW_CHARACTER_GUID": strconv.FormatUint(session.Identity.CharacterGUID, 10), "AGENT_WOW_CHARACTER_NAME": session.Identity.CharacterName,
 			"AGENT_WOW_REALM_ID": strconv.Itoa(int(session.Identity.RealmID)), "AGENT_WOW_REALM_NAME": session.Identity.RealmName, "AGENT_WOW_CLIENT_BUILD": "12340",
 		}}
+		if name == actionsModule {
+			var key [32]byte
+			if _, err := rand.Read(key[:]); err != nil {
+				return err
+			}
+			l.Environment[modcb.PolicyEncounterKeyEnv] = hex.EncodeToString(key[:])
+		}
 		listener, err := net.Listen("unix", filepath.Join(socketDir, "session.sock"))
 		if err != nil {
 			return err
@@ -77,7 +85,7 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		inst.launch = l
 		inst.server = grpc.NewServer()
 		modv1.RegisterSessionServer(inst.server, modcb.New(m.ctx, name, modcb.Handlers{
-			SendPacket:   m.session.SendPacket,
+			SendPacket:   m.modulePacketWriter(filepath.Base(dir), name),
 			Clock:        m.session.Clock,
 			InvokeModule: m.invokeModule,
 		}))
@@ -111,4 +119,16 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		go func() { defer m.wg.Done(); m.pollHealth(name, inst) }()
 	}
 	return m.Err()
+}
+
+func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {
+	return func(ctx context.Context, opcode uint32, payload []byte) error {
+		if token, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			return m.writePolicySpell(ctx, token, sessionID, module, opcode, payload)
+		}
+		// The callback server supplies module identity. A callback without a
+		// matched policy dispatch cannot claim a Lua generation or action ID.
+		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		return m.session.SendPacket(modsession.WithWriteOrigin(ctx, origin), opcode, payload)
+	}
 }

@@ -5,6 +5,7 @@ import copy
 import importlib.machinery
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -41,7 +42,7 @@ class BuddyLifecycleTests(unittest.TestCase):
         }
         for name, value in paths.items():
             self.patch(buddy, name, value)
-        for name,value in {"PROFILE":"default","CHARACTER":"Arlen","CHARACTER_GUID":None,"RPC_PORT":8086,"CONFIG_DIR":None,"DATA_DIR":None,"MODULE_DIR":None}.items():
+        for name,value in {"PROFILE":"default","CHARACTER":"Arlen","CHARACTER_GUID":None,"RPC_PORT":8086,"CONFIG_DIR":None,"DATA_DIR":None,"MODULE_DIR":None,"RELEASE_ENV":{}}.items():
             self.patch(buddy,name,value)
         environment = mock.patch.dict(os.environ, {"BUDDY_INDEPENDENT": ""})
         environment.start()
@@ -916,6 +917,122 @@ class BuddyLifecycleTests(unittest.TestCase):
         self.assertEqual(environment["AGENT_WOW_WORLDRPC_PORT"],"8087")
         self.assertEqual(record["argv"],buddy.command_line())
         self.assertFalse(buddy.ready_line(b'level=INFO msg="world session ready" event=ready pid=12345 character.name=Mira character.guid=11 rpc_url=http://127.0.0.1:8087/rpc\n',12345))
+
+    def test_explicit_binary_preserves_tracking_and_requires_matching_lifecycle_selection(self):
+        original_binary = buddy.BINARY
+        canary = buddy.ROOT / "canary-client"
+        canary.write_text("canary executable")
+        canary.chmod(0o700)
+        self.profile(binary=canary)
+        record = self.launch()
+        self.assertEqual(record["argv"][0], str(canary))
+        self.assertEqual(self.spawn_arguments[0][0][0], str(canary))
+        self.assertTrue(buddy.running_owned(record))
+        self.assertEqual(buddy.status(), 0)
+        self.profile()
+        self.assertEqual(buddy.BINARY, original_binary)
+        for action in (buddy.start, buddy.stop, buddy.status):
+            with self.assertRaisesRegex(buddy.BuddyError, "left untouched"):
+                action()
+        self.send_signal.assert_not_called()
+        self.profile(binary=canary)
+        self.assertEqual(buddy.load_record(), record)
+        self.send_signal.side_effect = self.confirmed_exit
+        self.assertEqual(buddy.stop(), 0)
+        self.send_signal.assert_called_once()
+
+    def test_profile_runtime_release_survives_normal_start_and_stop(self):
+        self.profile()
+        directory = buddy.PID_FILE.parent
+        selected = buddy.ROOT / "release" / "agent-wow"
+        selected.parent.mkdir()
+        selected.write_text("released executable")
+        selected.chmod(0o700)
+        release = {
+            "binary": "release/agent-wow", "moduleDir": "release/modules",
+            "policyFile": "release/mage.lua",
+            "policyObservation": "encounter=buddy-actions.encounter_observation",
+            "policyContext": ["self_mana=buddy-actions.self_mana_observation"],
+            "hostEncounterOwned": True, "hostHealingOwned": True, "hostSelfManaOwned": False,
+        }
+        sidecar = directory / "runtime-release.json"
+        sidecar.write_text(json.dumps(release))
+        self.profile()
+        frozen = dict(buddy.RELEASE_ENV)
+        # Start uses the release resolved by configure, even if the file or
+        # inherited flags change before the child is spawned.
+        sidecar.write_text(json.dumps(dict(release, hostHealingOwned=False)))
+        with mock.patch.dict(os.environ, {"BUDDY_HOST_HEALING_OWNED": "false", "AGENT_WOW_POLICY_FILE": "old.lua"}):
+            record = self.launch()
+        environment = self.spawn_arguments[1]["env"]
+        self.assertEqual(record["argv"][0], str(selected))
+        self.assertEqual(environment["AGENT_WOW_MODULE_DIR"], str(buddy.ROOT / "release/modules"))
+        self.assertEqual(environment["AGENT_WOW_POLICY_FILE"], str(buddy.ROOT / "release/mage.lua"))
+        self.assertEqual(environment["AGENT_WOW_POLICY_OBSERVATION"], release["policyObservation"])
+        self.assertEqual(environment["AGENT_WOW_POLICY_CONTEXT"], release["policyContext"][0])
+        self.assertEqual(environment["BUDDY_HOST_HEALING_OWNED"], "true")
+        self.assertEqual(environment["BUDDY_HOST_SELF_MANA_OWNED"], "false")
+        self.assertEqual(buddy.RELEASE_ENV, frozen)
+        sidecar.write_text(json.dumps(release))
+        self.profile()
+        self.assertEqual(buddy.load_record(), record)
+        self.send_signal.side_effect = self.confirmed_exit
+        self.assertEqual(buddy.stop(), 0)
+        self.send_signal.assert_called_once()
+
+    def test_profile_release_explicit_paths_win_and_private_storage_is_optional(self):
+        self.profile()
+        canonical = buddy.PID_FILE.parent
+        storage = buddy.ROOT / "selected-storage"
+        storage.mkdir()
+        release = {
+            "binary": "release/agent-wow", "moduleDir": "release/modules",
+            "config": str(storage / "buddy.yaml"), "configDir": str(storage),
+            "dataDir": "selected-data",
+        }
+        (canonical / "runtime-release.json").write_text(json.dumps(release))
+        self.profile()
+        self.assertEqual(buddy.CONFIG, storage / "buddy.yaml")
+        self.assertEqual(buddy.CONFIG_DIR, storage)
+        self.assertEqual(buddy.DATA_DIR, buddy.ROOT / "selected-data")
+        self.assertEqual(buddy.PID_FILE.parent, canonical)
+        explicit = buddy.ROOT / "explicit"
+        explicit.mkdir()
+        self.profile(binary=explicit / "client", module_dir=explicit / "modules",
+                     config=explicit / "buddy.yaml", config_dir=explicit, data_dir=explicit / "data")
+        self.assertEqual(buddy.BINARY, explicit / "client")
+        self.assertEqual(buddy.MODULE_DIR, explicit / "modules")
+        self.assertEqual(buddy.CONFIG_DIR, explicit)
+        self.assertEqual(buddy.DATA_DIR, explicit / "data")
+        self.assertEqual(buddy.PID_FILE.parent, canonical)
+
+    def test_no_runtime_release_preserves_default_selection_and_environment(self):
+        args = dict(profile="default", character_name=None, character_guid=None, rpc_port=None,
+                    config=None, config_dir=None, data_dir=None, module_dir=None)
+        buddy.RELEASE_ENV = {"BUDDY_HOST_ENCOUNTER_OWNED": "true"}
+        buddy.configure(types.SimpleNamespace(**args))
+        self.assertEqual(buddy.BINARY, buddy.ROOT / "bin/agent-wow")
+        self.assertEqual(buddy.CONFIG, buddy.ROOT / "config/buddy.yaml")
+        self.assertIsNone(buddy.MODULE_DIR)
+        self.assertIsNone(buddy.CONFIG_DIR)
+        self.assertIsNone(buddy.DATA_DIR)
+        self.assertEqual(buddy.RELEASE_ENV, {})
+        with mock.patch.dict(os.environ, {"BUDDY_HOST_HEALING_OWNED": "false"}):
+            self.launch()
+        self.assertEqual(self.spawn_arguments[1]["env"]["BUDDY_HOST_HEALING_OWNED"], "false")
+
+    def test_runtime_release_rejects_malformed_json_and_typed_fields_before_launch(self):
+        self.profile()
+        sidecar = buddy.PID_FILE.parent / "runtime-release.json"
+        for raw in ("{", "[]", '{"binary":3}', '{"moduleDir":{}}', '{"policyFile":null}',
+                    '{"hostEncounterOwned":"true"}', '{"policyContext":"bad"}',
+                    '{"policyObservation":5}', '{"binary":"a","binary":"b"}'):
+            with self.subTest(raw=raw):
+                sidecar.write_text(raw)
+                with self.assertRaises(buddy.BuddyError):
+                    self.profile()
+        self.spawn.assert_not_called()
+        self.send_signal.assert_not_called()
 
     def test_other_profile_record_is_never_signaled_even_with_matching_pid(self):
         self.profile()

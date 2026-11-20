@@ -87,26 +87,8 @@ func initialKnown(data []byte) (bool, error) {
 }
 
 func initialSpellKnown(data []byte, spell uint32) (bool, error) {
-	if len(data) < 5 {
-		return false, errors.New("truncated initial spells")
-	}
-	count := int(binary.LittleEndian.Uint16(data[1:]))
-	if count > 4096 || len(data) < 3+count*6+2 {
-		return false, errors.New("invalid initial spell count")
-	}
-	known := false
-	for i := 0; i < count; i++ {
-		if binary.LittleEndian.Uint32(data[3+i*6:]) == spell {
-			known = true
-		}
-	}
-	// Cooldown records are fixed16bytes. Reject malformed tails atomically.
-	end := 3 + count*6
-	cooldowns := int(binary.LittleEndian.Uint16(data[end:]))
-	if len(data) != end+2+cooldowns*16 {
-		return false, errors.New("invalid initial cooldowns")
-	}
-	return known, nil
+	known, err := completeSpellbook(data)
+	return known[spell], err
 }
 
 func castEvent(data []byte) (guid uint64, count byte, spell uint32, offset int, err error) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
@@ -19,6 +20,15 @@ type Server struct {
 	Port int    `mapstructure:"port"`
 }
 
+// Policy binds a character process to a Lua bundle and reflected read feeds.
+type Policy struct {
+	File           string        `mapstructure:"file"`
+	Observation    string        `mapstructure:"observation"`
+	Context        []string      `mapstructure:"context"`
+	ExecutionLimit time.Duration `mapstructure:"execution_limit"`
+	ValueBytes     int           `mapstructure:"value_bytes"`
+}
+
 // Config contains the settings shared by client packages.
 type Config struct {
 	ConfigDir     string     `mapstructure:"config_dir"`
@@ -28,6 +38,7 @@ type Config struct {
 	RealmFilePath string     `mapstructure:"realm_file_path"`
 	AuthServer    Server     `mapstructure:"authserver"`
 	WorldRPC      Server     `mapstructure:"worldrpc"`
+	Policy        Policy     `mapstructure:"policy"`
 	LogLevel      slog.Level `mapstructure:"log_level"`
 }
 
@@ -53,6 +64,11 @@ func Init(configFile string) error {
 	v.SetDefault("authserver.port", 3724)
 	v.SetDefault("worldrpc.host", "localhost")
 	v.SetDefault("worldrpc.port", 8086)
+	v.SetDefault("policy.file", "")
+	v.SetDefault("policy.observation", "")
+	v.SetDefault("policy.context", []string{})
+	v.SetDefault("policy.execution_limit", 0)
+	v.SetDefault("policy.value_bytes", 0)
 	v.SetDefault("log_level", "info")
 
 	if configFile != "" {
@@ -104,6 +120,9 @@ func Init(configFile string) error {
 	}
 	if err := validateServer("worldrpc", cfg.WorldRPC); err != nil {
 		return err
+	}
+	if cfg.Policy.ExecutionLimit < 0 {
+		return errors.New("policy.execution_limit must not be negative")
 	}
 	current = cfg
 	return nil

@@ -14,6 +14,7 @@ import (
 
 type Effect struct {
 	Kind, A, B, Aura, Trigger, PeriodMs, Chain, Radius uint32
+	ItemType                                           uint32
 	Points, Dice, Misc                                 int32
 	PerLevel                                           float64
 }
@@ -61,13 +62,35 @@ const (
 	Resurrect    Kind = "resurrect"
 	Stealth      Kind = "stealth"
 	WeaponStrike Kind = "weapon_strike"
+	Polymorph    Kind = "polymorph"
+	Sap          Kind = "sap"
+	CreateItem   Kind = "create_item"
 	Cleanse      Kind = "cleanse"
 )
+
+func (kind Kind) BreaksOnDamage() bool { return kind == Polymorph || kind == Sap }
 
 type Capability struct {
 	Kind    Kind
 	Target  string
 	Blocked string
+}
+
+// RequiresComboPoints is a mechanical spell attribute, not a rotation rule.
+func (s Spell) RequiresComboPoints() bool { return s.Attrs[1]&(0x100000|0x400000) != 0 }
+
+// DirectComboFinisher recognizes the ordinary rogue direct-damage finisher
+// with its self dummy effect. Other dummy/periodic finishers stay unsupported.
+func (s Spell) DirectComboFinisher() bool {
+	if s.FamilySet != 8 || s.FamilyFlags[0]&0x20000 == 0 || s.Attrs[1]&0x100000 == 0 ||
+		s.Power != 3 || s.ItemClass != 2 || len(s.Effects) != 2 {
+		return false
+	}
+	damage, dummy := s.Effects[0], s.Effects[1]
+	return damage.Kind == 2 && damage.A == 6 && dummy.Kind == 3 && dummy.A == 1 &&
+		damage.B == 0 && dummy.B == 0 && damage.Aura == 0 && dummy.Aura == 0 &&
+		damage.Trigger == 0 && dummy.Trigger == 0 && damage.Chain <= 1 && dummy.Chain <= 1 &&
+		damage.Radius == 0 && dummy.Radius == 0 && damage.PeriodMs == 0 && dummy.PeriodMs == 0
 }
 
 // InterruptsCasting reports a native interrupt effect, including spells with
@@ -132,7 +155,21 @@ func (s Spell) FriendlyDispelMask() uint32 {
 	return mask
 }
 
-// Capabilities match effects/target selectors, never names, classes or spell IDs.
+// CreatedItem is the single output of a direct self-target item creation.
+// Capability additionally applies the normal learned-cast requirements.
+func (s Spell) CreatedItem() uint32 {
+	if len(s.Effects) != 1 || s.TargetMask != 0 {
+		return 0
+	}
+	e := s.Effects[0]
+	if e.Kind != 24 || e.A != 1 || e.B != 0 || e.Aura != 0 || e.Trigger != 0 ||
+		e.PeriodMs != 0 || e.Chain != 0 || e.Radius != 0 || e.ItemType >= 1<<31 {
+		return 0
+	}
+	return e.ItemType
+}
+
+// Capabilities match spell mechanics. Specialized handlers can further restrict their known spell families, ranks and effects.
 // Deliberately expose unsupported requirements rather than silently hiding them.
 func (s Spell) Capability() Capability {
 	fail := func(why string) Capability { return Capability{Blocked: why} }
@@ -153,8 +190,36 @@ func (s Spell) Capability() Capability {
 			return fail("aura_state_requirement")
 		}
 	}
+	if s.DirectComboFinisher() {
+		return Capability{Kind: WeaponStrike, Target: "enemy"}
+	}
 	if s.ItemClass == -1 && s.Power == 0 && s.MaxFriendly > 0 && s.FriendlyDispelMask() != 0 {
 		return Capability{Kind: Cleanse, Target: "ally"}
+	}
+	// The ordinary learned sheep ranks use a single enemy, confuse and transform.
+	if s.Family == 118 && (s.ID == 118 || s.ID >= 12824 && s.ID <= 12826) &&
+		s.FamilySet == 3 && s.ItemClass == -1 && s.Power == 0 && s.CastMs == 1500 &&
+		s.MaxHostile == 30 && s.DurationIndex != 0 && s.TargetMask == 0 &&
+		len(s.Effects) == 2 {
+		confuse, transform := s.Effects[0], s.Effects[1]
+		if confuse.Kind == 6 && transform.Kind == 6 && confuse.Aura == 5 && transform.Aura == 56 &&
+			confuse.A == 6 && transform.A == 6 && confuse.B == 0 && transform.B == 0 &&
+			confuse.Trigger == 0 && transform.Trigger == 0 && confuse.Chain == 0 && transform.Chain == 0 &&
+			confuse.Radius == 0 && transform.Radius == 0 {
+			return Capability{Kind: Polymorph, Target: "enemy"}
+		}
+	}
+	// Learned rogue Sap ranks use an explicit single enemy, energy, Stealth
+	// stance and one incapacitate aura. Other aura-12 spells need their own contract.
+	if s.Family == 6770 && s.FamilySet == 8 && s.Stances == 1<<29 && s.Attrs[0]&0x20000 != 0 &&
+		s.ItemClass == 2 && s.SubclassMask == 173555 && s.InventoryMask == 0 &&
+		s.Power == 3 && s.CastMs == 0 && s.MaxHostile == 5 && s.DurationIndex != 0 &&
+		s.TargetMask == 0 && len(s.Effects) == 1 {
+		effect := s.Effects[0]
+		if effect.Kind == 6 && effect.A == 6 && effect.B == 0 && effect.Aura == 12 &&
+			effect.Trigger == 0 && effect.Chain == 0 && effect.Radius == 0 {
+			return Capability{Kind: Sap, Target: "enemy"}
+		}
 	}
 	kind := Kind("")
 	target := ""
@@ -190,6 +255,11 @@ func (s Spell) Capability() Capability {
 			t = "dead_ally"
 		case 121, 31, 58, 17:
 			k = WeaponStrike
+		case 24:
+			if s.CreatedItem() == 0 {
+				return fail("effect_24_requires_handler")
+			}
+			k = CreateItem
 		case 80:
 			continue // combo point award accompanies a weapon strike
 		case 6:

@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"sort"
 	"time"
+
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// Player::SendInitialSpells: complete active own spellbook + fixed16B cooldowns.
-// No partial initial packet, fabricated passive, or unknown metadata is promoted.
+// Player::SendInitialSpells writes an exact active spell count, followed by a
+// cooldown-map count. It can omit cooldown records marked needSendToClient=false
+// or whose spell metadata is missing, without updating that cooldown count.
+// Every serialized cooldown record must still be complete (16 bytes).
+// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Player/Player.cpp
 func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	bad := errors.New("malformed complete initial spellbook")
 	if len(p) < 5 || p[0] != 0 {
@@ -23,8 +28,10 @@ func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	if count > 4096 || len(p) < end+2 {
 		return nil, bad
 	}
-	n := int(binary.LittleEndian.Uint16(p[end:]))
-	if n > 4096 || len(p) != end+2+n*16 {
+	const cooldownRecordSize = 16
+	declaredCooldowns := int(binary.LittleEndian.Uint16(p[end:]))
+	cooldownBytes := len(p) - end - 2
+	if declaredCooldowns > 4096 || cooldownBytes%cooldownRecordSize != 0 || cooldownBytes/cooldownRecordSize > declaredCooldowns {
 		return nil, bad
 	}
 	out := make(map[uint32]bool, count)
@@ -37,6 +44,37 @@ func completeSpellbook(p []byte) (map[uint32]bool, error) {
 		out[id] = true
 	}
 	return out, nil
+}
+
+// Read the cooldown section only after the same complete spellbook packet has
+// been validated. The client learns the remaining durations, not game time.
+func (s *Service) observeInitialCooldownsLocked(p []byte) {
+	end := 3 + int(binary.LittleEndian.Uint16(p[1:]))*6
+	s.spellCooldownBaselineKnown = true
+	if s.spellReady == nil {
+		s.spellReady = make(map[uint32]time.Time)
+	}
+	if s.categoryReady == nil {
+		s.categoryReady = make(map[uint32]time.Time)
+	}
+	now := s.now()
+	for at := end + 2; at < len(p); at += 16 {
+		id := binary.LittleEndian.Uint32(p[at:])
+		category := uint32(binary.LittleEndian.Uint16(p[at+6:]))
+		spellMs, categoryMs := binary.LittleEndian.Uint32(p[at+8:]), binary.LittleEndian.Uint32(p[at+12:])
+		expires := now.Add(time.Duration(max(spellMs, categoryMs)) * time.Millisecond)
+		if id != 0 && expires.After(s.spellReady[id]) {
+			s.spellReady[id] = expires
+		}
+		if categoryEnd := now.Add(time.Duration(categoryMs) * time.Millisecond); category != 0 && categoryMs != 0 && categoryEnd.After(s.categoryReady[category]) {
+			s.categoryReady[category] = categoryEnd
+		}
+	}
+}
+
+func (s *Service) spellOnCooldownLocked(spell spellcatalog.Spell) bool {
+	now := s.now()
+	return now.Before(s.spellReady[spell.ID]) || now.Before(s.categoryReady[spell.Category])
 }
 func (s *Service) applySpellbookLocked(known map[uint32]bool) {
 	revision := s.spellbookRevision
@@ -86,7 +124,12 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.FlatCost = r.Cost
 			v.PowerType = r.Power
 			v.CastTimeMs = r.CastMs
+			v.SelfCastSupported = supportsSelfCast(r)
+			v.Channeled = isChanneledSpell(r)
 			v.Capability = string(cap.Kind)
+			if cap.Kind == spellcatalog.CreateItem {
+				v.CreatedItemEntry = r.CreatedItem()
+			}
 			v.TargetRule = cap.Target
 			v.BlockedReason = cap.Blocked
 			v.SelfOnly = cap.Target == "self"

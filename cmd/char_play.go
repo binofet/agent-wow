@@ -16,6 +16,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/internal/config"
 	"github.com/agent-wow/agent-wow/pkg/auth"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/char"
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/runtime"
@@ -53,7 +54,10 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 }
 
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
-	var moduleTimeout time.Duration
+	var moduleTimeout, policyExecutionLimit time.Duration
+	var policyFile, policyObservation string
+	var policyValueBytes int
+	var policyContext []string
 	command := &cobra.Command{
 		Use: "play <name|guid>", Short: "Enter the world and serve a local gameplay RPC API",
 		Long: `Enter the world as the selected character. This creates a persistent connection with the world server and exposes a
@@ -72,6 +76,46 @@ local RPC API for gameplay actions.`,
 			}
 			if moduleTimeout <= 0 {
 				return errors.New("--module-timeout must be greater than zero")
+			}
+			policy := config.Get().Policy
+			if cmd.Flags().Changed("policy-file") {
+				policy.File = policyFile
+			}
+			if cmd.Flags().Changed("policy-observation") {
+				policy.Observation = policyObservation
+			}
+			if cmd.Flags().Changed("policy-context") {
+				policy.Context = policyContext
+			}
+			if cmd.Flags().Changed("policy-execution-limit") {
+				policy.ExecutionLimit = policyExecutionLimit
+			}
+			if cmd.Flags().Changed("policy-value-bytes") {
+				policy.ValueBytes = policyValueBytes
+			}
+			if policy.ValueBytes < 0 {
+				return errors.New("--policy-value-bytes must not be negative")
+			}
+			if policy.ExecutionLimit < 0 {
+				return errors.New("--policy-execution-limit must not be negative")
+			}
+			var source string
+			if (policy.File == "") != (policy.Observation == "") || policy.File == "" && len(policy.Context) != 0 {
+				return errors.New("--policy-file and --policy-observation must be supplied together")
+			}
+			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_HEALING_OWNED")); owned && policy.File == "" {
+				return errors.New("Lua-owned healing requires a policy file and observation feed")
+			}
+			if owned, _ := strconv.ParseBool(os.Getenv("BUDDY_HOST_ENCOUNTER_OWNED")); owned &&
+				(policy.File == "" || policy.Observation != "encounter=buddy-actions.encounter_observation") {
+				return errors.New("Lua-owned encounters require a policy file and the encounter observation feed")
+			}
+			if policy.File != "" {
+				body, err := os.ReadFile(policy.File)
+				if err != nil {
+					return err
+				}
+				source = string(body)
 			}
 			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: config.Get().LogLevel}))
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -101,10 +145,20 @@ local RPC API for gameplay actions.`,
 			}
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
+			if policy.File != "" {
+				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit, ValueBytes: policy.ValueBytes}, policy.Context...); err != nil {
+					return err
+				}
+			}
 			return servePlay(ctx, listener, session, logger)
 		},
 	}
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
+	command.Flags().IntVar(&policyValueBytes, "policy-value-bytes", 0, "JSON bytes per persistent observation or checkpoint (0 uses 8 MiB)")
+	command.Flags().DurationVar(&policyExecutionLimit, "policy-execution-limit", 0, "Timeout per persistent Lua callback (0 uses the default execution budget)")
+	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
+	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")
+	command.Flags().StringSliceVar(&policyContext, "policy-context", nil, "Additional reflected reads for the same Lua decision, as phase=module.alias")
 	return command
 }
 

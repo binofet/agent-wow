@@ -1,0 +1,93 @@
+package modrt
+
+import (
+	"context"
+	"encoding/binary"
+	"math"
+	"testing"
+
+	"github.com/agent-wow/agent-wow/pkg/modules/session"
+	"github.com/agent-wow/agent-wow/pkg/movementflags"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+func policyMovementPacket(guid uint64) []byte {
+	// PackedGUID(9), flags, flags2, time, xyzo, fallTime.
+	out := make([]byte, 32)
+	out[0], out[1] = 1, byte(guid)
+	return out
+}
+
+func TestPolicyMovementAttributionAllowsOnlyCurrentBodyGroundPackets(t *testing.T) {
+	op := &policySpell{movement: &policyMovement{self: 9}}
+	packet := policyMovementPacket(9)
+	for _, test := range []struct {
+		name string
+		code uint32
+		body []byte
+		want bool
+	}{
+		{"heartbeat", opcode.MSGMoveHeartbeat, packet, true},
+		{"start", opcode.MSGMoveStartForward, packet, true},
+		{"stop", opcode.MSGMoveStop, packet, true},
+		{"face", opcode.MSGMoveSetFacing, packet, true},
+		{"other body", opcode.MSGMoveHeartbeat, policyMovementPacket(8), false},
+		{"cast", opcode.CMSGCastSpell, packet, false},
+		{"attack stop", opcode.CMSGAttackstop, nil, false},
+		{"truncated", opcode.MSGMoveHeartbeat, packet[:31], false},
+		{"trailing", opcode.MSGMoveHeartbeat, append(append([]byte(nil), packet...), 0), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := op.matchesActionPacket(test.code, test.body); got != test.want {
+				t.Fatalf("admitted=%v want=%v", got, test.want)
+			}
+		})
+	}
+	for _, flags := range []uint32{1, movementflags.PassiveModifiers, 1 | movementflags.PassiveModifiers, 0x200000, 0x200, 0x8000000} {
+		p := append([]byte(nil), packet...)
+		binary.LittleEndian.PutUint32(p[2:], flags)
+		if got := op.matchesMovementPacket(opcode.MSGMoveHeartbeat, p); got != (flags & ^(uint32(1)|movementflags.PassiveModifiers) == 0) {
+			t.Fatalf("flags %#x admitted=%v", flags, got)
+		}
+	}
+	invalid := append([]byte(nil), packet...)
+	binary.LittleEndian.PutUint32(invalid[12:], math.Float32bits(float32(math.NaN())))
+	if op.matchesMovementPacket(opcode.MSGMoveHeartbeat, invalid) {
+		t.Fatal("nonfinite pose admitted")
+	}
+	op.movement.stop = true
+	if op.matchesMovementPacket(opcode.MSGMoveStartForward, packet) || !op.matchesMovementPacket(opcode.MSGMoveStop, packet) {
+		t.Fatal("stop request can start motion")
+	}
+}
+
+func TestPolicyMovementInvocationCanWriteStepAndStopWithoutCastLedgerReplay(t *testing.T) {
+	m := New(nil, nil, nil)
+	t.Cleanup(m.cancel)
+	origin := modsession.WriteOrigin{SessionID: "move", Module: actionsModule, Writer: "lua", PolicyRevision: "p", ActionID: "7"}
+	op := &policySpell{capability: "approach_target", movement: &policyMovement{self: 9}, origin: origin, admitted: true}
+	m.policySpells.active = map[string]*policySpell{"token": op}
+	var writes []modsession.WriteOrigin
+	m.session.SendPacket = func(ctx context.Context, _ uint32, _ []byte) error {
+		writes = append(writes, modsession.WriteOriginFromContext(ctx))
+		return nil
+	}
+	packet := policyMovementPacket(9)
+	for _, code := range []uint32{opcode.MSGMoveHeartbeat, opcode.MSGMoveStop} {
+		if err := m.writePolicySpell(context.Background(), "token", "move", actionsModule, code, packet); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(writes) != 2 || writes[0] != origin || writes[1] != origin {
+		t.Fatal("movement lost Lua attribution", writes)
+	}
+	if err := m.writePolicySpell(context.Background(), "token", "move", actionsModule, opcode.CMSGAttackstop, nil); status.Code(err) != codes.PermissionDenied {
+		t.Fatal("movement authorized attack stop", err)
+	}
+	op.admitted = false
+	if err := m.writePolicySpell(context.Background(), "token", "move", actionsModule, opcode.MSGMoveHeartbeat, packet); status.Code(err) != codes.PermissionDenied {
+		t.Fatal("closed movement callback replayed", err)
+	}
+}

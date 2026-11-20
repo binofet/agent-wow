@@ -443,14 +443,13 @@ new approval queue. Existing project agreements still prohibit server database,
 configuration/source changes and secret access. Command transport is not proof
 of game effects: verify actual public observations. A genuine navigation failure
 or explicit Unstuck can use the rescue command instead of merely refusing.
-For native embedded action policies, use development.policyCommands with the
+To inspect and change the running Lua policy, use development.policyCommands with the
 supplied exact GUID/core session/RPC binding. Run show first, then apply --source PATH --expected-revision HASH or
 builtin --expected-revision HASH. Never substitute a new body SID after a stale
 binding rejection. Lua takes effect only after a verified same-body policy
-revision result. Native Go requires build and a qualified normal release/restart;
-source changes alone do not install new gameplay. Existing qualified routine
-release helpers may be used within their authority and ownership guards; Lua
-updates do not wait on native release. Shared mission Lua FSMs instead use the
+revision result. Make gameplay changes in Lua. Inspect the reflected native
+contracts with session.describe when you need a game action. Report missing
+native bindings with the exact requested action and receipt. Shared mission Lua FSMs instead use the
 actual shared_tasks.<kind>.sourcePath recorded by that task host. Edit that
 configured mission source (including its composed modules), not only sharedScripts
 or native behavior CAS. The host hot reloads this path on its next tick, retaining
@@ -1660,23 +1659,10 @@ class RPC:
 
     def call(self, method, params, timeout=None):
         self.last_failure = None
-        if method not in ("buddy-chat.poll", "buddy-chat.send", "buddy-chat.emote", "buddy-chat.emotes", "buddy-chat.owner_feed",
-                          "buddy-party.state", "buddy-party.accept",
-                          "buddy-world.snapshot",
-                          "buddy-quests.discover", "buddy-quests.state", "buddy-quests.offer", "buddy-quests.accept",
-                          "buddy-quests.journal", "buddy-quests.turn_in", "buddy-quests.claim_reward", "buddy-quests.accept_shared",
-                          # Internal town and quest workers share this transport.
-                          "buddy-loot.state", "buddy-loot.enable",
-                          "buddy-trade.state", "buddy-trade.open", "buddy-trade.offer_item",
-                          "buddy-trade.offer_gold", "buddy-trade.cancel", "buddy-trade.lookup_items",
-                          "buddy-quest-items.state",
-                          "buddy-inventory.state",
-                          "buddy-actions.status", "buddy-actions.follow",
-                          "session.describe", "buddy-actions.heal_once", "buddy-actions.assist",
-                          "buddy-actions.resurrect_once", "buddy-actions.pick_lock",
-                          "buddy-actions.buffs", "buddy-actions.spell_toolkit", "buddy-professions.state",
-                          "buddy-actions.behavior", "buddy-actions.reload_behavior"):
-            raise ConversationError("Unsupported chat method")
+        # The running registry defines the public game surface. Do not keep a
+        # second feature allowlist that prevents models using new capabilities.
+        if not isinstance(method, str) or not re.fullmatch(r"(?:session|buddy-[a-z0-9-]+)\.[a-z][a-z0-9_]*", method):
+            raise ConversationError("Invalid public RPC method")
         self.request_id += 1
         body = json.dumps({"jsonrpc": "2.0", "id": self.request_id,
                            "method": method, "params": params}).encode()
@@ -1686,9 +1672,10 @@ class RPC:
             request_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
             if method == "buddy-trade.lookup_items":
                 request_timeout = min(request_timeout, .45)
+            response_limit = (1024 if method == "session.policy_source" else 256) * 1024
             with self.opener.open(request, timeout=request_timeout) as response:
-                raw = response.read(256 * 1024 + 1)
-            if len(raw) > 256 * 1024:
+                raw = response.read(response_limit + 1)
+            if len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
         except (OSError, ValueError, urllib.error.URLError):
@@ -1730,6 +1717,17 @@ def checked_developer_workspace(path):
     if (path / git(path,"--git-common-dir")).resolve() != (ROOT / git(ROOT,"--git-common-dir")).resolve():
         raise ConversationError("Developer workspace belongs to another repository")
     return path
+
+def registered_developer_workspace(guid, name):
+    registry = read_json(ROOT / "data/self-edit/workspaces.json")
+    matches = [row for row in registry.get("characters", [])
+               if row.get("guid") == guid and row.get("name") == name.casefold()]
+    if not matches:
+        return None
+    if len(matches) != 1 or not isinstance(matches[0].get("workspace"), str):
+        raise ConversationError("Companion workspace registration is invalid")
+    return Path(matches[0]["workspace"])
+
 
 def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None):
     command = [str(binary), "exec", "--ephemeral", "--ignore-user-config",
@@ -2975,12 +2973,13 @@ class Conversation:
         try: RPC(url)
         except (ConversationError,TypeError,AttributeError): return {"enabled":False}
         binding=["--guid",str(self.character_guid),"--rpc-url",url,"--session-id",sid]
-        base=["python3","-B",str(Path(workspace)/"dev/self-edit")]
+        base=["python3","-B",str(ROOT/"dev/self-edit")]
         return dict(enabled=True,directDevelopment=True,workspace=str(workspace),rpcUrl=url,
             selfGuid=str(self.character_guid),ownerGuid=str(self.player_guid),sessionId=sid,
             policyCommands={"show":base+["show"]+binding,
                 "apply":base+["apply"]+binding+["--source","<PATH>","--expected-revision","<HASH>"],
-                "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"]})
+                "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"],
+                "input":["python3","-B",str(ROOT/"dev/policy-input")]+binding+["--value","<JSON object>"]})
 
     def poll_shared_quest(self):
         # The standing three-character worker owns main-party shares. Nix's
@@ -3584,7 +3583,7 @@ def main(argv=None):
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
-                        help="Enable same-brain Lua/Go development on owner/verified-peer turns in this repository/worktree")
+                        help="Override the registered in-game Lua development worktree")
     parser.add_argument("--poll-seconds", type=float, default=1)
     parser.add_argument("--reply-timeout", type=float, default=120)
     parser.add_argument("--max-replies", type=int, default=200)
@@ -3637,8 +3636,11 @@ def main(argv=None):
                 record.pop("error", None)
             write_json(state / "status.json", record)
         rpc = RPC(args.rpc_url)
+        workspace = args.developer_workspace
+        if workspace is None:
+            workspace = registered_developer_workspace(args.character_guid, args.character_name)
         brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           args.developer_workspace, args.model, args.reasoning_effort)
+                           workspace, args.model, args.reasoning_effort)
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
         record["requestedReasoningEffort"] = brain.reasoning_effort

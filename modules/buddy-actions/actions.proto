@@ -2,9 +2,30 @@ syntax = "proto3";
 package warcraftbuddy.actions.v1;
 option go_package = "github.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1";
 import "api/module/v1/session.proto";
+import "modules/buddy-party/party.proto";
+import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+// Normal client UI selection only; does not change the Lua combat queue.
+message SelectTargetRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  // Zero clears selection. Nonzero must be an observed same-map unit/corpse.
+  uint64 target_guid = 3;
+}
+message SelectTargetResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  bool transport_written = 4;
+  // True only when a subsequent World read changed to the requested target.
+  // A successful transport write alone does not establish an observed effect.
+  bool selection_observed = 5;
+  bool observed_target_known = 6;
+  uint64 observed_target_guid = 7;
+  string phase = 8;
+}
 // Explicitly select one currently observed NPC; never selects another target.
 message EngageNPCRequest { bool enabled = 1; uint64 target_guid = 2; }
 message EngageNPCState {
@@ -163,6 +184,9 @@ message KnownSpell {
   uint32 required_subclass_mask = 17;
   bool requires_stealth = 18;
   bool requires_behind = 19;
+  uint32 created_item_entry = 20;
+  bool self_cast_supported = 21;
+  bool channeled = 22;
 }
 message SpellOperation {
   uint32 spell_id = 1;
@@ -172,6 +196,15 @@ message SpellOperation {
   bool transport_written = 5;
   bool server_cast_go = 6;
   bool effect_observed = 7;
+  uint32 created_item_entry = 8;
+  uint32 created_item_count = 9;
+  bool item_push_observed = 10;
+  uint64 baseline_inventory_revision = 11;
+  uint64 observed_inventory_revision = 12;
+  bool inventory_confirmed = 13;
+  bool channel_started = 14;
+  bool channel_ended = 15;
+  uint32 channel_remaining_ms = 16;
 }
 message ObservedAura {
   uint32 slot = 1;
@@ -302,12 +335,340 @@ message State {
   uint64 self_guid = 107;
   SpellOperation last_spell_operation = 108;
   EngageNPCState engage_npc = 109;
+  // These are positive observations. Absence does not clear an unseen target.
+  repeated ProtectedTarget protected_targets = 110;
+  uint64 protected_target_revision = 111;
+  bool target_protection_overflow = 112;
+  // Kept for compatibility with the separate SpiritHealer release contract.
+  reserved 113;
+  bool crowd_control_approach_supported = 114;
+  CrowdControlState crowd_control = 115;
+  MeleeOperation last_melee_operation = 116;
+  TargetMovementState target_movement = 117;
+}
+message ProtectedTarget {
+  uint64 target_guid = 1;
+  uint64 caster_guid = 2;
+  uint32 spell_id = 3;
+  bool duration_known = 4;
+  uint32 remaining_ms = 5;
+  uint64 revision = 6;
+  uint32 slot = 7;
+  string capability = 8;
+}
+message CrowdControlState {
+  bool active = 1;
+  uint64 target_guid = 2;
+  uint32 spell_id = 3;
+  string phase = 4;
+  uint64 lease_remaining_ms = 5;
+}
+message PolymorphRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_guid = 3; bool approach = 4; bool cancel = 5; }
+message SapRequest { string session_id = 1; uint32 spell_id = 2; uint64 target_guid = 3; bool approach = 4; bool cancel = 5; }
+message CreateItemRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
+message CastSelfRequest { string session_id = 1; uint64 self_guid = 2; uint32 spell_id = 3; }
+message CastHealRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message CastOffenseRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
+message MeleeRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  bool stop = 4;
+  uint64 visit_id = 5;
+}
+message MeleeOperation {
+  uint64 self_guid = 1;
+  uint64 target_guid = 2;
+  bool enabled = 3;
+  string phase = 4;
+  bool transport_written = 5;
+  uint64 visit_id = 6;
+}
+message HealingRank {
+  uint32 spell_id = 1;
+  optional uint32 rank = 2;
+  optional uint32 cost = 3;
+  double amount = 4;
+  optional uint32 cast_ms = 5;
+  optional uint32 level = 6;
+  optional double min_range = 7;
+  optional double max_range = 8;
+  bool self_only = 9;
+}
+message HealingPatient {
+  uint64 guid = 1;
+  uint32 health = 2;
+  uint32 max_health = 3;
+  optional double distance = 4;
+  bool is_owner = 5;
+  bool under_attack = 6;
+}
+message HealingCaster {
+  uint64 guid = 1;
+  bool ready = 2;
+  optional uint32 mana = 3;
+}
+message HealingOptionsResponse {
+  string session_id = 1;
+  HealingCaster caster = 2;
+  bool host_owned = 3;
+  repeated HealingPatient patients = 4;
+  repeated HealingRank spells = 5;
+  string reason = 6;
+}
+message SelfManaCaster {
+  uint64 guid = 1;
+  bool present = 2;
+  bool alive_known = 3;
+  bool alive = 4;
+  bool map_known = 5;
+  bool position_known = 6;
+  bool class_known = 7;
+  uint32 class_id = 8;
+  bool power_known = 9;
+  optional uint32 power_type = 10;
+  optional uint32 power = 11;
+  optional uint32 max_power = 12;
+  bool combat_known = 13;
+  optional bool in_combat = 14;
+  bool movement_known = 15;
+  optional bool moving = 16;
+  bool channel_known = 17;
+  optional uint32 channel_spell_id = 18;
+}
+message SelfManaActivity {
+  bool known = 1;
+  optional bool idle = 2;
+}
+message SelfManaThreat {
+  bool known = 1;
+  optional bool attacking_self = 2;
+  optional bool attacking_party = 3;
+}
+message SelfManaSpell {
+  uint32 spell_id = 1;
+  uint32 family_id = 2;
+  optional uint32 rank = 3;
+  bool metadata_known = 4;
+  bool self_cast_supported = 5;
+  bool channeled = 6;
+  bool ready_known = 7;
+  optional bool ready = 8;
+}
+message SelfManaObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  bool spellbook_known = 3;
+  SelfManaCaster caster = 4;
+  SelfManaActivity activity = 5;
+  SelfManaThreat threat = 6;
+  repeated SelfManaSpell spells = 7;
+  bool host_owned = 8;
+}
+message EncounterObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  optional uint32 map_id = 4;
+  // False while native Actions still owns gameplay decisions.
+  optional bool host_owned = 5;
+  string reason = 6;
+  EncounterParty party = 7;
+  map<string, EncounterPlayer> players = 8;
+  map<string, EncounterCreature> targets = 9;
+  map<string, EncounterEngagement> engagement = 10;
+  repeated ProtectedTarget protected_auras = 11;
+  bool target_protection_overflow = 12;
+  map<string, EncounterSpell> spells = 13;
+  repeated EncounterControlCapability control_capabilities = 14;
+  uint64 observed_owner_focus = 15;
+  HealingOptionsResponse healing = 16;
+  uint64 world_observation_revision = 17;
+  uint64 spellbook_revision = 18;
+  bool spellbook_known = 19;
+  optional bool host_requested = 20;
+  bool melee_known = 21;
+  uint64 active_melee_target_guid = 22;
+  TargetMovementState target_movement = 23;
+  EncounterSupport support = 24;
+}
+message EncounterParty {
+  warcraftbuddy.party.v1.Group group = 1;
+  warcraftbuddy.party.v1.RaidTargetState raid_targets = 2;
+  uint64 revision = 3;
+}
+message EncounterPlayer {
+  uint64 guid = 1;
+  bool present = 2;
+  bool map_known = 3;
+  optional uint32 map_id = 4;
+  bool alive_known = 5;
+  optional bool alive = 6;
+  bool health_known = 7;
+  uint32 health = 8;
+  uint32 max_health = 9;
+  uint32 faction_template = 10;
+  bool position_known = 11;
+  uint64 position_revision = 12;
+  float x = 13;
+  float y = 14;
+  float z = 15;
+  float orientation = 16;
+  bool class_known = 17;
+  uint32 class_id = 18;
+  bool race_known = 19;
+  uint32 race_id = 20;
+  bool level_known = 21;
+  uint32 level = 22;
+  bool power_known = 23;
+  uint32 power_type = 24;
+  uint32 power = 25;
+  uint32 max_power = 26;
+  bool movement_known = 27;
+  bool moving = 28;
+  bool combat_known = 29;
+  bool in_combat = 30;
+  bool combo_known = 31;
+  uint64 combo_target_guid = 32;
+  uint32 combo_points = 33;
+}
+message EncounterCreature {
+  uint64 guid = 1;
+  uint32 entry = 2;
+  bool present = 3;
+  bool map_known = 4;
+  optional uint32 map_id = 5;
+  bool alive_known = 6;
+  optional bool alive = 7;
+  bool health_known = 8;
+  uint32 health = 9;
+  uint32 max_health = 10;
+  // Build-12340 unit flags permit an attack. This is not faction hostility.
+  bool attackable = 11;
+  bool engaged = 12;
+  bool protected = 13;
+  bool position_known = 14;
+  uint64 position_revision = 15;
+  float x = 16;
+  float y = 17;
+  float z = 18;
+  warcraftbuddy.world.v1.CreatureTrajectory trajectory = 19;
+  bool unit_flags_known = 20;
+  uint32 unit_flags = 21;
+  uint32 faction_template = 22;
+  bool melee_ready = 23;
+  // Currently observed own periodic damage auras, grouped by catalog family.
+  repeated uint32 own_damage_families = 24;
+  float orientation = 25;
+}
+message EncounterEngagement {
+  uint64 victim_guid = 1;
+  uint64 age_ms = 2;
+}
+message EncounterSpell {
+  bool known = 1;
+  bool ready = 2;
+  string capability = 3;
+  bool metadata_known = 4;
+  uint32 family_id = 5;
+  uint32 rank = 6;
+  uint32 level = 7;
+  string name = 8;
+  uint32 cast_time_ms = 9;
+  uint64 cost = 10;
+  int32 power_type = 11;
+  double min_range = 12;
+  double max_range = 13;
+  // Catalog base effect estimates, not observed damage or a tactical score.
+  double direct_damage = 14;
+  repeated EncounterPeriodicDamage periodic_damage = 15;
+  uint32 cooldown_ms = 16;
+  uint32 category_cooldown_ms = 17;
+  uint32 global_cooldown_ms = 18;
+  // Exact rank resources, cooldown and requirements; excludes movement/custody.
+  bool available = 19;
+  bool self_cast_supported = 20;
+  bool self_aura_known = 21;
+  bool self_aura_active = 22;
+  bool weapon_strike = 23;
+  bool requires_behind = 24;
+  bool requires_stealth = 25;
+  bool requires_combo_points = 26;
+  uint32 combo_points_generated = 27;
+  double weapon_damage_multiplier = 28;
+  double weapon_bonus_damage = 29;
+  // Base weapon/combo estimate only; excludes AP, armor and combat modifiers.
+  bool damage_model_known = 30;
+  bool requires_facing = 31;
+}
+message EncounterPeriodicDamage {
+  double damage_per_tick = 1;
+  uint32 period_ms = 2;
+}
+// One caller-selected movement step, never a target or rotation controller.
+message ApproachTargetRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint64 visit_id = 4;
+  float range_yards = 5;
+  bool stop = 6;
+  bool require_los = 7;
+  bool behind = 8;
+}
+message TargetMovementState {
+  uint64 target_guid = 1;
+  uint64 visit_id = 2;
+  float range_yards = 3;
+  bool require_los = 4;
+  bool behind = 5;
+  string phase = 6;
+  bool ready = 7;
+}
+message EncounterSupport {
+  bool caster_in_combat = 1;
+  repeated ResurrectionOption resurrections = 2;
+  repeated InterruptOption interrupts = 3;
+}
+message ResurrectionOption {
+  uint64 patient_guid = 1;
+  uint64 cast_target_guid = 2;
+  uint32 spell_id = 3;
+  bool ready = 4;
+  bool can_approach = 5;
+  float range_yards = 6;
+}
+message InterruptOption {
+  uint64 target_guid = 1;
+  uint32 spell_id = 2;
+  uint32 enemy_spell_id = 3;
+  uint64 cast_revision = 4;
+  uint32 remaining_ms = 5;
+  bool healing = 6;
+  bool ready = 7;
+  bool can_approach = 8;
+  float range_yards = 9;
+}
+message InterruptCastRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint32 spell_id = 4;
+  uint64 cast_revision = 5;
+}
+message EncounterControlCapability {
+  uint64 guid = 1;
+  string technique = 2;
+  bool ready = 3;
 }
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 service BuddyActions {
+  rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
+  rpc ApproachTarget(ApproachTargetRequest) returns (State);
+  rpc InterruptCast(InterruptCastRequest) returns (State);
   rpc Follow(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);
@@ -337,4 +698,14 @@ service BuddyActions {
   rpc ResurrectOnce(ResurrectOnceRequest) returns (State);
   rpc AcceptResurrection(AcceptResurrectionRequest) returns (State);
   rpc PickLock(PickLockRequest) returns (State);
+  rpc CreateItem(CreateItemRequest) returns (State);
+  rpc Polymorph(PolymorphRequest) returns (State);
+  rpc Sap(SapRequest) returns (State);
+  rpc CastSelf(CastSelfRequest) returns (State);
+  rpc HealingOptions(google.protobuf.Empty) returns (HealingOptionsResponse);
+  rpc EncounterObservation(google.protobuf.Empty) returns (EncounterObservationResponse);
+  rpc CastHeal(CastHealRequest) returns (State);
+  rpc CastOffense(CastOffenseRequest) returns (State);
+  rpc Melee(MeleeRequest) returns (State);
+  rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

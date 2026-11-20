@@ -108,6 +108,9 @@ func (s *Service) selfAttackerLocked(w *worldv1.SnapshotResponse) *worldv1.Creat
 
 func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, defense bool) bool {
 	fail := func(reason string) bool { s.state.Reason = reason; s.stopAutoAttackLocked(ctx); return false }
+	if s.blockProtectedOffenseLocked(ctx, target.Guid) {
+		return false
+	}
 	self, owner := w.Self, w.Owner
 	s.updateClassLocked()
 	if !self.ClassKnown || self.ClassId == 0 {
@@ -199,6 +202,9 @@ func (s *Service) faceEnemyLocked(ctx context.Context, target position) bool {
 	return true
 }
 func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target uint64, throttle time.Duration) bool {
+	if s.blockProtectedOffenseLocked(ctx, target) {
+		return false
+	}
 	rank := spellRankFor(spell)
 	if rank.id == 0 || !s.knownSpells[spell] {
 		s.state.Reason = "offensive_rank_not_in_known_spells"
@@ -241,6 +247,7 @@ func (s *Service) castOffenseLocked(ctx context.Context, spell uint32, target ui
 	s.castUntil = now.Add(max(5*time.Second, rank.castTime+1500*time.Millisecond))
 	s.pendingSpell = spell
 	s.pendingTarget = target
+	s.protectedCastCancelAttempted = false
 	s.state.CastPending = true
 	s.state.AssistAttempts++
 	s.state.LastCastFailure = 0
@@ -282,11 +289,31 @@ func creaturePosition(c *worldv1.CreatureState) (position, bool, bool) {
 		if t.Stopped {
 			return p, c.PositionKnown && finite(p), false
 		}
-		if !t.Cyclic && t.DestinationKnown && t.AgeMs >= uint64(t.DurationMs) {
-			p = position{t.DestinationX, t.DestinationY, t.DestinationZ, c.Orientation}
-			return p, finite(p), true
+		if t.Cyclic || !t.DestinationKnown || t.DurationMs == 0 {
+			return p, false, false
 		}
-		return p, false, false // Wait for arrival rather than using a stale start.
+		destination := position{t.DestinationX, t.DestinationY, t.DestinationZ, c.Orientation}
+		if !finite(destination) {
+			return p, false, false
+		}
+		if t.AgeMs >= uint64(t.DurationMs) {
+			return destination, true, true
+		}
+		if !c.PositionKnown || !finite(p) {
+			return p, false, false
+		}
+		// The world feed identifies a server-declared spline start, endpoint,
+		// duration and elapsed time. Its linear estimate is sufficient to
+		// attempt a normal target cast/swing; the server still checks actual
+		// range and LoS. Motion is not a reason to refuse a legal action.
+		fraction := math.Min(1, float64(t.AgeMs)/float64(t.DurationMs))
+		p.x += float32(float64(destination.x-p.x) * fraction)
+		p.y += float32(float64(destination.y-p.y) * fraction)
+		p.z += float32(float64(destination.z-p.z) * fraction)
+		if fraction < 1 && (destination.x != c.X || destination.y != c.Y) {
+			p.o = followFacing(position{x: c.X, y: c.Y, z: c.Z}, destination)
+		}
+		return p, finite(p), true
 	}
 	if c.MovementFlags&0x08000000 != 0 || c.MovementFlags&0xff != 0 && c.PositionAgeMs > 1500 {
 		return p, false, false

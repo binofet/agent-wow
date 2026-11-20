@@ -9,16 +9,23 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
 
 type supportAttempt struct {
-	view        actionsv1.SpellOperation
-	owner       uint64
-	count       byte
-	until       time.Time
-	cleanseAura uint32
+	view              actionsv1.SpellOperation
+	owner             uint64
+	count             byte
+	until             time.Time
+	controlAura       observedBuffAura
+	controlSlot       uint8
+	creation          *itemCreation
+	selfChannel       bool
+	effectLogEligible bool
+	cleanseAura       uint32
+	policySpellToken  string
 }
 type resurrectionOffer struct {
 	caster   uint64
@@ -36,22 +43,32 @@ func (s *Service) spellKindLocked(id uint32) spellcatalog.Kind {
 
 // Only observed dead players or actual owned corpse objects can grant a target.
 func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner uint64, r spellcatalog.Spell, team uint8) uint64 {
-	if owner == s.selfGUID {
-		return 0
+	target, pos, ok := s.resurrectionBodyLocked(w, owner, team)
+	if ok && distance(s.pos, pos) >= r.MinFriendly && distance(s.pos, pos) <= r.MaxFriendly {
+		return target
+	}
+	return 0
+}
+
+// Resolve the real player/body independently of spell range. Lua can use the
+// resulting observed body to approach before requesting an exact resurrection.
+func (s *Service) resurrectionBodyLocked(w *worldv1.SnapshotResponse, owner uint64, team uint8) (uint64, position, bool) {
+	if owner == s.selfGUID || w.GetSelf() == nil {
+		return 0, position{}, false
 	}
 	p := observedHealingPlayer(w, owner)
 	playerTeam := observedPlayerTeam(p)
 	if team != 0 && p != nil && p.Present && (p.AliveKnown && p.Alive || playerTeam != 0 && playerTeam != team) {
-		return 0
+		return 0, position{}, false
 	}
-	if (team == 0 || playerTeam == team) && p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&ghostFlag == 0 && p.MapKnown && p.MapId == s.posMap && p.PositionKnown && finite(playerPosition(p)) && distance(s.pos, playerPosition(p)) <= r.MaxFriendly {
-		return owner
+	if (team == 0 || playerTeam == team) && p != nil && p.Present && p.AliveKnown && !p.Alive && p.HealthKnown && p.Health == 0 && p.PlayerFlags&ghostFlag == 0 && p.MapKnown && p.MapId == w.Self.MapId && p.PositionKnown && finite(playerPosition(p)) {
+		return owner, playerPosition(p), true
 	}
 	var body *worldv1.CorpseState
 	for _, c := range w.PlayerCorpses {
-		if c != nil && c.OwnerGuid == owner && c.Present && c.Guid>>48 == 0xf101 && c.FlagsKnown && c.Flags&1 == 0 && c.MapKnown && c.MapId == s.posMap && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) {
+		if c != nil && c.OwnerGuid == owner && c.Present && c.Guid>>48 == 0xf101 && c.FlagsKnown && c.Flags&1 == 0 && c.MapKnown && c.MapId == w.Self.MapId && c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}) {
 			if body != nil {
-				return 0
+				return 0, position{}, false
 			}
 			body = c
 		}
@@ -62,14 +79,11 @@ func (s *Service) resurrectionTargetLocked(w *worldv1.SnapshotResponse, owner ui
 			corpseTeam = playerTeamForRace(body.RaceId)
 		}
 		if team != 0 && (corpseTeam != 0 && corpseTeam != team || corpseTeam == 0 && playerTeam != team) {
-			return 0
+			return 0, position{}, false
 		}
-		pos := position{body.X, body.Y, body.Z, body.Orientation}
-		if distance(s.pos, pos) <= r.MaxFriendly {
-			return body.Guid
-		}
+		return body.Guid, position{body.X, body.Y, body.Z, body.Orientation}, true
 	}
-	return 0
+	return 0, position{}, false
 }
 
 func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
@@ -165,6 +179,9 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 	s.reserveSpellCooldownLocked(r)
 	until := s.now().Add(time.Duration(r.CastMs)*time.Millisecond + 3*time.Second)
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.ID, TargetGuid: target, Capability: capability, Phase: "waiting_server"}, owner: owner, count: s.castCount, until: until}
+	if item == nil {
+		s.supportOp.policySpellToken = modcb.PolicySpellToken(ctx)
+	}
 	s.state.CastPending = true
 	s.pendingSpell = r.ID
 	s.pendingTarget = target
@@ -206,14 +223,43 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 	return true
 }
 
+// A callback reports only outcomes established by the native parser. Spell GO
+// during a pending operation does not by itself settle its effect.
+func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPending bool) {
+	switch op.view.Phase {
+	case "confirmed_aura", "confirmed_heal", "confirmed_effect", "confirmed_alive", "confirmed_loot_window", "confirmed_item":
+		if !op.view.ServerCastGo || !op.view.EffectObserved {
+			return
+		}
+	case "server_cast_go_effect_unverified":
+		if castPending {
+			return
+		}
+	case "server_rejected_no_replay", "server_cast_go_no_target_hit",
+		"outcome_unconfirmed_no_retry", "channel_ended_effect_unverified", "world_transfer_outcome_unconfirmed",
+		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed":
+	default:
+		return
+	}
+	if modcb.ReportPolicySpellEffect(ctx, op.policySpellToken, &op.view) {
+		op.policySpellToken = ""
+	}
+}
+
 func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	bad := errors.New("malformed support spell event")
+	if code == opcode.MSGChannelStart || code == opcode.MSGChannelUpdate {
+		return true, s.observeSelfChannelLocked(code, p)
+	}
 	if code == opcode.SMSGSpelldispellog {
 		return true, s.observeCleanseLocked(p)
 	}
 	if code == opcode.SMSGLootResponse {
 		s.observePickLockLootLocked(p)
 		return true, nil
+	}
+	if code == opcode.SMSGItemPushResult {
+		return true, s.observeCreatedItemPushLocked(p)
 	}
 	if code == opcode.SMSGResurrectRequest {
 		if len(p) < 14 {
@@ -246,7 +292,11 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return true, nil
 	}
 	op := s.supportOp
-	if op == nil || op.view.Phase != "waiting_server" || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
+	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
+		return false, nil
+	}
+	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
+		!(op.view.Capability == selfCastCapability && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -273,14 +323,46 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
 		}
-		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
+		if op.view.Capability == selfCastCapability {
+			source, _, _ := readGUID(p)
+			if source != s.selfGUID {
+				return false, nil
+			}
+		}
+		if !validCastTargetBody(p, off, code == opcode.SMSGSpellGo, op.view.TargetGuid, op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || s.implicitSelfSpellLocked(spell, op.view.TargetGuid)) {
 			return true, bad
 		}
 		if code == opcode.SMSGSpellStart {
 			return true, nil
 		}
+		if spellcatalog.Kind(op.view.Capability).BreaksOnDamage() {
+			source, _, _ := readGUID(p)
+			if source != s.selfGUID {
+				return false, nil
+			}
+			op.view.ServerCastGo = true
+			// The parser validated the complete target body. Direct
+			// single-unit crowd control must also hit that exact unit.
+			hits := off + 8
+			if len(p) < hits+10 || p[hits] != 1 || binary.LittleEndian.Uint64(p[hits+1:]) != op.view.TargetGuid || p[hits+9] != 0 {
+				s.finishCrowdControlLocked("server_cast_go_no_target_hit")
+			} else {
+				s.confirmCrowdControlLocked()
+			}
+			return true, nil
+		}
 		op.view.ServerCastGo = true
+		if op.selfChannel {
+			if op.view.ChannelEnded {
+				s.finishSelfChannelLocked("channel_ended_effect_unverified")
+			}
+			return true, nil
+		}
 		op.view.Phase = "server_cast_go_effect_unverified"
+		if op.creation != nil {
+			op.view.Phase = "waiting_created_item"
+			return true, nil
+		}
 		if op.view.EffectObserved {
 			if op.view.Capability == string(spellcatalog.Resurrect) {
 				op.view.Phase = "confirmed_alive"
@@ -294,6 +376,10 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	if rejected {
+		if spellcatalog.Kind(op.view.Capability).BreaksOnDamage() {
+			s.finishCrowdControlLocked("server_rejected_no_replay")
+			return true, nil
+		}
 		op.view.Phase = "server_rejected_no_replay"
 		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])

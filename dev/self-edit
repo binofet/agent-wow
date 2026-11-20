@@ -19,6 +19,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 c = importlib.util.module_from_spec(spec)
 loader.exec_module(c)
 DATA = ROOT / 'data/self-edit'
+MAX_SOURCE_BYTES = 128 * 1024
 
 
 def digest(source):
@@ -55,11 +56,11 @@ def read_source(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd) as source:
         info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 32768:
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE_BYTES:
             raise c.ConversationError('Bounded regular Lua source required')
         result = source.read()
-    if not 0 < len(result.encode()) <= 32768:
-        raise c.ConversationError('Lua source must contain 1..32768 bytes')
+    if not 0 < len(result.encode()) <= MAX_SOURCE_BYTES:
+        raise c.ConversationError(f'Lua source must contain 1..{MAX_SOURCE_BYTES} bytes')
     return result
 
 
@@ -82,7 +83,7 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
     if command != 'show' and (not isinstance(expected, str)
                              or not re.fullmatch(r'|[a-f0-9]{64}', expected)):
         raise c.ConversationError('Explicit expected revision required')
-    if command == 'apply' and (not isinstance(source, str) or not 0 < len(source.encode()) <= 32768):
+    if command == 'apply' and (not isinstance(source, str) or not 0 < len(source.encode()) <= MAX_SOURCE_BYTES):
         raise c.ConversationError('Bounded Lua source required')
     root = Path(data) if data is not None else DATA
     private_folder(root)
@@ -97,13 +98,29 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise c.ConversationError('Another direct edit is in progress; refresh before editing') from None
-        before = owned(rpc, guid, sid)
+        identity = dict(sessionId=sid, characterGuid=str(guid))
+        def read_session_policy():
+            view = rpc.call('session.policy_source', identity)
+            if view.get('sessionId') != sid or view.get('characterGuid') != str(guid):
+                raise c.ConversationError('Requested character/body changed; refresh observations')
+            return view
+
+        try:
+            before = read_session_policy()
+        except c.CapabilityUnavailable:
+            before = owned(rpc, guid, sid)
+            session_policy = False
+        else:
+            session_policy = True
         revision = before.get('revision', '')
         if command == 'show':
             result = dict(characterGuid=str(guid), sessionId=sid, status=before,
                           schema='behaviors/contract_generated.lua', nativeSource='modules/buddy-actions',
                           scope=['heal_target', 'heal_spell', 'damage_spell'], sourceKnown=False)
-            if revision:
+            if session_policy:
+                result.update(runtime='session', scope=['attached_session_policy'],
+                              sourceKnown=True, source=before['source'])
+            elif revision:
                 candidates = [actor / (revision + '.lua'), ROOT / 'behaviors/party.lua']
                 for path in candidates:
                     try:
@@ -120,14 +137,24 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
         if command == 'apply':
             save_source(actor / (target + '.lua'), source)
         started = time.monotonic()
-        if revision != target:
+        if session_policy:
+            request = dict(identity, expectedRevision=expected)
+            if command == 'apply':
+                request['source'] = source
+            else:
+                request['useBuiltin'] = True
+            if command == 'builtin' or revision != target:
+                applied = rpc.call('session.reload_policy', request)
+                if command == 'builtin':
+                    target = applied.get('revision')
+        elif revision != target:
             # One CAS write, including during combat. Native spell eligibility,
             # leases and packet receipts remain owned by the running controller.
             # A timeout never triggers a second write here.
             rpc.call('buddy-actions.reload_behavior', dict(sessionId=sid, selfGuid=str(guid),
                      expectedRevision=expected, source=source if command == 'apply' else '',
                      useBuiltin=command == 'builtin'))
-        after = owned(rpc, guid, sid)
+        after = read_session_policy() if session_policy else owned(rpc, guid, sid)
         if after.get('revision', '') != target:
             raise c.ConversationError('Policy is not current; inspect quarantine or concurrent edit')
         return dict(characterGuid=str(guid), sessionId=sid, revision=target,

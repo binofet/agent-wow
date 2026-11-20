@@ -9,7 +9,9 @@ import (
 
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -53,9 +55,20 @@ func (m *Manager) lookup(name, alias string, public bool) (*instance, moddisc.Me
 }
 
 func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMessage) (json.RawMessage, error) {
-	if full == "session.describe" {
+	switch full {
+	case "session.describe":
 		return m.describe(params)
+	case "session.attach":
+		return m.attach(ctx, params)
+	case "session.send_event":
+		return m.sendPolicyEvent(ctx, params)
+	case "session.policy_source", "session.reload_policy":
+		return m.editPolicy(ctx, full, params)
 	}
+	return m.invokeJSON(ctx, full, params, false)
+}
+
+func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMessage, emitDefaults bool) (json.RawMessage, error) {
 	name, alias, _ := strings.Cut(full, ".")
 	fault := func(code int, err error) (json.RawMessage, error) {
 		return nil, &CallError{Code: code, Module: name, Method: alias, Err: err}
@@ -80,10 +93,15 @@ func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMe
 		return fault(-32602, status.Error(codes.InvalidArgument, err.Error()))
 	}
 	result := dynamicpb.NewMessage(md.Descriptor().Output())
-	if err := m.invoke(ctx, publicCall, "jsonrpc", name, inst, md, req, result); err != nil {
-		return fault(-32000, err)
+	var trailers metadata.MD
+	invokeErr := m.invoke(ctx, publicCall, "jsonrpc", name, inst, md, req, result, grpc.Trailer(&trailers))
+	// Native action expiry can occur without any inbound world packet. Read
+	// feeds carry the same correlated terminal receipt trailers as OnPacket.
+	m.recordSpellEffect(name, trailers)
+	if invokeErr != nil {
+		return fault(-32000, invokeErr)
 	}
-	body, err := (protojson.MarshalOptions{Resolver: inst.definition.Types()}).Marshal(result)
+	body, err := (protojson.MarshalOptions{Resolver: inst.definition.Types(), EmitUnpopulated: emitDefaults}).Marshal(result)
 	if err != nil {
 		return fault(-32000, status.Error(codes.Internal, err.Error()))
 	}
@@ -117,7 +135,7 @@ func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv
 	return &modv1.InvokeModuleResponse{Result: packed}, nil
 }
 
-func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string, inst *instance, md moddisc.Method, req, result proto.Message) (err error) {
+func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string, inst *instance, md moddisc.Method, req, result proto.Message, opts ...grpc.CallOption) (err error) {
 	started := time.Now()
 	defer func() {
 		m.logger.Debug("module call", "caller", caller, "module", name, "method", md.Path(), "duration", time.Since(started), "status", status.Code(err).String())
@@ -141,7 +159,7 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
-	err = inst.conn.Invoke(ctx, md.Path(), req, result)
+	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)
 	}

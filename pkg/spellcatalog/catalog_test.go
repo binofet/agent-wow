@@ -48,6 +48,58 @@ func TestUnfamiliarIDsUseMechanicsAndExposeUnsupportedEffects(t *testing.T) {
 	}
 }
 
+func TestLearnedSingleTargetControlRanks(t *testing.T) {
+	for _, tc := range []struct {
+		kind Kind
+		ids  []uint32
+	}{
+		{Polymorph, []uint32{118, 12824, 12825, 12826}},
+		{Sap, []uint32{6770, 2070, 11297}},
+	} {
+		for _, id := range tc.ids {
+			spell, ok := Default().Lookup(id)
+			actual := spell.Capability()
+			if !ok || actual != (Capability{Kind: tc.kind, Target: "enemy"}) || !actual.Kind.BreaksOnDamage() {
+				t.Fatalf("spell %d has control %+v, want %s", id, actual, tc.kind)
+			}
+			spell.Effects[0].Radius = 1
+			if spell.Capability().Kind == tc.kind {
+				t.Fatalf("spell %d accepted area control as %s", id, tc.kind)
+			}
+		}
+	}
+}
+
+func TestGeneratedConjurationOutput(t *testing.T) {
+	for id, item := range map[uint32]uint32{587: 5349, 5504: 5350, 10140: 8079} {
+		spell, ok := Default().Lookup(id)
+		actual := spell.Capability()
+		if !ok || spell.CreatedItem() != item || actual != (Capability{Kind: CreateItem, Target: "self"}) {
+			t.Fatalf("spell %d produces %d with capability %+v, want %d", id, spell.CreatedItem(), actual, item)
+		}
+	}
+}
+
+func TestSelfItemCreationUsesVerifiedOutputAndNoReagent(t *testing.T) {
+	catalog, err := New([]byte(`{"id":987654,"name":"New spell","timingKnown":true,"rangeKnown":true,"itemClass":-1,"effects":[{"kind":24,"a":1,"itemType":9876}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spell, ok := catalog.Lookup(987654)
+	if !ok || spell.CreatedItem() != 9876 || spell.Capability() != (Capability{Kind: CreateItem, Target: "self"}) {
+		t.Fatal(spell)
+	}
+	spell.Reagents = []Reagent{{ID: 42, Count: 1}}
+	if spell.Capability().Blocked != "material_or_focus_requirement" {
+		t.Fatal(spell.Capability())
+	}
+	spell.Reagents = nil
+	spell.Effects[0].ItemType = 0
+	if spell.Capability().Blocked != "effect_24_requires_handler" {
+		t.Fatal(spell.Capability())
+	}
+}
+
 func TestInterruptSpellMetadata(t *testing.T) {
 	for _, id := range []uint32{1766, 2139, 6552} {
 		spell, ok := Default().Lookup(id)

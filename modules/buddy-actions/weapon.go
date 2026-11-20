@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"math"
+	"time"
 	"unicode/utf8"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -14,6 +16,8 @@ import (
 type weaponProof struct {
 	entry, class, subclass, inventory uint32
 	valid                             bool
+	damageKnown                       bool
+	damageMin, damageMax              float64
 }
 
 // Full normal ItemHandler.cpp HandleItemQuerySingleOpcode response framing.
@@ -66,7 +70,18 @@ func decodeWeaponQuery(data []byte) (weaponProof, error) {
 	at += 84
 	stats := binary.LittleEndian.Uint32(data[at:])
 	at += 4
-	if stats > 10 || !skip(int(stats)*8+8+24+28+12+120+4) || !text(16384) || !skip(116) || at != len(data) {
+	if stats > 10 || !skip(int(stats)*8+8) || len(data)-at < 24 {
+		return weaponProof{}, bad
+	}
+	for i := 0; i < 2; i++ {
+		low, high := float64(math.Float32frombits(binary.LittleEndian.Uint32(data[at+i*12:]))), float64(math.Float32frombits(binary.LittleEndian.Uint32(data[at+i*12+4:])))
+		if math.IsNaN(low) || math.IsNaN(high) || math.IsInf(low, 0) || math.IsInf(high, 0) || low < 0 || high < low || high > 1e8 {
+			return weaponProof{}, bad
+		}
+		p.damageMin, p.damageMax = p.damageMin+low, p.damageMax+high
+	}
+	p.damageKnown = p.damageMax > 0
+	if !skip(24+28+12+120+4) || !text(16384) || !skip(116) || at != len(data) {
 		return weaponProof{}, bad
 	}
 	p.valid = true
@@ -96,4 +111,25 @@ func (s *Service) requestWeaponLocked(ctx context.Context, p *worldv1.PlayerStat
 	s.weaponQueries[entry] = true
 	// Reserve before writing; ambiguous query outcomes never cause a retry loop.
 	s.sendLocked(ctx, opcode.CMSGItemQuerySingle, binary.LittleEndian.AppendUint32(nil, entry))
+}
+
+// A persistent host must not depend on a retired native combat controller to
+// query its own equipment. This acquires item-template facts only, before the
+// writer/role branches. It never selects an action, spell, target or movement.
+func (s *Service) observeHostWeaponMetadataLocked(ctx context.Context) {
+	if s.closed || s.hostEncounterKey == "" || s.session == nil {
+		return
+	}
+	call, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	w, err := s.readWorldSnapshot(call)
+	p := w.GetSelf()
+	if err != nil || p.GetGuid() != s.selfGUID || !p.GetPresent() || p.GetMainhand() == nil {
+		return
+	}
+	entry := p.Mainhand.Entry
+	if proof, known := s.weapons[entry]; known && proof.valid {
+		return
+	}
+	s.requestWeaponLocked(call, p)
 }

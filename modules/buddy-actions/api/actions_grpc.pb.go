@@ -21,39 +21,55 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BuddyActions_Follow_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
-	BuddyActions_Assist_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
-	BuddyActions_EngageNPC_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
-	BuddyActions_HealOnce_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
-	BuddyActions_Status_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Status"
-	BuddyActions_Buffs_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
-	BuddyActions_SpellToolkit_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
-	BuddyActions_ReloadBehavior_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
-	BuddyActions_Behavior_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
-	BuddyActions_AcquireInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
-	BuddyActions_ReleaseInteraction_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
-	BuddyActions_ApproachLoot_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
-	BuddyActions_ApproachQuest_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
-	BuddyActions_TravelQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
-	BuddyActions_TravelTrainer_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
-	BuddyActions_TravelVendor_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
-	BuddyActions_TravelTo_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
-	BuddyActions_PlanRouteLeg_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
-	BuddyActions_ExitCrypt_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
-	BuddyActions_Practice_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
-	BuddyActions_FargodeepEncounter_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
-	BuddyActions_Recovery_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
-	BuddyActions_OnPacket_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
-	BuddyActions_BeforeLogout_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
-	BuddyActions_ResurrectOnce_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
-	BuddyActions_AcceptResurrection_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
-	BuddyActions_PickLock_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
+	BuddyActions_SelectTarget_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
+	BuddyActions_ApproachTarget_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
+	BuddyActions_InterruptCast_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
+	BuddyActions_Follow_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
+	BuddyActions_Assist_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
+	BuddyActions_EngageNPC_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
+	BuddyActions_HealOnce_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/HealOnce"
+	BuddyActions_Status_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Status"
+	BuddyActions_Buffs_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Buffs"
+	BuddyActions_SpellToolkit_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
+	BuddyActions_ReloadBehavior_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
+	BuddyActions_Behavior_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
+	BuddyActions_AcquireInteraction_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
+	BuddyActions_ReleaseInteraction_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
+	BuddyActions_ApproachLoot_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
+	BuddyActions_ApproachQuest_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ApproachQuest"
+	BuddyActions_TravelQuest_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/TravelQuest"
+	BuddyActions_TravelTrainer_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/TravelTrainer"
+	BuddyActions_TravelVendor_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/TravelVendor"
+	BuddyActions_TravelTo_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/TravelTo"
+	BuddyActions_PlanRouteLeg_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/PlanRouteLeg"
+	BuddyActions_ExitCrypt_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/ExitCrypt"
+	BuddyActions_Practice_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Practice"
+	BuddyActions_FargodeepEncounter_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter"
+	BuddyActions_Recovery_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
+	BuddyActions_OnPacket_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
+	BuddyActions_BeforeLogout_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
+	BuddyActions_ResurrectOnce_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
+	BuddyActions_AcceptResurrection_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection"
+	BuddyActions_PickLock_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/PickLock"
+	BuddyActions_CreateItem_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CreateItem"
+	BuddyActions_Polymorph_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/Polymorph"
+	BuddyActions_Sap_FullMethodName                  = "/warcraftbuddy.actions.v1.BuddyActions/Sap"
+	BuddyActions_CastSelf_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastSelf"
+	BuddyActions_HealingOptions_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/HealingOptions"
+	BuddyActions_EncounterObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/EncounterObservation"
+	BuddyActions_CastHeal_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastHeal"
+	BuddyActions_CastOffense_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/CastOffense"
+	BuddyActions_Melee_FullMethodName                = "/warcraftbuddy.actions.v1.BuddyActions/Melee"
+	BuddyActions_SelfManaObservation_FullMethodName  = "/warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation"
 )
 
 // BuddyActionsClient is the client API for BuddyActions service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
+	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
+	InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
@@ -83,6 +99,16 @@ type BuddyActionsClient interface {
 	ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error)
 	AcceptResurrection(ctx context.Context, in *AcceptResurrectionRequest, opts ...grpc.CallOption) (*State, error)
 	PickLock(ctx context.Context, in *PickLockRequest, opts ...grpc.CallOption) (*State, error)
+	CreateItem(ctx context.Context, in *CreateItemRequest, opts ...grpc.CallOption) (*State, error)
+	Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error)
+	Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error)
+	CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error)
+	HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error)
+	EncounterObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EncounterObservationResponse, error)
+	CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error)
+	CastOffense(ctx context.Context, in *CastOffenseRequest, opts ...grpc.CallOption) (*State, error)
+	Melee(ctx context.Context, in *MeleeRequest, opts ...grpc.CallOption) (*State, error)
+	SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error)
 }
 
 type buddyActionsClient struct {
@@ -91,6 +117,36 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SelectTargetResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_SelectTarget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ApproachTarget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_InterruptCast_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error) {
@@ -363,10 +419,113 @@ func (c *buddyActionsClient) PickLock(ctx context.Context, in *PickLockRequest, 
 	return out, nil
 }
 
+func (c *buddyActionsClient) CreateItem(ctx context.Context, in *CreateItemRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CreateItem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Polymorph(ctx context.Context, in *PolymorphRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Polymorph_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Sap(ctx context.Context, in *SapRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Sap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) CastSelf(ctx context.Context, in *CastSelfRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastSelf_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) HealingOptions(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealingOptionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HealingOptionsResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_HealingOptions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) EncounterObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*EncounterObservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EncounterObservationResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_EncounterObservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) CastHeal(ctx context.Context, in *CastHealRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastHeal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) CastOffense(ctx context.Context, in *CastOffenseRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastOffense_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) Melee(ctx context.Context, in *MeleeRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_Melee_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SelfManaObservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SelfManaObservationResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_SelfManaObservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BuddyActionsServer is the server API for BuddyActions service.
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
+	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
+	InterruptCast(context.Context, *InterruptCastRequest) (*State, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
@@ -396,6 +555,16 @@ type BuddyActionsServer interface {
 	ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error)
 	AcceptResurrection(context.Context, *AcceptResurrectionRequest) (*State, error)
 	PickLock(context.Context, *PickLockRequest) (*State, error)
+	CreateItem(context.Context, *CreateItemRequest) (*State, error)
+	Polymorph(context.Context, *PolymorphRequest) (*State, error)
+	Sap(context.Context, *SapRequest) (*State, error)
+	CastSelf(context.Context, *CastSelfRequest) (*State, error)
+	HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error)
+	EncounterObservation(context.Context, *emptypb.Empty) (*EncounterObservationResponse, error)
+	CastHeal(context.Context, *CastHealRequest) (*State, error)
+	CastOffense(context.Context, *CastOffenseRequest) (*State, error)
+	Melee(context.Context, *MeleeRequest) (*State, error)
+	SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error)
 	mustEmbedUnimplementedBuddyActionsServer()
 }
 
@@ -406,6 +575,15 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SelectTarget not implemented")
+}
+func (UnimplementedBuddyActionsServer) ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproachTarget not implemented")
+}
+func (UnimplementedBuddyActionsServer) InterruptCast(context.Context, *InterruptCastRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InterruptCast not implemented")
+}
 func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Follow not implemented")
 }
@@ -487,6 +665,36 @@ func (UnimplementedBuddyActionsServer) AcceptResurrection(context.Context, *Acce
 func (UnimplementedBuddyActionsServer) PickLock(context.Context, *PickLockRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PickLock not implemented")
 }
+func (UnimplementedBuddyActionsServer) CreateItem(context.Context, *CreateItemRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateItem not implemented")
+}
+func (UnimplementedBuddyActionsServer) Polymorph(context.Context, *PolymorphRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Polymorph not implemented")
+}
+func (UnimplementedBuddyActionsServer) Sap(context.Context, *SapRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Sap not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastSelf(context.Context, *CastSelfRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastSelf not implemented")
+}
+func (UnimplementedBuddyActionsServer) HealingOptions(context.Context, *emptypb.Empty) (*HealingOptionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HealingOptions not implemented")
+}
+func (UnimplementedBuddyActionsServer) EncounterObservation(context.Context, *emptypb.Empty) (*EncounterObservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EncounterObservation not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastHeal(context.Context, *CastHealRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastHeal not implemented")
+}
+func (UnimplementedBuddyActionsServer) CastOffense(context.Context, *CastOffenseRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastOffense not implemented")
+}
+func (UnimplementedBuddyActionsServer) Melee(context.Context, *MeleeRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Melee not implemented")
+}
+func (UnimplementedBuddyActionsServer) SelfManaObservation(context.Context, *emptypb.Empty) (*SelfManaObservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SelfManaObservation not implemented")
+}
 func (UnimplementedBuddyActionsServer) mustEmbedUnimplementedBuddyActionsServer() {}
 func (UnimplementedBuddyActionsServer) testEmbeddedByValue()                      {}
 
@@ -506,6 +714,60 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_SelectTarget_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SelectTargetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SelectTarget(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SelectTarget_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SelectTarget(ctx, req.(*SelectTargetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_ApproachTarget_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproachTargetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ApproachTarget(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ApproachTarget_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ApproachTarget(ctx, req.(*ApproachTargetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_InterruptCast_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InterruptCastRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).InterruptCast(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_InterruptCast_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).InterruptCast(ctx, req.(*InterruptCastRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_Follow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -994,6 +1256,186 @@ func _BuddyActions_PickLock_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_CreateItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateItemRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CreateItem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CreateItem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CreateItem(ctx, req.(*CreateItemRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Polymorph_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolymorphRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Polymorph(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Polymorph_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Polymorph(ctx, req.(*PolymorphRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Sap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Sap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Sap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Sap(ctx, req.(*SapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_CastSelf_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastSelfRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastSelf(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastSelf_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastSelf(ctx, req.(*CastSelfRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_HealingOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).HealingOptions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_HealingOptions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).HealingOptions(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_EncounterObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).EncounterObservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_EncounterObservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).EncounterObservation(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_CastHeal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastHealRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastHeal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastHeal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastHeal(ctx, req.(*CastHealRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_CastOffense_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastOffenseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastOffense(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastOffense_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastOffense(ctx, req.(*CastOffenseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_Melee_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MeleeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).Melee(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_Melee_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).Melee(ctx, req.(*MeleeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SelfManaObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SelfManaObservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SelfManaObservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SelfManaObservation(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BuddyActions_ServiceDesc is the grpc.ServiceDesc for BuddyActions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1001,6 +1443,18 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SelectTarget",
+			Handler:    _BuddyActions_SelectTarget_Handler,
+		},
+		{
+			MethodName: "ApproachTarget",
+			Handler:    _BuddyActions_ApproachTarget_Handler,
+		},
+		{
+			MethodName: "InterruptCast",
+			Handler:    _BuddyActions_InterruptCast_Handler,
+		},
 		{
 			MethodName: "Follow",
 			Handler:    _BuddyActions_Follow_Handler,
@@ -1108,6 +1562,46 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PickLock",
 			Handler:    _BuddyActions_PickLock_Handler,
+		},
+		{
+			MethodName: "CreateItem",
+			Handler:    _BuddyActions_CreateItem_Handler,
+		},
+		{
+			MethodName: "Polymorph",
+			Handler:    _BuddyActions_Polymorph_Handler,
+		},
+		{
+			MethodName: "Sap",
+			Handler:    _BuddyActions_Sap_Handler,
+		},
+		{
+			MethodName: "CastSelf",
+			Handler:    _BuddyActions_CastSelf_Handler,
+		},
+		{
+			MethodName: "HealingOptions",
+			Handler:    _BuddyActions_HealingOptions_Handler,
+		},
+		{
+			MethodName: "EncounterObservation",
+			Handler:    _BuddyActions_EncounterObservation_Handler,
+		},
+		{
+			MethodName: "CastHeal",
+			Handler:    _BuddyActions_CastHeal_Handler,
+		},
+		{
+			MethodName: "CastOffense",
+			Handler:    _BuddyActions_CastOffense_Handler,
+		},
+		{
+			MethodName: "Melee",
+			Handler:    _BuddyActions_Melee_Handler,
+		},
+		{
+			MethodName: "SelfManaObservation",
+			Handler:    _BuddyActions_SelfManaObservation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

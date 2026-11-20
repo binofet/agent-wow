@@ -5,6 +5,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -34,13 +35,16 @@ func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceR
 	if r == nil || r.SessionId == "" || r.SelfGuid == 0 || r.TargetGuid == 0 || r.TargetGuid>>48 != 0 || r.TargetGuid == r.SelfGuid {
 		return nil, status.Error(codes.InvalidArgument, "current session, caster and a distinct player GUID required")
 	}
+	if token, supplied := modcb.IncomingPolicySpell(ctx); supplied && token == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid policy spell token")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "current caster session required")
 	}
 	w, err := s.snapshot(ctx)
-	if err != nil || safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
+	if err != nil || !s.resurrectionCasterAvailableLocked(w) || !s.refreshPositionLocked(w) {
 		return nil, status.Error(codes.FailedPrecondition, "current living caster observation required")
 	}
 	s.supportSnapshotLocked(w)
@@ -58,7 +62,7 @@ func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceR
 		return nil, status.Error(codes.FailedPrecondition, "resurrection already attempted for this death")
 	}
 	for _, spell := range s.candidatesLocked(spellcatalog.Resurrect) {
-		if r.SpellId != 0 && r.SpellId != spell.ID || spell.Power != 0 || uint64(p.Power) < spellCost(spell, p) || s.now().Before(s.spellReady[spell.ID]) {
+		if r.SpellId != 0 && r.SpellId != spell.ID || !s.resurrectionRankAvailableLocked(spell, p) {
 			continue
 		}
 		target := s.resurrectionTargetLocked(w, r.TargetGuid, spell, team)

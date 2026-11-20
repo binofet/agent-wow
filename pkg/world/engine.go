@@ -34,23 +34,25 @@ type engine struct {
 }
 
 func (e *engine) write(op uint32, body []byte) error {
-	return e.writeContext(context.Background(), op, body)
+	_, _, err := e.writeContext(context.Background(), op, body)
+	return err
 }
 
-func (e *engine) writeContext(ctx context.Context, op uint32, body []byte) error {
+func (e *engine) writeContext(ctx context.Context, op uint32, body []byte) (GameplayWriteOutcome, bool, error) {
 	deadline := time.Now().Add(e.timing.write)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
 		deadline = callerDeadline
 	}
 	if err := e.s.conn.SetWriteDeadline(deadline); err != nil {
-		return err
+		return GameplayDeadlineFailed, false, err
 	}
-	_, err := e.s.conn.WritePacket(op, body)
-	if err == nil {
-		e.movement.sent(op, body, e.s.state.Character.GUID)
-		logPacket(e.s.logger, "write", op, len(body))
+	anyBytes, err := e.s.conn.WritePacket(op, body)
+	if err != nil {
+		return GameplayWriteFailed, anyBytes, err
 	}
-	return err
+	e.movement.sent(op, body, e.s.state.Character.GUID)
+	logPacket(e.s.logger, "write", op, len(body))
+	return GameplayWritten, anyBytes, nil
 }
 
 func (e *engine) timestamp() uint32 { return e.s.Clock() }
@@ -99,7 +101,10 @@ func (e *engine) loop(packets <-chan packet) error {
 				r.reply <- status.FromContextError(err).Err()
 				continue
 			}
-			err := e.writeContext(r.ctx, r.op, r.body)
+			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body)
+			if trace := e.s.gameplayTrace; trace != nil {
+				trace.record(r.ctx, e.s.state.Character.GUID, r.op, r.body, outcome, anyBytes)
+			}
 			r.reply <- err
 			if err != nil {
 				return err

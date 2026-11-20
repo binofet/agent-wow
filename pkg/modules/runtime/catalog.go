@@ -17,6 +17,7 @@ type SessionCatalog struct {
 	SessionID     string `json:"sessionId"`
 	CharacterGUID string `json:"characterGuid"`
 	moddisc.Catalog
+	HostMethods []HostMethod `json:"hostMethods"`
 }
 
 func (m *Manager) describe(params json.RawMessage) (json.RawMessage, error) {
@@ -30,20 +31,27 @@ func (m *Manager) describe(params json.RawMessage) (json.RawMessage, error) {
 			return fault(-32602, status.Error(codes.InvalidArgument, "session.describe takes an empty object"))
 		}
 	}
+	catalog, _, err := m.observedSession()
+	if err != nil {
+		return fault(-32000, err)
+	}
+	return json.Marshal(catalog)
+}
+
+func (m *Manager) observedSession() (SessionCatalog, PolicyObserver, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.started || m.closing || m.preparing || m.prepared || m.err != nil || m.session.Identity.CharacterGUID == 0 {
-		return fault(-32000, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable"))
+		return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable")
 	}
 	for _, inst := range m.instances {
 		if !m.invocationAllowed(inst, true) {
-			return fault(-32000, status.Error(codes.FailedPrecondition, "module invocation unavailable in current session state"))
+			return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "module invocation unavailable in current session state")
 		}
 	}
-	// Startup assigns dir before publishing any healthy instance under mu.
-	// Do not read that startup-only field while modules are still starting.
+	// The session identity is available only after the directory is published.
 	if m.dir == "" {
-		return fault(-32000, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable"))
+		return SessionCatalog{}, nil, status.Error(codes.FailedPrecondition, "live owned session catalog unavailable")
 	}
-	return json.Marshal(SessionCatalog{SessionID: filepath.Base(m.dir), CharacterGUID: strconv.FormatUint(m.session.Identity.CharacterGUID, 10), Catalog: m.registry.Catalog()})
+	return SessionCatalog{SessionID: filepath.Base(m.dir), CharacterGUID: strconv.FormatUint(m.session.Identity.CharacterGUID, 10), Catalog: m.registry.Catalog(), HostMethods: hostMethods()}, m.policyObserver, nil
 }

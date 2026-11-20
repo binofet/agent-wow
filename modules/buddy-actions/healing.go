@@ -6,6 +6,7 @@ import (
 
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -62,6 +63,10 @@ func healablePlayer(p *worldv1.PlayerState, mapID uint32) bool {
 // current server group with this exact online self authorizes another player.
 // Joel is subject to the same membership rule; self-healing needs no group.
 func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
+	return s.onlineHealingGroup(s.readPartyStateLocked(ctx).GetGroup())
+}
+
+func (s *Service) readPartyStateLocked(ctx context.Context) *partyv1.StateResponse {
 	if s.session == nil {
 		return nil
 	}
@@ -76,7 +81,10 @@ func (s *Service) healingPartyLocked(ctx context.Context) map[uint64]bool {
 	if result.Result.UnmarshalTo(state) != nil || len(state.SessionId) == 0 || len(state.SessionId) > 128 {
 		return nil
 	}
-	g := state.Group
+	return state
+}
+
+func (s *Service) onlineHealingGroup(g *partyv1.Group) map[uint64]bool {
 	if g == nil || !g.Known || !g.InGroup || len(g.Members) < 2 || len(g.Members) > 40 {
 		return nil
 	}
@@ -195,6 +203,9 @@ func (s *Service) triageHealLocked(ctx context.Context, w *worldv1.SnapshotRespo
 }
 
 func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotResponse, automatic, urgentOnly bool) bool {
+	if automatic && s.hostStandingHealing {
+		return false
+	}
 	if reason := safeSelfCombat(w, s.selfGUID); reason != "" {
 		s.state.Reason = reason
 		return false
@@ -234,6 +245,10 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "mana_unknown_or_insufficient"
 		return false
 	}
+	return s.castHealLocked(ctx, target, heal, automatic, urgentOnly, false)
+}
+
+func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerState, heal spellcatalog.Spell, automatic, urgentOnly, exact bool) bool {
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
@@ -249,19 +264,23 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_observations_changed_before_cast"
 		return false
 	}
+	if exact && s.healCasterReadyLocked(fresh) != "" {
+		s.state.Reason = "healing_caster_changed_before_cast"
+		return false
+	}
 	freshBudget := spellCost(heal, fresh.Self)
-	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
+	if fresh.Self.MaxHealth == 0 || fresh.Self.Health > fresh.Self.MaxHealth || fresh.Self.UnitFlags&0x2000 != 0 || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || !exact && freshBudget == 0 || uint64(fresh.Self.Power) < freshBudget {
 		s.state.Reason = "healing_caster_changed_before_cast"
 		return false
 	}
 	// A newly urgent own injury takes priority even if an ally was selected
 	// before the movement-stop/observation round trip.
-	if injuredForHealing(fresh.Self, true) && uint64(fresh.Self.Health)*100 < uint64(fresh.Self.MaxHealth)*urgentSelfHealPercent {
+	if !exact && injuredForHealing(fresh.Self, true) && uint64(fresh.Self.Health)*100 < uint64(fresh.Self.MaxHealth)*urgentSelfHealPercent {
 		target = fresh.Self
 	} else {
 		target = observedHealingPlayer(fresh, target.Guid)
 	}
-	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || target.Guid != s.selfGUID && distance(s.pos, playerPosition(target)) > 35 || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
+	if !healablePlayer(target, fresh.Self.MapId) || !injuredForHealing(target, automatic) || !exact && target.Guid != s.selfGUID && distance(s.pos, playerPosition(target)) > 35 || urgentOnly && (target.Guid != s.selfGUID || uint64(target.Health)*100 >= uint64(target.MaxHealth)*urgentSelfHealPercent) {
 		s.state.Reason = "healing_target_changed_before_cast"
 		return false
 	}
@@ -269,9 +288,15 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 		s.state.Reason = "healing_target_no_longer_in_current_party"
 		return false
 	}
-	heal = s.bestHealLocked(fresh.Self, target)
-	if heal.ID == 0 {
+	if !exact {
+		heal = s.bestHealLocked(fresh.Self, target)
+	}
+	if heal.ID == 0 || exact && !s.healRankEligibleLocked(fresh.Self, target, heal, s.pos) {
 		s.state.Reason = "healing_spell_or_resources_changed_before_cast"
+		return false
+	}
+	if ctx.Err() != nil {
+		s.state.Reason = "healing_request_cancelled_before_cast"
 		return false
 	}
 	now := s.now()
@@ -285,12 +310,23 @@ func (s *Service) healTriageLocked(ctx context.Context, w *worldv1.SnapshotRespo
 	s.nextAssist = now.Add(3 * time.Second)
 	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.ID, target.Guid
 	s.state.LastCastFailure = 0
+	var receipt *supportAttempt
+	if token := modcb.PolicySpellToken(ctx); exact && token != "" {
+		receipt = s.reserveHealReceiptLocked(token, heal, target.Guid)
+	}
 	if !s.sendLocked(ctx, opcode.CMSGCastSpell, spellPacket(s.castCount, heal.ID, target.Guid)) {
 		// The packet may have reached the server. Reassess after the cast window.
 		s.nextHeal = s.castUntil
-		s.state.CastPending = false
-		s.pendingSpell, s.pendingTarget = 0, 0
+		if receipt != nil {
+			receipt.view.Phase = "transport_unconfirmed_no_retry"
+		} else {
+			s.state.CastPending = false
+			s.pendingSpell, s.pendingTarget = 0, 0
+		}
 		return false
+	}
+	if receipt != nil {
+		receipt.view.TransportWritten = true
 	}
 	s.state.Reason = "heal_transport_written_waiting_for_server"
 	return true

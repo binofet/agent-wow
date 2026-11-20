@@ -33,6 +33,7 @@ CHARACTER = "Arlen"
 RPC_HOST, RPC_PORT = "127.0.0.1", 8086
 PROFILE = "default"
 CONFIG_DIR = DATA_DIR = MODULE_DIR = CHARACTER_GUID = None
+RELEASE_ENV = {}
 START_TIMEOUT, STOP_TIMEOUT = 330, 45
 EXEC_SETTLE_TIMEOUT = 2
 MAX_LINE = 64 << 10
@@ -277,9 +278,52 @@ def remaining_time(deadline, expired):
     return remaining
 
 
+def runtime_release(directory):
+    """Resolve the optional release selection once, without reading account files."""
+    path = directory / "runtime-release.json"
+    try:
+        release = strict_json(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, {}
+    except (OSError, UnicodeError, ValueError):
+        raise BuddyError(f"Runtime release must be valid JSON: {path}") from None
+    if not isinstance(release, dict):
+        raise BuddyError(f"Runtime release must be a JSON object: {path}")
+    paths = {}
+    for key in ("binary", "moduleDir", "policyFile", "config", "configDir", "dataDir"):
+        if key not in release:
+            continue
+        value = release[key]
+        if not isinstance(value, str) or not value.strip() or any(c in value for c in "\0\n\r"):
+            raise BuddyError(f"Runtime release {key} must be a nonempty path string: {path}")
+        value = Path(value)
+        paths[key] = (value if value.is_absolute() else ROOT / value).absolute()
+    environment = {}
+    if "policyFile" in paths:
+        environment["AGENT_WOW_POLICY_FILE"] = str(paths["policyFile"])
+    if "policyObservation" in release:
+        value = release["policyObservation"]
+        if not isinstance(value, str) or not value.strip() or any(c in value for c in "\0\n\r"):
+            raise BuddyError(f"Runtime release policyObservation must be a nonempty string: {path}")
+        environment["AGENT_WOW_POLICY_OBSERVATION"] = value
+    if "policyContext" in release:
+        value = release["policyContext"]
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() or any(c in item for c in "\0\n\r,") for item in value):
+            raise BuddyError(f"Runtime release policyContext must be a list of feed strings: {path}")
+        environment["AGENT_WOW_POLICY_CONTEXT"] = ",".join(value)
+    for key, variable in (("hostEncounterOwned", "BUDDY_HOST_ENCOUNTER_OWNED"),
+                          ("hostHealingOwned", "BUDDY_HOST_HEALING_OWNED"),
+                          ("hostSelfManaOwned", "BUDDY_HOST_SELF_MANA_OWNED")):
+        if key in release:
+            if type(release[key]) is not bool:
+                raise BuddyError(f"Runtime release {key} must be a JSON boolean: {path}")
+            environment[variable] = "true" if release[key] else "false"
+    return paths, environment
+
+
 def configure(args):
-    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR
-    global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT
+    global PROFILE, CHARACTER, CHARACTER_GUID, CONFIG, CONFIG_DIR, DATA_DIR, MODULE_DIR, BINARY
+    global PID_FILE, LOG_FILE, LOCK_FILE, RPC_PORT, RELEASE_ENV
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", args.profile):
         raise BuddyError("Profile must be a short lowercase slug")
     custom = args.profile != "default"
@@ -294,10 +338,15 @@ def configure(args):
         raise BuddyError("RPC port must be1024..65535")
     PROFILE, CHARACTER, CHARACTER_GUID = args.profile, name, args.character_guid
     directory = ROOT / "config" / "buddies" / PROFILE if custom else ROOT / "config"
-    CONFIG = (args.config or directory / "buddy.yaml").absolute()
-    CONFIG_DIR = (args.config_dir or directory).absolute() if custom or args.config_dir else None
-    DATA_DIR = (args.data_dir or ROOT / "data" / "buddies" / PROFILE).absolute() if custom or args.data_dir else None
-    MODULE_DIR = args.module_dir.absolute() if args.module_dir else None
+    release, RELEASE_ENV = runtime_release(directory)
+    CONFIG = (args.config or release.get("config") or directory / "buddy.yaml").absolute()
+    config_dir = args.config_dir or release.get("configDir")
+    data_dir = args.data_dir or release.get("dataDir")
+    module_dir = args.module_dir or release.get("moduleDir")
+    CONFIG_DIR = (config_dir or directory).absolute() if custom or config_dir else None
+    DATA_DIR = (data_dir or ROOT / "data" / "buddies" / PROFILE).absolute() if custom or data_dir else None
+    MODULE_DIR = module_dir.absolute() if module_dir else None
+    BINARY = (getattr(args, "binary", None) or release.get("binary") or ROOT / "bin" / "agent-wow").absolute()
     PID_FILE, LOG_FILE, LOCK_FILE = (directory / name for name in ("buddy.pid", "buddy-live.log", "buddy.lock"))
     RPC_PORT = args.rpc_port if args.rpc_port is not None else 8086
 
@@ -561,6 +610,7 @@ def start(*, deadline=None):
         except OSError:
             raise BuddyError(f"{RPC_HOST}:{RPC_PORT} is occupied; its owner was left untouched.") from None
     environment = os.environ.copy()
+    environment.update(RELEASE_ENV)
     trace_environment(environment, independent)
     environment.update(BUDDY_INDEPENDENT="true" if independent else "false",
                        AGENT_WOW_MODULE_DIR=str(MODULE_DIR or ROOT / "modules"), AGENT_WOW_LOG_LEVEL="debug",
@@ -670,6 +720,7 @@ def main(argv=None):
     parser.add_argument("--character-name")
     parser.add_argument("--character-guid", type=int)
     parser.add_argument("--rpc-port", type=int)
+    parser.add_argument("--binary", type=Path, help="Client executable for this profile's tracked lifecycle")
     for flag in ("config", "config-dir", "data-dir", "module-dir"):
         parser.add_argument("--" + flag, type=Path)
     args = parser.parse_args(argv)

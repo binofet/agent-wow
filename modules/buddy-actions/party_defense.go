@@ -98,7 +98,7 @@ func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotRes
 	var target *worldv1.CreatureState
 	best := math.Inf(1)
 	for _, c := range w.NearbyCreatures {
-		if !partyDefenseEligible(w, c, online) {
+		if !partyDefenseEligible(w, c, online) || s.targetProtection.blocks(c.Guid, s.now()) {
 			continue
 		}
 		p, _, _ := creaturePosition(c)
@@ -110,7 +110,18 @@ func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotRes
 	if target == nil {
 		return false
 	}
-	if !s.refreshPositionLocked(w) {
+	approaching := s.crowdControl.active && s.state.Moving
+	s.endCrowdControlLocked(ctx, "party_defense")
+	if approaching && !s.state.MotionUnconfirmed {
+		w = s.lastWorld // STOP may have sampled a new authoritative position.
+		updated := partyDefenseCreature(w, target.Guid)
+		if safeSelfCombat(w, s.selfGUID) != "" || !partyDefenseEligible(w, updated, online) ||
+			updated.AttackVictimGuid != target.AttackVictimGuid || s.targetProtection.blocks(updated.Guid, s.now()) {
+			return true
+		}
+		target = updated
+	}
+	if s.state.MotionUnconfirmed || !s.refreshPositionLocked(w) {
 		return true
 	}
 	s.partyDefenseTarget, s.partyDefenseVictim = target.Guid, target.AttackVictimGuid

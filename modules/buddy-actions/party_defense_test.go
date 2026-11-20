@@ -252,3 +252,23 @@ func TestPartyDefenseRefreshesActualResourcesFlagsAndWeaponAfterFacing(t *testin
 		})
 	}
 }
+
+func TestPreparedCrowdControlYieldsToObservedPartyDefense(t *testing.T) {
+	for _, phase := range []string{"ready", "waiting_for_target"} {
+		t.Run(phase, func(t *testing.T) {
+			s, f, attacker, _ := scarletSentryDefenseRig(t, 8)
+			learnSpells(s, fireball, 118)
+			s.state.Following, s.state.Assisting = true, true
+			s.followUntil, s.assistUntil = s.now().Add(time.Minute), s.now().Add(time.Minute)
+			s.crowdControl = crowdControlIntent{
+				active: true, target: sheepTarget + 1, rank: 118, class: 8,
+				phase: phase, until: s.now().Add(time.Minute),
+			}
+			s.Tick(context.Background())
+			if lastCast(f) != fireball || s.state.LastCastTargetGuid != attacker.Guid ||
+				s.crowdControl.active || s.crowdControl.phase != "party_defense" {
+				t.Fatal("prepared crowd control blocked observed defense", s.stateLocked(), f.packets)
+			}
+		})
+	}
+}

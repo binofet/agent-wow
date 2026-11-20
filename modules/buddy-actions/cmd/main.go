@@ -14,6 +14,7 @@ import (
 	buddyactions "github.com/agent-wow/agent-wow/modules/buddy-actions"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -58,7 +59,36 @@ func run() error {
 	if identity.Independent() {
 		service = buddyactions.NewIndependentService(modv1.NewSessionClient(connection), identity.SelfGUID, sessionID)
 	}
+	if value := os.Getenv("BUDDY_HOST_HEALING_OWNED"); value != "" {
+		owned, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("BUDDY_HOST_HEALING_OWNED must be true or false")
+		}
+		if owned {
+			service.UseHostStandingHealing()
+		}
+	}
 	service.UseAutomaticCorpseLoot()
+	if value := os.Getenv("BUDDY_HOST_SELF_MANA_OWNED"); value != "" {
+		owned, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("BUDDY_HOST_SELF_MANA_OWNED must be true or false")
+		}
+		if owned {
+			service.UseHostSelfMana()
+		}
+	}
+	if value := os.Getenv("BUDDY_HOST_ENCOUNTER_OWNED"); value != "" {
+		owned, err := strconv.ParseBool(value)
+		if err != nil {
+			return errors.New("BUDDY_HOST_ENCOUNTER_OWNED must be true or false")
+		}
+		if owned {
+			if err := service.UseHostEncounterWriter(os.Getenv(modcb.PolicyEncounterKeyEnv)); err != nil {
+				return err
+			}
+		}
+	}
 	service.SetNavigationDataDir(os.Getenv("BUDDY_NAV_DATA_DIR"))
 	if value := os.Getenv("BUDDY_DUNGEON_TRACE_MAP"); value != "" {
 		const destination = "/var/lib/buddy-dungeon-trace"
@@ -84,9 +114,14 @@ func run() error {
 
 	server := grpc.NewServer()
 	actionsv1.RegisterBuddyActionsServer(server, service)
+	modcb.RegisterEncounterLeaseServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicySpellService, grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicyHostileSpellService, grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicyMeleeService, grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicySupportSpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	go service.Run(ctx)
 	go func() {
 		<-ctx.Done()

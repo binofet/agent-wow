@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLogLevelConfig(t *testing.T) {
@@ -204,6 +205,40 @@ func TestRealmFilePath(t *testing.T) {
 			}
 			if got := Get().RealmFilePath; got != tc.want {
 				t.Errorf("RealmFilePath=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPolicyExecutionLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, env string
+		want            time.Duration
+		wantErr         bool
+	}{
+		{name: "default", body: `{}`},
+		{name: "file", body: `{"policy":{"execution_limit":"75ms"}}`, want: 75 * time.Millisecond},
+		{name: "environment", body: `{"policy":{"execution_limit":"75ms"}}`, env: "125ms", want: 125 * time.Millisecond},
+		{name: "negative", body: `{"policy":{"execution_limit":"-1ms"}}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENT_WOW_POLICY_EXECUTION_LIMIT", tc.env)
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := Init(path)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "execution_limit") {
+					t.Fatalf("error=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := Get().Policy.ExecutionLimit; got != tc.want {
+				t.Fatalf("execution limit=%s, want %s", got, tc.want)
 			}
 		})
 	}

@@ -23,6 +23,13 @@ func (m *Manager) Close() error {
 			}
 		}
 		m.wg.Wait()
+		// Workers have stopped. Release packets canceled by explicit shutdown
+		// even if a caller retains the closed Manager for diagnostics.
+		m.mu.Lock()
+		for _, inst := range m.instances {
+			inst.queue, inst.queueHead, inst.queuedBytes = nil, 0, 0
+		}
+		m.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		for i := len(m.order) - 1; i >= 0; i-- {

@@ -85,7 +85,8 @@ func Handler(session Session) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		// A 128 KiB Lua source can occupy up to six JSON bytes per source byte.
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
@@ -95,12 +96,21 @@ func Handler(session Session) http.Handler {
 			writeError(w, nil, -32700, "Parse error", nil)
 			return
 		}
-		if !json.Valid(body) {
+		var req request
+		valid := json.Valid(body)
+		var decodeErr error
+		if valid {
+			decodeErr = json.Unmarshal(body, &req)
+		}
+		if len(body) > 64<<10 && req.Method != "session.reload_policy" {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if !valid {
 			writeError(w, nil, -32700, "Parse error", nil)
 			return
 		}
-		var req request
-		if err := json.Unmarshal(body, &req); err != nil || len(bytes.TrimSpace(body)) == 0 || bytes.TrimSpace(body)[0] != '{' || req.Version != "2.0" || req.Method == "" || !validID(req.ID) {
+		if decodeErr != nil || len(bytes.TrimSpace(body)) == 0 || bytes.TrimSpace(body)[0] != '{' || req.Version != "2.0" || req.Method == "" || !validID(req.ID) {
 			writeError(w, nil, -32600, "Invalid Request", nil)
 			return
 		}

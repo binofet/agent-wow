@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Write an editable Lua encounter bundle for a character profile."""
+
+import argparse
+from pathlib import Path
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--intent", type=Path, help="Lua module returning an encounter plan and damage preferences")
+    args = parser.parse_args()
+    behaviors = Path(__file__).resolve().parent.parent / "behaviors"
+    modules = [
+        ("encounter_tactics", behaviors / "encounter-tactics.lua"),
+        ("encounter_spells", behaviors / "encounter-spells.lua"),
+        ("encounter_healing", behaviors / "healing.lua"),
+        ("encounter_self_mana", behaviors / "self-mana.lua"),
+        ("encounter_support", behaviors / "support.lua"),
+        ("encounter_movement", behaviors / "encounter-movement.lua"),
+        ("encounter_commands", behaviors / "encounter-commands.lua"),
+    ]
+    if args.intent:
+        modules.append(("encounter_intent", args.intent))
+    try:
+        parts = [f"local {name} = (function()\n{source.read_text(encoding='utf-8')}\nend)()\n"
+                 for name, source in modules]
+        parts.append((behaviors / "encounter-session.lua").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as error:
+        parser.exit(1, f"{error}\n")
+    sys.stdout.write("".join(parts))
+
+
+if __name__ == "__main__":
+    main()

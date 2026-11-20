@@ -19,6 +19,8 @@ class RPC:
 
     def call(self, method, params):
         self.calls.append((method, params))
+        if method == 'session.policy_source':
+            raise edit.c.CapabilityUnavailable('older client')
         if method == 'buddy-actions.reload_behavior':
             self.revision = hashlib.sha256(params['source'].encode()).hexdigest() if params['source'] else ''
             if self.error:
@@ -45,6 +47,34 @@ class SelfEditTests(unittest.TestCase):
             self.assertEqual(writes[0]['selfGuid'], '4')
             edit.edit('builtin', 4, 'body-a', rpc, expected=result['revision'], data=folder)
             self.assertEqual(rpc.revision, '')
+
+    def test_session_edit_installs_source_on_the_attached_runtime(self):
+        class SessionRPC(RPC):
+            def __init__(self):
+                super().__init__()
+                self.source = self.builtin = 'return {decide=function() return {} end}'
+                self.revision = edit.digest(self.builtin)
+
+            def call(self, method, params):
+                self.calls.append((method, params))
+                if method == 'session.reload_policy':
+                    self.source = self.builtin if params.get('useBuiltin') else params['source']
+                    self.revision = edit.digest(self.source)
+                return dict(characterGuid=self.guid, sessionId=self.sid, revision=self.revision,
+                            source=self.source)
+
+        with tempfile.TemporaryDirectory() as folder:
+            rpc = SessionRPC()
+            source = 'return {decide=function() return {new=true} end}'
+            expected = rpc.revision
+            result = edit.edit('apply', 4, 'body-a', rpc, source, expected, folder)
+            self.assertEqual(result['revision'], edit.digest(source))
+            self.assertFalse(result['reconnected'])
+            shown = edit.edit('show', 4, 'body-a', rpc, data=folder)
+            self.assertEqual((shown['runtime'], shown['source']), ('session', source))
+            edit.edit('builtin', 4, 'body-a', rpc, expected=result['revision'], data=folder)
+            self.assertEqual(rpc.source, rpc.builtin)
+            self.assertTrue(all(method.startswith('session.') for method, _ in rpc.calls))
 
     def test_stale_body_and_revision_refuse_before_write(self):
         for sid, revision in [('old-body', ''), ('body-a', 'f' * 64)]:

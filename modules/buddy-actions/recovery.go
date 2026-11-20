@@ -130,7 +130,7 @@ func (s *Service) endRecoveryLocked(ctx context.Context, phase, reason string) {
 		r.token = ""
 	}
 }
-func (s *Service) beginRecoveryLocked() {
+func (s *Service) beginRecoveryLocked(ctx context.Context) {
 	r := &s.recovery
 	epoch := r.state.DeathEpoch + 1
 	r.state = actionsv1.RecoveryState{Enabled: true, Active: true, DeathEpoch: epoch, Phase: "observed_death"}
@@ -156,11 +156,15 @@ func (s *Service) beginRecoveryLocked() {
 	s.state.CastPending = false
 	s.pendingSpell = 0
 	s.pendingTarget = 0
-	s.state.AutoAttacking = false
-	s.state.AutoAttackRequested = false
-	s.state.AutoAttackUnconfirmed = false
-	s.autoTarget = 0
-	s.autoStopping = false
+	if s.encounterSwing.target != 0 {
+		s.stopEncounterMeleeLocked(ctx)
+	} else {
+		s.state.AutoAttacking = false
+		s.state.AutoAttackRequested = false
+		s.state.AutoAttackUnconfirmed = false
+		s.autoTarget = 0
+		s.autoStopping = false
+	}
 	s.state.Practicing = false
 }
 
@@ -248,7 +252,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 	if r.state.Active && r.state.AliveObserved {
 		// A new actual death during recuperation is a new epoch, not a retry
 		// of the previous epoch's already consumed release/reclaim requests.
-		s.beginRecoveryLocked()
+		s.beginRecoveryLocked(ctx)
 	}
 	if !r.state.Active {
 		if r.state.DeathEpoch != 0 && !r.readyForDeath {
@@ -257,7 +261,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 		if s.state.InteractionOwner != "" {
 			return false
 		}
-		s.beginRecoveryLocked()
+		s.beginRecoveryLocked(ctx)
 	}
 	if !s.now().Before(r.deadline) {
 		s.endRecoveryLocked(ctx, "recovery_timeout", "finite_recovery_deadline_no_retry")

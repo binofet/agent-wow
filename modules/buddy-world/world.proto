@@ -409,6 +409,9 @@ message SnapshotResponse {
   // Actual same-map non-bones corpses, bounded by the existing 32-entry cache.
   // Consumers must establish current group membership before targeting one.
   repeated CorpseState player_corpses = 46;
+  // Session-local world visit. Advances on each valid login verification or
+  // new-world packet, including a same-map transfer. Zero while unbound.
+  uint64 visit_revision = 47;
 }
 
 service BuddyWorld {

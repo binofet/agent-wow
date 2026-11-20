@@ -8,12 +8,25 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  select_target: /warcraftbuddy.actions.v1.BuddyActions/SelectTarget
+  approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
+  interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
   resurrect_once: /warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce
   accept_resurrection: /warcraftbuddy.actions.v1.BuddyActions/AcceptResurrection
   pick_lock: /warcraftbuddy.actions.v1.BuddyActions/PickLock
+  create_item: /warcraftbuddy.actions.v1.BuddyActions/CreateItem
+  cast_self: /warcraftbuddy.actions.v1.BuddyActions/CastSelf
+  healing_options: /warcraftbuddy.actions.v1.BuddyActions/HealingOptions
+  self_mana_observation: /warcraftbuddy.actions.v1.BuddyActions/SelfManaObservation
+  encounter_observation: /warcraftbuddy.actions.v1.BuddyActions/EncounterObservation
+  cast_heal: /warcraftbuddy.actions.v1.BuddyActions/CastHeal
+  cast_offense: /warcraftbuddy.actions.v1.BuddyActions/CastOffense
+  melee: /warcraftbuddy.actions.v1.BuddyActions/Melee
+  polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
+  sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
   heal_once: /warcraftbuddy.actions.v1.BuddyActions/HealOnce
   status: /warcraftbuddy.actions.v1.BuddyActions/Status
   buffs: /warcraftbuddy.actions.v1.BuddyActions/Buffs
@@ -34,9 +47,12 @@ rpc:
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
 packets:
+  SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_LOOT_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ITEM_PUSH_RESULT: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_CREATURE_QUERY_RESPONSE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_AURA_UPDATE_ALL: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLDISPELLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -54,6 +70,9 @@ packets:
   SMSG_CAST_FAILED: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SPELLHEALLOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  MSG_CHANNEL_START: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  MSG_CHANNEL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_FAILURE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELL_FAILED_OTHER: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -66,6 +85,9 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}
+  approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
+  interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
   behavior: {effect: read}
@@ -76,6 +98,16 @@ script_api:
   resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}
+  create_item: {effect: mutation, description: Cast one exact learned direct item creation spell on self and report inventory confirmation}
+  cast_self: {effect: mutation, description: Cast one exact learned spell on the current body and report cast or channel observations}
+  healing_options: {effect: read, description: Observe injured eligible patients and available learned heal ranks}
+  self_mana_observation: {effect: read, description: 'Observe current caster resources, activity, nearby attackers and learned spell mechanics'}
+  encounter_observation: {effect: read, description: Observe the current encounter body and map visit with party marks and learned spell facts}
+  cast_heal: {effect: mutation, description: Cast the exact learned heal on the selected observed eligible player}
+  cast_offense: {effect: mutation, description: Cast one exact learned damage spell on the selected current attacker}
+  melee: {effect: mutation, description: Start melee on the selected current attacker or stop the exact acknowledged own target}
+  polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
+  sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}

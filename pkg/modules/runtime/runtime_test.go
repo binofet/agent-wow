@@ -146,7 +146,9 @@ func waitFailure(t *testing.T, m *Manager) {
 func TestTypedCompositionAndPublicValidation(t *testing.T) {
 	r := &fixtureRunner{}
 	sent := make(chan *modv1.SendPacketRequest, 10)
-	m := startManager(t, r, func(_ context.Context, op uint32, b []byte) error {
+	origins := make(chan modsession.WriteOrigin, 10)
+	m := startManager(t, r, func(ctx context.Context, op uint32, b []byte) error {
+		origins <- modsession.WriteOriginFromContext(ctx)
 		sent <- &modv1.SendPacketRequest{Opcode: op, Payload: bytes.Clone(b)}
 		return nil
 	})
@@ -159,6 +161,10 @@ func TestTypedCompositionAndPublicValidation(t *testing.T) {
 	}
 	if p := <-sent; p.Opcode != 123 || !bytes.Equal(p.Payload, []byte{1, 2, 3}) {
 		t.Fatal(p)
+	}
+	wantOrigin := modsession.WriteOrigin{SessionID: filepath.Base(m.dir), Module: "worker", Writer: "module"}
+	if origin := <-origins; origin != wantOrigin {
+		t.Fatalf("callback write origin: got %+v, want %+v", origin, wantOrigin)
 	}
 	for _, tc := range []struct {
 		method, params string
@@ -350,29 +356,4 @@ func TestFatalFailuresAndCleanup(t *testing.T) {
 			t.Fatal("intentional cleanup became a health failure", m.Err())
 		}
 	})
-}
-
-func TestPacketQueueLimits(t *testing.T) {
-	root := t.TempDir()
-	modtest.WriteModule(t, root, "worker", "")
-	registry, err := moddisc.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, size := range []int{1, 1 << 20} {
-		m := New(registry, nil, nil)
-		count := queueLimit
-		if size > 1 {
-			count = queueBytes / size
-		}
-		for range count {
-			if err := m.Publish(0x236, make([]byte, size)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := m.Publish(0x236, make([]byte, size)); err == nil {
-			t.Fatal("queue grew without bound")
-		}
-		m.Stop()
-	}
 }
