@@ -1672,7 +1672,7 @@ class RPC:
             request_timeout = self.timeout if timeout is None else min(self.timeout, timeout)
             if method == "buddy-trade.lookup_items":
                 request_timeout = min(request_timeout, .45)
-            response_limit = (8192 if method == "session.describe" else
+            response_limit = (8192 if method in ("session.describe", "session.attach") else
                               1024 if method == "session.policy_source" else 256) * 1024
             with self.opener.open(request, timeout=request_timeout) as response:
                 raw = response.read(response_limit + 1)
