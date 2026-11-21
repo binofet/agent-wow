@@ -30,9 +30,6 @@ EAGAN_INTRO = 5261
 WOLVES = 33
 PREREQUISITES = frozenset((INTRO, EAGAN_INTRO, WOLVES))
 TURN_IN_GIVERS = {INTRO: 197, EAGAN_INTRO: 196, WOLVES: 196}
-# Official AzerothCore quest33 offers item80 (cloth feet) and6070 (leather
-# wrists). Choose only the verified role-usable item when actually offered.
-WOLF_REWARD_BY_CLASS = {5: 80, 8: 80, 4: 6070}
 ROSTER = (("Arlen", 1, 8086), ("Mira", 4, 8087), ("Rook", 5, 8088))
 IDENTITY = converse.QUEST_SYNC_IDENTITY
 LIMITATION = "Uses observed starter NPCs within8yd only; no travel, abandonment, combat pulls or progress grants. IDs are the goal; Joel's objective progress is unknown."
@@ -463,64 +460,76 @@ class CharacterSync:
         self.status["confirmedPrerequisiteQuestIds"] = sorted(confirmed)
 
     def reward(self, state, session, candidates, active, quest_id=INTRO):
-        if quest_id not in active or quest_id not in PREREQUISITES:
-            return False
-        giver_entry = TURN_IN_GIVERS[quest_id]
-        givers = [row for row in candidates if row[3] == giver_entry]
-        if not givers:
-            if self.autonomous:
-                self.travel(state, entry=giver_entry)
-                return True
-            self.status["phase"] = "waiting_for_observed_prerequisite_reward_giver"
-            return True
-        _, _, npc, _ = min(givers)
         offer = state.get("turnInOffer", {})
-        if (isinstance(offer, dict) and integer(offer.get("questId", 0)) == quest_id
-                and integer(offer.get("npcGuid", 0)) == npc and offer.get("source") == "reward_offer"
-                and offer.get("canComplete") is True and integer(offer.get("expiresInMs", 0)) > 0
-                and offer.get("rewardRequested") is not True):
-            choices = offer.get("choices", [])
-            if not isinstance(choices, list) or len(choices) > 6:
-                raise Error("Prerequisite reward choices are invalid")
-            indices = set()
+        if not isinstance(offer, dict):
+            offer = {}
+        choices = offer.get("choices", [])
+        rows = False
+        if isinstance(choices, list) and len(choices) <= 6:
+            rows = []
             for item in choices:
-                if (not isinstance(item, dict) or not 0 < integer(item.get("itemId", 0)) <= 2**32 - 1
-                        or not 0 < integer(item.get("count", 0)) <= 2**32 - 1
-                        or not 0 <= integer(item.get("index", 0)) < 6
-                        or integer(item.get("index", 0)) in indices):
-                    raise Error("Prerequisite reward choice is invalid")
-                indices.add(integer(item.get("index", 0)))
-            choice = choices[0] if choices else None
-            if len(choices) > 1:
-                class_id = integer(self.self_player.get("classId", 0)) if self.self_player.get("classKnown") is True else 0
-                preferred = WOLF_REWARD_BY_CLASS.get(class_id) if quest_id == WOLVES else None
-                matches = [item for item in choices if isinstance(item, dict) and integer(item.get("itemId", 0)) == preferred]
-                if len(matches) != 1:
-                    self.status["phase"] = "waiting_for_verified_prerequisite_reward_choice"
-                    return True
-                choice = matches[0]
-            revision = integer(offer.get("revision", 0))
-            if not revision:
-                raise Error("Prerequisite reward offer revision is unknown")
-            key = "claim:" + str(quest_id)
-            used = self.data["reservations"].get(key) == binding(session, npc, revision)
-            if not used:
-                self.mutate("buddy-quests.claim_reward", {
-                    "sessionId": session, "offerRevision": str(revision), "npcGuid": str(npc), "questId": quest_id,
-                    "choiceIndex": integer(choice.get("index", 0)) if choice else 0,
-                    "expectedItemId": integer(choice["itemId"]) if choice else 0, "noChoice": not choices},
-                    key, binding(session, npc, revision))
-                return True
-        # Turn-in is a bounded dialogue query, not a reward claim. Once a
-        # consumed/ambiguous reward needs reconciliation, query a new offer;
-        # claim can happen only against that new actual server revision.
+                try:
+                    row = {key: integer(item.get(key, 0)) for key in ("itemId", "count", "index")} if isinstance(item, dict) else {}
+                except Error:
+                    row = {}  # Lua rejects malformed choices only on the matching live offer.
+                rows.append(row)
         last = self.data.get("lastMutation", {})
-        if (last.get("method") == "buddy-quests.turn_in" and integer(last.get("questId", 0)) == quest_id
-                and self.now() - last.get("at", 0) < 60):
-            self.status["phase"] = "waiting_for_prerequisite_turn_in_response"
+        facts = dict(sessionId=session, now=self.now(), questId=quest_id, ownQuestIds=sorted(active), autonomous=self.autonomous,
+            candidates=[dict(priority=priority, distance=distance, guid=str(npc), entry=entry)
+                        for priority, distance, npc, entry in candidates],
+            turnInOffer=dict(npcGuid=str(integer(offer.get("npcGuid", 0))), questId=integer(offer.get("questId", 0)),
+                revision=str(integer(offer.get("revision", 0))), expiresInMs=str(integer(offer.get("expiresInMs", 0))),
+                source=offer.get("source", ""), canComplete=offer.get("canComplete") is True,
+                rewardRequested=offer.get("rewardRequested") is True, choices=rows),
+            classKnown=self.self_player.get("classKnown") is True,
+            classId=integer(self.self_player.get("classId", 0)) if self.self_player.get("classKnown") is True else 0,
+            claimReservation=self.data["reservations"].get("claim:" + str(quest_id), False),
+            lastMutation=dict(method=last.get("method", ""), questId=integer(last.get("questId", 0)), at=last.get("at", 0)),
+            questLogRevision=str(integer(state.get("questLogRevision", 0))))
+        decision = converse.quest_rewards.starter_handoff(facts)
+        if not isinstance(decision, dict) or decision.get("status") == "pending":
+            self.status["phase"] = "waiting_for_shared_lua_prerequisite_reward_policy"
             return True
-        self.mutate("buddy-quests.turn_in", {"sessionId": session, "npcGuid": str(npc), "questId": quest_id,
-                                            "questLogRevision": str(integer(state.get("questLogRevision", 0)))})
+        if decision.get("status") != "ready" or not isinstance(decision.get("choice"), dict):
+            raise Error("Shared Lua prerequisite reward policy rejected its facts")
+        selected = decision["choice"]
+        kind = selected.get("kind")
+        if kind == "ignore":
+            return False
+        if kind == "wait":
+            if selected.get("phase") not in ("waiting_for_observed_prerequisite_reward_giver", "waiting_for_verified_prerequisite_reward_choice",
+                                             "waiting_for_prerequisite_turn_in_response"):
+                raise Error("Lua prerequisite reward wait state is invalid")
+            self.status["phase"] = selected["phase"]
+            return True
+        if kind == "travel":
+            if not self.autonomous or type(selected.get("entry")) is not int or selected["entry"] not in set(TURN_IN_GIVERS.values()):
+                raise Error("Lua prerequisite reward destination is invalid")
+            self.travel(state, entry=selected["entry"])
+            return True
+        npc = integer(selected.get("npcGuid", 0))
+        if selected.get("questId") != quest_id or npc not in {row[2] for row in candidates}:
+            raise Error("Lua prerequisite reward identity is unobserved")
+        if kind == "turn_in":
+            self.mutate("buddy-quests.turn_in", {"sessionId": session, "npcGuid": str(npc), "questId": quest_id,
+                                                "questLogRevision": str(integer(state.get("questLogRevision", 0)))})
+        elif kind == "claim_reward":
+            revision = integer(offer.get("revision", 0))
+            position = selected.get("choicePosition")
+            if (selected.get("offerRevision") != str(revision) or integer(offer.get("npcGuid", 0)) != npc
+                    or integer(offer.get("questId", 0)) != quest_id or type(position) is not int
+                    or not isinstance(choices, list) or not 0 <= position <= len(choices) or (position == 0) != (len(choices) == 0)):
+                raise Error("Lua prerequisite reward is not bound to the actual offer")
+            choice = choices[position - 1] if position else None
+            index, item_id = (integer(choice.get("index", 0)), integer(choice["itemId"])) if choice else (0, 0)
+            if selected.get("choiceIndex") != index or selected.get("itemId") != item_id:
+                raise Error("Lua prerequisite reward differs from the actual offered row")
+            self.mutate("buddy-quests.claim_reward", {
+                "sessionId": session, "offerRevision": str(revision), "npcGuid": str(npc), "questId": quest_id,
+                "choiceIndex": index, "expectedItemId": item_id, "noChoice": position == 0},
+                "claim:" + str(quest_id), binding(session, npc, revision))
+        else:
+            raise Error("Lua prerequisite reward action is invalid")
         return True
 
     def tick(self):
