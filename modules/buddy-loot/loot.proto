@@ -81,6 +81,8 @@ message CorpseObservation {
   bool inventory_known = 7; uint64 inventory_revision = 8; uint32 general_free_slots = 9;
   State state = 10; CorpseOperation operation = 11; repeated uint64 retired_sources = 12;
   warcraftbuddy.world.v1.PlayerState owner = 13;
+  // Raw cached observation of the last caller-selected source, including life.
+  warcraftbuddy.world.v1.CreatureState source_observation = 14;
 }
 service BuddyLoot {
   rpc Enable(EnableRequest) returns (State);

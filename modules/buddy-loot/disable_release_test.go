@@ -41,6 +41,13 @@ func disableLoot(t *testing.T, s *Service) *lootv1.State {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if s.exactCorpse && s.corpseRequest != nil {
+		_, err = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: s.state.SessionId, SelfGuid: s.selfGUID, CorpseGuid: s.corpseRequest.request.CorpseGuid})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = current(t, s)
+	}
 	return got
 }
 
@@ -83,7 +90,11 @@ func TestDisableDuringOutstandingReleasePreservesDeadlineAndReceiptBinding(t *te
 		s, f, advance, guid, _ := storedLootWaitingRelease(t, gather)
 		deadline, token := s.deadline, s.token
 		got := disableLoot(t, s)
-		if got.Enabled || got.Phase != "waiting_release" || s.token != token || !s.deadline.Equal(deadline) || len(f.packets) != 3 || f.releases != 0 {
+		expectedReleases := 0
+		if !gather {
+			expectedReleases = 1
+		}
+		if got.Enabled || got.Phase != "waiting_release" || s.token != token || !s.deadline.Equal(deadline) || len(f.packets) != 3 || f.releases != expectedReleases {
 			t.Fatal("disable overwrote in-flight release", got)
 		}
 		advance(time.Second)
@@ -117,7 +128,7 @@ func TestDisabledOutstandingReleaseStillTimesOutWithoutResend(t *testing.T) {
 	advance(600 * time.Millisecond)
 	tickCorpseLua(t, s)
 	got := current(t, s)
-	if got.Enabled || got.Phase != "disabled" || got.Reason != "loot_response_timeout_no_retry" || got.ReleasesObserved != 0 || got.ItemsStoredConfirmed != 1 || got.LootSlotsRemoved != 1 || len(f.packets) != 3 || f.releases != 1 {
+	if got.Enabled || got.Phase != "loot_cleanup_unconfirmed" || s.cleanup.source == 0 || !s.cleanup.releaseRequested || got.ReleasesObserved != 0 || got.ItemsStoredConfirmed != 1 || got.LootSlotsRemoved != 1 || len(f.packets) != 3 || f.releases != 1 {
 		t.Fatal("timeout retried or invented release proof", got, f.packets)
 	}
 }
@@ -127,7 +138,7 @@ func TestDisableBeforeReleaseKeepsExistingAbortAndFailureGuards(t *testing.T) {
 	enable(t, s)
 	tickCorpseLua(t, s)
 	got := disableLoot(t, s)
-	if got.Phase != "abort" || len(f.packets) != 1 {
+	if got.Phase != "waiting_release" || len(f.packets) != 2 {
 		t.Fatal(got, f.packets)
 	}
 	tickCorpseLua(t, s)

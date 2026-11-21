@@ -32,7 +32,11 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		return nil, status.Error(codes.FailedPrecondition, "session closing")
 	}
 	w, a := &worldv1.SnapshotResponse{}, &actionsv1.State{}
-	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); err != nil {
+	request := &worldv1.SnapshotRequest{}
+	if s.corpseRequest != nil {
+		request.CreatureGuid = s.corpseRequest.request.CorpseGuid
+	}
+	if err := s.invoke(ctx, "buddy-world", "snapshot", request, w); err != nil {
 		return nil, err
 	}
 	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a); err != nil {
@@ -42,7 +46,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		return nil, status.Error(codes.FailedPrecondition, "current body observations required")
 	}
 	out := &lootv1.CorpseObservation{SessionId: s.state.SessionId, SelfGuid: s.selfGUID, Self: w.Self, Actions: a,
-		Owner:   w.Owner,
+		Owner: w.Owner, SourceObservation: w.RequestedCreature,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
 	if s.corpseRequest != nil {
@@ -57,6 +61,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 
 func exactCorpseCurrent(r *lootv1.OpenCorpseRequest, w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
 	if r == nil || w.GetSelf().GetGuid() != r.SelfGuid || a.GetSessionId() != r.SessionId || a.Position == nil ||
+		!w.Self.MapKnown || !w.Self.PositionKnown || !a.Position.Known || !a.Position.MapKnown || w.Self.MapId != a.Position.MapId ||
 		a.Position.Revision != r.ExpectedPositionRevision || !w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision || a.MotionUnconfirmed {
 		return false
 	}
@@ -178,6 +183,10 @@ func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest)
 		return nil, status.Error(codes.FailedPrecondition, "current exact corpse operation required")
 	}
 	if s.corpseRequest.receipt.Terminal || !s.exactCorpse || s.token == "" || s.cleanup.source != 0 {
+		return s.corpseReceiptLocked(), nil
+	}
+	if s.state.Phase == "release_observed" {
+		s.finishReleased(ctx)
 		return s.corpseReceiptLocked(), nil
 	}
 	if s.state.Phase != "waiting_release" && s.state.Phase != "release_observed" {

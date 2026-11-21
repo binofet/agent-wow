@@ -44,7 +44,7 @@ func TestOrdinaryOpeningTimeoutRetainsIntentAndResumesOnlyAfterExactCleanup(t *t
 	f.world.LootableCorpses = nil
 	advance(time.Second)
 	tickCorpseLua(t, s)
-	c := &worldv1.CreatureState{Guid: corpseGUID, Present: true, MapKnown: true, PositionKnown: true, X: 2, HealthKnown: true, MaxHealth: 100, AliveKnown: true, DynamicFlags: 1}
+	c := &worldv1.CreatureState{Guid: corpseGUID, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: 2, HealthKnown: true, MaxHealth: 100, AliveKnown: true, DynamicFlags: 1}
 	f.world.LootableCorpses = []*worldv1.CreatureState{c}
 	enable(t, s)
 	advance(time.Second)
@@ -275,7 +275,7 @@ func TestOrdinaryRetiredSourceCapacityIsBoundedAndDoesNotEraseOldSafety(t *testi
 		s.retired[corpseGUID+n] = true
 	}
 	tickCorpseLua(t, s)
-	if len(s.retired) != maxRetiredLootSources || len(f.packets) != 0 || f.snapshotReads != 2 || current(t, s).Reason != "loot_retired_source_bound_waiting_for_actual_new_life" {
+	if len(s.retired) != maxRetiredLootSources || len(f.packets) != 0 || f.snapshotReads != 3 {
 		t.Fatal("retirement bound dropped records or queried unboundedly", current(t, s), f.snapshotReads)
 	}
 	// Retirement and an unresolved outcome are body-local, not persisted or

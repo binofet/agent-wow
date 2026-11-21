@@ -34,12 +34,17 @@ function M.on_event(event)
   if op and op.openingTransportAttempted and id(op.corpseGuid) and state.lastRequest~=op.requestId then
    state.seen[op.corpseGuid]=true;state.lastRequest=op.requestId
   end
+  local fresh=observed.sourceObservation
+  if fresh and fresh.present and fresh.mapKnown and (observed.self or {}).mapKnown and
+   (fresh.mapId or 0)==(observed.self.mapId or 0) and fresh.aliveKnown and fresh.alive and fresh.healthKnown and (fresh.health or 0)>0 then
+   state.seen[fresh.guid]=nil
+  end
   if op and id(op.corpseGuid) and (observed.state or {}).inventoryPaused==true then
-   state.paused[op.corpseGuid]=observed.inventoryRevision
+   state.paused[op.corpseGuid]=state.paused[op.corpseGuid] or observed.inventoryRevision
   end
   if (observed.state or {}).inventoryPaused~=true and (observed.generalFreeSlots or 0)>0 then
    for g,revision in pairs(state.paused) do
-    if observed.inventoryRevision~=revision then state.seen[g]=nil;state.paused[g]=nil end
+    state.seen[g]=nil;state.paused[g]=nil
    end
   end
  elseif event.receipt and event.receipt.payload and event.receipt.payload.capability=="loot_open" then
@@ -61,9 +66,10 @@ function M.decide(frame,encounter,quiet,urgent)
  local a,p,s=o.actions or {},(o.actions or {}).position,o.self or {}
  local owner=o.owner
  if owner and owner.present and owner.aliveKnown and owner.alive and owner.unitFlagsKnown and
-  math.floor((owner.unitFlags or 0)/524288)%2==1 then quiet=false end
- for _,player in pairs(encounter.players or {}) do if player.present and player.aliveKnown and player.alive and player.inCombat==true then quiet=false end end
- for _,target in pairs(encounter.targets or {}) do if target.present and target.aliveKnown and target.alive and target.engaged==true then quiet=false end end
+  math.floor((owner.unitFlags or 0)/524288)%2==1 then quiet=false;urgent=true end
+ if s.unitFlagsKnown and math.floor((s.unitFlags or 0)/524288)%2==1 then quiet=false;urgent=true end
+ for _,player in pairs(encounter.players or {}) do if player.present and player.aliveKnown and player.alive and player.inCombat==true then quiet=false;urgent=true end end
+ for _,target in pairs(encounter.targets or {}) do if target.present and target.aliveKnown and target.alive and target.engaged==true then quiet=false;urgent=true end end
  local op=o.operation
  local pending=(o.state or {}).pendingCorpseGuid
  if id(pending) then

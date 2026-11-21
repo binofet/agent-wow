@@ -212,7 +212,7 @@ var corpseTestVMs sync.Map
 
 func tickCorpseLua(t *testing.T, s *Service) {
 	t.Helper()
-	if s.token == "" && s.cleanup.source == 0 && !s.questGather {
+	if (s.token == "" || s.exactCorpse) && s.cleanup.source == 0 && !s.questGather {
 		o, err := s.ObserveCorpses(context.Background(), &emptypb.Empty{})
 		if err == nil {
 			var vm *behavior.Session
@@ -233,6 +233,8 @@ func tickCorpseLua(t *testing.T, s *Service) {
 					t.Fatal(err)
 				}
 				_ = s.invoke(context.Background(), "buddy-actions", "approach_target", r, &actionsv1.State{})
+			} else if ok && a["capability"] == "loot_close" {
+				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid})
 			} else if ok && a["capability"] == "loot_open" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
