@@ -42,6 +42,9 @@ type policySpell struct {
 	target         uint64
 	castTarget     uint64 // Resurrection may target the observed corpse owned by target.
 	encounterVisit uint64
+	auraSlot       uint32
+	auraSpell      uint32
+	auraRevision   uint64
 	melee          *policyMelee
 	movement       *policyMovement
 	token          string
@@ -88,6 +91,8 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		method = "resurrect_once"
 	case "interrupt":
 		method = "interrupt_cast"
+	case "cleanse":
+		method = "cast_cleanse"
 	case "cast_self":
 		if target != self {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "self cast target must be the current body")
@@ -125,6 +130,21 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact enemy cast revision required")
 		}
 		values["cast_revision"] = protoreflect.ValueOfUint64(value)
+	}
+	if capability == "cleanse" {
+		slot, slotOK := action["auraSlot"].(float64)
+		aura, auraOK := action["auraSpellId"].(float64)
+		text, _ := action["auraRevision"].(string)
+		revision, err := strconv.ParseUint(text, 10, 64)
+		if !slotOK || math.IsNaN(slot) || slot < 0 || slot >= 255 || slot != math.Trunc(slot) ||
+			!auraOK || math.IsNaN(aura) || aura < 1 || aura > math.MaxUint32 || aura != math.Trunc(aura) ||
+			err != nil || revision == 0 || text != strconv.FormatUint(revision, 10) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact observed aura slot, spell and revision required")
+		}
+		op.auraSlot, op.auraSpell, op.auraRevision = uint32(slot), uint32(aura), revision
+		values["aura_slot"] = protoreflect.ValueOfUint32(op.auraSlot)
+		values["aura_spell_id"] = protoreflect.ValueOfUint32(op.auraSpell)
+		values["aura_revision"] = protoreflect.ValueOfUint64(revision)
 	}
 	return p.preparePolicyDispatch(method, values, op)
 }
@@ -185,7 +205,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
-	if op.capability == "resurrect" || op.capability == "interrupt" {
+	if op.capability == "resurrect" || op.capability == "interrupt" || op.capability == "cleanse" {
 		bridge = modcb.PolicySupportSpellService
 	}
 	switch {
@@ -314,11 +334,16 @@ func (op *policySpell) payload(phase string, written, castGo, observed bool) map
 	if op.melee != nil {
 		return op.meleePayload(phase, written, observed)
 	}
-	return map[string]any{
+	out := map[string]any{
 		"capability": op.capability, "spell_id": op.spell,
 		"target_guid": strconv.FormatUint(op.target, 10), "phase": phase,
 		"transport_written": written, "server_cast_go": castGo, "effect_observed": observed,
 	}
+	if op.capability == "cleanse" {
+		out["aura_slot"], out["aura_spell_id"] = op.auraSlot, op.auraSpell
+		out["aura_revision"] = strconv.FormatUint(op.auraRevision, 10)
+	}
+	return out
 }
 
 func (p *SessionPolicy) recordSpellTransport(op *policySpell, receipt *behavior.ActionReceipt) error {

@@ -331,6 +331,11 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 			view.Capability = string(spell.Capability().Kind)
 			view.Available = s.encounterRankResourcesAvailable(spell, self)
 			// Exact patient/enemy-cast readiness is reflected in support options.
+		case spellcatalog.Cleanse:
+			view.Capability = "cleanse"
+			view.FriendlyDispelMask = spell.FriendlyDispelMask()
+			view.Available = s.cleanseRankAvailableLocked(self, spell)
+			view.Ready = view.Available && s.cleanseCasterAvailableLocked(w, spell)
 		default:
 			continue
 		}

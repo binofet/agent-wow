@@ -159,28 +159,7 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 		out.Spells = append(out.Spells, v)
 	}
 	if err == nil {
-		targets := make([]uint64, 0, len(s.buffAuras))
-		for guid := range s.buffAuras {
-			if p := observedHealingPlayer(w, guid); p != nil && p.Present {
-				targets = append(targets, guid)
-			}
-		}
-		sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
-		for _, guid := range targets {
-			set := s.buffAuras[guid]
-			v := &actionsv1.PlayerAuras{TargetGuid: guid, Complete: set.complete, Revision: set.revision}
-			for slot, a := range set.slots {
-				if a.spell == 0 {
-					continue
-				}
-				remaining := a.remaining(s.now())
-				if a.durationKnown && remaining == 0 {
-					continue
-				}
-				v.Auras = append(v.Auras, &actionsv1.ObservedAura{Slot: uint32(slot), SpellId: a.spell, CasterGuid: a.caster, Positive: a.positive, DurationKnown: a.durationKnown, RemainingMs: remaining, Revision: a.revision})
-			}
-			out.PlayerAuras = append(out.PlayerAuras, v)
-		}
+		out.PlayerAuras = s.observedPlayerAurasLocked(w)
 	}
 	if s.buffOp != nil {
 		out.LastBuff = proto.Clone(&s.buffOp.view).(*actionsv1.BuffOperation)

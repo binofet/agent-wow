@@ -197,7 +197,7 @@ end
 function M.allow(view,obs,proposed)
     if not proposed or not view or not view.hold then return true end
     local cap=proposed.capability
-    if cap=="movement_owner" or cap=="heal" or cap=="cast_self" or cap=="resurrect" or cap=="interrupt" or
+    if cap=="movement_owner" or cap=="heal" or cap=="cleanse" or cap=="cast_self" or cap=="resurrect" or cap=="interrupt" or
        cap=="melee_stop" or cap=="stop_movement" then return true end
     local task=view.task
     local anchor=task and (task.anchor or position((obs.players or {})[obs.selfGuid],obs.mapId))
