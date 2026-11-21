@@ -100,6 +100,42 @@ func (f *fakeSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleReq
 		if f.afterApproach != nil {
 			f.afterApproach()
 		}
+	case "buddy-actions.approach_target":
+		request := &actionsv1.ApproachTargetRequest{}
+		if err := r.Request.UnmarshalTo(request); err != nil {
+			return nil, err
+		}
+		if request.SessionId != f.actions.SessionId || request.SelfGuid != f.world.GetSelf().GetGuid() || request.VisitId == 0 || f.leaseOwner != "" || f.failApproach {
+			return nil, errors.New("exact approach unavailable")
+		}
+		var corpse *worldv1.CreatureState
+		for _, c := range f.world.LootableCorpses {
+			if c.Guid == request.TargetGuid {
+				corpse = c
+				break
+			}
+		}
+		if corpse == nil {
+			return nil, errors.New("exact observed corpse missing")
+		}
+		x, _, _, known := corpsePosition(corpse)
+		if !known {
+			return nil, errors.New("corpse pose unavailable")
+		}
+		f.approachCalls++
+		end := x - request.RangeYards
+		f.actions.Position.X += 1.4
+		f.actions.Position.Revision++
+		f.actions.Position.Estimated = true
+		f.actions.Moving = true
+		if f.actions.Position.X >= end {
+			f.actions.Position.X = end
+			f.actions.Moving = false
+		}
+		value = proto.Clone(f.actions)
+		if f.afterApproach != nil {
+			f.afterApproach()
+		}
 	case "buddy-actions.acquire_interaction":
 		request := &actionsv1.InteractionRequest{}
 		if err := r.Request.UnmarshalTo(request); err != nil {
@@ -152,25 +188,25 @@ func TestNearbyCorpseApproachStopsBeforeOpeningAndFailureReleases(t *testing.T) 
 	s, f, advance := rig(t)
 	f.world.LootableCorpses[0].X = 12
 	enable(t, s)
-	s.Tick(context.Background())
-	if current(t, s).Phase != "approaching" || len(f.packets) != 0 {
+	tickCorpseLua(t, s)
+	if f.leaseOwner != "" || !f.actions.Moving || current(t, s).PendingCorpseGuid != 0 || len(f.packets) != 0 {
 		t.Fatal("opened distant corpse")
 	}
-	for i := 0; i < 8 && current(t, s).Phase == "approaching"; i++ {
+	for i := 0; i < 8 && len(f.packets) == 0; i++ {
 		advance(200 * time.Millisecond)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 	}
-	if current(t, s).Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 7 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+	if current(t, s).Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 6 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
 		t.Fatalf("approach %+v calls%d packets%v", current(t, s), f.approachCalls, f.packets)
 	}
 	s, f, advance = rig(t)
 	f.world.LootableCorpses[0].X = 12
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	f.failApproach = true
 	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
-	if len(f.packets) != 0 || f.releases != 1 || current(t, s).PendingCorpseGuid != 0 {
+	tickCorpseLua(t, s)
+	if len(f.packets) != 0 || f.releases != 0 || f.leaseOwner != "" || current(t, s).PendingCorpseGuid != 0 {
 		t.Fatal("failed approach retained interaction or wrote loot")
 	}
 }
@@ -187,7 +223,7 @@ func TestElapsedCorpseEndpointCanEstablishReachButActiveSplineCannot(t *testing.
 			c.Trajectory.AgeMs = 1000
 		}
 		enable(t, s)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		if elapsed {
 			if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
 				t.Fatal("completed endpoint not usable")
@@ -204,8 +240,10 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: uint32(i)})
 	}
 	f.world.Self.MapKnown, f.world.Self.PositionKnown, f.world.Self.PositionRevision = true, true, 1
+	f.actions.SessionId, f.actions.Position.Revision = "loot-session", 1
+	f.world.LootableCorpses[0].PositionRevision = 1
 	fixtureCarriedInventory(f.world)
-	s := NewService(f, 1)
+	s := NewService(f, 1, "loot-session")
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	return s, f, func(d time.Duration) { now = now.Add(d) }
@@ -234,7 +272,7 @@ func enable(t *testing.T, s *Service) {
 	}
 }
 
-func TestOwnerContextPausesLootAndEnableLastsFourHours(t *testing.T) {
+func TestSharedCorpsePolicyDoesNotDependOnLivingPresentOrNonAFKOwner(t *testing.T) {
 	for _, mode := range []string{"missing", "afk", "dead"} {
 		s, f, _ := rig(t)
 		enable(t, s)
@@ -249,8 +287,8 @@ func TestOwnerContextPausesLootAndEnableLastsFourHours(t *testing.T) {
 		case "dead":
 			f.world.Owner.Alive = false
 		}
-		s.Tick(context.Background())
-		if len(f.packets) != 0 || !current(t, s).Enabled {
+		tickCorpseLua(t, s)
+		if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot || !current(t, s).Enabled {
 			t.Fatalf("context %s: %+v", mode, current(t, s))
 		}
 	}
@@ -285,22 +323,22 @@ func pushPacket(player uint64, id, count uint32) []byte {
 func releasePacket() []byte { return append(guidPacket(corpseGUID), 1) }
 func openItem(t *testing.T, s *Service) {
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 2, id: 123, count: 3}))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 }
 
-func TestLootRequiresEnableAndNearbyActualCorpse(t *testing.T) {
+func TestSharedCorpsePolicyAlwaysTriesOnlyNearbyActualCorpses(t *testing.T) {
 	s, f, _ := rig(t)
-	s.Tick(context.Background())
-	if len(f.packets) != 0 {
-		t.Fatal("disabled loot sent packet")
+	tickCorpseLua(t, s)
+	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+		t.Fatal("ordinary Lua loot incorrectly required an enable command")
 	}
 	for _, change := range []func(*fakeSession){func(f *fakeSession) { f.world.LootableCorpses[0].X = 5 }, func(f *fakeSession) { f.world.LootableCorpses[0].Health = 1 }, func(f *fakeSession) { f.world.LootableCorpses[0].DynamicFlags = 0 }, func(f *fakeSession) { f.world.LootableCorpses[0].Guid = 3 }, func(f *fakeSession) { f.world.LootableCorpses[0].MapId = 1 }, func(f *fakeSession) { f.actions.Position.Known = false }, func(f *fakeSession) { f.world.Owner.UnitFlags |= 0x80000 }} {
 		s, f, _ := rig(t)
 		change(f)
 		enable(t, s)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		if len(f.packets) != 0 {
 			t.Fatalf("ineligible corpse looted %+v", current(t, s))
 		}
@@ -318,23 +356,23 @@ func TestOrdinaryItemNeedsOwnReceiptAndSlotRemovalThenReleases(t *testing.T) {
 	}
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(3, 123, 3))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if current(t, s).ItemsStoredConfirmed != 0 || len(f.packets) != 2 {
 		t.Fatal("party member receipt claimed as ours")
 	}
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3))
-	s.Tick(context.Background())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
+	tickCorpseLua(t, s)
 	if current(t, s).ItemsStoredConfirmed != 3 || len(current(t, s).RecentItems) != 1 || f.packets[2].Opcode != opcode.CMSGLootRelease {
 		t.Fatalf("receipt %+v", current(t, s))
 	}
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if f.releases != 1 || f.leaseOwner != "" || current(t, s).PendingCorpseGuid != 0 {
 		t.Fatal("lease not released after server response")
 	}
 	advance(2 * time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != 3 {
 		t.Fatal("same corpse retried endlessly")
 	}
@@ -343,9 +381,9 @@ func TestOrdinaryItemNeedsOwnReceiptAndSlotRemovalThenReleases(t *testing.T) {
 func TestRestrictedRollAndMasterSlotsNeverAutostore(t *testing.T) {
 	s, f, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 0, id: 1, count: 1, slotType: 1}, lootItem{slot: 1, id: 2, count: 1, slotType: 2}, lootItem{slot: 2, id: 3, count: 1, slotType: 3}))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
 		t.Fatalf("restricted items requested %+v", f.packets)
 	}
@@ -354,16 +392,16 @@ func TestRestrictedRollAndMasterSlotsNeverAutostore(t *testing.T) {
 func TestMoneyRequestsAreEmptyAndCountOnlyServerNotifications(t *testing.T) {
 	s, f, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 17))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if f.packets[1].Opcode != opcode.CMSGLootMoney || len(f.packets[1].Payload) != 0 || current(t, s).MoneyAwardedNotified != 0 {
 		t.Fatal("money optimism or bad packet")
 	}
 	emit(s, opcode.SMSGLootClearMoney, nil)
 	emit(s, opcode.SMSGLootMoneyNotify, []byte{17, 0, 0, 0, 1})
-	s.Tick(context.Background())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
+	tickCorpseLua(t, s)
 	if current(t, s).MoneyAwardedNotified != 17 || f.packets[2].Opcode != opcode.CMSGLootRelease {
 		t.Fatalf("money %+v", current(t, s))
 	}
@@ -375,16 +413,16 @@ func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
 	failure := make([]byte, 18)
 	failure[0] = 4 // Other inventory errors keep the existing fail-closed behavior.
 	emit(s, opcode.SMSGInventoryChangeFailure, failure)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if got := current(t, s); got.Enabled || got.LastInventoryError != 4 || got.ItemsStoredConfirmed != 0 {
 		t.Fatalf("inventory error %+v", got)
 	}
 	count := len(f.packets)
 	advance(time.Minute)
 	for i := 0; i < 10; i++ {
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 	}
 	if len(f.packets) != count {
 		t.Fatal("inventory error retried")
@@ -394,15 +432,15 @@ func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
 func TestTimeoutIsFiniteEvenAfterOverallTransactionDeadline(t *testing.T) {
 	s, f, advance := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	advance(13 * time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal("timeout did not release")
 	}
 	advance(3 * time.Second)
 	for i := 0; i < 20; i++ {
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 	}
 	if len(f.packets) != 2 || f.releases != 1 || !current(t, s).Enabled || current(t, s).Phase != "loot_cleanup_unconfirmed" {
 		t.Fatalf("timeout loop %+v packets%d", current(t, s), len(f.packets))
@@ -413,14 +451,14 @@ func TestBusyOrLostLeasePreventsLootWrites(t *testing.T) {
 	s, f, _ := rig(t)
 	f.leaseOwner = "trade"
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != 0 {
 		t.Fatal("loot bypassed trade lease")
 	}
 	s, f, _ = rig(t)
 	openItem(t, s)
 	f.leaseOwner = "trade"
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if current(t, s).Enabled || len(f.packets) != 2 {
 		t.Fatal("loot continued after lease loss")
 	}
@@ -429,7 +467,7 @@ func TestBusyOrLostLeasePreventsLootWrites(t *testing.T) {
 func TestMalformedPacketsAndForeignWindowsCannotAdvance(t *testing.T) {
 	s, _, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	for _, op := range []uint32{opcode.SMSGLootResponse, opcode.SMSGLootReleaseResponse, opcode.SMSGLootRemoved, opcode.SMSGItemPushResult, opcode.SMSGLootMoneyNotify, opcode.SMSGInventoryChangeFailure} {
 		emit(s, op, []byte{0xff})
 	}
@@ -443,16 +481,16 @@ func TestTransportFailureDoesNotRetryAndLogoutCloses(t *testing.T) {
 	s, f, advance := rig(t)
 	f.failOpcode = opcode.CMSGLoot
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != 1 || current(t, s).Enabled || f.releases != 1 {
 		t.Fatal("ambiguous open retried")
 	}
 	s, f, _ = rig(t)
 	openItem(t, s)
 	_, _ = s.BeforeLogout(context.Background(), &emptypb.Empty{})
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if f.releases != 1 || f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal("logout did not release owned loot")
 	}
@@ -480,18 +518,18 @@ func TestConcurrentStateAndPackets(t *testing.T) {
 
 func TestAutomaticLootPicksPersonalQuestItemWithoutOwner(t *testing.T) {
 	_, f, _ := rig(t)
-	ctx := context.Background()
 	f.world.Owner = nil
+	f.actions.SessionId = "session"
 	s := NewAutomaticService(f, 1, "session")
 	now := time.Unix(1000, 0).Add(5 * time.Hour)
 	s.now = func() time.Time { return now }
-	s.Tick(ctx)
+	tickCorpseLua(t, s)
 	if got := current(t, s); !got.Enabled || got.EnabledRemainingMs != 0 || got.Phase != "waiting_open" {
 		t.Fatalf("automatic looting did not open observed corpse: %v", got)
 	}
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0,
 		lootItem{slot: 0, id: 123, count: 1}, lootItem{slot: 1, id: 7365, count: 1, slotType: 4}))
-	s.Tick(ctx)
+	tickCorpseLua(t, s)
 	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGAutostoreLootItem || (len(f.packets[1].Payload) != 1 || f.packets[1].Payload[0] != 1) {
 		t.Fatalf("personal quest item was not taken first: %v", f.packets)
 	}
@@ -505,31 +543,33 @@ func TestAutomaticLootPicksPersonalQuestItemWithoutOwner(t *testing.T) {
 func TestAutomaticLootRecoversFromCombatAndMaintenance(t *testing.T) {
 	_, f, _ := rig(t)
 	ctx := context.Background()
-	f.world.Owner.UnitFlags |= 0x80000 // Joel's combat does not prevent loot.
+	f.world.Owner.UnitFlags |= 0x80000 // Shared Lua defers to a currently fighting ally.
+	f.actions.SessionId = "session"
 	s := NewAutomaticService(f, 1, "session")
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	if got, err := s.Enable(ctx, &lootv1.EnableRequest{}); err != nil || got.Enabled {
 		t.Fatalf("maintenance suspension: %v %v", got, err)
 	}
-	s.Tick(ctx)
+	tickCorpseLua(t, s)
 	if len(f.packets) != 0 {
 		t.Fatal("looted during maintenance")
 	}
 	now = now.Add(maintenanceLootPause)
 	f.world.Self.UnitFlags |= 0x80000
-	s.Tick(ctx)
+	tickCorpseLua(t, s)
 	if !current(t, s).Enabled || len(f.packets) != 0 {
 		t.Fatal("policy failed to resume, or looted during own combat")
 	}
 	now = now.Add(time.Second)
 	f.world.Self.UnitFlags &^= 0x80000
-	s.Tick(ctx)
+	f.world.Owner.UnitFlags &^= 0x80000
+	tickCorpseLua(t, s)
 	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
 		t.Fatal("loot did not resume after combat without a command")
 	}
 	f.leaseOwner = "trade"
-	s.Tick(ctx)
+	tickCorpseLua(t, s)
 	if !current(t, s).Enabled || len(f.packets) != 1 {
 		t.Fatal("lease loss should stop only the current transaction")
 	}

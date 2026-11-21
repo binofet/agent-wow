@@ -6,6 +6,8 @@ local tuning={drink_below_percent=70,drink_until_percent=100,drink_reserve=0,
               lease_ms=2000,renew_below_ms=1000,retry_ms=5000,stat_weights={}}
 local state={}
 local inventory,inventory_sequence
+-- Rogues prepare buff food outdoors too; absent class choices retain the default.
+local class_food_policy={[4]={food_only_in_dungeons=false}}
 local function number(v) return type(v)=="number" and v==v and v-v==0 end
 local function value(v) return tonumber(v) or 0 end
 local function guid(v) return type(v)=="string" and #v>0 and v~="0" end
@@ -46,10 +48,16 @@ function M.choose(view,obs,requested,fallback_food)
       if item.metadataKnown==true and spell.foodSupported==true then food_count=food_count+value((item.item or {}).stackCount) end
     end
   end
+  local food_only_in_dungeons=tuning.food_only_in_dungeons
+  local class_policy
+  if self.classKnown==true then class_policy=class_food_policy[self.classId] end
+  if class_policy and class_policy.food_only_in_dungeons~=nil then
+    food_only_in_dungeons=class_policy.food_only_in_dungeons
+  end
   local kind=fallback_food and "eat_buff_food" or requested or (want_drink and "drink" or "eat_buff_food")
   if kind=="drink" and not want_drink then return end
   if kind=="eat_buff_food" and (not requested and (tuning.automatic_buff_food~=true or
-     tuning.food_only_in_dungeons and (view.consumableContext or {}).dungeon~=true) or not set or set.complete~=true or (view.consumableContext or {}).foodBuffKnown~=true or (view.consumableContext or {}).foodBuffPresent==true) then return end
+     food_only_in_dungeons and (view.consumableContext or {}).dungeon~=true) or not set or set.complete~=true or (view.consumableContext or {}).foodBuffKnown~=true or (view.consumableContext or {}).foodBuffPresent==true) then return end
   if kind=="drink" and tuning.drink_reserve>0 and
      (view.manaDrinkCount==nil or value(view.manaDrinkCount)<=tuning.drink_reserve) then return end
   if kind=="eat_buff_food" and tuning.food_reserve>0 and (not food_known or food_count<=tuning.food_reserve) then return end

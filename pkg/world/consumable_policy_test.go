@@ -38,6 +38,85 @@ func consumablePolicyFixture() (map[string]any, map[string]any) {
 	return view, obs
 }
 
+func consumableBuffFoodFixture() (map[string]any, map[string]any) {
+	view, obs := consumablePolicyFixture()
+	obs["players"].(map[string]any)["6"].(map[string]any)["power"] = float64(100)
+	view["items"].([]any)[0].(map[string]any)["consumable"] = map[string]any{"usable": true, "spells": []any{
+		map[string]any{"spellId": float64(5004), "foodSupported": true, "foodAuraSpellId": float64(19705), "foodEffects": []any{map[string]any{"points": float64(4)}}}}}
+	return view, obs
+}
+
+func TestConsumableLuaKeepsOutdoorFoodSpecificToKnownRogues(t *testing.T) {
+	source := consumablePolicySource(t, true)
+	for _, class := range []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 999} {
+		for _, known := range []bool{false, true} {
+			for _, dungeon := range []any{nil, false, true} {
+				t.Run(fmt.Sprintf("class%g/known%t/dungeon%v", class, known, dungeon), func(t *testing.T) {
+					view, obs := consumableBuffFoodFixture()
+					self := obs["players"].(map[string]any)["6"].(map[string]any)
+					self["classKnown"], self["classId"] = known, class
+					view["consumableContext"].(map[string]any)["dungeon"] = dungeon
+					host, err := behavior.NewSession(context.Background(), "consumable-body", source)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer host.Close()
+					out, err := host.Decide(context.Background(), map[string]any{"inventory": view, "encounter": obs})
+					if err != nil {
+						t.Fatal(err)
+					}
+					choice, _ := out.Output["choice"].(map[string]any)
+					allowed := dungeon == true || known && class == 4
+					if allowed && (choice["kind"] != "eat_buff_food" || choice["spellId"] != float64(5004)) || !allowed && choice != nil {
+						t.Fatal("explicit false class override or dungeon-only fallback changed", choice)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRogueOutdoorFoodStillRequiresUsefulObservedFoodAndQuietBody(t *testing.T) {
+	source := consumablePolicySource(t, true)
+	for _, mode := range []string{"buff_present", "aura_present", "aura_unknown", "food_buff_unknown", "combat", "metadata_unknown", "class_unknown", "explicit_other_class"} {
+		t.Run(mode, func(t *testing.T) {
+			view, obs := consumableBuffFoodFixture()
+			self := obs["players"].(map[string]any)["6"].(map[string]any)
+			self["classKnown"], self["classId"] = true, float64(4)
+			facts := view["consumableContext"].(map[string]any)
+			facts["dungeon"] = false
+			input := map[string]any{"inventory": view, "encounter": obs}
+			switch mode {
+			case "buff_present":
+				facts["foodBuffPresent"] = true
+			case "aura_present":
+				facts["selfAuras"].(map[string]any)["auras"] = []any{map[string]any{"spellId": float64(19705), "positive": true}}
+			case "aura_unknown":
+				facts["selfAuras"].(map[string]any)["complete"] = false
+			case "food_buff_unknown":
+				facts["foodBuffKnown"] = false
+			case "combat":
+				self["inCombat"] = true
+			case "metadata_unknown":
+				view["items"].([]any)[0].(map[string]any)["metadataKnown"] = false
+			case "class_unknown":
+				delete(self, "classKnown")
+			case "explicit_other_class":
+				self["classId"], input["requested"] = float64(8), "eat_buff_food"
+			}
+			host, err := behavior.NewSession(context.Background(), "consumable-body", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close()
+			out, err := host.Decide(context.Background(), input)
+			if err != nil || mode == "explicit_other_class" && out.Output["choice"] == nil || mode != "explicit_other_class" && out.Output["choice"] != nil {
+				t.Fatal("outdoor override bypassed facts/combat or changed existing explicit requests", out.Output, err)
+			}
+		})
+	}
+}
+
 func TestConsumableLuaChoosesItemsAndThresholdsThroughSameSessionReload(t *testing.T) {
 	source := consumablePolicySource(t, true)
 	host, err := behavior.NewSessionWithOptions(context.Background(), "consumable-body", source, behavior.SessionOptions{ExecutionLimit: time.Second})
@@ -70,6 +149,12 @@ func TestConsumableLuaChoosesItemsAndThresholdsThroughSameSessionReload(t *testi
 }
 
 func TestConsumableLuaRetainsUnknownItemAcrossRestInterruptionAndReload(t *testing.T) {
+	t.Run("drink", func(t *testing.T) { testConsumableUnknownAcrossReload(t, false) })
+	t.Run("rogue_outdoor_food", func(t *testing.T) { testConsumableUnknownAcrossReload(t, true) })
+}
+
+func testConsumableUnknownAcrossReload(t *testing.T, food bool) {
+	t.Helper()
 	source := consumablePolicySource(t, false)
 	host, err := behavior.NewSessionWithOptions(context.Background(), "consumable-body", source, behavior.SessionOptions{ExecutionLimit: time.Second})
 	if err != nil {
@@ -77,6 +162,14 @@ func TestConsumableLuaRetainsUnknownItemAcrossRestInterruptionAndReload(t *testi
 	}
 	defer host.Close()
 	view, obs := consumablePolicyFixture()
+	wantSpell := float64(431)
+	if food {
+		view, obs = consumableBuffFoodFixture()
+		self := obs["players"].(map[string]any)["6"].(map[string]any)
+		self["classKnown"], self["classId"], self["powerType"] = true, float64(4), float64(3)
+		view["consumableContext"].(map[string]any)["dungeon"] = false
+		wantSpell = 5004
+	}
 	step := func(available bool) behavior.Decision {
 		t.Helper()
 		sequence, err := host.Enqueue(behavior.Event{Kind: "inventory_observation", Value: view})
@@ -109,7 +202,7 @@ func TestConsumableLuaRetainsUnknownItemAcrossRestInterruptionAndReload(t *testi
 	obs["navigation"].(map[string]any)["movementOwner"] = map[string]any{"active": true, "owner": owner, "remainingMs": "2000"}
 	use := step(true)
 	action := use.Output["action"].(map[string]any)
-	if action["capability"] != "consume" || action["spellId"] != float64(431) {
+	if action["capability"] != "consume" || action["spellId"] != wantSpell {
 		t.Fatal("selected item was not used", use.Output)
 	}
 	receive(use, map[string]any{"capability": "consume", "requestId": action["requestId"], "reconciliationRequired": true}, behavior.ActionSettledUnverified)

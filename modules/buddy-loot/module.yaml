@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Automatic nearby ordinary corpse loot and own quest containers selected from the shared content catalog with bounded leases and server item receipts
+description: Exact observed corpse opening, raw loot transactions and catalog quest containers; ordinary corpse choice belongs to Lua
 requires: [buddy-world, buddy-actions, buddy-party]
 compose:
   file: compose.yaml
@@ -10,6 +10,15 @@ grpc:
 rpc:
   enable: /warcraftbuddy.loot.v1.BuddyLoot/Enable
   state: /warcraftbuddy.loot.v1.BuddyLoot/GetState
+  observe_corpses: /warcraftbuddy.loot.v1.BuddyLoot/ObserveCorpses
+  open_corpse: /warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse
+  close_corpse: /warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse
+script_api:
+  enable: {effect: mutation, description: Legacy named quest/container scheduling metadata; ordinary corpse choice remains in Lua}
+  state: {effect: read, description: Read current native loot-window and packet settlement facts}
+  observe_corpses: {effect: read, description: 'Read this body''s observed corpse, position, capacity and exact opening receipts without choosing a source'}
+  open_corpse: {effect: mutation, description: 'Open one exact current in-range corpse, bound to body, source and inventory revisions and an idempotent request ID'}
+  close_corpse: {effect: mutation, description: Release the exact active corpse window and yield body custody without retrying uncertain mutations}
 packets:
   SMSG_CAST_FAILED: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
   SMSG_LOOT_RESPONSE: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
