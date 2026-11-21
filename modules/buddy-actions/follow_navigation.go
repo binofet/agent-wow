@@ -14,18 +14,19 @@ import (
 // written by this controller, rather than allowing another actuator's movement
 // to join an old route across an unverified chord.
 type followNavigation struct {
-	path         []position
-	index        int
-	target       position
-	arrival      position
-	arrivalStop  float64
-	arrivalKnown bool
-	ownerArrival bool
-	expected     position
-	selfRevision uint64
-	mapID        uint32
-	nextPlanAt   time.Time
-	lastError    string
+	slotStartDistance, slotStopDistance float64
+	path                                []position
+	index                               int
+	target                              position
+	arrival                             position
+	arrivalStop                         float64
+	arrivalKnown                        bool
+	ownerArrival                        bool
+	expected                            position
+	selfRevision                        uint64
+	mapID                               uint32
+	nextPlanAt                          time.Time
+	lastError                           string
 }
 
 func (f *followNavigation) Reset() { *f = followNavigation{} }
@@ -53,9 +54,13 @@ func (s *Service) formationNavigationPath(ctx context.Context, target position, 
 			if offset > 1.5 || math.Abs(float64(arrival.z-target.z)) > 1.5 {
 				return position{}, 0, false
 			}
-			// Formation's smallest restart threshold is1.8yd. Settle inside
-			// that band even when the alternate itself is1.25yd off-centre.
-			arrivalStop = math.Min(stop, 1.65-offset)
+			// The policy's restart radius bounds an alternate endpoint's
+			// total displacement from its requested personal slot.
+			restart := s.followNav.slotStartDistance
+			if restart == 0 {
+				restart = 1.8 // Generic route callers provide only an arrival radius.
+			}
+			arrivalStop = math.Min(stop, restart-.15-offset)
 			if arrivalStop < 0.1 {
 				return position{}, 0, false
 			}

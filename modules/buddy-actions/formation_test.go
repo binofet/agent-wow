@@ -2,8 +2,11 @@ package buddyactions
 
 import (
 	"math"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
 
 func TestFormationKnownCompanionsHaveDistinctBoundedTrailingPlaces(t *testing.T) {
@@ -39,6 +42,134 @@ func TestFormationKnownCompanionsHaveDistinctBoundedTrailingPlaces(t *testing.T)
 			}
 		}
 		points = append(points, got.Position)
+	}
+}
+
+func TestFormationPlanUsesLuaHysteresisAndOwnerArrival(t *testing.T) {
+	now := time.Unix(1000, 0)
+	owner := position{x: 20, y: 30, z: 7}
+	var f followFormation
+	slot := f.Target(now, 4, 8, owner, false)
+	if !slot.Valid {
+		t.Fatal("builtin Lua formation did not produce a valid slot", slot)
+	}
+	now = now.Add(time.Second)
+	between := slot.Position
+	between.x += float32((slot.StartDistance + slot.StopDistance) / 2)
+	stationary := f.Plan(now, 4, 8, owner, false, between, false, false)
+	if !stationary.Valid || !stationary.Hold || stationary.Phase != "within_personal_follow_space" {
+		t.Fatal("stationary body did not stay inside the restart band", stationary)
+	}
+	moving := f.Plan(now, 4, 8, owner, false, between, true, false)
+	if !moving.Valid || moving.Hold || moving.Phase != "following_formation" {
+		t.Fatal("moving body stopped outside its arrival band", moving)
+	}
+	arrived := f.Plan(now, 4, 8, owner, false, slot.Position, true, false)
+	if !arrived.Valid || !arrived.Hold || arrived.Phase != "within_personal_follow_space" {
+		t.Fatal("moving body did not stop at the slot", arrived)
+	}
+	ownerArrival := f.Plan(now, 4, 8, owner, false, slot.Position, true, true)
+	if !ownerArrival.Valid || ownerArrival.Hold {
+		t.Fatal("personal-slot hysteresis displaced the verified owner-floor arrival", ownerArrival)
+	}
+	below := slot.Position
+	below.z -= 2
+	otherFloor := f.Plan(now, 4, 8, owner, false, below, false, false)
+	if !otherFloor.Valid || otherFloor.Hold {
+		t.Fatal("horizontal proximity claimed arrival on a different floor", otherFloor)
+	}
+}
+
+func TestFormationPlanReactionNeverInterruptsContinuousMovement(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var f followFormation
+	owner := position{x: 20, y: 30, z: 7}
+	self := position{z: 7}
+	first := f.Plan(now, 4, 8, owner, true, self, false, false)
+	if !first.Valid || first.Ready || !first.Hold || first.Phase != "formation_reaction_delay" {
+		t.Fatal("new stationary follow start lacked its reaction delay", first)
+	}
+	continuous := f.Plan(now, 4, 8, owner, true, self, true, false)
+	if !continuous.Valid || continuous.Ready || continuous.Hold || continuous.Phase != "following_formation" {
+		t.Fatal("reaction delay interrupted an already moving body", continuous)
+	}
+	ready := f.Plan(now.Add(time.Second), 4, 8, owner, true, self, false, false)
+	if !ready.Valid || !ready.Ready || ready.Hold {
+		t.Fatal("formation never became ready", ready)
+	}
+}
+
+func TestFormationKeepsFullUnsignedIdentityAndDetachedMemory(t *testing.T) {
+	now := time.Unix(1000, 0)
+	owner := position{x: 20, y: 30, z: 7}
+	var a, b followFormation
+	first := a.Target(now, math.MaxUint64-1, 0, owner, false)
+	other := b.Target(now, math.MaxUint64, 0, owner, false)
+	if !first.Valid || !other.Valid || first.Position == other.Position ||
+		a.memory["guid"] != "18446744073709551614" || b.memory["guid"] != "18446744073709551615" {
+		t.Fatal("adjacent full-width GUIDs lost their exact identity", first, other, a.memory, b.memory)
+	}
+	before := a.memory
+	saved := make(map[string]any, len(before))
+	for key, value := range before {
+		saved[key] = value
+	}
+	a.Target(now.Add(time.Second), math.MaxUint64-1, 0, position{o: 2}, true)
+	if !reflect.DeepEqual(before, saved) {
+		t.Fatal("Lua evaluation mutated the previous detached checkpoint", before, saved)
+	}
+	a.Reset()
+	if a.memory != nil {
+		t.Fatal("formation reset retained policy state", a.memory)
+	}
+}
+
+func TestFormationPlanRejectsInvalidInputsWithoutUsableTarget(t *testing.T) {
+	now := time.Unix(1000, 0)
+	for _, malformed := range []struct {
+		name  string
+		owner position
+		self  position
+		guid  uint64
+	}{
+		{"unknown identity", position{}, position{}, 0},
+		{"owner NaN", position{x: float32(math.NaN())}, position{}, 4},
+		{"self infinity", position{}, position{z: float32(math.Inf(1))}, 4},
+		{"slot outside position bound", position{x: -40000}, position{}, 4},
+	} {
+		t.Run(malformed.name, func(t *testing.T) {
+			var f followFormation
+			f.Target(now, 4, 8, position{}, false)
+			got := f.Plan(now, malformed.guid, 8, malformed.owner, false, malformed.self, false, false)
+			if got.Valid || got.Ready || got.Position != (position{}) || !finite(got.Position) || f.memory != nil {
+				t.Fatal("invalid Lua formation input left a usable target or state", got, f.memory)
+			}
+		})
+	}
+}
+
+func TestFormationRuntimeFailureStopsOneBodyAndRecoversNextTick(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var failed, sibling followFormation
+	if !failed.Target(now, 4, 8, position{}, false).Valid || !sibling.Target(now, 1, 5, position{}, false).Valid {
+		t.Fatal("builtin formation could not initialize")
+	}
+	kept := sibling.runtime
+	failed.runtime = behavior.New() // An unavailable policy must fail closed.
+	got := failed.Target(now.Add(time.Second), 4, 8, position{}, false)
+	if got.Valid || got.Ready || got.Position != (position{}) || failed.runtime != nil || failed.memory != nil {
+		t.Fatal("runtime failure retained usable formation state", got, failed)
+	}
+	if next := sibling.Target(now.Add(time.Second), 1, 5, position{}, false); !next.Valid || sibling.runtime != kept {
+		t.Fatal("another body's runtime failure disturbed this body", next)
+	}
+	if next := failed.Target(now.Add(2*time.Second), 4, 8, position{}, false); !next.Valid || next.Ready {
+		t.Fatal("fresh runtime did not recover with a new reaction delay", next)
+	}
+	kept = failed.runtime
+	failed.Reset()
+	if failed.memory != nil || failed.runtime != kept {
+		t.Fatal("ordinary reset discarded the compiled builtin or retained memory", failed)
 	}
 }
 

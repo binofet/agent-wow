@@ -40,21 +40,21 @@ func (s *Service) followFormationLocked(ctx context.Context, world *worldv1.Snap
 	if world.Self.ClassKnown {
 		classID = world.Self.ClassId
 	}
-	target := s.formation.Target(now, s.selfGUID, classID, owner, moving)
-	if !finite(target.Position) {
+	target := s.followFormationPlanLocked(now, world, classID, owner, moving)
+	if !target.Valid || !finite(target.Position) {
 		pause("formation_position_invalid")
 		return
 	}
-	// Hysteresis lets them stay put through tiny player adjustments instead
-	// of constantly shuffling, while a different floor still requires a route.
-	if !s.followNav.ownerArrival && (followAtTarget(s.pos, target.Position, target.StopDistance) || !s.state.Moving && followAtTarget(s.pos, target.Position, target.StartDistance)) {
-		pause("within_personal_follow_space")
+	if target.Hold {
+		pause(target.Phase)
 		return
 	}
-	if !s.state.Moving && !target.Ready {
-		pause("formation_reaction_delay")
-		return
+	// A radius change replaces cached arrival tolerances, while normal goal
+	// refreshes keep the continuous route and expected movement boundary.
+	if s.followNav.slotStartDistance != target.StartDistance || s.followNav.slotStopDistance != target.StopDistance {
+		s.followNav.Reset()
 	}
+	s.followNav.slotStartDistance, s.followNav.slotStopDistance = target.StartDistance, target.StopDistance
 	s.followFormationStepLocked(ctx, target.Position, target.StopDistance, owner)
 }
 

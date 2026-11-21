@@ -155,6 +155,8 @@ type Service struct {
 	practiceQuestGoal                    bool
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
+	followGoal                           followFormationGoal
+	followRevision                       uint64
 	followNav                            followNavigation
 	followPortal                         dungeonPortalFollow
 	swimFollow                           swimFollowRoute
@@ -506,6 +508,8 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 		}
 		if !s.state.Following {
 			s.formation.Reset()
+			s.followGoal = followFormationGoal{}
+			s.followRevision++
 			s.followNav.Reset()
 			s.followPortal = dungeonPortalFollow{}
 		}
@@ -519,6 +523,8 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 			s.stopFargodeepLocked(ctx, "explicit_follow_stop")
 		}
 		s.formation.Reset()
+		s.followGoal = followFormationGoal{}
+		s.followRevision++
 		s.followNav.Reset()
 		s.followPortal = dungeonPortalFollow{}
 		s.swimFollow = swimFollowRoute{}

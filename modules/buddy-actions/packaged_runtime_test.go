@@ -224,6 +224,22 @@ func TestPackagedActionsRegistryRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("follow_formation", func(t *testing.T) {
+		const alias = "buddy-actions.set_follow_formation"
+		method := methods[alias]
+		if method.Effect != moddisc.EffectMutation ||
+			method.Path != "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation" {
+			t.Fatalf("incorrect formation goal route: %+v", method)
+		}
+		params := json.RawMessage(fmt.Sprintf(`{"sessionId":%q,"selfGuid":"11","visitId":"2","ownerGuid":"3","ownerPositionRevision":"1","followRevision":"1","x":1,"startDistance":2,"stopDistance":1,"ready":true}`, catalog.SessionID))
+		_, err := m.InvokeJSON(ctx, alias, params)
+		var call *modrt.CallError
+		if !errors.As(err, &call) || call.Code != -32000 || status.Code(call.Err) != codes.PermissionDenied ||
+			status.Convert(call.Err).Message() != "current attached encounter host required" {
+			t.Fatalf("formation goal route did not preserve its private host boundary: %v", err)
+		}
+	})
+
 	const service = "/warcraftbuddy.actions.v1.BuddyActions/"
 	for _, tc := range []struct {
 		alias, method, params, want string

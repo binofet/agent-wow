@@ -37,6 +37,8 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 		if !validEncounterWorldEntry(payload) {
 			return
 		}
+		s.formation.Reset()
+		s.followGoal = followFormationGoal{}
 		s.encounterVisit.revision++
 		s.encounterVisit.mapID = binary.LittleEndian.Uint32(payload)
 		s.encounterVisit.bound = true
@@ -113,7 +115,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
-	out.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, Following: s.state.Following,
+	out.Navigation = &actionsv1.NavigationObservation{FollowRevision: s.followRevision, FollowFormationSupported: s.navDataDir != "", OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
@@ -358,4 +360,20 @@ func (s *Service) reportPolledPolicyEffectsLocked(ctx context.Context) {
 		op.reportPolicyMeleeEffect(ctx)
 		op.token = token
 	}
+}
+
+// The followed owner may be outside the group. These are raw observed facts,
+// independent of the party authority used for combat and support.
+func encounterFollowOwner(p *worldv1.PlayerState) *actionsv1.EncounterPlayer {
+	if p == nil {
+		return nil
+	}
+	out := &actionsv1.EncounterPlayer{Guid: p.Guid, Present: p.Present, MapKnown: p.MapKnown,
+		MapId: proto.Uint32(p.MapId), AliveKnown: p.AliveKnown, PositionKnown: p.PositionKnown && finite(playerPosition(p)),
+		PositionRevision: p.PositionRevision, X: p.X, Y: p.Y, Z: p.Z, Orientation: p.Orientation,
+		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0}
+	if p.AliveKnown {
+		out.Alive = proto.Bool(p.Alive)
+	}
+	return out
 }
