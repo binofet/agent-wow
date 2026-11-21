@@ -214,6 +214,86 @@ class PartyQuestTests(unittest.TestCase):
     def mutations(self,rpc):return [(m,p) for m,p in rpc.calls if m not in (
         "buddy-world.snapshot","buddy-quests.discover","buddy-quests.state","buddy-actions.status","buddy-party.state","buddy-chat.owner_feed","buddy-trade.lookup_items")]
 
+    def test_unavailable_or_invalid_lua_policy_never_reserves_or_writes(self):
+        for decision in ({"status":"pending"}, {"status":"invalid"}, {},
+                         {"status":"ready","sessionId":"other","givers":[]}):
+            profile,rpc,_,saved=self.rig()
+            with patch.object(party.quest_policy,"evaluate",return_value=decision):
+                profile.tick()
+            self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_quest_policy")
+            self.assertFalse(self.mutations(rpc))
+            self.assertFalse(saved)
+            self.assertEqual(profile.data["reservations"],{})
+            self.assertEqual(profile.data["nextMutationAt"],0)
+
+    def test_broken_lua_action_identity_cannot_create_a_reservation(self):
+        profile,rpc,_,saved=self.rig()
+        context=profile.read()
+        valid=profile.policy(context)
+        for choice in ({"kind":"turn_in","npcGuid":"123","questId":7},
+                       {"kind":"turn_in","npcGuid":str(rpc.npc),"questId":999},
+                       {"kind":"accept","npcGuid":str(rpc.npc),"questId":15,"offerRevision":"99"},
+                       {"kind":"unknown"}):
+            decision=copy.deepcopy({k:v for k,v in valid.items() if k!="_givers"})
+            decision["choice"]=choice
+            with patch.object(party.quest_policy,"evaluate",return_value=decision):
+                profile.tick()
+            self.assertFalse(self.mutations(rpc))
+            self.assertFalse(saved)
+            self.assertEqual(profile.data["reservations"],{})
+
+    def test_malformed_lua_giver_cannot_escape_observation_binding(self):
+        profile,rpc,_,_=self.rig()
+        decision=profile.policy(profile.read())
+        for giver in ({"guid":[]}, {"guid":"123","entry":197}, None):
+            broken=copy.deepcopy({k:v for k,v in decision.items() if k!="_givers"})
+            broken["givers"]=[giver]
+            with patch.object(party.quest_policy,"evaluate",return_value=broken):
+                profile.tick()
+            self.assertFalse(self.mutations(rpc))
+            self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_quest_policy")
+
+    def test_unavailable_evaluator_is_pending_without_a_python_chooser(self):
+        profile,rpc,_,saved=self.rig()
+        with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/quest-policy-evaluator"}):
+            profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_quest_policy")
+        self.assertFalse(self.mutations(rpc))
+        self.assertFalse(saved)
+
+    def test_lua_edit_and_broken_source_keep_the_same_controller_and_pending_menu(self):
+        profile,rpc,clock,_=self.rig()
+        rpc.active=set();rpc.complete=set();rpc.owner_done=set();rpc.owner_active={15}
+        rpc.apply_accept=False;rpc.error_on="buddy-quests.accept"
+        profile.tick()  # Observe an actual menu.
+        clock[0]+=10
+        profile.tick()  # Ambiguous acceptance consumes that exact menu.
+        reserved=copy.deepcopy(profile.data["reservations"])
+        self.assertIn("accept:15",reserved)
+        session=rpc.session
+        count=len(self.mutations(rpc))
+        source=party.quest_policy.SOURCE.read_text()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"party-quests.lua"
+            path.write_text(source.replace("input.acceptSignature,30)","input.acceptSignature,300)"))
+            self.assertNotEqual(path.read_text(),source)
+            with patch.object(party.quest_policy,"SOURCE",path):
+                clock[0]+=40
+                profile.tick()
+                self.assertEqual(len(self.mutations(rpc)),count)
+                self.assertEqual(profile.status["phase"],"waiting_for_joel_at_followup_giver_or_server_offer")
+                path.write_text("this is an invalid candidate")
+                profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_quest_policy")
+                self.assertEqual(profile.data["reservations"],reserved)
+                self.assertEqual(len(self.mutations(rpc)),count)
+                path.write_text(source)
+                profile.tick()
+        self.assertEqual(rpc.session,session)
+        self.assertEqual(profile.data["reservations"],reserved)
+        self.assertEqual([m for m,_ in self.mutations(rpc)].count("buddy-quests.accept"),1)
+        self.assertEqual(self.mutations(rpc)[-1][0],"buddy-quests.offer")
+
     def test_owner_completed_own_complete_handoff_then_actual_owner_followup_accepts(self):
         profile,rpc,clock,_=self.rig()
         for _ in range(12):
