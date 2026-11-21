@@ -27,8 +27,8 @@ func extraCapacity(w *worldv1.SnapshotResponse, entry uint32) {
 
 func tickCapacityLoot(t *testing.T, s *Service, namedLegacy bool) {
 	t.Helper()
-	if namedLegacy && !(s.state.InventoryPaused && s.pausedGather && s.pausedSource != 0) {
-		s.Tick(context.Background())
+	if namedLegacy {
+		tickGatherWindow(t, s)
 		return
 	}
 	tickCorpseLua(t, s)

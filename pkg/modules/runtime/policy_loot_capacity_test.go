@@ -92,10 +92,22 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 			window = append(window, row...)
 			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
 			native.Tick(context.Background())
+			observedWindow, err := native.ObserveCorpses(context.Background(), &emptypb.Empty{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = native.TakeSlot(context.Background(), &lootv1.TakeLootRequest{SessionId: "corpse-body", SelfGuid: 6,
+				SourceGuid: source, OpenRequestId: observedWindow.Window.OpenRequestId, WindowRevision: observedWindow.Window.Revision,
+				RequestId: "capacity-fixture-slot", Slot: 2, ExpectedItemId: 11119, ExpectedCount: 1, ExpectedInventoryRevision: w.InventoryRevision})
+			if err != nil {
+				t.Fatal(err)
+			}
 			reject := make([]byte, 18)
 			reject[0] = 50
 			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInventoryChangeFailure, Payload: reject})
-			native.Tick(context.Background())
+			if _, err = native.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: "corpse-body", SelfGuid: 6, SourceGuid: source}); err != nil {
+				t.Fatal(err)
+			}
 			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootReleaseResponse, Payload: append(binary.LittleEndian.AppendUint64(nil, source), 1)})
 			native.Tick(context.Background())
 			paused, _ := native.GetState(context.Background(), &emptypb.Empty{})

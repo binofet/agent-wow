@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Úç
+Øí
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"ô
@@ -672,7 +672,8 @@ pointCount!
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"π	
+state (2.warcraftbuddy.actions.v1.StateRstate"ï
+
 RecoveryState
 enabled (Renabled
 active (Ractive
@@ -704,7 +705,21 @@ corpseGuidW
 own_corpse (2(.warcraftbuddy.actions.v1.RecoveryCorpseR	ownCorpse8
 ghost_movement_supported (RghostMovementSupported2
 corpse_query_revision (RcorpseQueryRevision%
-motion_pending (RmotionPending"⁄
+motion_pending (RmotionPendingZ
+resurrection_offer (2+.warcraftbuddy.actions.v1.ResurrectionOfferRresurrectionOffer"Ñ
+ResurrectionOffer
+caster_guid (R
+casterGuid
+revision (Rrevision
+death_epoch (R
+deathEpoch
+age_ms (RageMs-
+response_attempted (RresponseAttempted)
+response_written (RresponseWritten'
+outcome_unknown (RoutcomeUnknown3
+resurrection_sickness (RresurrectionSickness-
+reclaim_delay_ms	 (H RreclaimDelayMsàB
+_reclaim_delay_ms"⁄
 RecoveryCorpse
 guid (Rguid
 
@@ -1525,13 +1540,16 @@ session_id (	R	sessionId
 	self_guid (RselfGuid
 target_guid (R
 targetGuid
-spell_id (RspellId"x
+spell_id (RspellId"—
 AcceptResurrectionRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 caster_guid (R
-casterGuid"Q
+casterGuid
+death_epoch (R
+deathEpoch6
+expected_offer_revision (RexpectedOfferRevision"Q
 PickLockRequest
 
 session_id (	R	sessionId

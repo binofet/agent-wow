@@ -19,6 +19,8 @@ type policyRecovery struct {
 	self, epoch uint64
 	query       bool
 	corpse      uint64
+	caster      uint64
+	offer       uint64
 	phase       string
 }
 
@@ -35,6 +37,19 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 	method := capability
 	values := map[protoreflect.Name]protoreflect.Value{
 		"session_id": protoreflect.ValueOfString(session), "self_guid": protoreflect.ValueOfUint64(selfID), "death_epoch": protoreflect.ValueOfUint64(epochID),
+	}
+	if capability == "accept_resurrection" {
+		caster, _ := action["casterGuid"].(string)
+		revision, _ := action["expectedOfferRevision"].(string)
+		casterID, ce := strconv.ParseUint(caster, 10, 64)
+		offerID, re := strconv.ParseUint(revision, 10, 64)
+		if ce != nil || re != nil || casterID == 0 || casterID == selfID || casterID>>48 != 0 || offerID == 0 ||
+			caster != strconv.FormatUint(casterID, 10) || revision != strconv.FormatUint(offerID, 10) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact caster and observed offer revision required")
+		}
+		op.recovery.caster, op.recovery.offer = casterID, offerID
+		values["caster_guid"] = protoreflect.ValueOfUint64(casterID)
+		values["expected_offer_revision"] = protoreflect.ValueOfUint64(offerID)
 	}
 	if capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" {
 		revision, _ := action["expectedPositionRevision"].(string)
@@ -92,6 +107,9 @@ func (m *Manager) invokePolicyRecovery(ctx context.Context, inst *instance, md m
 	return outcome, payload
 }
 func (op *policySpell) matchesRecoveryPacket(code uint32, payload []byte) bool {
+	if op.capability == "accept_resurrection" {
+		return code == opcode.CMSGResurrectResponse && len(payload) == 9 && binary.LittleEndian.Uint64(payload) == op.recovery.caster && payload[8] == 1
+	}
 	if op.capability == "approach_corpse" || op.capability == "stop_corpse" {
 		return op.matchesMovementPacket(code, payload)
 	}
@@ -104,7 +122,11 @@ func (op *policySpell) matchesRecoveryPacket(code uint32, payload []byte) bool {
 	return code == opcode.CMSGRepopRequest && len(payload) == 1 && payload[0] == 0
 }
 func (op *policySpell) recoveryPayload(phase string, written bool) map[string]any {
-
-	return map[string]any{"capability": op.capability, "phase": phase, "self_guid": strconv.FormatUint(op.recovery.self, 10),
+	out := map[string]any{"capability": op.capability, "phase": phase, "self_guid": strconv.FormatUint(op.recovery.self, 10),
 		"death_epoch": strconv.FormatUint(op.recovery.epoch, 10), "transport_written": written, "effect_observed": false, "native_phase": op.recovery.phase}
+	if op.capability == "accept_resurrection" {
+		out["caster_guid"] = strconv.FormatUint(op.recovery.caster, 10)
+		out["offer_revision"] = strconv.FormatUint(op.recovery.offer, 10)
+	}
+	return out
 }

@@ -23,9 +23,9 @@ func capacityPausedGather(t *testing.T) (*Service, *fakeSession, func(time.Durat
 	failure := make([]byte, 18)
 	failure[0] = 50
 	emit(s, opcode.SMSGInventoryChangeFailure, failure)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if got := current(t, s); !got.InventoryPaused || got.PendingGameObjectGuid != 0 || s.token != "" || got.LastGather.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED {
 		t.Fatal("fixture did not reach settled server rejection", got)
 	}

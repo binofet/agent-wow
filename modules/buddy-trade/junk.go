@@ -167,6 +167,13 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	if err := junkRequestContextSafe(w, r); err != nil {
 		return err
 	}
+	var admission *junkPolicyAdmission
+	if r.RequestId != "" {
+		admission, err = s.admitJunkPolicy(ctx, r, w, initial)
+		if err != nil {
+			return err
+		}
+	}
 	// Do not interrupt an existing interaction; acquire may stop ordinary follow.
 	if err := s.junkSafe(ctx, w); err != nil {
 		return err
@@ -198,9 +205,20 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 		s.mu.Unlock()
 		return err
 	}
-	meta, known := s.metadata[selected.Entry]
-	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil || !known ||
-		(!meta.disposable() && !s.grayArmorJunk(w, selected)) {
+	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil {
+		s.mu.Unlock()
+		return status.Error(codes.FailedPrecondition, "trade or inventory mutation awaits confirmation")
+	}
+	if r.RequestId != "" {
+		if err := admission.matches(w, selected, r, s.selfGUID); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		if !proto.Equal(admission.template, s.lookup.items[selected.Entry]) {
+			s.mu.Unlock()
+			return status.Error(codes.FailedPrecondition, "owned_disposal_template_changed")
+		}
+	} else if meta, known := s.metadata[selected.Entry]; !known || (!meta.disposable() && !s.grayArmorJunk(w, selected)) {
 		s.mu.Unlock()
 		return status.Error(codes.FailedPrecondition, "only fully queried gray junk with no remaining use is disposable")
 	}

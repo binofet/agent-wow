@@ -1,7 +1,7 @@
 -- One shared editable death lifecycle: release, own-corpse query, ghost route,
 -- reclaim timing and continuation. Go supplies facts and exact physical inputs.
 local M={tuning={release_delay_ms=0,route_retry_ms=1000,reclaim_range=35,
-    unknown_reclaim_delay_ms=120000,deadline_ms=0}}
+    unknown_reclaim_delay_ms=120000,deadline_ms=0,offer_max_age_ms=60000,offer_scope='party'}}
 local state={}
 local function valid_id(v)return type(v)=='string' and v~='' and v~='0' end
 local function alive(p)return p and p.present==true and p.aliveKnown==true and p.alive==true end
@@ -14,6 +14,13 @@ function M.on_event(event)
     if event.kind=='death_recovery_request' then state.ensureRequested=true end
     local receipt=event.receipt
     local p=receipt and receipt.payload or {}
+    if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and p.capability=='accept_resurrection' then
+        if receipt.outcome=='not_dispatched' then
+            if state.accept_resurrection==p.offer_revision then state.accept_resurrection=nil end
+        else
+            state.accept_resurrection=p.offer_revision
+        end
+    end
     local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse'
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and irreversible and receipt.outcome~='not_dispatched' then
         -- Only an actual reserved action receipt can create private custody.
@@ -56,6 +63,29 @@ function M.decide(frame,obs,sequence)
         state={};return {phase='alive'}
     end
     if self.healthKnown~=true then return {phase='waiting_for_actual_health'} end
+    local offer=r.resurrectionOffer
+    if offer and offer.deathEpoch==r.deathEpoch and valid_id(offer.revision) and valid_id(offer.casterGuid) then
+        -- A later genuine server offer supersedes an earlier offer identity.
+        -- Successful/uncertain response writes otherwise retain custody until
+        -- actual life; an ACK or local age limit never proves resurrection.
+        if state.accept_resurrection and state.accept_resurrection~=offer.revision then state.accept_resurrection=nil end
+        if offer.responseAttempted==true or state.accept_resurrection==offer.revision then
+            return {phase='waiting_for_actual_life_after_offer_acceptance'}
+        end
+        local member=false
+        for _,p in ipairs((((obs.party or {}).group or {}).members or {})) do
+            if p.guid==offer.casterGuid and p.online==true then member=true end
+        end
+        local within_age=M.tuning.offer_max_age_ms<=0 or tonumber(offer.ageMs or '0')<=M.tuning.offer_max_age_ms
+        if (member or M.tuning.offer_scope=='any_offer') and within_age then
+            if (obs.navigation or {}).motionUnconfirmed==true then return {phase='waiting_for_actual_motion_before_offer'} end
+            if r.active==true or r.motionPending==true then return stop('resurrection_offer_owned_stop') end
+            local a=action('accept_resurrection');a.casterGuid=offer.casterGuid;a.expectedOfferRevision=offer.revision
+            return {phase='accepting_observed_resurrection_offer',action=a}
+        end
+    elseif state.accept_resurrection then
+        return {phase='waiting_for_actual_life_after_offer_acceptance'}
+    end
     if M.tuning.deadline_ms>0 and now and state.observedAt and now-state.observedAt>=M.tuning.deadline_ms then
         if r.motionPending==true or r.active==true then return stop('configured_deadline_owned_stop') end
         return {phase='configured_deadline_reached'}

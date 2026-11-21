@@ -173,7 +173,7 @@ func (s *Service) tryGatherLocked(ctx context.Context, w *worldv1.SnapshotRespon
 			continue
 		}
 		for _, candidate := range s.harvestRecipes(g.Entry) {
-			if s.gatherSeen[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
+			if s.gatherSeen[g.Guid] || s.retired[g.Guid] || !candidate.context(w, a, s.selfGUID, true) || !candidate.objectWithin(a.Position, g, 12) {
 				continue
 			}
 			d := math.Pow(float64(g.X-a.Position.X), 2) + math.Pow(float64(g.Y-a.Position.Y), 2) + math.Pow(float64(g.Z-a.Position.Z), 2)

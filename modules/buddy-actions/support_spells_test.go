@@ -126,15 +126,15 @@ func TestActualPartyResurrectionOfferAcceptedOnceNotForgedOrUnsolicited(t *testi
 		{name: "trailing bytes", caster: 3, tail: []byte{0, 0, 0, 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, f, _ := rig(t)
-			f.world.Self.Alive = false
-			f.world.Self.Health = 0
+			s, f, _ := recoveryRig(t)
+			// The shared policy reads the actual complete group projection.
+			f.party.Group.GroupGuid, f.party.Group.LeaderGuid = 100, 3
 			p := binary.LittleEndian.AppendUint64(nil, tc.caster)
 			p = binary.LittleEndian.AppendUint32(p, 1)
 			p = append(p, tc.tail...)
 			for i := 0; i < 2; i++ {
 				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGResurrectRequest, Payload: p})
-				s.Tick(context.Background())
+				tickDeathLua(t, s)
 			}
 			if countPackets(f, opcode.CMSGResurrectResponse) != tc.want {
 				t.Fatal("offer acceptance mismatch", f.packets)

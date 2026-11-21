@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Úç
+Øí
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"ô
@@ -672,7 +672,8 @@ pointCount!
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"π	
+state (2.warcraftbuddy.actions.v1.StateRstate"ï
+
 RecoveryState
 enabled (Renabled
 active (Ractive
@@ -704,7 +705,21 @@ corpseGuidW
 own_corpse (2(.warcraftbuddy.actions.v1.RecoveryCorpseR	ownCorpse8
 ghost_movement_supported (RghostMovementSupported2
 corpse_query_revision (RcorpseQueryRevision%
-motion_pending (RmotionPending"⁄
+motion_pending (RmotionPendingZ
+resurrection_offer (2+.warcraftbuddy.actions.v1.ResurrectionOfferRresurrectionOffer"Ñ
+ResurrectionOffer
+caster_guid (R
+casterGuid
+revision (Rrevision
+death_epoch (R
+deathEpoch
+age_ms (RageMs-
+response_attempted (RresponseAttempted)
+response_written (RresponseWritten'
+outcome_unknown (RoutcomeUnknown3
+resurrection_sickness (RresurrectionSickness-
+reclaim_delay_ms	 (H RreclaimDelayMsàB
+_reclaim_delay_ms"⁄
 RecoveryCorpse
 guid (Rguid
 
@@ -1525,13 +1540,16 @@ session_id (	R	sessionId
 	self_guid (RselfGuid
 target_guid (R
 targetGuid
-spell_id (RspellId"x
+spell_id (RspellId"—
 AcceptResurrectionRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 caster_guid (R
-casterGuid"Q
+casterGuid
+death_epoch (R
+deathEpoch6
+expected_offer_revision (RexpectedOfferRevision"Q
 PickLockRequest
 
 session_id (	R	sessionId
@@ -1595,7 +1613,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-Ñ;
+‚=
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1685,14 +1703,16 @@ corpseGuid
 request_id (	R	requestId<
 expected_position_revision (RexpectedPositionRevision8
 expected_corpse_revision (RexpectedCorpseRevision>
-expected_inventory_revision (RexpectedInventoryRevision"†
+expected_inventory_revision (RexpectedInventoryRevision"¡
 CloseCorpseRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 corpse_guid (R
 corpseGuid-
-retire_unconfirmed (RretireUnconfirmed"ß
+retire_unconfirmed (RretireUnconfirmed
+source_guid (R
+sourceGuid"»
 CorpseOperation
 
 session_id (	R	sessionId
@@ -1708,7 +1728,9 @@ request_id (	R	requestId
 window_observed	 (RwindowObserved)
 release_observed
  (RreleaseObserved
-terminal (Rterminal"á	
+terminal (Rterminal
+source_guid (R
+sourceGuid"’	
 CorpseObservation
 
 session_id (	R	sessionId
@@ -1732,7 +1754,8 @@ session_id (	R	sessionId
 quest_requirements (2+.warcraftbuddy.loot.v1.QuestItemRequirementRquestRequirements*
 item_counts_known (RitemCountsKnownF
 item_counts (2%.warcraftbuddy.loot.v1.OwnedItemCountR
-itemCounts"`
+itemCountsL
+source_object (2'.warcraftbuddy.world.v1.GameObjectStateRsourceObject"`
 QuestItemRequirement
 quest_id (RquestId
 item_id (RitemId
@@ -1745,7 +1768,7 @@ itemCounts"`
 item_id (RitemId
 count (Rcount
 	slot_type (RslotType
-removed (Rremoved"È
+removed (Rremoved"ı
 
 LootWindow
 corpse_guid (R
@@ -1757,7 +1780,14 @@ corpseGuid&
 money_requested (RmoneyRequested#
 money_cleared (RmoneyCleared5
 slots (2.warcraftbuddy.loot.v1.LootSlotRslots?
-mutation	 (2#.warcraftbuddy.loot.v1.LootMutationRmutation"É
+mutation	 (2#.warcraftbuddy.loot.v1.LootMutationRmutation
+source_guid
+ (R
+sourceGuid
+source_kind (	R
+sourceKind$
+bound_quest_id (RboundQuestId"
+bound_item_id (RboundItemId"§
 TakeLootRequest
 
 session_id (	R	sessionId
@@ -1772,7 +1802,9 @@ request_id (	R	requestId
 expected_item_id (RexpectedItemId%
 expected_count	 (RexpectedCount>
 expected_inventory_revision
- (RexpectedInventoryRevision"Æ
+ (RexpectedInventoryRevision
+source_guid (R
+sourceGuid"œ
 LootMutation
 
 session_id (	R	sessionId
@@ -1796,7 +1828,9 @@ request_id (	R	requestId
 server_rejected (RserverRejected'
 inventory_error (RinventoryError
 terminal (Rterminal8
-inventory_delta_observed (RinventoryDeltaObserved*ó
+inventory_delta_observed (RinventoryDeltaObserved
+source_guid (R
+sourceGuid*ó
 GatherStatus
 GATHER_NONE 
 GATHER_REQUESTED
