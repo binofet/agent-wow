@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
@@ -113,6 +114,9 @@ func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMe
 }
 
 func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv1.InvokeModuleRequest) (*modv1.InvokeModuleResponse, error) {
+	if req.GetModule() == modcb.FollowPolicyModule && req.GetMethod() == modcb.FollowPolicyMethod {
+		return m.readFollowDecision(ctx, callerName, req)
+	}
 	caller, ok := m.registry.Lookup(callerName)
 	if !ok || !caller.Requires(req.GetModule()) {
 		return nil, status.Error(codes.PermissionDenied, "target is not a directly declared dependency")

@@ -67,6 +67,7 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 			"AGENT_WOW_REALM_ID": strconv.Itoa(int(session.Identity.RealmID)), "AGENT_WOW_REALM_NAME": session.Identity.RealmName, "AGENT_WOW_CLIENT_BUILD": "12340",
 		}}
 		if name == actionsModule {
+			l.Environment[modcb.FollowPolicyCallbackEnv] = "true"
 			var key [32]byte
 			if _, err := rand.Read(key[:]); err != nil {
 				return err

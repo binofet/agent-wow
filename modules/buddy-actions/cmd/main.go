@@ -69,6 +69,9 @@ func run() error {
 		}
 	}
 	service.UseAutomaticCorpseLoot()
+	if os.Getenv(modcb.FollowPolicyCallbackEnv) == "true" {
+		service.UseHostFollowPolicy()
+	}
 	if value := os.Getenv("BUDDY_HOST_SELF_MANA_OWNED"); value != "" {
 		owned, err := strconv.ParseBool(value)
 		if err != nil {

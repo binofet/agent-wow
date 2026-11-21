@@ -80,7 +80,7 @@ func (s *Service) followFormationPlanLocked(now time.Time, w *worldv1.SnapshotRe
 		s.formation.Reset()
 	}
 	if s.navDataDir == "" {
-		return s.formation.NearOwner(now, s.selfGUID, owner, moving, s.pos, s.state.Moving)
+		return s.formation.NearOwner(now, s.selfGUID, owner, moving, s.pos, s.state.Moving, w.GetOwner().GetPlayerFlags())
 	}
-	return s.formation.Plan(now, s.selfGUID, classID, owner, moving, s.pos, s.state.Moving, s.followNav.ownerArrival)
+	return s.formation.Plan(now, s.selfGUID, classID, owner, moving, s.pos, s.state.Moving, s.followNav.ownerArrival, w.GetOwner().GetPlayerFlags())
 }
