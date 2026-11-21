@@ -173,6 +173,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
+	if legacyRecoveryIntent(name, md.Path(), inst) {
+		return m.queueLegacyRecoveryIntent(ctx, inst, result)
+	}
 	if legacyBuffEnsureRequest(name, md.Path(), inst, req) {
 		return m.queueLegacyBuffEnsure(ctx, inst, result)
 	}
