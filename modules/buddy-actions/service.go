@@ -150,6 +150,7 @@ type Service struct {
 	practiceQuestGoal                    bool
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
+	starterSpells                        starterSpellPolicy
 	followGoal                           followFormationGoal
 	followRevision                       uint64
 	followNav                            followNavigation

@@ -16,6 +16,7 @@ def main():
         ("encounter_gear", behaviors / "gear.lua"),
         ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),
+        ("encounter_starter_spells", behaviors / "starter-spells.lua"),
         ("encounter_self_mana", behaviors / "self-mana.lua"),
         ("encounter_support", behaviors / "support.lua"),
         ("encounter_consumables", behaviors / "consumables.lua"),

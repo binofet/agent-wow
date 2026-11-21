@@ -15,11 +15,20 @@ func TestWarlockUsesAnInstantAfterInterruptionWithoutRefreshingActiveCurse(t *te
 	const agony, bolt = 980, 705
 	learnSpells(s, agony, bolt)
 	self := f.world.Self
+	f.world.RequestedCreature = target // Fresh exact lookup observes this same attacker.
 	self.BaseManaKnown, self.BaseMana, self.Power = true, 100, 100
 	s.state.LastCastFailure, s.state.LastCastTargetGuid = spellFailedInterrupted, target.Guid
 	pos, _, _ := creaturePosition(target)
 	choose := func(health uint32) uint32 {
-		return s.starterBestDamageLocked(self, pos, health, target.Guid).ID
+		target.HealthKnown, target.MaxHealth, target.Health = true, 100, 100
+		if health != 0 {
+			target.Health = health
+		}
+		decision := s.starterSpellDecisionLocked(context.Background(), f.world, target, pos)
+		if !decision.valid {
+			t.Fatal(s.starterSpells.failure())
+		}
+		return decision.spell.ID
 	}
 	if got := choose(0); got != agony {
 		t.Fatal("expected a learned instant on the healthy attacker after interruption", got)
