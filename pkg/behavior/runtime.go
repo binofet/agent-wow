@@ -53,11 +53,13 @@ type policy struct {
 // Each call creates a fresh VM: Lua globals, closures and input mutations cannot
 // survive an evaluation or affect the caller's input.
 type Runtime struct {
-	mu          sync.Mutex
-	active      *policy
-	good        *policy
-	status      Status
-	sourceBytes int
+	mu             sync.Mutex
+	active         *policy
+	good           *policy
+	status         Status
+	sourceBytes    int
+	valueBytes     int
+	executionLimit time.Duration
 }
 
 func New() *Runtime { return &Runtime{} }
@@ -80,6 +82,32 @@ func NewWithSourceLimit(sourceBytes int) (*Runtime, error) {
 		return nil, err
 	}
 	return &Runtime{sourceBytes: limit}, nil
+}
+
+// NewWithOptions lets an accepted session's pure read adapters retain that
+// session's configured budgets. Standalone zero values keep their old defaults.
+func NewWithOptions(options SessionOptions) (*Runtime, error) {
+	source, err := SourceLimit(options.SourceBytes)
+	if err != nil {
+		return nil, err
+	}
+	if options.ValueBytes < 0 || options.ExecutionLimit < 0 {
+		return nil, errors.New("behavior budgets must not be negative")
+	}
+	return &Runtime{sourceBytes: source, valueBytes: options.ValueBytes, executionLimit: options.ExecutionLimit}, nil
+}
+func (r *Runtime) valueBudget() (int, int, int) {
+	if r.valueBytes > 0 {
+		nodes := sessionValueNodes(r.valueBytes)
+		return r.valueBytes, nodes, nodes
+	}
+	return MaxJSONBytes, MaxInputNodes, MaxNodes
+}
+func (r *Runtime) evaluationBudget() time.Duration {
+	if r.executionLimit > 0 {
+		return r.executionLimit
+	}
+	return EvaluationLimit
 }
 
 func (r *Runtime) Status() Status {
@@ -110,7 +138,7 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	defer L.Close()
 	fn, err := L.Load(strings.NewReader(source), "policy")
 	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), EvaluationLimit)
+		ctx, cancel := context.WithTimeout(context.Background(), r.evaluationBudget())
 		defer cancel()
 		L.SetContext(ctx)
 		_, err = decisionFunction(L, fn)
@@ -131,16 +159,26 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 // policy intact. Policy errors restore and evaluate the last working policy
 // against the original input, never the failed VM's possibly mutated table.
 func (r *Runtime) Evaluate(input map[string]any) (map[string]any, error) {
+	return r.EvaluateContext(context.Background(), input)
+}
+func (r *Runtime) EvaluateContext(ctx context.Context, input map[string]any) (map[string]any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.status.Evaluations++
-	if err := validateInput(input); err != nil {
+	byteLimit, inputNodes, outputNodes := r.valueBudget()
+	if _, err := toLua(nil, input, &budget{ctx: ctx, byteLimit: byteLimit, nodeLimit: inputNodes}); err != nil {
+		return nil, fmt.Errorf("invalid behavior input: %w", err)
+	}
+	if err := boundedJSONSize(input, byteLimit); err != nil {
 		return nil, fmt.Errorf("invalid behavior input: %w", err)
 	}
 	if r.active == nil {
 		return nil, ErrNoPolicy
 	}
-	output, err := evaluate(r.active, input)
+	output, err := evaluateWithLimits(ctx, r.active, input, byteLimit, inputNodes, outputNodes, r.evaluationBudget())
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err == nil {
 		r.good = r.active
 		r.status.LastGoodRevision = r.good.revision
@@ -157,7 +195,10 @@ func (r *Runtime) Evaluate(input map[string]any) (map[string]any, error) {
 		return nil, fmt.Errorf("behavior policy quarantined: %w", err)
 	}
 	r.status.Revision = r.active.revision
-	output, fallbackErr := evaluate(r.active, input)
+	output, fallbackErr := evaluateWithLimits(ctx, r.active, input, byteLimit, inputNodes, outputNodes, r.evaluationBudget())
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if fallbackErr != nil {
 		r.failed(r.active.revision, fallbackErr)
 		r.active, r.good = nil, nil
@@ -177,23 +218,26 @@ func (r *Runtime) failed(revision string, err error) {
 }
 
 func evaluate(p *policy, input map[string]any) (map[string]any, error) {
+	return evaluateWithLimits(context.Background(), p, input, MaxJSONBytes, MaxInputNodes, MaxNodes, EvaluationLimit)
+}
+func evaluateWithLimits(parent context.Context, p *policy, input map[string]any, byteLimit, inputNodes, outputNodes int, executionLimit time.Duration) (map[string]any, error) {
 	L := newVM()
 	defer L.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), EvaluationLimit)
+	ctx, cancel := context.WithTimeout(parent, executionLimit)
 	defer cancel()
 	L.SetContext(ctx)
 	fn, err := decisionFunction(L, L.NewFunctionFromProto(p.proto))
 	if err != nil {
 		return nil, err
 	}
-	state, err := toLua(L, input, &budget{nodeLimit: MaxInputNodes})
+	state, err := toLua(L, input, &budget{ctx: ctx, byteLimit: byteLimit, nodeLimit: inputNodes})
 	if err != nil {
 		return nil, err
 	}
 	if err = L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, state); err != nil {
 		return nil, err
 	}
-	value, err := fromLua(L.Get(-1), &budget{ctx: ctx}, map[*lua.LTable]bool{}, 0)
+	value, err := fromLua(L.Get(-1), &budget{ctx: ctx, byteLimit: byteLimit, nodeLimit: outputNodes}, map[*lua.LTable]bool{}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +245,7 @@ func evaluate(p *policy, input map[string]any) (map[string]any, error) {
 	if !ok {
 		return nil, errors.New("decide must return a JSON object table")
 	}
-	if err := jsonSize(output); err != nil {
+	if err := boundedJSONSize(output, byteLimit); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {

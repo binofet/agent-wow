@@ -15,13 +15,17 @@ end
 local function portal_uint32(value)
     return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
 end
+local function portal_binding_revision(value) return value=="0" or portal_revision(value) end
+local function portal_age(value)
+    if type(value)=="number" or type(value)=="string" then return tonumber(value) end
+end
 function M.portal_catchup(frame, obs, sequence)
     local nav=obs.navigation or {}
     local portal,self=nav.portal,(obs.players or {})[obs.selfGuid]
     if not encounter_formation or nav.following~=true or nav.groundNavigationConfigured~=true or
        type(portal)~="table" or portal.catchingUp~=true or portal.notified~=false or portal.ownerAbsent~=true or
-       not portal_revision(portal.witnessRevision) or not portal_revision(portal.followRevision) or
-       not portal_revision(portal.ownerGuid) or not portal_revision(portal.sourceVisitId) or
+       not portal_revision(portal.witnessRevision) or not portal_binding_revision(portal.followRevision) or
+       not portal_revision(portal.ownerGuid) or not portal_binding_revision(portal.sourceVisitId) or
        not portal_uint32(portal.triggerId) or portal.triggerId==0 or
        not portal_uint32(portal.sourceMapId) or not portal_uint32(portal.destinationMapId) or
        portal.sourceVisitId~=obs.visitId or
@@ -32,11 +36,26 @@ function M.portal_catchup(frame, obs, sequence)
     local start,ground=portal.start,portal.ground
     if type(start)~="table" or start.known~=true or start.mapKnown~=true or start.mapId~=obs.mapId or
        not portal_revision(start.revision) or type(ground)~="table" or type(frame.clock)~="table" then return end
-    local planned=encounter_formation.decide({mode="portal_catch_up",nowMs=frame.clock.monotonicMs,
+    local input={mode="portal_catch_up",nowMs=frame.clock.monotonicMs,
         selfGuid=obs.selfGuid,classId=self.classKnown and self.classId or 0,
         self={x=start.x or 0,y=start.y or 0,z=start.z or 0,moving=self.moving==true},
         owner={x=ground.x or 0,y=ground.y or 0,z=ground.z or 0,o=start.orientation or 0,moving=false,
-            playerFlags=(nav.followOwner or {}).playerFlags}})
+            playerFlags=(nav.followOwner or {}).playerFlags}}
+    -- Older clients omit both knownness fields and retain their native timing
+    -- gate. Once either fact is advertised, unknown timing blocks the proposal.
+    if portal.sightingAgeKnown~=nil or portal.disappearanceAgeKnown~=nil then
+        input.mode="portal_follow"
+        input.portal={sightingAgeKnown=portal.sightingAgeKnown,sightingAgeMs=portal_age(portal.sightingAgeMs),
+            disappearanceAgeKnown=portal.disappearanceAgeKnown,disappearanceAgeMs=portal_age(portal.disappearanceAgeMs),
+            catchingUp=portal.catchingUp,ownerAbsent=portal.ownerAbsent,following=nav.following,
+            sourceVisitId=portal.sourceVisitId,currentVisitId=obs.visitId,
+            followRevision=portal.followRevision,currentFollowRevision=nav.followRevision}
+        local timing=encounter_formation.decide(input)
+        if timing.ready~=true then return end
+        input.mode="portal_catch_up"
+        input.portal=nil
+    end
+    local planned=encounter_formation.decide(input)
     if type(planned.candidates)~="table" or #planned.candidates==0 then return end
     return {sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
         witnessRevision=portal.witnessRevision,followRevision=portal.followRevision,ownerGuid=portal.ownerGuid,

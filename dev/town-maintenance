@@ -39,8 +39,8 @@ class RPC:
             headers={"Content-Type": "application/json"}, method="POST")
         try:
             with self.opener.open(request, timeout=12) as response:
-                raw = response.read(262145)
-            if len(raw) > 262144:
+                raw = response.read() if method in ("buddy-inventory.state", "buddy-inventory.discover") else response.read(262145)
+            if method not in ("buddy-inventory.state", "buddy-inventory.discover") and len(raw) > 262144:
                 raise Error("rpc_response_too_large")
             reply = base.decode_json(raw)
         except (OSError, ValueError):

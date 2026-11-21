@@ -76,10 +76,10 @@ func TestArmorComparisonOmittedBenefitAndUnknownAlwaysRetained(t *testing.T) {
 		}
 	}
 	b := append([]byte(nil), base...)
-	binary.LittleEndian.PutUint32(b[4:], 2)
+	binary.LittleEndian.PutUint32(b[4:], 15)
 	got, err := parseLookupItem(b)
 	if err != nil || got.ArmorComparisonKnown {
-		t.Fatal("weapon implied armor comparison")
+		t.Fatal("non-equipment implied gear comparison")
 	}
 }
 func TestArmorComparisonAllowsNormalBindAndDurabilityNotFunctionalExtras(t *testing.T) {

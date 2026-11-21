@@ -117,6 +117,7 @@ type ItemEligibility struct {
 	ConservativeUpgrade      bool                   `protobuf:"varint,12,opt,name=conservative_upgrade,json=conservativeUpgrade,proto3" json:"conservative_upgrade,omitempty"`
 	GearBlockedReason        string                 `protobuf:"bytes,13,opt,name=gear_blocked_reason,json=gearBlockedReason,proto3" json:"gear_blocked_reason,omitempty"`
 	Consumable               *ConsumableMetadata    `protobuf:"bytes,14,opt,name=consumable,proto3" json:"consumable,omitempty"`
+	GearFacts                *GearItemFacts         `protobuf:"bytes,15,opt,name=gear_facts,json=gearFacts,proto3" json:"gear_facts,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -245,6 +246,13 @@ func (x *ItemEligibility) GetGearBlockedReason() string {
 func (x *ItemEligibility) GetConsumable() *ConsumableMetadata {
 	if x != nil {
 		return x.Consumable
+	}
+	return nil
+}
+
+func (x *ItemEligibility) GetGearFacts() *GearItemFacts {
+	if x != nil {
+		return x.GearFacts
 	}
 	return nil
 }
@@ -538,6 +546,7 @@ type State struct {
 	ManaDrinkCount    *uint32                   `protobuf:"varint,25,opt,name=mana_drink_count,json=manaDrinkCount,proto3,oneof" json:"mana_drink_count,omitempty"`
 	LastConsumableUse *ConsumableUse            `protobuf:"bytes,40,opt,name=last_consumable_use,json=lastConsumableUse,proto3" json:"last_consumable_use,omitempty"`
 	ConsumableContext *ConsumableContext        `protobuf:"bytes,41,opt,name=consumable_context,json=consumableContext,proto3" json:"consumable_context,omitempty"`
+	GearContext       *GearContext              `protobuf:"bytes,42,opt,name=gear_context,json=gearContext,proto3" json:"gear_context,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -761,6 +770,574 @@ func (x *State) GetConsumableContext() *ConsumableContext {
 	return nil
 }
 
+func (x *State) GetGearContext() *GearContext {
+	if x != nil {
+		return x.GearContext
+	}
+	return nil
+}
+
+// Static template facts and exact legal destinations; no upgrade preference.
+type GearStat struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          uint32                 `protobuf:"varint,1,opt,name=type,proto3" json:"type,omitempty"`
+	Value         int32                  `protobuf:"zigzag32,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GearStat) Reset() {
+	*x = GearStat{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearStat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearStat) ProtoMessage() {}
+
+func (x *GearStat) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearStat.ProtoReflect.Descriptor instead.
+func (*GearStat) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GearStat) GetType() uint32 {
+	if x != nil {
+		return x.Type
+	}
+	return 0
+}
+
+func (x *GearStat) GetValue() int32 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+type GearDamage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Minimum       float32                `protobuf:"fixed32,1,opt,name=minimum,proto3" json:"minimum,omitempty"`
+	Maximum       float32                `protobuf:"fixed32,2,opt,name=maximum,proto3" json:"maximum,omitempty"`
+	School        uint32                 `protobuf:"varint,3,opt,name=school,proto3" json:"school,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GearDamage) Reset() {
+	*x = GearDamage{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearDamage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearDamage) ProtoMessage() {}
+
+func (x *GearDamage) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearDamage.ProtoReflect.Descriptor instead.
+func (*GearDamage) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GearDamage) GetMinimum() float32 {
+	if x != nil {
+		return x.Minimum
+	}
+	return 0
+}
+
+func (x *GearDamage) GetMaximum() float32 {
+	if x != nil {
+		return x.Maximum
+	}
+	return 0
+}
+
+func (x *GearDamage) GetSchool() uint32 {
+	if x != nil {
+		return x.School
+	}
+	return 0
+}
+
+type GearTemplate struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	ItemId               uint32                 `protobuf:"varint,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	Available            bool                   `protobuf:"varint,2,opt,name=available,proto3" json:"available,omitempty"`
+	Name                 string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	ItemClass            uint32                 `protobuf:"varint,4,opt,name=item_class,json=itemClass,proto3" json:"item_class,omitempty"`
+	Subclass             uint32                 `protobuf:"varint,5,opt,name=subclass,proto3" json:"subclass,omitempty"`
+	InventoryType        uint32                 `protobuf:"varint,6,opt,name=inventory_type,json=inventoryType,proto3" json:"inventory_type,omitempty"`
+	Quality              uint32                 `protobuf:"varint,7,opt,name=quality,proto3" json:"quality,omitempty"`
+	Armor                uint32                 `protobuf:"varint,8,opt,name=armor,proto3" json:"armor,omitempty"`
+	Stats                []*GearStat            `protobuf:"bytes,9,rep,name=stats,proto3" json:"stats,omitempty"`
+	Damages              []*GearDamage          `protobuf:"bytes,10,rep,name=damages,proto3" json:"damages,omitempty"`
+	DelayMs              uint32                 `protobuf:"varint,11,opt,name=delay_ms,json=delayMs,proto3" json:"delay_ms,omitempty"`
+	Resistances          []uint32               `protobuf:"varint,12,rep,packed,name=resistances,proto3" json:"resistances,omitempty"`
+	ArmorComparisonKnown bool                   `protobuf:"varint,13,opt,name=armor_comparison_known,json=armorComparisonKnown,proto3" json:"armor_comparison_known,omitempty"`
+	Flags                uint32                 `protobuf:"varint,14,opt,name=flags,proto3" json:"flags,omitempty"`
+	Flags2               uint32                 `protobuf:"varint,15,opt,name=flags2,proto3" json:"flags2,omitempty"`
+	HasSpell             bool                   `protobuf:"varint,16,opt,name=has_spell,json=hasSpell,proto3" json:"has_spell,omitempty"`
+	ScalingDistribution  uint32                 `protobuf:"varint,17,opt,name=scaling_distribution,json=scalingDistribution,proto3" json:"scaling_distribution,omitempty"`
+	ScalingValue         uint32                 `protobuf:"varint,18,opt,name=scaling_value,json=scalingValue,proto3" json:"scaling_value,omitempty"`
+	RequiredLevel        uint32                 `protobuf:"varint,19,opt,name=required_level,json=requiredLevel,proto3" json:"required_level,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *GearTemplate) Reset() {
+	*x = GearTemplate{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearTemplate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearTemplate) ProtoMessage() {}
+
+func (x *GearTemplate) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearTemplate.ProtoReflect.Descriptor instead.
+func (*GearTemplate) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GearTemplate) GetItemId() uint32 {
+	if x != nil {
+		return x.ItemId
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetAvailable() bool {
+	if x != nil {
+		return x.Available
+	}
+	return false
+}
+
+func (x *GearTemplate) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GearTemplate) GetItemClass() uint32 {
+	if x != nil {
+		return x.ItemClass
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetSubclass() uint32 {
+	if x != nil {
+		return x.Subclass
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetInventoryType() uint32 {
+	if x != nil {
+		return x.InventoryType
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetQuality() uint32 {
+	if x != nil {
+		return x.Quality
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetArmor() uint32 {
+	if x != nil {
+		return x.Armor
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetStats() []*GearStat {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
+func (x *GearTemplate) GetDamages() []*GearDamage {
+	if x != nil {
+		return x.Damages
+	}
+	return nil
+}
+
+func (x *GearTemplate) GetDelayMs() uint32 {
+	if x != nil {
+		return x.DelayMs
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetResistances() []uint32 {
+	if x != nil {
+		return x.Resistances
+	}
+	return nil
+}
+
+func (x *GearTemplate) GetArmorComparisonKnown() bool {
+	if x != nil {
+		return x.ArmorComparisonKnown
+	}
+	return false
+}
+
+func (x *GearTemplate) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetFlags2() uint32 {
+	if x != nil {
+		return x.Flags2
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetHasSpell() bool {
+	if x != nil {
+		return x.HasSpell
+	}
+	return false
+}
+
+func (x *GearTemplate) GetScalingDistribution() uint32 {
+	if x != nil {
+		return x.ScalingDistribution
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetScalingValue() uint32 {
+	if x != nil {
+		return x.ScalingValue
+	}
+	return 0
+}
+
+func (x *GearTemplate) GetRequiredLevel() uint32 {
+	if x != nil {
+		return x.RequiredLevel
+	}
+	return 0
+}
+
+type GearDestination struct {
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	EquipmentSlot            uint32                 `protobuf:"varint,1,opt,name=equipment_slot,json=equipmentSlot,proto3" json:"equipment_slot,omitempty"`
+	ExpectedEquippedItemGuid uint64                 `protobuf:"varint,2,opt,name=expected_equipped_item_guid,json=expectedEquippedItemGuid,proto3" json:"expected_equipped_item_guid,omitempty"`
+	Eligible                 bool                   `protobuf:"varint,3,opt,name=eligible,proto3" json:"eligible,omitempty"`
+	BlockedReason            string                 `protobuf:"bytes,4,opt,name=blocked_reason,json=blockedReason,proto3" json:"blocked_reason,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *GearDestination) Reset() {
+	*x = GearDestination{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearDestination) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearDestination) ProtoMessage() {}
+
+func (x *GearDestination) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearDestination.ProtoReflect.Descriptor instead.
+func (*GearDestination) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GearDestination) GetEquipmentSlot() uint32 {
+	if x != nil {
+		return x.EquipmentSlot
+	}
+	return 0
+}
+
+func (x *GearDestination) GetExpectedEquippedItemGuid() uint64 {
+	if x != nil {
+		return x.ExpectedEquippedItemGuid
+	}
+	return 0
+}
+
+func (x *GearDestination) GetEligible() bool {
+	if x != nil {
+		return x.Eligible
+	}
+	return false
+}
+
+func (x *GearDestination) GetBlockedReason() string {
+	if x != nil {
+		return x.BlockedReason
+	}
+	return ""
+}
+
+type GearItemFacts struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EnhancementsKnown bool                   `protobuf:"varint,1,opt,name=enhancements_known,json=enhancementsKnown,proto3" json:"enhancements_known,omitempty"`
+	HasEnhancements   bool                   `protobuf:"varint,2,opt,name=has_enhancements,json=hasEnhancements,proto3" json:"has_enhancements,omitempty"`
+	DurabilityKnown   bool                   `protobuf:"varint,3,opt,name=durability_known,json=durabilityKnown,proto3" json:"durability_known,omitempty"`
+	Durability        uint32                 `protobuf:"varint,4,opt,name=durability,proto3" json:"durability,omitempty"`
+	MaxDurability     uint32                 `protobuf:"varint,5,opt,name=max_durability,json=maxDurability,proto3" json:"max_durability,omitempty"`
+	Destinations      []*GearDestination     `protobuf:"bytes,6,rep,name=destinations,proto3" json:"destinations,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *GearItemFacts) Reset() {
+	*x = GearItemFacts{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearItemFacts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearItemFacts) ProtoMessage() {}
+
+func (x *GearItemFacts) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearItemFacts.ProtoReflect.Descriptor instead.
+func (*GearItemFacts) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GearItemFacts) GetEnhancementsKnown() bool {
+	if x != nil {
+		return x.EnhancementsKnown
+	}
+	return false
+}
+
+func (x *GearItemFacts) GetHasEnhancements() bool {
+	if x != nil {
+		return x.HasEnhancements
+	}
+	return false
+}
+
+func (x *GearItemFacts) GetDurabilityKnown() bool {
+	if x != nil {
+		return x.DurabilityKnown
+	}
+	return false
+}
+
+func (x *GearItemFacts) GetDurability() uint32 {
+	if x != nil {
+		return x.Durability
+	}
+	return 0
+}
+
+func (x *GearItemFacts) GetMaxDurability() uint32 {
+	if x != nil {
+		return x.MaxDurability
+	}
+	return 0
+}
+
+func (x *GearItemFacts) GetDestinations() []*GearDestination {
+	if x != nil {
+		return x.Destinations
+	}
+	return nil
+}
+
+type GearContext struct {
+	state          protoimpl.MessageState   `protogen:"open.v1"`
+	ClassKnown     bool                     `protobuf:"varint,1,opt,name=class_known,json=classKnown,proto3" json:"class_known,omitempty"`
+	ClassId        uint32                   `protobuf:"varint,2,opt,name=class_id,json=classId,proto3" json:"class_id,omitempty"`
+	RaceKnown      bool                     `protobuf:"varint,3,opt,name=race_known,json=raceKnown,proto3" json:"race_known,omitempty"`
+	RaceId         uint32                   `protobuf:"varint,4,opt,name=race_id,json=raceId,proto3" json:"race_id,omitempty"`
+	LevelKnown     bool                     `protobuf:"varint,5,opt,name=level_known,json=levelKnown,proto3" json:"level_known,omitempty"`
+	Level          uint32                   `protobuf:"varint,6,opt,name=level,proto3" json:"level,omitempty"`
+	Templates      map[string]*GearTemplate `protobuf:"bytes,7,rep,name=templates,proto3" json:"templates,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	PolicyRevision string                   `protobuf:"bytes,8,opt,name=policy_revision,json=policyRevision,proto3" json:"policy_revision,omitempty"`
+	PolicyError    string                   `protobuf:"bytes,9,opt,name=policy_error,json=policyError,proto3" json:"policy_error,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GearContext) Reset() {
+	*x = GearContext{}
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GearContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GearContext) ProtoMessage() {}
+
+func (x *GearContext) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GearContext.ProtoReflect.Descriptor instead.
+func (*GearContext) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GearContext) GetClassKnown() bool {
+	if x != nil {
+		return x.ClassKnown
+	}
+	return false
+}
+
+func (x *GearContext) GetClassId() uint32 {
+	if x != nil {
+		return x.ClassId
+	}
+	return 0
+}
+
+func (x *GearContext) GetRaceKnown() bool {
+	if x != nil {
+		return x.RaceKnown
+	}
+	return false
+}
+
+func (x *GearContext) GetRaceId() uint32 {
+	if x != nil {
+		return x.RaceId
+	}
+	return 0
+}
+
+func (x *GearContext) GetLevelKnown() bool {
+	if x != nil {
+		return x.LevelKnown
+	}
+	return false
+}
+
+func (x *GearContext) GetLevel() uint32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+func (x *GearContext) GetTemplates() map[string]*GearTemplate {
+	if x != nil {
+		return x.Templates
+	}
+	return nil
+}
+
+func (x *GearContext) GetPolicyRevision() string {
+	if x != nil {
+		return x.PolicyRevision
+	}
+	return ""
+}
+
+func (x *GearContext) GetPolicyError() string {
+	if x != nil {
+		return x.PolicyError
+	}
+	return ""
+}
+
 // Deployed State22 contract. New roll controls use their separate Roll* types.
 type GroupRollReceipt struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -779,7 +1356,7 @@ type GroupRollReceipt struct {
 
 func (x *GroupRollReceipt) Reset() {
 	*x = GroupRollReceipt{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[4]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -791,7 +1368,7 @@ func (x *GroupRollReceipt) String() string {
 func (*GroupRollReceipt) ProtoMessage() {}
 
 func (x *GroupRollReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[4]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -804,7 +1381,7 @@ func (x *GroupRollReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GroupRollReceipt.ProtoReflect.Descriptor instead.
 func (*GroupRollReceipt) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GroupRollReceipt) GetRollGuid() uint64 {
@@ -882,7 +1459,7 @@ type ConsumableAuraEffect struct {
 
 func (x *ConsumableAuraEffect) Reset() {
 	*x = ConsumableAuraEffect{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[5]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -894,7 +1471,7 @@ func (x *ConsumableAuraEffect) String() string {
 func (*ConsumableAuraEffect) ProtoMessage() {}
 
 func (x *ConsumableAuraEffect) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[5]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -907,7 +1484,7 @@ func (x *ConsumableAuraEffect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumableAuraEffect.ProtoReflect.Descriptor instead.
 func (*ConsumableAuraEffect) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ConsumableAuraEffect) GetAuraType() uint32 {
@@ -954,7 +1531,7 @@ type ConsumableSpell struct {
 
 func (x *ConsumableSpell) Reset() {
 	*x = ConsumableSpell{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[6]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +1543,7 @@ func (x *ConsumableSpell) String() string {
 func (*ConsumableSpell) ProtoMessage() {}
 
 func (x *ConsumableSpell) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[6]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +1556,7 @@ func (x *ConsumableSpell) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumableSpell.ProtoReflect.Descriptor instead.
 func (*ConsumableSpell) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ConsumableSpell) GetSpellId() uint32 {
@@ -1049,7 +1626,7 @@ type ConsumableMetadata struct {
 
 func (x *ConsumableMetadata) Reset() {
 	*x = ConsumableMetadata{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[7]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1638,7 @@ func (x *ConsumableMetadata) String() string {
 func (*ConsumableMetadata) ProtoMessage() {}
 
 func (x *ConsumableMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[7]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1651,7 @@ func (x *ConsumableMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumableMetadata.ProtoReflect.Descriptor instead.
 func (*ConsumableMetadata) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ConsumableMetadata) GetUsable() bool {
@@ -1111,7 +1688,7 @@ type ConsumableContext struct {
 
 func (x *ConsumableContext) Reset() {
 	*x = ConsumableContext{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[8]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1123,7 +1700,7 @@ func (x *ConsumableContext) String() string {
 func (*ConsumableContext) ProtoMessage() {}
 
 func (x *ConsumableContext) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[8]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1136,7 +1713,7 @@ func (x *ConsumableContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumableContext.ProtoReflect.Descriptor instead.
 func (*ConsumableContext) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ConsumableContext) GetBodyReady() bool {
@@ -1197,7 +1774,7 @@ type ConsumableUse struct {
 
 func (x *ConsumableUse) Reset() {
 	*x = ConsumableUse{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[9]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1209,7 +1786,7 @@ func (x *ConsumableUse) String() string {
 func (*ConsumableUse) ProtoMessage() {}
 
 func (x *ConsumableUse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[9]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1222,7 +1799,7 @@ func (x *ConsumableUse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumableUse.ProtoReflect.Descriptor instead.
 func (*ConsumableUse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ConsumableUse) GetRequestId() string {
@@ -1340,7 +1917,7 @@ type DiscoverRequest struct {
 
 func (x *DiscoverRequest) Reset() {
 	*x = DiscoverRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1352,7 +1929,7 @@ func (x *DiscoverRequest) String() string {
 func (*DiscoverRequest) ProtoMessage() {}
 
 func (x *DiscoverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[10]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1365,7 +1942,7 @@ func (x *DiscoverRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoverRequest.ProtoReflect.Descriptor instead.
 func (*DiscoverRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DiscoverRequest) GetVendorEntry() uint32 {
@@ -1394,7 +1971,7 @@ type Vendor struct {
 
 func (x *Vendor) Reset() {
 	*x = Vendor{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[11]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1406,7 +1983,7 @@ func (x *Vendor) String() string {
 func (*Vendor) ProtoMessage() {}
 
 func (x *Vendor) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[11]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1419,7 +1996,7 @@ func (x *Vendor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Vendor.ProtoReflect.Descriptor instead.
 func (*Vendor) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Vendor) GetCreature() *api.CreatureState {
@@ -1460,7 +2037,7 @@ type Discovery struct {
 
 func (x *Discovery) Reset() {
 	*x = Discovery{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[12]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1472,7 +2049,7 @@ func (x *Discovery) String() string {
 func (*Discovery) ProtoMessage() {}
 
 func (x *Discovery) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[12]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1485,7 +2062,7 @@ func (x *Discovery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Discovery.ProtoReflect.Descriptor instead.
 func (*Discovery) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Discovery) GetState() *State {
@@ -1518,7 +2095,7 @@ type MoveRequest struct {
 
 func (x *MoveRequest) Reset() {
 	*x = MoveRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[13]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1530,7 +2107,7 @@ func (x *MoveRequest) String() string {
 func (*MoveRequest) ProtoMessage() {}
 
 func (x *MoveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[13]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1543,7 +2120,7 @@ func (x *MoveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MoveRequest.ProtoReflect.Descriptor instead.
 func (*MoveRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{13}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *MoveRequest) GetSessionId() string {
@@ -1617,7 +2194,7 @@ type EquipRequest struct {
 
 func (x *EquipRequest) Reset() {
 	*x = EquipRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[14]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1629,7 +2206,7 @@ func (x *EquipRequest) String() string {
 func (*EquipRequest) ProtoMessage() {}
 
 func (x *EquipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[14]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1642,7 +2219,7 @@ func (x *EquipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EquipRequest.ProtoReflect.Descriptor instead.
 func (*EquipRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{14}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *EquipRequest) GetSessionId() string {
@@ -1710,7 +2287,7 @@ type SellRequest struct {
 
 func (x *SellRequest) Reset() {
 	*x = SellRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[15]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1722,7 +2299,7 @@ func (x *SellRequest) String() string {
 func (*SellRequest) ProtoMessage() {}
 
 func (x *SellRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[15]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1735,7 +2312,7 @@ func (x *SellRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SellRequest.ProtoReflect.Descriptor instead.
 func (*SellRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{15}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SellRequest) GetSessionId() string {
@@ -1811,7 +2388,7 @@ type EquipGearRequest struct {
 
 func (x *EquipGearRequest) Reset() {
 	*x = EquipGearRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[16]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1823,7 +2400,7 @@ func (x *EquipGearRequest) String() string {
 func (*EquipGearRequest) ProtoMessage() {}
 
 func (x *EquipGearRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[16]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1836,7 +2413,7 @@ func (x *EquipGearRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EquipGearRequest.ProtoReflect.Descriptor instead.
 func (*EquipGearRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{16}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *EquipGearRequest) GetSessionId() string {
@@ -1916,7 +2493,7 @@ type DrinkRequest struct {
 
 func (x *DrinkRequest) Reset() {
 	*x = DrinkRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[17]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1928,7 +2505,7 @@ func (x *DrinkRequest) String() string {
 func (*DrinkRequest) ProtoMessage() {}
 
 func (x *DrinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[17]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1941,7 +2518,7 @@ func (x *DrinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrinkRequest.ProtoReflect.Descriptor instead.
 func (*DrinkRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{17}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DrinkRequest) GetSessionId() string {
@@ -2006,7 +2583,7 @@ type DrinkReceipt struct {
 
 func (x *DrinkReceipt) Reset() {
 	*x = DrinkReceipt{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[18]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2018,7 +2595,7 @@ func (x *DrinkReceipt) String() string {
 func (*DrinkReceipt) ProtoMessage() {}
 
 func (x *DrinkReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[18]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2031,7 +2608,7 @@ func (x *DrinkReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrinkReceipt.ProtoReflect.Descriptor instead.
 func (*DrinkReceipt) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{18}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DrinkReceipt) GetSessionId() string {
@@ -2132,7 +2709,7 @@ type EatBuffFoodRequest struct {
 
 func (x *EatBuffFoodRequest) Reset() {
 	*x = EatBuffFoodRequest{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[19]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2144,7 +2721,7 @@ func (x *EatBuffFoodRequest) String() string {
 func (*EatBuffFoodRequest) ProtoMessage() {}
 
 func (x *EatBuffFoodRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[19]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2157,7 +2734,7 @@ func (x *EatBuffFoodRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EatBuffFoodRequest.ProtoReflect.Descriptor instead.
 func (*EatBuffFoodRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{19}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *EatBuffFoodRequest) GetSessionId() string {
@@ -2220,7 +2797,7 @@ type EatBuffFoodReceipt struct {
 
 func (x *EatBuffFoodReceipt) Reset() {
 	*x = EatBuffFoodReceipt{}
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[20]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2232,7 +2809,7 @@ func (x *EatBuffFoodReceipt) String() string {
 func (*EatBuffFoodReceipt) ProtoMessage() {}
 
 func (x *EatBuffFoodReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[20]
+	mi := &file_modules_buddy_inventory_inventory_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2245,7 +2822,7 @@ func (x *EatBuffFoodReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EatBuffFoodReceipt.ProtoReflect.Descriptor instead.
 func (*EatBuffFoodReceipt) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{20}
+	return file_modules_buddy_inventory_inventory_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *EatBuffFoodReceipt) GetSessionId() string {
@@ -2329,7 +2906,7 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\titem_guid\x18\x03 \x01(\x04R\bitemGuid\x12\x14\n" +
 	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x1f\n" +
 	"\vstack_count\x18\x05 \x01(\rR\n" +
-	"stackCount\"\xb2\x05\n" +
+	"stackCount\"\xfc\x05\n" +
 	"\x0fItemEligibility\x127\n" +
 	"\x04item\x18\x01 \x01(\v2#.warcraftbuddy.inventory.v1.ItemRefR\x04item\x12%\n" +
 	"\x0emetadata_known\x18\x02 \x01(\bR\rmetadataKnown\x125\n" +
@@ -2348,7 +2925,9 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\x13gear_blocked_reason\x18\r \x01(\tR\x11gearBlockedReason\x12N\n" +
 	"\n" +
 	"consumable\x18\x0e \x01(\v2..warcraftbuddy.inventory.v1.ConsumableMetadataR\n" +
-	"consumable\"\x91\n" +
+	"consumable\x12H\n" +
+	"\n" +
+	"gear_facts\x18\x0f \x01(\v2).warcraftbuddy.inventory.v1.GearItemFactsR\tgearFacts\"\x91\n" +
 	"\n" +
 	"\tOperation\x12\x1d\n" +
 	"\n" +
@@ -2381,8 +2960,7 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\x0fobserved_copper\x18\x19 \x01(\rR\x0eobservedCopper\x12>\n" +
 	"\x1bbaseline_equipment_revision\x18\x1a \x01(\x04R\x19baselineEquipmentRevision\x12>\n" +
 	"\x1bobserved_equipment_revision\x18\x1b \x01(\x04R\x19observedEquipmentRevision\x12.\n" +
-	"\x13displaced_item_guid\x18\x1c \x01(\x04R\x11displacedItemGuid\"\xc5\n" +
-	"\n" +
+	"\x13displaced_item_guid\x18\x1c \x01(\x04R\x11displacedItemGuid\"\x91\v\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -2414,8 +2992,69 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"\x13buff_food_available\x18\x18 \x01(\bR\x11buffFoodAvailable\x12-\n" +
 	"\x10mana_drink_count\x18\x19 \x01(\rH\x00R\x0emanaDrinkCount\x88\x01\x01\x12Y\n" +
 	"\x13last_consumable_use\x18( \x01(\v2).warcraftbuddy.inventory.v1.ConsumableUseR\x11lastConsumableUse\x12\\\n" +
-	"\x12consumable_context\x18) \x01(\v2-.warcraftbuddy.inventory.v1.ConsumableContextR\x11consumableContextB\x13\n" +
-	"\x11_mana_drink_count\"\xb3\x02\n" +
+	"\x12consumable_context\x18) \x01(\v2-.warcraftbuddy.inventory.v1.ConsumableContextR\x11consumableContext\x12J\n" +
+	"\fgear_context\x18* \x01(\v2'.warcraftbuddy.inventory.v1.GearContextR\vgearContextB\x13\n" +
+	"\x11_mana_drink_count\"4\n" +
+	"\bGearStat\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\rR\x04type\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x11R\x05value\"X\n" +
+	"\n" +
+	"GearDamage\x12\x18\n" +
+	"\aminimum\x18\x01 \x01(\x02R\aminimum\x12\x18\n" +
+	"\amaximum\x18\x02 \x01(\x02R\amaximum\x12\x16\n" +
+	"\x06school\x18\x03 \x01(\rR\x06school\"\xa6\x05\n" +
+	"\fGearTemplate\x12\x17\n" +
+	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x1c\n" +
+	"\tavailable\x18\x02 \x01(\bR\tavailable\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"item_class\x18\x04 \x01(\rR\titemClass\x12\x1a\n" +
+	"\bsubclass\x18\x05 \x01(\rR\bsubclass\x12%\n" +
+	"\x0einventory_type\x18\x06 \x01(\rR\rinventoryType\x12\x18\n" +
+	"\aquality\x18\a \x01(\rR\aquality\x12\x14\n" +
+	"\x05armor\x18\b \x01(\rR\x05armor\x12:\n" +
+	"\x05stats\x18\t \x03(\v2$.warcraftbuddy.inventory.v1.GearStatR\x05stats\x12@\n" +
+	"\adamages\x18\n" +
+	" \x03(\v2&.warcraftbuddy.inventory.v1.GearDamageR\adamages\x12\x19\n" +
+	"\bdelay_ms\x18\v \x01(\rR\adelayMs\x12 \n" +
+	"\vresistances\x18\f \x03(\rR\vresistances\x124\n" +
+	"\x16armor_comparison_known\x18\r \x01(\bR\x14armorComparisonKnown\x12\x14\n" +
+	"\x05flags\x18\x0e \x01(\rR\x05flags\x12\x16\n" +
+	"\x06flags2\x18\x0f \x01(\rR\x06flags2\x12\x1b\n" +
+	"\thas_spell\x18\x10 \x01(\bR\bhasSpell\x121\n" +
+	"\x14scaling_distribution\x18\x11 \x01(\rR\x13scalingDistribution\x12#\n" +
+	"\rscaling_value\x18\x12 \x01(\rR\fscalingValue\x12%\n" +
+	"\x0erequired_level\x18\x13 \x01(\rR\rrequiredLevel\"\xba\x01\n" +
+	"\x0fGearDestination\x12%\n" +
+	"\x0eequipment_slot\x18\x01 \x01(\rR\requipmentSlot\x12=\n" +
+	"\x1bexpected_equipped_item_guid\x18\x02 \x01(\x04R\x18expectedEquippedItemGuid\x12\x1a\n" +
+	"\beligible\x18\x03 \x01(\bR\beligible\x12%\n" +
+	"\x0eblocked_reason\x18\x04 \x01(\tR\rblockedReason\"\xac\x02\n" +
+	"\rGearItemFacts\x12-\n" +
+	"\x12enhancements_known\x18\x01 \x01(\bR\x11enhancementsKnown\x12)\n" +
+	"\x10has_enhancements\x18\x02 \x01(\bR\x0fhasEnhancements\x12)\n" +
+	"\x10durability_known\x18\x03 \x01(\bR\x0fdurabilityKnown\x12\x1e\n" +
+	"\n" +
+	"durability\x18\x04 \x01(\rR\n" +
+	"durability\x12%\n" +
+	"\x0emax_durability\x18\x05 \x01(\rR\rmaxDurability\x12O\n" +
+	"\fdestinations\x18\x06 \x03(\v2+.warcraftbuddy.inventory.v1.GearDestinationR\fdestinations\"\xc2\x03\n" +
+	"\vGearContext\x12\x1f\n" +
+	"\vclass_known\x18\x01 \x01(\bR\n" +
+	"classKnown\x12\x19\n" +
+	"\bclass_id\x18\x02 \x01(\rR\aclassId\x12\x1d\n" +
+	"\n" +
+	"race_known\x18\x03 \x01(\bR\traceKnown\x12\x17\n" +
+	"\arace_id\x18\x04 \x01(\rR\x06raceId\x12\x1f\n" +
+	"\vlevel_known\x18\x05 \x01(\bR\n" +
+	"levelKnown\x12\x14\n" +
+	"\x05level\x18\x06 \x01(\rR\x05level\x12T\n" +
+	"\ttemplates\x18\a \x03(\v26.warcraftbuddy.inventory.v1.GearContext.TemplatesEntryR\ttemplates\x12'\n" +
+	"\x0fpolicy_revision\x18\b \x01(\tR\x0epolicyRevision\x12!\n" +
+	"\fpolicy_error\x18\t \x01(\tR\vpolicyError\x1af\n" +
+	"\x0eTemplatesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12>\n" +
+	"\x05value\x18\x02 \x01(\v2(.warcraftbuddy.inventory.v1.GearTemplateR\x05value:\x028\x01\"\xb3\x02\n" +
 	"\x10GroupRollReceipt\x12\x1b\n" +
 	"\troll_guid\x18\x01 \x01(\x04R\brollGuid\x12\x1d\n" +
 	"\n" +
@@ -2603,87 +3242,101 @@ func file_modules_buddy_inventory_inventory_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_inventory_inventory_proto_rawDescData
 }
 
-var file_modules_buddy_inventory_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_modules_buddy_inventory_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_modules_buddy_inventory_inventory_proto_goTypes = []any{
 	(*ItemRef)(nil),                // 0: warcraftbuddy.inventory.v1.ItemRef
 	(*ItemEligibility)(nil),        // 1: warcraftbuddy.inventory.v1.ItemEligibility
 	(*Operation)(nil),              // 2: warcraftbuddy.inventory.v1.Operation
 	(*State)(nil),                  // 3: warcraftbuddy.inventory.v1.State
-	(*GroupRollReceipt)(nil),       // 4: warcraftbuddy.inventory.v1.GroupRollReceipt
-	(*ConsumableAuraEffect)(nil),   // 5: warcraftbuddy.inventory.v1.ConsumableAuraEffect
-	(*ConsumableSpell)(nil),        // 6: warcraftbuddy.inventory.v1.ConsumableSpell
-	(*ConsumableMetadata)(nil),     // 7: warcraftbuddy.inventory.v1.ConsumableMetadata
-	(*ConsumableContext)(nil),      // 8: warcraftbuddy.inventory.v1.ConsumableContext
-	(*ConsumableUse)(nil),          // 9: warcraftbuddy.inventory.v1.ConsumableUse
-	(*DiscoverRequest)(nil),        // 10: warcraftbuddy.inventory.v1.DiscoverRequest
-	(*Vendor)(nil),                 // 11: warcraftbuddy.inventory.v1.Vendor
-	(*Discovery)(nil),              // 12: warcraftbuddy.inventory.v1.Discovery
-	(*MoveRequest)(nil),            // 13: warcraftbuddy.inventory.v1.MoveRequest
-	(*EquipRequest)(nil),           // 14: warcraftbuddy.inventory.v1.EquipRequest
-	(*SellRequest)(nil),            // 15: warcraftbuddy.inventory.v1.SellRequest
-	(*EquipGearRequest)(nil),       // 16: warcraftbuddy.inventory.v1.EquipGearRequest
-	(*DrinkRequest)(nil),           // 17: warcraftbuddy.inventory.v1.DrinkRequest
-	(*DrinkReceipt)(nil),           // 18: warcraftbuddy.inventory.v1.DrinkReceipt
-	(*EatBuffFoodRequest)(nil),     // 19: warcraftbuddy.inventory.v1.EatBuffFoodRequest
-	(*EatBuffFoodReceipt)(nil),     // 20: warcraftbuddy.inventory.v1.EatBuffFoodReceipt
-	(*api.InventoryBag)(nil),       // 21: warcraftbuddy.world.v1.InventoryBag
-	(*api.EquipmentSlotState)(nil), // 22: warcraftbuddy.world.v1.EquipmentSlotState
-	(*api1.PlayerAuras)(nil),       // 23: warcraftbuddy.actions.v1.PlayerAuras
-	(*api.CreatureState)(nil),      // 24: warcraftbuddy.world.v1.CreatureState
-	(*emptypb.Empty)(nil),          // 25: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),         // 26: agentwow.module.v1.WorldPacket
+	(*GearStat)(nil),               // 4: warcraftbuddy.inventory.v1.GearStat
+	(*GearDamage)(nil),             // 5: warcraftbuddy.inventory.v1.GearDamage
+	(*GearTemplate)(nil),           // 6: warcraftbuddy.inventory.v1.GearTemplate
+	(*GearDestination)(nil),        // 7: warcraftbuddy.inventory.v1.GearDestination
+	(*GearItemFacts)(nil),          // 8: warcraftbuddy.inventory.v1.GearItemFacts
+	(*GearContext)(nil),            // 9: warcraftbuddy.inventory.v1.GearContext
+	(*GroupRollReceipt)(nil),       // 10: warcraftbuddy.inventory.v1.GroupRollReceipt
+	(*ConsumableAuraEffect)(nil),   // 11: warcraftbuddy.inventory.v1.ConsumableAuraEffect
+	(*ConsumableSpell)(nil),        // 12: warcraftbuddy.inventory.v1.ConsumableSpell
+	(*ConsumableMetadata)(nil),     // 13: warcraftbuddy.inventory.v1.ConsumableMetadata
+	(*ConsumableContext)(nil),      // 14: warcraftbuddy.inventory.v1.ConsumableContext
+	(*ConsumableUse)(nil),          // 15: warcraftbuddy.inventory.v1.ConsumableUse
+	(*DiscoverRequest)(nil),        // 16: warcraftbuddy.inventory.v1.DiscoverRequest
+	(*Vendor)(nil),                 // 17: warcraftbuddy.inventory.v1.Vendor
+	(*Discovery)(nil),              // 18: warcraftbuddy.inventory.v1.Discovery
+	(*MoveRequest)(nil),            // 19: warcraftbuddy.inventory.v1.MoveRequest
+	(*EquipRequest)(nil),           // 20: warcraftbuddy.inventory.v1.EquipRequest
+	(*SellRequest)(nil),            // 21: warcraftbuddy.inventory.v1.SellRequest
+	(*EquipGearRequest)(nil),       // 22: warcraftbuddy.inventory.v1.EquipGearRequest
+	(*DrinkRequest)(nil),           // 23: warcraftbuddy.inventory.v1.DrinkRequest
+	(*DrinkReceipt)(nil),           // 24: warcraftbuddy.inventory.v1.DrinkReceipt
+	(*EatBuffFoodRequest)(nil),     // 25: warcraftbuddy.inventory.v1.EatBuffFoodRequest
+	(*EatBuffFoodReceipt)(nil),     // 26: warcraftbuddy.inventory.v1.EatBuffFoodReceipt
+	nil,                            // 27: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
+	(*api.InventoryBag)(nil),       // 28: warcraftbuddy.world.v1.InventoryBag
+	(*api.EquipmentSlotState)(nil), // 29: warcraftbuddy.world.v1.EquipmentSlotState
+	(*api1.PlayerAuras)(nil),       // 30: warcraftbuddy.actions.v1.PlayerAuras
+	(*api.CreatureState)(nil),      // 31: warcraftbuddy.world.v1.CreatureState
+	(*emptypb.Empty)(nil),          // 32: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),         // 33: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_inventory_inventory_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.inventory.v1.ItemEligibility.item:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	7,  // 1: warcraftbuddy.inventory.v1.ItemEligibility.consumable:type_name -> warcraftbuddy.inventory.v1.ConsumableMetadata
-	0,  // 2: warcraftbuddy.inventory.v1.Operation.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	21, // 3: warcraftbuddy.inventory.v1.State.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
-	2,  // 4: warcraftbuddy.inventory.v1.State.operation:type_name -> warcraftbuddy.inventory.v1.Operation
-	1,  // 5: warcraftbuddy.inventory.v1.State.items:type_name -> warcraftbuddy.inventory.v1.ItemEligibility
-	22, // 6: warcraftbuddy.inventory.v1.State.equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
-	4,  // 7: warcraftbuddy.inventory.v1.State.last_group_roll:type_name -> warcraftbuddy.inventory.v1.GroupRollReceipt
-	9,  // 8: warcraftbuddy.inventory.v1.State.last_consumable_use:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
-	8,  // 9: warcraftbuddy.inventory.v1.State.consumable_context:type_name -> warcraftbuddy.inventory.v1.ConsumableContext
-	5,  // 10: warcraftbuddy.inventory.v1.ConsumableSpell.food_effects:type_name -> warcraftbuddy.inventory.v1.ConsumableAuraEffect
-	6,  // 11: warcraftbuddy.inventory.v1.ConsumableMetadata.spells:type_name -> warcraftbuddy.inventory.v1.ConsumableSpell
-	23, // 12: warcraftbuddy.inventory.v1.ConsumableContext.self_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
-	0,  // 13: warcraftbuddy.inventory.v1.ConsumableUse.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	24, // 14: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
-	3,  // 15: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
-	11, // 16: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
-	0,  // 17: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 18: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 19: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 20: warcraftbuddy.inventory.v1.EquipGearRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	0,  // 21: warcraftbuddy.inventory.v1.DrinkRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	9,  // 22: warcraftbuddy.inventory.v1.DrinkReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
-	0,  // 23: warcraftbuddy.inventory.v1.EatBuffFoodRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
-	9,  // 24: warcraftbuddy.inventory.v1.EatBuffFoodReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
-	25, // 25: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
-	10, // 26: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
-	13, // 27: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
-	14, // 28: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
-	16, // 29: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
-	15, // 30: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
-	17, // 31: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
-	19, // 32: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
-	26, // 33: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	25, // 34: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
-	3,  // 35: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
-	12, // 36: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
-	3,  // 37: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 38: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 39: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 40: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
-	18, // 41: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
-	20, // 42: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
-	25, // 43: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
-	25, // 44: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
-	35, // [35:45] is the sub-list for method output_type
-	25, // [25:35] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	13, // 1: warcraftbuddy.inventory.v1.ItemEligibility.consumable:type_name -> warcraftbuddy.inventory.v1.ConsumableMetadata
+	8,  // 2: warcraftbuddy.inventory.v1.ItemEligibility.gear_facts:type_name -> warcraftbuddy.inventory.v1.GearItemFacts
+	0,  // 3: warcraftbuddy.inventory.v1.Operation.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	28, // 4: warcraftbuddy.inventory.v1.State.inventory_bags:type_name -> warcraftbuddy.world.v1.InventoryBag
+	2,  // 5: warcraftbuddy.inventory.v1.State.operation:type_name -> warcraftbuddy.inventory.v1.Operation
+	1,  // 6: warcraftbuddy.inventory.v1.State.items:type_name -> warcraftbuddy.inventory.v1.ItemEligibility
+	29, // 7: warcraftbuddy.inventory.v1.State.equipment:type_name -> warcraftbuddy.world.v1.EquipmentSlotState
+	10, // 8: warcraftbuddy.inventory.v1.State.last_group_roll:type_name -> warcraftbuddy.inventory.v1.GroupRollReceipt
+	15, // 9: warcraftbuddy.inventory.v1.State.last_consumable_use:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
+	14, // 10: warcraftbuddy.inventory.v1.State.consumable_context:type_name -> warcraftbuddy.inventory.v1.ConsumableContext
+	9,  // 11: warcraftbuddy.inventory.v1.State.gear_context:type_name -> warcraftbuddy.inventory.v1.GearContext
+	4,  // 12: warcraftbuddy.inventory.v1.GearTemplate.stats:type_name -> warcraftbuddy.inventory.v1.GearStat
+	5,  // 13: warcraftbuddy.inventory.v1.GearTemplate.damages:type_name -> warcraftbuddy.inventory.v1.GearDamage
+	7,  // 14: warcraftbuddy.inventory.v1.GearItemFacts.destinations:type_name -> warcraftbuddy.inventory.v1.GearDestination
+	27, // 15: warcraftbuddy.inventory.v1.GearContext.templates:type_name -> warcraftbuddy.inventory.v1.GearContext.TemplatesEntry
+	11, // 16: warcraftbuddy.inventory.v1.ConsumableSpell.food_effects:type_name -> warcraftbuddy.inventory.v1.ConsumableAuraEffect
+	12, // 17: warcraftbuddy.inventory.v1.ConsumableMetadata.spells:type_name -> warcraftbuddy.inventory.v1.ConsumableSpell
+	30, // 18: warcraftbuddy.inventory.v1.ConsumableContext.self_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
+	0,  // 19: warcraftbuddy.inventory.v1.ConsumableUse.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	31, // 20: warcraftbuddy.inventory.v1.Vendor.creature:type_name -> warcraftbuddy.world.v1.CreatureState
+	3,  // 21: warcraftbuddy.inventory.v1.Discovery.state:type_name -> warcraftbuddy.inventory.v1.State
+	17, // 22: warcraftbuddy.inventory.v1.Discovery.nearby:type_name -> warcraftbuddy.inventory.v1.Vendor
+	0,  // 23: warcraftbuddy.inventory.v1.MoveRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 24: warcraftbuddy.inventory.v1.EquipRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 25: warcraftbuddy.inventory.v1.SellRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 26: warcraftbuddy.inventory.v1.EquipGearRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	0,  // 27: warcraftbuddy.inventory.v1.DrinkRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	15, // 28: warcraftbuddy.inventory.v1.DrinkReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
+	0,  // 29: warcraftbuddy.inventory.v1.EatBuffFoodRequest.source:type_name -> warcraftbuddy.inventory.v1.ItemRef
+	15, // 30: warcraftbuddy.inventory.v1.EatBuffFoodReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
+	6,  // 31: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry.value:type_name -> warcraftbuddy.inventory.v1.GearTemplate
+	32, // 32: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
+	16, // 33: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
+	19, // 34: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
+	20, // 35: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
+	22, // 36: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
+	21, // 37: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
+	23, // 38: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
+	25, // 39: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
+	33, // 40: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	32, // 41: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
+	3,  // 42: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
+	18, // 43: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
+	3,  // 44: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 45: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 46: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 47: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
+	24, // 48: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
+	26, // 49: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
+	32, // 50: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
+	32, // 51: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
+	42, // [42:52] is the sub-list for method output_type
+	32, // [32:42] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_inventory_inventory_proto_init() }
@@ -2698,7 +3351,7 @@ func file_modules_buddy_inventory_inventory_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_inventory_inventory_proto_rawDesc), len(file_modules_buddy_inventory_inventory_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

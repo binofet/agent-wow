@@ -120,7 +120,8 @@ func TestPolicyPortalCatchupReloadsInTheSameSession(t *testing.T) {
 			MovementOwner: &actionsv1.MovementOwnerState{},
 			Portal: &actionsv1.PortalFollowObservation{WitnessRevision: witness, SourceVisitId: 7, FollowRevision: 3,
 				OwnerGuid: 3, SourceMapId: 0, DestinationMapId: 389, TriggerId: 100,
-				Start: start, Ground: &actionsv1.PortalPoint{X: 100, Z: 3}, CatchingUp: true, OwnerAbsent: true}},
+				Start: start, Ground: &actionsv1.PortalPoint{X: 100, Z: 3}, CatchingUp: true, OwnerAbsent: true,
+				SightingAgeKnown: true, SightingAgeMs: 1000, DisappearanceAgeKnown: true, DisappearanceAgeMs: 1000}},
 	}
 	observe := func() string {
 		t.Helper()
