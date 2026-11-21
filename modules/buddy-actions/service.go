@@ -82,10 +82,6 @@ type Service struct {
 	posAt                                      time.Time
 	posRevision                                uint64
 	movementSequence                           uint64
-	partyDefenseTarget, partyDefenseVictim     uint64
-	selfDefenseTarget                          uint64
-	selfDefenseRevision                        uint64
-	selfDefenseMap                             uint32
 	engage                                     engageIntent
 	crowdControl                               crowdControlIntent
 	crowdControlSight                          func(context.Context, string, uint32, position, position) (bool, error)
@@ -535,6 +531,9 @@ func (s *Service) Follow(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	return s.stateLocked(), nil
 }
 
+// Assist retains only the historical intent bit used to arm explicitly named
+// starter missions. Ordinary defense/targeting always belongs to Lua; changing
+// this compatibility value never stops an attack or disables that policy.
 func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*actionsv1.State, error) {
 	if r == nil {
 		return nil, status.Error(codes.InvalidArgument, "toggle request is required")
@@ -547,40 +546,13 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
-	if s.hostEncounterKey != "" {
-		return s.inactiveNativeEncounterLocked(r.Enabled)
-	}
-	if r.Enabled && s.independent {
-		return nil, status.Error(codes.FailedPrecondition, "owner assistance is unavailable in independent mode")
-	}
-	if r.Enabled && s.state.MotionUnconfirmed {
-		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
-		return s.stateLocked(), nil
-	}
 	s.state.Assisting = r.Enabled
 	if r.Enabled {
 		s.assistUntil = s.now().Add(lease)
-		s.lastStep = s.now()
-		s.failedAssistTarget = 0
-		s.failedAssistCastTarget = 0
-		s.state.Reason = "assist_enabled_waiting_for_observed_hostile_target"
-	} else {
-		if s.fargodeep.active {
-			s.stopFargodeepLocked(ctx, "explicit_assist_stop")
-		}
-		s.state.Reason = "assist_disabled"
-		// An explicit user disable authorizes one fresh stop attempt after an
-		// ambiguous write; ordinary controller ticks never retry that write.
-		s.autoStopping = false
-		s.state.AutoAttackUnconfirmed = false
-		if !s.stopAutoAttackLocked(ctx) {
-			s.state.Reason = "auto_attack_stop_waiting_for_server"
-		}
-		if !s.explicitStopLocked(ctx) {
-			s.state.Reason = "motion_unconfirmed_explicit_stop_required"
-		}
-		s.lastStep = s.now()
+	} else if s.fargodeep.active {
+		s.stopFargodeepLocked(ctx, "explicit_starter_mission_stop")
 	}
+	s.state.Reason = "legacy_assist_intent_only_lua_owns_combat"
 	return s.stateLocked(), nil
 }
 
@@ -646,7 +618,7 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.Practicing = false
 	s.fargodeep.active = false
 	s.fargodeep.phase = "session_closing"
-	s.engage.active, s.engage.phase = false, "session_closing"
+	s.engage.phase = "session_closing"
 	s.explicitStopLocked(ctx)
 	s.state.Reason = "session_closing"
 	return &emptypb.Empty{}, nil
@@ -895,25 +867,8 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "fargodeep_movement_observations_changed"
 		return false
 	}
-	if moving && s.partyDefenseTarget != 0 {
-		var allowed bool
-		w, allowed = s.partyDefenseCurrentLocked(ctx)
-		if !allowed {
-			s.state.Reason = "party_defense_authority_changed_before_movement"
-			return false
-		}
-		target, known, _ := creaturePosition(partyDefenseCreature(w, s.partyDefenseTarget))
-		if !known || distance(s.pos, target) > 35 || math.Abs(float64(target.z-s.pos.z)) > 12 {
-			s.state.Reason = "party_defense_target_left_bounded_approach"
-			return false
-		}
-	}
 	if moving && s.thermaplugg.approaching && !s.thermapluggMovementAllowedLocked(ctx, w) {
 		s.state.Reason = "thermaplugg_button_approach_changed"
-		return false
-	}
-	if moving && s.engage.executing && !s.engageCurrentLocked(ctx) {
-		s.state.Reason = "engage_npc_authority_changed_before_movement"
 		return false
 	}
 	if moving && s.targetMovementExecuting && (!s.matchesCurrentEncounterVisitLocked(w) || !s.admitsPolicyEncounterLocked(ctx, w)) {
@@ -924,7 +879,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "follow_instance_source_changed"
 		return false
 	}
-	if moving && !s.targetMovementExecuting && s.partyDefenseTarget == 0 && !s.engage.executing && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
+	if moving && !s.targetMovementExecuting && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -1190,17 +1145,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	healer := s.hasLearnedHealingLocked()
-	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
-	support := healer || resurrector
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
-		s.stopLocked(ctx)
-		if nativeTargetPolicy {
-			s.stopAutoAttackLocked(ctx)
-		}
-		s.lastStep = s.now()
-		return
-	}
 	if s.state.MotionUnconfirmed {
 		// A new authoritative stationary pose can settle an ambiguous stop.
 		if world, err := s.snapshot(ctx); err == nil && safeSelfCombat(world, s.selfGUID) == "" {
@@ -1227,18 +1171,12 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.state.Assisting && !now.Before(s.assistUntil) {
 		s.state.Assisting = false
-		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
-		s.state.Reason = "assist_lease_expired"
+		s.state.Reason = "legacy_assist_intent_expired_lua_defense_unchanged"
 	}
 
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
-		return
-	}
 	snapshot, err := s.snapshot(ctx)
 	if err != nil {
 		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
 		s.lastStep = now
 		s.state.Reason = "observations_unavailable"
 		s.state.AssistReason = s.state.Reason
@@ -1257,22 +1195,13 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if nativeTargetPolicy && s.selfDefenseLocked(ctx, snapshot) {
-		s.endCrowdControlLocked(ctx, "self_defense")
-		s.lastStep = now
-		return
-	}
-	if s.thermapluggButtonsTickLocked(ctx, snapshot) || nativeTargetPolicy && s.partyDefenseLocked(ctx, snapshot) {
+	if s.thermapluggButtonsTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
 	// A prepared approach yields to standing support and actual defense. An
 	// already dispatched CC cast is settled above before any new action.
 	if s.crowdControlTickLocked(ctx) {
-		return
-	}
-	if nativeTargetPolicy && s.engageTickLocked(ctx) {
-		s.lastStep = now
 		return
 	}
 	// A fresh exact Lua movement request owns its route. Standing support above
@@ -1308,7 +1237,6 @@ func (s *Service) Tick(ctx context.Context) {
 		// normal jump, AFK or visibility loss must not silently revoke it.
 		// No local motion is attempted until fresh safe context is available.
 		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
 		if reason == "player_identity_mismatch" {
 			s.state.Following = false
 			s.state.Assisting = false
@@ -1320,18 +1248,8 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if !s.refreshPositionLocked(snapshot) {
 		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
 		s.lastStep = now
 		return
-	}
-	if nativeTargetPolicy && s.autoTarget != 0 {
-		t := snapshot.OwnerTarget
-		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || !s.defendsVictimLocked(ctx, t.AttackVictimGuid) {
-			s.stopLocked(ctx)
-			s.stopAutoAttackLocked(ctx)
-			s.lastStep = now
-			return
-		}
 	}
 	if s.state.MotionUnconfirmed {
 		s.state.Reason = "motion_unconfirmed_waiting_for_fresh_pose"
@@ -1350,10 +1268,6 @@ func (s *Service) Tick(ctx context.Context) {
 			s.state.Reason = "formation_position_invalid"
 			return
 		}
-	}
-	if nativeTargetPolicy && s.state.Assisting && s.assistLocked(ctx, snapshot) {
-		s.lastStep = now
-		return
 	}
 	if s.state.AutoAttackUnconfirmed {
 		// A failed assist gate may just have requested ATTACKSTOP. Do not

@@ -324,7 +324,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			s.practicePullStarted, s.practiceRoute = true, nil
 			s.state.PracticePulls++
 		}
-		s.castOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second)
+		s.castStarterOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second)
 	}
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
 	if goal.questID == 170 {

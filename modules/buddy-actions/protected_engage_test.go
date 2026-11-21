@@ -4,32 +4,22 @@ import (
 	"context"
 	"testing"
 
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
-func TestProtectedEngageNeedsFreshSelectionAfterAuraRemoval(t *testing.T) {
-	s, f, _, _ := polymorphFixture(t)
-	ctx := context.Background()
-	req := &actionsv1.EngageNPCRequest{Enabled: true, TargetGuid: sheepTarget}
-	if _, err := s.EngageNPC(ctx, req); err != nil {
-		t.Fatal(err)
+func TestExactOffenseAfterProtectionRemovalNeedsAnExplicitLuaSelectedAction(t *testing.T) {
+	s, f, r, _ := exactOffenseFixture(t)
+	emitPolymorph(s, opcode.SMSGAuraUpdate, sheepAura(r.TargetGuid, 3, 118, 20000))
+	if _, err := s.CastOffense(context.Background(), r); err == nil {
+		t.Fatal("exact cast bypassed observed protection")
 	}
-	emitPolymorph(s, opcode.SMSGAuraUpdate, sheepAura(sheepTarget, 3, 118, 20000))
-	if _, err := s.EngageNPC(ctx, req); err == nil {
-		t.Fatal("explicit engage bypassed the same protection feed")
+	emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(r.TargetGuid, 3, 2, 0, 0))
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 {
+		t.Fatal("removing protection restarted a native controller")
 	}
-	s.Tick(ctx)
-	if s.engage.active || s.engage.phase != "protected_target_requires_new_selection" {
-		t.Fatal("existing engage intent was not retired", s.engage)
-	}
-	emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(sheepTarget, 3, 2, 0, 0))
-	s.Tick(ctx)
-	if s.engage.active || countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackswing) != 0 {
-		t.Fatal("breaking the aura replayed the old engage intent")
-	}
-	if _, err := s.EngageNPC(ctx, req); err != nil {
-		t.Fatal("fresh explicit selection should be possible after removal", err)
+	if _, err := s.CastOffense(context.Background(), r); err != nil {
+		t.Fatal("fresh explicit action failed after actual aura removal", err)
 	}
 }
 

@@ -183,50 +183,45 @@ func TestHighestKnownHealUsesActualCostAndExactPendingRank(t *testing.T) {
 		t.Fatal(s.stateLocked())
 	}
 }
-func TestOffensiveRankCostAndSelectedHealReserve(t *testing.T) {
+func TestExactOffensiveRankUsesSelectedCostWithoutHiddenHealReserve(t *testing.T) {
 	for _, class := range []uint32{8, 5} {
 		s, f, _ := assistRig(t)
 		f.world.Self.ClassId = class
-		f.world.Self.BaseManaKnown = true
-		f.world.Self.BaseMana = 100
-		need, spell := uint32(11), uint32(143)
-		if class == 8 {
-			learnSpells(s, 133, 143)
-		} else {
-			learnSpells(s, 585, 591, 2050, 2052)
-			need, spell = 33, 591
+		f.world.Self.BaseManaKnown, f.world.Self.BaseMana = true, 100
+		spell := uint32(143)
+		if class == 5 {
+			spell = 591
 		}
-		f.world.Self.Power = 1
-		s.Tick(context.Background())
-		if lastCast(f) != 0 {
-			t.Fatal("used lower-rank resource budget", s.stateLocked())
+		learnSpells(s, spell)
+		need := uint32(spellCost(s.learnedContractsLocked()[spell], f.world.Self))
+		f.world.Self.Power = need - 1
+		if _, err := castSelectedForTest(s, spell, enemyGUID); err == nil || len(f.packets) != 0 {
+			t.Fatal("selected cost bypassed", err)
 		}
 		f.world.Self.Power = need
-		s.Tick(context.Background())
-		if lastCast(f) != spell || s.stateLocked().CombatSpellId != spell {
-			t.Fatal(s.stateLocked(), f.packets)
+		if _, err := castSelectedForTest(s, spell, enemyGUID); err != nil || lastCast(f) != spell {
+			t.Fatal("native reserve or rank choice overrode Lua", err, s.stateLocked())
 		}
 		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: rankEvent(spell, false)})
 		if s.state.ServerAssistGo != 1 || s.state.ServerCastGo != 0 {
-			t.Fatal("rank classified as heal", s.stateLocked())
+			t.Fatal("damage rank receipt classified as heal", s.stateLocked())
 		}
 	}
 }
-func TestRogueSelectsKnownRankWithoutChangingVerifiedEnergyCost(t *testing.T) {
-	s, f, _ := rogueRig(t)
-	learnSpells(s, autoAttack, 1752, 1757)
-	verifyWeapon(t, s, f)
+func TestSelectedRogueRankRetainsVerifiedEnergyCost(t *testing.T) {
+	s, f, r := instantStrikeFixture(t, 1757)
+	learnSpells(s, 1752, 1757)
 	f.world.Self.Power = 44
-	s.Tick(context.Background())
-	if lastCast(f) != 0 {
-		t.Fatal("rank bypassed energy gate")
+	if _, err := s.CastOffense(context.Background(), r); err == nil {
+		t.Fatal("rank bypassed energy")
 	}
 	f.world.Self.Power = 45
-	s.Tick(context.Background())
-	if lastCast(f) != 1757 || s.stateLocked().SinisterStrikeEnergyCost != 45 {
-		t.Fatal(s.stateLocked())
+	out, err := s.CastOffense(context.Background(), r)
+	if err != nil || out.GetSinisterStrikeEnergyCost() != 45 || lastCast(f) != 1757 {
+		t.Fatal(out, err, f.packets)
 	}
 }
+
 func TestHigherRankDamageRetainsActualFamilyReceipts(t *testing.T) {
 	s, _, _ := rig(t)
 	p, _ := hex.DecodeString(smiteDamageGolden)

@@ -22,7 +22,7 @@ func isChanneledSpell(spell spellcatalog.Spell) bool {
 func (s *Service) selfCastBusyLocked() bool {
 	return s.state.CastPending || s.state.Moving || s.state.Traveling || s.state.MotionUnconfirmed ||
 		s.state.AutoAttackUnconfirmed || s.state.InteractionOwner != "" || s.state.Practicing ||
-		s.engage.active || s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
+		s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
 		s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist)
 }
 

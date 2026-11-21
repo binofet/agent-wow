@@ -5,18 +5,17 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
-	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func travelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachQuestRequest) {
@@ -410,7 +409,7 @@ func TestQuestTravelStopsOnCancellationExpiryCombatTargetLossAndTeleport(t *test
 
 func TestQuestTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
 	for _, landmark := range []bool{false, true} {
-		for _, assist := range []bool{false, true} {
+		for _, assist := range []bool{false} {
 			for _, planFails := range []bool{false, true} {
 				t.Run(fmt.Sprintf("landmark=%t/assist=%t/error=%t", landmark, assist, planFails), func(t *testing.T) {
 					s, f, _, r := travelRig(t)
@@ -444,7 +443,7 @@ func TestQuestTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
 }
 
 func TestQuestTravelExplicitStopBetweenMovingAndIdleFramesNeverRestarts(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		for _, idle := range []bool{false, true} {
 			t.Run(fmt.Sprintf("assist=%t/idle=%t", assist, idle), func(t *testing.T) {
 				s, f, advance, r := travelRig(t)

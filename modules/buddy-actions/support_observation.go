@@ -118,7 +118,7 @@ func (s *Service) encounterSupportLocked(ctx context.Context, w *worldv1.Snapsho
 func (s *Service) resurrectionCasterAvailableLocked(w *worldv1.SnapshotResponse) bool {
 	self := w.GetSelf()
 	return !s.closed && safeSelfCombat(w, s.selfGUID) == "" && self.PositionKnown && finite(playerPosition(self)) &&
-		self.UnitFlags&(0x80000|0x2000) == 0 && self.ChannelSpellId == 0 && s.selfAttackerLocked(w) == nil &&
+		self.UnitFlags&(0x80000|0x2000) == 0 && self.ChannelSpellId == 0 && !s.hasObservedSelfAttackerLocked(w) &&
 		!s.clientControlLost && !s.clientControlRestoring && !s.state.CastPending && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackUnconfirmed && s.state.InteractionOwner == "" && !s.recovery.state.Active
 }

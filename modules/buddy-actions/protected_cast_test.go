@@ -12,10 +12,12 @@ import (
 func TestProtectedTargetInterruptsOwnPendingDamageCastOnce(t *testing.T) {
 	for _, scenario := range []string{"written", "transport unconfirmed"} {
 		t.Run(scenario, func(t *testing.T) {
-			s, f, _ := assistRig(t)
+			s, f, request, _ := exactOffenseFixture(t)
 			ctx := context.Background()
 			s.castCount = 9 // The cancel counter is independent of the normal cast counter.
-			s.Tick(ctx)
+			if _, err := s.CastOffense(ctx, request); err != nil {
+				t.Fatal(err)
+			}
 			if got := state(t, s); !got.CastPending || got.LastCastTargetGuid != enemyGUID || lastCast(f) != smite {
 				t.Fatal("expected pending Smite", got)
 			}
@@ -59,13 +61,15 @@ func TestProtectedTargetInterruptsOwnPendingDamageCastOnce(t *testing.T) {
 }
 
 func TestProtectedTargetDoesNotCancelDamageAfterServerSpellGo(t *testing.T) {
-	s, f, _ := assistRig(t)
+	s, f, request, _ := exactOffenseFixture(t)
 	ctx := context.Background()
-	s.Tick(ctx)
+	if _, err := s.CastOffense(ctx, request); err != nil {
+		t.Fatal(err)
+	}
 	emitPolymorph(s, opcode.SMSGSpellGo, smiteEvent(true, s.castCount, enemyGUID))
 	emitPolymorph(s, opcode.SMSGAuraUpdate, sheepAura(enemyGUID, 9, 118, 20000))
 	s.Tick(ctx)
-	if got := state(t, s); got.CastPending || got.ServerAssistGo != 1 || countPackets(f, opcode.CMSGCancelCast) != 0 {
+	if got := state(t, s); !got.CastPending || got.ServerAssistGo != 1 || !got.LastSpellOperation.ServerCastGo || got.LastSpellOperation.EffectObserved || countPackets(f, opcode.CMSGCancelCast) != 0 {
 		t.Fatal("a dispatched spell cannot be recalled after server SPELL_GO", got, f.packets)
 	}
 }

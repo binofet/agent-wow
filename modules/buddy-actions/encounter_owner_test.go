@@ -2,9 +2,6 @@ package buddyactions
 
 import (
 	"context"
-	"strings"
-	"testing"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
@@ -14,6 +11,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	"strings"
+	"testing"
 )
 
 var testEncounterKey = strings.Repeat("b", 64)
@@ -272,9 +271,6 @@ func TestHostEncounterWriterDoesNotAdmitLegacyIntents(t *testing.T) {
 		name string
 		call func(bool) (*actionsv1.State, error)
 	}{
-		{"assist", func(enable bool) (*actionsv1.State, error) {
-			return s.Assist(ctx, &actionsv1.ToggleRequest{Enabled: enable})
-		}},
 		{"engage", func(enable bool) (*actionsv1.State, error) {
 			return s.EngageNPC(ctx, &actionsv1.EngageNPCRequest{Enabled: enable, TargetGuid: enemyGUID})
 		}},

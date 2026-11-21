@@ -447,6 +447,13 @@ local function decide_encounter(frame)
     local leader_alive = alive(leader)
     local directive = commands and commands.queue_intent(obs) or {}
     if directive.killOrder and #directive.killOrder > 0 then order = directive.killOrder end
+    if directive.pullGuid and targets[directive.pullGuid] then
+        targets[directive.pullGuid].pullRequested=true
+        if obs.targets[directive.pullGuid] then obs.targets[directive.pullGuid].pullRequested=true end
+        local explicit={directive.pullGuid}
+        for _,target in ipairs(order) do if target~=directive.pullGuid then explicit[#explicit+1]=target end end
+        order=explicit
+    end
     local queue = tactics.decide({
         kind="combat_queue", targets=queue_targets, explicitOrder=order,
         currentFocus=not fallback and state.focusGuid or nil,
@@ -572,7 +579,7 @@ local function decide_encounter(frame)
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
-           not held.engaged or active_melee ~= out.focusGuid then
+           not (held.engaged or held.pullRequested) or active_melee ~= out.focusGuid then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
             local strike = damage_spell(obs, obs.targets[active_melee], {instant_only=true})
