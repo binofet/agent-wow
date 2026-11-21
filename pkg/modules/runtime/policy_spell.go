@@ -291,7 +291,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	if op == nil || !op.admitted || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
 		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
-		return status.Error(codes.PermissionDenied, "invalid policy spell callback")
+		return modcb.PacketNotDispatchedError("invalid policy spell callback")
 	}
 	op.attempted = true
 	spells.mu.Unlock()

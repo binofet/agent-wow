@@ -223,6 +223,11 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
 	if err != nil {
+		if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot && modcb.PacketWasNotDispatched(err) {
+			s.corpseRequest.receipt.OpeningTransportAttempted = false
+			s.state.Reason = "opening_callback_rejected_before_transport"
+			return false
+		}
 		s.fault("transport_error_no_retry")
 		return false
 	}

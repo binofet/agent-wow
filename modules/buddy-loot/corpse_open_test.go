@@ -14,7 +14,10 @@ import (
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -107,6 +110,37 @@ func TestExactCorpseUnknownOpenCannotBeReplayedByNewRequestOrDisable(t *testing.
 	r.RequestId = "different-intent-same-uncertain-source"
 	if _, err = s.OpenCorpse(context.Background(), r); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 1 {
 		t.Fatal("a new intent/enable replayed uncertain OPEN", err, f.packets)
+	}
+}
+
+type refusedCorpseCallback struct {
+	*fakeSession
+	err error
+}
+
+func (f refusedCorpseCallback) SendPacket(context.Context, *modv1.SendPacketRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	return nil, f.err
+}
+func TestExactCorpseCallbackRefusalDoesNotInventTransportOrRetireSource(t *testing.T) {
+	for _, known := range []bool{true, false} {
+		s, f, r := exactCorpseRig(t)
+		err := status.Error(codes.PermissionDenied, "transport failed with a similar status")
+		if known {
+			err = modcb.PacketNotDispatchedError("core rejected packet before transport")
+		}
+		s.session = refusedCorpseCallback{fakeSession: f, err: err}
+		op, e := s.OpenCorpse(context.Background(), r)
+		if e != nil || op.OpeningTransportAttempted == known || s.retired[corpseGUID] == known || s.seen[corpseGUID] == known || !op.Terminal {
+			t.Fatal("callback refusal and unknown send were conflated", known, op, e, s.retired)
+		}
+		if known {
+			s.session = f
+			r.RequestId = "fresh-intent-after-known-non-dispatch"
+			op, e = s.OpenCorpse(context.Background(), r)
+			if e != nil || !op.OpeningTransportWritten || len(f.packets) != 1 {
+				t.Fatal("known no-write poisoned the valid source", op, e, f.packets)
+			}
+		}
 	}
 }
 

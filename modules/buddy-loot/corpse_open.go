@@ -96,6 +96,9 @@ func (s *Service) finishCorpseReceipt(phase string, terminal bool) {
 	}
 	r := s.corpseRequest.receipt
 	r.Phase, r.Reason, r.Terminal = phase, s.state.Reason, terminal
+	if !r.OpeningTransportAttempted {
+		r.Phase = "not_dispatched"
+	}
 	if r.WindowObserved && r.ReleaseObserved && !s.hasUnsettledLootMutation() {
 		r.Phase = "window_and_release_observed"
 	}
@@ -152,6 +155,11 @@ func (s *Service) OpenCorpse(ctx context.Context, r *lootv1.OpenCorpseRequest) (
 		s.corpseRequests = map[string]*corpseRequest{}
 	}
 	s.corpseRequests[r.RequestId] = s.corpseRequest
+	// This is a newly admitted exact window, not continuation of a previous
+	// definite inventory rejection. Actual capacity remains in the read facts
+	// and is rechecked before any item-store mutation.
+	s.state.InventoryPaused = false
+	s.pausedSource, s.pausedGather, s.rejectedInventoryRevision = 0, false, 0
 	s.state.PendingCorpseGuid = r.CorpseGuid
 	s.transactionUntil = s.now().Add(12 * time.Second)
 	s.moneySent, s.moneyCleared, s.itemRequested = false, false, false

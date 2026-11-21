@@ -34,13 +34,18 @@ type corpseNativeCallback struct {
 	manager *Manager
 	world   *worldv1.SnapshotResponse
 	actions *actionsv1.State
+	reject  bool
 }
 
 func (f *corpseNativeCallback) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	if md, ok := metadata.FromOutgoingContext(ctx); ok {
 		ctx = metadata.NewIncomingContext(ctx, md)
 	}
-	return &emptypb.Empty{}, f.manager.modulePacketWriter("corpse-body", "buddy-loot")(ctx, r.Opcode, r.Payload)
+	sid := "corpse-body"
+	if f.reject {
+		sid = "replaced-callback-session"
+	}
+	return &emptypb.Empty{}, f.manager.modulePacketWriter(sid, "buddy-loot")(ctx, r.Opcode, r.Payload)
 }
 func (f *corpseNativeCallback) InvokeModule(_ context.Context, r *modv1.InvokeModuleRequest, _ ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	var result proto.Message
@@ -139,7 +144,17 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 		}
 		return out, r
 	}
+	callback.reject = true
 	_, r := step(false)
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || len(writes) != 0 {
+		t.Fatal("known core callback rejection invented a transport attempt", r, writes)
+	}
+	view, e := native.ObserveCorpses(context.Background(), &emptypb.Empty{})
+	if e != nil || view.Operation.OpeningTransportAttempted || len(view.RetiredSources) != 0 {
+		t.Fatal("known no-write poisoned native source receipt", view, e)
+	}
+	callback.reject = false
+	_, r = step(false)
 	if r == nil || r.Outcome != behavior.ActionSettledUnverified || len(writes) != 1 || origins[0].Writer != "lua" || origins[0].Module != "buddy-loot" || origins[0].ActionID == "" {
 		t.Fatal("shared policy did not emit one attributed exact OPEN", r, writes, origins)
 	}
