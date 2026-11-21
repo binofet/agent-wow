@@ -117,46 +117,40 @@ local function could_use(item, player)
     item.subclass <= ARMOR[player.classId]
 end
 
-local function stats(item)
-  local rows, out = item.stats or {}, {}
-  if not array(rows, 10) then return nil end
-  for _, row in ipairs(rows) do
-    if type(row) ~= "table" then return nil end
-    local kind, value = row.type or 0, row.value or 0
-    if not uint(kind, UINT32) or not uint(value, 2147483647) or out[kind] ~= nil or
-        not (kind <= 1 or kind >= 3 and kind <= 7 or kind >= 12 and kind <= 39 or kind >= 43 and kind <= 48) then
-      return nil
-    end
-    out[kind] = value
-  end
-  return out
-end
-
 local function false_or_absent(value)
   return value == nil or value == false
 end
 
-local function dominated(item, equipped, current)
+local function dominated(source, item, equipped, current, player, gear)
   if type(equipped) ~= "table" or type(current) ~= "table" or item.armorComparisonKnown ~= true or
       current.armorComparisonKnown ~= true or not uint(equipped.entry, UINT32) or equipped.entry == 0 or
       equipped.metadataKnown ~= true or equipped.enhancementsKnown ~= true or not false_or_absent(equipped.hasEnhancements) or
       (equipped.stackCount or 1) ~= 1 or not false_or_absent(current.hasSpell) or
       (current.flags or 0) ~= 0 or (current.flags2 or 0) ~= 0 or current.itemClass ~= 4 or
       not uint(current.itemLevel or 0, UINT32) or not uint(current.armor or 0, UINT32) or
-      (current.itemLevel or 0) < (item.itemLevel or 0) or (current.armor or 0) < (item.armor or 0) or
+      (current.itemLevel or 0) < (item.itemLevel or 0) or
       equipped.durabilityKnown ~= true then return false end
   local maximum, durability = equipped.maxDurability or 0, equipped.durability or 0
   if not uint(maximum, UINT32) or not uint(durability, UINT32) or
       maximum > 0 and (durability == 0 or durability > maximum) then return false end
-  local old, new = stats(current), stats(item)
-  if not old or not new then return false, "party_stat_comparison_unknown" end
-  for kind, value in pairs(new) do
-    if (old[kind] or 0) < value then return false end
+  -- A worn candidate may truthfully lack its GUID in the owner's addon feed.
+  -- The real discarded source is the baseline, so the shared comparator never
+  -- mistakes this comparison for an empty equipment slot.
+  local proof = gear.preview({candidate = current, candidateFacts = equipped,
+    current = item, currentFacts = source, context = {classId = player.classId},
+    options = {minimum_score_gain = -1}})
+  if type(proof) ~= "table" or type(proof.upgrade) ~= "boolean" or type(proof.scoreGain) ~= "number" or
+      proof.scoreGain ~= proof.scoreGain or proof.scoreGain - proof.scoreGain ~= 0 or
+      type(proof.reason) ~= "string" or #proof.reason > 128 then
+    return false, "shared_gear_comparison_unavailable"
   end
-  return true
+  if proof.reason == "candidate_stats_unknown" or proof.reason == "comparison_facts_unknown" then
+    return false, "party_stat_comparison_unknown"
+  end
+  return proof.upgrade == true and proof.scoreGain >= 0 and proof.reason == ""
 end
 
-local function compare(input)
+local function compare(input, gear)
   local source, item = input.source, input.item
   if not ref(source) then return "owned_item_enhancement_context_required" end
   if not array(input.protected, 256) or not array(input.questItems, 4096) then
@@ -191,6 +185,9 @@ local function compare(input)
       not uint(item.armor or 0, UINT32) or not array(input.party, 5) or #input.party ~= 5 then
     return "party_upgrade_or_unknown_comparison_retained"
   end
+  if type(gear) ~= "table" or type(gear.preview) ~= "function" then
+    return "shared_gear_comparison_unavailable"
+  end
   local current = templates(input.current, 5)
   if not current then return "party_upgrade_or_unknown_comparison_retained" end
   for index, guid in ipairs(PARTY) do
@@ -221,7 +218,7 @@ local function compare(input)
         end
         local current_item
         if uint(equipped.entry, UINT32) and equipped.entry > 0 then current_item = current[tostring(equipped.entry)] end
-        local proven, reason = dominated(item, equipped, current_item)
+        local proven, reason = dominated(source, item, equipped, current_item, player, gear)
         if not proven then return reason or "party_upgrade_or_unknown_comparison_retained" end
       end
     end
@@ -243,10 +240,10 @@ local function select_source(input)
 end
 
 return {
-  decide = function(input)
+  decide = function(input, gear)
     if input.phase == "candidates" then return candidates(input) end
     if input.phase == "plan" then return plan(input) end
-    if input.phase == "compare" then return {reason = compare(input)} end
+    if input.phase == "compare" then return {reason = compare(input, gear)} end
     if input.phase == "select" then return select_source(input) end
     return {reason = "party_upgrade_or_unknown_comparison_retained"}
   end,

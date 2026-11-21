@@ -152,11 +152,12 @@ def skill_facts(world):
 
 
 class Scanner:
-    def __init__(self, client=RPC, bridge=None, policy=None):
+    def __init__(self, client=RPC, bridge=None, policy=None, gear_policy=None):
         self.client, self.offset, self.deadline = client, 0, None
         self.bridge = bridge or runtime.Bridge(
             os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT/'data/bin/luapolicy'), ROOT/'modules')
         self.policy = Path(policy) if policy is not None else ROOT/'behaviors/disenchant.lua'
+        self.gear_policy = Path(gear_policy) if gear_policy is not None else ROOT/'behaviors/gear.lua'
 
     def evaluate(self, code, phase, **facts):
         try:
@@ -245,6 +246,18 @@ class Scanner:
                 wanted_slots.add(slot)
         if not comparisons:
             return None, plan.get('reason') or 'no_ordinary_quality_gear_candidate', None
+        comparison_code, gear_revision = code, None
+        if wanted_slots:
+            try:
+                gear_code = runtime.read_file(self.gear_policy, runtime.MAX_SOURCE).decode('utf-8')
+            except (OSError, UnicodeError, runtime.Error) as exc:
+                raise Error('disenchant_shared_gear_unavailable') from exc
+            gear_revision = hashlib.sha256(gear_code.encode()).hexdigest()
+            comparison_code = ('local gear=(function()\n'+gear_code+'\nend)()\n'
+                'local disenchant=(function()\n'+code+'\nend)()\n'
+                'return {decide=function(input) return disenchant.decide(input,gear) end}\n')
+            if len(comparison_code.encode()) > runtime.MAX_SOURCE:
+                raise Error('disenchant_combined_source_size_bound')
         raw_feed = rpc.call('buddy-chat.owner_feed', {})
         owner_feed = c.validated_owner_feed(raw_feed)
         # Chat has its own module epoch, distinct from the core aw session.
@@ -352,6 +365,8 @@ class Scanner:
                 else:
                     proficiency = skill_facts(view['world'])
                 equipped = project(row, EQUIPMENT_FIELDS)
+                if guid != 3 and 'itemGuid' in row:
+                    equipped['itemGuid'] = str(number(row['itemGuid']))
                 if slot is not False:
                     equipped['slot'] = slot
                 party.append(dict(guid=str(guid), player=project(player, ('classId', 'raceId', 'level')),
@@ -359,7 +374,7 @@ class Scanner:
                 entry = number(row.get('entry', 0))
                 if entry in metadata:
                     current[entry] = project(metadata[entry], TEMPLATE_FIELDS)
-            result = self.evaluate(code, 'compare',
+            result = self.evaluate(comparison_code, 'compare',
                 source=dict(town.ref(actual), **project(actual, ('metadataKnown', 'enhancementsKnown', 'hasEnhancements'))),
                 item=project(metadata[number(actual['entry'])], TEMPLATE_FIELDS), party=party,
                 current=list(current.values()), questItems=sorted(quest_items),
@@ -375,6 +390,8 @@ class Scanner:
             raise Error('disenchant_policy_selection_uncompared')
         proof = dict(characters=shared, chatModuleSessionId=chat_session, ownerAddonSession=owner_feed['addonSession'],
             ownerQuestIds=sorted(q['questId'] for q in owner_feed['quests']), policySHA256=policy_revision)
+        if gear_revision is not None:
+            proof['gearSHA256'] = gear_revision
         chosen = copy.deepcopy(chosen)
         chosen['name'] = c.BuddyControls.label(metadata[number(chosen['entry'])].get('name'), f"item {chosen['entry']}", 120)
         return chosen, '', proof

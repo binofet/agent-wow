@@ -1,5 +1,6 @@
 """Automatic DE uses only simulated actual-client observations and receipts."""
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 import os
@@ -196,13 +197,13 @@ class DisenchantTests(unittest.TestCase):
         original, comparisons = scanner.bridge, []
         class CapturingBridge:
             def evaluate(self, code, value):
-                if value.get('phase') == 'compare': comparisons.append(copy.deepcopy(value))
+                if value.get('phase') == 'compare': comparisons.append((code, copy.deepcopy(value)))
                 return original.evaluate(code, value)
         scanner.bridge = CapturingBridge()
         self.assertIsNotNone(scanner.scan(self.fixture.inventories[4])[0])
-        comparison = comparisons[0]
+        comparison_code, comparison = comparisons[0]
         comparison['current'].append(copy.deepcopy(comparison['current'][0]))
-        result = original.evaluate(code, comparison)
+        result = original.evaluate(comparison_code, comparison)
         self.assertEqual(result['reason'], 'party_upgrade_or_unknown_comparison_retained')
         self.assertFalse(self.attempts())
     def test_owner_unknown_equipment_never_assumed_spare(self):
@@ -423,9 +424,9 @@ class DisenchantTests(unittest.TestCase):
             'syntax': 'return { decide = function(',
             'timeout': 'return {decide=function(frame) while true do end end}',
             'bad_result': 'return {decide=function(frame) return {sources="unsafe",offset=8,reason=""} end}',
-            'bad_reason': wrapper+'return {decide=function(frame) '
-                'if frame.phase=="compare" then return {reason=false} end return base.decide(frame) end}',
-            'foreign_source': wrapper+'return {decide=function(frame) local result=base.decide(frame); '
+            'bad_reason': wrapper+'return {decide=function(frame,gear) '
+                'if frame.phase=="compare" then return {reason=false} end return base.decide(frame,gear) end}',
+            'foreign_source': wrapper+'return {decide=function(frame,gear) local result=base.decide(frame,gear); '
                 'if frame.phase=="select" and result.source then result.source.itemGuid="'+str(SOURCE+1)+'" end '
                 'return result end}',
         }
@@ -460,9 +461,9 @@ class DisenchantTests(unittest.TestCase):
             scanner = m.Scanner(self.fixture.client, policy=policy)
             self.assertIsNotNone(scanner.scan(self.fixture.inventories[4])[0])
             policy.write_text('local original=(function()\n'+original+'\nend)()\n'
-                'return {decide=function(frame)\n'
+                'return {decide=function(frame,gear)\n'
                 '  if frame.phase=="compare" then return {reason="edited_lua_keeps_item"} end\n'
-                '  return original.decide(frame)\n'
+                '  return original.decide(frame,gear)\n'
                 'end}')
             source, reason, _ = scanner.scan(self.fixture.inventories[4])
             self.assertIsNone(source)
@@ -484,6 +485,170 @@ class DisenchantTests(unittest.TestCase):
                 self.assertEqual(result['phase'], 'blocked')
                 self.assertFalse(journal.data['attempts'])
             self.assertFalse(self.attempts())
+
+
+    def copied_policies(self, folder):
+        policy, gear = Path(folder)/'disenchant.lua', Path(folder)/'gear.lua'
+        policy.write_bytes((m.ROOT/'behaviors/disenchant.lua').read_bytes())
+        gear.write_bytes((m.ROOT/'behaviors/gear.lua').read_bytes())
+        return policy, gear
+
+    def test_same_scanner_actual_shared_class_profile_changes_selection_and_proof(self):
+        policy, gear = self.copied_policies(self.temp.name)
+        original_de, original_gear = policy.read_bytes(), gear.read_text()
+        scanner = m.Scanner(self.fixture.client, policy=policy, gear_policy=gear)
+        source, reason, proof = scanner.scan(self.fixture.inventories[4])
+        self.assertEqual(m.town.ref(source), m.town.ref(self.fixture.source))
+        self.assertEqual(reason, '')
+        self.assertEqual(proof['policySHA256'], hashlib.sha256(original_de).hexdigest())
+        self.assertEqual(proof['gearSHA256'], hashlib.sha256(original_gear.encode()).hexdigest())
+        # This edits the actual shared scorer's priest profile, not a DE stub.
+        # Worn intellect 3 versus carried 1 is a negative gain under this profile.
+        self.assertIn('M.class_profiles = {}', original_gear)
+        gear.write_text(original_gear.replace('M.class_profiles = {}',
+            'M.class_profiles = {[5]={statWeights={[5]=-100},armorWeight=0}}', 1))
+        source, reason, _ = scanner.scan(self.fixture.inventories[4])
+        self.assertIsNone(source)
+        self.assertEqual(reason, 'party_upgrade_or_unknown_comparison_retained')
+        self.assertEqual(policy.read_bytes(), original_de)
+        gear.write_text(original_gear)
+        source, reason, restored = scanner.scan(self.fixture.inventories[4])
+        self.assertIsNotNone(source)
+        self.assertEqual(reason, '')
+        self.assertEqual(restored, proof)
+        self.assertFalse(self.attempts())
+
+    def test_shared_gear_revision_change_between_scans_blocks_before_reservation(self):
+        policy, gear = self.copied_policies(self.temp.name)
+        original = gear.read_text()
+        scanner = m.Scanner(self.fixture.client, policy=policy, gear_policy=gear)
+        proofs, scan = [], scanner.scan
+        def record(*args, **kwargs):
+            result = scan(*args, **kwargs)
+            proofs.append(copy.deepcopy(result))
+            return result
+        scanner.scan = record
+        def edit(guid, method, params):
+            if method == 'buddy-professions.inspect_disenchant':
+                gear.write_text(original+'\n-- freshly reviewed shared gear revision\n')
+        self.fixture.before_call = edit
+        with m.Journal(self.path) as journal:
+            result = self.worker(journal, scanner=scanner).run()
+            self.assertEqual((result['phase'], result['reason']), ('blocked', 'party_comparison_changed'))
+            self.assertFalse(journal.data['attempts'])
+        self.assertEqual(len(proofs), 2)
+        self.assertTrue(all(row[0] is not None and row[1] == '' for row in proofs))
+        self.assertEqual(proofs[0][2]['policySHA256'], proofs[1][2]['policySHA256'])
+        self.assertNotEqual(proofs[0][2]['gearSHA256'], proofs[1][2]['gearSHA256'])
+        self.assertFalse(self.attempts())
+
+    def test_missing_or_invalid_shared_gear_keeps_comparison_without_reservation(self):
+        for mode in ('missing', 'syntax', 'missing_preview'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as folder:
+                self.fixture = Fixture()
+                gear = Path(folder)/'gear.lua'
+                if mode == 'syntax': gear.write_text('return {preview=function(')
+                elif mode == 'missing_preview': gear.write_text('return {}')
+                scanner = m.Scanner(self.fixture.client, gear_policy=gear)
+                with m.Journal(Path(folder).resolve()/'de.json') as journal:
+                    result = self.worker(journal, scanner=scanner).run()
+                    self.assertEqual(result['phase'], 'blocked')
+                    self.assertFalse(journal.data['attempts'])
+                self.assertFalse(self.attempts())
+                self.assertEqual(self.fixture.inventories[4]['inventoryBags'][0]['slots'][2]['itemGuid'], str(SOURCE))
+
+    def test_unused_candidate_and_slotless_plans_do_not_read_shared_gear(self):
+        for mode in ('no_candidates', 'not_ordinary_armor', 'unsupported_slot'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as folder:
+                self.fixture = Fixture()
+                if mode == 'no_candidates':
+                    self.fixture.inventories[4]['inventoryBags'][0]['slots'][2] = dict(bag=0, slot=2)
+                elif mode == 'not_ordinary_armor': self.fixture.metadata[5000]['itemClass'] = 2
+                else: self.fixture.metadata[5000]['inventoryType'] = 99
+                missing = Path(folder)/'absent-gear.lua'
+                scanner = m.Scanner(self.fixture.client, gear_policy=missing)
+                with patch.object(m.runtime, 'read_file', wraps=m.runtime.read_file) as reads:
+                    with m.Journal(Path(folder).resolve()/'de.json') as journal:
+                        result = self.worker(journal, scanner=scanner).run()
+                        self.assertEqual(result['phase'], 'blocked')
+                        self.assertFalse(journal.data['attempts'])
+                self.assertNotIn(missing, [Path(call.args[0]) for call in reads.call_args_list])
+                self.assertFalse(self.attempts())
+
+    def test_old_pending_journal_receipt_settles_without_reading_changed_or_missing_gear(self):
+        policy, gear = self.copied_policies(self.temp.name)
+        scanner = m.Scanner(self.fixture.client, policy=policy, gear_policy=gear)
+        self.fixture.mode = 'lost'
+        with m.Journal(self.path) as journal:
+            self.assertEqual(self.worker(journal, scanner=scanner).run()['phase'], 'unconfirmed')
+            # Pre-shared-gear journals remain valid historical reservations.
+            journal.data['attempts'][0]['partyProof'].pop('gearSHA256')
+            journal.save()
+            request = copy.deepcopy(journal.data['attempts'][0]['request'])
+        operation = copy.deepcopy(self.fixture.operation)
+        gear.write_text('return {preview=function() error("must not run for retained receipt") end}')
+        self.fixture.operation = None
+        with patch.object(m.runtime, 'read_file', wraps=m.runtime.read_file) as reads:
+            with m.Journal(self.path) as journal:
+                self.assertEqual(self.worker(journal, scanner=scanner).run()['phase'], 'unconfirmed')
+                self.assertEqual(journal.data['attempts'][0]['request'], request)
+            gear.unlink()
+            self.fixture.operation = operation
+            self.fixture.inventories[4]['inventoryBags'][0]['slots'][2] = dict(bag=0, slot=2)
+            self.fixture.inventories[4]['inventoryRevision'] = '12'
+            with m.Journal(self.path) as journal:
+                result = self.worker(journal, scanner=scanner).run()
+                self.assertEqual((result['phase'], result['newConfirmedOperations']), ('complete', 1))
+                self.assertEqual(journal.data['attempts'][0]['request'], request)
+                self.assertEqual(journal.data['attempts'][0]['receipt'], operation)
+            with m.Journal(self.path) as journal:
+                self.assertEqual(self.worker(journal, scanner=scanner).run()['phase'], 'blocked')
+                self.assertEqual(journal.data['attempts'][0]['phase'], 'completed')
+        self.assertNotIn(gear, [Path(call.args[0]) for call in reads.call_args_list])
+        self.assertEqual(len(self.attempts()), 1)
+
+    def test_pending_unknown_and_replaced_body_never_replay_after_shared_gear_edit(self):
+        _, gear = self.copied_policies(self.temp.name)
+        scanner = m.Scanner(self.fixture.client, gear_policy=gear)
+        self.fixture.mode = 'unknown'
+        with m.Journal(self.path) as journal:
+            self.assertEqual(self.worker(journal, scanner=scanner).run(max_seconds=.3)['phase'], 'unconfirmed')
+            request = copy.deepcopy(journal.data['attempts'][0]['request'])
+        gear.write_text('return {}')
+        self.fixture.backend['sessionId'] = 'replacement-body'
+        with patch.object(m.runtime, 'read_file', wraps=m.runtime.read_file) as reads:
+            with m.Journal(self.path) as journal:
+                self.assertEqual(self.worker(journal, scanner=scanner).run()['phase'], 'unconfirmed')
+                self.assertEqual(journal.data['attempts'][0]['phase'], 'new_session_requires_review')
+                self.assertEqual(journal.data['attempts'][0]['request'], request)
+        self.assertNotIn(gear, [Path(call.args[0]) for call in reads.call_args_list])
+        self.assertEqual(len(self.attempts()), 1)
+
+    def test_shared_signed_stat_dominance_keeps_any_component_loss(self):
+        for carried, worn, eligible in ((-1, -2, False), (-2, -1, True), (-2, -2, True), (1, 0, False)):
+            with self.subTest(carried=carried, worn=worn):
+                self.fixture = Fixture()
+                self.fixture.metadata[5000]['stats'] = [dict(type=5, value=carried)]
+                self.fixture.metadata[5001]['stats'] = [dict(type=5, value=worn)]
+                source, reason, _ = self.scan()
+                self.assertEqual(source is not None, eligible)
+                self.assertEqual(reason, '' if eligible else 'party_upgrade_or_unknown_comparison_retained')
+                self.assertFalse(self.attempts())
+
+    def test_unknown_duplicate_or_invalid_shared_stats_keep_without_native_attempt(self):
+        for location in (5000, 5001):
+            for mode in ('unsupported', 'duplicate', 'nonfinite', 'nonnumeric'):
+                with self.subTest(location=location, mode=mode), tempfile.TemporaryDirectory() as folder:
+                    self.fixture = Fixture()
+                    stats = [dict(type=2, value=1)] if mode == 'unsupported' else (
+                        [dict(type=5, value=1), dict(type=5, value=1)] if mode == 'duplicate' else
+                        [dict(type=5, value=float('inf') if mode == 'nonfinite' else '1')])
+                    self.fixture.metadata[location]['stats'] = stats
+                    with m.Journal(Path(folder).resolve()/'de.json') as journal:
+                        result = self.worker(journal).run()
+                        self.assertEqual(result['phase'], 'blocked')
+                        self.assertFalse(journal.data['attempts'])
+                    self.assertFalse(self.attempts())
 
 
 if __name__ == '__main__': unittest.main()
