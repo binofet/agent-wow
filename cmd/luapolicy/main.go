@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
@@ -50,6 +52,8 @@ func run(args []string, in io.Reader, out io.Writer) error {
 	mode := flags.String("mode", "evaluate", "evaluate, validate or describe")
 	source := flags.String("source", "", "Lua decide policy")
 	sourceBytes := flags.Int("source-bytes", 0, "Lua source budget (0 uses 8 MiB)")
+	valueBytes := flags.Int("value-bytes", 0, "JSON value budget (0 keeps the standalone 32 KiB default)")
+	executionMS := flags.Int64("execution-ms", 0, "Lua execution budget in milliseconds (0 keeps the standalone 5 ms default)")
 	method := flags.String("method", "", "public method to validate or describe")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -57,6 +61,16 @@ func run(args []string, in io.Reader, out io.Writer) error {
 	limit, err := behavior.SourceLimit(*sourceBytes)
 	if err != nil {
 		return err
+	}
+	if *valueBytes < 0 {
+		return errors.New("JSON value budget must not be negative")
+	}
+	if *executionMS < 0 || *executionMS > int64((1<<63-1)/time.Millisecond) {
+		return errors.New("Lua execution budget must be nonnegative and fit a duration")
+	}
+	jsonLimit := behavior.MaxJSONBytes
+	if *valueBytes > 0 {
+		jsonLimit = *valueBytes
 	}
 	var value any
 	switch *mode {
@@ -71,7 +85,11 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("bounded policy source required (configured limit %d bytes)", limit)
 		}
 		input := map[string]any{}
-		decoder := json.NewDecoder(io.LimitReader(in, behavior.MaxJSONBytes+1))
+		raw, err := io.ReadAll(io.LimitReader(in, int64(jsonLimit)+1))
+		if err != nil || len(raw) > jsonLimit {
+			return fmt.Errorf("bounded JSON input required (configured limit %d bytes)", jsonLimit)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.UseNumber()
 		if err := decoder.Decode(&input); err != nil {
 			return err
@@ -79,7 +97,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if decoder.Decode(new(any)) != io.EOF {
 			return errors.New("one bounded JSON input required")
 		}
-		runtime, err := behavior.NewWithSourceLimit(limit)
+		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{
+			SourceBytes: limit, ValueBytes: *valueBytes, ExecutionLimit: time.Duration(*executionMS) * time.Millisecond,
+		})
 		if err != nil {
 			return err
 		}
@@ -105,9 +125,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			}
 			value = catalog
 		} else {
-			raw, err := io.ReadAll(io.LimitReader(in, behavior.MaxJSONBytes+1))
-			if err != nil || len(raw) > behavior.MaxJSONBytes {
-				return errors.New("bounded request required")
+			raw, err := io.ReadAll(io.LimitReader(in, int64(jsonLimit)+1))
+			if err != nil || len(raw) > jsonLimit {
+				return fmt.Errorf("bounded request required (configured limit %d bytes)", jsonLimit)
 			}
 			canonical, err := validate(registry, *method, json.RawMessage(strings.TrimSpace(string(raw))))
 			if err != nil {
