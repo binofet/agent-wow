@@ -2,14 +2,18 @@ package modrt
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -177,5 +181,155 @@ func TestPolicyDeathRecoveryDefiniteCoreRefusalAllowsSameDeathFreshRetry(t *test
 		if r == nil || r.Outcome != behavior.ActionSettledUnverified || len(cb.writes) != before+1 || cb.writes[before].Opcode != want {
 			t.Fatal("same death fresh retry not dispatched", query, r, cb.writes)
 		}
+	}
+}
+
+func TestPolicyGhostRecoveryRealReclaimAndUnknownOutcomeWaitForActualLife(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
+			m, native, cb := friendlyEncounterManager(t)
+			self := cb.world.Self
+			self.Alive = false
+			self.Health = 1
+			self.PlayerFlags = 0x10
+			self.PositionRevision = 2
+			self.MovementFlags = 0x10000000
+			self.SpeedsKnown = true
+			self.RunSpeed = 8.75
+			corpse := uint64(0xf101000000000001)
+			cb.world.OwnCorpse = &worldv1.CorpseState{Guid: corpse, OwnerGuid: self.Guid, Present: true, MapKnown: true, PositionKnown: true, PositionRevision: 1, X: 10, FlagsKnown: true}
+			source := recoveryRuntimeSource(t)
+			p, err := m.StartPolicy(context.Background(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.close()
+			step := func() *behavior.ActionReceipt {
+				t.Helper()
+				view, err := m.readPolicyObservation(context.Background(), friendlyEncounterSession, encounterObservationMethod)
+				if err != nil {
+					t.Fatal(err)
+				}
+				seq, err := p.Enqueue(behavior.Event{Kind: "encounter_observation", Value: view})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, r, err := p.Step(context.Background(), map[string]any{"observationSequence": strconv.FormatUint(seq, 10)}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r
+			}
+			r := step()
+			if r == nil || len(cb.writes) != 1 || cb.writes[0].Opcode != opcode.MSGCorpseQuery {
+				t.Fatal("default Lua did not query released ghost", r, cb.writes)
+			}
+			payload := binary.LittleEndian.AppendUint32([]byte{1}, 0)
+			for _, v := range []float32{10, 0, 0} {
+				payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(v))
+			}
+			payload = append(payload, make([]byte, 8)...)
+			if _, err = native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.MSGCorpseQuery, Payload: payload}); err != nil {
+				t.Fatal(err)
+			}
+			native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCorpseReclaimDelay, Payload: make([]byte, 4)})
+			send := m.session.SendPacket
+			if unknown {
+				m.session.SendPacket = func(ctx context.Context, code uint32, payload []byte) error {
+					err := send(ctx, code, payload)
+					if code == opcode.CMSGReclaimCorpse {
+						return errors.New("actual reclaim write result unknown")
+					}
+					return err
+				}
+			}
+			r = step()
+			if r == nil || r.Outcome != behavior.ActionSettledUnverified || len(cb.writes) != 2 || cb.writes[1].Opcode != opcode.CMSGReclaimCorpse || len(cb.writes[1].Payload) != 8 || binary.LittleEndian.Uint64(cb.writes[1].Payload) != corpse || r.Payload["effect_observed"] != false {
+				t.Fatal("exact typed reclaim did not reach real native wire", r, cb.writes)
+			}
+			if _, err = p.vm.Reload(context.Background(), source+"\n-- same-session death tuning", p.vm.Status().Revision); err != nil {
+				t.Fatal(err)
+			}
+			if r = step(); r != nil || len(cb.writes) != 2 || p.vm.Status().Pending != 0 {
+				t.Fatal("unconfirmed reclaim replayed or globally blocked", r, p.vm.Status(), cb.writes)
+			}
+			state, _ := native.Status(context.Background(), &emptypb.Empty{})
+			if state.Recovery.AliveObserved || !state.Recovery.ReclaimAttempted || state.Recovery.ReclaimWritten == unknown {
+				t.Fatal("transport invented resurrection or lost uncertainty", state)
+			}
+			self.Alive = true
+			self.Health = 100
+			self.PlayerFlags = 0
+			self.MovementFlags = 0
+			self.PositionRevision++
+			step()
+			state, _ = native.Status(context.Background(), &emptypb.Empty{})
+			if !state.Recovery.AliveObserved {
+				t.Fatal("actual life not observed", state)
+			}
+		})
+	}
+}
+
+func TestPolicyGhostApproachAndStopRouteToActualNativeDescriptor(t *testing.T) {
+	m, native, cb := friendlyEncounterManager(t)
+	self := cb.world.Self
+	self.Alive = false
+	self.Health = 1
+	self.PlayerFlags = 0x10
+	self.PositionRevision = 2
+	self.MovementFlags = 0x10000000
+	self.SpeedsKnown = true
+	self.RunSpeed = 8.75
+	p, err := m.StartPolicy(context.Background(), recoveryRuntimeSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	step := func() *behavior.ActionReceipt {
+		t.Helper()
+		v, e := m.readPolicyObservation(context.Background(), friendlyEncounterSession, encounterObservationMethod)
+		if e != nil {
+			t.Fatal(e)
+		}
+		seq, e := p.Enqueue(behavior.Event{Kind: "encounter_observation", Value: v})
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, r, e := p.Step(context.Background(), map[string]any{"observationSequence": strconv.FormatUint(seq, 10)}, nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return r
+	}
+	if r := step(); r == nil || len(cb.writes) != 1 || cb.writes[0].Opcode != opcode.MSGCorpseQuery {
+		t.Fatal(r, cb.writes)
+	}
+	payload := binary.LittleEndian.AppendUint32([]byte{1}, 0)
+	for _, v := range []float32{10, 0, 0} {
+		payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(v))
+	}
+	payload = append(payload, make([]byte, 8)...)
+	if _, err = native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.MSGCorpseQuery, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	action := func(capability string) string {
+		return `return {on_event=function()return true end,export_state=function()return {version=1,data={}}end,import_state=function()return true end,decide=function(f)return {action={capability="` + capability + `",sessionId=f.session_id,selfGuid="22",deathEpoch="1",expectedPositionRevision="2",corpseQueryRevision="1",rangeYards=5}}end}`
+	}
+	if _, err = p.Reload(context.Background(), action("approach_corpse"), p.vm.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	r := step()
+	// No private client assets are used. A real native geometry precondition is
+	// the expected result, and is distinct from a missing/unimplemented RPC.
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || r.Payload["grpc_status"] != "FailedPrecondition" || r.Payload["grpc_message"] != "verified corpse route unavailable" || len(cb.writes) != 1 {
+		t.Fatal("approach alias/descriptor did not reach native executor", r, cb.writes)
+	}
+	if _, err = p.Reload(context.Background(), action("stop_corpse"), p.vm.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	r = step()
+	if r == nil || r.Outcome != behavior.ActionSettledUnverified || r.Payload["native_phase"] != "stopped" || r.Payload["effect_observed"] != false || len(cb.writes) != 1 {
+		t.Fatal("stop mode did not route through exact native method", r, cb.writes)
 	}
 }

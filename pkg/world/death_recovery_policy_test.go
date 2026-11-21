@@ -73,8 +73,15 @@ func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) 
 	if action["capability"] != "query_corpse" {
 		t.Fatal(query.Output)
 	}
-	// A proposal checkpoint already reserves the query, even if transport is
-	// uncertain and a new policy revision changes timing while it is outstanding.
+	// A real reserved query receipt retains custody across a code edit. Merely
+	// proposing an action that a surrounding task suppresses must not reserve it.
+	queryID, e := host.ReserveAction(query)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: queryID, Outcome: behavior.ActionSettledUnverified, Payload: map[string]any{"capability": "query_corpse", "self_guid": fallbackGUID(fallbackSelf), "death_epoch": "1"}}}); e != nil {
+		t.Fatal(e)
+	}
 	if _, err = host.Reload(context.Background(), source("0"), host.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
@@ -154,5 +161,63 @@ func TestDeathRecoveryDoesNotReserveReleaseBeforeActualLootWindowCleanup(t *test
 	a, _ = release.Output["action"].(map[string]any)
 	if a["capability"] != "release_spirit" || host.Status().Pending != 0 {
 		t.Fatal("unexecuted release was checkpoint-reserved during close", release.Output, host.Status())
+	}
+}
+
+func TestDeathRecoveryHoldFilteredProposalDoesNotInventPrivatePacketCustody(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("..", "..", "behaviors", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	original := "local encounter_death_recovery=(function()\n" + read("death-recovery.lua") + "\nend)()\n" + readEncounterBundle(t)
+	held := "local original=(function()\n" + original + "\nend)()\nlocal hold=(function()\n" + read("gm-recovery-hold.lua") + "\nend)()\nreturn hold(original)"
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, held, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	p := &fallbackPolicyTest{t: t, host: host}
+	obs := positionedHealObservation()
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.Alive = proto.Bool(false)
+	self.HealthKnown, self.Health, self.MaxHealth = true, 0, 100
+	// The actual hold evaluates the original to consider an injured living ally,
+	// then suppresses this dead caster's release proposal as task-inappropriate.
+	obs.Recovery = &actionsv1.RecoveryState{DeathEpoch: 1}
+	step := func() behavior.Decision {
+		t.Helper()
+		d, err := host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": p.observe(obs)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	if d := step(); d.Output["action"] != nil || d.Output["phase"] != "gm_recovery_hold" || host.Status().Pending != 0 {
+		t.Fatal("fixture did not suppress an unreserved proposal", d.Output, host.Status())
+	}
+	if _, err = host.Reload(context.Background(), original, host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	release := step()
+	a, _ := release.Output["action"].(map[string]any)
+	if a["capability"] != "release_spirit" {
+		t.Fatal("filtered proposal poisoned restored ordinary recovery", release.Output)
+	}
+	id, err := host.ReserveAction(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified, Payload: map[string]any{"capability": "release_spirit", "self_guid": fallbackGUID(fallbackSelf), "death_epoch": "1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = host.Reload(context.Background(), original, host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	if d := step(); d.Output["action"] != nil {
+		t.Fatal("actual uncertain action receipt lost no-replay custody", d.Output)
 	}
 }

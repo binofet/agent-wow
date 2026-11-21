@@ -68,6 +68,7 @@ func (s *Service) deathAction(ctx context.Context, request *actionsv1.DeathActio
 		if p.PlayerFlags&ghostFlag != 0 || p.Health != 0 {
 			return nil, status.Error(codes.FailedPrecondition, "actual unreleased zero-health body required")
 		}
+		s.refreshPositionLocked(w)
 		r.releasePositionRevision, r.releaseMap = p.PositionRevision, p.MapId
 		r.state.ReleaseAttempted = true
 		r.state.Phase = "release_requested"
