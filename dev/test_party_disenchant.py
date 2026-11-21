@@ -88,13 +88,13 @@ class Fixture:
             return dict(sessionId='body4', items=[copy.deepcopy(self.metadata[i]) for i in params['itemIds']])
         if method == 'buddy-professions.state': return self.prof()
         if method == 'buddy-professions.inspect_disenchant':
-            return dict(self.prof(), disenchantItem=dict(bag=0, slot=2, itemGuid=str(SOURCE), entry=5000,
+            return dict(self.prof(), disenchantItem=dict(bag=0, slot=2, itemGuid=str(SOURCE), entry=self.source['entry'],
                 stackCount=1, templateKnown=True, quality=2, itemClass=4, ready=self.ready))
         if method == 'buddy-professions.attempt':
             assert self.journal and self.journal.data['attempts'][-1]['phase'] == 'reserved'
             assert self.journal.data['attempts'][-1]['request'] == params
             self.operation = dict(operationId='real-op', requestId=params['requestId'], skillId=333, spellId=13262,
-                targetGuid=str(SOURCE), targetEntry=5000, sourceBag=0, sourceSlot=2,
+                targetGuid=str(SOURCE), targetEntry=self.source['entry'], sourceBag=0, sourceSlot=2,
                 baselineSkillsRevision='9', baselineInventoryRevision='11', observedInventoryRevision='12',
                 status='COMPLETED', leaseReleased=True, castTransportWritten=True, ownGoObserved=True,
                 lootWindowObserved=True, lootReleaseObserved=True, inputConsumedObserved=True,
@@ -142,6 +142,69 @@ class DisenchantTests(unittest.TestCase):
             self.assertNotEqual(proof['chatModuleSessionId'],self.attempts()[0]['sessionId'])
         with m.Journal(self.path) as journal:
             self.worker(journal).run(); self.assertEqual(len(self.attempts()), 1)
+
+    def retag_templates(self, candidate, current):
+        offered = self.fixture.metadata.pop(5000)
+        worn = self.fixture.metadata.pop(5001)
+        offered['itemId'], worn['itemId'] = candidate, current
+        self.fixture.metadata = {candidate: offered, current: worn}
+        self.fixture.source['entry'] = candidate
+        self.fixture.inventories[4]['inventoryBags'][0]['slots'][2]['entry'] = candidate
+        for inventory in self.fixture.inventories.values():
+            inventory['equipment'][4]['entry'] = current
+
+    def test_sparse_and_max_uint32_templates_complete_exact_workflow_without_replay(self):
+        for candidate, current in ((99000, 99001), (99000, 2**32-1), (2**32-1, 99000)):
+            with self.subTest(candidate=candidate, current=current), tempfile.TemporaryDirectory() as folder:
+                self.fixture = Fixture()
+                self.retag_templates(candidate, current)
+                path = Path(folder).resolve()/'de.json'
+                with m.Journal(path) as journal:
+                    result = self.worker(journal).run()
+                    self.assertEqual((result['phase'], result['newConfirmedOperations']), ('complete', 1))
+                    self.assertEqual(len(self.attempts()), 1)
+                    row = journal.data['attempts'][0]
+                    self.assertEqual(row['source']['entry'], candidate)
+                    self.assertIs(type(row['source']['entry']), int)
+                    self.assertEqual(row['receipt']['targetEntry'], candidate)
+                    self.assertEqual(row['phase'], 'completed')
+                    self.assertEqual(row['request']['targetGuid'], str(SOURCE))
+                queried = {item for _, method, params in self.fixture.calls
+                    if method == 'buddy-trade.lookup_items' for item in params['itemIds']}
+                self.assertEqual(queried, {candidate, current})
+                with m.Journal(path) as journal:
+                    self.worker(journal).run()
+                    self.assertEqual(journal.data['attempts'][0]['source']['entry'], candidate)
+                    self.assertEqual(len(self.attempts()), 1)
+
+    def test_string_keyed_templates_still_reject_duplicate_and_invalid_metadata(self):
+        self.retag_templates(99000, 2**32-1)
+        scanner = m.Scanner(self.fixture.client)
+        code = (m.ROOT/'behaviors/disenchant.lua').read_text()
+        source = m.town.ref(self.fixture.source)
+        for bad_id in (0, -1, 2**32, 1.5, True, '99000'):
+            with self.subTest(bad_id=bad_id):
+                row = copy.deepcopy(self.fixture.metadata[99000]); row['itemId'] = bad_id
+                result = scanner.bridge.evaluate(code, dict(phase='plan', sources=[source], metadata=[row]))
+                self.assertEqual(result['reason'], 'party_item_metadata_pending')
+                self.assertFalse(result['comparisons'])
+        duplicate = self.fixture.metadata[99000]
+        result = scanner.bridge.evaluate(code, dict(phase='plan', sources=[source],
+            metadata=[duplicate, copy.deepcopy(duplicate)]))
+        self.assertEqual(result['reason'], 'party_item_metadata_pending')
+        self.assertFalse(result['comparisons'])
+        original, comparisons = scanner.bridge, []
+        class CapturingBridge:
+            def evaluate(self, code, value):
+                if value.get('phase') == 'compare': comparisons.append(copy.deepcopy(value))
+                return original.evaluate(code, value)
+        scanner.bridge = CapturingBridge()
+        self.assertIsNotNone(scanner.scan(self.fixture.inventories[4])[0])
+        comparison = comparisons[0]
+        comparison['current'].append(copy.deepcopy(comparison['current'][0]))
+        result = original.evaluate(code, comparison)
+        self.assertEqual(result['reason'], 'party_upgrade_or_unknown_comparison_retained')
+        self.assertFalse(self.attempts())
     def test_owner_unknown_equipment_never_assumed_spare(self):
         self.fixture.metadata[5000]['allowableClass'] |= 1
         self.fixture.owner_feed.pop('ownerGear')
