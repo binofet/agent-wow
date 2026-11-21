@@ -753,7 +753,10 @@ def attached_policy_faults(guid, sid, policy, actions):
     for field in ('lastSpellOperation', 'lastMeleeOperation'):
         operation = actions.get(field, {})
         if isinstance(operation, dict) and operation.get('phase') in ATTACHED_OPERATION_FAILURES:
-            failures.append((field, operation['phase'], dict(operation)))
+            evidence = dict(operation)
+            if field == 'lastSpellOperation' and 'lastCastFailure' in actions:
+                evidence['lastCastFailure'] = actions['lastCastFailure']
+            failures.append((field, operation['phase'], evidence))
     command = actions.get('commandFault', {})
     if (isinstance(command, dict) and command.get('sessionId') == sid
             and str(command.get('selfGuid')) == str(guid) and command.get('method')
@@ -763,7 +766,7 @@ def attached_policy_faults(guid, sid, policy, actions):
     for field, reason, evidence in failures:
         # Target IDs and position drift are evidence, not distinct bugs. A broken
         # spell does not warrant another model call for every mob it encounters.
-        signature = [field, reason, evidence.get('capability'), evidence.get('spellId'), evidence.get('failureCode'),
+        signature = [field, reason, evidence.get('capability'), evidence.get('spellId'), evidence.get('lastCastFailure'),
             evidence.get('method'), evidence.get('error')]
         binding = [str(guid), sid, policy['revision'], signature]
         key = hashlib.sha256(json.dumps(binding, separators=(',', ':')).encode()).hexdigest()

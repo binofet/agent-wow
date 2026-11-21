@@ -2913,7 +2913,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.loop.tick()
         self.assertEqual(self.brain.states,[])
         self.actions['lastSpellOperation']['phase']='server_rejected_no_replay'
-        self.actions['lastSpellOperation']['failureCode']=49
+        self.actions['lastCastFailure']=49
         self.loop.tick()
         self.assertEqual(len(self.brain.states),1)
         fault=self.brain.states[0]['mission_fault']
