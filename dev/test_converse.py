@@ -3157,6 +3157,7 @@ def load_tests(loader, tests, pattern):
 
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
+from test_gm_task_inspection import GMTaskInspectionTests
 
 if __name__ == "__main__":
     unittest.main()
