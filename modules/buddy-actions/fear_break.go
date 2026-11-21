@@ -68,7 +68,7 @@ func observedFearBreakItem(item *worldv1.EquipmentSlotState) bool {
 // custody. Unknown movement is not falsely reconciled by a self cast.
 func (s *Service) controlBreakCasterLocked(w *worldv1.SnapshotResponse) bool {
 	self := w.GetSelf()
-	return !s.closed && !s.bodyMoving && !s.state.CastPending && s.state.InteractionOwner == "" &&
+	return !s.closed && !s.bodyMoving && !s.state.CastPending &&
 		self.GetGuid() == s.selfGUID && self.GetPresent() && self.GetAliveKnown() && self.GetAlive() &&
 		self.GetHealthKnown() && self.GetHealth() > 0 && self.GetUnitFlagsKnown() && self.GetUnitFlags()&fleeingUnitFlag != 0 && channelstate.Idle(self)
 }
@@ -134,13 +134,17 @@ func (s *Service) controlBreakObservationLocked(w *worldv1.SnapshotResponse) *ac
 			continue
 		}
 		out.Options = append(out.Options, &actionsv1.ControlBreakOption{SpellId: r.ID, Rank: r.Rank, CooldownMs: r.CooldownMs, CategoryCooldownMs: r.CategoryCooldownMs,
-			Ready: caster && (r.GcdMs == 0 || !s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)) && !s.spellOnCooldownLocked(r) && (r.Category == 0 || !s.now().Before(s.fearBreakReady))})
+			Ready: caster && (r.GcdMs == 0 || !s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)) && !s.spellOnCooldownLocked(r)})
 	}
 	if w.GetSelfEquipmentKnown() {
 		for _, item := range w.SelfEquipment {
 			if observedFearBreakItem(item) {
-				out.Options = append(out.Options, &actionsv1.ControlBreakOption{SpellId: pvpBreakSpell, ItemGuid: item.ItemGuid, ItemSlot: item.Slot, CooldownMs: 120000,
-					Ready: caster && !s.now().Before(s.fearBreakReady)})
+				r, known := s.controlBreakItemSpellLocked(item)
+				if !known {
+					continue
+				}
+				out.Options = append(out.Options, &actionsv1.ControlBreakOption{SpellId: pvpBreakSpell, ItemGuid: item.ItemGuid, ItemSlot: item.Slot, CooldownMs: r.CooldownMs, CategoryCooldownMs: r.CategoryCooldownMs,
+					Ready: caster && !s.spellOnCooldownLocked(r)})
 			}
 		}
 	}
@@ -149,6 +153,35 @@ func (s *Service) controlBreakObservationLocked(w *worldv1.SnapshotResponse) *ac
 		return a.SpellId < b.SpellId || a.SpellId == b.SpellId && a.ItemGuid < b.ItemGuid
 	})
 	return out
+}
+
+// Item-template cooldowns override DBC values, including the five-minute
+// Insignia versus two-minute Medallion. No native source/rank choice is made.
+func (s *Service) controlBreakItemSpellLocked(item *worldv1.EquipmentSlotState) (spellcatalog.Spell, bool) {
+	r, ok := s.spellData.Lookup(pvpBreakSpell)
+	facts, known := gamecatalog.FearBreakItemCooldown(item.Entry)
+	if !ok || !known {
+		return r, false
+	}
+	if facts.CooldownMs >= 0 || facts.CategoryCooldownMs >= 0 {
+		r.Category = facts.Category
+		r.CooldownMs = uint32(max(facts.CooldownMs, 0))
+		r.CategoryCooldownMs = uint32(max(facts.CategoryCooldownMs, 0))
+	}
+	return r, true
+}
+
+// Public spell_linked_spell rows attach only these mechanical cooldown
+// triggers. Their exact category/duration remains in the pinned spell catalog.
+// https://github.com/azerothcore/azerothcore-wotlk/blob/master/data/sql/base/db_world/spell_linked_spell.sql
+func controlBreakCooldownTrigger(id uint32) uint32 {
+	switch id {
+	case humanBreakSpell, pvpBreakSpell:
+		return 72752
+	case 7744:
+		return 72757
+	}
+	return 0
 }
 
 // BreakControl writes only the caller-selected rank/equipped source against an
@@ -169,7 +202,6 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	if s.closed || s.session == nil || s.sessionID != r.SessionId || s.selfGUID != r.SelfGuid {
 		return nil, status.Error(codes.FailedPrecondition, "current connected body required")
 	}
-	s.expireInteractionLocked()
 	w, err := s.snapshot(ctx)
 	if err != nil || !s.controlBreakCasterLocked(w) {
 		return nil, status.Error(codes.FailedPrecondition, "current living feared caster with idle cast/channel custody required")
@@ -202,13 +234,12 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 		if item == nil {
 			return nil, status.Error(codes.FailedPrecondition, "exact observed equipped fear-break source required")
 		}
-		spell, learned = s.spellData.Lookup(r.SpellId)
+		spell, learned = s.controlBreakItemSpellLocked(item)
 	} else if r.ItemSlot != 0 || r.SpellId == pvpBreakSpell {
 		learned = false
 	}
 	if !learned || !s.spellbookKnown || !fearBreakSpell(spell) || s.spellOnCooldownLocked(spell) ||
-		spell.GcdMs != 0 && (s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist)) ||
-		(item != nil || spell.Category != 0) && s.now().Before(s.fearBreakReady) {
+		spell.GcdMs != 0 && (s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist)) {
 		return nil, status.Error(codes.FailedPrecondition, "exact ready learned or equipped control break required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -217,13 +248,26 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	if s.controlBreakBindings == nil {
 		s.controlBreakBindings = map[uint32]observedBuffAura{}
 	}
-	priorReady, priorSpell := s.fearBreakReady, s.spellReady[spell.ID]
+	priorSpell := s.spellReady[spell.ID]
+	priorCategories := map[uint32]time.Time{}
+	if s.categoryReady == nil {
+		s.categoryReady = map[uint32]time.Time{}
+	}
+	reserveCategory := func(r spellcatalog.Spell) {
+		if r.Category == 0 || r.CategoryCooldownMs == 0 {
+			return
+		}
+		priorCategories[r.Category] = s.categoryReady[r.Category]
+		ready := s.now().Add(time.Duration(r.CategoryCooldownMs) * time.Millisecond)
+		if s.categoryReady[r.Category].Before(ready) {
+			s.categoryReady[r.Category] = ready
+		}
+	}
 	s.controlBreakBindings[r.AuraSlot] = aura
 	s.reserveSpellCooldownLocked(spell)
-	if item != nil || spell.ID == humanBreakSpell {
-		s.fearBreakReady = s.now().Add(2 * time.Minute)
-	} else if spell.CategoryCooldownMs > 0 {
-		s.fearBreakReady = s.now().Add(time.Duration(spell.CategoryCooldownMs) * time.Millisecond)
+	reserveCategory(spell)
+	if linked, ok := s.spellData.Lookup(controlBreakCooldownTrigger(spell.ID)); ok {
+		reserveCategory(linked)
 	}
 	s.castCount++
 	until := s.now().Add(3 * time.Second)
@@ -240,7 +284,10 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), wire, payload)
 	if modcb.PacketWasNotDispatched(err) {
 		delete(s.controlBreakBindings, r.AuraSlot)
-		s.fearBreakReady, s.spellReady[spell.ID] = priorReady, priorSpell
+		s.spellReady[spell.ID] = priorSpell
+		for category, prior := range priorCategories {
+			s.categoryReady[category] = prior
+		}
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0
 		s.supportOp.view.Phase = "not_dispatched"

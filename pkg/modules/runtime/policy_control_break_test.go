@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	buddyactions "github.com/agent-wow/agent-wow/modules/buddy-actions"
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
@@ -171,5 +172,32 @@ func TestPolicyControlBreakOwnedTrinketExactPacketAndForeignVisit(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestPolicyControlBreakHeldInteractionDoesNotNeedMovementStop(t *testing.T) {
+	m, native, cb := friendlyEncounterManager(t)
+	runtimeControlBook(t, native, 59752)
+	lease, err := native.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training", LeaseMs: 30000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb.world.Self.UnitFlags |= 0x800000
+	runtimeControlFear(t, native, 7399)
+	if _, err := native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGClientControlUpdate, Payload: append(spellFixturePackedGUID(friendlyEncounterSelf), 0)}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := m.StartPolicy(context.Background(), controlBreakRuntimeSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	if r, out := controlBreakStep(t, m, p); r == nil || r.Outcome != behavior.ActionTransportAccepted || len(cb.writes) != 1 || cb.writes[0].Opcode != opcode.CMSGCastSpell {
+		t.Fatal("lease/control flags prevented legal instant break", r, out, cb.writes)
+	}
+	// Renewal with the original private token proves the cast never cleared or
+	// stole the unrelated interaction; it does not restore movement control.
+	if _, err := native.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training", Token: lease.Token, LeaseMs: 30000}); err != nil {
+		t.Fatal("original lease token was lost", err)
 	}
 }

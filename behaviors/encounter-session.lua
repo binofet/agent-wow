@@ -767,7 +767,7 @@ local function decide(frame)
             not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
         local loot=corpse_loot.decide(frame,current,quiet,urgent)
         out.corpseLoot=loot
-        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+        if #frame.pending==0 and (not out.action or out.action.capability~="fear_break" and loot.action and loot.action.capability=="loot_close") then
             out.action=loot.action
         end
         if loot.action or loot.corpseGuid then out.followFormation=nil;out.portalCatchup=nil end

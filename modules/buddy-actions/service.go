@@ -114,7 +114,6 @@ type Service struct {
 	spellCooldownBaselineKnown                 bool
 	weaponCombo                                comboObservation
 	categoryReady                              map[uint32]time.Time
-	fearBreakReady                             time.Time
 	controlBreakBindings                       map[uint32]observedBuffAura
 	supportOp                                  *supportAttempt
 	meleeOp                                    *meleeAttempt

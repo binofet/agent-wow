@@ -2,6 +2,8 @@ package world
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -108,5 +110,37 @@ func TestControlRecoverySharedPolicyNeedsCurrentReadyFearFacts(t *testing.T) {
 				t.Fatal("unproven fear/source chosen", mode, d.Output)
 			}
 		})
+	}
+}
+
+func TestControlRecoveryInstantBreakPrecedesHeldLootWindowCleanup(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "behaviors", "corpse-loot.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := "local encounter_corpse_loot=(function()\n" + string(raw) + "\nend)()\n" + readEncounterBundle(t)
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	observer := &fallbackPolicyTest{t: t, host: host}
+	obs := positionedHealObservation()
+	obs.Support = &actionsv1.EncounterSupport{ControlRecovery: &actionsv1.ControlRecoveryObservation{FleeingKnown: true, Fleeing: true,
+		FearAuras: []*actionsv1.ObservedAura{{Slot: 5, SpellId: 7399, Revision: 1, MetadataKnown: true, Negative: true}}, Options: []*actionsv1.ControlBreakOption{{SpellId: 59752, Ready: true}}}}
+	corpse := fallbackGUID(0xf130000001000001)
+	loot := map[string]any{"sessionId": fallbackSession, "selfGuid": fallbackGUID(fallbackSelf), "self": map[string]any{"present": true, "aliveKnown": true, "alive": true},
+		"actions": map[string]any{"interactionOwner": "loot"}, "state": map[string]any{"pendingCorpseGuid": corpse, "phase": "waiting_open"}, "operation": map[string]any{"corpseGuid": corpse, "requestId": "open", "openingTransportAttempted": true}}
+	ls, err := host.Enqueue(behavior.Event{Kind: "corpse_loot_observation", Value: loot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observer.observe(obs), "observationSequences": map[string]any{"corpse_loot": fallbackGUID(ls)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := d.Output["action"].(map[string]any)
+	if a["capability"] != "fear_break" {
+		t.Fatal("loot close/STOP displaced instant legal control break", d.Output)
 	}
 }

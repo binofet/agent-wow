@@ -42,7 +42,7 @@ func TestControlBreakNativeTickNeverSelectsLearnedRankOrTrinket(t *testing.T) {
 }
 
 func TestControlBreakExactAuraBodyChannelAndCustodyGuards(t *testing.T) {
-	for _, mode := range []string{"body", "session", "aura_revision", "aura_spell", "aura_slot", "unlearned", "not_fleeing", "not_alive", "channel", "partial_channel", "cast_pending", "body_motion", "interaction", "expired_aura"} {
+	for _, mode := range []string{"body", "session", "aura_revision", "aura_spell", "aura_slot", "unlearned", "not_fleeing", "not_alive", "channel", "partial_channel", "cast_pending", "body_motion", "expired_aura"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := buffRig(t, 1, humanBreakSpell)
 			applyTestFear(s, 7399)
@@ -73,9 +73,6 @@ func TestControlBreakExactAuraBodyChannelAndCustodyGuards(t *testing.T) {
 				s.state.CastPending = true
 			case "body_motion":
 				s.bodyMoving = true
-			case "interaction":
-				s.state.InteractionOwner = "trade"
-				s.interactionUntil = s.now().Add(time.Minute)
 			case "expired_aura":
 				advance(8 * time.Second)
 			}
@@ -166,8 +163,62 @@ func TestControlBreakExactTrinketIdentityAndSharedCooldown(t *testing.T) {
 			if _, err := s.BreakControl(context.Background(), r); err != nil || len(f.packets) != 1 {
 				t.Fatal(err, f.packets)
 			}
-			if !s.fearBreakReady.After(s.now()) {
+			if !s.categoryReady[1182].Equal(s.now().Add(5*time.Minute)) || !s.spellReady[pvpBreakSpell].Equal(s.now().Add(5*time.Minute)) {
 				t.Fatal("server shared trinket cooldown lost")
+			}
+		})
+	}
+}
+
+func TestControlBreakKeepsInteractionAndServerControlWhileCastingInstantSelf(t *testing.T) {
+	s, f, _ := buffRig(t, 1, humanBreakSpell)
+	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training", LeaseMs: 30000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.world.Self.UnitFlags |= fleeingUnitFlag
+	applyTestFear(s, 7399)
+	s.clientControlPacketLocked(append(packedGUID(s.selfGUID), 0))
+	s.state.MotionUnconfirmed = true
+	if !exactFearBreak(s, f.world, humanBreakSpell) || len(f.packets) != 1 {
+		t.Fatal("instant legal break blocked by unrelated lease/server movement", f.packets)
+	}
+	if s.state.InteractionOwner != "training" || s.interactionToken != lease.Token || !s.clientControlLost || !s.state.MotionUnconfirmed {
+		t.Fatal("self break changed physical custody or old intent", s.stateLocked())
+	}
+}
+func TestControlBreakUsesExactItemAndLinkedCategoryCooldowns(t *testing.T) {
+	for _, row := range []struct {
+		item   uint32
+		millis uint32
+	}{{18854, 300000}, {28234, 120000}} {
+		t.Run(fmt.Sprint(row.item), func(t *testing.T) {
+			s, f, _ := buffRig(t, 1, humanBreakSpell, 7744)
+			applyTestFear(s, 7399)
+			f.world.Self.UnitFlags |= fleeingUnitFlag
+			f.world.SelfEquipmentKnown = true
+			f.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: 12, SlotKnown: true, MetadataKnown: true, ItemGuid: 0x4000000000012345, Entry: row.item, StackCount: 1}}
+			out := s.controlBreakObservationLocked(f.world)
+			found := false
+			for _, o := range out.Options {
+				if o.ItemGuid != 0 {
+					found = true
+					if o.CooldownMs != row.millis || o.CategoryCooldownMs != row.millis {
+						t.Fatal("generic two-minute item guess survived", o)
+					}
+				}
+			}
+			if !found {
+				t.Fatal(out)
+			}
+			r := exactFearRequest(s, pvpBreakSpell)
+			r.ItemGuid = f.world.SelfEquipment[0].ItemGuid
+			r.ItemSlot = 12
+			if _, err := s.BreakControl(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+			if s.categoryReady[1182] != s.now().Add(time.Duration(row.millis)*time.Millisecond) || s.categoryReady[1166] != s.now().Add(45*time.Second) {
+				t.Fatal("item/racial linked category facts lost", s.categoryReady)
 			}
 		})
 	}
