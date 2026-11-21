@@ -118,3 +118,33 @@ func TestEncounterFailedHealRepositionsThenResumesOnFreshReadyFeed(t *testing.T)
 	obs.TargetMovement.Ready, obs.TargetMovement.Phase = true, "in_position"
 	decide("heal")
 }
+
+func TestEncounterRejectedRegularSelfHealRetriesDirectly(t *testing.T) {
+	p, obs := newFallbackPolicyTest(t, ""), positionedHealObservation()
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.HealthKnown, self.Health, self.MaxHealth = true, 20, 100
+	obs.Healing.Patients[0].Guid = fallbackSelf
+	obs.Healing.Patients[0].Distance = proto.Float64(0)
+	// Keep the ordinary 40-yard rank, not a range-zero/self-only ability.
+	decide := func() behavior.Decision {
+		t.Helper()
+		out := p.decide(observeSparseEncounter(t, p, obs))
+		action, _ := out.Output["action"].(map[string]any)
+		if action["capability"] != "heal" || action["targetGuid"] != fallbackGUID(fallbackSelf) || action["spellId"] != float64(6063) {
+			t.Fatal("regular self-heal was replaced with spatial recovery", out.Output)
+		}
+		return out
+	}
+	first := decide()
+	id, err := p.host.ReserveAction(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionFailed,
+		Payload: map[string]any{"capability": "heal", "target_guid": fallbackGUID(fallbackSelf), "effect_observed": false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	decide()
+}
