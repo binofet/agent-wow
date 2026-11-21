@@ -4,6 +4,7 @@ import (
 	"math"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
 
 func observedRunSpeed(p *worldv1.PlayerState) float64 {

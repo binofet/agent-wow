@@ -136,10 +136,6 @@ func (s *Service) castStarterOffenseLocked(ctx context.Context, spell uint32, ta
 	return true
 }
 
-// NPC movement packets advertise a route endpoint and duration. Once an
-// ordinary noncyclic route has elapsed we may use that endpoint as a client
-// estimate, while keeping the actual observation and its age unchanged.
-
 func (s *Service) starterHealingReserveLocked(p *worldv1.PlayerState) uint64 {
 	reserve := uint64(0)
 	for _, r := range s.candidatesLocked(spellcatalog.Heal) {
@@ -369,4 +365,12 @@ func (s *Service) starterWeaponStrikeLocked(p *worldv1.PlayerState, target posit
 		}
 	}
 	return best
+}
+
+func (s *Service) starterRejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
+	self := w.Self
+	if !self.LevelKnown || !target.LevelKnown || uint64(target.Level) <= uint64(self.Level)+3 {
+		return false
+	}
+	return true
 }

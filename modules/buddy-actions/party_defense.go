@@ -26,14 +26,6 @@ func ongoingAttack(c *worldv1.CreatureState, victim *worldv1.PlayerState) bool {
 	return c.TargetKnown && c.TargetGuid == victim.Guid && c.UnitFlagsKnown && c.UnitFlags&0x80000 != 0
 }
 
-func (s *Service) starterRejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
-	self := w.Self
-	if !self.LevelKnown || !target.LevelKnown || uint64(target.Level) <= uint64(self.Level)+3 {
-		return false
-	}
-	return true
-}
-
 func partyDefenseCreature(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureState {
 	if w == nil || len(w.NearbyCreatures) > 32 {
 		return nil
@@ -67,7 +59,3 @@ func partyDefenseEligible(w *worldv1.SnapshotResponse, c *worldv1.CreatureState,
 	_, known, _ := creaturePosition(c)
 	return known
 }
-
-// Defend current online party members even while the owner is offline. This is
-// separate from owner target assistance: only an actual hostile attack relation
-// can select a target, and independent profiles acquire no new group authority.

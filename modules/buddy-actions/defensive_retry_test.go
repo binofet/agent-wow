@@ -247,7 +247,7 @@ func TestDefensiveRetryPreservesMissionAndNonCastAttackStopQuarantine(t *testing
 			}
 			advance(6 * time.Second)
 			before := countPackets(f, opcode.CMSGCastSpell)
-			s.starterAssistObservedTargetLocked(context.Background(), f.world, c, true)
+			s.starterAssistObservedTargetLocked(context.Background(), f.world, c)
 			if countPackets(f, opcode.CMSGCastSpell) != before || s.failedAssistTarget != c.Guid {
 				t.Fatal("bypassed a non-defensive-cast quarantine", s.stateLocked())
 			}

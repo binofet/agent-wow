@@ -3,6 +3,7 @@ package world
 import (
 	"testing"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,6 +36,7 @@ func TestEncounterExplicitPullUsesTheSameQueueWithoutInventingEngagement(t *test
 	p.expectNoAction(p.observe(obs))
 	// Canceling a voluntary pull cannot abandon an enemy actually attacking a
 	// teammate, including when the owner has died.
+	obs.Party = &actionsv1.EncounterParty{Group: fallbackRoster(true)}
 	obs.Players[fallbackGUID(fallbackLeader)] = fallbackPlayer(fallbackLeader)
 	obs.Players[fallbackGUID(fallbackLeader)].Alive = proto.Bool(false)
 	addFallbackTarget(obs, fallbackNPC, fallbackLeader, 20)
