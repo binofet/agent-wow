@@ -133,6 +133,15 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 }
 
 func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) {
+	s.coldridgeObservedPracticeTickLocked(ctx, w, nil, nil)
+}
+
+// A target-free Lua read is followed once by these same complete native gates
+// on its fresh World response. Readiness never survives into another tick.
+func (s *Service) coldridgeObservedPracticeTickLocked(ctx context.Context, w *worldv1.SnapshotResponse, readiness *starterSpellDecision, current func() bool) {
+	if current != nil && !current() {
+		return
+	}
 	self := w.Self
 	goal := &s.coldridgeGoal
 	// A new authoritative baseline invalidates any route and pull selected from
@@ -209,12 +218,43 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	if s.practiceTarget == 0 {
-		if !s.stopLocked(ctx) || self.UnitFlags&0x80000 != 0 || !s.stopAutoAttackLocked(ctx) {
+		if current == nil {
+			current = s.coldridgePracticeCurrentLocked(ctx, 0)
+		}
+		if !current() {
+			return
+		}
+		stopped := s.stopLocked(ctx)
+		if current != nil && !current() {
+			return
+		}
+		attackStopped := false
+		if stopped && self.UnitFlags&0x80000 == 0 {
+			attackStopped = s.stopAutoAttackLocked(ctx)
+		}
+		if current != nil && !current() {
+			return
+		}
+		if !stopped || self.UnitFlags&0x80000 != 0 || !attackStopped {
 			s.state.PracticePhase = "waiting_out_of_combat"
 			return
 		}
-		if self.MaxHealth == 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
-			s.state.PracticePhase = "recovering_before_next_pull"
+		if readiness == nil {
+			selected, fresh := s.starterColdridgePullDecisionLocked(ctx, w)
+			if !current() {
+				return
+			}
+			if !selected.valid || selected.kind != "ready" {
+				s.state.PracticePhase = "recovering_before_next_pull"
+				if !selected.valid {
+					s.state.Reason = s.starterSpells.failure()
+				}
+				return
+			}
+			s.coldridgeObservedPracticeTickLocked(ctx, fresh, &selected, current)
+			return
+		}
+		if !current() || !s.starterSpellFactsMatchLocked(*readiness, w, nil, position{}) {
 			return
 		}
 		best := float64(120)
@@ -306,7 +346,7 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	if !s.practicePullStarted {
-		if !goal.targetNeeded(target.Entry) || self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
+		if !goal.targetNeeded(target.Entry) || self.UnitFlags&0x80000 != 0 {
 			s.stopPracticeLocked(ctx, "pull_prerequisites_changed")
 			return
 		}
@@ -366,7 +406,7 @@ func (s *Service) coldridgeCastObservationsLocked(ctx context.Context, original 
 		return reject("target_observations_unavailable_or_unsafe")
 	}
 	if !s.practicePullStarted {
-		if !needed || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) || self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || uint64(self.Power) < manaBudget(self, 60) {
+		if !needed || !goal.targetNeeded(target.Entry) || !unclaimedColdridgePull(target) || self.UnitFlags&0x80000 != 0 {
 			return reject("fresh_pull_authority_changed")
 		}
 	} else {
