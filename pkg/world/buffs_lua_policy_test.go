@@ -134,13 +134,17 @@ func TestLuaBuffPolicyPreservesActorClassReserveScopes(t *testing.T) {
 	classes := []reserveCase{
 		{"paladin", 2, true, false, 5, 35},
 		{"priest", 5, true, false, 30, 30},
+		{"mage", 8, true, false, 30, 30},
+		{"warlock", 9, true, false, 30, 30},
 		{"unknown_paladin", 2, false, false, 35, 35},
 		{"unknown_priest", 5, false, false, 35, 35},
+		{"unknown_mage", 8, false, false, 35, 35},
+		{"unknown_warlock", 9, false, false, 35, 35},
 		{"omitted_class_known", 5, false, true, 35, 35},
 		{"unknown_id", 0, true, false, 35, 35},
 		{"unmapped_id", 999, true, false, 35, 35},
 	}
-	for _, class := range []float64{1, 3, 4, 6, 7, 8, 9, 11} {
+	for _, class := range []float64{1, 3, 4, 6, 7, 11} {
 		classes = append(classes, reserveCase{fmt.Sprintf("other_class_%g", class), class, true, false, 35, 35})
 	}
 	source := buffsPolicySource(t)
@@ -173,7 +177,7 @@ func TestLuaBuffPolicyPreservesActorClassReserveScopes(t *testing.T) {
 
 func TestLuaActorBuffReserveKeepsWaterAndObservedResourceChecks(t *testing.T) {
 	source := buffsPolicySource(t)
-	for _, class := range []float64{2, 5, 8} {
+	for _, class := range []float64{2, 5, 8, 9} {
 		for _, mode := range []string{"water_exact_cost", "water_insufficient_power", "unknown_power", "other_resource"} {
 			t.Run(fmt.Sprintf("class%g/%s", class, mode), func(t *testing.T) {
 				host, obs := newBuffPolicy(t, source), buffPolicyObservation()
