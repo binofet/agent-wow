@@ -178,7 +178,7 @@ func disposalArmorResult(t *testing.T, r *Runtime, frame map[string]any, want st
 		elapsed, status := time.Since(started), r.Status()
 		if err != nil || status.Failures > before.Failures ||
 			status.QuarantinedRevision != "" && status.QuarantinedRevision != before.QuarantinedRevision {
-			t.Fatalf("Evaluate failed after %s (default limit %s); Runtime.Status=%+v: %v", elapsed, EvaluationLimit, status, err)
+			t.Fatalf("Evaluate failed after %s (configured limit %s); Runtime.Status=%+v: %v", elapsed, r.evaluationBudget(), status, err)
 		}
 	}
 	if want == "retained" {
@@ -674,12 +674,29 @@ func TestItemDisposalArmorActualHostProjectionFitsRealRuntime(t *testing.T) {
 
 func TestItemDisposalArmorRequiresPositiveMechanicalCoverageFacts(t *testing.T) {
 	source, frame := disposalArmorHostProjection(t, disposalArmorFrame(t))
+	// Malformed mechanical coverage must refuse before calling the scorer.
+	// Load the real disposal module with a trap at that boundary, avoiding the
+	// unrelated shared scorer's initialization in every refusal case. Positive
+	// controls and actual-host/full-layout tests keep the real shared scorer.
+	refusalSource := "local disposal=(function()\n" + disposalPolicySource(t) + `
+end)()
+local called=false
+local gear={compare=function()called=true;error("invalid coverage reached the gear scorer")end}
+return {decide=function(input)
+ local out=disposal.classify(input.mode,input.item,input.context,gear)
+ if called then error("invalid coverage attempted a caught gear comparison")end
+ return out
+end}`
 	fresh := func(t *testing.T) *Runtime {
 		r := New()
-		load(t, r, source)
+		load(t, r, refusalSource)
 		return r
 	}
-	t.Run("complete_facts", func(t *testing.T) { disposalArmorResult(t, fresh(t), frame, "eligible") })
+	t.Run("complete_facts", func(t *testing.T) {
+		r := New()
+		load(t, r, source)
+		disposalArmorResult(t, r, frame, "eligible")
+	})
 	t.Run("missing_scorer", func(t *testing.T) { disposalArmorResult(t, disposalRuntime(t), frame, "unknown") })
 	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch", "questLogFrameKnown", "physicalDestinationsKnown"} {
 		for _, condition := range []struct {
