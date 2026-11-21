@@ -8,7 +8,6 @@ import (
 	"math"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
