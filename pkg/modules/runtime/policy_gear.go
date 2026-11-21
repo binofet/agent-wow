@@ -17,7 +17,7 @@ const policyGearEntryPoint = "gear_evaluation"
 
 func (p *SessionPolicy) publishGearEvaluation(source, revision string) {
 	p.gearEvaluation.Store(&policyFollowFallback{source: source, revision: revision,
-		entryPoint: policyGearEntryPoint, available: p.vm.HasExport(policyGearEntryPoint)})
+		entryPoint: policyGearEntryPoint, available: p.vm.HasExport(policyGearEntryPoint), options: p.vm.Options()})
 }
 func (p *SessionPolicy) gearDecision(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
 	current := p.gearEvaluation.Load()

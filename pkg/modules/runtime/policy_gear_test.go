@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	modsession "github.com/agent-wow/agent-wow/pkg/modules/session"
 	"google.golang.org/grpc"
@@ -276,4 +278,59 @@ func TestLegacyGearPinnedDescriptorKeepsItsExistingRPCDuringCoreOnlyUpgrade(t *t
 	if host.vm.Status().Buffered != 0 {
 		t.Fatal("legacy pinned RPC injected unsupported policy input", host.vm.Status())
 	}
+}
+
+func TestGearReadUsesAcceptedSessionBudgetsForAFullFiveBagInventory(t *testing.T) {
+	m, peer := gearInputManager(t)
+	peer.state.Items = nil
+	peer.state.InventoryBags = nil
+	for bag, capacity := range []uint32{16, 8, 8, 8, 8} {
+		row := &worldv1.InventoryBag{Bag: uint32(bag), SlotKnown: true, ContentsKnown: true, SlotCount: capacity}
+		if bag != 0 {
+			row.ContainerGuid = 0x4000000000100000 + uint64(bag)
+			row.MetadataKnown = true
+			row.Entry = 5000 + uint32(bag)
+		}
+		for slot := uint32(0); slot < capacity; slot++ {
+			index := len(peer.state.Items)
+			id := uint32(1000 + index)
+			guid := uint64(0x4000000000000100) + uint64(index)
+			owned := &worldv1.BackpackSlot{Bag: uint32(bag), Slot: slot, ItemGuid: guid, Entry: id, StackCount: 1, MetadataKnown: true, EnhancementsKnown: true}
+			row.Slots = append(row.Slots, owned)
+			peer.state.Items = append(peer.state.Items, &inventoryv1.ItemEligibility{Item: &inventoryv1.ItemRef{Bag: uint32(bag), Slot: slot, ItemGuid: guid, Entry: id, StackCount: 1}, MetadataKnown: true,
+				GearFacts: &inventoryv1.GearItemFacts{EnhancementsKnown: true, Destinations: []*inventoryv1.GearDestination{{EquipmentSlot: 6, ExpectedEquippedItemGuid: peer.state.Equipment[6].ItemGuid, Eligible: true}}}})
+			template := &inventoryv1.GearTemplate{ItemId: id, Available: true, Name: strings.Repeat("observed template ", 12), ItemClass: 4, Subclass: 2, InventoryType: 7, Armor: 20, ArmorComparisonKnown: true, Resistances: []uint32{0, 0, 0, 0, 0, 0}}
+			for _, stat := range []uint32{3, 4, 5, 6, 7, 12, 13, 14, 15, 16} {
+				template.Stats = append(template.Stats, &inventoryv1.GearStat{Type: stat, Value: 1})
+			}
+			peer.state.GearContext.Templates[strconv.FormatUint(uint64(id), 10)] = template
+		}
+		peer.state.InventoryBags = append(peer.state.InventoryBags, row)
+	}
+	encoded, err := protojson.Marshal(peer.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) <= behavior.MaxJSONBytes || len(peer.state.Items) != 48 {
+		t.Fatal("fixture did not exceed old pure-read budget", len(encoded), len(peer.state.Items))
+	}
+	host, err := m.StartPolicyWithOptions(context.Background(), followFallbackBundle(t), behavior.SessionOptions{ValueBytes: 512 * 1024, ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	before, err := host.vm.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := readGearState(t, m)
+	if state.GearContext.PolicyError != "" || state.GearContext.PolicyRevision != host.vm.Status().Revision || len(state.Items) != 48 {
+		t.Fatal("full inventory exceeded an inherited tiny read cap", len(encoded), state.GearContext, len(state.Items))
+	}
+	for _, item := range state.Items {
+		if !item.ConservativeUpgrade || item.GearEquipmentSlot != 6 {
+			t.Fatal("larger read lost a policy decision", item)
+		}
+	}
+	assertFollowFallbackState(t, host, before)
 }

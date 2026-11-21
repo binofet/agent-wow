@@ -17,6 +17,7 @@ type policyFollowFallback struct {
 	revision   string
 	available  bool
 	entryPoint string
+	options    behavior.SessionOptions
 
 	mu        sync.Mutex
 	runtime   *behavior.Runtime
@@ -35,7 +36,7 @@ type policyFollowFallbackMetadata struct {
 // Optional export facts come from that VM's load, without running its hooks.
 func (p *SessionPolicy) publishFollowFallback(source, revision string) {
 	p.followFallback.Store(&policyFollowFallback{source: source, revision: revision,
-		available: p.vm.HasExport(policyFollowEntryPoint), entryPoint: policyFollowEntryPoint})
+		available: p.vm.HasExport(policyFollowEntryPoint), entryPoint: policyFollowEntryPoint, options: p.vm.Options()})
 }
 
 func (p *SessionPolicy) followFallbackMetadata() policyFollowFallbackMetadata {
@@ -80,7 +81,7 @@ func (p *SessionPolicy) readonlyExportDecision(ctx context.Context, current *pol
 	if !available {
 		return false, revision, nil, nil
 	}
-	decision, err = current.evaluate(input)
+	decision, err = current.evaluate(ctx, input)
 	if err != nil {
 		return true, revision, nil, err
 	}
@@ -97,7 +98,7 @@ func (p *SessionPolicy) readonlyExportDecision(ctx context.Context, current *pol
 	return true, revision, decision, nil
 }
 
-func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, error) {
+func (p *policyFollowFallback) evaluate(ctx context.Context, input map[string]any) (map[string]any, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.attempted {
@@ -105,7 +106,9 @@ func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, e
 		// The original source already passed the session's configured source
 		// budget. Permit exactly its bytes plus this fixed enclosing wrapper.
 		wrapped := "local policy = (function()\n" + p.source + "\nend)()\nreturn {decide=policy." + p.entryPoint + "}\n"
-		runtime, err := behavior.NewWithSourceLimit(len(wrapped))
+		options := p.options
+		options.SourceBytes = len(wrapped)
+		runtime, err := behavior.NewWithOptions(options)
 		if err == nil {
 			_, err = runtime.Reload(wrapped, "")
 		}
@@ -118,7 +121,7 @@ func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, e
 	if p.runtime == nil {
 		return nil, errors.New(p.lastError)
 	}
-	decision, err := p.runtime.Evaluate(input)
+	decision, err := p.runtime.EvaluateContext(ctx, input)
 	p.recordError(err)
 	if err != nil && p.runtime.Status().Revision == "" {
 		p.runtime = nil // Retain this revision's original quarantine cause.
