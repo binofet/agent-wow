@@ -97,6 +97,7 @@ jobs:
           lua5.1 dev/test_current_gear_macros.lua addons/WarcraftBuddyQuestSync/GearSwap.lua
           lua5.1 dev/test_protection31.lua addons/WarcraftBuddyQuestSync/GearSwap.lua
           lua5.1 dev/test_prep_audit.lua addons/WarcraftBuddyQuestSync/PrepAudit.lua
+          lua5.1 dev/test_warrior_action_bars.lua addons/WarcraftBuddyQuestSync/GearSwap.lua
 
       - name: Vet
         run: go vet ./...
