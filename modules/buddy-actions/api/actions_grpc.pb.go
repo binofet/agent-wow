@@ -53,6 +53,8 @@ const (
 	BuddyActions_Recovery_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Recovery"
 	BuddyActions_ReleaseSpirit_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseSpirit"
 	BuddyActions_QueryCorpse_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/QueryCorpse"
+	BuddyActions_ApproachCorpse_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse"
+	BuddyActions_ReclaimCorpse_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse"
 	BuddyActions_OnPacket_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/OnPacket"
 	BuddyActions_BeforeLogout_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/BeforeLogout"
 	BuddyActions_ResurrectOnce_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ResurrectOnce"
@@ -110,6 +112,8 @@ type BuddyActionsClient interface {
 	Recovery(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	ReleaseSpirit(ctx context.Context, in *DeathActionRequest, opts ...grpc.CallOption) (*State, error)
 	QueryCorpse(ctx context.Context, in *DeathActionRequest, opts ...grpc.CallOption) (*State, error)
+	ApproachCorpse(ctx context.Context, in *CorpseApproachRequest, opts ...grpc.CallOption) (*State, error)
+	ReclaimCorpse(ctx context.Context, in *ReclaimCorpseRequest, opts ...grpc.CallOption) (*State, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	ResurrectOnce(ctx context.Context, in *ResurrectOnceRequest, opts ...grpc.CallOption) (*State, error)
@@ -457,6 +461,26 @@ func (c *buddyActionsClient) QueryCorpse(ctx context.Context, in *DeathActionReq
 	return out, nil
 }
 
+func (c *buddyActionsClient) ApproachCorpse(ctx context.Context, in *CorpseApproachRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ApproachCorpse_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) ReclaimCorpse(ctx context.Context, in *ReclaimCorpseRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ReclaimCorpse_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyActionsClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -665,6 +689,8 @@ type BuddyActionsServer interface {
 	Recovery(context.Context, *ToggleRequest) (*State, error)
 	ReleaseSpirit(context.Context, *DeathActionRequest) (*State, error)
 	QueryCorpse(context.Context, *DeathActionRequest) (*State, error)
+	ApproachCorpse(context.Context, *CorpseApproachRequest) (*State, error)
+	ReclaimCorpse(context.Context, *ReclaimCorpseRequest) (*State, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	ResurrectOnce(context.Context, *ResurrectOnceRequest) (*State, error)
@@ -787,6 +813,12 @@ func (UnimplementedBuddyActionsServer) ReleaseSpirit(context.Context, *DeathActi
 }
 func (UnimplementedBuddyActionsServer) QueryCorpse(context.Context, *DeathActionRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method QueryCorpse not implemented")
+}
+func (UnimplementedBuddyActionsServer) ApproachCorpse(context.Context, *CorpseApproachRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApproachCorpse not implemented")
+}
+func (UnimplementedBuddyActionsServer) ReclaimCorpse(context.Context, *ReclaimCorpseRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReclaimCorpse not implemented")
 }
 func (UnimplementedBuddyActionsServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -1436,6 +1468,42 @@ func _BuddyActions_QueryCorpse_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyActions_ApproachCorpse_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CorpseApproachRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ApproachCorpse(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ApproachCorpse_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ApproachCorpse(ctx, req.(*CorpseApproachRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_ReclaimCorpse_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReclaimCorpseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ReclaimCorpse(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ReclaimCorpse_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ReclaimCorpse(ctx, req.(*ReclaimCorpseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyActions_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -1876,6 +1944,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryCorpse",
 			Handler:    _BuddyActions_QueryCorpse_Handler,
+		},
+		{
+			MethodName: "ApproachCorpse",
+			Handler:    _BuddyActions_ApproachCorpse_Handler,
+		},
+		{
+			MethodName: "ReclaimCorpse",
+			Handler:    _BuddyActions_ReclaimCorpse_Handler,
 		},
 		{
 			MethodName: "OnPacket",

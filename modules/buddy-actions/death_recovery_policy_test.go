@@ -73,10 +73,21 @@ func tickDeathLua(t *testing.T, s *Service) {
 			t.Fatal(err)
 		}
 		var callErr error
-		if action["capability"] == "release_spirit" {
+		parse := func(key string) uint64 { v, _ := action[key].(string); n, _ := strconv.ParseUint(v, 10, 64); return n }
+		switch action["capability"] {
+		case "release_spirit":
 			_, callErr = s.ReleaseSpirit(context.Background(), request)
-		} else {
+		case "query_corpse":
 			_, callErr = s.QueryCorpse(context.Background(), request)
+		case "approach_corpse", "stop_corpse":
+			radius, _ := action["rangeYards"].(float64)
+			_, callErr = s.ApproachCorpse(context.Background(), &actionsv1.CorpseApproachRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
+				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseQueryRevision: parse("corpseQueryRevision"), RangeYards: float32(radius), Stop: action["capability"] == "stop_corpse"})
+		case "reclaim_corpse":
+			_, callErr = s.ReclaimCorpse(context.Background(), &actionsv1.ReclaimCorpseRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
+				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseGuid: parse("corpseGuid"), ExpectedCorpseRevision: parse("expectedCorpseRevision")})
+		default:
+			t.Fatal("unknown recovery action", action)
 		}
 		outcome := behavior.ActionSettledUnverified
 		if status.Code(callErr) == codes.FailedPrecondition {

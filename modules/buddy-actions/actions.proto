@@ -189,6 +189,35 @@ message RecoveryState {
   uint32 verified_legs = 22;
   // Reserved before the exact query write; unknown transport is never replayed.
   bool corpse_query_pending = 23;
+  RecoveryCorpse own_corpse = 24;
+  bool ghost_movement_supported = 25;
+  uint64 corpse_query_revision = 26;
+  bool motion_pending = 27;
+}
+message RecoveryCorpse {
+  uint64 guid = 1;
+  uint64 owner_guid = 2;
+  bool present = 3;
+  ClientPosition position = 4;
+  bool flags_known = 5;
+  uint32 flags = 6;
+}
+message CorpseApproachRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 death_epoch = 3;
+  uint64 expected_position_revision = 4;
+  uint64 corpse_query_revision = 5;
+  float range_yards = 6;
+  bool stop = 7;
+}
+message ReclaimCorpseRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 death_epoch = 3;
+  uint64 expected_position_revision = 4;
+  uint64 corpse_guid = 5;
+  uint64 expected_corpse_revision = 6;
 }
 // Only actual server spellbook IDs are returned. Unknown metadata stays unknown.
 message DeathActionRequest {
@@ -892,6 +921,8 @@ service BuddyActions {
   rpc Recovery(ToggleRequest) returns (State);
   rpc ReleaseSpirit(DeathActionRequest) returns (State);
   rpc QueryCorpse(DeathActionRequest) returns (State);
+  rpc ApproachCorpse(CorpseApproachRequest) returns (State);
+  rpc ReclaimCorpse(ReclaimCorpseRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc ResurrectOnce(ResurrectOnceRequest) returns (State);

@@ -51,7 +51,7 @@ func TestRecoveryProductionPlannerWiredAndMultipleVerifiedLegsReachActualCorpse(
 	const corpseX = float32(600)
 	f.world.OwnCorpse.X = corpseX
 	legs := 0
-	s.planRecoveryPath = func(ctx context.Context, root string, mapID uint32, from, corpse position) ([]position, error) {
+	s.planRecoveryPath = func(ctx context.Context, root string, mapID uint32, from, corpse position, arrival float64) ([]position, error) {
 		if root != "client-assets" || mapID != 0 || corpse.x != corpseX {
 			t.Fatal("planner was not bound to actual queried corpse", root, mapID, corpse)
 		}

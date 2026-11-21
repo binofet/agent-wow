@@ -135,7 +135,7 @@ type Service struct {
 	navDataDir                           string
 	planPath                             func(context.Context, string, position, position) ([]position, error)
 	planMapPath                          func(context.Context, string, uint32, position, position) ([]position, error)
-	planRecoveryPath                     func(context.Context, string, uint32, position, position) ([]position, error)
+	planRecoveryPath                     func(context.Context, string, uint32, position, position, float64) ([]position, error)
 	planLegPath                          func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                    func(context.Context, string, position, position) ([]position, error)
 	planColdridge182Path                 func(context.Context, string, position, position) ([]position, error)
@@ -207,6 +207,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	out.SessionId, out.SelfGuid = s.sessionID, s.selfGUID
 	out.Recovery = s.recovery.snapshot(s.now())
+	out.Recovery.MotionPending = s.state.Moving || s.state.MotionUnconfirmed
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())
 	out.CrowdControlApproachSupported = true
@@ -957,7 +958,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
 		binary.LittleEndian.PutUint32(payload[at:], flags)
 	}
+	before := s.transportSequence
 	if !s.sendLocked(ctx, op, payload) {
+		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > before && !failure.OutcomeUnknown {
+			s.state.Reason = "movement_not_dispatched"
+			return false
+		}
 		s.state.MotionUnconfirmed = true
 		s.publishClientMovementLocked(ctx, nil, p, false)
 		return false
