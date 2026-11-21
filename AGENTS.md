@@ -22,5 +22,7 @@
 ## Recovering a stuck companion inside an instance
 
 - An online GM summon inside an instance can fail unless the GM is the target party leader. A sent command is not evidence that the character moved.
-- Use the existing managed launcher to log the stuck companion out normally. Move the authenticated GM to the requested player, issue the ordinary offline `.summon <companion>` command, then start the same companion profile again. This uses public game commands and preserves the party and instance binding.
-- Verify the new world position, proximity to the requested player, and resumed following. Preserve this recovery knowledge instead of repeating failed online summons or route resets.
+- Revive dead or released players **online**, then verify they are alive with full health before transport. Do not use offline `.summon` followed by offline `.revive`: corpse deletion and `AT_LOGIN_RESURRECT` processing after instance admission can send them outside.
+- Only for a living stuck companion, use the managed launcher to log out normally, move the authenticated GM to the requested player, issue offline `.summon <companion>`, then restart the same profile. Wait for observed GM arrival and teleport completion before summoning; do not batch `.appear` with its dependent `.summon`.
+- Scarlet Monastery's wings share map 189. Verify the wing, coordinates and actual distance to Joel; matching map IDs alone do not establish a regroup.
+- At the Armory entry, online `.tele name <Name> SMArmory` reliably regrouped all four companions alive at full health within 18 yards of Joel. Verify the actual world positions, health and resumed following after recovery.
