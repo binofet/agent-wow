@@ -36,23 +36,25 @@ func planRecoveryNavigation(ctx context.Context, root string, mapID uint32, from
 }
 
 type deathRecovery struct {
-	state                                                                               actionsv1.RecoveryState
-	enabledUntil, deadline, started, lastAlive, delayAt, delayUntil, queryAt, reclaimAt time.Time
-	queryPending                                                                        bool
-	readyForDeath                                                                       bool
-	path                                                                                []position
-	index                                                                               int
-	mapID                                                                               uint32
-	revision                                                                            uint64
-	expected                                                                            position
-	token                                                                               string
-	releasePositionRevision                                                             uint64
-	releaseMap                                                                          uint32
-	graveyardPoseObserved                                                               bool
+	state                                                                      actionsv1.RecoveryState
+	enabledUntil, deadline, started, lastAlive, delayAt, delayUntil, reclaimAt time.Time
+	queryPending                                                               bool
+	preparedEpoch                                                              uint64
+	lifeKnown, lastObservedAlive                                               bool
+	path                                                                       []position
+	index                                                                      int
+	mapID                                                                      uint32
+	revision                                                                   uint64
+	expected                                                                   position
+	token                                                                      string
+	releasePositionRevision                                                    uint64
+	releaseMap                                                                 uint32
+	graveyardPoseObserved                                                      bool
 }
 
 func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 	s := proto.Clone(&r.state).(*actionsv1.RecoveryState)
+	s.CorpseQueryPending = r.queryPending
 	if s.Active && now.Before(r.delayUntil) {
 		s.ReclaimDelayRemainingMs = uint64(r.delayUntil.Sub(now).Milliseconds())
 	}
@@ -130,18 +132,41 @@ func (s *Service) endRecoveryLocked(ctx context.Context, phase, reason string) {
 		r.token = ""
 	}
 }
+
+// Life identity is raw observation bookkeeping, independent of recovery policy
+// enablement. A new positive death retires only that death's packet reservations.
+func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
+	r := &s.recovery
+	p := w.GetSelf()
+	if p == nil || p.Guid != s.selfGUID || !p.Present || !p.AliveKnown || !p.HealthKnown || p.MaxHealth == 0 || p.Health > p.MaxHealth {
+		return
+	}
+	if !p.Alive && (!r.lifeKnown || r.lastObservedAlive) {
+		r.state = actionsv1.RecoveryState{Enabled: r.state.Enabled, Active: r.state.Active,
+			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed}
+		r.queryPending = false
+		r.releasePositionRevision, r.releaseMap = 0, 0
+		r.graveyardPoseObserved = false
+	}
+	r.lifeKnown, r.lastObservedAlive = true, p.Alive
+	if p.Alive && r.state.DeathEpoch != 0 {
+		r.state.AliveObserved = true
+	}
+	if !p.Alive && p.PlayerFlags&ghostFlag != 0 {
+		r.state.GhostObserved = true
+	}
+}
+
 func (s *Service) beginRecoveryLocked(ctx context.Context) {
 	r := &s.recovery
-	epoch := r.state.DeathEpoch + 1
-	r.state = actionsv1.RecoveryState{Enabled: true, Active: true, DeathEpoch: epoch, Phase: "observed_death"}
+	r.preparedEpoch = r.state.DeathEpoch
+	r.state.Active = true
+	r.state.Phase = "observed_death"
 	r.started = s.now()
 	r.deadline = s.now().Add(10 * time.Minute)
 	r.path = nil
 	r.index = 0
-	r.queryPending = false
-	r.queryAt = time.Time{}
 	r.reclaimAt = time.Time{}
-	r.readyForDeath = false
 	r.graveyardPoseObserved = false
 	// If this body joined an already released ghost, no timer packet may remain.
 	// Player.cpp's source maximum is120s. Waiting that whole maximum grants no
@@ -209,7 +234,6 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 	p := w.Self
 	if p.Alive {
 		r.lastAlive = s.now()
-		r.readyForDeath = true
 		if r.state.DeathEpoch != 0 {
 			r.state.AliveObserved = true
 		}
@@ -246,13 +270,13 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 		s.endRecoveryLocked(ctx, "alive_observed", "actual_alive_receipt_shared_Lua_resource_policy")
 		return false
 	}
-	if r.state.Active && r.state.AliveObserved {
+	if r.state.Active && r.preparedEpoch != r.state.DeathEpoch {
 		// A new actual death during recuperation is a new epoch, not a retry
 		// of the previous epoch's already consumed release/reclaim requests.
 		s.beginRecoveryLocked(ctx)
 	}
 	if !r.state.Active {
-		if r.state.DeathEpoch != 0 && !r.readyForDeath {
+		if r.preparedEpoch == r.state.DeathEpoch {
 			return true
 		}
 		if s.state.InteractionOwner != "" {
@@ -284,19 +308,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 	}
 	s.interactionUntil = s.now().Add(15 * time.Second)
 	if p.PlayerFlags&ghostFlag == 0 {
-		if p.Health != 0 {
-			r.state.Reason = "dead_state_not_releaseable"
-			return true
-		}
-		if !r.state.ReleaseAttempted {
-			r.releasePositionRevision, r.releaseMap = p.PositionRevision, p.MapId
-			r.state.ReleaseAttempted = true
-			r.state.Phase = "release_requested"
-			r.state.ReleaseWritten = s.sendLocked(ctx, opcode.CMSGRepopRequest, []byte{0})
-			r.path = nil
-		} else {
-			r.state.Reason = "waiting_for_actual_ghost_and_graveyard_teleport"
-		}
+		r.state.Reason = "waiting_for_Lua_release_or_actual_ghost"
 		return true
 	}
 	r.state.GhostObserved = true
@@ -322,19 +334,8 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 		s.endRecoveryLocked(ctx, "blocked", "graveyard_movement_stop_unconfirmed")
 		return true
 	}
-	if !r.state.CorpseQueryKnown && !r.queryPending {
-		r.queryPending = true
-		r.queryAt = s.now()
-		r.state.Phase = "querying_actual_corpse"
-		if !s.sendLocked(ctx, opcode.MSGCorpseQuery, nil) {
-			r.state.Reason = "corpse_query_transport_unconfirmed"
-		}
-		return true
-	}
 	if !r.state.CorpseQueryKnown {
-		if s.now().Sub(r.queryAt) > 5*time.Second {
-			s.endRecoveryLocked(ctx, "blocked", "corpse_query_no_actual_response")
-		}
+		r.state.Reason = "waiting_for_Lua_corpse_query_or_actual_response"
 		return true
 	}
 	if !r.state.CorpseFound || r.state.CorpseLocation == nil {

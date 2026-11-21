@@ -39,13 +39,18 @@ type friendlyEncounterCallback struct {
 	world   *worldv1.SnapshotResponse
 	writes  []*modv1.SendPacketRequest
 	visits  []uint64
+	reject  bool
 }
 
 func (f *friendlyEncounterCallback) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	if md, ok := metadata.FromOutgoingContext(ctx); ok {
 		ctx = metadata.NewIncomingContext(ctx, md)
 	}
-	err := f.manager.modulePacketWriter(friendlyEncounterSession, actionsModule)(ctx, r.Opcode, r.Payload)
+	sid := friendlyEncounterSession
+	if f.reject {
+		sid = "replaced-death-callback-session"
+	}
+	err := f.manager.modulePacketWriter(sid, actionsModule)(ctx, r.Opcode, r.Payload)
 	return &emptypb.Empty{}, err
 }
 func (f *friendlyEncounterCallback) GetClock(context.Context, *emptypb.Empty, ...grpc.CallOption) (*modv1.ClockResponse, error) {
@@ -101,6 +106,7 @@ func friendlyEncounterManager(t *testing.T) (*Manager, *buddyactions.Service, *f
 	actionsv1.RegisterBuddyActionsServer(server, native)
 	modcb.RegisterEncounterLeaseServer(server, native)
 	h := health.NewServer()
+	h.SetServingStatus(modcb.PolicySpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	h.SetServingStatus(modcb.PolicySupportSpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	grpc_health_v1.RegisterHealthServer(server, h)
 	listener := bufconn.Listen(1024 * 1024)

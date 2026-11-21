@@ -11,7 +11,7 @@ import (
 func TestPostRecoveryActualLifeRetiresOnlyPhysicalCustody(t *testing.T) {
 	for _, unknownPower := range []bool{false, true} {
 		s, f, _ := recoveryRig(t)
-		s.Tick(context.Background())
+		tickDeathLua(t, s)
 		p := f.world.Self
 		p.Alive, p.Health, p.Power, p.PlayerFlags = true, 1, 0, 0
 		p.PowerKnown = !unknownPower

@@ -22,6 +22,7 @@ def main():
         ("encounter_consumables", behaviors / "consumables.lua"),
         ("encounter_formation", behaviors / "follow-formation.lua"),
         ("encounter_buffs", behaviors / "buffs.lua"),
+        ("encounter_death_recovery", behaviors / "death-recovery.lua"),
         ("encounter_movement", behaviors / "encounter-movement.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),
