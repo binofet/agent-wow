@@ -98,6 +98,8 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 	if jump {
 		limit = BodyMotionHorizon
 	}
+	minimumLanding := start.Z + float32(BodyJumpVelocity*seconds-BodyGravity*seconds*seconds/2)
+	maximumLanding := start.Z + float32(BodyJumpVelocity*BodyJumpVelocity/(2*BodyGravity))
 	for at := 50 * time.Millisecond; at <= limit+50*time.Millisecond; at += 50 * time.Millisecond {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -109,19 +111,21 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 			at = limit
 		}
 		seconds := at.Seconds()
-		q := Point{start.X + float32(math.Cos(bearing)*speed*seconds), start.Y + float32(math.Sin(bearing)*speed*seconds), start.Z}
+		previous := points[len(points)-1].Point
+		q := Point{start.X + float32(math.Cos(bearing)*speed*seconds), start.Y + float32(math.Sin(bearing)*speed*seconds), previous.Z}
 		if jump {
-			q.Z += float32(BodyJumpVelocity*seconds - BodyGravity*seconds*seconds/2)
+			q.Z = start.Z + float32(BodyJumpVelocity*seconds-BodyGravity*seconds*seconds/2)
 		}
 		above, below := float32(.5), float32(1)
 		if jump {
-			above, below = .5, 3
+			// Search to the lowest landing reachable during this finite
+			// flight. A fixed depth from the apex can hide valid support.
+			below = float32(math.Max(0, float64(q.Z-minimumLanding)))
 		}
 		h, known, err = floor(q, above, below)
 		if err != nil || !known || !finite(h) {
-			return nil, errors.New("body probe lacks a measured physical floor")
+			return nil, fmt.Errorf("body probe lacks a measured physical floor: at=%s sample=(%g,%g,%g) search=[%g,%g] measured_z=%g known=%t error=%v", at, q.X, q.Y, q.Z, q.Z-below, q.Z+above, h, known, err)
 		}
-		previous := points[len(points)-1].Point
 		landed := jump && BodyJumpVelocity-BodyGravity*seconds < 0 && q.Z <= h+.025
 		if !jump {
 			if math.Abs(float64(h-previous.Z)) > .5 {
@@ -129,7 +133,7 @@ func planBodyMotion(ctx context.Context, start Point, bearing, speed float64, du
 			}
 			q.Z = h
 		} else if landed {
-			if h < start.Z-1 || h > start.Z+float32(BodyJumpVelocity*BodyJumpVelocity/(2*BodyGravity)) || previous.Z < h-.05 {
+			if h < minimumLanding || h > maximumLanding || previous.Z < h-.05 {
 				return nil, errors.New("body hop has no reachable nearby landing")
 			}
 			q.Z = h
