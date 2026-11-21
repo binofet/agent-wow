@@ -104,6 +104,33 @@ func TestFollowPolicyRuntimeFailureReportsAttemptRevisionAndRetainsMemory(t *tes
 	}
 }
 
+func TestFollowPolicyProductionWatchdogPausesWithoutFallbackAndKeepsIntent(t *testing.T) {
+	s, fake, _ := rig(t)
+	fake.world.Owner.Health = fake.world.Owner.MaxHealth
+	runtime := behavior.New() // The production five-millisecond budget.
+	revision, err := runtime.Reload("return {decide=function(input) input.memory.marker='mutated' while true do end end}", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
+	toggle(t, s, true)
+	s.formation.memory = map[string]any{"guid": fmt.Sprint(s.selfGUID), "marker": "committed"}
+	s.Tick(context.Background())
+	view := s.stateLocked()
+	failure := view.GetLastFollowPolicyFailure()
+	if !view.Following || view.Moving || view.MotionUnconfirmed || len(fake.packets) != 0 || s.formation.runtime != nil {
+		t.Fatal("watchdog installed a fallback, wrote movement, or revoked standing intent", view, fake.packets)
+	}
+	if !reflect.DeepEqual(s.formation.memory, map[string]any{"guid": fmt.Sprint(s.selfGUID), "marker": "committed"}) {
+		t.Fatal("failed pure read changed committed Lua memory", s.formation.memory)
+	}
+	assertFollowFailureText(t, failure)
+	if failure.Mode != "near_owner" || failure.Stage != "evaluate" || failure.SourceRevision != revision ||
+		!strings.Contains(failure.Error, "context deadline exceeded") {
+		t.Fatal("production watchdog lost its actual cause or attempted revision", failure)
+	}
+}
+
 func TestFollowPolicyRemoteFailureUsesOnlyReturnedAttemptRevision(t *testing.T) {
 	s, _, _ := rig(t)
 	s.formation.memory = map[string]any{"guid": "4", "marker": "committed"}
