@@ -81,7 +81,7 @@ func TestExplicitResurrectionRefusesCombatUnlearnedAndOutOfRange(t *testing.T) {
 	}
 }
 
-func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testing.T) {
+func TestDefiniteResurrectionRejectionRequiresFreshCallerSelection(t *testing.T) {
 	s, f, advance := resRig(t)
 	_, _ = requestResurrection(s)
 	first := s.castCount
@@ -92,12 +92,11 @@ func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testi
 	if s.resurrectionBindings[3] || s.state.CastPending {
 		t.Fatal("definite rejection quarantined the death")
 	}
-	advance(9 * time.Second)
-	_, _ = requestResurrection(s)
+	advance(11 * time.Second)
+	s.Tick(context.Background())
 	if countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("rejection cooldown ignored")
+		t.Fatal("native Tick replayed the rejected death without a caller selection")
 	}
-	advance(2 * time.Second)
 	_, _ = requestResurrection(s)
 	if countPackets(f, opcode.CMSGCastSpell) != 2 || s.castCount == first {
 		t.Fatal("fresh eligible resurrection could not start")
