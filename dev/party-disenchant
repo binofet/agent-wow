@@ -22,6 +22,7 @@ def load(name, filename):
 gear = load('disenchant_gear', 'party-gear')
 town, c = gear.town, gear.c
 rewards = load('disenchant_items', 'quest-rewards.py')
+runtime = load('disenchant_runtime', 'task-runtime')
 Error, number, token, ROOT = town.Error, town.number, town.token, gear.ROOT
 PROFILES = {1: (8086, 5), 4: (8087, 8), 5: (8088, 4), 8: (8402, 9)}
 PARTY = frozenset((1, 3, 4, 5, 8))
@@ -72,17 +73,6 @@ def item_metadata(row):
     return row
 
 
-def stats(row):
-    out = {}
-    for stat in row.get('stats', []):
-        kind, value = number(stat.get('type', 0)), stat.get('value', 0)
-        if (type(value) is not int or value < 0 or kind in out
-                or not (kind <= 1 or 3 <= kind <= 7 or 12 <= kind <= 39 or 43 <= kind <= 48)):
-            raise Error('party_stat_comparison_unknown')
-        out[kind] = value
-    return out
-
-
 def player_known(world, guid):
     player = world.get('self', {})
     if (number(player.get('guid', 0)) != guid or any(player.get(k) is not True for k in
@@ -124,86 +114,74 @@ def owner_view(feed):
     return dict(player=owner, equipment=equipment, proficiencies=proficiencies)
 
 
-def could_use(item, player):
-    """Return false only for a permanent actual class/race exclusion."""
-    class_id, race = number(player['classId']), number(player['raceId'])
-    if not number(item.get('allowableClass', 0)) & (1 << (class_id-1)): return False
-    if not number(item.get('allowableRace', 0)) & (1 << (race-1)): return False
-    subclass = number(item.get('subclass', 0))
-    maximum = {1: 4, 4: 2, 5: 1, 8: 1, 9: 1}.get(class_id)
-    return maximum is None or subclass <= maximum
+TEMPLATE_FIELDS = (
+    'itemId', 'available', 'pending', 'itemClass', 'subclass', 'inventoryType',
+    'quality', 'itemLevel', 'requiredLevel', 'allowableClass', 'allowableRace',
+    'armorComparisonKnown', 'armor', 'stats', 'hasSpell', 'flags', 'flags2',
+    'requiredSpell', 'requiredHonorRank', 'requiredCityRank',
+    'requiredReputationFaction', 'requiredReputationRank', 'requiredSkill', 'requiredSkillRank',
+)
+EQUIPMENT_FIELDS = (
+    'slot', 'entry', 'metadataKnown', 'enhancementsKnown', 'hasEnhancements',
+    'stackCount', 'durabilityKnown', 'durability', 'maxDurability',
+)
 
 
-def dominated(item, equipped, current):
-    if (item.get('armorComparisonKnown') is not True or current.get('armorComparisonKnown') is not True
-            or not number(equipped.get('entry', 0)) or equipped.get('metadataKnown') is not True
-            or equipped.get('enhancementsKnown') is not True or equipped.get('hasEnhancements', False) is not False
-            or number(equipped.get('stackCount', 1)) != 1 or current.get('hasSpell', False) is not False
-            or number(current.get('flags', 0)) or number(current.get('flags2', 0))
-            or number(current.get('itemClass', 0)) != 4
-            or number(current.get('itemLevel', 0)) < number(item.get('itemLevel', 0))
-            or number(current.get('armor', 0)) < number(item.get('armor', 0))): return False
-    if equipped.get('durabilityKnown') is not True: return False
-    maximum, durability = number(equipped.get('maxDurability', 0)), number(equipped.get('durability', 0))
-    if maximum and not 0 < durability <= maximum: return False
-    old, new = stats(current), stats(item)
-    return all(old.get(kind, 0) >= value for kind, value in new.items())
+def project(row, fields):
+    return {key: row[key] for key in fields if key in row}
 
 
-def decision(source, item, views, metadata, quest_items, protected):
-    """An unknown comparison always keeps the exact carried item."""
-    guid, entry = number(source.get('itemGuid', 0)), number(source.get('entry', 0))
-    if guid in protected: return 'reserved_or_displaced_gear_retained'
-    if entry in quest_items: return 'active_party_quest_item_retained'
-    if (source.get('metadataKnown') is not True or number(source.get('stackCount', 0)) != 1
-            or source.get('enhancementsKnown') is not True or source.get('hasEnhancements', False) is not False):
-        return 'owned_item_enhancement_context_required'
-    if (number(item.get('itemClass', 0)) != 4 or number(item.get('subclass', 0)) not in (1, 2, 3, 4)
-            or item.get('armorComparisonKnown') is not True
-            or not 2 <= number(item.get('quality', 0)) <= 4 or item.get('hasSpell', False) is not False
-            or number(item.get('flags', 0)) or number(item.get('flags2', 0))):
-        return 'only_ordinary_armor_compared_for_automatic_disenchant'
-    slot = {1: 0, 3: 2, 5: 4, 20: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14}.get(number(item.get('inventoryType', 0)))
-    if slot is None: return 'unsupported_party_equipment_comparison'
-    if number(item.get('inventoryType',0))==16 and number(item.get('subclass',0))!=1:
-        return 'unsupported_party_equipment_comparison'
-    if any(number(item.get(k, 0)) for k in ('requiredSpell', 'requiredHonorRank', 'requiredCityRank',
-            'requiredReputationFaction', 'requiredReputationRank', 'requiredSkill', 'requiredSkillRank')):
-        return 'special_or_future_requirements_retained'
-    for guid in sorted(PARTY):
-        view = views.get(guid)
-        if view is None:
-            if guid == 3 and not number(item.get('allowableClass', 0)) & 1: continue
-            return 'owner_gear_comparison_unavailable' if guid == 3 else 'party_upgrade_or_unknown_comparison_retained'
-        player = view['player'] if guid == 3 else player_known(view['world'], guid)
-        if not could_use(item, player): continue
-        if number(item.get('requiredLevel', 0)) > number(player['level']): return 'future_party_equipment_retained'
-        proficiency = {1: 415, 2: 414, 3: 413, 4: 293}[number(item['subclass'])]
-        if guid == 3:
-            if view['proficiencies'].get(proficiency) is not True: return 'future_or_unknown_party_proficiency_retained'
-            equipped = view['equipment'][slot]
-        else:
-            world = view['world']; skills = world.get('selfSkills', [])
-            if (world.get('selfSkillsKnown') is not True or not number(world.get('selfSkillsRevision', 0))
-                    or not isinstance(skills, list) or len(skills) != 128 or any(not isinstance(r,dict) for r in skills)):
-                return 'future_or_unknown_party_proficiency_retained'
-            by_slot, by_skill = {}, {}
-            for skill in skills:
-                index, skill_id = number(skill.get('slot', 0), 127), number(skill.get('skillId', 0), 65535)
-                value,maximum=number(skill.get('value',0),65535),number(skill.get('maxValue',0),65535)
-                if index in by_slot or skill_id and skill_id in by_skill or value>maximum or not skill_id and (value or maximum):
-                    return 'future_or_unknown_party_proficiency_retained'
-                by_slot[index] = skill; by_skill[skill_id] = value
-            if not by_skill.get(proficiency): return 'future_or_unknown_party_proficiency_retained'
-            equipped = gear.equipment(view['inventory'])[slot]
-        current = metadata.get(number(equipped.get('entry', 0)))
-        if current is None or not dominated(item, equipped, item_metadata(current)):
-            return 'party_upgrade_or_unknown_comparison_retained'
-    return ''
+def skill_facts(world):
+    """Detach complete skill observations without sending 128 empty slots."""
+    out = dict(known=world.get('selfSkillsKnown') is True,
+        revision=str(number(world.get('selfSkillsRevision', 0))), complete=False, ranks={})
+    rows = world.get('selfSkills', [])
+    if not isinstance(rows, list) or len(rows) != 128 or any(not isinstance(row, dict) for row in rows):
+        return out
+    slots, ranks = set(), {}
+    for row in rows:
+        slot, skill = number(row.get('slot', 0), 127), number(row.get('skillId', 0), 65535)
+        value, maximum = number(row.get('value', 0), 65535), number(row.get('maxValue', 0), 65535)
+        if slot in slots or skill and str(skill) in ranks or value > maximum or not skill and (value or maximum):
+            return out
+        slots.add(slot)
+        if skill:
+            ranks[str(skill)] = value
+    out.update(complete=True, ranks=ranks)
+    return out
 
 
 class Scanner:
-    def __init__(self, client=RPC): self.client, self.offset, self.deadline = client, 0, None
+    def __init__(self, client=RPC, bridge=None, policy=None):
+        self.client, self.offset, self.deadline = client, 0, None
+        self.bridge = bridge or runtime.Bridge(
+            os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT/'data/bin/luapolicy'), ROOT/'modules')
+        self.policy = Path(policy) if policy is not None else ROOT/'behaviors/disenchant.lua'
+
+    def evaluate(self, code, phase, **facts):
+        try:
+            result = self.bridge.evaluate(code, dict(phase=phase, **facts))
+        except runtime.Error as exc:
+            raise Error(str(exc)) from exc
+        if (not isinstance(result, dict) or not isinstance(result.get('reason', ''), str)
+                or len(result.get('reason', '')) > 128):
+            raise Error('disenchant_policy_output_invalid')
+        return result
+
+    def observed_sources(self, rows, observed):
+        if rows == {}:
+            rows = []
+        if not isinstance(rows, list) or len(rows) > 8:
+            raise Error('disenchant_policy_sources_invalid')
+        actual, seen = [], set()
+        for row in rows:
+            ref = town.ref(row)
+            key = ref['itemGuid']
+            if key in seen or key not in observed or town.ref(observed[key]) != ref:
+                raise Error('disenchant_policy_source_unobserved')
+            seen.add(key)
+            actual.append(observed[key])
+        return actual
     def connection(self,url):
         client=self.client(url)
         if isinstance(client,RPC):client.deadline=self.scan_deadline
@@ -228,20 +206,45 @@ class Scanner:
         self.scan_deadline=min(self.deadline or time.monotonic()+12,time.monotonic()+12)
         if number(own.get('selfGuid', 0)) != 4: return None, 'mira_only', None
         _, slots = town.layout(own); gear.equipment(own)
-        choices = sorted((r for r in slots.values() if number(r.get('itemGuid', 0)) and number(r.get('stackCount', 0)) == 1),
-            key=lambda r: (number(r.get('bag', 0)), number(r.get('slot', 0))))
-        if not choices: return None, 'no_carried_candidate', None
+        try:
+            code = runtime.read_file(self.policy, runtime.MAX_SOURCE).decode('utf-8')
+        except (OSError, UnicodeError, runtime.Error) as exc:
+            raise Error('disenchant_policy_unavailable') from exc
+        policy_revision = hashlib.sha256(code.encode()).hexdigest()
+        observed = {str(number(row.get('itemGuid', 0))): row for row in slots.values()
+            if number(row.get('itemGuid', 0))}
+        inputs = dict(sources=[town.ref(row) for row in observed.values()], offset=self.offset)
         if selected is not None:
-            choices = [r for r in choices if town.ref(r) == town.ref(selected)]
-            if not choices: return None, 'disenchant_source_changed_during_comparison', None
-        else:
-            start = self.offset % len(choices); self.offset += 8
-            choices = (choices+choices)[start:start+min(8, len(choices))]
+            inputs['selected'] = town.ref(selected)
+        candidates = self.evaluate(code, 'candidates', **inputs)
+        choices = self.observed_sources(candidates.get('sources'), observed)
+        next_offset = candidates.get('offset')
+        if type(next_offset) is not int or not 0 <= next_offset <= 2**53-1:
+            raise Error('disenchant_policy_offset_invalid')
+        self.offset = next_offset
+        if not choices:
+            return None, candidates.get('reason') or 'no_carried_candidate', None
         rpc = self.connection('http://127.0.0.1:8087/rpc')
         metadata = self.lookup(rpc, own['sessionId'], [number(r.get('entry', 0)) for r in choices])
-        choices=[r for r in choices if number(metadata[number(r['entry'])].get('itemClass',0))==4
-            and 2<=number(metadata[number(r['entry'])].get('quality',0))<=4]
-        if not choices:return None,'no_ordinary_quality_gear_candidate',None
+        plan = self.evaluate(code, 'plan', sources=[town.ref(row) for row in choices],
+            metadata=[project(row, TEMPLATE_FIELDS) for row in metadata.values()])
+        comparisons = plan.get('comparisons')
+        if comparisons == {}:
+            comparisons = []
+        if not isinstance(comparisons, list) or len(comparisons) > len(choices):
+            raise Error('disenchant_policy_comparisons_invalid')
+        planned = self.observed_sources([row.get('source') for row in comparisons if isinstance(row, dict)], observed)
+        if len(planned) != len(comparisons) or any(row not in choices for row in planned):
+            raise Error('disenchant_policy_comparison_unobserved')
+        wanted_slots = set()
+        for comparison in comparisons:
+            slot = comparison.get('slot')
+            if slot is not False and (type(slot) is not int or not 0 <= slot <= 18):
+                raise Error('disenchant_policy_slot_invalid')
+            if slot is not False:
+                wanted_slots.add(slot)
+        if not comparisons:
+            return None, plan.get('reason') or 'no_ordinary_quality_gear_candidate', None
         raw_feed = rpc.call('buddy-chat.owner_feed', {})
         owner_feed = c.validated_owner_feed(raw_feed)
         # Chat has its own module epoch, distinct from the core aw session.
@@ -320,8 +323,6 @@ class Scanner:
         if (views[4]['inventory']['sessionId'] != own['sessionId']
                 or number(views[4]['inventory']['inventoryRevision']) != number(own['inventoryRevision'])):
             raise Error('disenchant_source_changed_during_comparison')
-        compared_slots = {1: 0, 3: 2, 5: 4, 20: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9, 16: 14}
-        wanted_slots = {compared_slots.get(number(metadata[number(r['entry'])].get('inventoryType', 0))) for r in choices}
         entries = [number(row.get('entry', 0)) for guid, view in views.items()
             for slot, row in (view['equipment'] if guid == 3 else gear.equipment(view['inventory'])).items() if slot in wanted_slots]
         metadata.update(self.lookup(rpc, own['sessionId'], entries))
@@ -336,16 +337,48 @@ class Scanner:
             raise Error('owner_feed_changed_during_comparison')
         tail=rpc.call('buddy-party.state',{});group_known(tail,4)
         if tail.get('sessionId')!=own['sessionId']:raise Error('party_comparison_body_changed')
-        reason = 'no_unused_party_gear_proven'
-        for source in choices:
-            reason = decision(source, metadata[number(source['entry'])], views, metadata, quest_items, set(protected))
-            if not reason:
-                proof = dict(characters=shared, chatModuleSessionId=chat_session,ownerAddonSession=owner_feed['addonSession'],
-                    ownerQuestIds=sorted(q['questId'] for q in owner_feed['quests']))
-                chosen=copy.deepcopy(source)
-                chosen['name']=c.BuddyControls.label(metadata[number(source['entry'])].get('name'),f"item {source['entry']}",120)
-                return chosen, '', proof
-        return None, reason, None
+        results = []
+        for comparison, actual in zip(comparisons, planned):
+            slot = comparison['slot']
+            party, current = [], {}
+            for guid in sorted(PARTY):
+                view = views[guid]
+                player = view['player'] if guid == 3 else view['world']['self']
+                equipment = view['equipment'] if guid == 3 else gear.equipment(view['inventory'])
+                row = equipment.get(slot, {}) if slot is not False else {}
+                if guid == 3:
+                    proficiency = dict(known=True, complete=True,
+                        ranks={str(skill): known for skill, known in view['proficiencies'].items()})
+                else:
+                    proficiency = skill_facts(view['world'])
+                equipped = project(row, EQUIPMENT_FIELDS)
+                if slot is not False:
+                    equipped['slot'] = slot
+                party.append(dict(guid=str(guid), player=project(player, ('classId', 'raceId', 'level')),
+                    equipment=equipped, proficiency=proficiency))
+                entry = number(row.get('entry', 0))
+                if entry in metadata:
+                    current[entry] = project(metadata[entry], TEMPLATE_FIELDS)
+            result = self.evaluate(code, 'compare',
+                source=dict(town.ref(actual), **project(actual, ('metadataKnown', 'enhancementsKnown', 'hasEnhancements'))),
+                item=project(metadata[number(actual['entry'])], TEMPLATE_FIELDS), party=party,
+                current=list(current.values()), questItems=sorted(quest_items),
+                protected=[str(number(guid)) for guid in protected])
+            if 'reason' not in result:
+                raise Error('disenchant_policy_comparison_reason_required')
+            results.append(dict(source=town.ref(actual), reason=result['reason']))
+        result = self.evaluate(code, 'select', results=results)
+        if result.get('source') is None:
+            return None, result.get('reason') or 'no_unused_party_gear_proven', None
+        chosen = self.observed_sources([result['source']], observed)[0]
+        if town.ref(chosen) not in [row['source'] for row in results]:
+            raise Error('disenchant_policy_selection_uncompared')
+        proof = dict(characters=shared, chatModuleSessionId=chat_session, ownerAddonSession=owner_feed['addonSession'],
+            ownerQuestIds=sorted(q['questId'] for q in owner_feed['quests']), policySHA256=policy_revision)
+        chosen = copy.deepcopy(chosen)
+        chosen['name'] = c.BuddyControls.label(metadata[number(chosen['entry'])].get('name'), f"item {chosen['entry']}", 120)
+        return chosen, '', proof
+
 
 
 def matches(request, source, operation):
