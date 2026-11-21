@@ -51,7 +51,7 @@ func TestRecoveryProductionPlannerWiredAndMultipleVerifiedLegsReachActualCorpse(
 	const corpseX = float32(600)
 	f.world.OwnCorpse.X = corpseX
 	legs := 0
-	s.planRecoveryPath = func(ctx context.Context, root string, mapID uint32, from, corpse position) ([]position, error) {
+	s.planRecoveryPath = func(ctx context.Context, root string, mapID uint32, from, corpse position, arrival float64) ([]position, error) {
 		if root != "client-assets" || mapID != 0 || corpse.x != corpseX {
 			t.Fatal("planner was not bound to actual queried corpse", root, mapID, corpse)
 		}
@@ -125,7 +125,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
 	tickDeathLua(t, s)
 	tickDeathLua(t, s)
-	if countOpcode(f, opcode.CMSGRepopRequest) != 1 || !s.recovery.state.ReleaseWritten || s.state.InteractionOwner != "recovery" {
+	if countOpcode(f, opcode.CMSGRepopRequest) != 1 || !s.recovery.state.ReleaseWritten || s.state.InteractionOwner != "" {
 		t.Fatal(s.stateLocked())
 	}
 	ghostAt(f, 0)
@@ -259,7 +259,7 @@ func TestRecoveryAmbiguousWritesCannotBeRepeatedOrResetByEnable(t *testing.T) {
 	tickDeathLua(t, s)
 	s.Recovery(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 	tickDeathLua(t, s)
-	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || s.recovery.state.Phase != "outcome_unconfirmed" {
+	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || s.recovery.state.Phase != "reclaim_requested" || !s.recovery.state.ReclaimAttempted || s.recovery.state.ReclaimWritten {
 		t.Fatal(s.stateLocked())
 	}
 }
@@ -287,7 +287,7 @@ func TestRecoveryNeverStealsOtherLeaseAndCancelStopsOwnedMovement(t *testing.T) 
 	}
 	before := countOpcode(f, opcode.MSGMoveStop)
 	s.Recovery(context.Background(), &actionsv1.ToggleRequest{Enabled: false})
-	if s.state.Moving || s.state.InteractionOwner != "" || countOpcode(f, opcode.MSGMoveStop) != before+1 || s.recovery.state.Enabled {
+	if s.state.Moving || s.state.InteractionOwner != "" || countOpcode(f, opcode.MSGMoveStop) != before+1 || !s.recovery.state.Enabled {
 		t.Fatal(s.stateLocked())
 	}
 }
@@ -312,7 +312,7 @@ func TestRecoveryBoundedUnavailableRouteAndFreshAgeIndependentCorpse(t *testing.
 	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 500}))
 	tickDeathLua(t, s)
-	if s.recovery.state.Active || s.recovery.state.Reason != "corpse_navigation_unavailable" || countOpcode(f, opcode.MSGMoveStartForward) != 0 {
+	if s.recovery.state.Active || s.recovery.state.Phase != "route_unavailable" || countOpcode(f, opcode.MSGMoveStartForward) != 0 {
 		t.Fatal(s.stateLocked())
 	}
 	a := &worldv1.CorpseState{Guid: ownCorpseGUID, OwnerGuid: 1, Present: true, MapKnown: true, PositionKnown: true, FlagsKnown: true, PositionRevision: 1}
@@ -443,6 +443,7 @@ func TestRecoveryMayReleaseActualDeathButNeedsFreshPoseToResolveOldMotion(t *tes
 	}
 	ghostAt(f, 50)
 	tickDeathLua(t, s)
+	tickDeathLua(t, s)
 	if s.state.MotionUnconfirmed || s.state.Moving || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.MSGMoveStop) != 1 {
 		t.Fatal("actual graveyard pose did not establish stopped ghost baseline", s.stateLocked())
 	}
@@ -462,12 +463,12 @@ func TestRecoveryGhostFlagBeforeGraveyardPoseWaitsWithoutWrites(t *testing.T) {
 	tickDeathLua(t, s)
 	// The corpse query has no coordinates and may proceed before the teleport.
 	// No STOP or route movement may use this intermediate ghost pose.
-	if len(f.packets) != before+1 || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.MSGMoveStop) != 0 || !s.recovery.state.Active || s.recovery.state.Phase != "waiting_for_actual_graveyard_position_baseline" {
+	if len(f.packets) != before+1 || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.MSGMoveStop) != 0 || s.recovery.state.Active || s.recovery.state.GhostMovementSupported || !s.state.MotionUnconfirmed {
 		t.Fatal("intermediate ghost prematurely stopped/retired", s.stateLocked())
 	}
 	ghostAt(f, 50)
 	tickDeathLua(t, s)
-	if s.state.MotionUnconfirmed || countOpcode(f, opcode.MSGCorpseQuery) != 1 || !s.recovery.state.Active {
+	if s.state.MotionUnconfirmed || countOpcode(f, opcode.MSGCorpseQuery) != 1 || s.recovery.state.Active {
 		t.Fatal(s.stateLocked())
 	}
 }

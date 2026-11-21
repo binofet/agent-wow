@@ -72,7 +72,8 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 	p.revision = before.Revision
 	output, err := runtime.EvaluateContext(ctx, input)
 	after := runtime.Status()
-	if err != nil || after.Revision != before.Revision || after.Failures != before.Failures {
+	quarantined := after.Revision != before.Revision || after.Failures != before.Failures
+	if err != nil || quarantined {
 		p.lastError = after.LastError
 		if err != nil {
 			p.lastError = err.Error()
@@ -82,7 +83,7 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 		}
 		// Runtime may restore a last-good source. A named-task decision must
 		// remain refused until the body owner explicitly accepts another edit.
-		if authored != nil {
+		if authored != nil && quarantined {
 			p.failedAuthored, p.authoredError = authored, p.lastError
 			p.authoredFailedRevision = before.Revision
 		}
@@ -185,6 +186,9 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		}
 		view.Available = true
 		view.Ready = s.encounterRankResourcesAvailable(rank, self)
+		if kind == spellcatalog.Damage && s.starterSpells.uncertainStrike != nil {
+			view.Ready = false
+		}
 		if selection == starterWeaponSelection {
 			s.reflectWeaponStrike(view, rank, self)
 			view.Ready = s.starterSpells.uncertainStrike == nil && s.offenseRankReadyLocked(self, rank)
@@ -213,13 +217,13 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		}
 		observed["mainhand"] = weapon
 		observed["stealthed"] = s.stealthedLocked()
-		if op := s.starterSpells.uncertainStrike; op != nil {
-			receipt, valid := starterJSON(&op.view)
-			if !valid {
-				return nil, nil, false
-			}
-			observed["strikeOperation"] = receipt
+	}
+	if op := s.starterSpells.uncertainStrike; op != nil {
+		receipt, valid := starterJSON(&op.view)
+		if !valid {
+			return nil, nil, false
 		}
+		observed["strikeOperation"] = receipt
 	}
 	return input, ranks, true
 }
@@ -260,7 +264,7 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 		s.starterSpells.lastError = "starter strike is not mechanically available"
 		return starterSpellDecision{}
 	}
-	if selected.Kind == "cast" && (rank.ID == 0 || selection == "" && !s.encounterRankResourcesAvailable(rank, w.Self) ||
+	if selected.Kind == "cast" && (rank.ID == 0 || s.starterSpells.uncertainStrike != nil || selection == "" && !s.encounterRankResourcesAvailable(rank, w.Self) ||
 		distance(s.pos, targetPosition) < rank.MinHostile || distance(s.pos, targetPosition) > rank.MaxHostile) {
 		s.starterSpells.lastError = "starter spell is not mechanically available"
 		return starterSpellDecision{}
