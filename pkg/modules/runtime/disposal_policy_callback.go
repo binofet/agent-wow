@@ -48,12 +48,36 @@ func (m *Manager) readDisposalDecision(ctx context.Context, caller string, reque
 	available, revision, decision := false, "", map[string]any{}
 	if host != nil {
 		var err error
-		available, revision, decision, err = host.disposalDecision(ctx, input)
+		var witness map[string]any
+		publication := host.disposalEvaluation.Load()
+		if input["kind"] == ownedDisposalInputKind && (publication == nil || !publication.available) {
+			// Preserve explicit accepted-source absence without querying peers
+			// for a classifier that cannot run. Reuse the normal source fence.
+			available, revision, decision, err = host.readonlyExportDecision(ctx, publication,
+				func() bool { return host.disposalEvaluation.Load() == publication }, input)
+		} else {
+			if input["kind"] == ownedDisposalInputKind {
+				input, witness, err = m.ownedDisposalInput(ctx, sid, self, input)
+				if err != nil {
+					return nil, status.Errorf(codes.FailedPrecondition, "owned disposal facts: %v", err)
+				}
+			}
+			available, revision, decision, err = host.disposalDecision(ctx, input)
+		}
 		if err != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "active disposal policy: %v", err)
 		}
 		if decision == nil {
 			decision = map[string]any{}
+		}
+		if available && witness != nil {
+			// Reserved host-owned evidence: an authored Lua key of this name
+			// cannot replace the exact factual frame collected above.
+			decision["nativeContext"] = witness
+		} else {
+			// The pure classifier may author arbitrary output, but this key
+			// is reserved for facts collected by the owned input path.
+			delete(decision, "nativeContext")
 		}
 	}
 	m.mu.Lock()
