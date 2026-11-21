@@ -59,7 +59,7 @@ func commandObservation() *actionsv1.EncounterObservationResponse {
 
 func observeCommandPolicy(t *testing.T, host *behavior.Session, observation *actionsv1.EncounterObservationResponse) string {
 	t.Helper()
-	raw, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(observation)
+	raw, err := protojson.Marshal(observation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +115,9 @@ func TestAutomaticLuaPolymorphMaintainsHealthyAddWithoutACommandOrHealthPressure
 		obs.Engagement[encounterGUID(id)] = &actionsv1.EncounterEngagement{VictimGuid: 1, AgeMs: 100}
 	}
 	obs.Targets[encounterGUID(other)].Health = 60
+	zero := proto.Clone(obs.Targets[encounterGUID(focus)]).(*actionsv1.EncounterCreature)
+	zero.Guid, zero.Health = other+1, 0
+	obs.Targets[encounterGUID(zero.Guid)] = zero
 	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: add, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
 	decide := func(kill uint64) map[string]any {
 		return commandDecision(t, host, observeCommandPolicy(t, host, obs), encounterGUID(kill))

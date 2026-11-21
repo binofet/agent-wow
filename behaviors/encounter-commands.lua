@@ -205,9 +205,10 @@ local function automatic_target(obs, request, focusGuid)
         local attack = (obs.engagement or {})[key] or {}
         local separation = distance(self,target)
         targets[key] = {present=target.present,aliveKnown=target.aliveKnown,alive=target.alive,
-            attackable=target.attackable,attackVictimKnown=target.engaged == true and guid(attack.victimGuid) ~= nil,
+            attackable=target.attackable and (not target.healthKnown or (tonumber(target.health) or 0) > 0),
+            attackVictimKnown=target.engaged == true and guid(attack.victimGuid) ~= nil,
             attackVictimGuid=attack.victimGuid,attackAgeMs=tonumber(attack.ageMs) or 0,
-            healthPercent=target.healthKnown == true and (target.maxHealth or 0) > 0 and target.health*100/target.maxHealth or nil,
+            healthPercent=target.healthKnown == true and (target.maxHealth or 0) > 0 and (tonumber(target.health) or 0)*100/target.maxHealth or nil,
             inRange=target.mapKnown == true and target.mapId == obs.mapId and separation ~= nil and
                     separation >= (spell.row.minRange or 0) and separation <= (spell.row.maxRange or 0)}
         if target.protected == true then observed[key] = observed[key] or {active=true} end
