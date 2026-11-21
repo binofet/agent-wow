@@ -112,7 +112,7 @@ class Endpoint:
 class ExpeditionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
-        self.folder = Path(temporary.name) / 'state'
+        self.folder = Path(temporary.name).resolve() / 'state'
         self.rpc = Endpoint(); self.rpc.discover()
         self.bridge = host.Bridge(BINARY, ROOT / 'modules')
         self.source = ROOT / 'behaviors/expedition.lua'
