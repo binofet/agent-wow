@@ -17,15 +17,24 @@ import (
 // not a second patient/rank selector. Returning a State acknowledges the queued
 // request only; normal observations and exact CastHeal produce cast receipts.
 func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result proto.Message) error {
+	return m.queuePolicyActionInput(ctx, inst, result, "healing_request", map[string]any{"source": "heal_once"}, "lua_healing_request_queued:")
+}
+
+// Shared input plumbing: validate the current VM and exact client status, then
+// enqueue caller intent. It never chooses a patient, learned rank or action.
+func (m *Manager) queuePolicyActionInput(ctx context.Context, inst *instance, result proto.Message, kind string, value map[string]any, acknowledgement string) error {
 	catalog, _, err := m.observedSession()
 	if err != nil {
 		return err
+	}
+	if sid, provided := value["sessionId"]; provided && (sid != catalog.SessionID || value["selfGuid"] != catalog.CharacterGUID) {
+		return status.Error(codes.FailedPrecondition, "request does not match the current attached body")
 	}
 	m.mu.Lock()
 	host := m.policy
 	m.mu.Unlock()
 	if host == nil || host.body != catalog.CharacterGUID {
-		return status.Error(codes.FailedPrecondition, "HealOnce requires the current attached Lua policy; exact callers use CastHeal")
+		return status.Error(codes.FailedPrecondition, "current attached Lua policy required for support selection; exact callers supply a learned spell ID")
 	}
 	if _, err := host.observe(ctx, catalog.SessionID, catalog.CharacterGUID); err != nil {
 		return err
@@ -52,16 +61,16 @@ func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result pr
 	same := m.policy == host
 	m.mu.Unlock()
 	if !same || current.SessionID != catalog.SessionID || current.CharacterGUID != catalog.CharacterGUID {
-		return status.Error(codes.FailedPrecondition, "session changed before healing request")
+		return status.Error(codes.FailedPrecondition, "session changed before support input")
 	}
 	if err := ctx.Err(); err != nil {
 		return status.FromContextError(err).Err()
 	}
-	sequence, err := host.Enqueue(behavior.Event{Kind: "healing_request", Value: map[string]any{"source": "heal_once"}})
+	sequence, err := host.Enqueue(behavior.Event{Kind: kind, Value: value})
 	if err != nil {
 		return err
 	}
-	view.Set(reason, protoreflect.ValueOfString("lua_healing_request_queued:"+strconv.FormatUint(sequence, 10)))
+	view.Set(reason, protoreflect.ValueOfString(acknowledgement+strconv.FormatUint(sequence, 10)))
 	body, err := proto.Marshal(view)
 	if err != nil {
 		return err

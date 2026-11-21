@@ -32,8 +32,8 @@ func observedPlayerTeam(p *worldv1.PlayerState) uint8 {
 // ResurrectOnce executes the caller-selected learned spell on one observed
 // friendly death. The exact player can be outside the party; Lua owns selection.
 func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceRequest) (*actionsv1.State, error) {
-	if r == nil || r.SessionId == "" || r.SelfGuid == 0 || r.TargetGuid == 0 || r.TargetGuid>>48 != 0 || r.TargetGuid == r.SelfGuid {
-		return nil, status.Error(codes.InvalidArgument, "current session, caster and a distinct player GUID required")
+	if r == nil || r.SessionId == "" || r.SelfGuid == 0 || r.TargetGuid == 0 || r.TargetGuid>>48 != 0 || r.TargetGuid == r.SelfGuid || r.SpellId == 0 {
+		return nil, status.Error(codes.InvalidArgument, "current session, caster, distinct player GUID and exact learned rank required")
 	}
 	if token, supplied := modcb.IncomingPolicySpell(ctx); supplied && token == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid policy spell token")
@@ -61,19 +61,16 @@ func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceR
 	if s.resurrectionBindings[r.TargetGuid] {
 		return nil, status.Error(codes.FailedPrecondition, "resurrection already attempted for this death")
 	}
-	for _, spell := range s.candidatesLocked(spellcatalog.Resurrect) {
-		if r.SpellId != 0 && r.SpellId != spell.ID || !s.resurrectionRankAvailableLocked(spell, p) {
-			continue
-		}
+	spell, learned := s.learnedContractsLocked()[r.SpellId]
+	if learned && s.resurrectionRankAvailableLocked(spell, p) {
 		target := s.resurrectionTargetLocked(w, r.TargetGuid, spell, team)
-		if target == 0 {
-			continue
+		if target != 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, status.FromContextError(err).Err()
+			}
+			s.castResurrectionLocked(ctx, spell, target, r.TargetGuid)
+			return s.stateLocked(), nil
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, status.FromContextError(err).Err()
-		}
-		s.castResurrectionLocked(ctx, spell, target, r.TargetGuid)
-		return s.stateLocked(), nil
 	}
 	return nil, status.Error(codes.FailedPrecondition, "ready learned resurrection and observed dead same-faction target in range required")
 }

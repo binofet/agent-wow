@@ -57,7 +57,7 @@ func TestTargetedResurrectionCastsLearnedRedemptionOnExactAllianceNonpartyTarget
 			p.Guid, p.RaceKnown, p.RaceId, p.Alive, p.Health = 7, true, 7, false, 0
 			f.world.NearbyPlayers = []*worldv1.PlayerState{p}
 			learnSpells(s, 7328)
-			req := &actionsv1.ResurrectOnceRequest{SessionId: s.sessionID, SelfGuid: 1, TargetGuid: p.Guid}
+			req := &actionsv1.ResurrectOnceRequest{SessionId: s.sessionID, SelfGuid: 1, TargetGuid: p.Guid, SpellId: 7328}
 			if tc.change != nil {
 				tc.change(s, f, p, req)
 			}

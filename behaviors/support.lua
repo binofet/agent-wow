@@ -67,11 +67,14 @@ local function resurrect(obs,frame)
       local patient = (obs.players or {})[option.patientGuid]
       if not patient or patient.aliveKnown ~= true or patient.alive ~= true then
         local rank, best_rank = spell_number(obs, option.spellId, "rank"), best and spell_number(obs, best.spellId, "rank") or 0
-        if not best or (option.ready == true and best.ready ~= true) or option.ready == best.ready and
+        local requested=state.requestedPatient
+        if not best or (option.patientGuid==requested and best.patientGuid~=requested) or
+          (option.patientGuid==requested)==(best.patientGuid==requested) and
+          ((option.ready == true and best.ready ~= true) or option.ready == best.ready and
           ((option.patientGuid == leader and best.patientGuid ~= leader) or
            (option.patientGuid == leader) == (best.patientGuid == leader) and
            (option.patientGuid < best.patientGuid or option.patientGuid == best.patientGuid and
-            (rank > best_rank or rank == best_rank and option.spellId < best.spellId))) then
+            (rank > best_rank or rank == best_rank and option.spellId < best.spellId)))) then
           best = option
         end
       end
@@ -132,10 +135,15 @@ local function blocked(target,slot,revision)
   return old and old.revision==revision
 end
 local function on_event(event)
+  if event.kind=="resurrection_request" and type(event.value)=="table" and guid(event.value.targetGuid) then
+    state.requestedPatient=event.value.targetGuid
+  end
   if event.kind=="encounter_observation" and type(event.value)=="table" then
     local obs=event.value
-    if state.sessionId and state.sessionId~=obs.sessionId then state.blocked={};state.resurrections={} end
+    if state.sessionId and state.sessionId~=obs.sessionId then state.blocked={};state.resurrections={};state.requestedPatient=nil end
     state.sessionId=obs.sessionId
+    local requested=(obs.players or {})[state.requestedPatient]
+    if requested and requested.present==true and requested.aliveKnown==true and requested.alive==true then state.requestedPatient=nil end
     for patient in pairs(state.resurrections) do
       local body=(obs.players or {})[patient]
       if body and body.present==true and body.aliveKnown==true and body.alive==true then
