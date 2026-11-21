@@ -1842,6 +1842,44 @@ class GearContextTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_generic_learned_cast_support_is_separate_from_effect_classification(self):
+        body=dict(sessionId='spell-body',selfGuid='4')
+        raw=dict(body,spellbookKnown=True,spellbookRevision='2',spells=[
+            dict(spellId=2120,metadataKnown=True,name='Flamestrike',genericCastSupported=True,
+                classificationReason='automatic_selection_unclassified',mechanics=dict(targetMask=64,
+                    attributes=[1,2,3],reagents=[dict(itemId=10,count=1)],effects=[dict(targetSelectorA=8)])),
+            dict(spellId=10,metadataKnown=True,name='Blizzard',channeled=True,selfCastSupported=False,
+                blockedReason='channel_requires_handler'),
+            dict(spellId=1449,metadataKnown=True,name='Arcane Explosion',genericCastSupported=True),
+            dict(spellId=4294967294,metadataKnown=False,genericCastSupported=True,classificationReason='metadata_unknown'),
+            dict(spellId=99,metadataKnown=True,name='Passive',passive=True)])
+        result=converse.spell_toolkit_context(raw,body,4)
+        rows={row['spellId']:row for row in result['spells']}
+        self.assertTrue(rows[2120]['genericCastSupported'])
+        self.assertEqual(rows[2120]['mechanicsHint']['targetMask'],64)
+        self.assertNotIn('reagents',repr(result));self.assertNotIn('attributes',repr(result))
+        self.assertTrue(rows[10]['channeled']);self.assertFalse(rows[10]['selfCastSupported'])
+        self.assertEqual(rows[10]['classificationReason'],'channel_requires_handler')
+        self.assertEqual(rows[10]['classificationSource'],'legacy_blocked_reason')
+        self.assertNotIn('genericCastSupported',rows[10]) # Old module: discover instead of inventing false.
+        self.assertTrue(rows[4294967294]['genericCastSupported']);self.assertNotIn('name',rows[4294967294])
+        self.assertFalse(rows[99]['genericCastSupported'])
+        self.assertEqual(result['castDiscoveryMethod'],'session.describe')
+        self.assertNotIn('blockedReason',rows[10])
+
+    def test_legacy_assist_reason_is_labeled_without_erasing_actual_effects(self):
+        controls=converse.BuddyControls(FakeRPC([]),character_class='mage',character_guid=4)
+        controls.actions_available=True
+        controls.actions=dict(sessionId='same-body',selfGuid='4',assistReason='player_dead_or_unknown',
+            lastSpellOperation=dict(spellId=8413,phase='confirmed_effect',serverCastGo=True,effectObserved=True))
+        state=controls.context()
+        self.assertEqual(state['controls']['assistReason'],'player_dead_or_unknown')
+        self.assertTrue(state['controls']['lastSpellOperation']['effectObserved'])
+        self.assertEqual(state['controlFieldScopes']['assistReason'],'legacy_native_controller')
+        persona=converse.character_persona('Mira','mage',developer=True)
+        self.assertIn('not the committed Lua phase',persona)
+        self.assertIn('do not claim idle or refuse casting',persona)
+
     def test_new_buff_and_profession_reads_pass_real_rpc_allowlist(self):
         rpc = converse.RPC('http://127.0.0.1:8086/rpc')
         import io
@@ -3674,6 +3712,8 @@ from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
 from test_gm_task_inspection import GMTaskInspectionTests
 from test_gm_task_lifecycle import GMTaskLifecycleTests
+from test_self_edit import SpellInspectionTests
+from test_spell_invocation import SpellInvocationPolicyTests
 
 if __name__ == "__main__":
     unittest.main()
