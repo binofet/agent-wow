@@ -47,7 +47,9 @@ type policySpell struct {
 	auraRevision   uint64
 	melee          *policyMelee
 	movement       *policyMovement
+	recovery       *policyRecovery
 	consumable     *policyConsumable
+	corpse         *policyCorpse
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -59,6 +61,12 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "release_spirit" || capability == "query_corpse" {
+		return p.resolveDeathAction(action, capability)
+	}
+	if capability == "loot_open" || capability == "loot_close" {
+		return p.resolveCorpseLoot(action, capability)
+	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
 	}
@@ -180,6 +188,9 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 		Module: actionsModule,
 		spell:  op,
 		Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
+			if op.recovery != nil {
+				return p.manager.invokePolicyRecovery(ctx, inst, md, req, op)
+			}
 			if op.movement != nil {
 				return p.manager.invokePolicyMovement(ctx, inst, md, req, op)
 			}
@@ -287,7 +298,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	if op == nil || !op.admitted || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
 		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
-		return status.Error(codes.PermissionDenied, "invalid policy spell callback")
+		return modcb.PacketNotDispatchedError("invalid policy spell callback")
 	}
 	op.attempted = true
 	spells.mu.Unlock()
@@ -300,6 +311,16 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.recovery != nil {
+		return op.matchesRecoveryPacket(code, payload)
+	}
+	if op.corpse != nil {
+		want := uint32(opcode.CMSGLoot)
+		if op.corpse.close {
+			want = opcode.CMSGLootRelease
+		}
+		return code == want && len(payload) == 8 && binary.LittleEndian.Uint64(payload) == op.target
+	}
 	if op.consumable != nil {
 		return op.matchesConsumablePacket(code, payload)
 	}
@@ -347,6 +368,9 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 }
 
 func (op *policySpell) payload(phase string, written, castGo, observed bool) map[string]any {
+	if op.recovery != nil {
+		return op.recoveryPayload(phase, written)
+	}
 	if op.movement != nil {
 		return op.movementPayload(phase, written)
 	}

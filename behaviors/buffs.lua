@@ -1,6 +1,6 @@
 -- Shared reloadable buff policy. The harness supplies learned spell mechanics
 -- and observed auras; this module owns rank, recipient, refresh and retry choices.
-local M = {tuning={reserve_fraction=.35,reserve_fraction_by_class={[5]=.30},self_health_fraction=.95,party_health_fraction=.90,
+local M = {tuning={reserve_fraction=.35,reserve_fraction_by_class={[5]=.30,[8]=.30,[9]=.30},self_health_fraction=.95,party_health_fraction=.90,
     water_refresh_ms=60000,retry_ms=5000},self_reserve_by_class={[2]=.05}}
 local state={blocked={}}
 local function alive(p) return p and p.present==true and p.aliveKnown==true and p.alive==true end

@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -23,7 +22,6 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 		{"unknown counts do not create a reserve", false, false, true, opcode.CMSGAutostoreLootItem, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
 			_, f, _ := rig(t)
 			world := f.world
 			world.SelfQuestLogKnown = true
@@ -44,11 +42,12 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 				items = append(items, lootItem{slot: 1, id: targorrHead, count: 1})
 			}
 			s := NewAutomaticService(f, 1, "session")
+			f.actions.SessionId = "session"
 			now := time.Unix(1000, 0)
 			s.now = func() time.Time { return now }
-			s.Tick(ctx)
+			tickCorpseLua(t, s)
 			emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, items...))
-			s.Tick(ctx)
+			tickCorpseLua(t, s)
 			if len(f.packets) != 2 || f.packets[1].Opcode != tc.wantOpcode {
 				t.Fatalf("unexpected loot request: %+v, state=%v", f.packets, current(t, s))
 			}
@@ -58,7 +57,7 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 			if tc.wantOpcode == opcode.CMSGLootRelease {
 				emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
 				now = now.Add(time.Minute)
-				s.Tick(ctx)
+				tickCorpseLua(t, s)
 				if len(f.packets) != 2 {
 					t.Fatalf("reopened the ordinary corpse while holding the reserve: %+v", f.packets)
 				}

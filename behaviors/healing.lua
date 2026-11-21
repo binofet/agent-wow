@@ -98,9 +98,15 @@ local function choose_rank(patient, selfGuid, spells)
   return best
 end
 
-local function choose_cast(view, explicit)
+local function needs_heal(patient, explicit)
+  return type(patient)=="table" and type(patient.guid)=="string" and
+    type(patient.health)=="number" and patient.health>0 and type(patient.maxHealth)=="number" and
+    patient.health*100<patient.maxHealth*(explicit and 100 or tuning.heal_below_percent)
+end
+
+local function choose_cast(view, explicit, allow_busy)
   local caster = view.caster
-  if type(caster) ~= "table" or caster.ready ~= true or
+  if type(caster) ~= "table" or not allow_busy and caster.ready ~= true or
       type(caster.guid) ~= "string" or type(caster.mana) ~= "number" or caster.mana < 0 or
       type(view.patients) ~= "table" or type(view.spells) ~= "table" then
     return nil, nil
@@ -109,9 +115,7 @@ local function choose_cast(view, explicit)
   if #spells == 0 then return nil, nil end
   local target
   for _, patient in ipairs(view.patients) do
-    if type(patient) == "table" and type(patient.guid) == "string" and
-        type(patient.health) == "number" and patient.health > 0 and
-        type(patient.maxHealth) == "number" and patient.health * 100 < patient.maxHealth * (explicit and 100 or tuning.heal_below_percent) and
+    if needs_heal(patient,explicit) and
         (patient.guid == caster.guid or
           (type(patient.distance) == "number" and patient.distance >= 0)) and
         prefer_patient(patient, target, caster.guid) and can_heal(patient, caster.guid, spells) then
@@ -165,6 +169,33 @@ end
 
 return {
   resource_reserve = resource_reserve,
+  -- Planning a custody handoff is not a claim that a cast is currently ready.
+  -- Reuse triage rather than duplicating its thresholds in maintenance policy.
+  needs_access = function(view, obs)
+    local target,rank=choose_cast(view,request_pending,true)
+    if target and rank then return true end
+    -- Older Actions builds hide patient/rank rows while another interaction
+    -- owns the body. Their raw player vitals and available spell metadata can
+    -- still prove that this healer needs access for self/party triage.
+    if not obs or not obs.selfGuid then return false end
+    local self_heal,ally_heal=false,false
+    for _,spell in pairs(obs.spells or {}) do
+      if spell.known==true and spell.available==true and spell.metadataKnown==true and spell.capability=="heal" then
+        self_heal=true
+        if spell.targetRule=="ally" or (spell.maxRange or 0)>0 then ally_heal=true end
+      end
+    end
+    local allies={[obs.selfGuid]=true}
+    for _,member in ipairs(((obs.party or {}).group or {}).members or {}) do
+      if member.online==true then allies[member.guid]=true end
+    end
+    for key,patient in pairs(obs.players or {}) do
+      if allies[key] and (key==obs.selfGuid and self_heal or key~=obs.selfGuid and ally_heal) and
+        patient.present==true and patient.aliveKnown==true and patient.alive==true and patient.healthKnown==true and
+        patient.mapKnown==true and (patient.mapId or 0)==(obs.mapId or 0) and needs_heal(patient,request_pending) then return true end
+    end
+    return false
+  end,
   on_event = function(event)
     if event.kind == "healing_observation" then
       observation, sequence = event.value, event.sequence
