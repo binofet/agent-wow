@@ -19,7 +19,11 @@ func commandPolicySource(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return "local commands=(function()\n" + string(source) + "\nend)()\n" + `
+	tactics, err := os.ReadFile("../../behaviors/encounter-tactics.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "local encounter_tactics=(function()\n" + string(tactics) + "\nend)()\nlocal commands=(function()\n" + string(source) + "\nend)()\n" + `
 local observation
 return {
   on_event=function(event)
@@ -27,7 +31,7 @@ return {
     return commands.on_event(event)
   end,
   decide=function(frame)
-    local action, control=commands.control_action(observation,frame,frame.input.focusGuid)
+    local action, control=commands.control_action(observation,frame,frame.input.focusGuid,frame.input.plannedControl)
     return {action=action,control=control,intent=commands.queue_intent(observation)}
   end,
   export_state=function() return {version=1,data={observation=observation,commands=commands.export_state()}} end,
@@ -55,7 +59,7 @@ func commandObservation() *actionsv1.EncounterObservationResponse {
 
 func observeCommandPolicy(t *testing.T, host *behavior.Session, observation *actionsv1.EncounterObservationResponse) string {
 	t.Helper()
-	raw, err := (protojson.MarshalOptions{EmitUnpopulated: true}).Marshal(observation)
+	raw, err := protojson.Marshal(observation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +96,76 @@ func expectControlAction(t *testing.T, out map[string]any, capability, target st
 	if action["capability"] != capability || action["targetGuid"] != target || action["selfGuid"] != "1" || action["visitId"] != "1" {
 		t.Fatalf("expected exact %s for %s, got %+v", capability, target, out)
 	}
+}
+
+func TestAutomaticLuaPolymorphMaintainsHealthyAddWithoutACommandOrHealthPressure(t *testing.T) {
+	host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	obs := commandObservation()
+	obs.Party.Group.Members = []*partyv1.Member{{Guid: 1, Online: true}, {Guid: 3, Online: true}}
+	obs.Engagement = map[string]*actionsv1.EncounterEngagement{}
+	focus, add, other := sheepTarget, sheepTarget+1, sheepTarget+2
+	for _, id := range []uint64{focus, add, other} {
+		npc := proto.Clone(obs.Targets[encounterGUID(sheepTarget)]).(*actionsv1.EncounterCreature)
+		npc.Guid, npc.X, npc.HealthKnown, npc.Health, npc.MaxHealth, npc.Engaged = id, 10, true, 100, 100, true
+		obs.Targets[encounterGUID(id)] = npc
+		obs.Engagement[encounterGUID(id)] = &actionsv1.EncounterEngagement{VictimGuid: 1, AgeMs: 100}
+	}
+	obs.Targets[encounterGUID(other)].Health = 60
+	zero := proto.Clone(obs.Targets[encounterGUID(focus)]).(*actionsv1.EncounterCreature)
+	zero.Guid, zero.Health = other+1, 0
+	obs.Targets[encounterGUID(zero.Guid)] = zero
+	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: add, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
+	decide := func(kill uint64) map[string]any {
+		return commandDecision(t, host, observeCommandPolicy(t, host, obs), encounterGUID(kill))
+	}
+	seq := observeCommandPolicy(t, host, obs)
+	before, err := host.Decide(context.Background(), map[string]any{"observationSequence": seq, "focusGuid": encounterGUID(focus), "plannedControl": true})
+	if err != nil || before.Output["action"] != nil {
+		t.Fatal("automatic default displaced an explicitly authored control plan", before.Output, err)
+	}
+	expectControlAction(t, decide(focus), "polymorph", encounterGUID(add))
+	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{{TargetGuid: add, CasterGuid: 1, Capability: "polymorph", SpellId: 118}}
+	if out := decide(focus); out["action"] != nil {
+		t.Fatal("cast again while the actual sheep aura remained active", out)
+	}
+	obs.ProtectedAuras = nil
+	expectControlAction(t, decide(focus), "polymorph", encounterGUID(add))
+	// Observe that retry's aura before it breaks onto the current kill focus.
+	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{{TargetGuid: add, CasterGuid: 1, Capability: "polymorph", SpellId: 118}}
+	decide(focus)
+	obs.ProtectedAuras = nil
+	obs.Targets[encounterGUID(focus)].Alive, obs.Targets[encounterGUID(other)].Alive = proto.Bool(false), proto.Bool(false)
+	if out := decide(add); out["action"] != nil {
+		t.Fatal("resheeped the final enemy after it became kill focus", out)
+	}
+	// The standing policy survives a new pull instead of consuming one command.
+	obs.VisitId, obs.TargetMovement.VisitId = 2, 2
+	obs.Targets[encounterGUID(focus)].Alive, obs.Targets[encounterGUID(other)].Alive = proto.Bool(true), proto.Bool(true)
+	if out := decide(focus); out["action"].(map[string]any)["targetGuid"] != encounterGUID(add) ||
+		out["action"].(map[string]any)["visitId"] != "2" {
+		t.Fatal("standing control did not rebind for the next pull", out)
+	}
+}
+
+func TestGenericLuaControlAndExplicitMarkOverrideDefaultSelection(t *testing.T) {
+	host, err := behavior.NewSession(context.Background(), "commands-body", commandPolicySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	obs := commandObservation()
+	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "auto": true})
+	out := commandDecision(t, host, observeCommandPolicy(t, host, obs), "2")
+	if out["control"] == nil || out["action"] != nil {
+		t.Fatal("generic request was silently dropped instead of awaiting multiple attackers", out)
+	}
+	sendPolicyCommand(t, host, map[string]any{"task": "cancel_control"})
+	sendPolicyCommand(t, host, map[string]any{"task": "control", "technique": "polymorph", "mark": "moon"})
+	expectControlAction(t, commandDecision(t, host, observeCommandPolicy(t, host, obs), "2"), "approach_target", encounterGUID(sheepTarget))
 }
 
 func TestLuaControlCommandPersistsThroughApproachAndReloadUntilActualAura(t *testing.T) {

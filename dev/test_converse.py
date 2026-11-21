@@ -3004,6 +3004,9 @@ class AttachedPolicyRepairTests(unittest.TestCase):
 
 
 
+from test_lua_control_bridge import LuaControlBridgeTests
+
+
 if __name__ == "__main__":
     unittest.main()
 

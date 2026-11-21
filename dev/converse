@@ -2051,6 +2051,67 @@ class CodexBrain:
                         process.stdin.close()
 
 
+def queue_lua_control(controls, technique, mark=None, target_guid=None):
+    """Queue an owner intent; None alone permits an existing legacy caller."""
+    if technique not in ("polymorph", "sap"):
+        raise ConversationError("Unknown crowd-control technique")
+    marks = ("star", "circle", "diamond", "triangle", "moon", "square", "x", "skull")
+    if mark is not None and mark not in marks or mark is not None and target_guid is not None:
+        raise ConversationError("Use one exact crowd-control selector")
+    method, session = "session.attach", ""
+    try:
+        actions = controls.rpc.call("buddy-actions.status", {})
+        session = actions.get("sessionId")
+        if (not isinstance(session, str) or not session or
+                integer(actions.get("selfGuid", 0)) != controls.character_guid):
+            raise ConversationError("Crowd-control body is unconfirmed")
+        identity = {"sessionId": session, "characterGuid": str(controls.character_guid)}
+        try:
+            attached = controls.rpc.call(method, identity)
+        except CapabilityUnavailable:
+            return None
+        if attached.get("sessionId") != session or attached.get("characterGuid") != identity["characterGuid"]:
+            raise ConversationError("Attached crowd-control body changed")
+        if not (attached.get("policy") or {}).get("revision"):
+            return None
+        value = {"task": "control", "technique": technique}
+        if target_guid is not None:
+            target = integer(target_guid, "control target")
+            if not 0 < target < 2**64:
+                raise ConversationError("Crowd-control target is invalid")
+            value["targetGuid"] = str(target)
+        elif mark is not None:
+            value["mark"] = mark
+        else:
+            value["auto"] = True
+        method = "session.send_event"
+        result = controls.rpc.call(method, dict(identity, kind="command", value=value))
+        if (result.get("status") != "queued" or result.get("sessionId") != session or
+                result.get("characterGuid") != identity["characterGuid"] or integer(result.get("sequence", 0)) <= 0):
+            raise ConversationError("Crowd-control request acknowledgment is unconfirmed")
+        controls.command_fault = None
+        controls.last_control_evidence = dict(value, sessionId=session, phase="queued", sequence=result["sequence"])
+        return "I've queued the crowd-control request. I'll confirm it when the effect is observed."
+    except ConversationError as error:
+        controls.command_fault = {"sessionId": session, "selfGuid": str(controls.character_guid),
+                                  "method": method, "error": str(error)}
+        return "I couldn't confirm the crowd-control request. I won't retry it through a different controller."
+
+
+def parse_lua_control_request(text):
+    marks = "star|circle|diamond|triangle|moon|square|x|skull"
+    match = re.fullmatch(r"(?:(?:can|could|would|will) you\s+|please\s+)?"
+        r"(?:(?P<verb>sheep|polymorph|sap)\s+(?:the\s+)?(?P<target>" + marks + r"|[1-9][0-9]{0,19}|one|an? add)"
+        r"|keep\s+(?:one|an? add)\s+(?P<effect>sheeped|sapped))"
+        r"(?:\s+please)?(?:\s+(?:when|while)\s+we\s+(?:have|fight)\s+(?:adds|multiple enemies))?[.!?]?", text, re.I)
+    if not match:
+        return None
+    technique = "sap" if (match["verb"] or "").lower() == "sap" or (match["effect"] or "").lower() == "sapped" else "polymorph"
+    target = (match["target"] or "").lower()
+    return dict(technique=technique, mark=target if target in marks.split("|") else None,
+                target_guid=target if target.isdecimal() else None)
+
+
 class BuddyControls:
     """Only fixed-owner game controls; the model never supplies RPC methods."""
     def __init__(self, rpc, player_name="Joel", character_class="priest", owner_quest_context=None, character_guid=1):
@@ -3350,6 +3411,14 @@ class Conversation:
         request_text = selected[-1]["text"].strip()
         address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
         request = request_text[address.end():] if address else request_text
+        control_request = parse_lua_control_request(request)
+        if not peer and isinstance(self.controls, BuddyControls) and control_request:
+            expected_class = "rogue" if control_request["technique"] == "sap" else "mage"
+            if self.character_class == expected_class and self.same_body():
+                text = queue_lua_control(self.controls, **control_request)
+                if text is not None:
+                    self.send_reply({"text": text, "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
+                    return
         if not peer and isinstance(self.controls, BuddyControls) and PICK_LOCK_ORDER.fullmatch(request):
             if self.character_class == "rogue" and self.same_body():
                 text = self.controls.pick_chest(self.player_guid)

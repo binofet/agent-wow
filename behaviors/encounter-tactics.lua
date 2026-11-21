@@ -202,8 +202,70 @@ local function assign_pull_marks(input)
     return {assignments=assignments}
 end
 
+local function automatic_control(input)
+    local group = (input.party or {}).group or {}
+    local caster, focus = guid(input.casterGuid), guid(input.focusGuid)
+    local preferred = guid(input.preferredGuid)
+    local members = {}
+    for _, member in ipairs(group.members or {}) do
+        if member.online and guid(member.guid) then members[member.guid] = true end
+    end
+    if not group.known or not group.inGroup or not caster or not members[caster] or not input.inCombat then
+        return wait("automatic_control_waiting_for_party_combat")
+    end
+    local technique
+    for _, capability in ipairs(input.capabilities or {}) do
+        if capability.guid == caster and capability.technique == "polymorph" and capability.ready then
+            technique = capability.technique
+            break
+        end
+    end
+    if not technique then return wait("automatic_control_waiting_for_caster") end
+
+    local observed = input.controlObserved or {}
+    for _, aura in pairs(observed) do
+        if aura.active and aura.casterGuid == caster and aura.technique == technique then
+            return wait("automatic_control_active")
+        end
+    end
+    for _, pending in pairs(input.controlPending or {}) do
+        if pending then return wait("automatic_control_pending") end
+    end
+
+    local focused, attempted = input.focusTargets or {}, input.attemptedTargets or {}
+    local threats, choice, choiceHealth, choiceAge = 0, nil, nil, nil
+    local renew, renewIsThreat = nil, false
+    for target, npc in pairs(input.targets or {}) do
+        local age = tonumber(npc.attackAgeMs)
+        local aura = observed[target]
+        if guid(target) and alive(npc) and npc.attackable and not (aura and aura.active) then
+            local threatening = npc.attackVictimKnown and members[npc.attackVictimGuid] and age and age >= 0 and age <= 5000
+            if threatening then threats = threats + 1 end
+            local health = tonumber(npc.healthPercent)
+            if target ~= focus and not focused[target] and not attempted[target] and npc.inRange and health and health > 25 then
+                if target == preferred then
+                    renew, renewIsThreat = target, threatening
+                elseif threatening and (not choice or health > choiceHealth or
+                        health == choiceHealth and (age < choiceAge or age == choiceAge and target < choice)) then
+                    choice, choiceHealth, choiceAge = target, health, age
+                end
+            end
+        end
+    end
+    if renew and threats > (renewIsThreat and 1 or 0) then
+        choice = renew
+    elseif threats < 2 then
+        return wait("automatic_control_waiting_for_add")
+    end
+    if not choice then return wait("automatic_control_no_eligible_add") end
+    local out = wait("apply_control")
+    out.control = {casterGuid=caster, targetGuid=choice, technique=technique}
+    return out
+end
+
 local function decide(input)
     if input.kind == "combat_queue" then return combat_queue(input) end
+    if input.kind == "automatic_control" then return automatic_control(input) end
     if input.kind == "assign_pull_marks" then return assign_pull_marks(input) end
     local plan, party = input.plan or {}, input.party or {}
     local group, feed = party.group or {}, party.raidTargets or {}
