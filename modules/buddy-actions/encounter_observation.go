@@ -31,6 +31,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 	case opcode.SMSGTransferPending:
 		if len(payload) >= 4 {
 			s.encounterVisit.bound = false
+			s.navigationGoalKnown = false
 		}
 	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld:
 		if !validEncounterWorldEntry(payload) {
@@ -39,6 +40,8 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 		s.encounterVisit.revision++
 		s.encounterVisit.mapID = binary.LittleEndian.Uint32(payload)
 		s.encounterVisit.bound = true
+		s.navigationGoalKnown = false
+		s.state.BodyMovement = nil
 		if op == opcode.SMSGLoginVerifyWorld {
 			s.targetProtection.reset()
 		}
@@ -110,6 +113,13 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	players := s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
+	out.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, Following: s.state.Following,
+		OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
+		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
+		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
+	if s.state.BodyMovement != nil {
+		out.Navigation.BodyMovement = proto.Clone(s.state.BodyMovement).(*actionsv1.BodyMovementState)
+	}
 	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid

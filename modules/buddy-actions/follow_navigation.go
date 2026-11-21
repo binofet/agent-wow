@@ -222,6 +222,7 @@ func (s *Service) followFormationStepLocked(ctx context.Context, target position
 	if !s.posKnown || !finite(s.pos) || !finite(target) || math.IsNaN(stopDistance) || math.IsInf(stopDistance, 0) || stopDistance < 0.1 || stopDistance > 4 {
 		return fail("follow_navigation_invalid_target", errors.New("formation position or stop distance is invalid"))
 	}
+	s.navigationGoal, s.navigationGoalKnown = target, true
 	if s.state.MotionUnconfirmed {
 		return fail("motion_unconfirmed_explicit_stop_required", errors.New("movement stop is unconfirmed"))
 	}

@@ -84,7 +84,7 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		movement.view.Ready = s.stopLocked(ctx)
 		return s.stateLocked(), nil
 	}
-	if s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active || s.crowdControl.active {
+	if s.bodyMoving || s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active || s.crowdControl.active {
 		movement.view.Phase = "movement_occupied"
 		return s.stateLocked(), nil
 	}

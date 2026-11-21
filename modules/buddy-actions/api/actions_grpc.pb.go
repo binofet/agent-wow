@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	BuddyActions_SelectTarget_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
 	BuddyActions_ApproachTarget_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
+	BuddyActions_MoveBody_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
 	BuddyActions_InterruptCast_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
 	BuddyActions_Follow_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
 	BuddyActions_Assist_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
@@ -69,6 +70,7 @@ const (
 type BuddyActionsClient interface {
 	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
 	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
+	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
 	InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
@@ -133,6 +135,16 @@ func (c *buddyActionsClient) ApproachTarget(ctx context.Context, in *ApproachTar
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_ApproachTarget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_MoveBody_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +537,7 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 type BuddyActionsServer interface {
 	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
 	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
+	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
 	InterruptCast(context.Context, *InterruptCastRequest) (*State, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
@@ -580,6 +593,9 @@ func (UnimplementedBuddyActionsServer) SelectTarget(context.Context, *SelectTarg
 }
 func (UnimplementedBuddyActionsServer) ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApproachTarget not implemented")
+}
+func (UnimplementedBuddyActionsServer) MoveBody(context.Context, *BodyMovementRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MoveBody not implemented")
 }
 func (UnimplementedBuddyActionsServer) InterruptCast(context.Context, *InterruptCastRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InterruptCast not implemented")
@@ -748,6 +764,24 @@ func _BuddyActions_ApproachTarget_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).ApproachTarget(ctx, req.(*ApproachTargetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_MoveBody_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BodyMovementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).MoveBody(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_MoveBody_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).MoveBody(ctx, req.(*BodyMovementRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1450,6 +1484,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApproachTarget",
 			Handler:    _BuddyActions_ApproachTarget_Handler,
+		},
+		{
+			MethodName: "MoveBody",
+			Handler:    _BuddyActions_MoveBody_Handler,
 		},
 		{
 			MethodName: "InterruptCast",

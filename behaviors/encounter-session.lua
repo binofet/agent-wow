@@ -516,6 +516,9 @@ local function decide_encounter(frame)
             end
         end
     end
+    if not out.action and not out.focusGuid and movement and movement.idle_recovery then
+        out.action = movement.idle_recovery(obs, state.sequence).action
+    end
     return out
 end
 

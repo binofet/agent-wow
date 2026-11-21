@@ -4,10 +4,57 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
+
+func TestEncounterMovementRecoversOnlyAfterActualStallAndRechecksRouteBetweenProbes(t *testing.T) {
+	vm, ctx := movementPolicy(t), context.Background()
+	obs := movementObservation()
+	obs["navigation"] = map[string]any{"bodyMovementSupported": true}
+	obs["targetMovement"] = map[string]any{"targetGuid": "99", "visitId": "1", "phase": "follow_navigation_unavailable"}
+	decide := func(sequence int) behavior.Decision {
+		t.Helper()
+		out, err := vm.Decide(ctx, map[string]any{"obs": obs, "target": "99", "sequence": strconv.Itoa(sequence), "options": map[string]any{"rangeYards": 4.5, "requireLos": true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	for sequence := 1; sequence < 3; sequence++ {
+		if got := decide(sequence).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+			t.Fatal("stale single rejection triggered probe", got)
+		}
+	}
+	for _, sequence := range []int{3, 5, 7} {
+		decision := decide(sequence)
+		action := decision.Output["action"].(map[string]any)
+		if action["capability"] != "move_body" || action["visitId"] != "1" || action["sequenceId"] != strconv.Itoa(sequence) || action["jump"] != (sequence == 7) {
+			t.Fatal("missing relative/alternative/hop recovery", decision.Output)
+		}
+		id, err := vm.ReserveAction(decision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: "move", ActionID: id, Outcome: behavior.ActionSettledUnverified,
+			Payload: map[string]any{"capability": "move_body", "sequence_id": strconv.Itoa(sequence), "phase": "body_input_written", "effect_observed": false}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := decide(sequence + 1).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+			t.Fatal("probe skipped normal route recheck", got)
+		}
+	}
+	// Actual progress and a new authoritative pose reset stale failure proof.
+	self := obs["players"].(map[string]any)["5"].(map[string]any)
+	self["positionRevision"] = "2"
+	self["x"] = float64(4)
+	if got := decide(9).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+		t.Fatal("stale failure survived correction", got)
+	}
+}
 
 func movementPolicy(t *testing.T) *behavior.Session {
 	t.Helper()
@@ -22,8 +69,9 @@ func movementPolicy(t *testing.T) *behavior.Session {
  decide=function(frame)
  local input=frame.input
  if input.cast then return {action={capability="offense"}} end
- if input.spell then return movement.for_spell(input.obs,"8",input.target,input.spell,input.options) end
- return movement.decide(input.obs,"8",input.target,input.options)
+ if input.idle then return movement.idle_recovery(input.obs,input.sequence or "8") end
+ if input.spell then return movement.for_spell(input.obs,input.sequence or "8",input.target,input.spell,input.options) end
+ return movement.decide(input.obs,input.sequence or "8",input.target,input.options)
  end
  }`
 	vm, err := behavior.NewSession(context.Background(), "move", script)
