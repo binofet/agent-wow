@@ -207,13 +207,13 @@ records the stipend receipt; reserved or unrecorded outcomes remain unconfirmed.
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
-Normal death recovery is automatic when controls.recovery.enabled is true.
-The controller releases spirit, follows verified ground routes to the actual
-own corpse, waits for the server reclaim timer, and reclaims. Actual life and
+The shared Lua death policy attempts ordinary recovery by default. It chooses
+release/query, ghost routing, reclaim timing and continuation; Go exposes the
+raw death/corpse/timer facts and exact epoch-bound packets and measured movement.
+Legacy recovery toggles cannot turn this ordinary support off. Actual life and
 reconciled movement complete that physical operation; the same shared Lua
 healing and consumable policies own subsequent health/mana recovery and tuning.
-Explain its actual phase and reason when asked; do not say that
-corpse recovery is unavailable when it is enabled. A request or a movement
+Explain its actual policy phase, native packet/motion receipts and blockers when asked. A request or a movement
 write is not a successful resurrection: use aliveObserved. Do not infer Lua
 resource recovery from the legacy native rested flag; inspect the current
 policy's healing/consumable status and actual health/mana/item/aura receipts.

@@ -265,3 +265,26 @@ func TestPhysicalRecoveryReachesReclaimRangeAroundRecordedElwynnLedge(t *testing
 	}
 	t.Logf("ledge=%v; detour length %.3f, %d points, endpoint %+v, corpse distance %.3f", ledge, length, len(path), end, distance(end, corpse))
 }
+
+func TestRecoveryRangeDetourUsesOnlyRequestedPhysicalArrivalRadius(t *testing.T) {
+	start, corpse := Point{-9388, 131, 62}, Point{-9380, 131, 62}
+	w, err := newRecoveryWindow(0, start, corpse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, radius := range []float64{1, 10, 35} {
+		calls := 0
+		path := planRangeDetour(context.Background(), w, start, corpse, radius, func(goal Point) ([]Point, error) {
+			calls++
+			if distance(goal, corpse) > radius {
+				t.Fatal("planner chose a larger tactical range", radius, goal)
+			}
+			// Full physical sampling remains authoritative; this fixture rejects all
+			// candidates instead of promoting a requested point to a measured surface.
+			return nil, errors.New("measured obstruction")
+		})
+		if path != nil || calls != 3 {
+			t.Fatal(radius, path, calls)
+		}
+	}
+}
