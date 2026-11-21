@@ -18,6 +18,7 @@ local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
+local policy_observation
 local task_view
 local task_support_action
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
@@ -180,8 +181,53 @@ local function owns_current_observation(obs, frame, self)
     return false
 end
 
+-- These are policy tuning, not transport admission rules. Attack observations
+-- remain available even when their victim died or is not in this party.
+local engagement_tuning = {recent_attack_ms=5000, sustained_attack_ms=30000}
+local function witnessed_attack(obs, target, npc, members)
+    if not alive(npc) then return false end
+    local raw = npc.attackObservation
+    if type(raw) ~= "table" then
+        -- Compatibility for an explicitly older harness, never a second
+        -- classifier running alongside raw observations from a current one.
+        local old = (obs.engagement or {})[target]
+        local victim = old and guid(old.victimGuid)
+        return npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
+               same_map((obs.players or {})[victim], obs.mapId)
+    end
+    local victim = raw.victimKnown == true and guid(raw.victimGuid)
+    local player = victim and (obs.players or {})[victim]
+    if not victim or not (victim == obs.selfGuid or members[victim]) or not player or
+       player.present ~= true or not same_map(player, obs.mapId) then return false end
+    if raw.targetKnown == true and raw.targetGuid ~= victim then return false end
+    local age = tonumber(raw.ageMs or "0")
+    if not age or age < 0 or age - age ~= 0 then return false end
+    -- A witnessed attack remains relevant when its victim has just died; that
+    -- is when living teammates most need to finish the same encounter.
+    if age <= engagement_tuning.recent_attack_ms then return true end
+    if player.combatKnown ~= true or player.inCombat ~= true then return false end
+    if age <= engagement_tuning.sustained_attack_ms then return true end
+    local flags = npc.unitFlags or 0
+    return raw.targetKnown == true and raw.targetGuid == victim and npc.unitFlagsKnown == true and
+           type(flags) == "number" and flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 1
+end
+
+local function current_attack_hint(npc, witnessed)
+    if witnessed then return true end
+    local raw = npc.attackObservation
+    if type(raw) ~= "table" then return npc.engaged == true end
+    local age = tonumber(raw.ageMs or "0")
+    -- Changing to a new victim does not retire an existing encounter. This
+    -- evidence preserves history; it cannot admit a new foreign-party pull.
+    return raw.victimKnown == true and guid(raw.victimGuid) and age and age >= 0 and
+           age - age == 0 and age <= engagement_tuning.recent_attack_ms
+end
+
 local function observe_targets(obs, members)
     local targets, auras, protected = {}, {}, {}
+    local classified = {}
+    for key, value in pairs(obs) do classified[key] = value end
+    classified.targets, classified.engagement = {}, {}
     -- Read CC reservations before evaluating reset evidence. Full health is
     -- normal under Polymorph and must not erase an active encounter target.
     for _, aura in ipairs(obs.protectedAuras or {}) do protected[aura.targetGuid] = true end
@@ -189,26 +235,30 @@ local function observe_targets(obs, members)
         if aura.active == true then protected[target] = true end
     end
     state.engaged = state.engaged or {}
-    local players = obs.players or {}
     local in_combat = false
     for target, npc in pairs(obs.targets or {}) do
         if guid(target) and same_map(npc, obs.mapId) then
-            local attack = (obs.engagement or {})[target]
-            local victim = attack and guid(attack.victimGuid)
-            local witnessed = npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
-                              same_map(players[victim], obs.mapId)
+            local witnessed = witnessed_attack(obs, target, npc, members)
             if witnessed then state.engaged[target] = true end
             local reserved = npc.protected == true or state.controls[target] == true or protected[target] == true
             local flags = npc.unitFlags or 0 -- Known protobuf flags omit an explicit zero.
             local reset = alive(npc) and npc.unitFlagsKnown == true and type(flags) == "number" and
                 flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 0 and
-                npc.engaged ~= true and npc.healthKnown == true and type(npc.health) == "number" and
+                not current_attack_hint(npc, witnessed) and npc.healthKnown == true and type(npc.health) == "number" and
                 npc.health > 0 and npc.health == npc.maxHealth and not reserved
             -- Death or a positively observed full evade reset ends historical
             -- engagement. Losing/changing the victim alone never ends it.
             if npc.aliveKnown == true and npc.alive == false or reset then state.engaged[target] = nil end
             local engaged = state.engaged[target] == true
             targets[target] = copy_target(npc, engaged, reserved)
+            local row = {}
+            for key, value in pairs(npc) do row[key] = value end
+            row.engaged, row.protected = engaged, reserved
+            classified.targets[target] = row
+            if witnessed then
+                local attack = type(npc.attackObservation) == "table" and npc.attackObservation or (obs.engagement or {})[target]
+                classified.engagement[target] = {victimGuid=attack.victimGuid,ageMs=attack.ageMs or "0"}
+            end
             if engaged and alive(npc) then in_combat = true end
         end
     end
@@ -239,7 +289,7 @@ local function observe_targets(obs, members)
             auras[guid] = rows
         end
     end
-    return targets, auras, in_combat
+    return targets, auras, in_combat, classified
 end
 
 local function marked_plan(frame, obs, plan, targets, auras, in_combat)
@@ -294,6 +344,7 @@ local function marked_plan(frame, obs, plan, targets, auras, in_combat)
 end
 
 local function decide_encounter(frame)
+    policy_observation=nil
     task_view=nil
     task_support_action=nil
     local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
@@ -323,7 +374,11 @@ local function decide_encounter(frame)
             if guid(member.guid) then members[member.guid] = member.online == true end
         end
     end
-    local targets, auras, in_combat = observe_targets(obs, members)
+    local targets, auras, in_combat, classified = observe_targets(obs, members)
+    -- All consumers use the same Lua engagement result: queue/execution,
+    -- interrupts, automatic CC, temporary tasks and mana recovery. The raw
+    -- ingress observation remains unchanged for checkpoint and inspection.
+    obs, policy_observation = classified, classified
     local marked, stale, all_control_observed
     if plan then
         marked, stale, all_control_observed = marked_plan(frame, obs, plan, targets, auras, in_combat)
@@ -569,9 +624,9 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
-    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,observation or {},out.action) then out.action=nil end
+    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
-    local input, encounter = frame.input, observation
+    local input, encounter = frame.input, policy_observation or observation
     local expected
     if input.kind == "self_mana" then
         -- A separate mana tick cannot supersede a bound encounter decision.

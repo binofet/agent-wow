@@ -120,5 +120,10 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if s.hostEncounterActiveLocked() {
 		return preempted
 	}
+	if s.hostEncounterKey != "" {
+		// Configured Lua owns enemy and spell selection even while its writer
+		// is briefly unavailable. Mechanical preemption remains observable.
+		return preempted
+	}
 	return s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }
