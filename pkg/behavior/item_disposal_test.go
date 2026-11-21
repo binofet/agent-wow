@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -25,7 +26,12 @@ func disposalPolicySource(t *testing.T) string {
 
 func disposalRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	r := New()
+	// This healthy matrix checks policy outcomes, not the production watchdog.
+	// Timeout/default-budget behavior has separate tests and remains unchanged.
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
 	load(t, r, disposalPolicySource(t))
 	return r
 }
