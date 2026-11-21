@@ -189,5 +189,15 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		comparisonKnown = comparisonKnown && tail[i] == 0
 	}
 	item.ArmorComparisonKnown = comparisonKnown && bonding <= 2 && prefix[18] == 0 && prefix[19] == 1
+	item.RawTemplateFacts = &tradev1.RawTemplateFacts{
+		ContainerSlots: meta.containerSlots,
+		Bonding:        meta.bonding,
+		PageText:       meta.pageText,
+		StartQuest:     meta.startQuest,
+		LockId:         meta.lockID,
+		MaxDurability:  meta.maxDurability,
+		BagFamily:      meta.bagFamily,
+		Duration:       meta.duration,
+	}
 	return item, nil
 }
