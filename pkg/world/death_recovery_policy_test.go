@@ -97,3 +97,62 @@ func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) 
 		t.Fatal(d.Output)
 	}
 }
+
+func TestDeathRecoveryDoesNotReserveReleaseBeforeActualLootWindowCleanup(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("..", "..", "behaviors", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	source := "local encounter_death_recovery=(function()\n" + read("death-recovery.lua") + "\nend)()\nlocal encounter_corpse_loot=(function()\n" + read("corpse-loot.lua") + "\nend)()\n" + readEncounterBundle(t)
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	p := &fallbackPolicyTest{t: t, host: host}
+	obs := positionedHealObservation()
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.Alive = proto.Bool(false)
+	self.HealthKnown, self.Health, self.MaxHealth = true, 0, 100
+	obs.Recovery = &actionsv1.RecoveryState{Enabled: true, DeathEpoch: 1}
+	corpse := fallbackGUID(0xf130000001000001)
+	loot := map[string]any{"sessionId": fallbackSession, "selfGuid": fallbackGUID(fallbackSelf),
+		"self":      map[string]any{"present": true, "aliveKnown": true, "alive": false, "unitFlagsKnown": true},
+		"state":     map[string]any{"pendingCorpseGuid": corpse, "phase": "waiting_open"},
+		"operation": map[string]any{"corpseGuid": corpse, "requestId": "open", "openingTransportAttempted": true}}
+	step := func() behavior.Decision {
+		t.Helper()
+		ls, err := host.Enqueue(behavior.Event{Kind: "corpse_loot_observation", Value: loot})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := host.Decide(context.Background(), map[string]any{"observationSequence": p.observe(obs), "observationSequences": map[string]any{"corpse_loot": fallbackGUID(ls)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	close := step()
+	a, _ := close.Output["action"].(map[string]any)
+	if a["capability"] != "loot_close" {
+		t.Fatal("death skipped current physical window cleanup", close.Output)
+	}
+	id, err := host.ReserveAction(close)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified, Payload: map[string]any{"capability": "loot_close", "corpse_guid": corpse}}}); err != nil {
+		t.Fatal(err)
+	}
+	loot["state"] = map[string]any{}
+	loot["operation"].(map[string]any)["terminal"] = true
+	release := step()
+	a, _ = release.Output["action"].(map[string]any)
+	if a["capability"] != "release_spirit" || host.Status().Pending != 0 {
+		t.Fatal("unexecuted release was checkpoint-reserved during close", release.Output, host.Status())
+	}
+}
