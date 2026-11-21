@@ -104,8 +104,11 @@ func TestLootCapacityBlocksNewOpenAndRechecksAfterLease(t *testing.T) {
 			}
 			enable(t, s)
 			tickCapacityLoot(t, s, gather)
-			if len(f.packets) != 0 || f.leaseOwner != "" || !current(t, s).InventoryPaused {
+			if len(f.packets) != 0 || f.leaseOwner != "" || (gather || !afterLease) && !current(t, s).InventoryPaused {
 				t.Fatal(gather, afterLease, current(t, s), f.packets)
+			}
+			if !gather && afterLease && (s.corpseRequest == nil || !s.corpseRequest.receipt.Terminal || s.corpseRequest.receipt.OpeningTransportAttempted) {
+				t.Fatal("lost exact inventory observation was not a known no-write refusal", current(t, s))
 			}
 			f.afterAcquire = nil
 			f.world.InventoryKnown = true
