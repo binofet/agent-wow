@@ -3,6 +3,7 @@
 ## Notes: Quest sync and companion inventory. Type /wbinv to inspect bags.
 ## Version: 0.2.0
 ## SavedVariablesPerCharacter: WarcraftBuddyQuestSyncDB
+PrepAudit.lua
 Catalog.lua
 WarcraftBuddyQuestSync.lua
 GearSwapConfig.lua
