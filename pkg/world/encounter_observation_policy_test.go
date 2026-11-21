@@ -115,7 +115,7 @@ local encounter_intent = {
 	assigned := &actionsv1.ProtectedTarget{TargetGuid: moon, CasterGuid: 4, SpellId: 118, Revision: 8,
 		Slot: 3, DurationKnown: true, RemainingMs: 20000, Capability: "polymorph"}
 	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{foreign, wrongSpell}
-	expect(decide(observe()), "apply_control", nil)
+	expect(decide(observe()), "engaged_focus", key(skull))
 	// The matching aura is deliberately neither the first nor the last row
 	// for this GUID. Collapsing to just one aura must not unlock/hold by order.
 	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{foreign, assigned, wrongSpell}

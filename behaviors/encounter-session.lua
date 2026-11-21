@@ -107,6 +107,7 @@ local function copy_target(target, engaged, protected)
     return {
         present=target.present, aliveKnown=target.aliveKnown, alive=target.alive,
         attackable=target.attackable, health=target.healthKnown and target.health or nil,
+        maxHealth=target.healthKnown and target.maxHealth or nil,
         killSeconds=target.killSeconds, incomingDPS=target.incomingDPS, inCombat=engaged,
         engaged=engaged, protected=protected,
     }
@@ -154,6 +155,11 @@ local function active_aura(aura, row)
 end
 
 local function damage_spell(obs, target, options)
+    options = options or {}
+    local burst = state.burstIntent
+    if burst and target and tostring(target.guid) == burst.targetGuid then
+        options.burst, options.burst_reason = true, burst.reason
+    end
     return spells.damage_spell(obs, target, obs.damage or intent.damage, options)
 end
 
@@ -184,6 +190,16 @@ local function observe_targets(obs, members)
             local engaged = state.engaged[target] == true
             targets[target] = copy_target(npc, engaged, npc.protected == true or state.controls[target] == true)
             if engaged and alive(npc) then in_combat = true end
+        end
+    end
+    -- These are actual current cast observations exposed with learned
+    -- interrupt options. Absence is unknown, not evidence of no enemy heal.
+    for _, cast in ipairs((obs.support or {}).interrupts or {}) do
+        local target = targets[cast.targetGuid]
+        if target and cast.healing == true and guid(cast.castRevision) and
+           type(cast.remainingMs) == "number" and cast.remainingMs > 0 then
+            target.healingCastKnown = true
+            target.healingCastRemainingMs = math.min(target.healingCastRemainingMs or cast.remainingMs, cast.remainingMs)
         end
     end
     for _, aura in ipairs(obs.protectedAuras or {}) do
@@ -321,6 +337,7 @@ local function decide_encounter(frame)
         currentFocus=not fallback and state.focusGuid or nil,
         ownerFocus=directive.focusGuid or leader_alive and obs.observedOwnerFocus or nil,
         partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds,
+        tuning=intent.targetTuning,
     })
     local first_focus = queue.focusGuid
     local reserved = false
@@ -333,30 +350,22 @@ local function decide_encounter(frame)
     if reserved then
         queue = tactics.decide({kind="combat_queue", targets=targets, explicitOrder=order,
             ownerFocus=directive.focusGuid or leader_alive and obs.observedOwnerFocus or nil,
-            partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds})
+            partyDPS=obs.partyDPS or intent.partyDPS, switchSeconds=obs.switchSeconds or intent.switchSeconds,
+            tuning=intent.targetTuning})
     end
-    out.queue = queue.queue
+    out.queue, out.burstIntent, state.burstIntent = queue.queue, queue.burstIntent, queue.burstIntent
     out.nextPullGuid = queue.queue[1] and queue.queue[1].targetGuid
     for _, row in ipairs(queue.queue) do
         if row.protected then out.protected[#out.protected+1] = row.targetGuid end
     end
-    local skull = plan and state.bindings.skull
-    if skull and alive(targets[skull]) and targets[skull].engaged then state.started = true end
-    local control
-    if fallback then
-        if queue.focusGuid then out.focusGuid, out.phase = queue.focusGuid, "engaged_defense" end
-    else
-        local skull_dead = skull and state.defeated[skull]
-        local order_ready = marked.phase == "focus" or marked.phase == "encounter_complete"
-        -- A dead but witnessed leader stays the leader. Continue only after
-        -- the marked Skull's death is also witnessed.
-        if order_ready and state.started and skull and (skull_dead or queue.focusGuid == skull) and
-           all_control_observed and (leader_alive or leader and leader.aliveKnown == true and leader.alive == false and skull_dead) then
-            out.focusGuid, state.focusGuid = queue.focusGuid, queue.focusGuid
-            out.phase = out.focusGuid and "engaged_focus" or "waiting_for_engaged_focus"
-        end
-        control = leader_alive and marked.phase == "apply_control" and marked.control
+    -- The maintained queue is also the execution policy. Plans reserve CC
+    -- and guide order; they cannot make an already-engaged enemy disappear
+    -- because Skull, the leader, or another control is not currently ready.
+    if queue.focusGuid then
+        out.focusGuid, state.focusGuid = queue.focusGuid, queue.focusGuid
+        out.phase = fallback and "engaged_defense" or "engaged_focus"
     end
+    local control = not fallback and leader_alive and marked.phase == "apply_control" and marked.control
 
     local self = players[obs.selfGuid]
     if owns_current_observation(obs, frame, self) then

@@ -237,10 +237,9 @@ local encounter_intent = {
 	addFallbackTarget(obs, skull, 0, 900)
 	addFallbackTarget(obs, moon, fallbackSelf, 1)
 	addFallbackTarget(obs, attacker, fallbackSelf, 20)
-	// Current marks bind this plan. It still waits for its own Skull pull.
-	if out := p.expectNoAction(p.observe(obs)); out["focusGuid"] != nil {
-		t.Fatalf("fallback escaped a current authored pull: %+v", out)
-	}
+	// A bound plan reserves Moon but cannot suppress defense against the
+	// already-engaged add while its planned Skull remains unpulled.
+	p.expectOffense(p.observe(obs), "engaged_focus", attacker, 585)
 
 	marks := obs.Party.RaidTargets
 	obs.Party.RaidTargets = nil
@@ -260,19 +259,18 @@ local encounter_intent = {
 	marks.Revision = 11
 	currentMarks := marks.Marks
 	marks.Marks = []*partyv1.RaidTarget{{Icon: 8, TargetGuid: attacker}, currentMarks[1]}
-	if out := p.expectNoAction(p.observe(obs)); out["phase"] != "raid_mark_changed_replan" {
-		t.Fatalf("a fresh changed Skull bypassed the authored plan: %+v", out)
-	}
+	p.expectOffense(p.observe(obs), "engaged_focus", attacker, 585)
 	marks.Marks = currentMarks[1:]
-	if out := p.expectNoAction(p.observe(obs)); out["phase"] != "waiting_for_mark_skull" {
-		t.Fatalf("a fresh cleared live Skull bypassed the authored plan: %+v", out)
-	}
+	p.expectOffense(p.observe(obs), "engaged_focus", attacker, 585)
 	marks.Marks = currentMarks
 	marks.Revision = 12
 	addFallbackTarget(obs, skull, fallbackLeader, 900)
 	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{
 		{TargetGuid: moon, CasterGuid: fallbackSelf, SpellId: 118, Revision: 2},
 	}
+	// Finish the injured add before switching to the newly engaged Skull.
+	p.expectOffense(p.observe(obs), "engaged_focus", attacker, 585)
+	obs.Targets[fallbackGUID(attacker)].Alive = proto.Bool(false)
 	p.expectOffense(p.observe(obs), "engaged_focus", skull, 585)
 
 	obs.VisitId++
