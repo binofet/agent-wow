@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/behaviors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -67,9 +69,24 @@ func TestNearOwnerFollowUsesVerifiedRouteAndNormalRunBudget(t *testing.T) {
 }
 
 func TestNearOwnerFollowNeverFallsBackFromIncompleteOrBlockedRoute(t *testing.T) {
+	// These cases exercise route rejection and STOP, using the actual Lua
+	// source with a healthy semantic-fixture allowance. Separate watchdog
+	// regressions keep the production five-millisecond failure contract.
+	useHealthyGeometryPolicy := func(t *testing.T, s *Service) {
+		t.Helper()
+		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+			t.Fatal(err)
+		}
+		s.formation.runtime = runtime
+	}
 	for _, mode := range []string{"blocked", "partial", "empty", "nonfinite", "overbudget"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := rig(t)
+			useHealthyGeometryPolicy(t, s)
 			s.planPath = func(_ context.Context, _ string, from, to position) ([]position, error) {
 				switch mode {
 				case "blocked":
@@ -91,11 +108,12 @@ func TestNearOwnerFollowNeverFallsBackFromIncompleteOrBlockedRoute(t *testing.T)
 				advance(200 * time.Millisecond)
 			}
 			if len(f.packets) != 0 || s.state.Moving || s.state.NavAvailable || !s.state.Following || s.state.Reason != "follow_navigation_unavailable" {
-				t.Fatal("incomplete near-owner route produced movement", s.stateLocked(), f.packets)
+				t.Fatal("incomplete near-owner route produced movement", s.stateLocked(), f.packets, "policy failure", s.formation.lastFailure)
 			}
 		})
 	}
 	s, f, advance := rig(t)
+	useHealthyGeometryPolicy(t, s)
 	toggle(t, s, true)
 	s.Tick(context.Background())
 	s.planPath = func(context.Context, string, position, position) ([]position, error) {
@@ -104,7 +122,7 @@ func TestNearOwnerFollowNeverFallsBackFromIncompleteOrBlockedRoute(t *testing.T)
 	advance(200 * time.Millisecond)
 	s.Tick(context.Background())
 	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop || s.state.Moving || s.state.NavAvailable || !s.state.Following {
-		t.Fatal("lost route continued a previously started movement", s.stateLocked(), f.packets)
+		t.Fatal("lost route continued a previously started movement", s.stateLocked(), f.packets, "policy failure", s.formation.lastFailure)
 	}
 }
 
