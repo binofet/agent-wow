@@ -360,15 +360,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	if self.ClassId == 4 {
 		s.starterRogueAssistLocked(ctx, w, target, targetPosition)
 	} else {
-		rank := s.selectedSpellLocked(fireball)
-		if self.ClassId == 5 {
-			rank = s.selectedSpellLocked(smite)
-		}
-		if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) && self.UnitFlags&0x2000 == 0 {
-			if s.faceEnemyLocked(ctx, targetPosition) {
-				s.castStarterOffenseLocked(ctx, rank.id, target.Guid, 3*time.Second)
-			}
-		}
+		s.starterPracticeCasterLocked(ctx, w, target, targetPosition)
 	}
 	if finishing {
 		if s.practiceQuestGoal {

@@ -17,21 +17,20 @@ const starterWeaponSelection = "weapon_strike"
 // custody (which deliberately excludes both Practice and Fargodeep).
 func (s *Service) starterWeaponMechanicsLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState, point position, rank spellcatalog.Spell) bool {
 	self := w.GetSelf()
-	return s.starterSpells.uncertainStrike == nil && !s.closed && !s.clientControlLost && !s.clientControlRestoring &&
-		safeSelfCombat(w, s.selfGUID) == "" && observedWeaponCaster(self) && self.ClassId == 4 &&
-		!s.state.CastPending && !s.state.Moving && !s.state.Traveling && !s.state.MotionUnconfirmed &&
-		!s.autoStopping && !s.state.AutoAttackUnconfirmed && s.state.InteractionOwner == "" && !s.recovery.state.Active &&
-		!s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) &&
-		s.failedAssistTarget != target.GetGuid() && instantWeaponStrike(rank) &&
-		s.offenseRankReadyLocked(self, rank) && s.strikeTargetReady(target.GetGuid(), rank) &&
-		exactOffenseTarget(w, target, target.GetGuid(), nil) && offenseLineInRange(s.pos, point, rank) &&
-		(!rank.Behind || behindEnemy(s.pos, point))
+	return s.starterNamedOffenseAvailableLocked(w, target) && self.ClassId == 4 && observedWeaponCaster(self) &&
+		instantWeaponStrike(rank) && s.offenseRankReadyLocked(self, rank) && s.strikeTargetReady(target.GetGuid(), rank) &&
+		offenseLineInRange(s.pos, point, rank) && (!rank.Behind || behindEnemy(s.pos, point))
 }
 
 // Practice has no party prerequisite. Recheck its existing solo mission
 // authority after policy/STOP/facing callbacks, including the witnessed fight
 // that it is already finishing after its quest or level goal changes.
 func (s *Service) practiceWeaponAuthorityLocked(ctx context.Context, targetGUID uint64) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
+	w, target, point, valid := s.practiceOffenseAuthorityLocked(ctx, targetGUID)
+	return w, target, point, valid && w.Self.ClassId == 4
+}
+
+func (s *Service) practiceOffenseAuthorityLocked(ctx context.Context, targetGUID uint64) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
 	until := s.practiceUntil
 	current := func() bool {
 		return ctx.Err() == nil && s.state.Practicing && s.practicePullStarted && targetGUID == s.practiceTarget &&
@@ -49,17 +48,24 @@ func (s *Service) practiceWeaponAuthorityLocked(ctx context.Context, targetGUID 
 	}
 	self, target := w.Self, practiceTargetObservation(w, targetGUID)
 	point, known, _ := creaturePosition(target)
-	if !self.ClassKnown || self.ClassId != 4 || !self.LevelKnown || !self.HealthKnown || !self.PowerKnown || self.PowerType != 3 ||
+	if !self.ClassKnown || (self.ClassId != 4 && self.ClassId != 5 && self.ClassId != 8) || !self.LevelKnown || !self.HealthKnown || !self.PowerKnown ||
 		!northshire(playerPosition(self)) || !northshire(s.pos) || !known || !northshire(point) ||
-		!self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || !self.BaseAttackTimeKnown || !self.CombatReachKnown ||
-		!s.state.KnownAutoAttack || !s.state.KnownSinisterStrike || !s.weaponReady(self) || self.UnitFlags&(0x20000|0x200000) != 0 ||
-		!eligiblePracticeWolf(target) || !exactOffenseTarget(w, target, targetGUID, nil) || !target.CombatReachKnown || len(w.NearbyCreatures) > 32 ||
+		!self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 ||
+		!eligiblePracticeWolf(target) || !exactOffenseTarget(w, target, targetGUID, nil) || len(w.NearbyCreatures) > 32 ||
 		target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 ||
 		s.failedAssistTarget == targetGUID {
 		return nil, nil, position{}, false
 	}
+	if self.ClassId == 4 {
+		if self.PowerType != 3 || !self.BaseAttackTimeKnown || !self.CombatReachKnown || !target.CombatReachKnown ||
+			!s.state.KnownAutoAttack || !s.state.KnownSinisterStrike || !s.weaponReady(self) || self.UnitFlags&(0x20000|0x200000) != 0 {
+			return nil, nil, position{}, false
+		}
+	} else if self.PowerType != 0 || self.UnitFlags&0x2000 != 0 || self.ClassId == 5 && !s.state.KnownSmite || self.ClassId == 8 && !s.state.KnownFireball {
+		return nil, nil, position{}, false
+	}
 	active, incomplete := ownWolfQuest(w)
-	goal := incomplete && self.Level >= 1 && self.Level <= 5 || !active && self.Level == 1 && !s.practiceQuestGoal
+	goal := incomplete && self.Level >= 1 && self.Level <= 5 || !active && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
 	finishing := self.UnitFlags&0x80000 != 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 	if !goal && !finishing {
 		return nil, nil, position{}, false
@@ -93,6 +99,15 @@ func (s *Service) starterWeaponWriteAllowedLocked(ctx context.Context, targetGUI
 func (s *Service) castStarterWeaponLocked(ctx context.Context, rank spellcatalog.Spell, target uint64) bool {
 	if !s.starterWeaponWriteAllowedLocked(ctx, target, rank.ID) {
 		s.state.Reason = "starter_strike_prewrite_observations_changed"
+		return false
+	}
+	return s.writeStarterNamedOffenseLocked(ctx, rank, target)
+}
+
+// Execute one exact rank after the caller's final policy and native admission.
+// Both named attack paths borrow this same bounded receipt and uncertainty hold.
+func (s *Service) writeStarterNamedOffenseLocked(ctx context.Context, rank spellcatalog.Spell, target uint64) bool {
+	if ctx.Err() != nil || s.starterSpells.uncertainStrike != nil || s.targetProtection.blocks(target, s.now()) {
 		return false
 	}
 	now := s.now()

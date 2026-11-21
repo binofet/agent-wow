@@ -84,6 +84,10 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 }
 
 func (s *Service) castStarterOffenseLocked(ctx context.Context, spell uint32, target uint64, throttle time.Duration) bool {
+	if s.starterSpells.uncertainStrike != nil {
+		s.state.Reason = "named_offense_receipt_unconfirmed_no_retry"
+		return false
+	}
 	if s.blockProtectedOffenseLocked(ctx, target) {
 		return false
 	}
