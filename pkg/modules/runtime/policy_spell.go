@@ -224,7 +224,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	ready, err := grpc_health_v1.NewHealthClient(inst.conn).Check(probeCtx, &grpc_health_v1.HealthCheckRequest{Service: bridge})
 	cancel()
 	if err != nil || ready.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
-		return behavior.ActionNotDispatched, op.payload("policy_spell_bridge_unavailable", false, false, false)
+		return behavior.ActionNotDispatched, policyDispatchError(op.payload("policy_spell_bridge_unavailable", false, false, false), err)
 	}
 	spells := &m.policySpells
 	spells.mu.Lock()
@@ -251,9 +251,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	}
 	switch {
 	case op.written:
-		return behavior.ActionTransportAccepted, op.payload("transport_written", true, false, false)
+		return behavior.ActionTransportAccepted, policyDispatchError(op.payload("transport_written", true, false, false), err)
 	case op.attempted:
-		return behavior.ActionUnknown, op.payload("transport_unconfirmed_no_retry", false, false, false)
+		return behavior.ActionUnknown, policyDispatchError(op.payload("transport_unconfirmed_no_retry", false, false, false), err)
 	}
 	if err == nil && op.movement != nil && op.movement.body && op.movement.phase == "local_physics_refused" {
 		// The binding measured and refused the input before any packet write.
@@ -262,9 +262,19 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	}
 	switch status.Code(err) {
 	case codes.InvalidArgument, codes.FailedPrecondition, codes.NotFound, codes.PermissionDenied:
-		return behavior.ActionNotDispatched, op.payload("admission_rejected", false, false, false)
+		return behavior.ActionNotDispatched, policyDispatchError(op.payload("admission_rejected", false, false, false), err)
 	}
-	return behavior.ActionUnknown, op.payload("dispatch_unconfirmed_no_retry", false, false, false)
+	return behavior.ActionUnknown, policyDispatchError(op.payload("dispatch_unconfirmed_no_retry", false, false, false), err)
+}
+
+// Preserve the actual RPC status separately from the compatible policy phase.
+// A transport return or an admission error is never a server game effect.
+func policyDispatchError(payload map[string]any, err error) map[string]any {
+	if err != nil {
+		rpc := status.Convert(err)
+		payload["grpc_status"], payload["grpc_message"] = rpc.Code().String(), rpc.Message()
+	}
+	return payload
 }
 
 func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module string, code uint32, payload []byte) error {
