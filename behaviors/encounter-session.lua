@@ -185,6 +185,7 @@ end
 -- remain available even when their victim died or is not in this party.
 local engagement_tuning = {recent_attack_ms=5000, sustained_attack_ms=30000}
 local function witnessed_attack(obs, target, npc, members)
+    if not alive(npc) then return false end
     local raw = npc.attackObservation
     if type(raw) ~= "table" then
         -- Compatibility for an explicitly older harness, never a second
