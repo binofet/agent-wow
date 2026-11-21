@@ -28,7 +28,11 @@ func legacyConsumableRequest(name, path string, req proto.Message) (string, bool
 	}
 	m := req.ProtoReflect()
 	fields := m.Descriptor().Fields()
-	if source := fields.ByName("source"); source != nil && m.Has(source) {
+	source := fields.ByName("source")
+	// Explicitly pinned old Inventory modules retain their deployed legacy RPC
+	// until the coherent exact-item/metadata module is installed. No selector is
+	// restored in the new module's source.
+	if source == nil || m.Has(source) {
 		return "", false
 	}
 	for _, name := range []protoreflect.Name{"spell_id", "expected_inventory_revision", "request_id"} {

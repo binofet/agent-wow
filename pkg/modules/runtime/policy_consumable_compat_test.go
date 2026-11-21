@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -17,6 +18,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -24,6 +27,7 @@ type consumableInputPeer struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
 	sid    string
 	direct atomic.Int32
+	legacy bool
 }
 
 func (p *consumableInputPeer) GetState(context.Context, *emptypb.Empty) (*inventoryv1.State, error) {
@@ -31,11 +35,11 @@ func (p *consumableInputPeer) GetState(context.Context, *emptypb.Empty) (*invent
 }
 func (p *consumableInputPeer) Drink(context.Context, *inventoryv1.DrinkRequest) (*inventoryv1.DrinkReceipt, error) {
 	p.direct.Add(1)
-	return &inventoryv1.DrinkReceipt{}, nil
+	return &inventoryv1.DrinkReceipt{SessionId: p.sid, SelfGuid: 6, TransportWritten: p.legacy}, nil
 }
 func (p *consumableInputPeer) EatBuffFood(context.Context, *inventoryv1.EatBuffFoodRequest) (*inventoryv1.EatBuffFoodReceipt, error) {
 	p.direct.Add(1)
-	return &inventoryv1.EatBuffFoodReceipt{}, nil
+	return &inventoryv1.EatBuffFoodReceipt{SessionId: p.sid, SelfGuid: 6, TransportWritten: p.legacy}, nil
 }
 
 func consumableInputManager(t *testing.T) (*Manager, *consumableInputPeer) {
@@ -132,5 +136,108 @@ func TestConsumablePolicyCallbackPermitsOnlyExactSelectedItemPacket(t *testing.T
 	}
 	if op.matchesActionPacket(opcode.CMSGCastSpell, p) || op.matchesActionPacket(opcode.CMSGUseItem, append(p, 0)) {
 		t.Fatal("unrelated or trailing packet bytes admitted")
+	}
+}
+
+func TestConsumableCoreUpgradePreservesExplicitlyPinnedLegacyInventoryRPC(t *testing.T) {
+	m, peer := consumableInputManager(t)
+	root := t.TempDir()
+	source := filepath.Join("..", "..", "..", "modules")
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if _, err := os.Stat(filepath.Join(source, entry.Name(), "module.yaml")); err != nil {
+				continue
+			}
+			dst := filepath.Join(root, entry.Name())
+			if err := os.Mkdir(dst, 0700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"module.yaml", "module.pb", "compose.yaml"} {
+				raw, err := os.ReadFile(filepath.Join(source, entry.Name(), name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(dst, name), raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	path := filepath.Join(root, "buddy-inventory", "module.pb")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := &descriptorpb.FileDescriptorSet{}
+	if err = proto.Unmarshal(raw, set); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range set.File {
+		if file.GetName() == "modules/buddy-inventory/inventory.proto" {
+			for _, message := range file.MessageType {
+				limit := int32(0)
+				switch message.GetName() {
+				case "DrinkRequest", "EatBuffFoodRequest":
+					limit = 2
+				case "DrinkReceipt":
+					limit = 10
+				case "EatBuffFoodReceipt":
+					limit = 7
+				case "State":
+					limit = 25
+				case "ItemEligibility":
+					limit = 13
+				}
+				if limit != 0 {
+					var fields []*descriptorpb.FieldDescriptorProto
+					for _, field := range message.Field {
+						if field.GetNumber() <= limit {
+							fields = append(fields, field)
+						}
+					}
+					message.Field = fields
+				}
+			}
+		}
+	}
+	raw, err = proto.Marshal(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := moddisc.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, _ := legacy.Lookup(consumableInventoryModule)
+	m.registry = legacy
+	m.instances[consumableInventoryModule].definition = definition
+	peer.legacy = true
+	host, err := m.StartPolicy(context.Background(), `return {on_event=function(e)return true end,decide=function(f)return {}end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	for _, kind := range []string{"drink", "eat_buff_food"} {
+		raw, err := m.InvokeJSON(context.Background(), "buddy-inventory."+kind, json.RawMessage(`{"sessionId":"consumable-body","selfGuid":"6"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result map[string]any
+		if err = json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result["transportWritten"] != true {
+			t.Fatal("core-only upgrade broke the old pinned RPC", kind, result)
+		}
+	}
+	if peer.direct.Load() != 2 || host.vm.Status().Buffered != 0 {
+		t.Fatal("old module was incorrectly redirected to an unsupported new policy feed", peer.direct.Load(), host.vm.Status())
 	}
 }
