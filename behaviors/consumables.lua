@@ -118,7 +118,7 @@ function M.on_event(event)
     elseif r.outcome=="settled_unverified" then state.token=nil;state.leaseUnknown=true
     elseif r.outcome=="not_dispatched" or r.outcome=="failed" then state.phase="movement_lease_refused" end
   elseif p.capability=="consume" and state.attempt and p.requestId==state.attempt.id then
-    if r.outcome=="not_dispatched" or r.outcome=="failed" then state.finished=true;state.keepAttempt=false;state.phase="use_not_dispatched"
+    if r.outcome=="not_dispatched" or r.outcome=="failed" then state.finished=true;state.keepAttempt=false;state.retryNeeded=true;state.phase="use_not_dispatched"
     else state.attempt.sent=true;state.phase="awaiting_consumption_and_aura" end
   end
   return true
@@ -134,6 +134,11 @@ function M.decide(frame,obs,available)
   local owner=(obs.navigation or {}).movementOwner
   if state.session and (state.session~=frame.session_id or state.self~=obs.selfGuid) then state={};return {phase="body_changed"} end
   state.session,state.self=frame.session_id,obs.selfGuid
+  if state.owner and owner.active==true and owner.owner~=state.owner then
+    state.token=nil;state.leaseUnknown=nil;state.owner=nil
+    if state.attempt and state.attempt.sent then state.restAbandoned=true else state.attempt=nil end
+    return {phase="movement_owner_replaced"}
+  end
   if state.owner and owner.active~=true then
     state.token=nil;state.leaseUnknown=nil
     if state.finished then
@@ -142,7 +147,7 @@ function M.decide(frame,obs,available)
     end
   end
   if state.finished then
-    if state.phase=="use_not_dispatched" and not state.retryAt then state.retryAt=now+tuning.retry_ms end
+    if state.retryNeeded then state.retryAt=now+tuning.retry_ms;state.retryNeeded=nil end
     return release(frame,obs,available,state.phase or "finished")
   end
   local attempt=state.attempt
@@ -151,6 +156,7 @@ function M.decide(frame,obs,available)
   end
   if attempt and attempt.sent then
     local receipt=view.lastConsumableUse
+    local active_use=aura((view.consumableContext or {}).selfAuras,attempt.spellId)
     if receipt and receipt.requestId==attempt.id then
       if receipt.serverRejected==true then state.retryAt=now+tuning.retry_ms;return release(frame,obs,available,"server_rejected",true) end
       local set=(view.consumableContext or {}).selfAuras
@@ -173,7 +179,8 @@ function M.decide(frame,obs,available)
     -- An ambiguous write remains this exact private intent across reload. It
     -- never monopolizes the global action ledger or repeats the item use.
     if state.token and available and value(owner.remainingMs)<=tuning.renew_below_ms then
-      return {phase=state.phase,hold=true,action=custody(frame,obs,"renew")}
+      if active_use then return {phase=state.phase,hold=true,action=custody(frame,obs,"renew")} end
+      return release(frame,obs,available,"consumable_effect_unverified",false)
     end
     return {phase=state.phase,hold=state.token~=nil and not state.restAbandoned}
   end

@@ -35,7 +35,8 @@ func exactConsumableFixture(t *testing.T, spell uint32) (*Service, *consumableTe
 	t.Helper()
 	s, f := fixtureInventory()
 	f.a.SessionId, f.a.SelfGuid = "body", 6
-	f.a.Following, f.a.Healing = true, true
+	f.a.Following, f.a.Assisting = true, true
+	f.w.Self.ChannelSpellKnown = false // Initial zero fields may be omitted by the server.
 	f.w.Self.LevelKnown, f.w.Self.Level = true, 30
 	f.w.Self.PowerKnown, f.w.Self.Power, f.w.Self.MaxPower = true, 5, 150
 	item := f.w.InventoryBags[0].Slots[0]
@@ -74,13 +75,13 @@ func TestExactConsumableUsesChosenOwnedItemAndRequiresConsumptionPlusFreshAura(t
 	f.w.InventoryBags[0].Slots[0].StackCount--
 	f.w.InventoryRevision++
 	view = stateInventory(t, s)
-	if !view.LastConsumableUse.InventoryConfirmed || view.LastConsumableUse.Phase != "confirmed_consumption_and_aura" || !f.a.Following || !f.a.Healing || f.leases != 1 || f.releases != 1 {
+	if !view.LastConsumableUse.InventoryConfirmed || view.LastConsumableUse.Phase != "confirmed_consumption_and_aura" || !f.a.Following || !f.a.Assisting || f.leases != 1 || f.releases != 1 {
 		t.Fatal("missing actual effects or standing intent changed", view.LastConsumableUse, f.a)
 	}
 }
 
 func TestExactConsumableRejectsStaleForeignOrUnsafeRequestsWithoutChoosingAnotherItem(t *testing.T) {
-	for _, mode := range []string{"foreign_session", "foreign_body", "wrong_item", "wrong_spell", "stale_revision", "slot_changed", "combat", "moving", "unknown_motion", "on_equip"} {
+	for _, mode := range []string{"foreign_session", "foreign_body", "wrong_item", "wrong_spell", "stale_revision", "slot_changed", "combat", "moving", "channel", "unknown_motion", "on_equip"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, r := exactConsumableFixture(t, 430)
 			switch mode {
@@ -100,6 +101,8 @@ func TestExactConsumableRejectsStaleForeignOrUnsafeRequestsWithoutChoosingAnothe
 				f.w.Self.UnitFlags |= 0x80000
 			case "moving":
 				f.w.Self.MovementFlags = 1
+			case "channel":
+				f.w.Self.ChannelSpellId = 12051
 			case "unknown_motion":
 				f.a.MotionUnconfirmed = true
 			case "on_equip":
@@ -111,6 +114,31 @@ func TestExactConsumableRejectsStaleForeignOrUnsafeRequestsWithoutChoosingAnothe
 				t.Fatal("invalid source used another consumable", mode, err, f.packets)
 			}
 		})
+	}
+}
+
+func TestConsumableMetadataComesFromCompleteOwnedItemQuery(t *testing.T) {
+	s, f, _ := exactConsumableFixture(t, 430)
+	for _, trigger := range []uint32{0, 1} {
+		packet := metadataFixture(60001, 0, 0, 0, 0)
+		binary.LittleEndian.PutUint32(packet[8:], 5)
+		at := 16 + len("Fixture\x00\x00\x00\x00") + 88 + 8 + 24 + 28 + 12
+		binary.LittleEndian.PutUint32(packet[at:], 430)
+		binary.LittleEndian.PutUint32(packet[at+4:], trigger)
+		if _, err := s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGItemQuerySingleResponse, Payload: packet}); err != nil {
+			t.Fatal(err)
+		}
+		view := stateInventory(t, s)
+		metadata := view.Items[0].GetConsumable()
+		if trigger == 0 && (!metadata.GetUsable() || len(metadata.Spells) != 1 || !metadata.Spells[0].DrinkSupported || metadata.Spells[0].ManaPerTick <= 0 || view.GetManaDrinkCount() != 3) {
+			t.Fatal("complete on-use spell fact not reflected", view.Items[0])
+		}
+		if trigger == 1 && metadata.GetUsable() {
+			t.Fatal("on-equip spell became a consumable", view.Items[0])
+		}
+	}
+	if len(f.packets) != 0 {
+		t.Fatal("metadata projection chose an item use", f.packets)
 	}
 }
 
