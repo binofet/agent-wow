@@ -346,7 +346,11 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 			f.failOpcode = 0
 			advance(3 * time.Second) // Lua chooses when to retire an uncertain request.
 			tickCorpseLua(t, s)      // exact cleanup, one release
-			if s.state.Phase != "waiting_release" || s.state.Enabled != (mode != "disabled_ack" && mode != "disabled_timeout") {
+			wantPhase := "waiting_release"
+			if mode == "disabled_ack" || mode == "disabled_timeout" {
+				wantPhase = "loot_mutation_unconfirmed"
+			}
+			if s.state.Phase != wantPhase || s.state.Enabled != (mode != "disabled_ack" && mode != "disabled_timeout") {
 				t.Fatal("fixture not disabled/releasing", current(t, s))
 			}
 			before := len(f.packets)
@@ -366,7 +370,7 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 				}
 				return
 			}
-			if s.cleanup.source != 0 || !s.unconfirmedItems[123] || s.state.Enabled || s.state.ItemsStoredConfirmed != 0 || s.state.LastCorpseGuid != 0 || len(f.packets) != before {
+			if s.cleanup.source != 0 || !s.unconfirmedItems[123] || s.state.Enabled != (mode != "disabled_ack" && mode != "disabled_timeout") || s.state.ItemsStoredConfirmed != 0 || s.state.LastCorpseGuid != 0 || len(f.packets) != before {
 				t.Fatal("ambiguous abort escaped or rewrote", current(t, s))
 			}
 			enable(t, s)

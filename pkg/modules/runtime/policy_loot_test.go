@@ -81,8 +81,9 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	var writes []uint32
 	var origins []modsession.WriteOrigin
 	const corpse = uint64(0xf130000001000001)
+	wantedCorpse := corpse
 	m.session.SendPacket = func(ctx context.Context, code uint32, p []byte) error {
-		valid := (code == opcode.CMSGLoot || code == opcode.CMSGLootRelease) && len(p) == 8 && binary.LittleEndian.Uint64(p) == corpse ||
+		valid := (code == opcode.CMSGLoot || code == opcode.CMSGLootRelease) && len(p) == 8 && binary.LittleEndian.Uint64(p) == wantedCorpse ||
 			code == opcode.CMSGLootMoney && len(p) == 0 || code == opcode.CMSGAutostoreLootItem && len(p) == 1 && p[0] == 2
 		if !valid {
 			return fmt.Errorf("foreign loot write %x %v", code, p)
@@ -191,24 +192,15 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	if !o.Operation.Terminal || !o.Operation.ReleaseObserved || o.Operation.WindowObserved {
 		t.Fatal("release invented an unobserved opening window", o.Operation)
 	}
-	// A positively observed new source life permits a new window. Exercise the
-	// same VM/native callback path for exact money and item selection, not a
-	// mock receipt that assumes native Tick processed the offered window.
-	dead := w.LootableCorpses[0]
-	alive := proto.Clone(dead).(*worldv1.CreatureState)
-	alive.Alive = true
-	alive.Health = 1
-	alive.MaxHealth = 1
-	w.NearbyCreatures = []*worldv1.CreatureState{alive}
-	w.RequestedCreature = alive
-	w.LootableCorpses = nil
-	native.Tick(context.Background())
-	step(false)
-	w.NearbyCreatures = nil
+	// A distinct observed source exercises the same VM/native callback path
+	// for exact money/slot requests after the first UI was actually released.
+	dead := proto.Clone(w.LootableCorpses[0]).(*worldv1.CreatureState)
+	dead.Guid++
+	wantedCorpse = dead.Guid
 	w.RequestedCreature = dead
 	w.LootableCorpses = []*worldv1.CreatureState{dead}
 	step(false)
-	window := binary.LittleEndian.AppendUint64(nil, corpse)
+	window := binary.LittleEndian.AppendUint64(nil, dead.Guid)
 	window = append(window, 1)
 	window = binary.LittleEndian.AppendUint32(window, 5)
 	window = append(window, 1)
