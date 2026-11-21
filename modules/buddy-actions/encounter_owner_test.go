@@ -244,7 +244,7 @@ func TestHostEncounterWriterKeepsHealingAndExactActions(t *testing.T) {
 		activateEncounterWriter(t, s, f)
 		advance(encounterLeaseDuration)
 		f.world.NearbyPlayers[0].Health = 40
-		s.Tick(ctx)
+		tickLuaHealing(t, s)
 		if got := state(t, s); got.HealAttempts != 1 || got.AssistAttempts != 0 || lastCast(f) != lesserHeal || got.LastCastTargetGuid != 4 {
 			t.Fatal("expired target lease interrupted the separate standing healing lane", got, f.packets)
 		}

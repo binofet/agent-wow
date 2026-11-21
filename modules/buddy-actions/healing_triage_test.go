@@ -41,6 +41,9 @@ func healingCastTarget(f *fakeSession) uint64 {
 // Existing packet fixtures explicitly select intent. Refusals still yield the
 // observed State for packet/correlation assertions, not a replacement cast.
 func testExactHeal(s *Service, spell uint32, target uint64) (*actionsv1.State, error) {
+	if s.sessionID == "" {
+		s.sessionID = "actions-test-body"
+	}
 	out, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: target, SpellId: spell})
 	if err != nil {
 		return s.Status(context.Background(), &emptypb.Empty{})
@@ -51,6 +54,9 @@ func testExactHeal(s *Service, spell uint32, target uint64) (*actionsv1.State, e
 // Exercise the shipped editable selector, never a Go translation of triage.
 func healingVM(t *testing.T, s *Service, source string) *behavior.Session {
 	t.Helper()
+	if s.sessionID == "" {
+		s.sessionID = "actions-test-body"
+	}
 	if source == "" {
 		b, e := os.ReadFile("../../behaviors/healing.lua")
 		if e != nil {
@@ -212,6 +218,7 @@ func TestExactHealRechecksWithoutRetargetingAndAllowsLivingRecovery(t *testing.T
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := rig(t)
 			learn(s)
+			s.sessionID = "actions-test-body"
 			f.world.Owner.Health = 50
 			if mode == "recovery" {
 				s.recovery.state.Active = true
@@ -240,5 +247,18 @@ func TestExactHealRechecksWithoutRetargetingAndAllowsLivingRecovery(t *testing.T
 				t.Fatal("exact intent was substituted or living recovery blocked", err, s.stateLocked())
 			}
 		})
+	}
+}
+
+// Existing interaction/movement packet fixtures now run the actual shared Lua
+// healer around native mechanical maintenance. No patient/rank choice is
+// recreated here, and the production Tick itself stays policy-free.
+func tickLuaHealing(t *testing.T, s *Service) {
+	t.Helper()
+	before := s.state.HealAttempts
+	runLuaHealing(t, s, false)
+	s.Tick(context.Background())
+	if s.state.HealAttempts == before && !s.state.CastPending {
+		runLuaHealing(t, s, false)
 	}
 }

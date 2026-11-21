@@ -102,7 +102,7 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	learn(s)
 	toggle(t, s, true)
 	for i := 0; i < 6; i++ {
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if !s.state.CastPending || s.state.Moving {
@@ -116,14 +116,14 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	s, _, advance = formationRig(t, 4, 8)
 	toggle(t, s, true)
 	for i := 0; i < 5; i++ {
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if !s.state.Moving {
 		t.Fatal("formation never started")
 	}
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if s.state.Moving || !s.state.Following || s.state.Reason != "follow_tick_late" || math.IsNaN(float64(s.pos.x)) {
 		t.Fatal("late formation failed to stop", s.stateLocked())
 	}

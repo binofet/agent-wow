@@ -43,7 +43,7 @@ func TestPassiveOwnerStillGetsActualSupportedBuffAndHealing(t *testing.T) {
 	f.world.Owner.MovementFlags = 0x70000000
 	f.world.Owner.PositionAgeMs = 300000 // Stationary passive modifiers are not motion.
 	for i := 0; i < 2; i++ {
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if s.buffOp == nil || s.buffOp.view.Phase != "waiting_server" {
 			t.Fatal("known passive owner blocked buff", s.state.BuffReason)
 		}
@@ -57,7 +57,7 @@ func TestPassiveOwnerStillGetsActualSupportedBuffAndHealing(t *testing.T) {
 	f2.world.Owner.MovementFlags = 0x70000000
 	f2.world.Owner.Health = 30
 	learn(s2)
-	s2.Tick(context.Background())
+	tickLuaHealing(t, s2)
 	if healingCastTarget(f2) != 3 || countPackets(f2, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("normal injured owner did not get actual heal cast", s2.stateLocked())
 	}
