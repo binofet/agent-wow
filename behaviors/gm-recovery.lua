@@ -76,15 +76,6 @@ local function wait_effect(m,frame,confirmed,nextPhase)
     end
     return result(m,"observing_"..pending.phase)
 end
-local function route_proven(m,obs,p)
-    local route=obs.destinationRoute or {}
-    local gm=obs.gm or {}
-    local endpoint=route.endpoint
-    if endpoint and endpoint.known==true then endpoint.positionKnown=true end
-    return route.sessionId==m.gmSessionId and route.goalReached==true
-        and same(route.serverPositionRevision,gm.observationRevision)
-        and gm.observationRevision~=nil and near(endpoint,p,m.tolerance)
-end
 local function move_command(m)
     if m.player then return ".appear "..m.player.name end
     local p=m.destination
@@ -190,19 +181,6 @@ local function decide(frame)
         end
         return true
     end
-    local function landings_proven()
-        for _,member in ipairs(m.members) do if member.rpcUrl then
-            local p=find(obs.members,member.guid) or {}
-            local route=p.landingRoute or (obs.memberRoutes or {})[member.guid] or {}
-            local endpoint=route.endpoint
-            if endpoint and endpoint.known==true then endpoint.positionKnown=true end
-            if route.sessionId~=p.sessionId or route.goalReached~=true or p.observationRevision==nil
-                or not same(route.serverPositionRevision,p.observationRevision) or not near(endpoint,destination,m.tolerance) then
-                return false,member.name
-            end
-        end end
-        return true
-    end
     local function effect(ok,nextPhase)
         if m.waiting then return wait_effect(m,frame,ok,nextPhase) end
         if ok then m.stage=nextPhase;return nil end
@@ -217,7 +195,7 @@ local function decide(frame)
             if out then return out end
             if m.stage==stage then return command("move",move_command(m)) end
         elseif stage=="validate_destination" then
-            if not route_proven(m,obs,destination) then return result(m,"observing_destination_route","destination_ground_corridor_unconfirmed") end
+            -- Teleport completion is an observed position, not a walking route.
             m.stage="clear_combat"
         elseif stage=="clear_combat" then
             m.stopIndex=m.stopIndex or 1
@@ -277,8 +255,6 @@ local function decide(frame)
         elseif stage=="revive" or stage=="health" or stage=="mana" then
             if not group_matches(obs.group,roster(m),m.originalLeader) then return result(m,"blocked_roster","original_party_not_restored") end
             if not colocated() then return result(m,"blocked_arrival","party_left_verified_destination") end
-            local grounded,memberName=landings_proven()
-            if not grounded then return result(m,"observing_member_landing","member_ground_corridor_unconfirmed:"..memberName) end
             m.memberIndex=m.memberIndex or 1
             local member=m.members[m.memberIndex]
             if not member then
@@ -329,8 +305,6 @@ local function decide(frame)
         elseif stage=="verify" then
             if not group_matches(obs.group,roster(m),m.originalLeader) then return result(m,"blocked_roster","original_party_not_restored") end
             if not colocated() then return result(m,"blocked_arrival","party_left_verified_destination") end
-            local grounded,memberName=landings_proven()
-            if not grounded then return result(m,"observing_member_landing","member_ground_corridor_unconfirmed:"..memberName) end
             for _,member in ipairs(m.members) do local p=find(obs.members,member.guid) or {}
                 if p.aliveKnown~=true or p.alive~=true or not finite(p.maxHp) or num(p.hp)~=num(p.maxHp) or num(p.maxHp)<=0 then return result(m,"blocked_final_verification","full_health_not_observed:"..member.name) end
                 if p.manaUser~=false and (not finite(p.maxMana) or num(p.maxMana)>0 and num(p.mana)~=num(p.maxMana)) then return result(m,"blocked_final_verification","full_mana_not_observed:"..member.name) end

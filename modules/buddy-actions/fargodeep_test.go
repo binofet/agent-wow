@@ -19,6 +19,7 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 	t.Helper()
 	class := map[uint64]uint32{1: 5, 4: 8, 5: 4}[guid]
 	s, f, _, advance := selfDefenseRig(t, class)
+	useStarterSemanticPolicy(t, s)
 	s.selfGUID = guid
 	f.world.Self.Guid = guid
 	f.world.Self.UnitFlags = 0
@@ -641,7 +642,7 @@ func TestFargodeepOrdinaryPatrolCanPullWithVerifiedCurrentEndpoint(t *testing.T)
 					wantPlans = 1
 				}
 				if plans != wantPlans || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
-					t.Fatalf("state=%v plans=%d packets=%v starterPolicyError=%q", got, plans, f.packets, s.starterSpells.lastError)
+					t.Fatalf("state=%v plans=%d packets=%v starterRevision=%s starterError=%q", got, plans, f.packets, s.starterSpells.revision, s.starterSpells.lastError)
 				}
 			})
 		}

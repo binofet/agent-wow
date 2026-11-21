@@ -21,6 +21,7 @@ import (
 func vendorTravelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachQuestRequest) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.formation.runtime = healthyServiceTravelRuntime(t)
 	f.world.Owner = nil
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -9460, 70, 58
 	const guid = uint64(0xf130000202000001)
