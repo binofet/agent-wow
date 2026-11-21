@@ -17,7 +17,11 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-type policyCorpse struct{ close bool }
+type policyCorpse struct {
+	close bool
+	money bool
+	slot  *byte
+}
 
 func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability string) (PolicyDispatch, error) {
 	sid, _ := action["sessionId"].(string)
@@ -27,6 +31,20 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 	}
 	params := map[string]any{"sessionId": sid, "selfGuid": self, "corpseGuid": action["corpseGuid"]}
 	method := "close_corpse"
+	if value, ok := action["retireUnconfirmed"]; ok {
+		params["retireUnconfirmed"] = value
+	}
+	if capability == "loot_money" || capability == "loot_slot" {
+		method = "take_money"
+		if capability == "loot_slot" {
+			method = "take_slot"
+		}
+		for _, key := range []string{"openRequestId", "windowRevision", "requestId", "slot", "expectedItemId", "expectedCount", "expectedInventoryRevision"} {
+			if value, ok := action[key]; ok {
+				params[key] = value
+			}
+		}
+	}
 	if capability == "loot_open" {
 		method = "open_corpse"
 		for _, key := range []string{"requestId", "expectedPositionRevision", "expectedCorpseRevision", "expectedInventoryRevision"} {
@@ -56,6 +74,17 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 	}
 	op := &policySpell{vm: p.vm, capability: capability, target: selected.CorpseGuid,
 		corpse: &policyCorpse{close: capability == "loot_close"}, token: hex.EncodeToString(nonce[:])}
+	if capability == "loot_money" {
+		op.corpse.money = true
+	}
+	if capability == "loot_slot" {
+		item := &lootv1.TakeLootRequest{}
+		if err = protojson.Unmarshal(encoded, item); err != nil || item.Slot > 255 {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact loot slot required")
+		}
+		slot := byte(item.Slot)
+		op.corpse.slot = &slot
+	}
 	return PolicyDispatch{Module: "buddy-loot", Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
 		origin := modsession.WriteOriginFromContext(ctx)
 		payload := map[string]any{"capability": capability, "corpse_guid": strconv.FormatUint(op.target, 10), "request_id": action["requestId"]}
@@ -99,6 +128,9 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 		if json.Unmarshal(raw, &receipt) == nil {
 			payload["result"] = receipt
 			if capability == "loot_open" && receipt["openingTransportAttempted"] != true && !attempted {
+				return behavior.ActionNotDispatched, payload
+			}
+			if (capability == "loot_money" || capability == "loot_slot") && receipt["transportAttempted"] != true && !attempted {
 				return behavior.ActionNotDispatched, payload
 			}
 		}

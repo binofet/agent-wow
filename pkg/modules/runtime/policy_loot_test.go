@@ -81,8 +81,11 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	var writes []uint32
 	var origins []modsession.WriteOrigin
 	const corpse = uint64(0xf130000001000001)
+	wantedCorpse := corpse
 	m.session.SendPacket = func(ctx context.Context, code uint32, p []byte) error {
-		if (code != opcode.CMSGLoot && code != opcode.CMSGLootRelease) || len(p) != 8 || binary.LittleEndian.Uint64(p) != corpse {
+		valid := (code == opcode.CMSGLoot || code == opcode.CMSGLootRelease) && len(p) == 8 && binary.LittleEndian.Uint64(p) == wantedCorpse ||
+			code == opcode.CMSGLootMoney && len(p) == 0 || code == opcode.CMSGAutostoreLootItem && len(p) == 1 && p[0] == 2
+		if !valid {
 			return fmt.Errorf("foreign loot write %x %v", code, p)
 		}
 		writes = append(writes, code)
@@ -163,6 +166,12 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	if err != nil || o.Operation.WindowObserved {
 		t.Fatal(o, err)
 	}
+	callback.reject = true
+	_, r = step(true)
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || len(writes) != 1 {
+		t.Fatal("known no-write close consumed UI release", r, writes)
+	}
+	callback.reject = false
 	_, r = step(true)
 	if r == nil || len(writes) != 2 || writes[1] != opcode.CMSGLootRelease || callback.actions.InteractionOwner != "" {
 		t.Fatal("incoming defense did not yield loot custody immediately", r, writes, callback.actions)
@@ -182,5 +191,62 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	o, _ = native.ObserveCorpses(context.Background(), &emptypb.Empty{})
 	if !o.Operation.Terminal || !o.Operation.ReleaseObserved || o.Operation.WindowObserved {
 		t.Fatal("release invented an unobserved opening window", o.Operation)
+	}
+	// A distinct observed source exercises the same VM/native callback path
+	// for exact money/slot requests after the first UI was actually released.
+	dead := proto.Clone(w.LootableCorpses[0]).(*worldv1.CreatureState)
+	dead.Guid++
+	wantedCorpse = dead.Guid
+	w.RequestedCreature = dead
+	w.LootableCorpses = []*worldv1.CreatureState{dead}
+	step(false)
+	window := binary.LittleEndian.AppendUint64(nil, dead.Guid)
+	window = append(window, 1)
+	window = binary.LittleEndian.AppendUint32(window, 5)
+	window = append(window, 1)
+	row := make([]byte, 22)
+	row[0] = 2
+	binary.LittleEndian.PutUint32(row[1:], 42)
+	binary.LittleEndian.PutUint32(row[5:], 1)
+	window = append(window, row...)
+	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootResponse, Payload: window})
+	native.Tick(context.Background())
+	if len(writes) != 3 {
+		t.Fatal("native selected window contents", writes)
+	}
+	callback.reject = true
+	_, r = step(false)
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || len(writes) != 3 {
+		t.Fatal("known no-write money refusal was lost", r, writes)
+	}
+	callback.reject = false
+	_, r = step(false)
+	if r == nil || len(writes) != 4 || writes[3] != opcode.CMSGLootMoney {
+		t.Fatal("Lua did not choose money after definite refusal", r, writes)
+	}
+	host.Reload(context.Background(), source, host.vm.Status().Revision)
+	_, r = step(false)
+	if r != nil || len(writes) != 4 || host.vm.Status().Pending != 0 {
+		t.Fatal("reload replayed money or blocked support ledger", r, writes)
+	}
+	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootClearMoney})
+	_, r = step(false)
+	if r == nil || len(writes) != 5 || writes[4] != opcode.CMSGAutostoreLootItem {
+		t.Fatal("actual clear did not advance Lua to exact slot", r, writes)
+	}
+	push := make([]byte, 45)
+	binary.LittleEndian.PutUint64(push, 6)
+	binary.LittleEndian.PutUint32(push[25:], 42)
+	binary.LittleEndian.PutUint32(push[37:], 1)
+	binary.LittleEndian.PutUint32(push[41:], 1)
+	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGItemPushResult, Payload: push})
+	_, r = step(false)
+	if r != nil {
+		t.Fatal("push without removed slot advanced window", r)
+	}
+	native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGLootRemoved, Payload: []byte{2}})
+	_, r = step(false)
+	if r == nil || len(writes) != 6 || writes[5] != opcode.CMSGLootRelease {
+		t.Fatal("Lua did not release actually collected window", r, writes)
 	}
 }

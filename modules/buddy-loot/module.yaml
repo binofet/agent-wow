@@ -13,12 +13,16 @@ rpc:
   observe_corpses: /warcraftbuddy.loot.v1.BuddyLoot/ObserveCorpses
   open_corpse: /warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse
   close_corpse: /warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse
+  take_money: /warcraftbuddy.loot.v1.BuddyLoot/TakeMoney
+  take_slot: /warcraftbuddy.loot.v1.BuddyLoot/TakeSlot
 script_api:
   enable: {effect: mutation, description: Legacy named quest/container scheduling metadata; ordinary corpse choice remains in Lua}
   state: {effect: read, description: Read current native loot-window and packet settlement facts}
   observe_corpses: {effect: read, description: 'Read this body''s observed corpse, position, capacity and exact opening receipts without choosing a source'}
   open_corpse: {effect: mutation, description: 'Open one exact current in-range corpse, bound to body, source and inventory revisions and an idempotent request ID'}
   close_corpse: {effect: mutation, description: Release the exact active corpse window and yield body custody without retrying uncertain mutations}
+  take_money: {effect: mutation, description: Take observed unrequested money from the exact bound window with an idempotent request ID}
+  take_slot: {effect: mutation, description: Take one caller-selected permitted slot bound to source window revision item count inventory revision and request ID}
 packets:
   SMSG_CAST_FAILED: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket
   SMSG_LOOT_RESPONSE: /warcraftbuddy.loot.v1.BuddyLoot/OnPacket

@@ -764,7 +764,7 @@ local function decide(frame)
         if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
             out.action=loot.action
         end
-        if loot.action or loot.phase=="native_window_settlement" then out.followFormation=nil;out.portalCatchup=nil end
+        if loot.action or loot.corpseGuid then out.followFormation=nil;out.portalCatchup=nil end
     end
     -- Do not reserve a release proposal that a loot-window close will replace.
     -- Dead-body window cleanup retains its own exact receipt custody first.
