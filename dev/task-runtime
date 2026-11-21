@@ -23,7 +23,7 @@ MAX_INPUT, MAX_POLICY_STATE, MAX_ACTIONS = 32768, 65536, 100000
 MAX_STATE = MAX_POLICY_STATE  # Compatibility: policy/value budget, never audit storage.
 MAX_CONTROLLER_STATE, MAX_CONTROLLER_LIMIT = 16*1024*1024, 256*1024*1024
 LIFECYCLE_HEADROOM = 128*1024
-MAX_SOURCE = 128 * 1024
+MAX_SOURCE = 8 * 1024 * 1024  # Default Lua source budget; independent of JSON state.
 ALIAS = re.compile(r'[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*')
 
 
@@ -263,7 +263,9 @@ class RPC:
 
 
 class Bridge:
-    def __init__(self, binary, modules): self.binary, self.modules = str(binary), str(modules)
+    def __init__(self, binary, modules, source_bytes=MAX_SOURCE):
+        require(type(source_bytes) is int and source_bytes>0,'positive_source_budget_required')
+        self.binary, self.modules, self.source_bytes = str(binary), str(modules), source_bytes
 
     def call(self, mode, value=None, method=None, source=None):
         command = [self.binary, '--mode', mode, '--modules', self.modules]
@@ -271,8 +273,10 @@ class Bridge:
         if method is not None: command += ['--method', method]
         with tempfile.TemporaryDirectory(prefix='buddy-task-policy-') as folder:
             if source is not None:
+                require(0<len(source.encode())<=self.source_bytes,'configured_source_budget_exceeded')
                 path = Path(folder) / 'policy.lua'; path.write_text(source); path.chmod(0o600)
                 command += ['--source', str(path)]
+                if self.source_bytes!=MAX_SOURCE:command += ['--source-bytes',str(self.source_bytes)]
             try:
                 result = subprocess.run(command, input=raw_input if raw_input is not None else b'',
                                         capture_output=True, timeout=6, check=False)
@@ -401,7 +405,9 @@ class SharedBoard:
 
 
 class Runner:
-    def __init__(self, store, bridge, rpc, guid, sid, goal, source, library, deadline=None, stopped=lambda: False, rpc_timeout=5, shared=None):
+    def __init__(self, store, bridge, rpc, guid, sid, goal, source, library, deadline=None, stopped=lambda: False, rpc_timeout=5, shared=None, source_bytes=MAX_SOURCE):
+        require(type(source_bytes) is int and source_bytes>0,'positive_source_budget_required')
+        self.source_bytes=source_bytes
         require(type(guid) is int and 0 < guid < 2**48 and isinstance(sid, str)
                 and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', sid), 'explicit_body_identity_required')
         self.store, self.bridge, self.rpc = store, bridge, rpc
@@ -592,15 +598,15 @@ class Runner:
     def evaluate(self, value):
         error = ''
         try:
-            code = 'local tasks=(function()\n' + read_file(self.library, MAX_SOURCE).decode() + '\nend)()\n' + read_file(self.source, MAX_SOURCE).decode()
-            require(0 < len(code.encode()) <= MAX_SOURCE, 'combined_source_size_bound')
+            code = 'local tasks=(function()\n' + read_file(self.library, self.source_bytes).decode() + '\nend)()\n' + read_file(self.source, self.source_bytes).decode()
+            require(0 < len(code.encode()) <= self.source_bytes, 'combined_source_size_bound')
             revision = hashlib.sha256(code.encode()).hexdigest()
             # Input-dependent failure does not revoke a source that already
             # produced a valid result. Retry only its pure decision on this
             # frame; invalid new candidates still fall back without reloading.
             require(revision != self.data['rejectedRevision'] or revision == self.data['goodRevision'], 'candidate_quarantined')
             result = self.output(self.bridge.evaluate(code, value))
-            self.store.write('policy-' + revision + '.lua', code.encode(), MAX_SOURCE)
+            self.store.write('policy-' + revision + '.lua', code.encode(), self.source_bytes)
             self.data.update(goodRevision=revision, policyError='')
             return result
         except (Error, OSError, UnicodeError) as failure:
@@ -612,7 +618,7 @@ class Runner:
             self.data['policyErrorInstance'] = self.data['run']['instance']
         revision = self.data['goodRevision']
         require(re.fullmatch('[a-f0-9]{64}', revision or ''), 'no_valid_policy')
-        code = read_file(self.store.folder / ('policy-' + revision + '.lua'), MAX_SOURCE, True)
+        code = read_file(self.store.folder / ('policy-' + revision + '.lua'), self.source_bytes, True)
         require(hashlib.sha256(code).hexdigest() == revision, 'retained_policy_hash_changed')
         try:
             return self.output(self.bridge.evaluate(code.decode(), value))
@@ -703,6 +709,7 @@ def main(argv=None):
     run.add_argument('--rpc-timeout-seconds', type=float, default=5)
     run.add_argument('--controller-state-bytes',type=int,default=MAX_CONTROLLER_STATE)
     run.add_argument('--policy-binary', type=Path, default=ROOT / 'data/bin/luapolicy')
+    run.add_argument('--source-bytes',type=int,default=MAX_SOURCE)
     args = parser.parse_args(argv)
     if args.command == 'status':
         print(json.dumps(status(Store(args.state_dir,args.controller_state_bytes).load()), sort_keys=True)); return 0
@@ -716,9 +723,9 @@ def main(argv=None):
     signal.signal(signal.SIGINT, stop); signal.signal(signal.SIGTERM, stop)
     deadline = time.monotonic() + args.max_seconds
     with Store(args.state_dir,args.controller_state_bytes) as store:
-        runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules'), RPC(args.rpc_url), int(args.guid),
+        runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules',args.source_bytes), RPC(args.rpc_url), int(args.guid),
             args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
-            deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds)
+            deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds,source_bytes=args.source_bytes)
         runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True,
                                   sourcePath=str(runner.source.absolute()),
                                   previousInstance=runner.data.get('run',{}).get('instance'))

@@ -82,7 +82,8 @@ local function export_state()
     return {version=1, data={encounter=state, healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
-                            support=support_policy and support_policy.export_state and support_policy.export_state()}}
+                            support=support_policy and support_policy.export_state and support_policy.export_state(),
+                            movement=movement and movement.export_state and movement.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -106,6 +107,8 @@ local function import_state(checkpoint)
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
+    if checkpoint.data.movement and (not movement or not movement.import_state or
+       not movement.import_state(checkpoint.data.movement)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -640,6 +643,10 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
+    if out.encounterOwnership and movement and movement.follow_formation and policy_observation and
+       not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and not out.action then
+        out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
+    end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, policy_observation or observation

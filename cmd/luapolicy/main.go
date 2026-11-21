@@ -49,8 +49,13 @@ func run(args []string, in io.Reader, out io.Writer) error {
 	modules := flags.String("modules", "modules", "validated module metadata directory")
 	mode := flags.String("mode", "evaluate", "evaluate, validate or describe")
 	source := flags.String("source", "", "Lua decide policy")
+	sourceBytes := flags.Int("source-bytes", 0, "Lua source budget (0 uses 8 MiB)")
 	method := flags.String("method", "", "public method to validate or describe")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	limit, err := behavior.SourceLimit(*sourceBytes)
+	if err != nil {
 		return err
 	}
 	var value any
@@ -61,9 +66,9 @@ func run(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		defer file.Close()
-		code, err := io.ReadAll(io.LimitReader(file, behavior.MaxSourceBytes+1))
-		if err != nil || len(code) > behavior.MaxSourceBytes {
-			return errors.New("bounded policy source required")
+		code, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+		if err != nil || len(code) > limit {
+			return fmt.Errorf("bounded policy source required (configured limit %d bytes)", limit)
 		}
 		input := map[string]any{}
 		decoder := json.NewDecoder(io.LimitReader(in, behavior.MaxJSONBytes+1))
@@ -74,7 +79,10 @@ func run(args []string, in io.Reader, out io.Writer) error {
 		if decoder.Decode(new(any)) != io.EOF {
 			return errors.New("one bounded JSON input required")
 		}
-		runtime := behavior.New()
+		runtime, err := behavior.NewWithSourceLimit(limit)
+		if err != nil {
+			return err
+		}
 		if _, err := runtime.Reload(string(code), ""); err != nil {
 			return err
 		}

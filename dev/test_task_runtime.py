@@ -636,7 +636,7 @@ class RuntimeTests(unittest.TestCase):
                 self.rpc.hook=lambda *_:None
 
     def test_bounded_module_source_and_retained_fallback_are_separate_from_json_frame_bound(self):
-        self.source.write_text('return {} --GOOD\n'+' '*(70*1024))
+        self.source.write_text('return {} --GOOD\n'+' '*(256*1024))
         with m.Store(self.folder) as store:
             runner=self.runner(store);runner.tick();runner.tick()
             revision=runner.data['goodRevision'];cached=store.folder/('policy-'+revision+'.lua')

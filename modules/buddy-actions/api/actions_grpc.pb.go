@@ -25,6 +25,7 @@ const (
 	BuddyActions_ApproachTarget_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
 	BuddyActions_MoveBody_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
 	BuddyActions_InterruptCast_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
+	BuddyActions_SetFollowFormation_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation"
 	BuddyActions_Follow_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
 	BuddyActions_Assist_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
 	BuddyActions_EngageNPC_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
@@ -75,6 +76,7 @@ type BuddyActionsClient interface {
 	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
 	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
 	InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error)
+	SetFollowFormation(ctx context.Context, in *FollowFormationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
@@ -161,6 +163,16 @@ func (c *buddyActionsClient) InterruptCast(ctx context.Context, in *InterruptCas
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_InterruptCast_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SetFollowFormation(ctx context.Context, in *FollowFormationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuddyActions_SetFollowFormation_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -575,6 +587,7 @@ type BuddyActionsServer interface {
 	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
 	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
 	InterruptCast(context.Context, *InterruptCastRequest) (*State, error)
+	SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
@@ -638,6 +651,9 @@ func (UnimplementedBuddyActionsServer) MoveBody(context.Context, *BodyMovementRe
 }
 func (UnimplementedBuddyActionsServer) InterruptCast(context.Context, *InterruptCastRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InterruptCast not implemented")
+}
+func (UnimplementedBuddyActionsServer) SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetFollowFormation not implemented")
 }
 func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Follow not implemented")
@@ -848,6 +864,24 @@ func _BuddyActions_InterruptCast_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).InterruptCast(ctx, req.(*InterruptCastRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SetFollowFormation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FollowFormationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SetFollowFormation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SetFollowFormation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SetFollowFormation(ctx, req.(*FollowFormationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1594,6 +1628,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InterruptCast",
 			Handler:    _BuddyActions_InterruptCast_Handler,
+		},
+		{
+			MethodName: "SetFollowFormation",
+			Handler:    _BuddyActions_SetFollowFormation_Handler,
 		},
 		{
 			MethodName: "Follow",

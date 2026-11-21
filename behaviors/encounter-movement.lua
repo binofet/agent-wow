@@ -2,6 +2,42 @@
 -- combat target or interrupts autoswing. The encounter queue remains the one
 -- authority; positioning advances alongside its active attack.
 local M = {}
+local formation_memory, formation_identity
+function M.follow_formation(frame, obs, sequence)
+    local nav = obs.navigation or {}
+    local owner, self = nav.followOwner, (obs.players or {})[obs.selfGuid]
+    if nav.following ~= true then formation_memory, formation_identity = nil, nil end
+    if not encounter_formation or nav.followFormationSupported ~= true or nav.following ~= true or
+       not owner or not self or owner.present ~= true or owner.aliveKnown ~= true or owner.alive ~= true or
+       owner.positionKnown ~= true or owner.mapKnown ~= true or owner.mapId ~= obs.mapId or
+       owner.movementKnown ~= true or self.aliveKnown ~= true or self.alive ~= true or
+       self.positionKnown ~= true or self.movementKnown ~= true then return end
+    local identity = obs.sessionId .. ":" .. obs.selfGuid .. ":" .. obs.visitId .. ":" .. tostring(nav.followRevision)
+    if identity ~= formation_identity then formation_memory, formation_identity = nil, identity end
+    local planned = encounter_formation.decide({
+        nowMs=frame.clock.monotonicMs, selfGuid=obs.selfGuid, classId=self.classKnown and self.classId or 0,
+        owner={x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,o=owner.orientation or 0,moving=owner.moving == true},
+        self={x=self.x or 0,y=self.y or 0,z=self.z or 0,moving=self.moving == true},
+        ownerArrival=nav.ownerArrival == true, memory=formation_memory,
+    })
+    formation_memory = planned.memory
+    local target = planned.position
+    if not target then return end
+    return {sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
+        ownerGuid=owner.guid,ownerPositionRevision=owner.positionRevision,followRevision=nav.followRevision,
+        x=target.x,y=target.y,z=target.z,orientation=target.o,
+        startDistance=planned.startDistance,stopDistance=planned.stopDistance,
+        ready=planned.ready == true,hold=planned.hold == true}
+end
+function M.export_state()
+    return {memory=formation_memory,identity=formation_identity}
+end
+function M.import_state(saved)
+    if type(saved) ~= "table" then return false end
+    formation_memory, formation_identity = saved.memory, saved.identity
+    return true
+end
+
 M.recovery_tuning = {stalled_observations=3, progress_yards=.3, step_ms=250,
     probes={{0,false},{1.5707963268,false},{0,true},{-1.5707963268,false},
             {3.1415926536,false},{0,true},{1.5707963268,true},{0,false},

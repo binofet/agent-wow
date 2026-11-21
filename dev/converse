@@ -1822,8 +1822,8 @@ class RPC:
                 # policy_state contains both checkpoint and decision, each
                 # already bounded by the session's configurable value budget.
                 # A second fixed chat cap would hide valid running Lua state.
-                raw = response.read() if method == "session.policy_state" else response.read(response_limit + 1)
-            if method != "session.policy_state" and len(raw) > response_limit:
+                raw = response.read() if method in ("session.policy_state","session.policy_source") else response.read(response_limit + 1)
+            if method not in ("session.policy_state","session.policy_source") and len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
         except (OSError, ValueError, urllib.error.URLError):

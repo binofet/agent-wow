@@ -1956,8 +1956,9 @@ class BoundaryTests(unittest.TestCase):
         class Response:
             def __enter__(self): return self
             def __exit__(self, *args): pass
-            def read(self, limit):
-                return json.dumps({"jsonrpc": "2.0", "id": 1, "result": catalog}).encode()[:limit]
+            def read(self, limit=-1):
+                raw=json.dumps({"jsonrpc": "2.0", "id": 1, "result": catalog}).encode()
+                return raw if limit<0 else raw[:limit]
         for method in ("session.describe", "session.attach", "session.policy_source"):
             rpc = converse.RPC("http://127.0.0.1:8086/rpc")
             with patch.object(rpc.opener, "open", return_value=Response()):
@@ -1975,9 +1976,10 @@ class BoundaryTests(unittest.TestCase):
             def __enter__(self): return self
             def __exit__(self, *args): pass
             def read(self, limit=-1): return body if limit < 0 else body[:limit]
-        rpc = converse.RPC("http://127.0.0.1:8086/rpc")
-        with patch.object(rpc.opener, "open", return_value=Response()):
-            self.assertEqual(rpc.call("session.policy_state", {"sessionId":"aw-4","characterGuid":"4"}), state)
+        for method in ("session.policy_state","session.policy_source"):
+            rpc = converse.RPC("http://127.0.0.1:8086/rpc")
+            with patch.object(rpc.opener, "open", return_value=Response()):
+                self.assertEqual(rpc.call(method, {"sessionId":"aw-4","characterGuid":"4"}), state)
 
     def test_rpc_validates_response_id_and_precise_restart_fault(self):
         class Response:
