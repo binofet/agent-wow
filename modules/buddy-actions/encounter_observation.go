@@ -111,7 +111,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		out.Party, online = s.encounterParty(state)
 	}
 	s.supportSnapshotLocked(w)
-	players := s.encounterPlayers(w, online, out)
+	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
@@ -124,7 +124,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid
 	}
-	s.encounterCreatures(w, players, online, out)
+	s.encounterCreatures(w, out)
 	s.encounterSpells(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.Support = s.encounterSupportLocked(ctx, w, online)
@@ -216,7 +216,7 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 	return players
 }
 
-func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[uint64]*worldv1.PlayerState, online map[uint64]bool, out *actionsv1.EncounterObservationResponse) {
+func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, out *actionsv1.EncounterObservationResponse) {
 	if len(w.NearbyCreatures) > 32 {
 		return
 	}
@@ -233,17 +233,14 @@ func (s *Service) encounterCreatures(w *worldv1.SnapshotResponse, players map[ui
 			if out.Targets[key] != nil {
 				continue
 			}
-			victim := players[c.AttackVictimGuid]
-			engaged := c.Alive && c.AliveKnown && victim.GetAliveKnown() && victim.GetAlive() && ongoingAttack(c, victim)
-			if engaged {
-				out.Engagement[key] = &actionsv1.EncounterEngagement{VictimGuid: victim.Guid, AgeMs: c.AttackAgeMs}
-			}
 			view := &actionsv1.EncounterCreature{
 				Guid: c.Guid, Entry: c.Entry, Present: c.Present, MapKnown: c.MapKnown, MapId: proto.Uint32(c.MapId),
 				AliveKnown: c.AliveKnown, HealthKnown: c.HealthKnown, Health: c.Health, MaxHealth: c.MaxHealth,
 				Attackable: c.AliveKnown && c.Alive && c.HealthKnown && c.Health != 0 && c.UnitFlagsKnown && c.DynamicFlagsKnown &&
 					c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) == 0 && c.UnitFlags_2&1 == 0 && c.DynamicFlags&0x20 == 0,
-				Engaged: engaged, UnitFlagsKnown: c.UnitFlagsKnown, UnitFlags: c.UnitFlags, FactionTemplate: c.FactionTemplate,
+				UnitFlagsKnown: c.UnitFlagsKnown, UnitFlags: c.UnitFlags, FactionTemplate: c.FactionTemplate,
+				AttackObservation: &actionsv1.EncounterAttackObservation{VictimKnown: c.AttackVictimKnown,
+					VictimGuid: c.AttackVictimGuid, AgeMs: c.AttackAgeMs, TargetKnown: c.TargetKnown, TargetGuid: c.TargetGuid},
 				PositionKnown:     c.PositionKnown && finite(position{c.X, c.Y, c.Z, c.Orientation}),
 				Trajectory:        c.Trajectory,
 				OwnDamageFamilies: s.encounterOwnDamageFamilies(c.Guid),

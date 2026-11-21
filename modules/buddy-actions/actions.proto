@@ -610,7 +610,9 @@ message EncounterCreature {
   uint32 max_health = 10;
   // Build-12340 unit flags permit an attack. This is not faction hostility.
   bool attackable = 11;
-  bool engaged = 12;
+  // Legacy preclassified feed. New clients expose attack_observation instead;
+  // Lua owns party membership, freshness and engagement decisions.
+  bool engaged = 12 [deprecated = true];
   bool protected = 13;
   bool position_known = 14;
   uint64 position_revision = 15;
@@ -626,6 +628,17 @@ message EncounterCreature {
   // Currently observed own periodic damage auras, grouped by catalog family.
   repeated uint32 own_damage_families = 24;
   float orientation = 25;
+  EncounterAttackObservation attack_observation = 26;
+}
+// Raw cached ATTACKSTART and selected-target observations. A present empty
+// object means no current known attack; absence identifies a legacy backend.
+// No freshness, party membership or target priority is inferred here.
+message EncounterAttackObservation {
+  bool victim_known = 1;
+  uint64 victim_guid = 2;
+  uint64 age_ms = 3;
+  bool target_known = 4;
+  uint64 target_guid = 5;
 }
 message EncounterEngagement {
   uint64 victim_guid = 1;

@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-// The host samples every 250 ms. Allow a momentary stall and resume native
-// selection if an entire second passes without a fresh decision.
+// The host samples every 250 ms. The lease fences stale physical writes after
+// a stall; it does not replace the Lua target policy with native selection.
 const encounterLeaseDuration = time.Second
 
 // UseHostEncounterWriter enables lease requests from this session's host. Call

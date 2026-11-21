@@ -120,5 +120,10 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if s.hostEncounterActiveLocked() {
 		return preempted
 	}
+	if s.hostEncounterKey != "" {
+		// Keep the existing interrupt/support fallback, but never choose a
+		// native offense target when the configured Lua writer briefly stalls.
+		return s.interruptHealLocked(ctx, w) || preempted
+	}
 	return s.interruptHealLocked(ctx, w) || s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }

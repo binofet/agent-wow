@@ -1196,10 +1196,14 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	nativeEncounter := !s.hostEncounterActiveLocked()
+	// Lua remains the target policy across short stalls, reloads and lease
+	// expiry. Expiry fences its writes; it must not install a different target
+	// selector. Support and movement retain their separate ownership contracts.
+	nativeTargetPolicy := s.hostEncounterKey == ""
 	if s.fargodeep.active && (!s.state.Assisting || !s.now().Before(s.assistUntil) || !s.now().Before(s.fargodeep.until)) {
 		s.stopFargodeepLocked(ctx, "authorization_expired")
 	}
-	if nativeEncounter && s.state.Practicing {
+	if nativeTargetPolicy && s.state.Practicing {
 		s.practiceTickLocked(ctx)
 		return
 	}
@@ -1283,16 +1287,16 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if nativeEncounter && s.fargodeepTickLocked(ctx, snapshot) {
+	if nativeTargetPolicy && s.fargodeepTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
-	if nativeEncounter && s.selfDefenseLocked(ctx, snapshot) {
+	if nativeTargetPolicy && s.selfDefenseLocked(ctx, snapshot) {
 		s.endCrowdControlLocked(ctx, "self_defense")
 		s.lastStep = now
 		return
 	}
-	if s.thermapluggButtonsTickLocked(ctx, snapshot) || nativeEncounter && s.partyDefenseLocked(ctx, snapshot) {
+	if s.thermapluggButtonsTickLocked(ctx, snapshot) || nativeTargetPolicy && s.partyDefenseLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1301,7 +1305,7 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.crowdControlTickLocked(ctx) {
 		return
 	}
-	if nativeEncounter && s.engageTickLocked(ctx) {
+	if nativeTargetPolicy && s.engageTickLocked(ctx) {
 		s.lastStep = now
 		return
 	}
@@ -1358,7 +1362,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if nativeEncounter && s.autoTarget != 0 {
+	if nativeTargetPolicy && s.autoTarget != 0 {
 		t := snapshot.OwnerTarget
 		if !snapshot.Owner.TargetKnown || snapshot.Owner.TargetGuid != s.autoTarget || t == nil || t.Guid != s.autoTarget || !t.Present || !t.AliveKnown || !t.Alive || !t.AttackVictimKnown || !s.defendsVictimLocked(ctx, t.AttackVictimGuid) {
 			s.stopLocked(ctx)
@@ -1381,7 +1385,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0)
 	}
-	if nativeEncounter && s.state.Assisting && s.assistLocked(ctx, snapshot) {
+	if nativeTargetPolicy && s.state.Assisting && s.assistLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
