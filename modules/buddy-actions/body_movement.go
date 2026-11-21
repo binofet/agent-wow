@@ -25,7 +25,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	defer cancel()
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetVisitId() == 0 || r.GetSequenceId() == 0 ||
 		math.IsNaN(float64(r.BearingRadians)) || math.IsInf(float64(r.BearingRadians), 0) || math.Abs(float64(r.BearingRadians)) > math.Pi+.001 ||
-		!r.Jump && (r.DurationMs < 100 || r.DurationMs > 500) {
+		!r.Jump && (r.DurationMs == 0 || r.DurationMs > 500) {
 		return nil, status.Error(codes.InvalidArgument, "current body, visit, sequence and bounded relative input required")
 	}
 	token, supplied := modcb.IncomingPolicySpell(ctx)
@@ -86,7 +86,18 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	s.mu.Lock()
 	if err != nil || len(points) < 2 || len(points) > 24 {
 		view.Phase = "local_physics_refused"
+		if err != nil {
+			view.Detail = navigationDiagnostic(err, dataDir)
+		} else {
+			view.Detail = "local physics returned an invalid finite trajectory"
+		}
 		return s.stateLocked(), nil
+	}
+	settling := points[0].Settling
+	airborne := r.Jump || settling
+	horizontalSpeed, verticalSpeed := speed, float64(buddynav.BodyJumpVelocity)
+	if settling {
+		horizontalSpeed, verticalSpeed = 0, 0
 	}
 	ctx = modcb.ForwardPolicySpell(ctx)
 	passive := w.Self.MovementFlags & movementflags.PassiveModifiers
@@ -132,28 +143,34 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		if elapsed > 0 {
 			stamp = motionClock + uint32(elapsed/time.Millisecond)
 		}
-		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, elapsed, bearing, speed, falling, moving)
+		packet := bodyMovementPacket(s.selfGUID, stamp, p, passive, elapsed, bearing, horizontalSpeed, verticalSpeed, falling, moving)
 		if _, e := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: code, Payload: packet}); e != nil {
 			view.Phase, s.state.MotionUnconfirmed = "transport_unconfirmed_no_retry", true
 			s.publishClientMovementLocked(ctx, nil, p, false)
 			return false
 		}
 		view.TransportWritten, view.PositionEstimated = true, true
-		if code == opcode.MSGMoveStartForward || code == opcode.MSGMoveJump {
+		if code == opcode.MSGMoveStartForward || code == opcode.MSGMoveJump || falling && elapsed == 0 {
 			motionClock = stamp
 		}
 		view.X, view.Y, view.Z = p.x, p.y, p.z
 		s.state.TransportWrites++
-		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving
+		s.pos, s.posEstimated, s.posAt, s.state.Moving = p, true, s.now(), moving || falling
 		s.posRevision++
 		s.publishClientMovementLocked(ctx, w, p, true)
 		return true
 	}
-	if !write(opcode.MSGMoveSetFacing, from, 0, false, false) || !write(opcode.MSGMoveStartForward, from, 0, false, true) {
-		return s.stateLocked(), nil
-	}
-	if r.Jump && !write(opcode.MSGMoveJump, from, 0, true, true) {
-		return s.stateLocked(), nil
+	if settling {
+		if !write(opcode.MSGMoveHeartbeat, from, 0, true, false) {
+			return s.stateLocked(), nil
+		}
+	} else {
+		if !write(opcode.MSGMoveSetFacing, from, 0, false, false) || !write(opcode.MSGMoveStartForward, from, 0, false, true) {
+			return s.stateLocked(), nil
+		}
+		if r.Jump && !write(opcode.MSGMoveJump, from, 0, true, true) {
+			return s.stateLocked(), nil
+		}
 	}
 	view.Phase = "executing_body_input"
 	started := s.now()
@@ -170,16 +187,19 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		}
 		last := i == len(points)-2
 		code := uint32(opcode.MSGMoveHeartbeat)
-		if last && r.Jump {
+		if last && airborne {
 			code = opcode.MSGMoveFallLand
 		}
 		point := position{x: sample.Point.X, y: sample.Point.Y, z: sample.Point.Z}
-		if !write(code, point, sample.At, r.Jump && !last, true) {
+		if !write(code, point, sample.At, airborne && !last, !settling) {
 			return s.stateLocked(), nil
 		}
 	}
 	if write(opcode.MSGMoveStop, s.pos, 0, false, false) {
 		view.Phase = "body_input_written"
+		if settling {
+			view.Phase = "body_settled_written"
+		}
 		s.followNav.Reset()
 		s.targetMovement.nav.Reset()
 	}
@@ -200,7 +220,7 @@ func (s *Service) waitBodyMotion(ctx context.Context, duration time.Duration) er
 	}
 }
 
-func bodyMovementPacket(guid uint64, clock uint32, p position, passive uint32, elapsed time.Duration, bearing, speed float64, falling, moving bool) []byte {
+func bodyMovementPacket(guid uint64, clock uint32, p position, passive uint32, elapsed time.Duration, bearing, speed, verticalSpeed float64, falling, moving bool) []byte {
 	packet := movementPacket(guid, clock, p, moving)
 	n := len(packedGUID(guid))
 	flags := binary.LittleEndian.Uint32(packet[n:]) | passive
@@ -210,7 +230,7 @@ func bodyMovementPacket(guid uint64, clock uint32, p position, passive uint32, e
 	binary.LittleEndian.PutUint32(packet[n:], flags)
 	binary.LittleEndian.PutUint32(packet[n+26:], uint32(elapsed/time.Millisecond))
 	if falling {
-		for _, value := range []float32{buddynav.BodyJumpVelocity, float32(math.Sin(bearing)), float32(math.Cos(bearing)), float32(speed)} {
+		for _, value := range []float32{float32(verticalSpeed), float32(math.Sin(bearing)), float32(math.Cos(bearing)), float32(speed)} {
 			packet = binary.LittleEndian.AppendUint32(packet, math.Float32bits(value))
 		}
 	}

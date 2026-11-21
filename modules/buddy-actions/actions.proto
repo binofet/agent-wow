@@ -500,7 +500,8 @@ message BodyMovementRequest {
   uint64 visit_id = 3;
   uint64 sequence_id = 4;
   float bearing_radians = 5;
-  // Ground input hold time. A jump always completes one normal ballistic hop.
+  // Positive ground input hold time, at most 500ms. An unsupported start settles
+  // under normal gravity before a subsequent input can step or jump.
   uint32 duration_ms = 6;
   bool jump = 7;
 }
@@ -513,6 +514,7 @@ message BodyMovementState {
   float x = 6;
   float y = 7;
   float z = 8;
+  string detail = 9;
 }
 message NavigationObservation {
   bool body_movement_supported = 1;

@@ -24,6 +24,7 @@ type policyMovement struct {
 	jump     bool
 	sequence uint64
 	phase    string
+	detail   string
 }
 
 func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispatch, error) {
@@ -40,7 +41,7 @@ func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispat
 	if sessionID != p.vm.Status().SessionID || self != p.body || selfID == 0 || visitErr != nil || visitID == 0 ||
 		sequenceErr != nil || sequenceID == 0 || visit != strconv.FormatUint(visitID, 10) || sequence != strconv.FormatUint(sequenceID, 10) ||
 		math.IsNaN(bearing) || math.IsInf(bearing, 0) || math.Abs(bearing) > math.Pi+.001 ||
-		math.IsNaN(duration) || math.IsInf(duration, 0) || duration != math.Trunc(duration) || duration < 0 || duration > 500 || !jump && duration < 100 {
+		math.IsNaN(duration) || math.IsInf(duration, 0) || duration != math.Trunc(duration) || duration < 0 || duration > 500 || !jump && duration < 1 {
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current body, visit, sequence and bounded relative input required")
 	}
 	values := map[protoreflect.Name]protoreflect.Value{
@@ -108,14 +109,18 @@ func (op *policySpell) movementPayload(phase string, written bool) map[string]an
 	return map[string]any{"capability": op.capability, "phase": phase, "self_guid": strconv.FormatUint(op.movement.self, 10),
 		"target_guid": strconv.FormatUint(op.target, 10), "visit_id": strconv.FormatUint(op.encounterVisit, 10),
 		"sequence_id":       strconv.FormatUint(op.movement.sequence, 10),
-		"transport_written": written, "effect_observed": false}
+		"transport_written": written, "effect_observed": false, "detail": op.movement.detail}
 }
 
 func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 	switch code {
 	case opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveStop, opcode.MSGMoveSetFacing:
-	case opcode.MSGMoveJump, opcode.MSGMoveFallLand:
+	case opcode.MSGMoveJump:
 		if !op.movement.body || !op.movement.jump {
+			return false
+		}
+	case opcode.MSGMoveFallLand:
+		if !op.movement.body {
 			return false
 		}
 	default:
@@ -146,10 +151,11 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		return false
 	}
 	// Allow only the requested forward motion and observed passive ground
-	// modifiers, never a transported, swimming, flying or jumping packet.
+	// modifiers, plus normal jumping or gravity settling for an explicit body
+	// input. A route-only movement cannot introduce airborne packets.
 	allowedFlags := uint32(1) | movementflags.PassiveModifiers
 	falling := flags&0x1000 != 0
-	if op.movement.body && op.movement.jump {
+	if op.movement.body {
 		allowedFlags |= 0x1000
 	}
 	if guid != op.movement.self || flags & ^allowedFlags != 0 ||
@@ -165,8 +171,10 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 				return false
 			}
 		}
-		if math.Abs(values[0]-7.955547) > .0001 || math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 ||
-			values[3] < .1 || values[3] > 14 || binary.LittleEndian.Uint32(body[n+26:]) > 1100 {
+		jump := op.movement.jump && math.Abs(values[0]-7.955547) <= .0001 && values[3] >= .1 && values[3] <= 14
+		settling := values[0] == 0 && values[3] == 0 && flags&1 == 0
+		if (!jump && !settling) || code == opcode.MSGMoveJump && !jump ||
+			math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 || binary.LittleEndian.Uint32(body[n+26:]) > 1100 {
 			return false
 		}
 	}

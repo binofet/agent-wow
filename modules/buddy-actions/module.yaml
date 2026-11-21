@@ -88,7 +88,7 @@ lifecycle:
 script_api:
   select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}
   approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
-  move_body: {effect: mutation, description: Execute one short body-relative ground step or complete hop at observed speed on the current visit}
+  move_body: {effect: mutation, description: Execute one bounded body-relative step or hop at observed speed; unsupported starts settle to measured ground on the current visit}
   interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}

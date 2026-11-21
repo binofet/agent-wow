@@ -215,14 +215,21 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
-	if op.movement != nil && op.movement.body && state.BodyMovement != nil {
+	if op.movement != nil && op.movement.body && state.BodyMovement != nil &&
+		state.BodyMovement.SequenceId == op.movement.sequence && state.BodyMovement.VisitId == op.encounterVisit {
 		op.movement.phase = state.BodyMovement.Phase
+		op.movement.detail = state.BodyMovement.Detail
 	}
 	switch {
 	case op.written:
 		return behavior.ActionTransportAccepted, op.payload("transport_written", true, false, false)
 	case op.attempted:
 		return behavior.ActionUnknown, op.payload("transport_unconfirmed_no_retry", false, false, false)
+	}
+	if err == nil && op.movement != nil && op.movement.body && op.movement.phase == "local_physics_refused" {
+		// The binding measured and refused the input before any packet write.
+		// This is a known non-dispatch, not an ambiguous transport outcome.
+		return behavior.ActionNotDispatched, op.payload(op.movement.phase, false, false, false)
 	}
 	switch status.Code(err) {
 	case codes.InvalidArgument, codes.FailedPrecondition, codes.NotFound, codes.PermissionDenied:

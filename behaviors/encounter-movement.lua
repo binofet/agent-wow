@@ -17,6 +17,11 @@ function M.on_event(event)
     local payload = receipt.payload or {}
     local capability, target = payload.capability, payload.target_guid
     if capability == "move_body" and recovery and payload.sequence_id == recovery.probeSequence then
+        if payload.phase == "body_settled_written" then
+            -- Falling consumed the input; retry this caller-selected probe
+            -- after checking the normal route from the supported position.
+            recovery.index = math.max(1,recovery.index-1)
+        end
         recovery.checkRoute = true
     end
     if (receipt.outcome == "failed" or receipt.outcome == "not_dispatched") and
