@@ -474,10 +474,12 @@ task is installed or make a permanent toggle its cleanup mechanism. The bundled
 behaviors/encounter-tasks.lua example accepts wait_for_pull with a unique id,
 optional ownerGuid/responseYards/deadlineMonotonicMs, and cancel_task with its id.
 A replacement wait id or explicit supersedes id retires the old task first.
-Inspect the actual running bundle before using that handler. Public
-buddy-actions.status movementOwner plus pose/following can verify hold/release;
-the Lua task phase is not currently exposed by session.attach. Do not claim that
-private phase was read from an unavailable public status field.
+Inspect the actual running bundle before using that handler. Discover the body
+with session.describe: if session.policy_state is advertised, inspect its
+committed checkpoint/latestDecision for Lua task/queue phase using its reflected
+identity binding. Older clients can verify hold/release only through native
+movementOwner plus pose/following; never invent an unavailable Lua phase field.
+Policy output alone is not proof of actual gameplay effects.
 For spatial tactics, share a Lua plan with a cleared anchor/area, uncleared
 frontier/chokepoint, pull lane, untouched-pack danger zones and role-specific
 operating areas, allowing temporary CC/scout exceptions. A tank-first doorway
