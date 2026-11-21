@@ -135,8 +135,12 @@ local function combat_queue(input)
         end
         for _, row in ipairs(urgent) do append(row.targetGuid) end
     end
-    for _, target in ipairs(input.explicitOrder or {}) do append(target) end
-    if #result.queue == 0 then append(input.ownerFocus) end
+    local explicit = false
+    for _, target in ipairs(input.explicitOrder or {}) do
+        if candidates[target] then explicit = true end
+        append(target)
+    end
+    if not explicit then append(input.ownerFocus) end
     local current = candidates[input.currentFocus]
     if not result.focusGuid and current and current.engaged and not current.protected then
         for _, next_target in ipairs(rows) do

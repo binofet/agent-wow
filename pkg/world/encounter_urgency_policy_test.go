@@ -89,6 +89,22 @@ func TestQueueEmergencyUsesKnownFactsBeforeGuidanceAndProtectsControl(t *testing
 	}
 }
 
+func TestQueueKeepsHumanGuidanceAfterTheEmergency(t *testing.T) {
+	host := urgencyModule(t, "encounter-tactics.lua", "return module.decide(frame.input)")
+	targets := map[string]any{}
+	for id, health := range map[string]float64{"1": 90, "2": 10, "3": 30} {
+		targets[id] = map[string]any{"present": true, "aliveKnown": true, "alive": true, "attackable": true, "engaged": true, "health": health, "maxHealth": float64(100)}
+	}
+	out, err := host.Decide(context.Background(), map[string]any{"kind": "combat_queue", "targets": targets, "ownerFocus": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := out.Output["queue"].([]any)
+	if queue[0].(map[string]any)["targetGuid"] != "2" || queue[1].(map[string]any)["targetGuid"] != "1" {
+		t.Fatal("emergency discarded the remaining human guidance", out.Output)
+	}
+}
+
 func TestUrgentQueueDrivesBoundPlanExecutionAfterLeaderDies(t *testing.T) {
 	const intent = `local encounter_intent={plan={id="urgent",groupGuid="7",leaderGuid="3",killOrder={"skull","moon"},controls={{mark="moon",technique="polymorph",casterGuid="4",spellId=118}}},damage={scope="focus",spellId=585}}` + "\n"
 	p := newFallbackPolicyTest(t, intent)
