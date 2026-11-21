@@ -293,6 +293,10 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	if !s.spellbookKnown {
 		return
 	}
+	// Aura classification uses the same lazily loaded catalog as these ranks.
+	// Initialize it before the first caster-readiness projection, including
+	// rogues whose non-mana healing view does not enter learnedContractsLocked.
+	contracts := s.learnedContractsLocked()
 	self := w.Self
 	currentCaster := safeSelfCombat(w, s.selfGUID) == ""
 	controlCaster := currentCaster && s.crowdControlIdleLocked() &&
@@ -302,7 +306,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 		!s.questApproaching && !s.clientControlLost &&
 		!s.clientControlRestoring && s.stealthedLocked()
 	polyReady, sapReady := false, false
-	for id, spell := range s.learnedContractsLocked() {
+	for id, spell := range contracts {
 		view := encounterSpellMechanics(spell, self)
 		view.SelfAuraKnown, view.SelfAuraActive = s.encounterSelfAura(spell.Family)
 		switch spell.Capability().Kind {
