@@ -46,7 +46,7 @@ func tradeConsentFixtureRuntime(t *testing.T, source string) *Runtime {
 	}
 	bytes, inputNodes, outputNodes := r.valueBudget()
 	if r.evaluationBudget() != EvaluationLimit || EvaluationLimit != 5*time.Millisecond ||
-		bytes != MaxJSONBytes || bytes != 32*1024 || inputNodes != MaxInputNodes || outputNodes != MaxNodes {
+		MaxJSONBytes != 32*1024 || bytes != MaxJSONBytes || inputNodes != MaxInputNodes || outputNodes != MaxNodes {
 		t.Fatal("fixture changed the actual evaluation or value budgets")
 	}
 	load(t, r, source)
