@@ -83,8 +83,7 @@ func (s *Service) AcceptResurrection(ctx context.Context, r *actionsv1.AcceptRes
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	offer := s.resurrectionOffer
-	if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.pendingResurrectionOfferLocked(offer, r.CasterGuid) {
+	if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.pendingResurrectionOfferLocked(s.resurrectionOffer, r.CasterGuid) {
 		return nil, status.Error(codes.FailedPrecondition, "current recipient session and pending offer from that caster required")
 	}
 	w, err := s.snapshot(ctx)
@@ -95,12 +94,19 @@ func (s *Service) AcceptResurrection(ctx context.Context, r *actionsv1.AcceptRes
 	if p == nil || p.Guid != s.selfGUID || !p.Present || !p.AliveKnown || p.Alive || p.PlayerFlags&ghostFlag == 0 && (!p.HealthKnown || p.Health != 0) {
 		return nil, status.Error(codes.FailedPrecondition, "current dead recipient observation required")
 	}
+	offer := s.resurrectionOffer
+	if !s.pendingResurrectionOfferLocked(offer, r.CasterGuid) || offer.epoch != s.recovery.state.DeathEpoch ||
+		r.DeathEpoch != 0 && r.DeathEpoch != offer.epoch || r.ExpectedOfferRevision != 0 && r.ExpectedOfferRevision != offer.revision {
+		return nil, status.Error(codes.FailedPrecondition, "exact current death and observed resurrection offer required")
+	}
 	if casterTeam := observedPlayerTeam(observedHealingPlayer(w, offer.caster)); casterTeam != 0 && casterTeam != observedPlayerTeam(p) {
 		return nil, status.Error(codes.FailedPrecondition, "same-faction resurrection offer required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
-	s.acceptResurrectionOfferLocked(ctx, offer)
+	if err := s.acceptResurrectionOfferLocked(ctx, offer); err != nil {
+		return s.stateLocked(), err
+	}
 	return s.stateLocked(), nil
 }

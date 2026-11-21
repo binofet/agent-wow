@@ -61,7 +61,7 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
-	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" {
+	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" || capability == "accept_resurrection" {
 		return p.resolveDeathAction(action, capability)
 	}
 	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {
