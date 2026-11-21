@@ -54,6 +54,9 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 	owner, c := parse(value.OwnerGUID)
 	revision, d := parse(value.OwnerPositionRevision)
 	followRevision, e := parse(value.FollowRevision)
+	// Follow is a counter, unlike the nonzero identities above. A freshly
+	// attached body's untouched native intent has canonical revision zero.
+	e = e || value.FollowRevision == "0"
 	if !a || !b || !c || !d || !e {
 		return status.Error(codes.InvalidArgument, "canonical formation identities and owner revision required")
 	}

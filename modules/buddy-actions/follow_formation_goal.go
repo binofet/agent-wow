@@ -13,9 +13,11 @@ import (
 )
 
 type followFormationGoal struct {
-	visit, owner uint64
-	until        time.Time
-	target       formationTarget
+	sessionID                               string
+	self                                    uint64
+	visit, owner, followRevision, hostEpoch uint64
+	until                                   time.Time
+	target                                  formationTarget
 }
 
 func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFormationRequest) (*emptypb.Empty, error) {
@@ -33,13 +35,19 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 	if !s.trustedEncounterHostLocked(ctx) {
 		return nil, status.Error(codes.PermissionDenied, "current attached encounter host required")
 	}
-	if !s.hasPolicyEncounterAccessLocked(ctx) || s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.hostEncounterActiveLocked() ||
-		r.VisitId != s.encounterVisit.revision || r.FollowRevision != s.followRevision || !s.state.Following {
-		return nil, status.Error(codes.FailedPrecondition, "current following body and observed visit required")
+	current := func() bool {
+		return s.hasPolicyEncounterAccessLocked(ctx) && !s.closed && !s.independent && r.SessionId == s.sessionID && r.SelfGuid == s.selfGUID &&
+			r.VisitId == s.encounterVisit.revision && r.FollowRevision == s.followRevision
+	}
+	if !current() {
+		return nil, status.Error(codes.FailedPrecondition, "current owned body, follow revision and observed visit required")
 	}
 	w, err := s.readWorldSnapshot(ctx)
 	owner := w.GetOwner()
-	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || owner.GetGuid() != r.OwnerGuid || !owner.GetPresent() ||
+	if ctx.Err() != nil {
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	if err != nil || !current() || !s.matchesCurrentEncounterVisitLocked(w) || owner.GetGuid() != r.OwnerGuid || !owner.GetPresent() ||
 		!owner.GetAliveKnown() || !owner.GetAlive() || !owner.GetMapKnown() || owner.MapId != w.Self.MapId || !owner.PositionKnown ||
 		owner.PositionRevision != r.OwnerPositionRevision || !finite(playerPosition(owner)) {
 		return nil, status.Error(codes.FailedPrecondition, "current living followed owner pose required")
@@ -63,16 +71,28 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 			return nil, status.Error(codes.InvalidArgument, "known formation phase required")
 		}
 	}
-	s.followGoal = followFormationGoal{visit: r.VisitId, owner: r.OwnerGuid,
+	s.followGoal = followFormationGoal{sessionID: r.SessionId, self: r.SelfGuid, visit: r.VisitId, owner: r.OwnerGuid,
+		followRevision: r.FollowRevision, hostEpoch: s.hostEncounterEpoch,
 		until: s.now().Add(encounterLeaseDuration), target: formationTarget{
 			Position: target, StartDistance: r.StartDistance, StopDistance: r.StopDistance, Ready: r.Ready, Hold: r.Hold, Phase: phase, Valid: true}}
 	return &emptypb.Empty{}, nil
 }
 
+// A finite exact goal is voluntary movement authority, separate from the
+// legacy Follow toggle. Every packet rechecks this after dependency callbacks.
+func (s *Service) currentFollowFormationGoalLocked(goal followFormationGoal, w *worldv1.SnapshotResponse) bool {
+	owner := w.GetOwner()
+	return goal == s.followGoal && goal.target.Valid && s.now().Before(goal.until) && !s.independent &&
+		goal.sessionID == s.sessionID && goal.self == s.selfGUID &&
+		goal.hostEpoch == s.hostEncounterEpoch && goal.followRevision == s.followRevision &&
+		goal.visit == s.encounterVisit.revision && s.hostEncounterActiveLocked() && s.matchesCurrentEncounterVisitLocked(w) &&
+		goal.owner == owner.GetGuid() && owner.GetPresent() && owner.GetAliveKnown() && owner.GetAlive() &&
+		owner.GetMapKnown() && owner.GetMapId() == w.GetSelf().GetMapId() && owner.GetPositionKnown() && finite(playerPosition(owner))
+}
+
 func (s *Service) followFormationPlanLocked(now time.Time, w *worldv1.SnapshotResponse, classID uint32, owner position, moving bool) formationTarget {
 	goal := s.followGoal
-	if now.Before(goal.until) && goal.visit == s.encounterVisit.revision && s.encounterVisit.bound &&
-		goal.owner == w.GetOwner().GetGuid() && s.hostEncounterActiveLocked() {
+	if s.currentFollowFormationGoalLocked(goal, w) {
 		return goal.target
 	}
 	if !goal.until.IsZero() {
