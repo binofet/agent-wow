@@ -129,8 +129,12 @@ class ExpeditionTests(unittest.TestCase):
         self.goal['allow'].append('buddy-actions.plan_route_leg')
 
     def runner(self, store):
+        reward_policy = None
+        if self.source != ROOT / 'behaviors/expedition.lua':
+            reward_policy = ROOT / 'behaviors/quest-rewards.lua'
         return host.Runner(store, self.bridge, self.rpc, 87, self.rpc.sid, self.goal, self.source,
-                           ROOT / 'behaviors/task-stack.lua', rpc_timeout=35)
+                           ROOT / 'behaviors/task-stack.lua', rpc_timeout=35,
+                           reward_policy=reward_policy)
 
     def count(self, method): return sum(name == method for name, _ in self.rpc.calls)
 

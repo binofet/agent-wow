@@ -121,6 +121,20 @@ class RuntimeTests(unittest.TestCase):
 
     def purchases(self): return [v for v in self.rpc.calls if v[0] == 'vendor.buy']
 
+    def test_unrelated_task_does_not_read_or_compile_optional_reward_policy(self):
+        original_read = m.read_file
+        def read(path, *args, **kwargs):
+            if Path(path).name == 'quest-rewards.lua':
+                raise FileNotFoundError('optional reward policy unavailable')
+            return original_read(path, *args, **kwargs)
+        with m.Store(self.folder) as store, patch.object(m, 'read_file', side_effect=read):
+            runner = self.runner(store)
+            runner.tick()
+        self.assertEqual(runner.data['phase'], 'waiting')
+        self.assertEqual(len(self.bridge.sources), 1)
+        self.assertNotIn('quest_rewards', self.bridge.sources[0])
+        self.assertEqual(self.purchases(), [])
+
     def test_native_failure_keeps_exact_private_frame_and_preserves_pending(self):
         self.bridge.decide = lambda _: self.buy()
         self.rpc.hook = lambda method, _: (_ for _ in ()).throw(m.Error('lost')) if method == 'vendor.buy' else None
