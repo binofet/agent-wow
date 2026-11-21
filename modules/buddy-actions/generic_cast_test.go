@@ -151,3 +151,18 @@ func TestCastSpellBindsSessionVisitObservedTargetsAndUnknownWrite(t *testing.T) 
 		t.Fatal(st)
 	}
 }
+
+func TestCastSpellArcaneExplosionWhileBodyMovingUsesNormalTransport(t *testing.T) {
+	s, f, _ := genericCastRig(t)
+	s.applySpellbookLocked(map[uint32]bool{1449: true})
+	s.bodyMoving = true
+	s.state.Moving = true
+	f.world.Self.MovementFlags = 1
+	st, err := s.CastSpell(context.Background(), genericRequest(s, 1449))
+	if err != nil || len(f.packets) != 1 || len(f.packets[0].Payload) != 10 || !st.CastPending {
+		t.Fatal(st, err, f.packets)
+	}
+	if !s.bodyMoving || !st.Moving {
+		t.Fatal("cast altered normal movement intent", st)
+	}
+}

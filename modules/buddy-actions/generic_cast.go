@@ -46,8 +46,8 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 		return nil, status.Error(codes.FailedPrecondition, "exact currently learned spell ID required")
 	}
 	// These are outstanding physical writes, not gameplay readiness estimates.
-	if s.state.CastPending || s.bodyMoving {
-		return nil, status.Error(codes.FailedPrecondition, "existing cast/channel or body write must reconcile first")
+	if s.state.CastPending {
+		return nil, status.Error(codes.FailedPrecondition, "existing cast/channel write must reconcile first")
 	}
 	if err := s.genericItemBindingLocked(ctx, r); err != nil {
 		return nil, err
