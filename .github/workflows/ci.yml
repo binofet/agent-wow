@@ -52,6 +52,7 @@ jobs:
           export BUDDY_LUAPOLICY_TEST_BINARY="$GITHUB_WORKSPACE/data/bin/luapolicy"
           python3 -B dev/test_quest_rewards.py
           python3 -B dev/test_starter_rewards_policy.py
+          python3 -B dev/test_starter_objective_policy.py
           python3 -B dev/test_expedition_policy.py \
             ExpeditionTests.test_single_omitted_zero_choice_and_multiple_choices_block \
             ExpeditionTests.test_multiple_rewards_choose_actual_index_by_known_total_value_and_wait_exact_receipt \
