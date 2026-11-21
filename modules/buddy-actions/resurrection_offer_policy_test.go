@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -84,10 +85,10 @@ func TestResurrectionOfferExactIdentityAndKnownNoWriteVersusUnknownCustody(t *te
 		func(r *actionsv1.AcceptResurrectionRequest) { r.DeathEpoch++ },
 		func(r *actionsv1.AcceptResurrectionRequest) { r.ExpectedOfferRevision++ },
 	} {
-		copy := *r
-		change(&copy)
-		if _, err := s.AcceptResurrection(ctx, &copy); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
-			t.Fatal("foreign/stale identity wrote a response", &copy, err, f.packets)
+		copy := proto.Clone(r).(*actionsv1.AcceptResurrectionRequest)
+		change(copy)
+		if _, err := s.AcceptResurrection(ctx, copy); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
+			t.Fatal("foreign/stale identity wrote a response", copy, err, f.packets)
 		}
 	}
 	callback := &resurrectionNoWriteSession{fakeSession: f, refuse: true}
