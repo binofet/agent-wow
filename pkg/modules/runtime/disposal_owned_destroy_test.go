@@ -203,7 +203,11 @@ return actual`
 		t.Fatal("actual shared classifier did not initially admit miscellaneous item", decision)
 	}
 	assertFollowFallbackState(t, host, before)
-	changed := strings.Replace(source, `return result("eligible","ordinary_gray_miscellaneous")`, `return result("keep","edited_owned_destroy_retention")`, 1)
+	// Edit the owned mode's decision itself. Editing only the miscellaneous
+	// branch to keep would still allow the union to examine the armor branch,
+	// whose missing facts correctly produce unknown for this miscellaneous item.
+	changed := strings.Replace(source, `if miscellaneous.status=="eligible" then return miscellaneous end`,
+		`if miscellaneous.status=="eligible" then return result("keep","edited_owned_destroy_retention") end`, 1)
 	if changed == source {
 		t.Fatal("actual shared classifier edit did not match")
 	}
@@ -217,7 +221,8 @@ return actual`
 	}
 	p.calls = nil
 	result := disposalOwnedRead(t, m, request)
-	if result["revision"] != revision || result["decision"].(map[string]any)["status"] != "keep" || !reflect.DeepEqual(p.calls, disposalOwnedTrace()) {
+	edited := result["decision"].(map[string]any)
+	if result["revision"] != revision || edited["status"] != "keep" || edited["reason"] != "edited_owned_destroy_retention" || !reflect.DeepEqual(p.calls, disposalOwnedTrace()) {
 		t.Fatal("accepted edit did not govern same-body owned admission", result, p.calls)
 	}
 	assertFollowFallbackState(t, host, before)
