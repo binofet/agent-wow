@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
@@ -47,6 +48,16 @@ func run() error {
 	service := buddyworld.NewService(identity.SelfGUID)
 	if identity.Independent() {
 		service = buddyworld.NewIndependentService(identity.SelfGUID)
+	}
+	// Retain raw combat evidence beside the private module socket. Failure to
+	// persist is exposed by the public stream; it must not disconnect a player.
+	journal, journalErr := os.OpenFile(filepath.Join(filepath.Dir(socket), "combat-events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if journalErr == nil {
+		defer journal.Close()
+		service.ConfigureCombatJournal(os.Getenv("AGENT_WOW_SESSION_ID"), journal)
+	} else {
+		service.ConfigureCombatJournal(os.Getenv("AGENT_WOW_SESSION_ID"), nil)
+		fmt.Fprintln(os.Stderr, "combat journal persistence unavailable:", journalErr)
 	}
 	worldv1.RegisterBuddyWorldServer(server, service)
 	readiness := health.NewServer()

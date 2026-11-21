@@ -414,7 +414,52 @@ message SnapshotResponse {
   uint64 visit_revision = 47;
 }
 
+// Passive server combat packet evidence for exactly one authenticated session.
+// Sequences are session-local and retained without a packet-count eviction cap.
+message CombatEventsRequest {
+  string session_id = 1;
+  uint64 after_sequence = 2;
+  // Page size only; zero uses 128. This never limits journal retention.
+  uint32 limit = 3;
+}
+message CombatEvent {
+  uint64 sequence = 1;
+  uint64 received_at_unix_ms = 2;
+  uint32 opcode = 3;
+  // melee_damage, spell_damage, heal, cast_start, cast_go, cast_failure,
+  // death, or unknown. cast_go means launched, never a confirmed effect.
+  string kind = 4;
+  uint64 source_guid = 5;
+  uint64 target_guid = 6;
+  uint32 spell_id = 7;
+  bool amount_known = 8;
+  uint32 amount = 9;
+  bool result_known = 10;
+  uint32 result = 11;
+  // Exact received game packet body, including unsupported/malformed bodies.
+  bytes raw_payload = 12;
+  bool malformed = 13;
+  string detail = 14;
+}
+message CombatEventGap {
+  uint64 from_sequence = 1;
+  uint64 through_sequence = 2;
+  // cursor_ahead, or durability_unavailable (events remain readable in RAM).
+  string reason = 3;
+}
+message CombatEventsResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 first_sequence = 3;
+  uint64 latest_sequence = 4;
+  uint64 next_sequence = 5;
+  bool has_more = 6;
+  repeated CombatEvent events = 7;
+  repeated CombatEventGap gaps = 8;
+}
+
 service BuddyWorld {
+  rpc CombatEvents(CombatEventsRequest) returns (CombatEventsResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc ObserveClientMovement(ClientMovementRequest) returns (google.protobuf.Empty);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
