@@ -40,15 +40,15 @@ func TestSharedLuaSessionApproachesAndResurrectsObservedNonpartyAlly(t *testing.
 func TestLuaResurrectionRequiresCurrentHostOwnershipOrRequest(t *testing.T) {
 	p := newSupportPolicy(t, "resurrect")
 	obs := supportResObservation()
-	obs.HostOwned, obs.HostRequested = false, false
+	obs.HostOwned, obs.HostRequested = proto.Bool(false), proto.Bool(false)
 	p.expectNoAction(p.observe(obs))
-	obs.HostRequested = true
+	obs.HostRequested = proto.Bool(true)
 	out := p.decide(p.observe(obs)).Output
 	if action, _ := out["action"].(map[string]any); action["capability"] != "resurrect" {
 		t.Fatal("current requested host failed to select resurrection", out)
 	}
-	obs.HostRequested = false
-	obs.HostOwned = true
+	obs.HostRequested = proto.Bool(false)
+	obs.HostOwned = proto.Bool(true)
 	out = p.decide(p.observe(obs)).Output
 	if action, _ := out["action"].(map[string]any); action["capability"] != "resurrect" {
 		t.Fatal("current owned host failed to select resurrection", out)
