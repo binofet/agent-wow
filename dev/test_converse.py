@@ -3155,9 +3155,65 @@ def load_tests(loader, tests, pattern):
     return tests
 
 
+class GMTaskFaultRepairTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.repo=Path(self.temp.name).resolve();self.actions=dict(sessionId='aw-123',selfGuid='87')
+        self.calls=[];self.polls=[];self.statuses=[]
+        self.rpc=types.SimpleNamespace(url='http://127.0.0.1:8090/rpc',call=self.call)
+        self.controls=types.SimpleNamespace(actions=self.actions,actions_available=True,party_available=True,
+            party_session='aw-123',refresh=lambda:None,context=lambda:{},events=[],execute=lambda *a,**k:None)
+        self.brain=FakeBrain(dict(text='The observed refill maximum changed; cleanup is not yet verified.',emote='NONE',action='NONE'))
+        self.brain.developer_workspace=self.repo;self.brain.state_dir=self.repo/'brain';self.brain.states=[]
+        generate=self.brain.generate
+        def record(history,state):self.brain.states.append(state);return generate(history,state)
+        self.brain.generate=record
+        from test_gm_task_lifecycle import GMTaskLifecycleTests
+        self.folder,self.policy=GMTaskLifecycleTests().fixture(self.repo)
+        p=patch.object(converse,'ROOT',self.repo);p.start();self.addCleanup(p.stop)
+        self.loop=self.new_loop()
+    def call(self,method,params,**kwargs):
+        self.calls.append((method,params))
+        if method=='session.attach':return dict(sessionId='aw-123',characterGuid='87')
+        if method=='buddy-chat.poll':return self.polls.pop(0) if self.polls else poll(sessionId='chat-current')
+        if method=='buddy-actions.status':return dict(self.actions)
+        if method=='buddy-party.state':return dict(sessionId='aw-123')
+        if method=='buddy-chat.send':return dict(transportWritten=True)
+        raise AssertionError('unexpected RPC:'+method)
+    def new_loop(self):
+        loop=converse.Conversation(self.rpc,self.brain,controls=self.controls,character_guid=87,
+            character_name='Lotharen',status=lambda **kw:self.statuses.append(kw))
+        loop.initialized=True;loop.session_id='chat-current';return loop
+    def test_resumable_gm_task_enters_same_brain_once_and_new_policy_revisits(self):
+        self.loop.tick();self.new_loop().tick()
+        self.assertEqual(len(self.brain.states),1)
+        state=self.brain.states[0];self.assertEqual(state['mission_fault']['kind'],'gm_task')
+        self.assertEqual(state['mission_fault']['taskStateDir'],str(self.folder))
+        self.assertIn('gmTasks',state['development']);self.assertIs(type(state['current_request']),converse._MissionFaultRequest)
+        self.assertTrue(any(m=='buddy-chat.send' for m,p in self.calls))
+        self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
+        self.policy.write_text('return {repaired=true}')
+        self.new_loop().tick();self.assertEqual(len(self.brain.states),2)
+    def test_owner_message_pending_leaves_fault_unreserved_for_chat(self):
+        self.polls=[poll([message(1,'Wait, please do not move us.')],sessionId='chat-current')]
+        self.assertTrue(self.loop.maybe_repair_mission())
+        self.assertEqual(self.brain.states,[])
+        self.assertFalse((self.brain.state_dir/'attached-policy-faults').exists())
+    def test_developer_authority_rechecks_current_task_without_attached_policy(self):
+        self.loop.tick();state=self.brain.states[0]
+        brain=object.__new__(converse.CodexBrain);brain.developer_workspace=self.repo
+        self.assertTrue(brain.development_enabled(state))
+        self.policy.write_text('return {repaired=true}')
+        self.assertTrue(brain.development_enabled(state))
+        with converse.gm_tasks.runtime.Store(self.folder) as store:
+            data=store.load();data['identity']['sessionId']='aw-456';store.save(data)
+        self.assertFalse(brain.development_enabled(state))
+
+
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
 from test_gm_task_inspection import GMTaskInspectionTests
+from test_gm_task_lifecycle import GMTaskLifecycleTests
 
 if __name__ == "__main__":
     unittest.main()

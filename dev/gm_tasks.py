@@ -57,7 +57,8 @@ def tools(root, guid, rpc_url):
         bindings=command+['bindings'],source=command+['source'],
         inspect=command+['inspect','--rpc-url',rpc_url],
         status=command+['status','--state-dir','<STATE_DIR>'],
-        cancel=command+['cancel','--state-dir','<STATE_DIR>'])
+        cancel=command+['cancel','--state-dir','<STATE_DIR>'],
+        resume=command+['resume','--state-dir','<STATE_DIR>'])
 
 
 def _varint(value):
@@ -276,7 +277,7 @@ class Host:
         frame=dict(goal=self.goal,memory=self.data['memory'],observations=observations,last=self.data['last'],pending=[],now=self.clock(),cancelled=self.stopping)
         out=self.bridge.evaluate(self.policy.read_text(),frame)
         if not isinstance(out,dict) or not isinstance(out.get('memory'),dict):raise ValueError('Lua task result must contain memory')
-        self.data.update(memory=out['memory'],phase=out.get('phase'),done=out.get('done') is True,error=out.get('error'),success=out.get('success') is True)
+        self.data.update(memory=out['memory'],phase=out.get('phase'),done=out.get('done') is True,error=out.get('error'),success=out.get('success') is True,cancelled=out.get('cancelled') is True,cleanupComplete=out.get('cleanupComplete') is True)
         self.persist()
         if out.get('action'):self.dispatch(out['action'],observations)
         return out
@@ -290,7 +291,7 @@ class Host:
                     errors=self.restore_holds()
                     if errors:
                         out.update(done=False,success=False,cleanupComplete=False,error='policy_restore_incomplete')
-                        self.data.update(done=False,success=False,error=out['error'],resumable=True);self.persist()
+                        self.data.update(done=False,success=False,cleanupComplete=False,error=out['error'],resumable=True);self.persist()
                     return out
                 if out.get('error'):
                     # A blocked phase is resumable, not permission to unpause a
@@ -349,12 +350,103 @@ def inspect_clients(rpc_url,root=ROOT,*,rpc_factory=None,timeout=2):
         semantics='Read-only public observations. Group membership belongs to each observed client; a groupless GM does not imply unavailable teammates. Errors are explicit and no recovery or game action was started.')
 
 
+def task_faults(root,guid,sid,url):
+    """Observe only this GM body's stopped, resumable task; never run cleanup."""
+    if str(guid)!='87' or not isinstance(sid,str) or not re.fullmatch(r'aw-[0-9]+',sid):return []
+    try:
+        writer=runtime.Store(Path(root)/'data/gm-task-writers'/sid).load()
+        if not writer or writer.get('active') is not True or not writer.get('stateDir'):return []
+        store=runtime.Store(Path(writer['stateDir']))
+        data=store.load()
+        if not data or store.held() or data.get('done') or not data.get('resumable') or not data.get('error'):return []
+        identity=data.get('identity') or dict(sessionId=data.get('lastObservations',{}).get('gm',{}).get('sessionId'),guid='87',rpcUrl=url)
+        if identity!=dict(sessionId=sid,guid='87',rpcUrl=url):return []
+        invocation=load_invocation(store)
+        source=Path(invocation['policy'])
+        source_error=None
+        try:revision=hashlib.sha256(source.read_bytes()).hexdigest()
+        except OSError as error:
+            source_error=str(error);revision=hashlib.sha256(('source_unavailable:'+str(source)).encode()).hexdigest()
+        signature=['gm_task',str(store.folder),data.get('phase'),data['error']]
+        key=hashlib.sha256(json.dumps([sid,revision,signature],separators=(',',':')).encode()).hexdigest()
+        return [dict(key=key,kind='gm_task',sessionId=sid,sourceRevision=revision,sourcePath=str(source),
+            signature=signature,task=data.get('phase'),reason=data['error'],error=data['error'],field='resumable_task',
+            goalId=data.get('goal',{}).get('id'),taskStateDir=str(store.folder),
+            evidence=dict(phase=data.get('phase'),last=data.get('last'),sourceError=source_error,heldMembers=public_status(data)['heldMembers']))]
+    except (OSError,ValueError,TypeError,KeyError,RuntimeError,runtime.Error):return []
+
+
+def task_identity_matches(guid,sid,url,fault):
+    """The same repair turn may edit/resume and then observe its bound task."""
+    try:
+        data=runtime.Store(Path(fault['taskStateDir'])).load()
+        identity=data.get('identity') or dict(sessionId=data.get('lastObservations',{}).get('gm',{}).get('sessionId'),guid='87',rpcUrl=url)
+        return str(guid)=='87' and identity==dict(sessionId=sid,guid='87',rpcUrl=url) and data.get('goal',{}).get('id')==fault.get('goalId')
+    except (OSError,ValueError,TypeError,KeyError,runtime.Error):return False
+
+
+def invocation_from_args(args):
+    return dict(rpcUrl=args.rpc_url,goal=str(args.goal.absolute()),transport=str(args.transport.absolute()),
+        policy=str(args.policy.absolute()),policyBinary=str(args.policy_binary.absolute()))
+
+
+def load_invocation(store):
+    try:return runtime.decoded(runtime.read_file(store.folder/'invocation.json',runtime.MAX_INPUT,True))
+    except FileNotFoundError:
+        # Compatibility with already-running tasks started before this metadata
+        # existed. Interpret only our maintained run argv, never execute it.
+        process=runtime.decoded(runtime.read_file(store.folder/'process.json',runtime.MAX_INPUT,True))
+        argv=process['argv']
+        if not isinstance(argv,list) or len(argv)<4 or argv[2]!=str(ROOT/'dev/gm-task') or argv[3]!='run':
+            raise ValueError('maintained task invocation unavailable')
+        options=dict(zip(argv[4::2],argv[5::2]))
+        if len(argv[4:])%2 or options.get('--state-dir')!=str(store.folder):raise ValueError('task invocation does not match state')
+        return dict(rpcUrl=options['--rpc-url'],goal=options['--goal'],transport=options['--transport'],policy=options['--policy'],policyBinary=options['--policy-binary'])
+
+
+def launch_task(store,invocation):
+    for field in ('rpcUrl','goal','transport','policy','policyBinary'):
+        if not isinstance(invocation.get(field),str) or not invocation[field] or '\0' in invocation[field]:raise ValueError('task invocation unavailable: '+field)
+    runtime.RPC(invocation['rpcUrl'])
+    child=[sys.executable,'-B',str(ROOT/'dev/gm-task'),'run','--state-dir',str(store.folder),
+        '--goal',invocation['goal'],'--transport',invocation['transport'],'--rpc-url',invocation['rpcUrl'],
+        '--policy',invocation['policy'],'--policy-binary',invocation['policyBinary']]
+    store.write('invocation.json',json.dumps(invocation).encode(),runtime.MAX_INPUT)
+    with (store.folder/'task.log').open('ab',buffering=0) as log:
+        process=subprocess.Popen(child,cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+    store.write('process.json',json.dumps(dict(pid=process.pid,argv=child,startedAt=time.time())).encode(),runtime.MAX_INPUT)
+    return dict(started=True,pid=process.pid,stateDir=str(store.folder),completion='not_yet_observed')
+
+
+def request_cancel(state_dir):
+    store=runtime.Store(Path(state_dir).absolute())
+    data=store.load()
+    if data is None:raise ValueError('existing task state required for cancellation')
+    store.write('cancel.json',b'{}\n')
+    if store.held():return dict(cancelRequested=True,cleanup='running_task_will_observe',completion='not_yet_observed')
+    if (data.get('done') or data.get('cancelled') and data.get('cleanupComplete')) and all(r.get('restored') for r in data.get('holds',{}).values()):
+        return dict(cancelRequested=True,cleanup='already_terminal',completion='observed_terminal')
+    # Resume the same Lua runner in cancellation mode; it reconciles the actual
+    # roster and restores held policies before releasing the shared body writer.
+    result=launch_task(store,load_invocation(store))
+    return dict(result,cancelRequested=True,cleanup='cleanup_runner_started')
+
+
+def request_resume(state_dir):
+    store=runtime.Store(Path(state_dir).absolute());data=store.load()
+    if data is None:raise ValueError('existing task state required for resume')
+    if store.held():return dict(started=False,stateDir=str(store.folder),completion='runner_already_active')
+    if data.get('done') or data.get('cancelled') and data.get('cleanupComplete'):
+        return dict(started=False,stateDir=str(store.folder),completion='already_terminal')
+    return launch_task(store,load_invocation(store))
+
+
 def public_status(data):
-    return dict({k:data.get(k) for k in ('version','goal','phase','done','success','error','memory','last','lastObservations','restoreErrors','updatedAt','resumable')},heldMembers=[dict(guid=g,heldRevision=r.get('heldRevision'),restored=r.get('restored',False),followPaused=r.get('followPaused',False)) for g,r in data.get('holds',{}).items()])
+    return dict({k:data.get(k) for k in ('version','goal','phase','done','success','error','memory','last','lastObservations','restoreErrors','updatedAt','resumable','cancelled','cleanupComplete')},heldMembers=[dict(guid=g,heldRevision=r.get('heldRevision'),restored=r.get('restored',False),followPaused=r.get('followPaused',False)) for g,r in data.get('holds',{}).items()])
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('inspect','bindings','source','start','run','status','cancel'))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('inspect','bindings','source','start','run','status','cancel','resume'))
     parser.add_argument('--state-dir',type=Path);parser.add_argument('--goal',type=Path);parser.add_argument('--transport',type=Path)
     parser.add_argument('--rpc-url');parser.add_argument('--policy',type=Path,default=ROOT/'behaviors/gm-recovery.lua')
     parser.add_argument('--policy-binary',type=Path,default=ROOT/'data/bin/luapolicy')
@@ -368,22 +460,13 @@ def main(argv=None):
     if args.command=='start':
         if not args.goal or not args.transport or not args.rpc_url:parser.error('start requires --goal, --transport and --rpc-url')
         with runtime.Store(args.state_dir.absolute()) as store:
-            metadata=store.folder/'process.json'
-            if metadata.exists():
-                previous=json.loads(metadata.read_text())
-                try:os.kill(int(previous['pid']),0)
-                except ProcessLookupError:pass
-                else:raise ValueError('task process already running; inspect status')
-            child=[sys.executable,'-B',str(ROOT/'dev/gm-task'),'run','--state-dir',str(args.state_dir.absolute()),'--goal',str(args.goal.absolute()),'--transport',str(args.transport.absolute()),'--rpc-url',args.rpc_url,'--policy',str(args.policy.absolute()),'--policy-binary',str(args.policy_binary.absolute())]
-        # Release the task lock before the child acquires it. Holding it while
-        # spawning could make the valid child fail its own exclusive startup.
-        with (store.folder/'task.log').open('ab',buffering=0) as log:
-            process=subprocess.Popen(child,cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
-        store.write('process.json',json.dumps(dict(pid=process.pid,argv=child,startedAt=time.time())).encode(),16384)
-        print(json.dumps(dict(started=True,pid=process.pid,stateDir=str(store.folder),completion='not_yet_observed')))
-        return 0
+            invocation=invocation_from_args(args)
+        # The child acquires the same exclusive task lock; release it first.
+        print(json.dumps(launch_task(store,invocation)));return 0
+    if args.command=='resume':
+        print(json.dumps(request_resume(args.state_dir)));return 0
     if args.command=='cancel':
-        args.state_dir.mkdir(mode=0o700,parents=True,exist_ok=True);(args.state_dir/'cancel.json').write_text('{}\n');print('{"cancelRequested":true}');return 0
+        print(json.dumps(request_cancel(args.state_dir)));return 0
     if args.command=='status':
         try:data=json.loads((args.state_dir/'state.json').read_text())
         except FileNotFoundError:
@@ -392,10 +475,15 @@ def main(argv=None):
     if not args.goal or not args.transport or not args.rpc_url:parser.error('run requires --goal, --transport and --rpc-url')
     goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text())
     with runtime.Store(args.state_dir.absolute()) as store:
+        store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
         rpc=runtime.RPC(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
+        host=Host(store,rpc,SessionTransport(rpc,config),runtime.Bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
+        identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
+        prior=host.data.get('identity')
+        if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
         with runtime.Store(writer_folder(ROOT,sid,config).absolute()) as owner:
             owned=claim_writer(owner,store.folder)
-            host=Host(store,rpc,SessionTransport(rpc,config),runtime.Bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
+            host.data['identity']=identity;host.persist()
             for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:setattr(host,'stopping',True))
             result=host.run()
             if result.get('done') or result.get('cancelled') and result.get('cleanupComplete'):
