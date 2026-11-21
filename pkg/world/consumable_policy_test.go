@@ -205,8 +205,9 @@ func TestConsumableLuaStopsWalkingFollowerBeforeOneExactUse(t *testing.T) {
 		t.Fatal("item used while still moving", moving.Output)
 	}
 	self["moving"], contextView["bodyReady"] = false, true
+	view["inventoryRevision"] = "11" // Unrelated loot arrived during the stop.
 	ready := step()
-	if action := ready.Output["action"].(map[string]any); action["capability"] != "consume" || action["spellId"] != float64(431) {
+	if action := ready.Output["action"].(map[string]any); action["capability"] != "consume" || action["spellId"] != float64(431) || action["expectedInventoryRevision"] != "11" {
 		t.Fatal("observed stop did not reach chosen exact use", ready.Output)
 	}
 }

@@ -195,6 +195,7 @@ function M.decide(frame,obs,available)
     end
     choice.id="consume_"..tostring(frame.cursor).."_"..tostring(now)
     choice.visit=obs.visitId
+    choice.requested=state.requested
     state.restAbandoned=nil;state.attempt=choice;state.owner="consumable:"..choice.id;state.requested=nil;attempt=choice
   end
   if state.leaseUnknown then return {phase="movement_lease_unconfirmed",hold=true} end
@@ -204,6 +205,12 @@ function M.decide(frame,obs,available)
   end
   if inventory_sequence~=(frame.input.observationSequences or {}).inventory then return {phase="awaiting_current_inventory",hold=true} end
   if not (view.consumableContext or {}).bodyReady then return {phase="awaiting_stationary_body",hold=true} end
+  -- Custody may have required several observations. Re-run this same selector
+  -- against the current facts/source before the first irreversible item use.
+  local selected=M.choose(view,obs,attempt.requested)
+  if not selected then return release(frame,obs,available,"rest_no_longer_needed",true) end
+  selected.id,selected.visit,selected.requested=attempt.id,attempt.visit,attempt.requested
+  state.attempt=selected;attempt=selected
   return {phase="using_selected_item",hold=true,action={capability="consume",sessionId=frame.session_id,selfGuid=obs.selfGuid,
     kind=attempt.kind,requestId=attempt.id,source=attempt.source,spellId=attempt.spellId,expectedInventoryRevision=attempt.inventoryRevision}}
 end
