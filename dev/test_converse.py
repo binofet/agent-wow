@@ -279,6 +279,63 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(len(brain.histories), 1)
         self.assertEqual(brain.histories[0][0]["text"], "New chat")
 
+    def test_retained_current_owner_request_keeps_controls_and_gm_development(self):
+        class Controls:
+            def __init__(self):
+                self.events, self.executed = [], []
+                self.actions_available = self.party_available = True
+                self.actions = {"sessionId":"aw-body", "selfGuid":"87"}
+                self.party_session = "aw-body"
+            def refresh(self): pass
+            def context(self): return {"gm_controls_available":True}
+            def execute(self, action, **kwargs): self.executed.append(action)
+        class Brain(FakeBrain):
+            developer_workspace=Path("/actual-own-workspace")
+            def generate(self, history, control_state=None):
+                self.state=control_state
+                return super().generate(history, control_state)
+        rpc=FakeRPC([poll([message(17,"Regroup at my position",channel="WHISPER",receiverGuid="3")],sessionId="current"),
+                     poll(latest=17,sessionId="current"),poll(latest=17,sessionId="current")])
+        rpc.url="http://127.0.0.1:8090/rpc"
+        controls=Controls();brain=Brain({"text":"On it.","emote":"NONE","action":"FOLLOW"})
+        loop=converse.Conversation(rpc,brain,controls=controls,character_name="Lotharen",character_guid=87,resume_whispers=True)
+        loop.tick();loop.tick()
+        self.assertEqual(controls.executed,["FOLLOW"])
+        self.assertEqual(len(brain.histories),1)
+        self.assertTrue(brain.state["current_request"]["controls_allowed"])
+        self.assertEqual(brain.state["current_request"]["source"],"owner")
+        self.assertTrue(brain.state["development"]["enabled"])
+        self.assertIn("start",brain.state["development"]["gmTasks"])
+        self.assertEqual(loop.session_id,"current")
+        self.assertEqual(loop.cursor,17)
+        self.assertFalse(loop.resume_whispers)
+
+    def test_resume_does_not_replay_answered_or_foreign_owner_whispers(self):
+        for entries in (
+            [message(17,"Already answered",channel="WHISPER"),message(18,"Done",channel="WHISPER_INFORM",self=True)],
+            [message(17,"For another character",channel="WHISPER",receiverGuid="99")],
+        ):
+            with self.subTest(entries=entries):
+                rpc=FakeRPC([poll(entries,sessionId="current")]);brain=FakeBrain()
+                loop=converse.Conversation(rpc,brain,resume_whispers=True)
+                loop.tick()
+                self.assertEqual(brain.histories,[])
+                self.assertTrue(all(method=="buddy-chat.poll" for method,_ in rpc.calls))
+
+    def test_body_change_still_discards_retained_request_after_generation(self):
+        class Controls:
+            def __init__(self): self.events,self.executed=[],[]
+            def refresh(self): pass
+            def context(self): return {}
+            def execute(self,action,**kwargs): self.executed.append(action)
+        rpc=FakeRPC([poll([message(17,"Follow me",channel="WHISPER")],sessionId="current"),converse.CursorReset()])
+        controls=Controls();brain=FakeBrain({"text":"On it.","emote":"NONE","action":"FOLLOW"})
+        loop=converse.Conversation(rpc,brain,controls=controls,resume_whispers=True)
+        loop.tick()
+        self.assertEqual(controls.executed,[])
+        self.assertFalse(loop.initialized)
+        self.assertFalse(any(method=="buddy-chat.send" for method,_ in rpc.calls))
+
     def test_overflow_answers_only_newest_message_and_records_gap(self):
         rpc = FakeRPC([poll(), poll([message(257, "Old backlog"), message(258, "Newest")], cursorLost=True)])
         brain, events = FakeBrain(), []
