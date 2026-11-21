@@ -46,6 +46,7 @@ func newCombatExecutionFixture(t *testing.T, catalog string, learned ...uint32) 
 	npc.AttackVictimGuid = s.selfGUID
 	npc.TargetKnown, npc.TargetGuid = true, s.selfGUID
 	npc.UnitFlags = 0x80000
+	npc.DynamicFlagsKnown = true
 	f.world.NearbyCreatures = []*worldv1.CreatureState{npc}
 	f.world.Self.UnitFlags = 0x80000
 	s.navDataDir = "/fixture/clear-flat-ground"
