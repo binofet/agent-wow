@@ -13,6 +13,7 @@ import (
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
@@ -54,6 +55,7 @@ type policySpell struct {
 	corpse         *policyCorpse
 	genericRequest *actionsv1.CastSpellRequest
 	cancelRequest  *actionsv1.CancelSpellRequest
+	roll           *policyRoll
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -82,6 +84,9 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
+	}
+	if capability == "loot_roll" {
+		return p.resolveRoll(action)
 	}
 	if capability == "movement_owner" {
 		return p.resolveMovementOwner(action)
@@ -195,7 +200,8 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 }
 
 func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoreflect.Name]protoreflect.Value, op *policySpell) (PolicyDispatch, error) {
-	inst, md, err := p.manager.lookup(actionsModule, method, true)
+	module := op.moduleName()
+	inst, md, err := p.manager.lookup(module, method, true)
 	if err != nil {
 		return PolicyDispatch{}, err
 	}
@@ -207,7 +213,7 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 		}
 		req.Set(field, value)
 	}
-	if md.Descriptor().Output().FullName() != (&actionsv1.State{}).ProtoReflect().Descriptor().FullName() {
+	if md.Descriptor().Output().FullName() != op.resultMessage().ProtoReflect().Descriptor().FullName() {
 		return PolicyDispatch{}, status.Error(codes.FailedPrecondition, "incompatible policy action result descriptor")
 	}
 	var nonce [32]byte
@@ -216,7 +222,7 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 	}
 	op.token = hex.EncodeToString(nonce[:])
 	return PolicyDispatch{
-		Module: actionsModule,
+		Module: module,
 		spell:  op,
 		Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
 			if op.recovery != nil {
@@ -228,6 +234,20 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 			return p.manager.invokePolicySpell(ctx, inst, md, req, op)
 		},
 	}, nil
+}
+
+func (op *policySpell) moduleName() string {
+	if op.roll != nil {
+		return inventoryModule
+	}
+	return actionsModule
+}
+
+func (op *policySpell) resultMessage() proto.Message {
+	if op.roll != nil {
+		return &inventoryv1.RollState{}
+	}
+	return &actionsv1.State{}
 }
 
 func fieldMatchesValue(kind protoreflect.Kind, value protoreflect.Value) bool {
@@ -251,7 +271,8 @@ func fieldMatchesValue(kind protoreflect.Kind, value protoreflect.Value) bool {
 
 func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md moddisc.Method, req proto.Message, op *policySpell) (behavior.ActionOutcome, map[string]any) {
 	origin := modsession.WriteOriginFromContext(ctx)
-	if origin.Writer != "lua" || origin.Module != actionsModule || origin.ActionID == "" {
+	module := op.moduleName()
+	if origin.Writer != "lua" || origin.Module != module || origin.ActionID == "" {
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
@@ -259,6 +280,8 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		bridge = modcb.PolicySupportSpellService
 	}
 	switch {
+	case op.roll != nil:
+		bridge = modcb.PolicyRollService
 	case op.melee != nil:
 		bridge = modcb.PolicyMeleeService
 	case op.capability == "offense" || op.capability == "sap":
@@ -279,30 +302,37 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.active[op.token] = op
 	spells.mu.Unlock()
 
-	state := &actionsv1.State{}
+	state := op.resultMessage()
 	call := modcb.WithPolicySpell(ctx, op.token)
 	if op.encounterVisit != 0 {
 		call = modcb.WithPolicyEncounterAccess(call, inst.launch.Environment[modcb.PolicyEncounterKeyEnv], op.encounterVisit)
 	}
-	err = m.invoke(call, publicCall, "lua", actionsModule, inst, md, req, state)
+	err = m.invoke(call, publicCall, "lua", module, inst, md, req, state)
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
-	if op.recovery != nil && state.Recovery != nil {
-		op.recovery.phase = state.Recovery.Phase
+	if op.roll != nil && !op.attempted && err == nil {
+		if outcome, payload := op.undispatchedRollResult(state); outcome != "" {
+			return outcome, payload
+		}
 	}
-	if op.movement != nil && op.movement.body && state.BodyMovement != nil &&
-		state.BodyMovement.SequenceId == op.movement.sequence && state.BodyMovement.VisitId == op.encounterVisit {
-		op.movement.phase = state.BodyMovement.Phase
-		op.movement.detail = state.BodyMovement.Detail
-	}
-	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
-		// The exact lease is released. A STOP write/returned metadata is not a
-		// server movement effect, and has no future spell-effect receipt.
-		return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
-	}
-	if op.cancelRequest != nil && err == nil && state.GetLastSpellOperation().GetOperationRevision() == op.cancelRequest.ExpectedOperationRevision && state.GetLastSpellOperation().GetCancelAttempted() && !op.attempted {
-		return behavior.ActionSettledUnverified, op.payload("cancel_already_attempted_no_replay", false, false, false)
+	if actions, ok := state.(*actionsv1.State); ok {
+		if op.recovery != nil && actions.Recovery != nil {
+			op.recovery.phase = actions.Recovery.Phase
+		}
+		if op.movement != nil && op.movement.body && actions.BodyMovement != nil &&
+			actions.BodyMovement.SequenceId == op.movement.sequence && actions.BodyMovement.VisitId == op.encounterVisit {
+			op.movement.phase = actions.BodyMovement.Phase
+			op.movement.detail = actions.BodyMovement.Detail
+		}
+		if err == nil && op.capability == "release_interaction" && actions.InteractionOwner == "" {
+			// The exact lease is released. A STOP write/returned metadata is not a
+			// server movement effect, and has no future spell-effect receipt.
+			return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
+		}
+		if op.cancelRequest != nil && err == nil && actions.GetLastSpellOperation().GetOperationRevision() == op.cancelRequest.ExpectedOperationRevision && actions.GetLastSpellOperation().GetCancelAttempted() && !op.attempted {
+			return behavior.ActionSettledUnverified, op.payload("cancel_already_attempted_no_replay", false, false, false)
+		}
 	}
 	if op.cancelRequest != nil && op.attempted {
 		// Cancellation transport never completes the original cast/channel.
@@ -398,6 +428,9 @@ func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 	if op.consumable != nil {
 		return op.matchesConsumablePacket(code, payload)
 	}
+	if op.roll != nil {
+		return op.matchesRollPacket(code, payload)
+	}
 	if op.movement != nil {
 		return op.matchesMovementPacket(code, payload)
 	}
@@ -445,6 +478,9 @@ func (op *policySpell) payload(phase string, written, castGo, observed bool) map
 	if op.recovery != nil {
 		return op.recoveryPayload(phase, written)
 	}
+	if op.roll != nil {
+		return op.rollPayload(phase, written, observed)
+	}
 	if op.movement != nil {
 		return op.movementPayload(phase, written)
 	}
@@ -485,23 +521,29 @@ func (p *SessionPolicy) recordSpellTransport(op *policySpell, receipt *behavior.
 }
 
 func (m *Manager) recordSpellEffect(module string, trailer metadata.MD) {
+	if module == inventoryModule {
+		if token, body, ok := modcb.PolicyRollEffect(trailer); ok {
+			m.recordPolicyEffect(module, token, body, false)
+		}
+		return
+	}
 	if module != actionsModule {
 		return
 	}
 	if token, body, ok := modcb.PolicySpellEffect(trailer); ok {
-		m.recordPolicyEffect(token, body, false)
+		m.recordPolicyEffect(module, token, body, false)
 	}
 	if token, body, ok := modcb.PolicyMeleeEffect(trailer); ok {
-		m.recordPolicyEffect(token, body, true)
+		m.recordPolicyEffect(module, token, body, true)
 	}
 }
 
-func (m *Manager) recordPolicyEffect(token string, body []byte, melee bool) {
+func (m *Manager) recordPolicyEffect(module, token string, body []byte, melee bool) {
 	spells := &m.policySpells
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op := spells.active[token]
-	if op == nil || !op.attempted || op.effect != nil || (op.melee != nil) != melee {
+	if op == nil || op.moduleName() != module || !op.attempted || op.effect != nil || (op.melee != nil) != melee {
 		return
 	}
 	outcome, payload, err := op.decodeEffect(body)
@@ -533,6 +575,9 @@ func (m *Manager) recordPolicyEffect(token string, body []byte, melee bool) {
 }
 
 func (op *policySpell) decodeEffect(body []byte) (behavior.ActionOutcome, map[string]any, error) {
+	if op.roll != nil {
+		return op.decodeRollEffect(body)
+	}
 	if op.melee != nil {
 		return op.decodeMeleeEffect(body)
 	}

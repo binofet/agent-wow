@@ -21,6 +21,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyInventory_Rolls_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Rolls"
+	BuddyInventory_Roll_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Roll"
 	BuddyInventory_GetState_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/GetState"
 	BuddyInventory_RawGearFacts_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/RawGearFacts"
 	BuddyInventory_Discover_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/Discover"
@@ -38,6 +40,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyInventoryClient interface {
+	Rolls(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RollState, error)
+	Roll(ctx context.Context, in *RollRequest, opts ...grpc.CallOption) (*RollState, error)
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	RawGearFacts(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Discover(ctx context.Context, in *DiscoverRequest, opts ...grpc.CallOption) (*Discovery, error)
@@ -57,6 +61,26 @@ type buddyInventoryClient struct {
 
 func NewBuddyInventoryClient(cc grpc.ClientConnInterface) BuddyInventoryClient {
 	return &buddyInventoryClient{cc}
+}
+
+func (c *buddyInventoryClient) Rolls(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RollState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RollState)
+	err := c.cc.Invoke(ctx, BuddyInventory_Rolls_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyInventoryClient) Roll(ctx context.Context, in *RollRequest, opts ...grpc.CallOption) (*RollState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RollState)
+	err := c.cc.Invoke(ctx, BuddyInventory_Roll_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyInventoryClient) GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error) {
@@ -173,6 +197,8 @@ func (c *buddyInventoryClient) BeforeLogout(ctx context.Context, in *emptypb.Emp
 // All implementations must embed UnimplementedBuddyInventoryServer
 // for forward compatibility.
 type BuddyInventoryServer interface {
+	Rolls(context.Context, *emptypb.Empty) (*RollState, error)
+	Roll(context.Context, *RollRequest) (*RollState, error)
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	RawGearFacts(context.Context, *emptypb.Empty) (*State, error)
 	Discover(context.Context, *DiscoverRequest) (*Discovery, error)
@@ -194,6 +220,12 @@ type BuddyInventoryServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyInventoryServer struct{}
 
+func (UnimplementedBuddyInventoryServer) Rolls(context.Context, *emptypb.Empty) (*RollState, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Rolls not implemented")
+}
+func (UnimplementedBuddyInventoryServer) Roll(context.Context, *RollRequest) (*RollState, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Roll not implemented")
+}
 func (UnimplementedBuddyInventoryServer) GetState(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
 }
@@ -246,6 +278,42 @@ func RegisterBuddyInventoryServer(s grpc.ServiceRegistrar, srv BuddyInventorySer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyInventory_ServiceDesc, srv)
+}
+
+func _BuddyInventory_Rolls_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).Rolls(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_Rolls_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).Rolls(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyInventory_Roll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RollRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).Roll(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_Roll_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).Roll(ctx, req.(*RollRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyInventory_GetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -453,6 +521,14 @@ var BuddyInventory_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.inventory.v1.BuddyInventory",
 	HandlerType: (*BuddyInventoryServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Rolls",
+			Handler:    _BuddyInventory_Rolls_Handler,
+		},
+		{
+			MethodName: "Roll",
+			Handler:    _BuddyInventory_Roll_Handler,
+		},
 		{
 			MethodName: "GetState",
 			Handler:    _BuddyInventory_GetState_Handler,

@@ -1125,10 +1125,12 @@ type ItemDetails struct {
 	RequiredCityRank          uint32                 `protobuf:"varint,29,opt,name=required_city_rank,json=requiredCityRank,proto3" json:"required_city_rank,omitempty"`
 	// Full normal query proves otherwise unrepresented armor/weapon properties empty.
 	// False is unknown/unsupported, never a zero-resistance comparison claim.
-	ArmorComparisonKnown bool              `protobuf:"varint,30,opt,name=armor_comparison_known,json=armorComparisonKnown,proto3" json:"armor_comparison_known,omitempty"`
-	RawTemplateFacts     *RawTemplateFacts `protobuf:"bytes,32,opt,name=raw_template_facts,json=rawTemplateFacts,proto3" json:"raw_template_facts,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	ArmorComparisonKnown bool `protobuf:"varint,30,opt,name=armor_comparison_known,json=armorComparisonKnown,proto3" json:"armor_comparison_known,omitempty"`
+	// Full normal query proves otherwise unrepresented weapon properties empty.
+	WeaponComparisonKnown bool              `protobuf:"varint,31,opt,name=weapon_comparison_known,json=weaponComparisonKnown,proto3" json:"weapon_comparison_known,omitempty"`
+	RawTemplateFacts      *RawTemplateFacts `protobuf:"bytes,32,opt,name=raw_template_facts,json=rawTemplateFacts,proto3" json:"raw_template_facts,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ItemDetails) Reset() {
@@ -1371,6 +1373,13 @@ func (x *ItemDetails) GetArmorComparisonKnown() bool {
 	return false
 }
 
+func (x *ItemDetails) GetWeaponComparisonKnown() bool {
+	if x != nil {
+		return x.WeaponComparisonKnown
+	}
+	return false
+}
+
 func (x *ItemDetails) GetRawTemplateFacts() *RawTemplateFacts {
 	if x != nil {
 		return x.RawTemplateFacts
@@ -1594,7 +1603,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"bag_family\x18\a \x01(\rR\tbagFamily\x12\x1a\n" +
 	"\bduration\x18\b \x01(\rR\bduration\x12+\n" +
 	"\x0fmax_stack_count\x18\t \x01(\rH\x00R\rmaxStackCount\x88\x01\x01B\x12\n" +
-	"\x10_max_stack_count\"\xb0\t\n" +
+	"\x10_max_stack_count\"\xe8\t\n" +
 	"\vItemDetails\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x1c\n" +
 	"\tavailable\x18\x02 \x01(\bR\tavailable\x12\x18\n" +
@@ -1629,7 +1638,8 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x18required_reputation_rank\x18\x1b \x01(\rR\x16requiredReputationRank\x12.\n" +
 	"\x13required_honor_rank\x18\x1c \x01(\rR\x11requiredHonorRank\x12,\n" +
 	"\x12required_city_rank\x18\x1d \x01(\rR\x10requiredCityRank\x124\n" +
-	"\x16armor_comparison_known\x18\x1e \x01(\bR\x14armorComparisonKnown\x12V\n" +
+	"\x16armor_comparison_known\x18\x1e \x01(\bR\x14armorComparisonKnown\x126\n" +
+	"\x17weapon_comparison_known\x18\x1f \x01(\bR\x15weaponComparisonKnown\x12V\n" +
 	"\x12raw_template_facts\x18  \x01(\v2(.warcraftbuddy.trade.v1.RawTemplateFactsR\x10rawTemplateFacts\"/\n" +
 	"\x12LookupItemsRequest\x12\x19\n" +
 	"\bitem_ids\x18\x01 \x03(\rR\aitemIds\"o\n" +

@@ -70,6 +70,7 @@ func run() error {
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 	readiness.SetServingStatus(modcb.PolicyConsumableService, grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicyRollService, grpc_health_v1.HealthCheckResponse_SERVING)
 	go func() { <-ctx.Done(); readiness.Shutdown(); server.Stop() }()
 	err = server.Serve(listener)
 	if errors.Is(err, grpc.ErrServerStopped) {
