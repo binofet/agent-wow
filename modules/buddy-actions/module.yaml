@@ -55,6 +55,8 @@ rpc:
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
   release_spirit: /warcraftbuddy.actions.v1.BuddyActions/ReleaseSpirit
   query_corpse: /warcraftbuddy.actions.v1.BuddyActions/QueryCorpse
+  approach_corpse: /warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse
+  reclaim_corpse: /warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse
 packets:
   SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -141,3 +143,5 @@ script_api:
   recovery: {effect: mutation}
   release_spirit: {effect: mutation}
   query_corpse: {effect: mutation}
+  approach_corpse: {effect: mutation}
+  reclaim_corpse: {effect: mutation}

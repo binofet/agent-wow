@@ -12,6 +12,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -73,13 +74,24 @@ func tickDeathLua(t *testing.T, s *Service) {
 			t.Fatal(err)
 		}
 		var callErr error
-		if action["capability"] == "release_spirit" {
+		parse := func(key string) uint64 { v, _ := action[key].(string); n, _ := strconv.ParseUint(v, 10, 64); return n }
+		switch action["capability"] {
+		case "release_spirit":
 			_, callErr = s.ReleaseSpirit(context.Background(), request)
-		} else {
+		case "query_corpse":
 			_, callErr = s.QueryCorpse(context.Background(), request)
+		case "approach_corpse", "stop_corpse":
+			radius, _ := action["rangeYards"].(float64)
+			_, callErr = s.ApproachCorpse(context.Background(), &actionsv1.CorpseApproachRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
+				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseQueryRevision: parse("corpseQueryRevision"), RangeYards: float32(radius), Stop: action["capability"] == "stop_corpse"})
+		case "reclaim_corpse":
+			_, callErr = s.ReclaimCorpse(context.Background(), &actionsv1.ReclaimCorpseRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
+				ExpectedPositionRevision: parse("expectedPositionRevision"), CorpseGuid: parse("corpseGuid"), ExpectedCorpseRevision: parse("expectedCorpseRevision")})
+		default:
+			t.Fatal("unknown recovery action", action)
 		}
 		outcome := behavior.ActionSettledUnverified
-		if status.Code(callErr) == codes.FailedPrecondition {
+		if status.Code(callErr) == codes.FailedPrecondition || modcb.PacketWasNotDispatched(callErr) {
 			outcome = behavior.ActionNotDispatched
 		}
 		if callErr != nil && outcome != behavior.ActionNotDispatched {
@@ -100,6 +112,7 @@ func TestDeathReleaseQueryNativeTickIsPassiveAndEpochIsObservedWithoutEnable(t *
 	if countOpcode(f, opcode.CMSGRepopRequest) != 0 {
 		t.Fatal("native maintenance selected release", f.packets)
 	}
+	s.EncounterObservation(context.Background(), &emptypb.Empty{})
 	r := &actionsv1.DeathActionRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: s.recovery.state.DeathEpoch}
 	if _, err := s.Recovery(context.Background(), &actionsv1.ToggleRequest{}); err != nil {
 		t.Fatal(err)

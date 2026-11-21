@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ƒÑ
+Úç
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"ô
@@ -672,7 +672,7 @@ pointCount!
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"€
+state (2.warcraftbuddy.actions.v1.StateRstate"π	
 RecoveryState
 enabled (Renabled
 active (Ractive
@@ -699,7 +699,42 @@ corpseGuidW
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
 verified_legs (RverifiedLegs0
-corpse_query_pending (RcorpseQueryPending"q
+corpse_query_pending (RcorpseQueryPendingG
+
+own_corpse (2(.warcraftbuddy.actions.v1.RecoveryCorpseR	ownCorpse8
+ghost_movement_supported (RghostMovementSupported2
+corpse_query_revision (RcorpseQueryRevision%
+motion_pending (RmotionPending"⁄
+RecoveryCorpse
+guid (Rguid
+
+owner_guid (R	ownerGuid
+present (RpresentD
+position (2(.warcraftbuddy.actions.v1.ClientPositionRposition
+flags_known (R
+flagsKnown
+flags (Rflags"õ
+CorpseApproachRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+death_epoch (R
+deathEpoch<
+expected_position_revision (RexpectedPositionRevision2
+corpse_query_revision (RcorpseQueryRevision
+range_yards (R
+rangeYards
+stop (Rstop"å
+ReclaimCorpseRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+death_epoch (R
+deathEpoch<
+expected_position_revision (RexpectedPositionRevision
+corpse_guid (R
+corpseGuid8
+expected_corpse_revision (RexpectedCorpseRevision"q
 DeathActionRequest
 
 session_id (	R	sessionId
@@ -1506,7 +1541,7 @@ targetGuid"Ä
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror2±#
+error (	Rerror2˜$
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
@@ -1539,7 +1574,9 @@ targetGuid"Ä
 FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.State^
 ReleaseSpirit,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.State\
-QueryCorpse,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.StateC
+QueryCorpse,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.Stateb
+ApproachCorpse/.warcraftbuddy.actions.v1.CorpseApproachRequest.warcraftbuddy.actions.v1.State`
+ReclaimCorpse..warcraftbuddy.actions.v1.ReclaimCorpseRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
 ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
