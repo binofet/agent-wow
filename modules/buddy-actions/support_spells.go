@@ -22,6 +22,7 @@ type supportAttempt struct {
 	controlSlot        uint8
 	creation           *itemCreation
 	selfChannel        bool
+	genericSpell       bool
 	effectLogEligible  bool
 	cleanseAura        uint32
 	cleanseBaseline    map[uint8]observedBuffAura
@@ -280,7 +281,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
-		!((op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
+		!((op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -289,7 +290,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if len(p) < 6 || p[0] != op.count || binary.LittleEndian.Uint32(p[1:]) != op.view.SpellId {
 			return false, nil
 		}
-		if len(p) != 6 && op.view.Capability != pickLockCapability {
+		if len(p) != 6 && op.view.Capability != pickLockCapability && !op.genericSpell {
 			return true, bad
 		}
 		rejected = true
@@ -306,6 +307,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		guid, count, spell, off, e := castEvent(p)
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
+		}
+		if op.genericSpell {
+			return true, s.genericCastEventLocked(op, code, p, off)
 		}
 		if op.view.Capability == fearBreakCapability {
 			source, _, _ := readGUID(p)
@@ -380,7 +384,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_rejected_no_replay"
-		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
+		if (op.genericSpell || op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {
