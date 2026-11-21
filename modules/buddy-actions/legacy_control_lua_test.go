@@ -110,6 +110,11 @@ func TestLuaLegacyControlCancellationStopsOnceUntilPhysicalReconciliation(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	// On an unknown own STOP the raw server baseline may still say standing.
+	// Actions' explicit uncertainty must prevent that stale zero from retiring
+	// the Lua cancellation or authorizing a second STOP.
+	obs.Players["1"].Moving = false
+	obs.Navigation = &actionsv1.NavigationObservation{MotionUnconfirmed: true}
 	if _, err = host.Reload(context.Background(), commandPolicySource(t)+"\n-- uncertain STOP survives", host.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +123,7 @@ func TestLuaLegacyControlCancellationStopsOnceUntilPhysicalReconciliation(t *tes
 		t.Fatal("unknown STOP replayed or canceled intent forgotten", out)
 	}
 	obs.Players["1"].Moving = false
+	obs.Navigation.MotionUnconfirmed = false
 	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: sheepTarget, VisitId: 1, Phase: "stopped", Ready: true}
 	obs.Targets[target].Alive = proto.Bool(false)
 	out = commandDecision(t, host, observeCommandPolicy(t, host, obs), "2")
