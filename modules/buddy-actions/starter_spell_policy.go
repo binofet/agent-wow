@@ -135,6 +135,10 @@ func (s *Service) starterSpellFactsLocked(w *worldv1.SnapshotResponse, target *w
 }
 
 func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position, selection string) (map[string]any, map[uint32]spellcatalog.Spell, bool) {
+	if selection == coldridgePullSelection {
+		input, valid := s.starterColdridgePullFactsLocked(w)
+		return input, nil, valid
+	}
 	self := w.GetSelf()
 	if self == nil || self.Guid != s.selfGUID || s.selfGUID == 0 || s.sessionID == "" || target == nil || target.Guid == 0 || !self.Present || !self.MapKnown ||
 		!self.PositionKnown || !s.posKnown || !finite(s.pos) || !finite(targetPosition) ||
@@ -169,11 +173,14 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 	if !a || !b {
 		return nil, nil, false
 	}
+	if selection == coldridgeCasterSelection {
+		selfJSON["baseManaKnown"], selfJSON["baseMana"] = self.BaseManaKnown, self.BaseMana
+	}
 	spells := map[string]any{}
 	ranks := map[uint32]spellcatalog.Spell{}
 	for id, rank := range s.learnedContractsLocked() {
 		kind := rank.Capability().Kind
-		if (selection == "" && kind != spellcatalog.Damage && kind != spellcatalog.Heal ||
+		if (selection != starterWeaponSelection && kind != spellcatalog.Damage && kind != spellcatalog.Heal ||
 			selection == starterWeaponSelection && !instantWeaponStrike(rank)) || !casterRequirementsObserved(rank, self) {
 			continue
 		}
@@ -211,6 +218,11 @@ func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, targe
 		"target": targetJSON, "autoAttackKnown": s.state.KnownAutoAttack}
 	if selection != "" {
 		input["selection"] = selection
+	}
+	if selection == coldridgeCasterSelection {
+		input["pullRequired"] = !s.practicePullStarted
+	}
+	if selection == starterWeaponSelection {
 		weapon, valid := starterJSON(self.GetMainhand())
 		if !valid {
 			return nil, nil, false
@@ -236,6 +248,10 @@ func (s *Service) starterWeaponDecisionLocked(ctx context.Context, w *worldv1.Sn
 	return s.starterSelectionDecisionLocked(ctx, w, target, targetPosition, starterWeaponSelection)
 }
 
+func (s *Service) starterColdridgeSpellDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) starterSpellDecision {
+	return s.starterSelectionDecisionLocked(ctx, w, target, targetPosition, coldridgeCasterSelection)
+}
+
 func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position, selection string) starterSpellDecision {
 	input, ranks, known := s.starterSelectionFactsLocked(w, target, targetPosition, selection)
 	if !known {
@@ -250,12 +266,19 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err != nil || output == nil || len(output) != 2 || decoder.Decode(&selected) != nil ||
-		(selected.Kind != "cast" && selected.Kind != "melee" && selected.Kind != "wait") ||
+		(selected.Kind != "cast" && selected.Kind != "melee" && selected.Kind != "wait" &&
+			!(selection == coldridgeCasterSelection && selected.Kind == "pull_wait")) ||
 		(selected.Kind == "cast") != (selected.SpellID != 0) {
 		if s.starterSpells.lastError == "" {
 			s.starterSpells.lastError = "invalid starter spell decision"
 		}
 		return starterSpellDecision{}
+	}
+	// A first-pull refusal grants no offensive dispatch. Keep that decision
+	// about observed resources even if they recover before the read returns;
+	// the Coldridge caller still checks its original task binding before stop.
+	if selection == coldridgeCasterSelection && selected.Kind == "pull_wait" {
+		return starterSpellDecision{kind: selected.Kind, valid: true, facts: input, selection: selection}
 	}
 	rank := ranks[selected.SpellID]
 	if selected.Kind == "cast" && selection == starterWeaponSelection &&
@@ -264,7 +287,7 @@ func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1
 		s.starterSpells.lastError = "starter strike is not mechanically available"
 		return starterSpellDecision{}
 	}
-	if selected.Kind == "cast" && (rank.ID == 0 || s.starterSpells.uncertainStrike != nil || selection == "" && !s.encounterRankResourcesAvailable(rank, w.Self) ||
+	if selected.Kind == "cast" && (rank.ID == 0 || s.starterSpells.uncertainStrike != nil || selection != starterWeaponSelection && !s.encounterRankResourcesAvailable(rank, w.Self) ||
 		distance(s.pos, targetPosition) < rank.MinHostile || distance(s.pos, targetPosition) > rank.MaxHostile) {
 		s.starterSpells.lastError = "starter spell is not mechanically available"
 		return starterSpellDecision{}
