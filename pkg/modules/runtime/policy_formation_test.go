@@ -51,6 +51,7 @@ func TestPolicyFollowFormationReloadsInTheSameSession(t *testing.T) {
 	initialRevision := vm.Status().Revision
 	var goals []*actionsv1.FollowFormationRequest
 	var renewals []uint64
+	denyGoal := false
 	conn, err := grpc.NewClient("passthrough:///formation-fixture", grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, request, reply any, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 			md, _ := metadata.FromOutgoingContext(ctx)
@@ -64,6 +65,9 @@ func TestPolicyFollowFormationReloadsInTheSameSession(t *testing.T) {
 			case "/agentwow.policy.encounter.v1.Lease/Renew":
 				renewals = append(renewals, request.(*wrapperspb.UInt64Value).Value)
 			case actionsv1.BuddyActions_SetFollowFormation_FullMethodName:
+				if denyGoal {
+					return status.Error(codes.FailedPrecondition, "observed owner pose changed")
+				}
 				if modcb.IncomingPolicyEncounterVisit(incoming) != 7 {
 					t.Fatal("formation goal lost its current native visit witness", md)
 				}
@@ -163,6 +167,12 @@ func TestPolicyFollowFormationReloadsInTheSameSession(t *testing.T) {
 
 	current := policyEncounterObservation{visit: 7, sequence: sequence}
 	goal := second["followFormation"].(map[string]any)
+	denyGoal = true
+	if err := host.refreshFollowFormation(context.Background(), second, current); status.Code(err) != codes.FailedPrecondition ||
+		status.Convert(err).Message() != "observed owner pose changed" {
+		t.Fatalf("native formation denial was hidden: %v", err)
+	}
+	denyGoal = false
 	for _, field := range []string{"sessionId", "selfGuid", "visitId", "observationSequence"} {
 		bad := map[string]any{}
 		for name, value := range goal {
