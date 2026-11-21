@@ -29,6 +29,9 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 	f.world.Self.MaxPower = 128
 	if class == 4 {
 		f.world.Self.PowerType = 3
+		proof := s.weapons[2092]
+		proof.damageKnown, proof.damageMin, proof.damageMax = true, 20, 30
+		s.weapons[2092] = proof
 	}
 	f.world.SelfQuestLogKnown = true
 	f.world.SelfQuestLogRevision = 3
@@ -547,7 +550,7 @@ func TestFargodeepRogueRechecksActualEnergyAfterFacing(t *testing.T) {
 				}
 			}
 			s.Tick(context.Background())
-			if got := state(t, s); countPackets(f, opcode.CMSGAttackswing) != 1 || countPackets(f, opcode.CMSGCastSpell) != 0 || got.AssistAttempts != 0 {
+			if got := state(t, s); countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 || got.AssistAttempts != 0 {
 				t.Fatal(got, f.packets)
 			}
 		})

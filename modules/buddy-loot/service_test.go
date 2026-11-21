@@ -407,7 +407,7 @@ func TestMoneyRequestsAreEmptyAndCountOnlyServerNotifications(t *testing.T) {
 	}
 }
 
-func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
+func TestInventoryFailureRetainsOrdinaryIntentAndDoesNotRetry(t *testing.T) {
 	s, f, advance := rig(t)
 	openItem(t, s)
 	failure := make([]byte, 18)
@@ -416,7 +416,7 @@ func TestInventoryFailureDisablesAndDoesNotRetry(t *testing.T) {
 	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
 	tickCorpseLua(t, s)
-	if got := current(t, s); got.Enabled || got.LastInventoryError != 4 || got.ItemsStoredConfirmed != 0 {
+	if got := current(t, s); !got.Enabled || got.LastInventoryError != 4 || got.ItemsStoredConfirmed != 0 {
 		t.Fatalf("inventory error %+v", got)
 	}
 	count := len(f.packets)
@@ -459,8 +459,8 @@ func TestBusyOrLostLeasePreventsLootWrites(t *testing.T) {
 	openItem(t, s)
 	f.leaseOwner = "trade"
 	tickCorpseLua(t, s)
-	if current(t, s).Enabled || len(f.packets) != 2 {
-		t.Fatal("loot continued after lease loss")
+	if !current(t, s).Enabled || len(f.packets) != 2 || f.leaseOwner != "trade" {
+		t.Fatal("loot used another writer or discarded Lua intent after lease loss")
 	}
 }
 

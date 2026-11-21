@@ -128,7 +128,7 @@ func TestLootCapacityRechecksBeforeAutostoreAndPreservesPendingWrite(t *testing.
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 2, id: 123, count: 1}))
 	fillBackpack(f.world)
 	tickCapacityLoot(t, s, false)
-	if !current(t, s).InventoryPaused || len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
+	if !corpsePolicyPaused(t, s) || len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal("autostore ignored full carried inventory", current(t, s), f.packets)
 	}
 	s, f, _ = rig(t)
@@ -265,7 +265,7 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 				advance(time.Second)
 				tickCapacityLoot(t, s, gather)
 			}
-			if !current(t, s).InventoryPaused || f.world.InventoryRevision != writtenRevision || len(f.packets) != before {
+			if (gather && !current(t, s).InventoryPaused || !gather && !corpsePolicyPaused(t, s)) || f.world.InventoryRevision != writtenRevision || len(f.packets) != before {
 				t.Fatal("same cached free view retried rejected write", current(t, s), f.packets)
 			}
 			f.world.InventoryRevision++
@@ -283,7 +283,7 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 				// Lua then consumes its positively updated state on a fresh read.
 				tickCapacityLoot(t, s, false)
 			}
-			if current(t, s).InventoryPaused || len(f.packets) != before+1 {
+			if (gather && current(t, s).InventoryPaused || !gather && corpsePolicyPaused(t, s)) || len(f.packets) != before+1 {
 				t.Fatal("newer complete free view did not resume", current(t, s), f.packets)
 			}
 		})

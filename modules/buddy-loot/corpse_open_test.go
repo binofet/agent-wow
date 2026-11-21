@@ -171,13 +171,18 @@ func TestExactCorpseOpenDoesNotChooseCombatOrBagSpacePolicy(t *testing.T) {
 	}
 }
 
-func corpsePolicyVM(t *testing.T, sid string) *behavior.Session {
+func corpsePolicySource(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile("../../behaviors/corpse-loot.lua")
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "local loot=(function()\n" + string(raw) + "\nend)()\nreturn {on_event=loot.on_event,export_state=loot.export_state,import_state=loot.import_state,decide=function(f)return loot.decide(f,f.input.encounter,f.input.quiet,f.input.urgent)end}"
+	source := "local loot=(function()\n" + string(raw) + "\nend)()\nreturn {on_event=loot.on_event,export_state=loot.export_state,import_state=loot.import_state,decide=function(f)if f.input.testNow then f.clock={monotonicMs=f.input.testNow} end;return loot.decide(f,f.input.encounter,f.input.quiet,f.input.urgent)end}"
+	return source
+}
+func corpsePolicyVM(t *testing.T, sid string) *behavior.Session {
+	t.Helper()
+	source := corpsePolicySource(t)
 	vm, err := behavior.NewSessionWithOptions(context.Background(), sid, source, behavior.SessionOptions{ExecutionLimit: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +191,7 @@ func corpsePolicyVM(t *testing.T, sid string) *behavior.Session {
 	return vm
 }
 
-func corpsePolicyDecision(t *testing.T, vm *behavior.Session, o *lootv1.CorpseObservation, quiet, urgent bool) map[string]any {
+func corpsePolicyDecision(t *testing.T, vm *behavior.Session, o *lootv1.CorpseObservation, quiet, urgent bool, now ...int64) map[string]any {
 	t.Helper()
 	raw, err := protojson.Marshal(o)
 	if err != nil {
@@ -201,7 +206,11 @@ func corpsePolicyDecision(t *testing.T, vm *behavior.Session, o *lootv1.CorpseOb
 		t.Fatal(err)
 	}
 	n := strconv.FormatUint(seq, 10)
-	d, err := vm.Decide(context.Background(), map[string]any{"quiet": quiet, "urgent": urgent, "observationSequence": n, "observationSequences": map[string]any{"corpse_loot": n}, "encounter": map[string]any{"selfGuid": strconv.FormatUint(o.SelfGuid, 10), "visitId": "1"}})
+	input := map[string]any{"quiet": quiet, "urgent": urgent, "observationSequence": n, "observationSequences": map[string]any{"corpse_loot": n}, "encounter": map[string]any{"selfGuid": strconv.FormatUint(o.SelfGuid, 10), "visitId": "1"}}
+	if len(now) > 0 {
+		input["testNow"] = now[0]
+	}
+	d, err := vm.Decide(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +253,21 @@ func TestSharedLuaChoosesNearestCorpseAndApproachesBeforeCustody(t *testing.T) {
 // target policy. Their actual OPEN source now comes from the shared Lua module.
 var corpseTestVMs sync.Map
 
+func corpsePolicyPaused(t *testing.T, s *Service) bool {
+	t.Helper()
+	value, ok := corpseTestVMs.Load(s)
+	if !ok {
+		return false
+	}
+	snapshot, e := value.(*behavior.Session).State(context.Background())
+	if e != nil {
+		t.Fatal(e)
+	}
+	data, _ := snapshot.Checkpoint["data"].(map[string]any)
+	paused, _ := data["paused"].(map[string]any)
+	return len(paused) > 0
+}
+
 func tickCorpseLua(t *testing.T, s *Service) {
 	t.Helper()
 	if (s.token == "" || s.exactCorpse) && s.cleanup.source == 0 && !s.questGather {
@@ -257,7 +281,7 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				corpseTestVMs.Store(s, vm)
 				t.Cleanup(func() { corpseTestVMs.Delete(s) })
 			}
-			out := corpsePolicyDecision(t, vm, o, true, false)
+			out := corpsePolicyDecision(t, vm, o, true, false, s.now().UnixMilli())
 			if a, ok := out["action"].(map[string]any); ok && a["capability"] == "approach_target" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
@@ -268,7 +292,8 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				}
 				_ = s.invoke(context.Background(), "buddy-actions", "approach_target", r, &actionsv1.State{})
 			} else if ok && a["capability"] == "loot_close" {
-				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid})
+				retire, _ := a["retireUnconfirmed"].(bool)
+				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid, RetireUnconfirmed: retire})
 			} else if ok && a["capability"] == "loot_open" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
@@ -277,9 +302,21 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				if err = protojson.Unmarshal(raw, r); err != nil {
 					t.Fatal(err)
 				}
-				// The fixture authors a distinct exact intent for each observation.
-				r.RequestId = "test-" + strconv.FormatUint(uint64(len(s.corpseRequests)+1), 10)
 				_, _ = s.OpenCorpse(context.Background(), r)
+			} else if ok && (a["capability"] == "loot_money" || a["capability"] == "loot_slot") {
+				money := a["capability"] == "loot_money"
+				delete(a, "capability")
+				delete(a, "observationSequence")
+				raw, _ := json.Marshal(a)
+				r := &lootv1.TakeLootRequest{}
+				if err = protojson.Unmarshal(raw, r); err != nil {
+					t.Fatal(err)
+				}
+				if money {
+					_, _ = s.TakeMoney(context.Background(), r)
+				} else {
+					_, _ = s.TakeSlot(context.Background(), r)
+				}
 			}
 		}
 	}

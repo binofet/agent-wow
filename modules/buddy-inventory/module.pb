@@ -1595,7 +1595,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-µ\
+€]
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto"ƒ
 ItemRef
 bag (Rbag
@@ -1914,9 +1914,10 @@ item_entry (R	itemEntry
 request_id (	R	requestIdG
 	operation	 (2).warcraftbuddy.inventory.v1.ConsumableUseR	operation
 reason
- (	Rreason2ä
+ (	Rreason2¯
 BuddyInventoryE
-GetState.google.protobuf.Empty!.warcraftbuddy.inventory.v1.State^
+GetState.google.protobuf.Empty!.warcraftbuddy.inventory.v1.StateI
+RawGearFacts.google.protobuf.Empty!.warcraftbuddy.inventory.v1.State^
 Discover+.warcraftbuddy.inventory.v1.DiscoverRequest%.warcraftbuddy.inventory.v1.DiscoveryR
 Move'.warcraftbuddy.inventory.v1.MoveRequest!.warcraftbuddy.inventory.v1.StateT
 Equip(.warcraftbuddy.inventory.v1.EquipRequest!.warcraftbuddy.inventory.v1.State\

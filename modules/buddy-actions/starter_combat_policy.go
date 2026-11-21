@@ -87,6 +87,9 @@ func (s *Service) castStarterOffenseLocked(ctx context.Context, spell uint32, ta
 	if s.blockProtectedOffenseLocked(ctx, target) {
 		return false
 	}
+	if r := s.learnedContractsLocked()[spell]; instantWeaponStrike(r) {
+		return s.castStarterWeaponLocked(ctx, r, target)
+	}
 	rank := spellRankFor(spell)
 	if rank.id == 0 || !s.knownSpells[spell] {
 		s.state.Reason = "offensive_rank_not_in_known_spells"
@@ -191,11 +194,23 @@ func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.Snaps
 		s.stopAutoAttackLocked(ctx)
 		return true
 	}
-	if r := s.starterWeaponStrikeLocked(self, targetPosition); r.ID != 0 && r.Attrs[0]&0x20000 != 0 && s.stealthedLocked() {
-		s.castStarterOffenseLocked(ctx, r.ID, target.Guid, time.Second)
+	decision := s.starterWeaponDecisionLocked(ctx, w, target, targetPosition)
+	if !decision.valid || decision.kind == "wait" {
+		s.state.Reason = s.starterSpells.failure()
+		return true
+	}
+	if decision.kind == "cast" && decision.spell.Attrs[0]&0x20000 != 0 {
+		s.castStarterOffenseLocked(ctx, decision.spell.ID, target.Guid, time.Second)
 		return true
 	}
 	if s.autoTarget == 0 {
+		// A pure selection callback may have changed the solo mission facts.
+		if s.state.Practicing {
+			if _, _, _, valid := s.practiceWeaponAuthorityLocked(ctx, target.Guid); !valid {
+				s.state.Reason = "starter_strike_mission_observations_changed"
+				return false
+			}
+		}
 		if s.blockProtectedOffenseLocked(ctx, target.Guid) {
 			return false
 		}
@@ -210,18 +225,10 @@ func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.Snaps
 		s.state.Reason = "rogue_auto_attack_gcd_wait"
 		return true
 	}
-	if !s.state.KnownSinisterStrike {
+	if decision.kind == "cast" {
+		s.castStarterOffenseLocked(ctx, decision.spell.ID, target.Guid, time.Second)
+	} else {
 		s.state.Reason = "rogue_auto_attack_only"
-		return true
-	}
-	s.updateClassLocked()
-	if !self.PowerKnown || self.PowerType != 3 || self.Power < s.state.SinisterStrikeEnergyCost {
-		s.state.Reason = "rogue_auto_attack_waiting_for_energy"
-		return true
-	}
-	r := s.starterWeaponStrikeLocked(self, targetPosition)
-	if r.ID != 0 {
-		s.castStarterOffenseLocked(ctx, r.ID, target.Guid, time.Second)
 	}
 	return true
 }
@@ -270,34 +277,6 @@ func (s *Service) starterStealthApproachLocked(ctx context.Context, w *worldv1.S
 		return s.castSupportLocked(ctx, r, s.selfGUID, target)
 	}
 	return false
-}
-
-func (s *Service) starterWeaponStrikeLocked(p *worldv1.PlayerState, target position) spellcatalog.Spell {
-	var best spellcatalog.Spell
-	score := float64(-1)
-	for _, r := range s.candidatesLocked(spellcatalog.WeaponStrike) {
-		cost := spellCost(r, p)
-		if r.Family == sinisterStrike {
-			cost = uint64(s.state.SinisterStrikeEnergyCost)
-		}
-		if !p.PowerKnown || int32(p.PowerType) != r.Power || uint64(p.Power) < cost || s.now().Before(s.spellReady[r.ID]) || r.Behind && !behindEnemy(s.pos, target) || r.Attrs[0]&0x20000 != 0 && !s.stealthedLocked() {
-			continue
-		}
-		proof := s.weapons[p.GetMainhand().GetEntry()]
-		if r.ItemClass >= 0 && (!proof.valid || int32(proof.class) != r.ItemClass || proof.subclass >= 32 || r.SubclassMask != 0 && r.SubclassMask&(1<<proof.subclass) == 0 || proof.inventory >= 32 || r.InventoryMask != 0 && r.InventoryMask&(1<<proof.inventory) == 0) {
-			continue
-		}
-		amount := float64(0)
-		for _, e := range r.Effects {
-			if e.Kind != 80 {
-				amount += float64(e.Points) + float64(e.Dice)/2
-			}
-		}
-		if amount > score {
-			best, score = r, amount
-		}
-	}
-	return best
 }
 
 func (s *Service) starterRejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
