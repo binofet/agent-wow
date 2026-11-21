@@ -12,6 +12,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -90,7 +91,7 @@ func tickDeathLua(t *testing.T, s *Service) {
 			t.Fatal("unknown recovery action", action)
 		}
 		outcome := behavior.ActionSettledUnverified
-		if status.Code(callErr) == codes.FailedPrecondition {
+		if status.Code(callErr) == codes.FailedPrecondition || modcb.PacketWasNotDispatched(callErr) {
 			outcome = behavior.ActionNotDispatched
 		}
 		if callErr != nil && outcome != behavior.ActionNotDispatched {
