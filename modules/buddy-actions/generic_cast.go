@@ -35,6 +35,9 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	if token, supplied := modcb.IncomingPolicySpell(ctx); supplied && token == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid policy spell token")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireSelfChannelLocked()
