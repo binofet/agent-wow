@@ -222,6 +222,13 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 			r.state.Reason = "waiting_for_controllable_position_before_owned_stop"
 			return true
 		}
+		// Control reconciliation may have consumed a newer world observation.
+		// Do not rebase STOP to the pre-return pose or retire a newly dead body.
+		w = s.lastWorld
+		if !recoverySelf(w, s.selfGUID) || !w.Self.Alive {
+			r.state.Reason = "alive_observation_changed_before_owned_stop"
+			return true
+		}
 		s.refreshPositionLocked(w)
 		if stopped := s.stopLocked(ctx); !stopped || s.state.MotionUnconfirmed {
 			r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
