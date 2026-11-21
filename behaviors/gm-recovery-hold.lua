@@ -47,7 +47,7 @@ return function(policy)
             if fighting then return ordinary end
             local action=ordinary and ordinary.action
             local heal=action and action.capability=="heal"
-            if action and action.kind=="approach_target" then
+            if action and action.capability=="approach_target" then
                 local patient=((observation or {}).players or {})[tostring(action.targetGuid)]
                 heal=patient and patient.present==true and patient.aliveKnown==true and patient.alive==true
                     and patient.healthKnown==true and (tonumber(patient.health) or 0)<(tonumber(patient.maxHealth) or 0)

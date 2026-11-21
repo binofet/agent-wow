@@ -501,10 +501,10 @@ func TestGMRecoveryHoldDefendsObservedAttackAndHealsWhileTaskIsBlocked(t *testin
  return {decide=function(frame)
   local original={export_state=function()return {version=1,data={encounter={engaged={old=true}}}} end,
    import_state=function(s)return true end,on_event=function(e)return true end,
-   decide=function(f)return {phase="ordinary",action={kind="cast",capability=frame.heal and "heal" or "offense",targetGuid="3"}} end}
+   decide=function(f)return {phase="ordinary",action={kind="cast",capability=frame.approach and "approach_target" or frame.heal and "heal" or "offense",targetGuid="3"}} end}
   local held=wrap(original)
   held.on_event({kind="encounter_observation",sequence="7",value={sessionId="aw-current",visitId="1",
-   players={ ["3"]={guid="3",present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=frame.attacked==true,healthKnown=true,health=frame.heal and 50 or 100,maxHealth=100}},
+   players={ ["3"]={guid="3",present=true,aliveKnown=true,alive=true,combatKnown=true,inCombat=frame.attacked==true,healthKnown=true,health=(frame.heal or frame.approach) and 50 or 100,maxHealth=100}},
    targets={ ["99"]={guid="99",present=true,aliveKnown=true,alive=true}},
    engagement=frame.attackEvent and { ["99"]={victimGuid="3",ageMs=0}} or {}}})
   return held.decide({session_id="aw-current",cursor="7",pending={},input={kind="encounter",observationSequence="7"}})
@@ -513,7 +513,7 @@ func TestGMRecoveryHoldDefendsObservedAttackAndHealsWhileTaskIsBlocked(t *testin
 	if _, err = r.Reload(source, ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []map[string]any{{"attacked": true}, {"attackEvent": true}, {"heal": true}} {
+	for _, input := range []map[string]any{{"attacked": true}, {"attackEvent": true}, {"heal": true}, {"approach": true}} {
 		out, err := evaluateGMRecoveryPolicy(r, input)
 		if err != nil || out["action"] == nil || out["phase"] != "ordinary" {
 			t.Fatal("recovery disabled live defense/healing", input, out, err)
