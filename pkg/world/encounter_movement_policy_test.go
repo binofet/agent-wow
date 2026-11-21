@@ -91,6 +91,44 @@ func movementPolicy(t *testing.T) *behavior.Session {
 	return vm
 }
 
+func TestEncounterMovementRetriesRequestedProbeAfterGravityAndRouteRecheck(t *testing.T) {
+	vm, ctx := movementPolicy(t), context.Background()
+	obs := movementObservation()
+	obs["navigation"] = map[string]any{"bodyMovementSupported": true}
+	obs["targetMovement"] = map[string]any{"targetGuid": "99", "visitId": "1", "phase": "follow_navigation_unavailable"}
+	decide := func(sequence int) behavior.Decision {
+		t.Helper()
+		out, err := vm.Decide(ctx, map[string]any{"obs": obs, "target": "99", "sequence": strconv.Itoa(sequence), "options": map[string]any{"rangeYards": 4.5}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	decide(1)
+	decide(2)
+	first := decide(3)
+	probe := first.Output["action"].(map[string]any)
+	id, err := vm.ReserveAction(first)
+	if err != nil || probe["capability"] != "move_body" {
+		t.Fatal("missing initial probe", first, err)
+	}
+	_, err = vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: "move", ActionID: id, Outcome: behavior.ActionSettledUnverified,
+		Payload: map[string]any{"capability": "move_body", "sequence_id": "3", "phase": "body_settled_written", "effect_observed": false}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs["players"].(map[string]any)["5"].(map[string]any)["z"] = float64(-1)
+	for sequence := 4; sequence < 8; sequence++ {
+		if got := decide(sequence).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+			t.Fatal("settling skipped normal route recheck or fresh progress", sequence, got)
+		}
+	}
+	retry := decide(8).Output["action"].(map[string]any)
+	if retry["capability"] != "move_body" || retry["bearingRadians"] != probe["bearingRadians"] || retry["jump"] != probe["jump"] {
+		t.Fatal("gravity consumed the requested probe", probe, retry)
+	}
+}
+
 func movementObservation() map[string]any {
 	return map[string]any{"sessionId": "move", "selfGuid": "5", "visitId": "1", "mapId": float64(0), "activeMeleeTargetGuid": "99",
 		"players": map[string]any{"5": map[string]any{"present": true, "positionKnown": true, "x": float64(0), "y": float64(0), "z": float64(0)}},

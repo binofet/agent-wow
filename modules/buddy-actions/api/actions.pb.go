@@ -4942,7 +4942,8 @@ type BodyMovementRequest struct {
 	VisitId        uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
 	SequenceId     uint64                 `protobuf:"varint,4,opt,name=sequence_id,json=sequenceId,proto3" json:"sequence_id,omitempty"`
 	BearingRadians float32                `protobuf:"fixed32,5,opt,name=bearing_radians,json=bearingRadians,proto3" json:"bearing_radians,omitempty"`
-	// Ground input hold time. A jump always completes one normal ballistic hop.
+	// Positive ground input hold time, at most 500ms. An unsupported start settles
+	// under normal gravity before a subsequent input can step or jump.
 	DurationMs    uint32 `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	Jump          bool   `protobuf:"varint,7,opt,name=jump,proto3" json:"jump,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -5038,6 +5039,7 @@ type BodyMovementState struct {
 	X                 float32                `protobuf:"fixed32,6,opt,name=x,proto3" json:"x,omitempty"`
 	Y                 float32                `protobuf:"fixed32,7,opt,name=y,proto3" json:"y,omitempty"`
 	Z                 float32                `protobuf:"fixed32,8,opt,name=z,proto3" json:"z,omitempty"`
+	Detail            string                 `protobuf:"bytes,9,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -5126,6 +5128,13 @@ func (x *BodyMovementState) GetZ() float32 {
 		return x.Z
 	}
 	return 0
+}
+
+func (x *BodyMovementState) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
 }
 
 type NavigationObservation struct {
@@ -7598,7 +7607,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0fbearing_radians\x18\x05 \x01(\x02R\x0ebearingRadians\x12\x1f\n" +
 	"\vduration_ms\x18\x06 \x01(\rR\n" +
 	"durationMs\x12\x12\n" +
-	"\x04jump\x18\a \x01(\bR\x04jump\"\xeb\x01\n" +
+	"\x04jump\x18\a \x01(\bR\x04jump\"\x83\x02\n" +
 	"\x11BodyMovementState\x12\x1f\n" +
 	"\vsequence_id\x18\x01 \x01(\x04R\n" +
 	"sequenceId\x12\x19\n" +
@@ -7608,7 +7617,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x12position_estimated\x18\x05 \x01(\bR\x11positionEstimated\x12\f\n" +
 	"\x01x\x18\x06 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\a \x01(\x02R\x01y\x12\f\n" +
-	"\x01z\x18\b \x01(\x02R\x01z\"\xc8\x03\n" +
+	"\x01z\x18\b \x01(\x02R\x01z\x12\x16\n" +
+	"\x06detail\x18\t \x01(\tR\x06detail\"\xc8\x03\n" +
 	"\x15NavigationObservation\x126\n" +
 	"\x17body_movement_supported\x18\x01 \x01(\bR\x15bodyMovementSupported\x12\x1c\n" +
 	"\tfollowing\x18\x02 \x01(\bR\tfollowing\x12\x1d\n" +
