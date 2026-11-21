@@ -9,7 +9,8 @@ local function has(mask,bits)
     mask,bits=mask or 0,bits or 0
     while bits>0 do
         if bits%2==1 and mask%2==1 then return true end
-        bits,mask=math.floor(bits/2),math.floor(mask/2)
+        bits=(bits-bits%2)/2
+        mask=(mask-mask%2)/2
     end
     return false
 end
