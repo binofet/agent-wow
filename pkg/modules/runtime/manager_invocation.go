@@ -117,6 +117,12 @@ func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv
 	if req.GetModule() == modcb.FollowPolicyModule && req.GetMethod() == modcb.FollowPolicyMethod {
 		return m.readFollowDecision(ctx, callerName, req)
 	}
+	if req.GetModule() == modcb.StarterSpellPolicyModule && req.GetMethod() == modcb.StarterSpellPolicyMethod {
+		return m.readStarterSpellDecision(ctx, callerName, req)
+	}
+	if req.GetModule() == modcb.DisposalPolicyModule && req.GetMethod() == modcb.DisposalPolicyMethod {
+		return m.readDisposalDecision(ctx, callerName, req)
+	}
 	caller, ok := m.registry.Lookup(callerName)
 	if !ok || !caller.Requires(req.GetModule()) {
 		return nil, status.Error(codes.PermissionDenied, "target is not a directly declared dependency")

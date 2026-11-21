@@ -2,6 +2,9 @@
 -- combat target or interrupts autoswing. The encounter queue remains the one
 -- authority; positioning advances alongside its active attack.
 local M = {}
+-- Ordinary companion role policy. Temporary waits use encounter tasks and
+-- movement ownership, not the legacy Follow toggle. Every goal remains finite.
+M.follow_owner_by_default = true
 local formation_memory, formation_identity
 local function portal_revision(value)
     if type(value)~="string" or #value==0 or #value>20 or byte_at(value,1)==48 or
@@ -64,8 +67,10 @@ end
 function M.follow_formation(frame, obs, sequence)
     local nav = obs.navigation or {}
     local owner, self = nav.followOwner, (obs.players or {})[obs.selfGuid]
-    if nav.following ~= true then formation_memory, formation_identity = nil, nil end
-    if not encounter_formation or nav.followFormationSupported ~= true or nav.following ~= true or
+    local following = nav.following == true or
+        nav.following == false and M.follow_owner_by_default == true
+    if not following then formation_memory, formation_identity = nil, nil end
+    if not encounter_formation or nav.followFormationSupported ~= true or not following or
        not owner or not self or owner.present ~= true or owner.aliveKnown ~= true or owner.alive ~= true or
        owner.positionKnown ~= true or owner.mapKnown ~= true or owner.mapId ~= obs.mapId or
        owner.movementKnown ~= true or self.aliveKnown ~= true or self.alive ~= true or

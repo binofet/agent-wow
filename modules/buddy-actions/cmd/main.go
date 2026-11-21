@@ -72,6 +72,9 @@ func run() error {
 	if os.Getenv(modcb.FollowPolicyCallbackEnv) == "true" {
 		service.UseHostFollowPolicy()
 	}
+	if os.Getenv(modcb.StarterSpellPolicyCallbackEnv) == "true" {
+		service.UseHostStarterSpellPolicy()
+	}
 	if value := os.Getenv("BUDDY_HOST_SELF_MANA_OWNED"); value != "" {
 		owned, err := strconv.ParseBool(value)
 		if err != nil {

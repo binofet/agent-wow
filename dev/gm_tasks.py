@@ -23,6 +23,23 @@ _spec = importlib.util.spec_from_loader(_loader.name, _loader)
 runtime = importlib.util.module_from_spec(_spec)
 _loader.exec_module(runtime)
 
+# Rich world frames and four saved encounter sources use explicit host budgets.
+# Keep the shared runtime's defaults unchanged for unrelated task clients.
+SOURCE_BYTES=8*1024*1024
+VALUE_BYTES=8*1024*1024
+EXECUTION_MS=1000
+STATE_BYTES=64*1024*1024
+RPC_BYTES=6*SOURCE_BYTES+64*1024
+
+def task_rpc(url):
+    return runtime.RPC(url,request_bytes=RPC_BYTES,response_bytes=RPC_BYTES)
+
+def task_store(folder):
+    return runtime.Store(folder,max_bytes=STATE_BYTES)
+
+def task_bridge(binary,modules):
+    return runtime.Bridge(binary,modules,source_bytes=SOURCE_BYTES,value_bytes=VALUE_BYTES,execution_ms=EXECUTION_MS)
+
 INSTRUCTIONS = '''You can directly execute ordered GM tasks with development.gmTasks.
 For recovery/regroup requests, preserve the whole requested outcome, including destination,
 full health/resources and original roster. Write a goal JSON, inspect/edit the shared Lua
@@ -153,7 +170,7 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
     live=rpc.call('buddy-actions.status',{});sid=live.get('sessionId')
     if expected_session is not None and expected_session!=sid:
         raise ValueError('GM body changed; inspect the current session before acting')
-    with runtime.Store(writer_folder(root,sid,config).absolute()) as owner:
+    with task_store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
         transport=SessionTransport(rpc,config)
         if select_guid is not None:transport.select(select_guid,sid)
@@ -190,7 +207,7 @@ class Host:
         self.store,self.rpc,self.transport,self.bridge=store,rpc,transport,bridge
         self.goal,self.policy,self.hold=goal,Path(policy),Path(hold)
         self.sleep,self.clock=sleep,clock
-        self.member_rpcs={str(m['guid']):runtime.RPC(m['rpcUrl']) for m in goal.get('members',[]) if m.get('rpcUrl')}
+        self.member_rpcs={str(m['guid']):task_rpc(m['rpcUrl']) for m in goal.get('members',[]) if m.get('rpcUrl')}
         self.data=store.load() or dict(version=1,goal=goal,memory={},last=None,reservations={},holds={},phase='starting')
         if self.data.get('goal')!=goal:raise ValueError('state directory belongs to another explicit task goal')
         self.stopping=False
@@ -248,9 +265,12 @@ class Host:
             if rpc:member['landingRoute']=self.route(rpc,member,route_target)
         return dict(gm=gm,members=members,group=group,destinationPlayer=destination,threats=threats,destinationRoute=route,
             selection=selection,provenance=dict(observedAtUnixMs=int(self.clock()*1000),gmSessionId=actions['sessionId'],partyRevision=party.get('revision'),destination=self.goal.get('provenance')))
+    def hold_rpcs(self):
+        # The GM is a writer too, but is not part of the requested roster.
+        return dict({'87':self.rpc},**{g:r for g,r in self.member_rpcs.items() if g!='87'})
     def install_holds(self):
         wrapper=self.hold.read_text()
-        for guid,rpc in self.member_rpcs.items():
+        for guid,rpc in self.hold_rpcs().items():
             record=self.data['holds'].get(guid)
             if record and record.get('restored'):continue
             state=rpc.call('buddy-actions.status',{})
@@ -274,14 +294,31 @@ class Host:
                 record['heldRevision']=receipt['revision']
             else:raise ValueError('member policy changed independently:'+guid)
             self.persist()
-            if state.get('following') is True:rpc.call('buddy-actions.follow',dict(enabled=False))
+            stop=record.get('movementStop')
+            if stop and stop.get('outcome')!='written':raise ValueError('hold movement stop outcome is unconfirmed:'+guid)
+            if stop is None and (guid=='87' or state.get('following') is True):
+                # Follow(false) explicitly retires physical motion even when
+                # Following was already false. Reserve before the identity-less
+                # legacy RPC; an unknown return must never replay that write.
+                state=rpc.call('buddy-actions.status',{})
+                if str(state.get('selfGuid'))!=guid or state.get('sessionId')!=identity['sessionId']:
+                    raise ValueError('hold body session changed before stop:'+guid)
+                stop=dict(outcome='reserved');record['movementStop']=stop
+                record['followPaused']=True;self.persist()
+                try:
+                    result=rpc.call('buddy-actions.follow',dict(enabled=False))
+                    if str(result.get('selfGuid'))!=guid or result.get('sessionId')!=identity['sessionId'] or result.get('following') is True or result.get('moving') is True or result.get('motionUnconfirmed') is True or result.get('reason')!='follow_disabled':
+                        raise ValueError('explicit movement stop was not confirmed:'+guid)
+                    stop['outcome']='written'
+                except Exception as error:
+                    stop.update(outcome='unconfirmed',error=str(error));self.persist();raise
             record['followPaused']=True;self.persist()
     def restore_holds(self):
         errors=[]
         for guid,record in self.data.get('holds',{}).items():
             if record.get('restored'):continue
             try:
-                rpc=self.member_rpcs[guid];current=rpc.call('session.policy_source',record['identity'])
+                rpc=self.hold_rpcs()[guid];current=rpc.call('session.policy_source',record['identity'])
                 source_hash=hashlib.sha256(current['source'].encode()).hexdigest()
                 if current['source']!=record['source']:
                     if source_hash!=record.get('heldSourceSHA256'):raise ValueError('policy changed independently; original source was not overwritten')
@@ -353,7 +390,7 @@ def bindings(root=ROOT):
         try:
             identity=json.loads(path.read_text()).get('character_identity',{})
             if not identity.get('guid') or not identity.get('name') or not identity.get('rpc_url'):continue
-            runtime.RPC(identity['rpc_url'])
+            task_rpc(identity['rpc_url'])
             result.append({k:identity[k] for k in ('guid','name','rpc_url')})
         except (OSError,ValueError,KeyError):continue
     return result
@@ -362,7 +399,7 @@ def bindings(root=ROOT):
 
 def inspect_clients(rpc_url,root=ROOT,*,rpc_factory=None,timeout=2):
     """Read configured public clients in parallel; never choose a party/task."""
-    factory=rpc_factory or runtime.RPC
+    factory=rpc_factory or task_rpc
     configured=bindings(root)
     rows=[dict(guid='87',name='Lotharen',rpc_url=rpc_url)]
     rows.extend(row for row in configured if row['rpc_url']!=rpc_url)
@@ -393,9 +430,9 @@ def task_faults(root,guid,sid,url):
     """Observe only this GM body's stopped, resumable task; never run cleanup."""
     if str(guid)!='87' or not isinstance(sid,str) or not re.fullmatch(r'aw-[0-9]+',sid):return []
     try:
-        writer=runtime.Store(Path(root)/'data/gm-task-writers'/sid).load()
+        writer=task_store(Path(root)/'data/gm-task-writers'/sid).load()
         if not writer or writer.get('active') is not True or not writer.get('stateDir'):return []
-        store=runtime.Store(Path(writer['stateDir']))
+        store=task_store(Path(writer['stateDir']))
         data=store.load()
         if not data or store.held() or data.get('done') or not data.get('resumable') or not data.get('error'):return []
         identity=data.get('identity') or dict(sessionId=data.get('lastObservations',{}).get('gm',{}).get('sessionId'),guid='87',rpcUrl=url)
@@ -418,7 +455,7 @@ def task_faults(root,guid,sid,url):
 def task_identity_matches(guid,sid,url,fault):
     """The same repair turn may edit/resume and then observe its bound task."""
     try:
-        data=runtime.Store(Path(fault['taskStateDir'])).load()
+        data=task_store(Path(fault['taskStateDir'])).load()
         identity=data.get('identity') or dict(sessionId=data.get('lastObservations',{}).get('gm',{}).get('sessionId'),guid='87',rpcUrl=url)
         return str(guid)=='87' and identity==dict(sessionId=sid,guid='87',rpcUrl=url) and data.get('goal',{}).get('id')==fault.get('goalId')
     except (OSError,ValueError,TypeError,KeyError,runtime.Error):return False
@@ -446,7 +483,7 @@ def load_invocation(store):
 def launch_task(store,invocation):
     for field in ('rpcUrl','goal','transport','policy','policyBinary'):
         if not isinstance(invocation.get(field),str) or not invocation[field] or '\0' in invocation[field]:raise ValueError('task invocation unavailable: '+field)
-    runtime.RPC(invocation['rpcUrl'])
+    task_rpc(invocation['rpcUrl'])
     child=[sys.executable,'-B',str(ROOT/'dev/gm-task'),'run','--state-dir',str(store.folder),
         '--goal',invocation['goal'],'--transport',invocation['transport'],'--rpc-url',invocation['rpcUrl'],
         '--policy',invocation['policy'],'--policy-binary',invocation['policyBinary']]
@@ -458,7 +495,7 @@ def launch_task(store,invocation):
 
 
 def request_cancel(state_dir):
-    store=runtime.Store(Path(state_dir).absolute())
+    store=task_store(Path(state_dir).absolute())
     data=store.load()
     if data is None:raise ValueError('existing task state required for cancellation')
     store.write('cancel.json',b'{}\n')
@@ -472,7 +509,7 @@ def request_cancel(state_dir):
 
 
 def request_resume(state_dir):
-    store=runtime.Store(Path(state_dir).absolute());data=store.load()
+    store=task_store(Path(state_dir).absolute());data=store.load()
     if data is None:raise ValueError('existing task state required for resume')
     if store.held():return dict(started=False,stateDir=str(store.folder),completion='runner_already_active')
     if data.get('done') or data.get('cancelled') and data.get('cleanupComplete'):
@@ -498,7 +535,7 @@ def main(argv=None):
         if args.command=='select' and (not args.select_guid or args.gm_command):
             parser.error('select requires --select-guid and no command')
         config=json.loads(args.transport.read_text())
-        result=execute_command(runtime.RPC(args.rpc_url),config,args.gm_command,
+        result=execute_command(task_rpc(args.rpc_url),config,args.gm_command,
             select_guid=args.select_guid,expected_session=args.session_id)
         print(json.dumps(result));return 0
     if args.command=='inspect':
@@ -509,7 +546,7 @@ def main(argv=None):
     if args.state_dir is None:parser.error('this command requires --state-dir')
     if args.command=='start':
         if not args.goal or not args.transport or not args.rpc_url:parser.error('start requires --goal, --transport and --rpc-url')
-        with runtime.Store(args.state_dir.absolute()) as store:
+        with task_store(args.state_dir.absolute()) as store:
             invocation=invocation_from_args(args)
         # The child acquires the same exclusive task lock; release it first.
         print(json.dumps(launch_task(store,invocation)));return 0
@@ -524,14 +561,14 @@ def main(argv=None):
         print(json.dumps(public_status(data)));return 0
     if not args.goal or not args.transport or not args.rpc_url:parser.error('run requires --goal, --transport and --rpc-url')
     goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text())
-    with runtime.Store(args.state_dir.absolute()) as store:
+    with task_store(args.state_dir.absolute()) as store:
         store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
-        rpc=runtime.RPC(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
-        host=Host(store,rpc,SessionTransport(rpc,config),runtime.Bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
+        rpc=task_rpc(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
+        host=Host(store,rpc,SessionTransport(rpc,config),task_bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
         identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
         prior=host.data.get('identity')
         if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
-        with runtime.Store(writer_folder(ROOT,sid,config).absolute()) as owner:
+        with task_store(writer_folder(ROOT,sid,config).absolute()) as owner:
             owned=claim_writer(owner,store.folder)
             host.data['identity']=identity;host.persist()
             for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:setattr(host,'stopping',True))

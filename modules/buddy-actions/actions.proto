@@ -384,6 +384,7 @@ message State {
   BodyMovementState body_movement = 118;
   MovementOwnerState movement_owner = 119;
   TransportFailure last_transport_failure = 120;
+  PolicyDecisionFailure last_follow_policy_failure = 121;
 }
 // A failed attempted packet write is uncertainty, not a behavior cancellation.
 // Sequence identifies the attempted write; it does not confirm server receipt.
@@ -856,6 +857,15 @@ message EncounterControlCapability {
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
 message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
+
+// Last failed shared pure-policy read. Success does not erase this diagnostic.
+// Empty source_revision means the callback did not identify its attempted source.
+message PolicyDecisionFailure {
+  string mode = 1;
+  string stage = 2;
+  string source_revision = 3;
+  string error = 4;
+}
 
 service BuddyActions {
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
