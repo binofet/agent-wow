@@ -997,6 +997,34 @@ def evaluate_mission_repair(source,frame,source_limit,*,binary=None):
     return bridge.evaluate(wrapped,frame)
 
 
+PARTY_INVITATION_SOURCE = ROOT / 'behaviors/party-invitation.lua'
+
+
+def evaluate_party_invitation(party, owner_name, character_guid):
+    """Read the current choice policy without writing or reserving an invite."""
+    try:
+        host = task_runtime_module()
+    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError) as error:
+        raise ConversationError('Party invitation evaluator unavailable: ' + str(error)) from error
+    try:
+        source = PARTY_INVITATION_SOURCE.read_text()
+        binary = os.environ.get('BUDDY_LUAPOLICY_BINARY',
+                 os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT / 'data/bin/luapolicy'))
+        invite = party.get('pendingInvite')
+        decision_type = 'absent'
+        if isinstance(invite, dict) and 'decision' in invite:
+            value = invite['decision']
+            decision_type = {str: 'string', int: 'integer', bool: 'boolean', type(None): 'null'}.get(type(value), 'other')
+        decision = host.Bridge(binary, ROOT / 'modules').evaluate(source, {
+            'sessionId': party.get('sessionId'), 'selfGuid': str(character_guid),
+            'ownerName': owner_name, 'party': party, 'inviteDecisionType': decision_type})
+        if PARTY_INVITATION_SOURCE.read_text() != source:
+            raise ConversationError('Party invitation policy changed during evaluation')
+        return decision
+    except (host.Error, OSError, UnicodeError, ValueError, TypeError, RuntimeError) as error:
+        raise ConversationError('Party invitation policy unavailable: ' + str(error)) from error
+
+
 def named(text, name):
     return name.casefold() in {word.casefold() for word in re.findall(r"[^\W\d_]+", text)}
 
@@ -2337,6 +2365,7 @@ class BuddyControls:
         self.party_available = self.actions_available = False
         self.attempted_invites = set()
         self.party_session = ""
+        self.invitation_policy_fault = None
         self.events = []
         self.previous_group = None
         self.previous_cast_go = None
@@ -2368,15 +2397,33 @@ class BuddyControls:
                 self.events.append("server_confirmed_party_join")
             self.previous_group = in_group
             invitation = party.get("pendingInvite", {})
-            if isinstance(invitation, dict) and invitation.get("inviterName") == self.player_name:
+            self.invitation_policy_fault = None
+            if isinstance(invitation, dict) and invitation:
                 sequence = integer(invitation.get("sequence", "0"), "invite sequence")
                 key = (session, sequence)
-                if (sequence and invitation.get("decision", "PENDING") in ("PENDING", 0)
-                        and key not in self.attempted_invites and len(self.attempted_invites) < 256):
+                inviter = invitation.get("inviterName")
+                if sequence and key not in self.attempted_invites and len(self.attempted_invites) < 256:
+                    try:
+                        proposal = evaluate_party_invitation(party, self.player_name, self.character_guid)
+                    except ConversationError as error:
+                        self.invitation_policy_fault = str(error)[:512]
+                        proposal = None
+                    # Lua chooses whether to accept. The adapter binds only that
+                    # proposal to the actual observed invitation; native Accept
+                    # rechecks its session, sequence, name and pending decision.
+                    if (not isinstance(proposal, dict) or proposal.get("kind") != "accept" or
+                            set(proposal) != {"kind", "sessionId", "inviteSequence", "inviterName"} or
+                            proposal["sessionId"] != session or proposal["inviteSequence"] != str(sequence) or
+                            not isinstance(inviter, str) or not 1 <= len(inviter) <= 128 or
+                            proposal["inviterName"] != inviter):
+                        proposal = None
+                else:
+                    proposal = None
+                if proposal is not None:
                     # Reserve before writing: a timeout cannot cause a repeated accept.
                     self.attempted_invites.add(key)
                     result = self.rpc.call("buddy-party.accept", {
-                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": self.player_name})
+                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": inviter})
                     if result.get("transportWritten") is not True:
                         raise ConversationError("Party acceptance write was not confirmed")
         except ConversationError:
