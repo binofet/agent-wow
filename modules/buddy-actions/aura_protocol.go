@@ -171,6 +171,7 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 		}
 	}
 	s.confirmBuffLocked()
+	s.confirmCleanseLocked()
 }
 func (s *Service) pruneBuffAurasLocked(w *worldv1.SnapshotResponse) {
 	if w == nil || w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present {

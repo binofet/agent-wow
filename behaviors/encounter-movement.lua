@@ -25,7 +25,7 @@ function M.on_event(event)
         recovery.checkRoute = true
     end
     if (receipt.outcome == "failed" or receipt.outcome == "not_dispatched") and
-       (capability == "offense" or capability == "polymorph" or capability == "sap" or capability == "heal") and
+       (capability == "offense" or capability == "polymorph" or capability == "sap" or capability == "heal" or capability == "cleanse") and
        type(target) == "string" then
         invalid_target, checked_target = target, nil
     elseif capability == "approach_target" and receipt.outcome == "settled_unverified" and target == invalid_target then

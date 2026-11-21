@@ -1122,7 +1122,7 @@ func (s *Service) Tick(ctx context.Context) {
 	if !s.closed && s.acceptResurrectionLocked(ctx) {
 		return
 	}
-	if op := s.supportOp; op != nil && op.view.Phase == "waiting_server" && !s.now().Before(op.until) {
+	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
 		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
 			s.state.CastPending = false
@@ -1207,12 +1207,11 @@ func (s *Service) Tick(ctx context.Context) {
 		s.practiceTickLocked(ctx)
 		return
 	}
-	cleanse := s.potentialCleanseLocked()
 	healer := s.hasLearnedHealingLocked()
 	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
 	support := healer || resurrector
 	waterBreath := s.dueWaterBreathLocked()
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
 		s.stopLocked(ctx)
 		if nativeEncounter {
 			s.stopAutoAttackLocked(ctx)
@@ -1251,7 +1250,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1272,10 +1271,6 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if healer && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
-		s.lastStep = now
-		return
-	}
-	if cleanse && s.cleanseTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}

@@ -6,8 +6,13 @@ import (
 	"testing"
 	"time"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func cleanseRig(t *testing.T, classID uint32, spells ...uint32) (*Service, *fakeSession, func(time.Duration)) {
@@ -40,87 +45,127 @@ func dispelLog(target, caster uint64, cast, aura uint32) []byte {
 	return append(data, 0)
 }
 
-func TestAutoCleanseSelectsMatchingLearnedSpellFromExactHarmfulAura(t *testing.T) {
+func exactCleanseRequest(s *Service, target uint64, spell uint32) *actionsv1.CastCleanseRequest {
+	aura := s.buffAuras[target].slots[1]
+	return &actionsv1.CastCleanseRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: target,
+		SpellId: spell, AuraSlot: 1, AuraSpellId: aura.spell, AuraRevision: aura.revision}
+}
+
+func TestExactCleanseExecutesChosenRankAndRequiresObservedRemoval(t *testing.T) {
 	for _, tt := range []struct {
 		name                 string
 		class, debuff, spell uint32
-	}{
-		{"Mira removes curse", 8, 980, 475},
-		{"Arlen removes disease", 5, 3150, 528},
-		{"Arlen dispels magic", 5, 172, 527},
-	} {
+	}{{"curse", 8, 980, 475}, {"disease", 5, 3150, 528}, {"magic", 5, 172, 527}} {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			learned := []uint32{tt.spell}
-			if tt.class == 5 {
-				learned = []uint32{527, 528}
-			}
-			s, f, advance := cleanseRig(t, tt.class, learned...)
-			f.world.Owner.PlayerFlags = 2 // AFK party members still receive support.
-			send := func(code uint32, data []byte) {
-				t.Helper()
-				s.OnPacket(ctx, &modv1.WorldPacket{Opcode: code, Payload: data})
-			}
-			// A single-slot update can prove the positive presence of this
-			// harmful aura even before a full party aura snapshot arrives.
-			send(opcode.SMSGAuraUpdate, cleanseAuraPacket(ownerGUID, tt.debuff, true))
-			s.Tick(ctx)
-			if lastCast(f) != tt.spell || healingCastTarget(f) != ownerGUID ||
-				s.supportOp == nil || s.supportOp.view.EffectObserved {
-				t.Fatal("missing exact learned cleanse", state(t, s))
+			s, f, advance := cleanseRig(t, tt.class, tt.spell)
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, tt.debuff, true)})
+			request := exactCleanseRequest(s, ownerGUID, tt.spell)
+			if _, err := s.CastCleanse(context.Background(), request); err != nil || lastCast(f) != tt.spell || healingCastTarget(f) != ownerGUID {
+				t.Fatal("exact cleanse did not execute caller's choice", err, s.stateLocked())
 			}
 			goPacket := smiteEvent(true, s.castCount, ownerGUID)
 			_, _, _, offset, _ := castEvent(goPacket)
 			binary.LittleEndian.PutUint32(goPacket[offset-4:], tt.spell)
-			send(opcode.SMSGSpellGo, goPacket)
-			send(opcode.SMSGSpelldispellog, dispelLog(ownerGUID, 2, tt.spell, tt.debuff))
-			if !s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved {
-				t.Fatal("unrelated log or cast completion credited removal", s.supportOp.view.String())
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goPacket})
+			if s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "waiting_cleanse_effect" {
+				t.Fatal("GO invented a dispel effect", s.supportOp.view.String())
 			}
-			send(opcode.SMSGSpelldispellog, dispelLog(ownerGUID, s.selfGUID, tt.spell, tt.debuff))
-			if !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_effect" {
-				t.Fatal("missing correlated dispel receipt", s.supportOp.view.String())
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpelldispellog, Payload: dispelLog(ownerGUID, 2, tt.spell, tt.debuff)})
+			if s.supportOp.cleanseLogObserved {
+				t.Fatal("unrelated caster credited removal")
 			}
-			send(opcode.SMSGAuraUpdate, buffAura(ownerGUID, 0, 1, 0, 0))
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpelldispellog, Payload: dispelLog(ownerGUID, s.selfGUID, tt.spell, tt.debuff)})
+			if s.supportOp.view.EffectObserved {
+				t.Fatal("log without requested slot removal claimed exact effect")
+			}
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: buffAura(ownerGUID, 0, 1, 0, 0)})
+			if !s.supportOp.view.ServerCastGo || !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_effect" {
+				t.Fatal("missing correlated actual removal", s.supportOp.view.String())
+			}
 			advance(2 * time.Second)
-			s.Tick(ctx)
+			s.Tick(context.Background())
 			if countPackets(f, opcode.CMSGCastSpell) != 1 {
-				t.Fatal("removed aura was targeted again", state(t, s))
+				t.Fatal("native Tick chose another cleanse after exact execution")
 			}
 		})
 	}
 }
 
-func TestAutoCleanseSkipsNonmembersUnlearnedOrIneligibleAurasAndYieldsToHeal(t *testing.T) {
-	for _, mode := range []string{"nonmember", "unlearned", "positive", "wrong type", "expired", "out of range", "urgent heal"} {
+func TestExactCleanseRejectsStaleAuraAndInvalidRequestWithoutWrite(t *testing.T) {
+	for _, mode := range []string{"foreign session", "foreign body", "changed slot", "changed revision", "unlearned", "positive", "wrong type", "expired", "out of range", "unknown friendly", "silenced", "channel", "resources"} {
 		t.Run(mode, func(t *testing.T) {
-			ctx := context.Background()
-			s, f, advance := cleanseRig(t, 5, 528, lesserHeal)
-			debuff, harmful := uint32(3150), true
-			var spell uint32
+			s, f, advance := cleanseRig(t, 5, 528)
+			aura, harmful := uint32(3150), true
+			if mode == "positive" {
+				harmful = false
+			}
+			if mode == "wrong type" {
+				aura = 980
+			}
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, aura, harmful)})
+			request := exactCleanseRequest(s, ownerGUID, 528)
 			switch mode {
-			case "nonmember":
-				f.party = nil
+			case "foreign session":
+				request.SessionId = "other"
+			case "foreign body":
+				request.SelfGuid++
+			case "changed slot":
+				request.AuraSlot = 2
+			case "changed revision":
+				request.AuraRevision++
 			case "unlearned":
 				s.setKnownSpell(528, false)
-			case "positive":
-				harmful = false
-			case "wrong type":
-				debuff = 980
+			case "expired":
+				advance(16 * time.Second)
 			case "out of range":
 				f.world.Owner.X = 100
-			case "urgent heal":
-				f.world.Self.Health = 25
-				spell = lesserHeal
+			case "unknown friendly":
+				f.party = nil
+				f.world.Owner.RaceKnown = false
+			case "silenced":
+				f.world.Self.UnitFlags |= 0x2000
+			case "channel":
+				f.world.Self.ChannelSpellId = 12051
+			case "resources":
+				f.world.Self.Power = 0
 			}
-			s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, debuff, harmful)})
-			if mode == "expired" {
-				advance(16 * time.Second)
-			}
-			s.Tick(ctx)
-			if lastCast(f) != spell {
-				t.Fatal("incorrect cast selection", state(t, s), f.packets)
+			if _, err := s.CastCleanse(context.Background(), request); status.Code(err) != codes.FailedPrecondition || countPackets(f, opcode.CMSGCastSpell) != 0 {
+				t.Fatal("invalid exact cleanse wrote a game packet", mode, err, f.packets)
 			}
 		})
+	}
+}
+
+func TestExactCleanseKeepsInstantMovementAndAutoswingAndHonorsSelectedFriendly(t *testing.T) {
+	s, f, _ := cleanseRig(t, 5, 528)
+	f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+	other := proto.Clone(f.world.Owner).(*worldv1.PlayerState)
+	other.Guid, other.RaceKnown, other.RaceId = 9, true, 1
+	f.world.NearbyPlayers = append(f.world.NearbyPlayers, other)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, 3150, true)})
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(9, 3150, true)})
+	s.state.Moving, s.state.AutoAttacking, s.state.AutoAttackRequested = true, true, true
+	s.autoTarget = 0xf130000000000001
+	f.world.Self.MovementFlags = 1
+	if _, err := s.CastCleanse(context.Background(), exactCleanseRequest(s, 9, 528)); err != nil || healingCastTarget(f) != 9 {
+		t.Fatal("native harness replaced the selected friendly or rejected a legal instant", err)
+	}
+	if !s.state.AutoAttacking || !s.state.Moving || countPackets(f, opcode.CMSGAttackstop) != 0 || countPackets(f, opcode.MSGMoveStop) != 0 {
+		t.Fatal("instant cleanse authored a movement/swing policy", s.stateLocked(), f.packets)
+	}
+}
+
+func TestNativeTickAndEmergencyNeverChooseCleanse(t *testing.T) {
+	s, f, _ := cleanseRig(t, 5, 528)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, 3150, true)})
+	s.Tick(context.Background())
+	enemy := encounterTestCreature(0xf130000000000001, 0)
+	enemy.AttackVictimKnown, enemy.AttackVictimGuid, enemy.TargetKnown, enemy.TargetGuid = true, s.selfGUID, true, s.selfGUID
+	enemy.UnitFlags = 0x80000
+	f.world.NearbyCreatures = []*worldv1.CreatureState{enemy}
+	f.world.Self.UnitFlags |= 0x80000
+	s.emergencyDefenseLocked(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 0 || s.supportOp != nil {
+		t.Fatal("Go retained autonomous cleanse spell/patient selection", s.stateLocked(), f.packets)
 	}
 }

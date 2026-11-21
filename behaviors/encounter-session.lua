@@ -48,6 +48,7 @@ local function on_event(event)
     if transient_tasks and not transient_tasks.on_event(event) then return false end
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
+    if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
         observation = obs
@@ -80,7 +81,8 @@ end
 local function export_state()
     return {version=1, data={encounter=state, healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
-                            tasks=transient_tasks and transient_tasks.export_state()}}
+                            tasks=transient_tasks and transient_tasks.export_state(),
+                            support=support_policy and support_policy.export_state and support_policy.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -103,6 +105,7 @@ local function import_state(checkpoint)
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
+    if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -503,6 +506,19 @@ local function decide_encounter(frame)
                 (support.needsApproach or movement and movement.needs_position(support.targetGuid))
             out.action = needs_position and position_for(support.targetGuid, support.spellId) or proposal(obs, "heal", support.targetGuid, support.spellId)
         end
+        return out
+    end
+    -- Triage remains ahead of cleansing. Patient, harmful aura and learned
+    -- dispel priority are all selected by the same editable Lua support policy.
+    local cleanse = support_policy and support_policy.cleanse and support_policy.cleanse(obs)
+    if cleanse and cleanse.capability=="cleanse" and cleanse.sessionId==obs.sessionId and cleanse.selfGuid==obs.selfGuid and
+       guid(cleanse.targetGuid) and members[cleanse.targetGuid] and alive(players[cleanse.targetGuid]) and
+       usable_spell(obs,cleanse.spellId,"cleanse") then
+        task_support_action=true
+        local needs=cleanse.targetGuid~=obs.selfGuid and
+            (cleanse.needsApproach or movement and movement.needs_position(cleanse.targetGuid))
+        if needs then out.action=position_for(cleanse.targetGuid,cleanse.spellId)
+        else cleanse.needsApproach=nil;cleanse.observationSequence=state.sequence;out.action=cleanse end
         return out
     end
     local resurrection = support_policy and support_policy.resurrect(obs)
