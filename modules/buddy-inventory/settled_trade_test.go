@@ -14,7 +14,7 @@ func TestInventorySettledCompletedTradeDoesNotBlockFutureUpkeep(t *testing.T) {
 	complete := &tradev1.State{SessionId: "body", Phase: "COMPLETE", PartnerGuid: 3, PartnerAccepted: true,
 		AcceptTransportWritten: true, LastServerStatus: 8, Reason: "server_confirmed_trade_complete", CompletedTrades: 1,
 		PartnerItems: []*tradev1.Item{{Entry: 2962, Count: 1, MetadataKnown: true}}, JunkDisposalEnabled: true}
-	for _, phase := range []string{"IDLE", "COMPLETE"} {
+	for _, phase := range []string{"IDLE", "COMPLETE", "PEER_COMPLETE"} {
 		t.Run(phase, func(t *testing.T) {
 			s, f := fixtureInventory()
 			written := make(chan struct{})
@@ -22,6 +22,9 @@ func TestInventorySettledCompletedTradeDoesNotBlockFutureUpkeep(t *testing.T) {
 			f.trade = proto.Clone(complete).(*tradev1.State)
 			if phase == "IDLE" {
 				f.trade = &tradev1.State{SessionId: "body", Phase: "IDLE", JunkDisposalEnabled: true}
+			}
+			if phase == "PEER_COMPLETE" {
+				f.trade.PartnerGuid = 4
 			}
 			r := moveRequest(t, s)
 			st, err := s.Move(context.Background(), r)
@@ -54,7 +57,7 @@ func TestInventorySettledCompletedTradeDoesNotBlockFutureUpkeep(t *testing.T) {
 			case "count":
 				f.trade.CompletedTrades = 0
 			case "partner":
-				f.trade.PartnerGuid = 4
+				f.trade.PartnerGuid = 0xf130000000000004
 			case "phase":
 				f.trade.Phase = "ACCEPT_SENT"
 			case "junk-awaiting":

@@ -47,6 +47,8 @@ type Service struct {
 	lookup                      itemLookupRuntime
 	junkPending                 *tradev1.JunkDisposal
 	junkUntil, junkNext         time.Time
+	transferUntil               time.Time
+	transferRequests            map[string]*tradev1.TransferStepRequest
 }
 
 func NewService(session sessionAPI, sessionID string, selfGUID uint64) *Service {
@@ -79,7 +81,10 @@ func (s *Service) invoke(ctx context.Context, module, method string, input, outp
 	return response.Result.UnmarshalTo(output)
 }
 func (s *Service) send(ctx context.Context, op uint32, payload []byte) error {
-	if s.independent {
+	return s.sendTradePacket(ctx, op, payload, false)
+}
+func (s *Service) sendTradePacket(ctx context.Context, op uint32, payload []byte, exact bool) error {
+	if s.independent && !exact {
 		switch op {
 		case opcode.CMSGInitiateTrade, opcode.CMSGBeginTrade, opcode.CMSGBusyTrade, opcode.CMSGIgnoreTrade, opcode.CMSGAcceptTrade, opcode.CMSGUnacceptTrade, opcode.CMSGSetTradeItem, opcode.CMSGClearTradeItem, opcode.CMSGSetTradeGold:
 			return status.Error(codes.FailedPrecondition, "trading is disabled in independent mode")
@@ -101,6 +106,12 @@ func (s *Service) send(ctx context.Context, op uint32, payload []byte) error {
 func (s *Service) snapshot() *tradev1.State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if x := s.state.ExactTransfer; x != nil {
+		x.LeaseRemainingMs = 0
+		if left := s.transferUntil.Sub(s.now()); left > 0 {
+			x.LeaseRemainingMs = uint64(left.Milliseconds())
+		}
+	}
 	return proto.Clone(s.state).(*tradev1.State)
 }
 func (s *Service) boundLocked(session string, revision uint64) error {
@@ -237,7 +248,7 @@ func (s *Service) Open(ctx context.Context, r *tradev1.BoundRequest) (*tradev1.S
 	}
 	s.mu.Lock()
 	err := s.boundLocked(r.SessionId, r.Revision)
-	busy := active(s.state.Phase) || s.junkPending != nil
+	busy := active(s.state.Phase) || s.junkPending != nil || s.state.ExactTransfer != nil
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -279,7 +290,7 @@ func (s *Service) offerGate(session string, revision uint64) error {
 	if err := s.boundLocked(session, revision); err != nil {
 		return err
 	}
-	if s.state.Phase != "OPEN" || s.state.PartnerGuid != ownerGUID || s.state.AcceptTransportWritten {
+	if s.state.ExactTransfer != nil || s.state.Phase != "OPEN" || s.state.PartnerGuid != ownerGUID || s.state.AcceptTransportWritten {
 		return status.Error(codes.FailedPrecondition, "trade is not open for changes")
 	}
 	return nil
@@ -369,9 +380,17 @@ func (s *Service) OfferGold(ctx context.Context, r *tradev1.GoldRequest) (*trade
 	return s.snapshot(), nil
 }
 func (s *Service) cancelTrade(ctx context.Context) error {
-	err := s.send(ctx, opcode.CMSGCancelTrade, nil)
+	s.mu.Lock()
+	exact := s.state.ExactTransfer != nil
+	s.mu.Unlock()
+	return s.cancelTradeInput(ctx, exact)
+}
+func (s *Service) cancelTradeInput(ctx context.Context, exact bool) error {
+	err := s.sendTradePacket(ctx, opcode.CMSGCancelTrade, nil, exact)
 	s.mu.Lock()
 	s.state.Phase = "CANCEL_SENT"
+	s.state.ExactTransfer = nil
+	s.state.WaterGiftArmed = false
 	s.state.PartnerAccepted = false
 	s.state.Revision++
 	s.pendingBegin = false
@@ -414,6 +433,9 @@ func (s *Service) Tick(ctx context.Context) {
 	defer s.opMu.Unlock()
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	if s.exactTransferTick(call) {
+		return
+	}
 	s.mu.Lock()
 	phase, pendingBegin, pendingCancel, accepted, deadline := s.state.Phase, s.pendingBegin, s.pendingCancel, s.state.PartnerAccepted, s.deadline
 	s.mu.Unlock()
@@ -514,6 +536,9 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.exactTransferPacketLocked(p) {
+		return &emptypb.Empty{}, nil
+	}
 	switch p.Opcode {
 	case uint32(opcode.SMSGTradeStatus):
 		code, guid, err := parseStatus(p.Payload)

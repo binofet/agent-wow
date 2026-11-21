@@ -10,8 +10,7 @@ import time
 import urllib.request
 
 from party_bag_pressure import maintain_bag_pressure, safe_junk_entries
-from party_mana_drink import maintain_drink
-from party_mana_supply import maintain_supply
+from party_mana_supply import maintain_supply, runtime
 
 CASTERS = {8086: "1", 8087: "4", 8402: "8"}
 PARTY = {**CASTERS, 8088: "5"}
@@ -79,22 +78,20 @@ def run(state_dir):
 
         signal.signal(signal.SIGTERM, stopping)
         signal.signal(signal.SIGINT, stopping)
-        rests, supply, bag_attempts = {}, {}, {}
+        bag_attempts = {}
         previous, views = None, {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(PARTY)) as readers:
+        with runtime.Store(state_dir/'supply') as store, concurrent.futures.ThreadPoolExecutor(max_workers=len(PARTY)) as readers:
+            supply = store.load() or {}
             try:
                 while not stop:
                     views = {port: view for port, view in zip(PARTY, readers.map(observe, PARTY)) if view}
-                    drink = maintain_drink(rpc, views, rests)
-                    for port, view in views.items():
-                        view["mana_rest_active"] = port in rests
                     bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
                     try:
-                        water = maintain_supply(rpc, views, supply)
+                        water = maintain_supply(rpc, views, supply, persist=lambda: store.save(supply))
                     except (KeyError, OSError, ValueError, RPCError) as error:
                         water = str(error)
                     status = {
-                        "phases": {"drinking": drink, "water": water, "bag_space": bags},
+                        "phases": {"drinking": "attached_lua_policy", "water": water, "bag_space": bags},
                         "casters": {
                             str(port): {"mana": view["world"]["self"].get("power", 0),
                                         "max_mana": view["world"]["self"].get("maxPower", 0),
@@ -111,14 +108,13 @@ def run(state_dir):
                         previous = status
                     time.sleep(1)
             finally:
-                for port, view in views.items():
-                    if port in rests and rests[port].get("restoreFollow") is True:
-                        try:
-                            current = rpc(port, METHODS["actions"])
-                            if current.get("sessionId") == rests[port].get("sessionId"):
-                                rpc(port, "buddy-actions.follow", {"enabled": True})
-                        except (OSError, RPCError):
-                            pass
+                # Lua may propose exact cancellation; native finite custody
+                # also expires if this process dies before cleanup can run.
+                if views:
+                    try:
+                        maintain_supply(rpc, views, supply, persist=lambda: store.save(supply), cancelled=True)
+                    except Exception:
+                        pass
 
 
 if __name__ == "__main__":

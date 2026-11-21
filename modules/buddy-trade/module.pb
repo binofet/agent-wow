@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-‡&
+õ7
 modules/buddy-trade/trade.protowarcraftbuddy.trade.v1api/module/v1/session.protogoogle/protobuf/empty.proto"û
 Item
 slot (Rslot
@@ -39,7 +39,8 @@ SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 count (Rcount
 	item_guid (RitemGuid
 name (	Rname%
-metadata_known (RmetadataKnown"Ç	
+metadata_known (RmetadataKnown"’
+
 State
 
 session_id (	R	sessionId
@@ -71,7 +72,68 @@ limitation!
 last_junk_disposal (2$.warcraftbuddy.trade.v1.JunkDisposalRlastJunkDisposal2
 junk_stacks_destroyed (RjunkStacksDestroyed
 junk_reason (	R
-junkReason"’
+junkReason(
+water_gift_armed (RwaterGiftArmedL
+exact_transfer! (2%.warcraftbuddy.trade.v1.ExactTransferRexactTransferY
+last_transfer_step" (2+.warcraftbuddy.trade.v1.TransferStepReceiptRlastTransferStep"€
+TransferSource
+bag (Rbag
+slot (Rslot
+	item_guid (RitemGuid
+entry (Rentry
+count (Rcount-
+inventory_revision (RinventoryRevision+
+backpack_revision (RbackpackRevision"Û
+ExactTransfer%
+transaction_id (	RtransactionId!
+partner_guid (RpartnerGuid>
+source (2&.warcraftbuddy.trade.v1.TransferSourceRsource9
+	own_items (2.warcraftbuddy.trade.v1.ItemRownItemsA
+partner_items (2.warcraftbuddy.trade.v1.ItemRpartnerItems,
+lease_remaining_ms (RleaseRemainingMs,
+partner_view_known (RpartnerViewKnown"˘
+TransferStepReceipt%
+transaction_id (	RtransactionId
+
+request_id (	R	requestId
+mode (	Rmode/
+transport_attempted (RtransportAttempted+
+transport_written (RtransportWritten
+phase (	Rphase
+error (	Rerror"√
+TransferStepRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+revision (Rrevision%
+transaction_id (	RtransactionId
+
+request_id (	R	requestId!
+partner_guid (RpartnerGuid
+mode (	Rmode
+lease_ms (RleaseMs>
+source	 (2&.warcraftbuddy.trade.v1.TransferSourceRsource9
+	own_items
+ (2.warcraftbuddy.trade.v1.ItemRownItemsA
+partner_items (2.warcraftbuddy.trade.v1.ItemRpartnerItems"ù
+WaterGiftRequest
+
+session_id (	R	sessionId
+revision (Rrevision!
+partner_guid (RpartnerGuid
+
+item_entry (R	itemEntry
+
+item_count (R	itemCount,
+expected_item_guid (RexpectedItemGuid+
+backpack_revision (RbackpackRevision#
+backpack_slot (RbackpackSlot
+
+source_bag	 (R	sourceBag
+source_slot
+ (R
+sourceSlot-
+inventory_revision (RinventoryRevision"’
 JunkDisposal#
 backpack_slot (RbackpackSlot
 	item_guid (RitemGuid
@@ -167,9 +229,11 @@ sell_price (R	sellPrice'
 LookupItemsResponse
 
 session_id (	R	sessionId9
-items (2#.warcraftbuddy.trade.v1.ItemDetailsRitems2†
+items (2#.warcraftbuddy.trade.v1.ItemDetailsRitems2“
 
-BuddyTradeA
+BuddyTradeZ
+TransferStep+.warcraftbuddy.trade.v1.TransferStepRequest.warcraftbuddy.trade.v1.StateT
+	WaterGift(.warcraftbuddy.trade.v1.WaterGiftRequest.warcraftbuddy.trade.v1.StateA
 GetState.google.protobuf.Empty.warcraftbuddy.trade.v1.StateK
 Open$.warcraftbuddy.trade.v1.BoundRequest.warcraftbuddy.trade.v1.StateO
 	OfferItem#.warcraftbuddy.trade.v1.ItemRequest.warcraftbuddy.trade.v1.StateO

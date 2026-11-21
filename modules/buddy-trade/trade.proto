@@ -41,6 +41,44 @@ message State {
   JunkDisposal last_junk_disposal = 24;
   uint64 junk_stacks_destroyed = 25;
   string junk_reason = 26;
+  // Deployed private API prefix. This is an intent, never transfer proof.
+  bool water_gift_armed = 27;
+  // 31 is reserved by held rolls; 32 by raw item facts.
+  ExactTransfer exact_transfer = 33;
+  TransferStepReceipt last_transfer_step = 34;
+}
+message TransferSource {
+  uint32 bag = 1; uint32 slot = 2; uint64 item_guid = 3;
+  uint32 entry = 4; uint32 count = 5; uint64 inventory_revision = 6;
+  uint64 backpack_revision = 7;
+}
+message ExactTransfer {
+  string transaction_id = 1; uint64 partner_guid = 2;
+  TransferSource source = 3;
+  repeated Item own_items = 4; repeated Item partner_items = 5;
+  uint64 lease_remaining_ms = 6;
+  bool partner_view_known = 7;
+}
+message TransferStepReceipt {
+  string transaction_id = 1; string request_id = 2; string mode = 3;
+  bool transport_attempted = 4; bool transport_written = 5;
+  string phase = 6; string error = 7;
+}
+// Each call performs at most one normal trade input. Whole-stack quantity is
+// exact; splitting/recipient/rank/acceptance decisions remain in Lua.
+message TransferStepRequest {
+  string session_id = 1; uint64 self_guid = 2; uint64 revision = 3;
+  string transaction_id = 4; string request_id = 5; uint64 partner_guid = 6;
+  string mode = 7; uint32 lease_ms = 8; TransferSource source = 9;
+  repeated Item own_items = 10; repeated Item partner_items = 11;
+}
+// Preserve the actual deployed ABI. New source maps explicit terms into the
+// generic reservation; editable Lua must author all subsequent inputs.
+message WaterGiftRequest {
+  string session_id = 1; uint64 revision = 2; uint64 partner_guid = 3;
+  uint32 item_entry = 4; uint32 item_count = 5; uint64 expected_item_guid = 6;
+  uint64 backpack_revision = 7; uint32 backpack_slot = 8;
+  uint32 source_bag = 9; uint32 source_slot = 10; uint64 inventory_revision = 11;
 }
 message JunkDisposal {
   uint32 backpack_slot = 1;
@@ -123,6 +161,8 @@ message ItemDetails {
 message LookupItemsRequest { repeated uint32 item_ids = 1; }
 message LookupItemsResponse { string session_id = 1; repeated ItemDetails items = 2; }
 service BuddyTrade {
+  rpc TransferStep(TransferStepRequest) returns (State);
+  rpc WaterGift(WaterGiftRequest) returns (State);
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc Open(BoundRequest) returns (State);
   rpc OfferItem(ItemRequest) returns (State);

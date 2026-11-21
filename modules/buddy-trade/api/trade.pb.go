@@ -137,8 +137,13 @@ type State struct {
 	LastJunkDisposal    *JunkDisposal `protobuf:"bytes,24,opt,name=last_junk_disposal,json=lastJunkDisposal,proto3" json:"last_junk_disposal,omitempty"`
 	JunkStacksDestroyed uint64        `protobuf:"varint,25,opt,name=junk_stacks_destroyed,json=junkStacksDestroyed,proto3" json:"junk_stacks_destroyed,omitempty"`
 	JunkReason          string        `protobuf:"bytes,26,opt,name=junk_reason,json=junkReason,proto3" json:"junk_reason,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Deployed private API prefix. This is an intent, never transfer proof.
+	WaterGiftArmed bool `protobuf:"varint,27,opt,name=water_gift_armed,json=waterGiftArmed,proto3" json:"water_gift_armed,omitempty"`
+	// 31 is reserved by held rolls; 32 by raw item facts.
+	ExactTransfer    *ExactTransfer       `protobuf:"bytes,33,opt,name=exact_transfer,json=exactTransfer,proto3" json:"exact_transfer,omitempty"`
+	LastTransferStep *TransferStepReceipt `protobuf:"bytes,34,opt,name=last_transfer_step,json=lastTransferStep,proto3" json:"last_transfer_step,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *State) Reset() {
@@ -353,6 +358,555 @@ func (x *State) GetJunkReason() string {
 	return ""
 }
 
+func (x *State) GetWaterGiftArmed() bool {
+	if x != nil {
+		return x.WaterGiftArmed
+	}
+	return false
+}
+
+func (x *State) GetExactTransfer() *ExactTransfer {
+	if x != nil {
+		return x.ExactTransfer
+	}
+	return nil
+}
+
+func (x *State) GetLastTransferStep() *TransferStepReceipt {
+	if x != nil {
+		return x.LastTransferStep
+	}
+	return nil
+}
+
+type TransferSource struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Bag               uint32                 `protobuf:"varint,1,opt,name=bag,proto3" json:"bag,omitempty"`
+	Slot              uint32                 `protobuf:"varint,2,opt,name=slot,proto3" json:"slot,omitempty"`
+	ItemGuid          uint64                 `protobuf:"varint,3,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry             uint32                 `protobuf:"varint,4,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count             uint32                 `protobuf:"varint,5,opt,name=count,proto3" json:"count,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,6,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *TransferSource) Reset() {
+	*x = TransferSource{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferSource) ProtoMessage() {}
+
+func (x *TransferSource) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferSource.ProtoReflect.Descriptor instead.
+func (*TransferSource) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TransferSource) GetBag() uint32 {
+	if x != nil {
+		return x.Bag
+	}
+	return 0
+}
+
+func (x *TransferSource) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *TransferSource) GetItemGuid() uint64 {
+	if x != nil {
+		return x.ItemGuid
+	}
+	return 0
+}
+
+func (x *TransferSource) GetEntry() uint32 {
+	if x != nil {
+		return x.Entry
+	}
+	return 0
+}
+
+func (x *TransferSource) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *TransferSource) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *TransferSource) GetBackpackRevision() uint64 {
+	if x != nil {
+		return x.BackpackRevision
+	}
+	return 0
+}
+
+type ExactTransfer struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	TransactionId    string                 `protobuf:"bytes,1,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	PartnerGuid      uint64                 `protobuf:"varint,2,opt,name=partner_guid,json=partnerGuid,proto3" json:"partner_guid,omitempty"`
+	Source           *TransferSource        `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	OwnItems         []*Item                `protobuf:"bytes,4,rep,name=own_items,json=ownItems,proto3" json:"own_items,omitempty"`
+	PartnerItems     []*Item                `protobuf:"bytes,5,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
+	LeaseRemainingMs uint64                 `protobuf:"varint,6,opt,name=lease_remaining_ms,json=leaseRemainingMs,proto3" json:"lease_remaining_ms,omitempty"`
+	PartnerViewKnown bool                   `protobuf:"varint,7,opt,name=partner_view_known,json=partnerViewKnown,proto3" json:"partner_view_known,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ExactTransfer) Reset() {
+	*x = ExactTransfer{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExactTransfer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExactTransfer) ProtoMessage() {}
+
+func (x *ExactTransfer) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExactTransfer.ProtoReflect.Descriptor instead.
+func (*ExactTransfer) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ExactTransfer) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
+	}
+	return ""
+}
+
+func (x *ExactTransfer) GetPartnerGuid() uint64 {
+	if x != nil {
+		return x.PartnerGuid
+	}
+	return 0
+}
+
+func (x *ExactTransfer) GetSource() *TransferSource {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *ExactTransfer) GetOwnItems() []*Item {
+	if x != nil {
+		return x.OwnItems
+	}
+	return nil
+}
+
+func (x *ExactTransfer) GetPartnerItems() []*Item {
+	if x != nil {
+		return x.PartnerItems
+	}
+	return nil
+}
+
+func (x *ExactTransfer) GetLeaseRemainingMs() uint64 {
+	if x != nil {
+		return x.LeaseRemainingMs
+	}
+	return 0
+}
+
+func (x *ExactTransfer) GetPartnerViewKnown() bool {
+	if x != nil {
+		return x.PartnerViewKnown
+	}
+	return false
+}
+
+type TransferStepReceipt struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	TransactionId      string                 `protobuf:"bytes,1,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	RequestId          string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Mode               string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	TransportAttempted bool                   `protobuf:"varint,4,opt,name=transport_attempted,json=transportAttempted,proto3" json:"transport_attempted,omitempty"`
+	TransportWritten   bool                   `protobuf:"varint,5,opt,name=transport_written,json=transportWritten,proto3" json:"transport_written,omitempty"`
+	Phase              string                 `protobuf:"bytes,6,opt,name=phase,proto3" json:"phase,omitempty"`
+	Error              string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *TransferStepReceipt) Reset() {
+	*x = TransferStepReceipt{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferStepReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferStepReceipt) ProtoMessage() {}
+
+func (x *TransferStepReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferStepReceipt.ProtoReflect.Descriptor instead.
+func (*TransferStepReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TransferStepReceipt) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
+	}
+	return ""
+}
+
+func (x *TransferStepReceipt) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *TransferStepReceipt) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *TransferStepReceipt) GetTransportAttempted() bool {
+	if x != nil {
+		return x.TransportAttempted
+	}
+	return false
+}
+
+func (x *TransferStepReceipt) GetTransportWritten() bool {
+	if x != nil {
+		return x.TransportWritten
+	}
+	return false
+}
+
+func (x *TransferStepReceipt) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *TransferStepReceipt) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// Each call performs at most one normal trade input. Whole-stack quantity is
+// exact; splitting/recipient/rank/acceptance decisions remain in Lua.
+type TransferStepRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	Revision      uint64                 `protobuf:"varint,3,opt,name=revision,proto3" json:"revision,omitempty"`
+	TransactionId string                 `protobuf:"bytes,4,opt,name=transaction_id,json=transactionId,proto3" json:"transaction_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	PartnerGuid   uint64                 `protobuf:"varint,6,opt,name=partner_guid,json=partnerGuid,proto3" json:"partner_guid,omitempty"`
+	Mode          string                 `protobuf:"bytes,7,opt,name=mode,proto3" json:"mode,omitempty"`
+	LeaseMs       uint32                 `protobuf:"varint,8,opt,name=lease_ms,json=leaseMs,proto3" json:"lease_ms,omitempty"`
+	Source        *TransferSource        `protobuf:"bytes,9,opt,name=source,proto3" json:"source,omitempty"`
+	OwnItems      []*Item                `protobuf:"bytes,10,rep,name=own_items,json=ownItems,proto3" json:"own_items,omitempty"`
+	PartnerItems  []*Item                `protobuf:"bytes,11,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferStepRequest) Reset() {
+	*x = TransferStepRequest{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferStepRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferStepRequest) ProtoMessage() {}
+
+func (x *TransferStepRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferStepRequest.ProtoReflect.Descriptor instead.
+func (*TransferStepRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TransferStepRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TransferStepRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *TransferStepRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *TransferStepRequest) GetTransactionId() string {
+	if x != nil {
+		return x.TransactionId
+	}
+	return ""
+}
+
+func (x *TransferStepRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *TransferStepRequest) GetPartnerGuid() uint64 {
+	if x != nil {
+		return x.PartnerGuid
+	}
+	return 0
+}
+
+func (x *TransferStepRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *TransferStepRequest) GetLeaseMs() uint32 {
+	if x != nil {
+		return x.LeaseMs
+	}
+	return 0
+}
+
+func (x *TransferStepRequest) GetSource() *TransferSource {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *TransferStepRequest) GetOwnItems() []*Item {
+	if x != nil {
+		return x.OwnItems
+	}
+	return nil
+}
+
+func (x *TransferStepRequest) GetPartnerItems() []*Item {
+	if x != nil {
+		return x.PartnerItems
+	}
+	return nil
+}
+
+// Preserve the actual deployed ABI. New source maps explicit terms into the
+// generic reservation; editable Lua must author all subsequent inputs.
+type WaterGiftRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision          uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	PartnerGuid       uint64                 `protobuf:"varint,3,opt,name=partner_guid,json=partnerGuid,proto3" json:"partner_guid,omitempty"`
+	ItemEntry         uint32                 `protobuf:"varint,4,opt,name=item_entry,json=itemEntry,proto3" json:"item_entry,omitempty"`
+	ItemCount         uint32                 `protobuf:"varint,5,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`
+	ExpectedItemGuid  uint64                 `protobuf:"varint,6,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	BackpackSlot      uint32                 `protobuf:"varint,8,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	SourceBag         uint32                 `protobuf:"varint,9,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot        uint32                 `protobuf:"varint,10,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,11,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *WaterGiftRequest) Reset() {
+	*x = WaterGiftRequest{}
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaterGiftRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaterGiftRequest) ProtoMessage() {}
+
+func (x *WaterGiftRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WaterGiftRequest.ProtoReflect.Descriptor instead.
+func (*WaterGiftRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WaterGiftRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WaterGiftRequest) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetPartnerGuid() uint64 {
+	if x != nil {
+		return x.PartnerGuid
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetItemEntry() uint32 {
+	if x != nil {
+		return x.ItemEntry
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetItemCount() uint32 {
+	if x != nil {
+		return x.ItemCount
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetExpectedItemGuid() uint64 {
+	if x != nil {
+		return x.ExpectedItemGuid
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetBackpackRevision() uint64 {
+	if x != nil {
+		return x.BackpackRevision
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetBackpackSlot() uint32 {
+	if x != nil {
+		return x.BackpackSlot
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *WaterGiftRequest) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
 type JunkDisposal struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	BackpackSlot     uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
@@ -368,7 +922,7 @@ type JunkDisposal struct {
 
 func (x *JunkDisposal) Reset() {
 	*x = JunkDisposal{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -380,7 +934,7 @@ func (x *JunkDisposal) String() string {
 func (*JunkDisposal) ProtoMessage() {}
 
 func (x *JunkDisposal) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[2]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -393,7 +947,7 @@ func (x *JunkDisposal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JunkDisposal.ProtoReflect.Descriptor instead.
 func (*JunkDisposal) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{2}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *JunkDisposal) GetBackpackSlot() uint32 {
@@ -454,7 +1008,7 @@ type JunkToggle struct {
 
 func (x *JunkToggle) Reset() {
 	*x = JunkToggle{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -466,7 +1020,7 @@ func (x *JunkToggle) String() string {
 func (*JunkToggle) ProtoMessage() {}
 
 func (x *JunkToggle) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[3]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -479,7 +1033,7 @@ func (x *JunkToggle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JunkToggle.ProtoReflect.Descriptor instead.
 func (*JunkToggle) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{3}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *JunkToggle) GetEnabled() bool {
@@ -502,7 +1056,7 @@ type JunkRequest struct {
 
 func (x *JunkRequest) Reset() {
 	*x = JunkRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -514,7 +1068,7 @@ func (x *JunkRequest) String() string {
 func (*JunkRequest) ProtoMessage() {}
 
 func (x *JunkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[4]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -527,7 +1081,7 @@ func (x *JunkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JunkRequest.ProtoReflect.Descriptor instead.
 func (*JunkRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *JunkRequest) GetSessionId() string {
@@ -575,7 +1129,7 @@ type BoundRequest struct {
 
 func (x *BoundRequest) Reset() {
 	*x = BoundRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -587,7 +1141,7 @@ func (x *BoundRequest) String() string {
 func (*BoundRequest) ProtoMessage() {}
 
 func (x *BoundRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[5]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -600,7 +1154,7 @@ func (x *BoundRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BoundRequest.ProtoReflect.Descriptor instead.
 func (*BoundRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *BoundRequest) GetSessionId() string {
@@ -631,7 +1185,7 @@ type ItemRequest struct {
 
 func (x *ItemRequest) Reset() {
 	*x = ItemRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -643,7 +1197,7 @@ func (x *ItemRequest) String() string {
 func (*ItemRequest) ProtoMessage() {}
 
 func (x *ItemRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[6]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -656,7 +1210,7 @@ func (x *ItemRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ItemRequest.ProtoReflect.Descriptor instead.
 func (*ItemRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ItemRequest) GetSessionId() string {
@@ -712,7 +1266,7 @@ type GoldRequest struct {
 
 func (x *GoldRequest) Reset() {
 	*x = GoldRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -724,7 +1278,7 @@ func (x *GoldRequest) String() string {
 func (*GoldRequest) ProtoMessage() {}
 
 func (x *GoldRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[7]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -737,7 +1291,7 @@ func (x *GoldRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GoldRequest.ProtoReflect.Descriptor instead.
 func (*GoldRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GoldRequest) GetSessionId() string {
@@ -771,7 +1325,7 @@ type ItemStat struct {
 
 func (x *ItemStat) Reset() {
 	*x = ItemStat{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[8]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -783,7 +1337,7 @@ func (x *ItemStat) String() string {
 func (*ItemStat) ProtoMessage() {}
 
 func (x *ItemStat) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[8]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -796,7 +1350,7 @@ func (x *ItemStat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ItemStat.ProtoReflect.Descriptor instead.
 func (*ItemStat) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ItemStat) GetType() uint32 {
@@ -824,7 +1378,7 @@ type WeaponDamage struct {
 
 func (x *WeaponDamage) Reset() {
 	*x = WeaponDamage{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[9]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -836,7 +1390,7 @@ func (x *WeaponDamage) String() string {
 func (*WeaponDamage) ProtoMessage() {}
 
 func (x *WeaponDamage) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[9]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -849,7 +1403,7 @@ func (x *WeaponDamage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WeaponDamage.ProtoReflect.Descriptor instead.
 func (*WeaponDamage) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *WeaponDamage) GetMinimum() float32 {
@@ -891,7 +1445,7 @@ type RawTemplateFacts struct {
 
 func (x *RawTemplateFacts) Reset() {
 	*x = RawTemplateFacts{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[10]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -903,7 +1457,7 @@ func (x *RawTemplateFacts) String() string {
 func (*RawTemplateFacts) ProtoMessage() {}
 
 func (x *RawTemplateFacts) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[10]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -916,7 +1470,7 @@ func (x *RawTemplateFacts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RawTemplateFacts.ProtoReflect.Descriptor instead.
 func (*RawTemplateFacts) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RawTemplateFacts) GetContainerSlots() uint32 {
@@ -1018,7 +1572,7 @@ type ItemDetails struct {
 
 func (x *ItemDetails) Reset() {
 	*x = ItemDetails{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[11]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1030,7 +1584,7 @@ func (x *ItemDetails) String() string {
 func (*ItemDetails) ProtoMessage() {}
 
 func (x *ItemDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[11]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1043,7 +1597,7 @@ func (x *ItemDetails) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ItemDetails.ProtoReflect.Descriptor instead.
 func (*ItemDetails) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ItemDetails) GetItemId() uint32 {
@@ -1272,7 +1826,7 @@ type LookupItemsRequest struct {
 
 func (x *LookupItemsRequest) Reset() {
 	*x = LookupItemsRequest{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[12]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1284,7 +1838,7 @@ func (x *LookupItemsRequest) String() string {
 func (*LookupItemsRequest) ProtoMessage() {}
 
 func (x *LookupItemsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[12]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1297,7 +1851,7 @@ func (x *LookupItemsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupItemsRequest.ProtoReflect.Descriptor instead.
 func (*LookupItemsRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LookupItemsRequest) GetItemIds() []uint32 {
@@ -1317,7 +1871,7 @@ type LookupItemsResponse struct {
 
 func (x *LookupItemsResponse) Reset() {
 	*x = LookupItemsResponse{}
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[13]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1329,7 +1883,7 @@ func (x *LookupItemsResponse) String() string {
 func (*LookupItemsResponse) ProtoMessage() {}
 
 func (x *LookupItemsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_trade_trade_proto_msgTypes[13]
+	mi := &file_modules_buddy_trade_trade_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1342,7 +1896,7 @@ func (x *LookupItemsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupItemsResponse.ProtoReflect.Descriptor instead.
 func (*LookupItemsResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{13}
+	return file_modules_buddy_trade_trade_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *LookupItemsResponse) GetSessionId() string {
@@ -1370,7 +1924,8 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1b\n" +
 	"\titem_guid\x18\x04 \x01(\x04R\bitemGuid\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x82\t\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xd5\n" +
+	"\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -1402,7 +1957,68 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x12last_junk_disposal\x18\x18 \x01(\v2$.warcraftbuddy.trade.v1.JunkDisposalR\x10lastJunkDisposal\x122\n" +
 	"\x15junk_stacks_destroyed\x18\x19 \x01(\x04R\x13junkStacksDestroyed\x12\x1f\n" +
 	"\vjunk_reason\x18\x1a \x01(\tR\n" +
-	"junkReason\"\xd5\x01\n" +
+	"junkReason\x12(\n" +
+	"\x10water_gift_armed\x18\x1b \x01(\bR\x0ewaterGiftArmed\x12L\n" +
+	"\x0eexact_transfer\x18! \x01(\v2%.warcraftbuddy.trade.v1.ExactTransferR\rexactTransfer\x12Y\n" +
+	"\x12last_transfer_step\x18\" \x01(\v2+.warcraftbuddy.trade.v1.TransferStepReceiptR\x10lastTransferStep\"\xdb\x01\n" +
+	"\x0eTransferSource\x12\x10\n" +
+	"\x03bag\x18\x01 \x01(\rR\x03bag\x12\x12\n" +
+	"\x04slot\x18\x02 \x01(\rR\x04slot\x12\x1b\n" +
+	"\titem_guid\x18\x03 \x01(\x04R\bitemGuid\x12\x14\n" +
+	"\x05entry\x18\x04 \x01(\rR\x05entry\x12\x14\n" +
+	"\x05count\x18\x05 \x01(\rR\x05count\x12-\n" +
+	"\x12inventory_revision\x18\x06 \x01(\x04R\x11inventoryRevision\x12+\n" +
+	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\"\xf3\x02\n" +
+	"\rExactTransfer\x12%\n" +
+	"\x0etransaction_id\x18\x01 \x01(\tR\rtransactionId\x12!\n" +
+	"\fpartner_guid\x18\x02 \x01(\x04R\vpartnerGuid\x12>\n" +
+	"\x06source\x18\x03 \x01(\v2&.warcraftbuddy.trade.v1.TransferSourceR\x06source\x129\n" +
+	"\town_items\x18\x04 \x03(\v2\x1c.warcraftbuddy.trade.v1.ItemR\bownItems\x12A\n" +
+	"\rpartner_items\x18\x05 \x03(\v2\x1c.warcraftbuddy.trade.v1.ItemR\fpartnerItems\x12,\n" +
+	"\x12lease_remaining_ms\x18\x06 \x01(\x04R\x10leaseRemainingMs\x12,\n" +
+	"\x12partner_view_known\x18\a \x01(\bR\x10partnerViewKnown\"\xf9\x01\n" +
+	"\x13TransferStepReceipt\x12%\n" +
+	"\x0etransaction_id\x18\x01 \x01(\tR\rtransactionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12/\n" +
+	"\x13transport_attempted\x18\x04 \x01(\bR\x12transportAttempted\x12+\n" +
+	"\x11transport_written\x18\x05 \x01(\bR\x10transportWritten\x12\x14\n" +
+	"\x05phase\x18\x06 \x01(\tR\x05phase\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xc3\x03\n" +
+	"\x13TransferStepRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\x12%\n" +
+	"\x0etransaction_id\x18\x04 \x01(\tR\rtransactionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\x12!\n" +
+	"\fpartner_guid\x18\x06 \x01(\x04R\vpartnerGuid\x12\x12\n" +
+	"\x04mode\x18\a \x01(\tR\x04mode\x12\x19\n" +
+	"\blease_ms\x18\b \x01(\rR\aleaseMs\x12>\n" +
+	"\x06source\x18\t \x01(\v2&.warcraftbuddy.trade.v1.TransferSourceR\x06source\x129\n" +
+	"\town_items\x18\n" +
+	" \x03(\v2\x1c.warcraftbuddy.trade.v1.ItemR\bownItems\x12A\n" +
+	"\rpartner_items\x18\v \x03(\v2\x1c.warcraftbuddy.trade.v1.ItemR\fpartnerItems\"\x9d\x03\n" +
+	"\x10WaterGiftRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\brevision\x18\x02 \x01(\x04R\brevision\x12!\n" +
+	"\fpartner_guid\x18\x03 \x01(\x04R\vpartnerGuid\x12\x1d\n" +
+	"\n" +
+	"item_entry\x18\x04 \x01(\rR\titemEntry\x12\x1d\n" +
+	"\n" +
+	"item_count\x18\x05 \x01(\rR\titemCount\x12,\n" +
+	"\x12expected_item_guid\x18\x06 \x01(\x04R\x10expectedItemGuid\x12+\n" +
+	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\x12#\n" +
+	"\rbackpack_slot\x18\b \x01(\rR\fbackpackSlot\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18\t \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18\n" +
+	" \x01(\rR\n" +
+	"sourceSlot\x12-\n" +
+	"\x12inventory_revision\x18\v \x01(\x04R\x11inventoryRevision\"\xd5\x01\n" +
 	"\fJunkDisposal\x12#\n" +
 	"\rbackpack_slot\x18\x01 \x01(\rR\fbackpackSlot\x12\x1b\n" +
 	"\titem_guid\x18\x02 \x01(\x04R\bitemGuid\x12\x14\n" +
@@ -1498,9 +2114,11 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x13LookupItemsResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x129\n" +
-	"\x05items\x18\x02 \x03(\v2#.warcraftbuddy.trade.v1.ItemDetailsR\x05items2\xa0\x06\n" +
+	"\x05items\x18\x02 \x03(\v2#.warcraftbuddy.trade.v1.ItemDetailsR\x05items2\xd2\a\n" +
 	"\n" +
-	"BuddyTrade\x12A\n" +
+	"BuddyTrade\x12Z\n" +
+	"\fTransferStep\x12+.warcraftbuddy.trade.v1.TransferStepRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12T\n" +
+	"\tWaterGift\x12(.warcraftbuddy.trade.v1.WaterGiftRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12A\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1d.warcraftbuddy.trade.v1.State\x12K\n" +
 	"\x04Open\x12$.warcraftbuddy.trade.v1.BoundRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12O\n" +
 	"\tOfferItem\x12#.warcraftbuddy.trade.v1.ItemRequest\x1a\x1d.warcraftbuddy.trade.v1.State\x12O\n" +
@@ -1524,59 +2142,76 @@ func file_modules_buddy_trade_trade_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_trade_trade_proto_rawDescData
 }
 
-var file_modules_buddy_trade_trade_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_modules_buddy_trade_trade_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_modules_buddy_trade_trade_proto_goTypes = []any{
 	(*Item)(nil),                // 0: warcraftbuddy.trade.v1.Item
 	(*State)(nil),               // 1: warcraftbuddy.trade.v1.State
-	(*JunkDisposal)(nil),        // 2: warcraftbuddy.trade.v1.JunkDisposal
-	(*JunkToggle)(nil),          // 3: warcraftbuddy.trade.v1.JunkToggle
-	(*JunkRequest)(nil),         // 4: warcraftbuddy.trade.v1.JunkRequest
-	(*BoundRequest)(nil),        // 5: warcraftbuddy.trade.v1.BoundRequest
-	(*ItemRequest)(nil),         // 6: warcraftbuddy.trade.v1.ItemRequest
-	(*GoldRequest)(nil),         // 7: warcraftbuddy.trade.v1.GoldRequest
-	(*ItemStat)(nil),            // 8: warcraftbuddy.trade.v1.ItemStat
-	(*WeaponDamage)(nil),        // 9: warcraftbuddy.trade.v1.WeaponDamage
-	(*RawTemplateFacts)(nil),    // 10: warcraftbuddy.trade.v1.RawTemplateFacts
-	(*ItemDetails)(nil),         // 11: warcraftbuddy.trade.v1.ItemDetails
-	(*LookupItemsRequest)(nil),  // 12: warcraftbuddy.trade.v1.LookupItemsRequest
-	(*LookupItemsResponse)(nil), // 13: warcraftbuddy.trade.v1.LookupItemsResponse
-	(*emptypb.Empty)(nil),       // 14: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),      // 15: agentwow.module.v1.WorldPacket
+	(*TransferSource)(nil),      // 2: warcraftbuddy.trade.v1.TransferSource
+	(*ExactTransfer)(nil),       // 3: warcraftbuddy.trade.v1.ExactTransfer
+	(*TransferStepReceipt)(nil), // 4: warcraftbuddy.trade.v1.TransferStepReceipt
+	(*TransferStepRequest)(nil), // 5: warcraftbuddy.trade.v1.TransferStepRequest
+	(*WaterGiftRequest)(nil),    // 6: warcraftbuddy.trade.v1.WaterGiftRequest
+	(*JunkDisposal)(nil),        // 7: warcraftbuddy.trade.v1.JunkDisposal
+	(*JunkToggle)(nil),          // 8: warcraftbuddy.trade.v1.JunkToggle
+	(*JunkRequest)(nil),         // 9: warcraftbuddy.trade.v1.JunkRequest
+	(*BoundRequest)(nil),        // 10: warcraftbuddy.trade.v1.BoundRequest
+	(*ItemRequest)(nil),         // 11: warcraftbuddy.trade.v1.ItemRequest
+	(*GoldRequest)(nil),         // 12: warcraftbuddy.trade.v1.GoldRequest
+	(*ItemStat)(nil),            // 13: warcraftbuddy.trade.v1.ItemStat
+	(*WeaponDamage)(nil),        // 14: warcraftbuddy.trade.v1.WeaponDamage
+	(*RawTemplateFacts)(nil),    // 15: warcraftbuddy.trade.v1.RawTemplateFacts
+	(*ItemDetails)(nil),         // 16: warcraftbuddy.trade.v1.ItemDetails
+	(*LookupItemsRequest)(nil),  // 17: warcraftbuddy.trade.v1.LookupItemsRequest
+	(*LookupItemsResponse)(nil), // 18: warcraftbuddy.trade.v1.LookupItemsResponse
+	(*emptypb.Empty)(nil),       // 19: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),      // 20: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_trade_trade_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.trade.v1.State.own_requested_items:type_name -> warcraftbuddy.trade.v1.Item
 	0,  // 1: warcraftbuddy.trade.v1.State.partner_items:type_name -> warcraftbuddy.trade.v1.Item
 	0,  // 2: warcraftbuddy.trade.v1.State.backpack:type_name -> warcraftbuddy.trade.v1.Item
-	2,  // 3: warcraftbuddy.trade.v1.State.last_junk_disposal:type_name -> warcraftbuddy.trade.v1.JunkDisposal
-	8,  // 4: warcraftbuddy.trade.v1.ItemDetails.stats:type_name -> warcraftbuddy.trade.v1.ItemStat
-	9,  // 5: warcraftbuddy.trade.v1.ItemDetails.damages:type_name -> warcraftbuddy.trade.v1.WeaponDamage
-	10, // 6: warcraftbuddy.trade.v1.ItemDetails.raw_template_facts:type_name -> warcraftbuddy.trade.v1.RawTemplateFacts
-	11, // 7: warcraftbuddy.trade.v1.LookupItemsResponse.items:type_name -> warcraftbuddy.trade.v1.ItemDetails
-	14, // 8: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
-	5,  // 9: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	6,  // 10: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
-	7,  // 11: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
-	5,  // 12: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	3,  // 13: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:input_type -> warcraftbuddy.trade.v1.JunkToggle
-	4,  // 14: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:input_type -> warcraftbuddy.trade.v1.JunkRequest
-	12, // 15: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:input_type -> warcraftbuddy.trade.v1.LookupItemsRequest
-	15, // 16: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	14, // 17: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
-	1,  // 18: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 19: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 20: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 21: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 22: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 23: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 24: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:output_type -> warcraftbuddy.trade.v1.State
-	13, // 25: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:output_type -> warcraftbuddy.trade.v1.LookupItemsResponse
-	14, // 26: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
-	14, // 27: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	7,  // 3: warcraftbuddy.trade.v1.State.last_junk_disposal:type_name -> warcraftbuddy.trade.v1.JunkDisposal
+	3,  // 4: warcraftbuddy.trade.v1.State.exact_transfer:type_name -> warcraftbuddy.trade.v1.ExactTransfer
+	4,  // 5: warcraftbuddy.trade.v1.State.last_transfer_step:type_name -> warcraftbuddy.trade.v1.TransferStepReceipt
+	2,  // 6: warcraftbuddy.trade.v1.ExactTransfer.source:type_name -> warcraftbuddy.trade.v1.TransferSource
+	0,  // 7: warcraftbuddy.trade.v1.ExactTransfer.own_items:type_name -> warcraftbuddy.trade.v1.Item
+	0,  // 8: warcraftbuddy.trade.v1.ExactTransfer.partner_items:type_name -> warcraftbuddy.trade.v1.Item
+	2,  // 9: warcraftbuddy.trade.v1.TransferStepRequest.source:type_name -> warcraftbuddy.trade.v1.TransferSource
+	0,  // 10: warcraftbuddy.trade.v1.TransferStepRequest.own_items:type_name -> warcraftbuddy.trade.v1.Item
+	0,  // 11: warcraftbuddy.trade.v1.TransferStepRequest.partner_items:type_name -> warcraftbuddy.trade.v1.Item
+	13, // 12: warcraftbuddy.trade.v1.ItemDetails.stats:type_name -> warcraftbuddy.trade.v1.ItemStat
+	14, // 13: warcraftbuddy.trade.v1.ItemDetails.damages:type_name -> warcraftbuddy.trade.v1.WeaponDamage
+	15, // 14: warcraftbuddy.trade.v1.ItemDetails.raw_template_facts:type_name -> warcraftbuddy.trade.v1.RawTemplateFacts
+	16, // 15: warcraftbuddy.trade.v1.LookupItemsResponse.items:type_name -> warcraftbuddy.trade.v1.ItemDetails
+	5,  // 16: warcraftbuddy.trade.v1.BuddyTrade.TransferStep:input_type -> warcraftbuddy.trade.v1.TransferStepRequest
+	6,  // 17: warcraftbuddy.trade.v1.BuddyTrade.WaterGift:input_type -> warcraftbuddy.trade.v1.WaterGiftRequest
+	19, // 18: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
+	10, // 19: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	11, // 20: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
+	12, // 21: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
+	10, // 22: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	8,  // 23: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:input_type -> warcraftbuddy.trade.v1.JunkToggle
+	9,  // 24: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:input_type -> warcraftbuddy.trade.v1.JunkRequest
+	17, // 25: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:input_type -> warcraftbuddy.trade.v1.LookupItemsRequest
+	20, // 26: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	19, // 27: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
+	1,  // 28: warcraftbuddy.trade.v1.BuddyTrade.TransferStep:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 29: warcraftbuddy.trade.v1.BuddyTrade.WaterGift:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 30: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 31: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 32: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 33: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 34: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 35: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 36: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:output_type -> warcraftbuddy.trade.v1.State
+	18, // 37: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:output_type -> warcraftbuddy.trade.v1.LookupItemsResponse
+	19, // 38: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
+	19, // 39: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
+	28, // [28:40] is the sub-list for method output_type
+	16, // [16:28] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_trade_trade_proto_init() }
@@ -1590,7 +2225,7 @@ func file_modules_buddy_trade_trade_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_trade_trade_proto_rawDesc), len(file_modules_buddy_trade_trade_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

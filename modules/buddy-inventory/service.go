@@ -342,7 +342,7 @@ func settledTrade(t *tradev1.State) bool {
 		return false
 	}
 	if t.Phase == "COMPLETE" {
-		return t.PartnerGuid == 3 && t.LastServerStatus == 8 && t.Reason == "server_confirmed_trade_complete" && t.CompletedTrades > 0
+		return t.PartnerGuid != 0 && t.PartnerGuid>>48 == 0 && t.LastServerStatus == 8 && t.Reason == "server_confirmed_trade_complete" && t.CompletedTrades > 0
 	}
 	return t.Phase == "IDLE" && t.PartnerGuid == 0 && !t.PartnerAccepted && !t.AcceptTransportWritten && len(t.OwnRequestedItems) == 0 && len(t.PartnerItems) == 0 && t.OwnRequestedCopper == 0 && t.PartnerCopper == 0
 }
