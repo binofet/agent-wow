@@ -55,7 +55,7 @@ func TestPolicyDeathRecoveryRealNativePacketsReloadAndUnknownCustody(t *testing.
 	if receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["transport_written"] != true || receipt.Payload["effect_observed"] != false || len(cb.writes) != 1 || cb.writes[0].Opcode != opcode.CMSGRepopRequest || len(cb.writes[0].Payload) != 1 || cb.writes[0].Payload[0] != 0 {
 		t.Fatal(out, receipt, cb.writes)
 	}
-	if policy.vm.Status().Pending != 0 {
+	if receipt, _ := step(); receipt != nil || policy.vm.Status().Pending != 0 {
 		t.Fatal("release blocked unrelated global actions", policy.vm.Status())
 	}
 	if _, err := policy.vm.Reload(context.Background(), source+"\n-- same body edit", policy.vm.Status().Revision); err != nil {
@@ -75,13 +75,13 @@ func TestPolicyDeathRecoveryRealNativePacketsReloadAndUnknownCustody(t *testing.
 		return errors.New("unknown socket result")
 	}
 	receipt, out = step()
-	if receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["phase"] != "transport_unconfirmed_no_retry" || len(cb.writes) != 2 || cb.writes[1].Opcode != opcode.MSGCorpseQuery || len(cb.writes[1].Payload) != 0 || policy.vm.Status().Pending != 0 {
+	if receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified || receipt.Payload["phase"] != "transport_unconfirmed_no_retry" || len(cb.writes) != 2 || cb.writes[1].Opcode != opcode.MSGCorpseQuery || len(cb.writes[1].Payload) != 0 {
 		t.Fatal(out, receipt, cb.writes, policy.vm.Status())
 	}
 	if _, err := policy.vm.Reload(context.Background(), source+"\n-- unknown query retained", policy.vm.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, _ := step(); receipt != nil || len(cb.writes) != 2 {
+	if receipt, _ := step(); receipt != nil || len(cb.writes) != 2 || policy.vm.Status().Pending != 0 {
 		t.Fatal("unknown corpse query replayed", receipt, cb.writes)
 	}
 	state, _ := native.Status(context.Background(), &emptypb.Empty{})

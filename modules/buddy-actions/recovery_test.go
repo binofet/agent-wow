@@ -460,7 +460,9 @@ func TestRecoveryGhostFlagBeforeGraveyardPoseWaitsWithoutWrites(t *testing.T) {
 	f.world.Self.RunSpeed = 8.75
 	before := len(f.packets)
 	tickDeathLua(t, s)
-	if len(f.packets) != before || !s.recovery.state.Active || s.recovery.state.Phase != "waiting_for_actual_graveyard_position_baseline" {
+	// The corpse query has no coordinates and may proceed before the teleport.
+	// No STOP or route movement may use this intermediate ghost pose.
+	if len(f.packets) != before+1 || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.MSGMoveStop) != 0 || !s.recovery.state.Active || s.recovery.state.Phase != "waiting_for_actual_graveyard_position_baseline" {
 		t.Fatal("intermediate ghost prematurely stopped/retired", s.stateLocked())
 	}
 	ghostAt(f, 50)

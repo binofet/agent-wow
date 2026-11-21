@@ -20,7 +20,7 @@ func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) 
 	source := func(delay string) string {
 		return "local encounter_death_recovery=(function()\n" + string(module) + "\nend)()\nencounter_death_recovery.tuning.release_delay_ms=" + delay + "\n" + readEncounterBundle(t)
 	}
-	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source("0"), behavior.SessionOptions{ExecutionLimit: time.Second})
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source("60000"), behavior.SessionOptions{ExecutionLimit: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) 
 	obs := positionedHealObservation()
 	self := obs.Players[fallbackGUID(fallbackSelf)]
 	self.Alive = proto.Bool(false)
-	self.Health = 0
+	self.HealthKnown, self.Health, self.MaxHealth = true, 0, 100
 	obs.Recovery = &actionsv1.RecoveryState{Enabled: true, DeathEpoch: 1}
 	step := func() behavior.Decision {
 		t.Helper()
@@ -38,6 +38,12 @@ func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) 
 			t.Fatal(err)
 		}
 		return d
+	}
+	if delayed := step(); delayed.Output["action"] != nil {
+		t.Fatal("editable release delay ignored", delayed.Output)
+	}
+	if _, err = host.Reload(context.Background(), source("0"), host.Status().Revision); err != nil {
+		t.Fatal(err)
 	}
 	release := step()
 	action, _ := release.Output["action"].(map[string]any)
