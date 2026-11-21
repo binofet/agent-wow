@@ -16,7 +16,10 @@ import (
 )
 
 const (
-	MaxSourceBytes  = 128 * 1024
+	DefaultSourceBytes = 8 * 1024 * 1024
+	// MaxSourceBytes is retained for existing callers; it is the default, not
+	// a hard upper bound for runtimes configured with a different source budget.
+	MaxSourceBytes  = DefaultSourceBytes
 	MaxJSONBytes    = 32 * 1024
 	MaxDepth        = 16
 	MaxNodes        = 2048
@@ -50,13 +53,34 @@ type policy struct {
 // Each call creates a fresh VM: Lua globals, closures and input mutations cannot
 // survive an evaluation or affect the caller's input.
 type Runtime struct {
-	mu     sync.Mutex
-	active *policy
-	good   *policy
-	status Status
+	mu          sync.Mutex
+	active      *policy
+	good        *policy
+	status      Status
+	sourceBytes int
 }
 
 func New() *Runtime { return &Runtime{} }
+
+// SourceLimit resolves a configured source budget. Zero uses the explicit
+// default; the limit is independent of observation/checkpoint JSON limits.
+func SourceLimit(configured int) (int, error) {
+	if configured < 0 {
+		return 0, errors.New("policy source byte limit must not be negative")
+	}
+	if configured == 0 {
+		return DefaultSourceBytes, nil
+	}
+	return configured, nil
+}
+
+func NewWithSourceLimit(sourceBytes int) (*Runtime, error) {
+	limit, err := SourceLimit(sourceBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{sourceBytes: limit}, nil
+}
 
 func (r *Runtime) Status() Status {
 	r.mu.Lock()
@@ -74,8 +98,9 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	if expectedRevision != r.status.Revision {
 		return r.status.Revision, ErrRevisionConflict
 	}
-	if len(source) == 0 || len(source) > MaxSourceBytes {
-		return r.status.Revision, fmt.Errorf("policy source must contain 1..%d bytes", MaxSourceBytes)
+	limit, _ := SourceLimit(r.sourceBytes)
+	if len(source) == 0 || len(source) > limit {
+		return r.status.Revision, fmt.Errorf("policy source must contain 1..%d bytes (configured source budget)", limit)
 	}
 	revision := fmt.Sprintf("%x", sha256.Sum256([]byte(source)))
 	if revision == r.status.QuarantinedRevision {

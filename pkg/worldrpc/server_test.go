@@ -33,6 +33,50 @@ func (s *fakeSession) InvokeJSON(ctx context.Context, method string, params json
 	return json.RawMessage(`{"character":{"guid":"9007199254740993"}}`), nil
 }
 
+func TestPolicySourceEnvelopeFollowsConfiguredBudgetWithoutWideningGameRequests(t *testing.T) {
+	var observed string
+	session := &fakeSession{invoke: func(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		var view struct {
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(params, &view); err != nil {
+			return nil, err
+		}
+		observed = view.Source
+		return json.RawMessage(`{}`), nil
+	}}
+	large := strings.Repeat("x", 1200*1024)
+	request := func(handler http.Handler, method, source string) int {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": map[string]any{"source": source}})
+		r := httptest.NewRequest("POST", "http://127.0.0.1:8086/rpc", strings.NewReader(string(body)))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	handler, err := HandlerWithSourceLimit(session, 2*1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request(handler, "session.reload_policy", large); got != 200 || observed != large {
+		t.Fatal("source envelope retained obsolete1MiB cap", got, len(observed))
+	}
+	if got := request(handler, "buddy-actions.status", large); got != 413 {
+		t.Fatal("source budget widened ordinary protocol request", got)
+	}
+	small, err := HandlerWithSourceLimit(session, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request(small, "session.reload_policy", large); got != 413 {
+		t.Fatal("ignored explicitly configured small source envelope", got)
+	}
+	if _, err := HandlerWithSourceLimit(session, -1); err == nil {
+		t.Fatal("accepted negative source budget")
+	}
+}
+
 func TestRPCNullAndStructuredTargetError(t *testing.T) {
 	detail := structpb.NewStringValue("typed status detail")
 	target, err := status.New(codes.FailedPrecondition, "initializing").WithDetails(detail)

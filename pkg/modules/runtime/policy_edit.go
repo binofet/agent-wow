@@ -19,6 +19,14 @@ type policyEditRequest struct {
 	UseBuiltin       bool    `json:"useBuiltin"`
 }
 
+type policySourceResponse struct {
+	PolicySnapshot
+	Source           string `json:"source"`
+	SessionID        string `json:"sessionId"`
+	CharacterGUID    string `json:"characterGuid"`
+	SourceLimitBytes int    `json:"sourceLimitBytes"`
+}
+
 // The local control plane edits the existing host using the same revision
 // fence as native callers. It never starts a second policy or world session.
 func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMessage) (json.RawMessage, error) {
@@ -71,10 +79,6 @@ func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMe
 	if err != nil {
 		return fault(-32000, err)
 	}
-	return json.Marshal(struct {
-		PolicySnapshot
-		Source        string `json:"source"`
-		SessionID     string `json:"sessionId"`
-		CharacterGUID string `json:"characterGuid"`
-	}{PolicySnapshot: view, Source: host.source, SessionID: request.SessionID, CharacterGUID: request.CharacterGUID})
+	return json.Marshal(policySourceResponse{PolicySnapshot: view, Source: host.source, SessionID: request.SessionID,
+		CharacterGUID: request.CharacterGUID, SourceLimitBytes: host.vm.SourceLimitBytes()})
 }

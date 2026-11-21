@@ -19,7 +19,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 c = importlib.util.module_from_spec(spec)
 loader.exec_module(c)
 DATA = ROOT / 'data/self-edit'
-MAX_SOURCE_BYTES = 128 * 1024
+MAX_SOURCE_BYTES = 8 * 1024 * 1024  # Legacy hosts without a reflected source budget.
 
 
 def digest(source):
@@ -56,11 +56,11 @@ def read_source(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd) as source:
         info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE_BYTES:
-            raise c.ConversationError('Bounded regular Lua source required')
+        if not stat.S_ISREG(info.st_mode):
+            raise c.ConversationError('Regular Lua source required')
         result = source.read()
-    if not 0 < len(result.encode()) <= MAX_SOURCE_BYTES:
-        raise c.ConversationError(f'Lua source must contain 1..{MAX_SOURCE_BYTES} bytes')
+    if not result.encode():
+        raise c.ConversationError('Lua source must not be empty')
     return result
 
 
@@ -83,7 +83,7 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
     if command != 'show' and (not isinstance(expected, str)
                              or not re.fullmatch(r'|[a-f0-9]{64}', expected)):
         raise c.ConversationError('Explicit expected revision required')
-    if command == 'apply' and (not isinstance(source, str) or not 0 < len(source.encode()) <= MAX_SOURCE_BYTES):
+    if command == 'apply' and (not isinstance(source, str) or not source.encode()):
         raise c.ConversationError('Bounded Lua source required')
     root = Path(data) if data is not None else DATA
     private_folder(root)
@@ -112,6 +112,11 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
             session_policy = False
         else:
             session_policy = True
+        source_limit=before.get('sourceLimitBytes',MAX_SOURCE_BYTES)
+        if type(source_limit) is not int or source_limit<=0:
+            raise c.ConversationError('Host source budget unavailable')
+        if command=='apply' and len(source.encode())>source_limit:
+            raise c.ConversationError(f'Lua source must contain 1..{source_limit} bytes (configured host source budget)')
         revision = before.get('revision', '')
         if command == 'show':
             result = dict(characterGuid=str(guid), sessionId=sid, status=before,

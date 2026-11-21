@@ -27,12 +27,12 @@ type sessionVM struct {
 }
 
 func newSessionVM(parent context.Context, source string, executionLimit time.Duration) (*sessionVM, error) {
-	return newSessionVMWithValues(parent, source, executionLimit, DefaultSessionValueBytes)
+	return newSessionVMWithValues(parent, source, executionLimit, DefaultSessionValueBytes, DefaultSourceBytes)
 }
 
-func newSessionVMWithValues(parent context.Context, source string, executionLimit time.Duration, valueBytes int) (*sessionVM, error) {
-	if len(source) == 0 || len(source) > MaxSourceBytes {
-		return nil, fmt.Errorf("policy source must contain 1..%d bytes", MaxSourceBytes)
+func newSessionVMWithValues(parent context.Context, source string, executionLimit time.Duration, valueBytes, sourceBytes int) (*sessionVM, error) {
+	if len(source) == 0 || len(source) > sourceBytes {
+		return nil, fmt.Errorf("policy source must contain 1..%d bytes (configured source budget)", sourceBytes)
 	}
 	if err := parent.Err(); err != nil {
 		return nil, err

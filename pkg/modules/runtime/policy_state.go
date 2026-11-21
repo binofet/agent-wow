@@ -18,6 +18,7 @@ type policyStateRequest struct {
 }
 
 type policyStateResponse struct {
+	SourceLimitBytes int                        `json:"sourceLimitBytes"`
 	SessionID        string                     `json:"sessionId"`
 	CharacterGUID    string                     `json:"characterGuid"`
 	Revision         string                     `json:"revision"`
@@ -71,7 +72,8 @@ func (m *Manager) readPolicyState(ctx context.Context, params json.RawMessage) (
 		return fault(-32000, status.Error(codes.FailedPrecondition, "policy session identity changed"))
 	}
 	out := policyStateResponse{SessionID: request.SessionID, CharacterGUID: request.CharacterGUID,
-		Revision: view.Status.Revision, Generation: strconv.FormatUint(view.Status.Epoch, 10),
+		SourceLimitBytes: view.SourceLimitBytes,
+		Revision:         view.Status.Revision, Generation: strconv.FormatUint(view.Status.Epoch, 10),
 		Cursor: strconv.FormatUint(view.Status.Cursor, 10), BufferedEvents: view.Status.Buffered,
 		PendingActionIDs: make([]string, 0, len(view.Pending)), Swapping: view.Status.Swapping,
 		Fault: view.Status.Fault, Clock: view.Clock, Checkpoint: view.Checkpoint, LatestDecision: view.LatestDecision}
