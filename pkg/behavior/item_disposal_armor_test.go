@@ -181,6 +181,11 @@ func disposalArmorResult(t *testing.T, r *Runtime, frame map[string]any, want st
 			t.Fatalf("Evaluate failed after %s (configured limit %s); Runtime.Status=%+v: %v", elapsed, r.evaluationBudget(), status, err)
 		}
 	}
+	return disposalArmorAssertResult(t, out, want)
+}
+
+func disposalArmorAssertResult(t *testing.T, out map[string]any, want string) map[string]any {
+	t.Helper()
 	if want == "retained" {
 		if out["status"] != "keep" && out["status"] != "unknown" {
 			t.Fatalf("unsafe disposal: %v", out)
@@ -193,11 +198,35 @@ func disposalArmorResult(t *testing.T, r *Runtime, frame map[string]any, want st
 	}
 	return out
 }
+
+// Healthy semantic matrices use an explicit budget. Product-default execution
+// remains a separate proof through the artifact-validated production helper.
+func disposalArmorSemanticRuntime(t *testing.T, source string) *Runtime {
+	t.Helper()
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	load(t, r, source)
+	return r
+}
+
 func disposalArmorRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	r := New()
-	load(t, r, disposalArmorComposition(t, nil))
-	return r
+	return disposalArmorSemanticRuntime(t, disposalArmorComposition(t, nil))
+}
+
+func disposalArmorProductionResult(t *testing.T, source string, frame map[string]any, want string) map[string]any {
+	t.Helper()
+	before := disposalArmorClone(t, frame)
+	out, err := evaluateDisposalProduction(t, source, frame)
+	if err != nil {
+		t.Fatalf("production disposal evaluation failed: %v", err)
+	}
+	if !reflect.DeepEqual(frame, before) {
+		t.Fatal("production disposal evaluation mutated observed facts")
+	}
+	return disposalArmorAssertResult(t, out, want)
 }
 
 func TestItemDisposalArmorFullContextAndEqualWornArmor(t *testing.T) {
@@ -487,19 +516,20 @@ func TestItemDisposalArmorContextDoesNotChangeOtherModes(t *testing.T) {
 }
 
 func TestItemDisposalArmorUsesEditableActualSharedGearScorer(t *testing.T) {
-	r := New()
 	source := disposalArmorComposition(t, nil)
-	first := load(t, r, source)
+	r := disposalArmorSemanticRuntime(t, source)
+	first := r.Status().Revision
 	frame := disposalArmorFrame(t)
 	before := disposalArmorClone(t, frame)
 	disposalArmorResult(t, r, frame, "eligible")
-	edited := disposalArmorComposition(t, func(gear string) string {
+	editScorer := func(gear string) string {
 		const expression = "local gain=(candidate.armor or 0)-(current.armor or 0)"
 		if strings.Count(gear, expression) != 1 {
 			t.Fatal("real shared armor score expression changed")
 		}
 		return strings.Replace(gear, expression, expression+"-100", 1)
-	})
+	}
+	edited := disposalArmorComposition(t, editScorer)
 	second, err := r.Reload(edited, first)
 	if err != nil || second == first {
 		t.Fatal(second, err)
@@ -515,6 +545,14 @@ func TestItemDisposalArmorUsesEditableActualSharedGearScorer(t *testing.T) {
 	disposalArmorResult(t, r, frame, "eligible")
 	if !reflect.DeepEqual(frame, before) {
 		t.Fatal("scorer edit mutated observed facts")
+	}
+	// Product-default availability is independently required for the actual
+	// host source/frame, before and after this exact shared-scorer source edit.
+	productionSource, projected := disposalArmorHostProjection(t, frame)
+	disposalArmorProductionResult(t, productionSource, projected, "eligible")
+	disposalArmorProductionResult(t, editScorer(productionSource), projected, "keep")
+	if !reflect.DeepEqual(frame, before) {
+		t.Fatal("production scorer edit mutated the original observed facts")
 	}
 }
 
@@ -667,9 +705,7 @@ func disposalArmorHostProjection(t *testing.T, frame map[string]any) (string, ma
 
 func TestItemDisposalArmorActualHostProjectionFitsRealRuntime(t *testing.T) {
 	source, frame := disposalArmorHostProjection(t, disposalArmorFrame(t))
-	r := New()
-	load(t, r, source)
-	disposalArmorResult(t, r, frame, "eligible")
+	disposalArmorProductionResult(t, source, frame, "eligible")
 }
 
 func TestItemDisposalArmorRequiresPositiveMechanicalCoverageFacts(t *testing.T) {
@@ -688,16 +724,15 @@ return {decide=function(input)
  return out
 end}`
 	fresh := func(t *testing.T) *Runtime {
-		r := New()
-		load(t, r, refusalSource)
-		return r
+		return disposalArmorSemanticRuntime(t, refusalSource)
 	}
 	t.Run("complete_facts", func(t *testing.T) {
-		r := New()
-		load(t, r, source)
+		r := disposalArmorSemanticRuntime(t, source)
 		disposalArmorResult(t, r, frame, "eligible")
 	})
-	t.Run("missing_scorer", func(t *testing.T) { disposalArmorResult(t, disposalRuntime(t), frame, "unknown") })
+	t.Run("missing_scorer", func(t *testing.T) {
+		disposalArmorResult(t, disposalArmorSemanticRuntime(t, disposalPolicySource(t)), frame, "unknown")
+	})
 	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch", "questLogFrameKnown", "physicalDestinationsKnown"} {
 		for _, condition := range []struct {
 			name  string
@@ -794,7 +829,5 @@ func TestItemDisposalArmorFullCarriedLayoutAndOccupiedEquipmentBudget(t *testing
 	context["inventory"] = disposalArmorProtoJSON(t, inv, &inventoryv1.State{})
 	context["world"] = disposalArmorProtoJSON(t, world, &worldv1.SnapshotResponse{})
 	source, projected := disposalArmorHostProjection(t, frame)
-	r := New()
-	load(t, r, source)
-	disposalArmorResult(t, r, projected, "eligible")
+	disposalArmorProductionResult(t, source, projected, "eligible")
 }
