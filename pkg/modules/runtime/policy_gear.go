@@ -152,6 +152,18 @@ func (m *Manager) resolveLegacyGearComparison(ctx context.Context, inst *instanc
 	if err != nil {
 		return nil, err
 	}
+	if state.SessionId == selected.SessionId && selected.SessionId == catalog.SessionID && strconv.FormatUint(state.SelfGuid, 10) == catalog.CharacterGUID &&
+		state.Operation.GetKind() == "equip_gear" && state.Operation.GetRequestId() == selected.RequestId {
+		// An existing request's native idempotency check owns its receipt. No new
+		// comparison can reinterpret or replay a previously admitted mutation.
+		selected.RequireConservativeUpgrade = false
+		raw, _ = proto.Marshal(selected)
+		exact := request.ProtoReflect().Type().New().Interface()
+		if err = proto.Unmarshal(raw, exact); err != nil {
+			return nil, err
+		}
+		return exact, nil
+	}
 	if state.SessionId != selected.SessionId || selected.SessionId != catalog.SessionID || strconv.FormatUint(state.SelfGuid, 10) != catalog.CharacterGUID ||
 		selected.ExpectedRevision != state.Revision || selected.ExpectedInventoryRevision != state.InventoryRevision || selected.ExpectedEquipmentRevision != state.EquipmentRevision || state.GearContext.GetPolicyRevision() == "" {
 		return nil, status.Error(codes.FailedPrecondition, "current identity-bound Lua gear evaluation required")

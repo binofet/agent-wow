@@ -38,7 +38,7 @@ func runGearPolicy(t *testing.T, input map[string]any, comparison bool) map[stri
 	if comparison {
 		export = `function(frame)local f=frame.input;local upgrade,score,reason=gear.compare(f.candidate,f.source,f.current,f.equipped,f.options);return {upgrade=upgrade,score=score,reason=reason}end`
 	}
-	source := "local gear=(function()\n" + string(raw) + "\nend)()\nreturn {decide=" + export + "}"
+	source := "local gear=(function()\n" + string(raw) + "\nend)()\nreturn {on_event=function(e)return true end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end,decide=" + export + "}"
 	vm, err := behavior.NewSessionWithOptions(context.Background(), "gear-test", source, behavior.SessionOptions{ExecutionLimit: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,10 @@ func compareGearPolicy(t *testing.T, candidate itemMetadata, carried *worldv1.Ba
 func equipGearPolicyTest(t *testing.T, s *Service, r *inventoryv1.EquipGearRequest) (*inventoryv1.State, error) {
 	t.Helper()
 	exact := proto.Clone(r).(*inventoryv1.EquipGearRequest)
-	if r.RequireConservativeUpgrade {
+	s.mu.Lock()
+	prior := s.requests[r.RequestId]
+	s.mu.Unlock()
+	if r.RequireConservativeUpgrade && prior == nil {
 		state := stateGear(t, s)
 		approved := false
 		for _, row := range state.Items {
@@ -85,7 +88,7 @@ func equipGearPolicyTest(t *testing.T, s *Service, r *inventoryv1.EquipGearReque
 		if !approved {
 			return nil, status.Error(codes.FailedPrecondition, "current shared Lua did not select this upgrade")
 		}
-		exact.RequireConservativeUpgrade = false
 	}
+	exact.RequireConservativeUpgrade = false
 	return s.EquipGear(context.Background(), exact)
 }

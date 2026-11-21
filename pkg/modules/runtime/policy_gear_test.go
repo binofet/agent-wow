@@ -172,7 +172,7 @@ func TestGearReadDoesNotEnterAdvanceAndRejectsUnpublishedRevisionsAndReplacedBod
 }
 func TestGearEvaluatorFailureKeepsRawFactsReadableWithoutNativeFallback(t *testing.T) {
 	m, peer := gearInputManager(t)
-	source := `return {decide=function(f)return {}end,gear_evaluation=function(f)error("deliberate gear fault")end}`
+	source := `return {on_event=function(e)return true end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end,decide=function(f)return {}end,gear_evaluation=function(f)error("deliberate gear fault")end}`
 	host, err := m.StartPolicy(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
