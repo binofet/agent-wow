@@ -183,7 +183,7 @@ func packagedRollRegistry(t *testing.T) *moddisc.Registry {
 
 func packagedRollPolicy(t *testing.T, label string) string {
 	t.Helper()
-	source, err := os.ReadFile(filepath.Join("..", "..", "..", "behaviors", "loot-roll.lua"))
+	source, err := exec.Command("python3", "-B", filepath.Join("..", "..", "..", "dev", "encounter-bundle")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
