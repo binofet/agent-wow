@@ -55,18 +55,25 @@ func TestTrainerTravelAcceptsActualClassOrProfessionTeacherFlags(t *testing.T) {
 			// arrival evaluator's availability over a long journey. Default Lua
 			// arrival and verified movement are exercised in the journey tests.
 			f.world.NearbyCreatures[0].X = f.world.Self.X + 2
-			decisions := 0
-			s.formation.remote = func(input map[string]any) (bool, string, map[string]any, error) {
-				decisions++
-				travel, known := input["travel"].(map[string]any)
-				if input["mode"] != "service_travel" || !known || travel["kind"] != "trainer" || travel["routeKnown"] != false {
-					return true, "", nil, errors.New("nearby trainer admission unexpectedly required a route")
-				}
-				return true, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", map[string]any{"arrived": true}, nil
+			s.sessionID = f.party.SessionId
+			host := &followPolicySession{fakeSession: f, t: t, sid: s.sessionID, self: s.selfGUID, available: true,
+				fixedRevision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				fixedDecision: map[string]any{"arrived": true}}
+			s.session = host
+			s.UseHostFollowPolicy()
+			plans := 0
+			s.planMapPath = func(context.Context, string, uint32, position, position) ([]position, error) {
+				plans++
+				return nil, errors.New("nearby trainer admission unexpectedly required a route")
 			}
 			got, err := s.TravelTrainer(context.Background(), r)
-			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || got.NavAvailable || got.InteractionOwner != "training" || decisions != 1 || distance(s.pos, playerPosition(f.world.Self)) != 0 || len(f.packets) != 0 {
+			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || got.NavAvailable || got.InteractionOwner != "training" || plans != 0 || len(host.inputs) != 1 || distance(s.pos, playerPosition(f.world.Self)) != 0 || len(f.packets) != 0 {
 				t.Fatal(flags, got, err)
+			}
+			input := host.inputs[0]
+			travel, known := input["travel"].(map[string]any)
+			if input["mode"] != "service_travel" || !known || travel["kind"] != "trainer" || travel["routeKnown"] != false {
+				t.Fatal("nearby trainer admission did not consume the initial typed policy reply", input)
 			}
 		})
 	}
