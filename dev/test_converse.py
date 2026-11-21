@@ -38,7 +38,7 @@ class FakeRPC:
     def __init__(self, responses):
         self.responses, self.calls = list(responses), []
 
-    def call(self, method, params):
+    def call(self, method, params, timeout=None):
         self.calls.append((method, params))
         if method == "buddy-chat.poll":
             response = self.responses.pop(0)
@@ -73,7 +73,7 @@ class ConversationTests(unittest.TestCase):
 
     def test_owner_whisper_resurrects_joel_without_waiting_for_the_model(self):
         class RezRPC(FakeRPC):
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 if method == "buddy-world.snapshot":
                     self.calls.append((method, params))
                     return {"self": {"guid": "1"}, "owner": {"guid": "3", "present": True}}
@@ -177,7 +177,7 @@ class ConversationTests(unittest.TestCase):
         chest = dict(pose, entry=74447, typeKnown=True, gameObjectType=3, flagsKnown=True, flags=2, stateKnown=True, state=1)
 
         class ChestRPC(FakeRPC):
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 if method == "buddy-world.snapshot":
                     return {"self": dict(pose, guid="5"), "owner": dict(pose, guid="3", x=8),
                             "questObjects": [dict(chest, guid=str(base_guid+1), x=1),
@@ -305,7 +305,7 @@ class ConversationTests(unittest.TestCase):
     def test_ambiguous_chat_write_is_not_retried_and_no_emote_is_sent(self):
         rpc = FakeRPC([poll(), poll([message(1)]), poll(latest=1)])
         original = rpc.call
-        def call(method, params):
+        def call(method, params, timeout=None):
             if method == "buddy-chat.send":
                 rpc.calls.append((method, params))
                 raise converse.ConversationError("write timed out")
@@ -437,7 +437,7 @@ class ProfilePartyTests(unittest.TestCase):
         controls=Controls()
         rpc=FakeRPC(responses)
         original=rpc.call
-        def call(method,params):
+        def call(method,params,timeout=None):
             if method=="buddy-party.state":
                 rpc.calls.append((method,params))
                 return {"group":group}
@@ -598,7 +598,7 @@ class ControlsTests(unittest.TestCase):
         class RPC:
             def __init__(self):
                 self.calls = []
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 if method == "buddy-quests.discover":
                     return {"sessionId": "quest-session", "revision": "3", "nearby": [
@@ -648,7 +648,7 @@ class ControlsTests(unittest.TestCase):
         self.assertIn("isn't in the current offer", controls.execute("ACCEPT_QUEST", quest_id=999))
         controls, rpc = self.quest_controls()
         original = rpc.call
-        def call(method, params):
+        def call(method, params, timeout=None):
             if method == "buddy-quests.accept":
                 rpc.calls.append((method, params))
                 raise converse.ConversationError("ambiguous write")
@@ -661,7 +661,7 @@ class ControlsTests(unittest.TestCase):
         controls,rpc=self.quest_controls([{"questId":2158,"title":"Rest and Relaxation","available":True,"flags":flags}])
         original=rpc.call
         pending=list(polls)
-        def call(method,params):
+        def call(method,params,timeout=None):
             if method=="buddy-quests.state":
                 rpc.calls.append((method,params))
                 return pending.pop(0) if pending else {"sessionId":"quest-session","questLogKnown":True,"questLog":[]}
@@ -708,7 +708,7 @@ class ControlsTests(unittest.TestCase):
             controls,rpc=self.auto_quest(flags=0,polls=[{"sessionId":"replacement" if mode=="replacement" else "quest-session",
                 "questLogKnown":mode!="unknown","questLog":[{"questId":7 if mode=="wrong_quest" else 2158}]}])
             original=rpc.call
-            def call(method,params):
+            def call(method,params,timeout=None):
                 if method=="buddy-quests.accept":
                     rpc.calls.append((method,params))
                     raise converse.ConversationError("ambiguous write")
@@ -740,7 +740,7 @@ class ControlsTests(unittest.TestCase):
         class RPC:
             def __init__(self):
                 self.calls = []
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 return {"sessionId": "trade-session", "revision": "8", "phase": "OPEN", "backpackKnown": True,
                     "backpackRevision": "11", "backpack": backpack}
@@ -774,7 +774,7 @@ class ControlsTests(unittest.TestCase):
         class RPC:
             def __init__(self):
                 self.calls = []
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 raise converse.CapabilityUnavailable("not installed")
         rpc = RPC()
@@ -787,7 +787,7 @@ class ControlsTests(unittest.TestCase):
         class RPC:
             def __init__(self):
                 self.calls, self.session, self.name = [], "one", "Joel"
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 if method == "buddy-party.state":
                     return {"sessionId": self.session, "pendingInvite": {"sequence": "1", "inviterName": self.name}}
@@ -830,7 +830,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_rogue_uncertain_attack_stop_is_not_reported_stopped(self):
         class RPC:
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 return {"autoAttackUnconfirmed": True}
         controls = converse.BuddyControls(RPC(), character_class="rogue")
         controls.actions_available = True
@@ -971,7 +971,7 @@ class QuestJournalRewardTests(unittest.TestCase):
         offer.update(questId=21,title="Skirmish at Echo Ridge")
         offer.pop("expiresInMs")
         original=rpc.call
-        def call(method,params):
+        def call(method,params,timeout=None):
             if method=="buddy-quests.turn_in":
                 offer.update(expiresInMs="60000",revision="12",choices=[
                     {"index":0,"itemId":2691},{"index":4,"itemId":2186},{"index":2,"itemId":11192}])
@@ -997,7 +997,7 @@ class QuestJournalRewardTests(unittest.TestCase):
             elif mode=="failed":discovery["questLog"][0]["failed"]=True
             elif mode=="giver_changed":discovery["nearby"][0]["creature"]["guid"]="17379390962878382082"
             elif mode=="body_changed":discovery["sessionId"]="replacement"
-            def call(method,params):
+            def call(method,params,timeout=None):
                 result=original(method,params)
                 if mode.startswith("REWARD_") and method in ("buddy-quests.state","buddy-quests.discover"):
                     result=dict(result,lastReward={"questId":783,"status":mode})
@@ -1010,7 +1010,7 @@ class QuestJournalRewardTests(unittest.TestCase):
         controls,rpc,_,offer=self.reward_controls([{ "index":0,"itemId":2186}])
         offer.pop("expiresInMs")
         original=rpc.call
-        def call(method,params):
+        def call(method,params,timeout=None):
             if method=="buddy-quests.turn_in":offer.update(expiresInMs="60000",revision="12",choices=[{"index":0,"itemId":11192}])
             return original(method,params)
         rpc.call=call
@@ -1038,7 +1038,7 @@ class QuestJournalRewardTests(unittest.TestCase):
               {"itemId":60,"name":"Layered Tunic","available":True,"itemClass":4,"inventoryType":4,"allowableClass":0xffffffff,"allowableRace":0xffffffff},
               {"itemId":3070,"name":"Ensign Cloak","available":True,"itemClass":4,"subclass":1,"inventoryType":16,"armor":6,"allowableClass":0xffffffff,"allowableRace":0xffffffff}]
         original=rpc.call
-        def call(method,params):
+        def call(method,params,timeout=None):
             if method=="buddy-world.snapshot":
                 rpc.calls.append((method,params))
                 return {"self":{"guid":"1","classKnown":True,"classId":8,"levelKnown":True,"level":8}}
@@ -1055,7 +1055,7 @@ class QuestJournalRewardTests(unittest.TestCase):
         controls,rpc,_,_,_=self.lookup_controls()
         original=rpc.call
         reads=[]
-        def call(method,params):
+        def call(method,params,timeout=None):
             result=original(method,params)
             if method=="buddy-trade.lookup_items":
                 reads.append(params)
@@ -1088,7 +1088,7 @@ class QuestJournalRewardTests(unittest.TestCase):
             with self.subTest(change=change):
                 controls,rpc,_,offer,rows=self.lookup_controls()
                 original=rpc.call
-                def call(method,params):
+                def call(method,params,timeout=None):
                     result=original(method,params)
                     if method=="buddy-world.snapshot" and change=="foreign_character":result["self"]["guid"]="4"
                     if method=="buddy-trade.lookup_items":
@@ -1224,7 +1224,7 @@ class QuestApproachCandidateTests(unittest.TestCase):
         candidate["creature"]["x"] = 3
         class RPC:
             def __init__(self): self.calls = []
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 if method == "buddy-quests.discover":
                     return {"sessionId": "quests", "nearby": [candidate]}
@@ -1241,7 +1241,7 @@ class QuestApproachCandidateTests(unittest.TestCase):
         controls, rpc, discovery, _ = QuestJournalRewardTests().reward_controls()
         discovery["nearby"] = [candidate]
         original = rpc.call
-        def call(method, params):
+        def call(method, params, timeout=None):
             if method == "buddy-actions.status": return actions
             if method == "buddy-world.snapshot": return world
             return original(method, params)
@@ -1822,7 +1822,7 @@ class BoundaryTests(unittest.TestCase):
         corpse = str(0xf101000000000004)
         class RezRPC:
             def __init__(self): self.calls = []
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, params))
                 if method == 'buddy-world.snapshot':
                     return {'self': {'guid': '87'},
@@ -2010,7 +2010,7 @@ class NixSharedQuestTests(unittest.TestCase):
             members=[dict(guid=str(g), self=g == 8, online=True, name="Joel" if g == 3 else "Nixwick" if g == 8 else "Peer") for g in (1,3,4,5,8)]))
         class RPC:
             def __init__(self): self.calls=[]; self.state=state; self.party=party; self.timeout=False; self.tail=None; self.result_change=None
-            def call(self, method, params):
+            def call(self, method, params, timeout=None):
                 self.calls.append((method, copy.deepcopy(params)))
                 if method == "buddy-party.state":
                     out = copy.deepcopy(self.party)
@@ -2274,7 +2274,7 @@ class DeveloperBrainTests(unittest.TestCase):
             def generate(history,state=None):brain.state=state;return old_generate(history,state)
             brain.generate=generate
             old_call=rpc.call
-            def call(method,params):
+            def call(method,params,timeout=None):
                 result=old_call(method,params)
                 if method=='buddy-party.state':result=dict(result,sessionId=fresh_sid)
                 return result
@@ -2535,7 +2535,7 @@ class MissionFaultRepairTests(unittest.TestCase):
         self.statuses=[]
         self.loop=self.new_loop()
         call=self.rpc.call;self.polls=[]
-        def rpc(method,params):
+        def rpc(method,params,timeout=None):
             if method=='buddy-chat.poll':
                 self.rpc.calls.append((method,params))
                 return self.polls.pop(0) if self.polls else poll(sessionId='chat-current')
@@ -2864,6 +2864,144 @@ class SharedRoleConfigurationTests(unittest.TestCase):
         for bad in ('','light','HIGH','high\n','high" -c injected=true',False,1,[]):
             with self.assertRaises(converse.ConversationError):
                 converse.codex_command('codex','repo','s','o',reasoning_effort=bad)
+
+
+class AttachedPolicyRepairTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.repo=Path(self.temporary.name).resolve()
+        self.policy=dict(revision='a'*64,generation='1')
+        self.actions=dict(sessionId='aw-current',selfGuid='5',reason='within_personal_follow_space')
+        self.calls=[];self.polls=[];self.statuses=[]
+        self.rpc=types.SimpleNamespace(url='http://127.0.0.1:8088/rpc',call=self.call)
+        self.controls=types.SimpleNamespace(actions=self.actions,actions_available=True,party_available=True,
+            party_session='aw-current',refresh=lambda:None,context=lambda:{},events=[],execute=lambda *a,**kw:None)
+        self.brain=FakeBrain(dict(text='Navigation lacks a route here; a harness update is needed. No repair is verified.',
+            emote='NONE',action='NONE'))
+        self.brain.developer_workspace=self.repo;self.brain.state_dir=self.repo/'brain'
+        self.brain.states=[]
+        original=self.brain.generate
+        def record(history,state):
+            self.brain.states.append(state)
+            return original(history,state)
+        self.brain.generate=record
+        self.loop=self.new_loop()
+
+    def call(self, method, params, **kwargs):
+        self.calls.append((method,params))
+        if method=='session.attach':
+            return dict(sessionId='aw-current',characterGuid='5',policy=copy.deepcopy(self.policy))
+        if method=='buddy-chat.poll':
+            return self.polls.pop(0) if self.polls else poll(sessionId='aw-current')
+        if method=='buddy-party.state':return dict(sessionId='aw-current')
+        if method=='buddy-actions.status':return copy.deepcopy(self.actions)
+        if method=='buddy-chat.send':return dict(transportWritten=True)
+        raise AssertionError('unexpected RPC: '+method)
+
+    def new_loop(self):
+        loop=converse.Conversation(self.rpc,self.brain,controls=self.controls,
+            character_name='Rook',character_class='rogue',character_guid=5,status=lambda **kw:self.statuses.append(kw))
+        loop.initialized=True;loop.session_id='aw-current'
+        return loop
+
+    def movement_failure(self):
+        self.actions['targetMovement']=dict(targetGuid='77',phase='follow_navigation_unavailable',ready=False)
+
+    def test_only_actual_current_failures_trigger_not_waiting_or_unverified_effect(self):
+        self.actions['lastSpellOperation']=dict(spellId=6762,phase='server_cast_go_effect_unverified')
+        self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.actions['lastSpellOperation']['phase']='server_rejected_no_replay'
+        self.actions['lastCastFailure']=49
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        fault=self.brain.states[0]['mission_fault']
+        self.assertEqual(fault['kind'],'attached_policy')
+        self.assertEqual(fault['evidence']['spellId'],6762)
+        self.assertIs(type(self.brain.states[0]['current_request']),converse._MissionFaultRequest)
+        self.assertEqual(self.brain.states[0]['development']['policyCommands']['show'][2],str(self.repo/'dev/self-edit'))
+        self.assertTrue(any(m=='buddy-chat.send' for m,p in self.calls))
+        self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
+
+    def test_explicit_command_rejection_without_cast_receipt_reaches_same_brain(self):
+        self.controls.command_fault=dict(sessionId='aw-current',selfGuid='5',
+            method='buddy-actions.control_marked',error='current Lua encounter owns crowd control')
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(self.brain.states[0]['mission_fault']['field'],'command')
+        self.assertEqual(self.brain.states[0]['mission_fault']['evidence']['method'],'buddy-actions.control_marked')
+        self.loop.tick();self.assertEqual(len(self.brain.states),1)
+        self.controls.command_fault=None
+        self.assertFalse(self.loop.attached_fault_current(5,'aw-current',self.rpc.url,
+            self.brain.states[0]['mission_fault']['key']))
+
+    def test_unchanged_failure_deduplicates_across_worker_refresh_and_target_changes(self):
+        self.movement_failure();self.loop.tick()
+        self.actions['targetMovement']['targetGuid']='88'
+        self.new_loop().tick()
+        self.assertEqual(len(self.brain.states),1)
+        receipts=list((self.brain.state_dir/'attached-policy-faults').glob('*.json'))
+        self.assertEqual(len(receipts),1)
+
+    def test_changed_policy_revision_revisits_same_failure_after_cached_observation(self):
+        self.movement_failure();self.loop.tick()
+        self.policy['revision']='b'*64
+        self.loop.attached_policy_check_at=0
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),2)
+        self.assertNotEqual(self.brain.states[0]['mission_fault']['key'],self.brain.states[1]['mission_fault']['key'])
+
+    def test_policy_fault_without_action_failure_and_cached_metadata(self):
+        self.policy['faulted']=True
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        count=len([m for m,p in self.calls if m=='session.attach'])
+        for _ in range(3):self.loop.tick()
+        self.assertEqual(len([m for m,p in self.calls if m=='session.attach']),count)
+        self.assertEqual(self.brain.states[0]['mission_fault']['error'],'attached_policy_faulted')
+
+    def test_chat_arriving_during_preflight_wins_without_consuming_failure(self):
+        self.movement_failure()
+        self.polls=[poll(sessionId='aw-current'),poll([message(1,'Rook, hello')],sessionId='aw-current')]
+        self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.assertFalse((self.brain.state_dir/'attached-policy-faults').exists())
+        self.polls=[poll([message(1,'Rook, hello')],sessionId='aw-current')]
+        self.loop.tick()
+        self.assertEqual(self.brain.states[0]['current_request']['source'],'owner')
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_running_developer_turn_yields_to_owner_and_does_not_send_stale_report(self):
+        self.movement_failure()
+        def interrupted(history,state):
+            self.brain.states.append(state)
+            raise converse.OwnerInputPending('new owner message')
+        self.brain.generate=interrupted
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        self.assertTrue(any(s.get('missionRepairPhase')=='yielded_to_owner' for s in self.statuses))
+        self.assertFalse(any(m=='buddy-chat.send' for m,p in self.calls))
+        self.new_loop().tick()
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_developer_authority_rechecks_actual_fault_and_body(self):
+        self.movement_failure();self.loop.tick()
+        state=self.brain.states[0]
+        brain=object.__new__(converse.CodexBrain);brain.developer_workspace=self.repo
+        self.assertTrue(brain.development_enabled(state))
+        self.actions.pop('targetMovement')
+        self.assertFalse(brain.development_enabled(state))
+        self.movement_failure();self.actions['sessionId']='aw-replaced'
+        self.assertFalse(brain.development_enabled(state))
+
+    def test_no_attached_policy_or_wrong_body_does_not_authorize_repair(self):
+        self.movement_failure();self.policy=None
+        self.loop.tick();self.assertEqual(self.brain.states,[])
+        self.policy=dict(revision='a'*64,faulted=True)
+        self.actions['selfGuid']='4'
+        self.loop.tick();self.assertEqual(self.brain.states,[])
+
 
 
 if __name__ == "__main__":
