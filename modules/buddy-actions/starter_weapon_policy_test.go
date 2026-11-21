@@ -305,7 +305,7 @@ func TestStarterWeaponNativeSharedSourceCASChangesAbilityInSameBody(t *testing.T
 		t.Fatal("test did not edit the real shared selector tuning")
 	}
 	request := &actionsv1.BehaviorReloadRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: source}
-	accepted, err := s.ReloadBehavior(context.Background(), request)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), request)
 	if err != nil || accepted.Revision == "" {
 		t.Fatal(accepted, err)
 	}
@@ -315,11 +315,11 @@ func TestStarterWeaponNativeSharedSourceCASChangesAbilityInSameBody(t *testing.T
 		t.Fatal("same-body source edit did not change the shared ability choice", changed, s.starterSpells.failure(), f.packets)
 	}
 	request.Source = behaviors.StarterSpellSource
-	if _, err := s.ReloadBehavior(context.Background(), request); err == nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), request); err == nil {
 		t.Fatal("stale editor revision replaced the accepted shared tuning")
 	}
 	request.ExpectedRevision = accepted.Revision
-	if _, err := s.ReloadBehavior(context.Background(), request); err != nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
 	restored := s.starterWeaponDecisionLocked(context.Background(), f.world, target, point)
@@ -382,7 +382,7 @@ func TestStarterWeaponNativeAmbiguousStrikeRetainsReceiptAcrossTimeAndLuaEdit(t 
 			}
 			before := proto.Clone(operation).(*actionsv1.SpellOperation)
 			advance(6 * time.Second)
-			accepted, err := s.ReloadBehavior(context.Background(), &actionsv1.BehaviorReloadRequest{
+			accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
 				SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: behaviors.StarterSpellSource + "\n-- accepted after uncertain strike"})
 			if err != nil || accepted.Revision == "" {
 				t.Fatal(accepted, err)

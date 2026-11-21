@@ -17,6 +17,7 @@ func practiceRig(t *testing.T, class uint32) (*Service, *fakeSession, func(time.
 	t.Helper()
 	s, f, advance := rig(t)
 	s.sessionID = f.party.SessionId
+	useStarterSemanticPolicy(t, s)
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8933, -136, 81
 	f.world.Self.LevelKnown, f.world.Self.Level, f.world.Self.ClassId = true, 1, class
 	f.world.Self.Health, f.world.Self.MaxHealth = 100, 100
