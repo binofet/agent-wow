@@ -49,14 +49,18 @@ func run() error {
 	if identity.Independent() {
 		service = buddyworld.NewIndependentService(identity.SelfGUID)
 	}
-	// Retain raw combat evidence beside the private module socket. Failure to
+	// Retain raw combat evidence in a persistent named volume. Failure to
 	// persist is exposed by the public stream; it must not disconnect a player.
-	journal, journalErr := os.OpenFile(filepath.Join(filepath.Dir(socket), "combat-events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
+	if sessionID == "" || filepath.Base(sessionID) != sessionID || sessionID == "." || sessionID == ".." {
+		return errors.New("AGENT_WOW_SESSION_ID must be a single nonempty path component")
+	}
+	journal, journalErr := os.OpenFile(filepath.Join("/var/lib/buddy-combat-events", sessionID+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if journalErr == nil {
 		defer journal.Close()
-		service.ConfigureCombatJournal(os.Getenv("AGENT_WOW_SESSION_ID"), journal)
+		service.ConfigureCombatJournal(sessionID, journal)
 	} else {
-		service.ConfigureCombatJournal(os.Getenv("AGENT_WOW_SESSION_ID"), nil)
+		service.ConfigureCombatJournal(sessionID, nil)
 		fmt.Fprintln(os.Stderr, "combat journal persistence unavailable:", journalErr)
 	}
 	worldv1.RegisterBuddyWorldServer(server, service)
