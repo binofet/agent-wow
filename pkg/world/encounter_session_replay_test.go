@@ -89,6 +89,7 @@ func readEncounterBundle(t *testing.T) string {
 		"local encounter_support = (function()\n" + read(filepath.Join(root, "support.lua")) + "\nend)()\n" +
 		"local encounter_movement = (function()\n" + read(filepath.Join(root, "encounter-movement.lua")) + "\nend)()\n" +
 		"local encounter_commands = (function()\n" + read(filepath.Join(root, "encounter-commands.lua")) + "\nend)()\n" +
+		"local encounter_tasks = (function()\n" + read(filepath.Join(root, "encounter-tasks.lua")) + "\nend)()\n" +
 		read(filepath.Join(root, "encounter-session.lua"))
 }
 

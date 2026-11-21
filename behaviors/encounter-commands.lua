@@ -232,7 +232,7 @@ local function automatic_target(obs, request, focusGuid)
     return result.control and result.control.targetGuid
 end
 
-local function control_action(obs, frame, focusGuid, planned_control)
+local function control_action(obs, frame, focusGuid, planned_control, allow_action)
     refresh(obs)
     if planned_control then cancel({id="automatic:polymorph"}) end
     if not planned_control and #state.requests == 0 and state.autoPolymorph ~= false and highest_spell(obs,"polymorph") then
@@ -322,8 +322,10 @@ local function control_action(obs, frame, focusGuid, planned_control)
                 status.phase = "casting_control"
                 local active = guid(obs.activeMeleeTargetGuid)
                 if active then return action(obs,frame,"melee_stop",active),status end
+                local cast=action(obs,frame,request.technique,request.boundGuid,spell.id)
+                if allow_action and not allow_action(cast) then status.phase="waiting_for_task_area";return nil,status end
                 request.controlPending = spell.id
-                return action(obs,frame,request.technique,request.boundGuid,spell.id),status
+                return cast,status
             end
             return nil,status
         end
