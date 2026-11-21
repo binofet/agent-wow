@@ -362,15 +362,36 @@ func TestFinitePortalIntentFinalWorldReadCannotAuthorizeAStaleTrigger(t *testing
 				t.Fatal("could not observe the physical trigger pose")
 			}
 			x.renew(t)
-			reads, injected := 0, false
+			runtime := x.s.formation.runtime
+			if runtime == nil {
+				t.Fatal("fixture lost its actual embedded Lua evaluator")
+			}
+			reads, readyReads := 0, 0
+			armed, injected := false, false
 			var replacement portalCatchupGoal
+			x.s.formation.remote = func(input map[string]any) (bool, string, map[string]any, error) {
+				revision := runtime.Status().Revision
+				output, err := runtime.Evaluate(input)
+				if err != nil {
+					t.Fatal("healthy embedded Lua evaluation failed before the final-read seam", err)
+				}
+				if input["mode"] == "portal_follow" && output["ready"] == true {
+					readyReads++
+					if readyReads == 2 {
+						armed = true
+					}
+				}
+				return true, revision, output, err
+			}
 			x.s.session = &finitePortalIntentWorldHook{fakeSession: x.f, beforeWorld: func() {
 				reads++
-				// Tick's initial observation and the post-STOP observation have
-				// already passed. Change authority at the final physical read.
-				if reads != 3 {
+				// The second ready portal decision follows STOP and the fresh
+				// source observation. Its next World read is the final physical
+				// entry check, independent of unrelated earlier maintenance reads.
+				if !armed || injected {
 					return
 				}
+				armed = false
 				injected = true
 				switch change {
 				case "goal expiry":
@@ -396,8 +417,8 @@ func TestFinitePortalIntentFinalWorldReadCannotAuthorizeAStaleTrigger(t *testing
 				}
 			}}
 			x.s.Tick(context.Background())
-			if !injected || len(x.f.packets) != 0 || x.s.followPortal.notified || x.s.state.Moving || x.s.state.Following {
-				t.Fatal("late final-read authority change reached the trigger", injected, reads, x.s.followPortal, x.s.stateLocked(), x.f.packets)
+			if readyReads != 2 || !injected || armed || len(x.f.packets) != 0 || x.s.followPortal.notified || x.s.state.Moving || x.s.state.Following {
+				t.Fatal("late final-read authority change reached the trigger", injected, readyReads, reads, x.s.followPortal, x.s.stateLocked(), x.f.packets)
 			}
 			if change == "goal replacement" && !reflect.DeepEqual(replacement, x.s.portalGoal) {
 				t.Fatal("old entry attempt rewrote a replacement portal goal", replacement, x.s.portalGoal)
