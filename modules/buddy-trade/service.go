@@ -46,6 +46,7 @@ type Service struct {
 	metadata                    map[uint32]itemMetadata
 	lookup                      itemLookupRuntime
 	junkPending                 *tradev1.JunkDisposal
+	carriedJunkProof            *carriedJunkProof
 	junkUntil, junkNext         time.Time
 }
 
@@ -129,6 +130,9 @@ func (s *Service) inventory(ctx context.Context) (*worldv1.SnapshotResponse, err
 		return nil, err
 	}
 	s.mu.Lock()
+	if s.junkPending.GetInventoryRevision() != 0 && s.carriedJunkProof != nil {
+		s.carriedJunkProof.observe(w, s.junkPending)
+	}
 	if w.SelfCopperRevision >= s.state.CopperRevision {
 		s.state.CopperKnown = w.SelfCopperKnown
 		s.state.Copper = w.SelfCopper
