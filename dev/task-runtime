@@ -228,7 +228,9 @@ def stop_requested(store, data):
 
 
 class RPC:
-    def __init__(self, url):
+    def __init__(self, url, request_bytes=MAX_INPUT, response_bytes=1048576):
+        require(type(request_bytes) is int and request_bytes>0 and
+                type(response_bytes) is int and response_bytes>0,'positive_rpc_byte_budgets_required')
         parsed = urllib.parse.urlsplit(url)
         try: port = parsed.port
         except ValueError: raise Error('explicit_loopback_rpc_required') from None
@@ -238,15 +240,16 @@ class RPC:
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *_): return None
         self.url, self.sequence = url, 0
+        self.request_bytes,self.response_bytes=request_bytes,response_bytes
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def call(self, method, params, timeout=5):
         self.sequence += 1
         request = urllib.request.Request(self.url, data=packed(dict(jsonrpc='2.0', id=self.sequence,
-            method=method, params=params), MAX_INPUT), headers={'Content-Type': 'application/json'})
+            method=method, params=params), self.request_bytes), headers={'Content-Type': 'application/json'})
         try:
-            with self.opener.open(request, timeout=timeout) as response: raw = response.read(1048577)
-            require(len(raw) <= 1048576, 'rpc_response_size_bound')
+            with self.opener.open(request, timeout=timeout) as response: raw = response.read(self.response_bytes+1)
+            require(len(raw) <= self.response_bytes, 'rpc_response_size_bound')
             value = decoded(raw)
             require(isinstance(value, dict) and value.get('jsonrpc') == '2.0'
                     and type(value.get('id')) is int and value['id'] == self.sequence, 'rpc_result_unconfirmed')
