@@ -71,6 +71,18 @@ message ItemRequest {
 message GoldRequest { string session_id = 1; uint64 revision = 2; uint32 copper = 3; }
 message ItemStat { uint32 type = 1; sint32 value = 2; }
 message WeaponDamage { float minimum = 1; float maximum = 2; uint32 school = 3; }
+// Present only after a complete requested normal item-template response.
+// Absence is unknown; a present message establishes observed zero values too.
+message RawTemplateFacts {
+  uint32 container_slots = 1;
+  uint32 bonding = 2;
+  uint32 page_text = 3;
+  uint32 start_quest = 4;
+  uint32 lock_id = 5;
+  uint32 max_durability = 6;
+  uint32 bag_family = 7;
+  uint32 duration = 8;
+}
 // Static template facts from a complete normal server item-query response.
 // These are not proof that this character can equip or owns the item.
 message ItemDetails {
@@ -106,6 +118,7 @@ message ItemDetails {
   // Full normal query proves otherwise unrepresented armor properties empty.
   // False is unknown/unsupported, never a zero-resistance comparison claim.
   bool armor_comparison_known = 30;
+  RawTemplateFacts raw_template_facts = 32;
 }
 message LookupItemsRequest { repeated uint32 item_ids = 1; }
 message LookupItemsResponse { string session_id = 1; repeated ItemDetails items = 2; }
