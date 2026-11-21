@@ -164,3 +164,49 @@ func TestConsumableLuaRequiresClockLeaseAndAvoidsActiveFoodBuff(t *testing.T) {
 		t.Fatal("missing lease silently changed native follow", out.Output, err)
 	}
 }
+
+func TestConsumableLuaStopsWalkingFollowerBeforeOneExactUse(t *testing.T) {
+	host, err := behavior.NewSessionWithOptions(context.Background(), "consumable-body", consumablePolicySource(t, false), behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	view, obs := consumablePolicyFixture()
+	contextView := view["consumableContext"].(map[string]any)
+	contextView["bodyReady"] = false
+	self := obs["players"].(map[string]any)["6"].(map[string]any)
+	self["moving"] = true
+	step := func() behavior.Decision {
+		t.Helper()
+		seq, err := host.Enqueue(behavior.Event{Kind: "inventory_observation", Value: view})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := host.Decide(context.Background(), map[string]any{"encounter": obs, "observationSequences": map[string]any{"inventory": fmt.Sprint(seq)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	first := step()
+	request := first.Output["action"].(map[string]any)
+	if request["mode"] != "acquire" {
+		t.Fatal("walking follower could not request finite stop", first.Output)
+	}
+	id, err := host.ReserveAction(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: "consumable-body", ActionID: id, Outcome: behavior.ActionConfirmed, Payload: map[string]any{"capability": "movement_owner", "mode": "acquire", "owner": request["owner"], "result": map[string]any{"token": "rest-token"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	obs["navigation"].(map[string]any)["movementOwner"] = map[string]any{"active": true, "owner": request["owner"], "remainingMs": "2000"}
+	if moving := step(); moving.Output["action"] != nil || moving.Output["phase"] != "awaiting_stationary_body" {
+		t.Fatal("item used while still moving", moving.Output)
+	}
+	self["moving"], contextView["bodyReady"] = false, true
+	ready := step()
+	if action := ready.Output["action"].(map[string]any); action["capability"] != "consume" || action["spellId"] != float64(431) {
+		t.Fatal("observed stop did not reach chosen exact use", ready.Output)
+	}
+}

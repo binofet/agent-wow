@@ -33,7 +33,7 @@ end
 -- The same selector is used by automatic resting and explicit legacy requests.
 function M.choose(view,obs,requested,fallback_food)
   if not view or view.sessionId~=obs.sessionId or view.selfGuid~=obs.selfGuid or view.inventoryKnown~=true or
-     not (view.consumableContext or {}).bodyReady or not quiet(obs) then return end
+     type(view.consumableContext)~="table" or not quiet(obs) then return end
   local self=(obs.players or {})[obs.selfGuid]
   local mana=self.powerKnown==true and self.powerType==0 and value(self.maxPower)>0
   local percent=mana and value(self.power)*100/value(self.maxPower) or 100

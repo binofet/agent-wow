@@ -23,9 +23,12 @@ type consumableTestSession struct {
 func (f *consumableTestSession) InvokeModule(ctx context.Context, r *modv1.InvokeModuleRequest, opts ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
 	if r.Module == "buddy-actions" && r.Method == "spell_toolkit" {
 		f.mu.Lock()
-		snapshot := proto.Clone(f.auras).(*actionsv1.PlayerAuras)
+		var sets []*actionsv1.PlayerAuras
+		if f.auras != nil {
+			sets = []*actionsv1.PlayerAuras{proto.Clone(f.auras).(*actionsv1.PlayerAuras)}
+		}
 		f.mu.Unlock()
-		body, err := anypb.New(&actionsv1.SpellToolkitState{SessionId: "body", SelfGuid: 6, PlayerAuras: []*actionsv1.PlayerAuras{snapshot}})
+		body, err := anypb.New(&actionsv1.SpellToolkitState{SessionId: "body", SelfGuid: 6, PlayerAuras: sets})
 		return &modv1.InvokeModuleResponse{Result: body}, err
 	}
 	return f.fakeInventory.InvokeModule(ctx, r, opts...)
@@ -67,7 +70,7 @@ func TestExactConsumableUsesChosenOwnedItemAndRequiresConsumptionPlusFreshAura(t
 		t.Fatal("request ID replayed item use", again, err)
 	}
 	f.auras.Revision = 2
-	f.auras.Auras = []*actionsv1.ObservedAura{{SpellId: 430, Positive: true, Revision: 2, DurationKnown: true, RemainingMs: 30000}}
+	f.auras.Auras = []*actionsv1.ObservedAura{{SpellId: 430, CasterGuid: 6, Positive: true, Revision: 2, DurationKnown: true, RemainingMs: 30000}}
 	view := stateInventory(t, s)
 	if !view.LastConsumableUse.AuraObserved || view.LastConsumableUse.InventoryConfirmed {
 		t.Fatal("aura alone claimed consumption", view.LastConsumableUse)
@@ -139,6 +142,38 @@ func TestConsumableMetadataComesFromCompleteOwnedItemQuery(t *testing.T) {
 	}
 	if len(f.packets) != 0 {
 		t.Fatal("metadata projection chose an item use", f.packets)
+	}
+}
+
+func TestConsumableColdAuraBaselineAndConcurrentInventoryFacts(t *testing.T) {
+	for _, mode := range []string{"cold_aura_baseline", "unrelated_arrival", "unrelated_only"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, r := exactConsumableFixture(t, 430)
+			if mode == "cold_aura_baseline" {
+				f.auras = nil
+			}
+			if _, err := s.Drink(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+			f.auras = &actionsv1.PlayerAuras{TargetGuid: 6, Revision: 2, Auras: []*actionsv1.ObservedAura{{SpellId: 430, CasterGuid: 6, Positive: true, Revision: 2}}}
+			if mode != "unrelated_only" {
+				f.w.InventoryBags[0].Slots[0].StackCount--
+			}
+			if mode != "cold_aura_baseline" {
+				f.w.InventoryBags[0].Slots[8] = &worldv1.BackpackSlot{Slot: 8, ItemGuid: 0x4000000000000009, Entry: 60009, StackCount: 1, MetadataKnown: true}
+				s.metadata[60009] = itemMetadata{known: true, entry: 60009}
+				s.queried[60009] = true
+			}
+			f.w.InventoryRevision++
+			view := stateInventory(t, s).LastConsumableUse
+			if mode == "unrelated_only" {
+				if view.InventoryConfirmed {
+					t.Fatal("unrelated item change claimed selected consumption", view)
+				}
+			} else if !view.InventoryConfirmed || !view.AuraObserved || view.Phase != "confirmed_consumption_and_aura" {
+				t.Fatal("actual selected consumption/fresh aura could not settle", mode, view)
+			}
+		})
 	}
 }
 

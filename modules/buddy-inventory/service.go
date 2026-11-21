@@ -47,30 +47,31 @@ type operation struct {
 }
 type Service struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
-	mu             sync.Mutex
-	sendMu         sync.Mutex
-	observeMu      sync.Mutex
-	session        sessionAPI
-	selfGUID       uint64
-	now            func() time.Time
-	state          *inventoryv1.State
-	view           view
-	known          bool
-	actions        *actionsv1.State
-	trade          *tradev1.State
-	loot           *lootv1.State
-	prof           *professionsv1.State
-	metadata       map[uint32]itemMetadata
-	queried        map[uint32]bool
-	queryAfter     time.Time
-	requests       map[string]*operation
-	active, last   *operation
-	consumableBusy bool
-	itemUseCount   byte
-	consumableUses map[string]*consumableAttempt
-	lastConsumable *consumableAttempt
-	closed         bool
-	addon          *addonBridge
+	mu                       sync.Mutex
+	sendMu                   sync.Mutex
+	observeMu                sync.Mutex
+	session                  sessionAPI
+	selfGUID                 uint64
+	now                      func() time.Time
+	state                    *inventoryv1.State
+	view                     view
+	known                    bool
+	actions                  *actionsv1.State
+	trade                    *tradev1.State
+	loot                     *lootv1.State
+	prof                     *professionsv1.State
+	metadata                 map[uint32]itemMetadata
+	queried                  map[uint32]bool
+	queryAfter               time.Time
+	requests                 map[string]*operation
+	active, last             *operation
+	consumableBusy           bool
+	itemUseCount             byte
+	consumableUses           map[string]*consumableAttempt
+	lastConsumable           *consumableAttempt
+	consumableAurasAvailable bool
+	closed                   bool
+	addon                    *addonBridge
 }
 
 func NewService(session sessionAPI, sessionID string, self uint64) *Service {
@@ -128,6 +129,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		}
 	}
 	var selfAuras *actionsv1.PlayerAuras
+	aurasAvailable := false
 	s.mu.Lock()
 	needAuras := s.lastConsumable != nil
 	for _, m := range s.metadata {
@@ -139,6 +141,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 	if e == nil && needAuras {
 		toolkit := &actionsv1.SpellToolkitState{}
 		if s.invoke(ctx, "buddy-actions", "spell_toolkit", &emptypb.Empty{}, toolkit) == nil && toolkit.SessionId == s.state.SessionId && toolkit.SelfGuid == s.selfGUID {
+			aurasAvailable = true
 			for _, set := range toolkit.PlayerAuras {
 				if set.TargetGuid == s.selfGUID {
 					selfAuras = set
@@ -148,6 +151,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		}
 	}
 	s.mu.Lock()
+	s.consumableAurasAvailable = aurasAvailable
 	before := proto.Clone(s.state).(*inventoryv1.State)
 	if e == nil && (t.SessionId != s.state.SessionId || l.SessionId != s.state.SessionId || p.SessionId != s.state.SessionId || p.SelfGuid != s.selfGUID) {
 		e = fail("dependency_session_or_actor_changed")

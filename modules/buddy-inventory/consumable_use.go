@@ -22,7 +22,6 @@ const consumableWriteLimit = 3 * time.Second
 
 type consumableAttempt struct {
 	view               *inventoryv1.ConsumableUse
-	expected           view
 	baselineMana       uint32
 	baselineAurasKnown bool
 	count              byte
@@ -128,7 +127,7 @@ func (s *Service) useConsumable(ctx context.Context, kind, sid string, self uint
 	}
 	baseline := s.view
 	baselineAura := s.state.GetConsumableContext().GetSelfAuras().GetRevision()
-	baselineAurasKnown := s.state.GetConsumableContext().GetSelfAuras() != nil
+	baselineAurasKnown := s.consumableAurasAvailable
 	s.mu.Unlock()
 	lease := &actionsv1.InteractionLease{}
 	acquired := s.now()
@@ -156,14 +155,6 @@ func (s *Service) useConsumable(ctx context.Context, kind, sid string, self uint
 	if _, ok := current.source(item); !ok {
 		return nil, 0, fail("consumable_source_slot_or_stack_changed")
 	}
-	expected := proto.Clone(w).(*worldv1.SnapshotResponse)
-	expectedView, _ := validateWorld(expected, self)
-	slot := expectedView.slots[slotKey{item.Bag, item.Slot}]
-	if slot.StackCount > 1 {
-		slot.StackCount--
-	} else {
-		slot.ItemGuid, slot.Entry, slot.StackCount, slot.MetadataKnown = 0, 0, 0, false
-	}
 	s.mu.Lock()
 	if s.closed || ctx.Err() != nil || s.now().Sub(acquired) >= time.Duration(lease.State.InteractionLeaseRemainingMs)*time.Millisecond {
 		s.mu.Unlock()
@@ -172,7 +163,7 @@ func (s *Service) useConsumable(ctx context.Context, kind, sid string, self uint
 	s.itemUseCount++
 	op := &consumableAttempt{view: &inventoryv1.ConsumableUse{RequestId: id, Kind: kind, Source: proto.Clone(item).(*inventoryv1.ItemRef), SpellId: spell,
 		AuraSpellId: aura, BaselineInventoryRevision: revision, BaselineAuraRevision: baselineAura, TransportAttempted: true, Phase: "transport_unconfirmed_no_retry"},
-		expected: expectedView, baselineMana: w.Self.Power, baselineAurasKnown: baselineAurasKnown, count: s.itemUseCount}
+		baselineMana: w.Self.Power, baselineAurasKnown: baselineAurasKnown, count: s.itemUseCount}
 	if s.consumableUses == nil {
 		s.consumableUses = map[string]*consumableAttempt{}
 	}
@@ -199,12 +190,23 @@ func (s *Service) consumableEvidenceLocked(v view, auras *actionsv1.PlayerAuras)
 	}
 	r := op.view
 	r.ObservedInventoryRevision = v.w.InventoryRevision
-	if v.w.InventoryRevision > r.BaselineInventoryRevision && exactVector(op.expected, v) {
-		r.InventoryConfirmed = true
+	if v.w.InventoryRevision > r.BaselineInventoryRevision {
+		found := false
+		for _, slot := range v.slots {
+			if slot.ItemGuid == r.Source.ItemGuid {
+				found = true
+				if slot.MetadataKnown && slot.Entry == r.Source.Entry && r.Source.StackCount > 1 && slot.StackCount == r.Source.StackCount-1 {
+					r.InventoryConfirmed = true
+				}
+			}
+		}
+		if r.Source.StackCount == 1 && !found {
+			r.InventoryConfirmed = true
+		}
 	}
 	if op.baselineAurasKnown && auras != nil && auras.TargetGuid == s.selfGUID {
 		for _, aura := range auras.Auras {
-			if aura.SpellId == r.AuraSpellId && aura.Positive && aura.Revision > r.BaselineAuraRevision && (!aura.DurationKnown || aura.RemainingMs > 0) {
+			if aura.SpellId == r.AuraSpellId && aura.CasterGuid == s.selfGUID && aura.Positive && aura.Revision > r.BaselineAuraRevision && (!aura.DurationKnown || aura.RemainingMs > 0) {
 				r.AuraObserved = true
 			}
 		}
