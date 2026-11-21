@@ -14,5 +14,5 @@ func waterBreathPlayer(p *worldv1.PlayerState, mapID uint32) bool {
 		p = proto.Clone(p).(*worldv1.PlayerState)
 		p.MovementFlags &^= swimMovementFlag | swimAscendingFlag | swimDescendingFlag
 	}
-	return safeHealingPlayer(p, mapID) && p.HealthKnown && p.Health > 0
+	return healablePlayer(p, mapID) && p.HealthKnown && p.Health > 0
 }

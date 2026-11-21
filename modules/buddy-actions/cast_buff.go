@@ -14,7 +14,7 @@ import (
 func (s *Service) buffCasterAvailableLocked(w *worldv1.SnapshotResponse, spell spellcatalog.Spell) bool {
 	self := w.GetSelf()
 	return !s.closed && self.GetGuid() == s.selfGUID && waterBreathPlayer(self, self.GetMapId()) &&
-		self.UnitFlags&0x2000 == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0 &&
+		self.UnitFlags&(0x2000|0x00040000|0x00400000|0x00800000) == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0 &&
 		!s.clientControlLost && !s.clientControlRestoring && !s.state.CastPending &&
 		!s.state.MotionUnconfirmed && s.state.InteractionOwner == "" &&
 		(spell.CastMs == 0 || !s.state.Moving && self.MovementFlags&0xff == 0) &&

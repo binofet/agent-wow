@@ -17,9 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/dynamicpb"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestCastBuffPublishedContractRoutesToCompiledPrimitive(t *testing.T) {
@@ -33,7 +31,7 @@ func TestCastBuffPublishedContractRoutesToCompiledPrimitive(t *testing.T) {
 	}
 	method, ok := actions.RPC("cast_buff")
 	if !ok || actions.Manifest().ScriptAPI["cast_buff"].Effect != moddisc.EffectMutation || method.Path() != "/warcraftbuddy.actions.v1.BuddyActions/CastBuff" {
-		t.Fatal("cleanse RPC/manifest disagree")
+		t.Fatal("buff RPC/manifest disagree")
 	}
 	s, f, _ := buffRig(t, 5, 1243)
 	listener := bufconn.Listen(64 << 10)
@@ -41,7 +39,7 @@ func TestCastBuffPublishedContractRoutesToCompiledPrimitive(t *testing.T) {
 	actionsv1.RegisterBuddyActionsServer(server, s)
 	go func() { _ = server.Serve(listener) }()
 	defer server.Stop()
-	conn, err := grpc.NewClient("passthrough:///cleanse", grpc.WithTransportCredentials(insecure.NewCredentials()),
+	conn, err := grpc.NewClient("passthrough:///buff", grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }))
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +57,7 @@ func TestCastBuffPublishedContractRoutesToCompiledPrimitive(t *testing.T) {
 	defer cancel()
 	err = conn.Invoke(ctx, method.Path(), input, output)
 	if status.Code(err) != codes.FailedPrecondition || countPackets(f, opcode.CMSGCastSpell) != 0 {
-		t.Fatal("matched descriptor did not reach normal no-aura primitive precondition", err)
+		t.Fatal("matched descriptor did not reach normal unlearned-rank primitive precondition", err)
 	}
 }
 
