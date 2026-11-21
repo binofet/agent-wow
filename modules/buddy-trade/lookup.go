@@ -198,6 +198,7 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		MaxDurability:  meta.maxDurability,
 		BagFamily:      meta.bagFamily,
 		Duration:       meta.duration,
+		MaxStackCount:  proto.Uint32(prefix[19]),
 	}
 	return item, nil
 }

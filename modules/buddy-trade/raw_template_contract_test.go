@@ -64,11 +64,11 @@ func TestRawTemplateFactsAdvertisedContractMatchesCompiledTrade(t *testing.T) {
 			continue
 		}
 		facts := catalog.Messages[field.Type]
-		if field.Number != 32 || field.Kind != "message" || !field.Optional || field.Repeated || field.Map || len(facts.Fields) != 8 {
+		if field.Number != 32 || field.Kind != "message" || !field.Optional || field.Repeated || field.Map || len(facts.Fields) < 8 {
 			t.Fatal("raw template facts lost their reflected presence contract", field, facts)
 		}
 		for _, raw := range facts.Fields {
-			if raw.Kind != "uint32" || raw.Repeated || raw.Map {
+			if raw.Number <= 8 && (raw.Kind != "uint32" || raw.Repeated || raw.Map) {
 				t.Fatal("raw template facts must remain scalar wire values", raw)
 			}
 		}

@@ -72,8 +72,19 @@ func TestRawTemplateFactsObservedZeroRetainsMessagePresence(t *testing.T) {
 	if err := json.Compact(&compact, encoded); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(compact.Bytes(), []byte(`"rawTemplateFacts":{}`)) {
+	if !bytes.Contains(compact.Bytes(), []byte(`"rawTemplateFacts":{`)) {
 		t.Fatalf("observed zero facts became absent JSON coverage: %s", encoded)
+	}
+	// The original producer emitted an empty object for the eight known-zero
+	// fields. A newer producer may add independently presence-bearing facts.
+	item.RawTemplateFacts.MaxStackCount = nil
+	legacy, err := protojson.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact.Reset()
+	if err := json.Compact(&compact, legacy); err != nil || !bytes.Contains(compact.Bytes(), []byte(`"rawTemplateFacts":{}`)) {
+		t.Fatalf("legacy observed-zero presence changed: %s, %v", legacy, err)
 	}
 }
 
