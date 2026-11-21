@@ -27,6 +27,9 @@ INSTRUCTIONS = '''You can directly execute ordered GM tasks with development.gmT
 For recovery/regroup requests, preserve the whole requested outcome, including destination,
 full health/resources and original roster. Write a goal JSON, inspect/edit the shared Lua
 policy, run the same task host available to Lothar, then inspect its observed completion.
+Use gmTasks.inspect for current GM and per-binding public party/vitals observations.
+The GM being outside the group does not make teammates unavailable: inspect their
+public party observations before deriving the requested original roster.
 A transport acknowledgement is not arrival or revival. Do not substitute a single .revive
 for a multi-step request. If an effect is uncertain, inspect/resume the task rather than
 resending it blindly. Keep gm_command empty when a task handles the request; this does not
@@ -52,6 +55,7 @@ def tools(root, guid, rpc_url):
         run=command+['run','--rpc-url',rpc_url,'--goal','<GOAL.json>','--state-dir','<STATE_DIR>',
             '--transport',str(root/'data/converse/lotharen/gm-transport.json')],
         bindings=command+['bindings'],source=command+['source'],
+        inspect=command+['inspect','--rpc-url',rpc_url],
         status=command+['status','--state-dir','<STATE_DIR>'],
         cancel=command+['cancel','--state-dir','<STATE_DIR>'])
 
@@ -315,16 +319,49 @@ def bindings(root=ROOT):
     return result
 
 
+
+def inspect_clients(rpc_url,root=ROOT,*,rpc_factory=None,timeout=2):
+    """Read configured public clients in parallel; never choose a party/task."""
+    factory=rpc_factory or runtime.RPC
+    configured=bindings(root)
+    rows=[dict(guid='87',name='Lotharen',rpc_url=rpc_url)]
+    rows.extend(row for row in configured if row['rpc_url']!=rpc_url)
+    def read(binding):
+        row=dict(guid=str(binding['guid']),name=binding['name'],rpcUrl=binding['rpc_url'],errors=[],observations={})
+        try:rpc=factory(binding['rpc_url'])
+        except Exception as error:
+            row['errors'].append(dict(method='client_binding',error=str(error)));return row
+        for method,key in (('buddy-actions.status','actions'),('buddy-world.snapshot','world'),('buddy-party.state','party')):
+            try:
+                value=rpc.call(method,{},timeout=timeout)
+                if key=='world':
+                    value={k:value[k] for k in ('self','owner','nearbyPlayers','nearbyCreatures','visitRevision') if k in value}
+                elif key=='actions':
+                    value={k:value[k] for k in ('sessionId','selfGuid','position','following','moving','motionUnconfirmed','reason') if k in value}
+                row['observations'][key]=value
+            except Exception as error:row['errors'].append(dict(method=method,error=str(error)))
+        observations=row['observations'];a=observations.get('actions',{});w=observations.get('world',{});party=observations.get('party',{})
+        row['identityMatches']=str(a.get('selfGuid'))==row['guid']==str(w.get('self',{}).get('guid')) and bool(a.get('sessionId')) and a.get('sessionId')==party.get('sessionId')
+        return row
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,len(rows))) as pool:
+        observed=list(pool.map(read,rows))
+    return dict(observedAtUnixMs=int(time.time()*1000),gm=observed[0],bindings=observed[1:],
+        semantics='Read-only public observations. Group membership belongs to each observed client; a groupless GM does not imply unavailable teammates. Errors are explicit and no recovery or game action was started.')
+
+
 def public_status(data):
     return dict({k:data.get(k) for k in ('version','goal','phase','done','success','error','memory','last','lastObservations','restoreErrors','updatedAt','resumable')},heldMembers=[dict(guid=g,heldRevision=r.get('heldRevision'),restored=r.get('restored',False),followPaused=r.get('followPaused',False)) for g,r in data.get('holds',{}).items()])
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('bindings','source','start','run','status','cancel'))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('inspect','bindings','source','start','run','status','cancel'))
     parser.add_argument('--state-dir',type=Path);parser.add_argument('--goal',type=Path);parser.add_argument('--transport',type=Path)
     parser.add_argument('--rpc-url');parser.add_argument('--policy',type=Path,default=ROOT/'behaviors/gm-recovery.lua')
     parser.add_argument('--policy-binary',type=Path,default=ROOT/'data/bin/luapolicy')
     args=parser.parse_args(argv)
+    if args.command=='inspect':
+        if not args.rpc_url:parser.error('inspect requires --rpc-url')
+        print(json.dumps(inspect_clients(args.rpc_url)));return 0
     if args.command=='bindings':print(json.dumps(dict(bindings=bindings())));return 0
     if args.command=='source':print(json.dumps(dict(source=str(args.policy),sha256=hashlib.sha256(args.policy.read_bytes()).hexdigest())));return 0
     if args.state_dir is None:parser.error('this command requires --state-dir')
