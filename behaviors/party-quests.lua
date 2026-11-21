@@ -197,7 +197,105 @@ local function starter_pickup(input)
     if not best then return ready({kind="wait",phase="waiting_for_new_offer_or_prerequisite_state"}) end
     return ready({kind="offer",npcGuid=best.guid})
 end
+
+-- Select the next starter giver and allowed IDs without creating completion
+-- evidence. Probe events retain the original ordered durable-save semantics.
+local function starter_route(input)
+    local invalid={status="invalid"}
+    local active,confirmed=ids(input.activeQuestIds,25),ids(input.confirmedQuestIds,3)
+    local probes=input.probes
+    if not active or not confirmed or not text(input.sessionId,128) or
+       type(input.levelKnown)~="boolean" or type(input.wolfComplete)~="boolean" or
+       type(probes)~="table" or type(probes.intro)~="boolean" or
+       type(probes.eagan)~="boolean" or type(probes.wolf)~="boolean" or
+       not array(input.candidates,64) then return invalid end
+    if input.levelKnown and (not uint(input.level,80) or input.level==0) then return invalid end
+    local givers,entries={},{}
+    for _,g in ipairs(input.candidates) do
+        if type(g)~="table" or not decimal(g.guid) or not uint(g.entry,4294967295) then return invalid end
+        if entries[g.guid]~=nil and entries[g.guid]~=g.entry then return invalid end
+        entries[g.guid]=g.entry
+        givers[tostring(g.entry)]=givers[tostring(g.entry)] or {}
+        givers[tostring(g.entry)][g.guid]=true
+    end
+    local missing7,missing18,missing3903=not active["7"],not active["18"],not active["3903"]
+    local reward=active["783"] and 783 or active["5261"] and 5261 or active["33"] and input.wolfComplete and 33 or 0
+    local needed
+    if reward~=0 then needed=reward==783 and 197 or 196
+    elseif missing7 then needed=confirmed["783"] and 197 or 823
+    elseif missing3903 and not confirmed["33"] and not probes.wolf and (confirmed["5261"] or probes.eagan) then needed=196
+    else needed=823 end
+
+    -- Return false for an unused/non-live menu, nil for a consulted invalid
+    -- fact. Missing quests defaults to [] only in the original intro predicate.
+    local function menu(entry,allow_missing)
+        if type(input.offerObjectKnown)~="boolean" then return nil end
+        if not input.offerObjectKnown then return false end
+        local o=input.offer
+        if type(o)~="table" or not decimal(o.npcGuid) then return nil end
+        if not (givers[tostring(entry)] and givers[tostring(entry)][o.npcGuid]) then return false end
+        if not decimal(o.expiresInMs) then return nil end
+        if o.expiresInMs=="0" then return false end
+        if o.questsMissing==true then return allow_missing and {} or false end
+        if o.questsKnown~=true then return false end
+        if not array(o.quests,32) then return nil end
+        return o.quests
+    end
+    local function available(rows,wanted)
+        for _,row in ipairs(rows) do
+            if row~=false then
+                if type(row)~="table" or not decimal(row.questId) then return nil end
+                if wanted[row.questId] and row.available==true then return true end
+            end
+        end
+        return false
+    end
+    local intro=probes.intro
+    local events={}
+    if missing7 and not active["783"] then
+        local rows=menu(823,true)
+        if rows==nil then return invalid end
+        if rows then
+            local offered=available(rows,{["783"]=true})
+            if offered==nil then return invalid end
+            if not offered then events[#events+1]="intro"; intro=true end
+        end
+        if intro then needed=197 end
+    end
+    if active["7"] and missing3903 and not confirmed["5261"] and not confirmed["33"] and not active["5261"] and not active["33"] then
+        local rows=menu(823,false)
+        if rows==nil then return invalid end
+        if rows then
+            local offered=available(rows,{["5261"]=true,["3903"]=true})
+            if offered==nil then return invalid end
+            if not offered then events[#events+1]="eagan"; needed=196 end
+        end
+    end
+    if reward==0 and missing3903 and not active["5261"] and not active["33"] then
+        local rows=menu(196,false)
+        if rows==nil then return invalid end
+        if rows then
+            local offered=available(rows,{["33"]=true})
+            if offered==nil then return invalid end
+            if not offered then events[#events+1]="wolf"; needed=823 end
+        end
+    end
+    local allowed={}
+    if needed==197 and missing7 then allowed["7"]=true
+    elseif needed==823 then
+        if missing7 then allowed["783"]=true end
+        if input.levelKnown and input.level>=2 then
+            if missing18 then allowed["18"]=true end
+            if missing3903 then allowed["3903"]=true end
+        end
+        if missing3903 and not confirmed["5261"] and not confirmed["33"] then allowed["5261"]=true end
+    elseif needed==196 and missing3903 and not confirmed["33"] then allowed["33"]=true end
+    return {status="ready",choice={neededEntry=needed,rewardQuestId=reward,
+        allowedQuestIds=sorted_ids(allowed),probeEvents=events}}
+end
+
 function M.decide(input)
+    if type(input)=="table" and input.mode=="starter_route" then return starter_route(input) end
     if type(input)=="table" and input.mode=="starter_pickup" then return starter_pickup(input) end
     local invalid={status="invalid"}
     if type(input)~="table" or not text(input.sessionId,128) or not number(input.now) then return invalid end

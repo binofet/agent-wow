@@ -620,6 +620,65 @@ class CharacterSync:
             raise Error("Lua prerequisite reward action is invalid")
         return True
 
+    def route(self, state, session, candidates, active, confirmed, level_known, level, wolf_complete):
+        def counter(value):
+            try:
+                return str(integer(value))
+            except Error:
+                return False
+        raw_offer = state.get("offer", {})
+        offer_known = isinstance(raw_offer, dict)
+        offer = raw_offer if offer_known else {}
+        rows = offer.get("quests", [])
+        facts = dict(mode="starter_route", sessionId=session, activeQuestIds=sorted(active),
+            confirmedQuestIds=sorted(confirmed), levelKnown=level_known, level=level, wolfComplete=wolf_complete,
+            probes={name: self.data.get(name + "ProbeSession") == session for name in ("intro", "eagan", "wolf")},
+            candidates=[dict(guid=str(npc), entry=entry) for _, _, npc, entry in candidates],
+            offerObjectKnown=offer_known, offer=dict(npcGuid=counter(offer.get("npcGuid", 0)),
+                expiresInMs=counter(offer.get("expiresInMs", 0)), questsKnown=isinstance(offer.get("quests"), list),
+                questsMissing="quests" not in offer,
+                quests=[dict(questId=counter(q.get("questId", 0)), available=q.get("available") is True)
+                        if isinstance(q, dict) else False for q in rows]
+                    if isinstance(rows, list) and len(rows) <= 32 else False))
+        decision = pickup_policy.evaluate(facts)
+        if not isinstance(decision, dict) or decision.get("status") == "pending":
+            self.status["phase"] = "waiting_for_shared_lua_starter_route_policy"
+            return
+        choice = decision.get("choice")
+        if decision.get("status") != "ready" or not isinstance(choice, dict):
+            raise Error("Shared Lua starter route policy rejected its observations")
+        entry, reward, allowed, events = (choice.get(key) for key in
+                                          ("neededEntry", "rewardQuestId", "allowedQuestIds", "probeEvents"))
+        if type(allowed) is dict and not allowed:
+            allowed = []
+        if type(events) is dict and not events:
+            events = []
+        if (type(entry) is not int or entry not in (196, 197, 823) or type(reward) is not int
+                or reward != 0 and (reward not in active or reward not in PREREQUISITES
+                                   or reward == WOLVES and not wolf_complete)
+                or not isinstance(allowed, list) or len(allowed) > 6
+                or any(type(q) is not int or q not in DESIRED | PREREQUISITES for q in allowed)
+                or len(allowed) != len(set(allowed)) or not isinstance(events, list) or len(events) > 3
+                or any(type(event) is not str or event not in ("intro", "eagan", "wolf") for event in events)
+                or events != sorted(set(events), key=("intro", "eagan", "wolf").index)):
+            raise Error("Lua starter route is outside this goal's scope")
+        # A probe is dialogue history, never a reward confirmation. Bind each
+        # ordered save to an actual fresh menu from a supplied observed giver.
+        if events:
+            npc, expires = integer(offer.get("npcGuid", 0)), integer(offer.get("expiresInMs", 0))
+            for event in events:
+                expected = 196 if event == "wolf" else 823
+                if (not offer_known or expires == 0 or not isinstance(rows, list)
+                        or not any(guid == npc and observed == expected for _, _, guid, observed in candidates)
+                        or event != "intro" and "quests" not in offer):
+                    raise Error("Lua starter probe is not bound to an actual fresh menu")
+            for event in events:
+                self.data[event + "ProbeSession"] = session
+                if event == "eagan":
+                    self.data.pop("wolfProbeSession", None)
+                self.save(self.data)
+        return entry, reward or None, set(allowed)
+
     def pickup(self, state, session, candidates, active, allowed, needed_entry, level):
         def counter(value):
             try:
@@ -767,55 +826,10 @@ class CharacterSync:
             raise Error("Lua starter objective decision is invalid")
         self.status["phase"] = "waiting_for_mutation_cooldown" if self.now() < self.data["nextMutationAt"] else "checking_observed_quest_offers"
         all_candidates = self.candidates(state)
-        reward_quest = next((q for q in (INTRO, EAGAN_INTRO, WOLVES)
-                             if q in active and (q != WOLVES or wolf_complete)), None)
-        if reward_quest is not None:
-            needed_entry = TURN_IN_GIVERS[reward_quest]
-        elif 7 in missing:
-            needed_entry = 197 if INTRO in confirmed else 823
-        elif (3903 in missing and WOLVES not in confirmed and self.data.get("wolfProbeSession") != session
-              and (EAGAN_INTRO in confirmed or self.data.get("eaganProbeSession") == session)):
-            needed_entry = 196
-        else:
-            needed_entry = 823
-        # If an actual fresh Willem menu no longer offers the intro, probe
-        # McBride for7. This is a dialogue query, never invented quest access.
-        raw_offer = state.get("offer", {})
-        if 7 in missing and INTRO not in active:
-            willem_guids = {row[2] for row in all_candidates if row[3] == 823}
-            if (isinstance(raw_offer, dict) and integer(raw_offer.get("npcGuid", 0)) in willem_guids
-                    and integer(raw_offer.get("expiresInMs", 0)) > 0
-                    and isinstance(raw_offer.get("quests", []), list)
-                    and not any(isinstance(q, dict) and integer(q.get("questId", 0)) == INTRO
-                                and q.get("available") is True for q in raw_offer.get("quests", []))):
-                self.data["introProbeSession"] = session
-                self.save(self.data)
-            if self.data.get("introProbeSession") == session:
-                needed_entry = 197
-        if (7 in active and 3903 in missing and EAGAN_INTRO not in confirmed and WOLVES not in confirmed
-                and not (active & {EAGAN_INTRO, WOLVES}) and isinstance(raw_offer, dict)
-                and integer(raw_offer.get("npcGuid", 0)) in {row[2] for row in all_candidates if row[3] == 823}
-                and integer(raw_offer.get("expiresInMs", 0)) > 0
-                and isinstance(raw_offer.get("quests"), list)
-                and not any(isinstance(q, dict) and integer(q.get("questId", 0)) in (EAGAN_INTRO, 3903)
-                            and q.get("available") is True for q in raw_offer["quests"])):
-            self.data["eaganProbeSession"] = session
-            self.data.pop("wolfProbeSession", None)
-            self.save(self.data)
-            needed_entry = 196
-        # A reward may have applied just before a body replacement discarded
-        # its receipt. An actual Eagan menu with no33 allows a fresh Willem
-        # query; only Willem's actual3903 offer can reconcile that history.
-        if (reward_quest is None and 3903 in missing and not (active & {EAGAN_INTRO, WOLVES})
-                and isinstance(raw_offer, dict)
-                and integer(raw_offer.get("npcGuid", 0)) in {row[2] for row in all_candidates if row[3] == 196}
-                and integer(raw_offer.get("expiresInMs", 0)) > 0
-                and isinstance(raw_offer.get("quests"), list)
-                and not any(isinstance(q, dict) and integer(q.get("questId", 0)) == WOLVES
-                            and q.get("available") is True for q in raw_offer["quests"])):
-            self.data["wolfProbeSession"] = session
-            self.save(self.data)
-            needed_entry = 823
+        route = self.route(state, session, all_candidates, active, confirmed, level_known, level, wolf_complete)
+        if route is None:
+            return
+        needed_entry, reward_quest, allowed = route
         candidates = [row for row in all_candidates if row[3] == needed_entry]
         self.status["neededQuestgiverEntry"] = needed_entry
         if self.autonomous:
@@ -824,18 +838,6 @@ class CharacterSync:
                 return
         if reward_quest is not None and self.reward(state, session, candidates, active, reward_quest):
             return
-        allowed = set()
-        if needed_entry == 197 and 7 in missing:
-            allowed.add(7)
-        elif needed_entry == 823:
-            if 7 in missing:
-                allowed.add(INTRO)
-            if level_known and level >= 2:
-                allowed |= missing & {18, 3903}
-            if 3903 in missing and EAGAN_INTRO not in confirmed and WOLVES not in confirmed:
-                allowed.add(EAGAN_INTRO)
-        elif needed_entry == 196 and 3903 in missing and WOLVES not in confirmed:
-            allowed.add(WOLVES)
         if not allowed:
             fallback = self.objective("fallback")
             if fallback["kind"] == "practice":

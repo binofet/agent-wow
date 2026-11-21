@@ -456,7 +456,7 @@ class SyncTests(unittest.TestCase):
                 self.assertEqual(len(self.mutate_calls(rpc)),count)
                 path.write_text("invalid candidate")
                 profile.tick()
-                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_pickup_policy")
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_route_policy")
                 self.assertEqual(profile.data["reservations"],reserved)
                 self.assertEqual(len(self.mutate_calls(rpc)),count)
                 path.write_text(source)
@@ -1090,6 +1090,92 @@ class SyncTests(unittest.TestCase):
         self.assertEqual([p["questId"] for m,p in rpc.calls if m == "buddy-quests.accept"],[3903])
         self.assertTrue(profile.status["exactGoalMatched"])
         self.assertNotIn("33",profile.data["confirmedRewards"])
+
+    def test_route_missing_menu_rows_only_allow_intro_probe(self):
+        for active,npc,confirmed,expected in ((set(),WILLEM,set(),197),
+                ({7,18},WILLEM,set(),823),({7,18},EAGAN,{5261},196)):
+            profile,rpc,_,saved=self.rig()
+            state=rpc.state()
+            state["offer"]={"npcGuid":str(npc),"expiresInMs":"60000"}
+            route=profile.route(state,rpc.session,profile.candidates(state),active,confirmed,True,2,False)
+            self.assertEqual(route[0],expected)
+            self.assertEqual(len(saved),int(not active))
+            self.assertNotIn("eaganProbeSession",profile.data)
+            self.assertNotIn("wolfProbeSession",profile.data)
+            self.assertEqual(profile.data["confirmedRewards"],{})
+
+    def test_route_probe_save_precedes_cooldown_and_save_failure_blocks_writer(self):
+        for fail in (False,True):
+            profile,rpc,clock,saved=self.rig()
+            rpc.active,rpc.level={7,18},2
+            rpc.offer={"npcGuid":str(WILLEM),"expiresInMs":"60000","quests":[]}
+            profile.data.update(wolfProbeSession="old-body",nextMutationAt=clock[0]+100)
+            if fail:
+                profile.save=lambda value: (_ for _ in ()).throw(OSError("disk full"))
+                with self.assertRaises(OSError):profile.tick()
+            else:
+                profile.tick()
+                self.assertEqual(saved[-1]["eaganProbeSession"],rpc.session)
+                self.assertNotIn("wolfProbeSession",saved[-1])
+                self.assertNotIn("33",saved[-1]["confirmedRewards"])
+            self.assertFalse(self.mutate_calls(rpc))
+
+    def test_route_rejects_unbound_probe_and_invented_goal_output(self):
+        base={"neededEntry":823,"rewardQuestId":0,"allowedQuestIds":[783],"probeEvents":[]}
+        for changed in ({"neededEntry":999},{"rewardQuestId":33},{"allowedQuestIds":[999]},
+                        {"probeEvents":["eagan"]},{"probeEvents":["wolf","intro"]}):
+            profile,rpc,_,saved=self.rig()
+            state=rpc.state()
+            with patch.object(sync.pickup_policy,"evaluate",return_value={"status":"ready","choice":base|changed}):
+                with self.assertRaises(sync.Error):
+                    profile.route(state,rpc.session,profile.candidates(state),set(),set(),True,1,False)
+            self.assertFalse(saved)
+            self.assertFalse(self.mutate_calls(rpc))
+            self.assertEqual(profile.data["reservations"],{})
+
+    def test_route_unavailable_evaluator_has_no_python_routing_fallback(self):
+        profile,rpc,_,saved=self.rig()
+        state=rpc.state()
+        with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-route-evaluator"}):
+            self.assertIsNone(profile.route(state,rpc.session,profile.candidates(state),set(),set(),True,1,False))
+        self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_route_policy")
+        self.assertFalse(saved)
+        self.assertFalse(self.mutate_calls(rpc))
+
+    def test_route_source_edit_changes_query_in_same_controller_and_preserves_reservation(self):
+        profile,rpc,clock,_=self.rig()
+        bound=[rpc.session,str(WILLEM),"99"]
+        profile.data["reservations"]["accept:783"]=bound[:]
+        source=sync.pickup_policy.SOURCE.read_text()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"party-quests.lua"
+            changed=source.replace('elseif missing7 then needed=confirmed["783"] and 197 or 823',
+                                   "elseif missing7 then needed=197")
+            self.assertNotEqual(changed,source)
+            path.write_text(changed)
+            with patch.object(sync.pickup_policy,"SOURCE",path):
+                profile.tick()
+                self.assertEqual(int(self.mutate_calls(rpc)[-1][1]["npcGuid"]),MCBRIDE)
+                count=len(self.mutate_calls(rpc))
+                path.write_text("invalid candidate")
+                clock[0]+=10;profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_route_policy")
+                self.assertEqual(len(self.mutate_calls(rpc)),count)
+                path.write_text(source)
+                profile.tick()
+        self.assertEqual(int(self.mutate_calls(rpc)[-1][1]["npcGuid"]),WILLEM)
+        self.assertEqual(profile.data["reservations"],{"accept:783":bound})
+        self.assertFalse(any(method=="buddy-quests.accept" for method,_ in rpc.calls))
+        self.assertEqual(rpc.session,"quest-session")
+
+    def test_route_adapter_ignores_large_unused_menu_scalars_and_keeps_reward_priority(self):
+        profile,rpc,_,saved=self.rig()
+        state=rpc.state()
+        state["offer"]={"npcGuid":"x"*35000,"expiresInMs":{},"quests":[{"questId":"x"*35000}]}
+        route=profile.route(state,rpc.session,profile.candidates(state),{783,5261,33},set(),True,2,True)
+        self.assertEqual(route[:2],(197,783))
+        self.assertFalse(saved)
+        self.assertFalse(self.mutate_calls(rpc))
 
 
 if __name__ == "__main__":
