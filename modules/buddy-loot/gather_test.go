@@ -424,22 +424,22 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 		p := make([]byte, 18)
 		p[0] = 50
 		emit(s, opcode.SMSGInventoryChangeFailure, p)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		if out := current(t, s); !out.Enabled || !out.InventoryPaused {
 			t.Fatal(out)
 		}
 		before := len(f.packets)
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		if len(f.packets) != before {
 			t.Fatal("retried while full")
 		}
 		f.world.Backpack = f.world.Backpack[:15]
 		fixtureCarriedInventory(f.world)
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		if len(f.packets) != before {
 			t.Fatal("partial backpack resumed")
 		}
@@ -449,7 +449,7 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 			s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
 		}
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		out := current(t, s)
 		if disabled {
 			if out.Enabled || len(f.packets) != before {
