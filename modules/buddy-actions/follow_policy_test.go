@@ -37,7 +37,13 @@ type followPolicySession struct {
 
 func newFollowPolicySession(t *testing.T, s *Service, f *fakeSession) *followPolicySession {
 	t.Helper()
-	host := &followPolicySession{fakeSession: f, t: t, sid: s.sessionID, self: s.selfGUID, available: true, runtime: behavior.New()}
+	// This fake host exercises authored-source/route/admission semantics. Keep
+	// its healthy evaluator separate from the actual production watchdog test.
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &followPolicySession{fakeSession: f, t: t, sid: s.sessionID, self: s.selfGUID, available: true, runtime: runtime}
 	host.reload(t, behaviors.FollowFormationSource)
 	s.session = host
 	return host
