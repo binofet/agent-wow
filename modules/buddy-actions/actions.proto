@@ -616,6 +616,10 @@ message PortalFollowObservation {
   bool catching_up = 10;
   bool notified = 11;
   bool owner_absent = 12;
+  bool sighting_age_known = 13;
+  uint64 sighting_age_ms = 14;
+  bool disappearance_age_known = 15;
+  uint64 disappearance_age_ms = 16;
 }
 message PortalCatchupRequest {
   string session_id = 1;

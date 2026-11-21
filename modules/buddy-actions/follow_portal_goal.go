@@ -43,12 +43,16 @@ func (s *Service) portalObservationLocked(w *worldv1.SnapshotResponse) *actionsv
 	if f.portal.trigger == 0 || f.sourceVisit == 0 || f.witness == 0 {
 		return nil
 	}
+	now := s.now()
+	seenKnown, seenAge := portalElapsed(now, f.seenAt)
+	lostKnown, lostAge := portalElapsed(now, f.lostAt)
 	return &actionsv1.PortalFollowObservation{WitnessRevision: f.witness, SourceVisitId: f.sourceVisit,
 		FollowRevision: f.followRevision, OwnerGuid: ownerGUID, SourceMapId: f.portal.source,
 		DestinationMapId: f.portal.destination, TriggerId: f.portal.trigger,
 		Ground: &actionsv1.PortalPoint{X: f.ground.x, Y: f.ground.y, Z: f.ground.z},
 		Start:  s.portalStartLocked(w), CatchingUp: f.catchingUp, Notified: f.notified,
-		OwnerAbsent: w.GetOwner().GetGuid() == ownerGUID && !w.GetOwner().GetPresent()}
+		OwnerAbsent:      w.GetOwner().GetGuid() == ownerGUID && !w.GetOwner().GetPresent(),
+		SightingAgeKnown: seenKnown, SightingAgeMs: seenAge, DisappearanceAgeKnown: lostKnown, DisappearanceAgeMs: lostAge}
 }
 
 func (s *Service) SetPortalCatchup(ctx context.Context, r *actionsv1.PortalCatchupRequest) (*emptypb.Empty, error) {

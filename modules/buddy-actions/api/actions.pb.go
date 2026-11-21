@@ -5938,21 +5938,25 @@ func (x *PortalPoint) GetZ() float32 {
 
 // A witnessed owner pose inside an entrance, not evidence of an instance or wing.
 type PortalFollowObservation struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	WitnessRevision  uint64                 `protobuf:"varint,1,opt,name=witness_revision,json=witnessRevision,proto3" json:"witness_revision,omitempty"`
-	SourceVisitId    uint64                 `protobuf:"varint,2,opt,name=source_visit_id,json=sourceVisitId,proto3" json:"source_visit_id,omitempty"`
-	FollowRevision   uint64                 `protobuf:"varint,3,opt,name=follow_revision,json=followRevision,proto3" json:"follow_revision,omitempty"`
-	OwnerGuid        uint64                 `protobuf:"varint,4,opt,name=owner_guid,json=ownerGuid,proto3" json:"owner_guid,omitempty"`
-	SourceMapId      uint32                 `protobuf:"varint,5,opt,name=source_map_id,json=sourceMapId,proto3" json:"source_map_id,omitempty"`
-	DestinationMapId uint32                 `protobuf:"varint,6,opt,name=destination_map_id,json=destinationMapId,proto3" json:"destination_map_id,omitempty"`
-	TriggerId        uint32                 `protobuf:"varint,7,opt,name=trigger_id,json=triggerId,proto3" json:"trigger_id,omitempty"`
-	Ground           *PortalPoint           `protobuf:"bytes,8,opt,name=ground,proto3" json:"ground,omitempty"`
-	Start            *ClientPosition        `protobuf:"bytes,9,opt,name=start,proto3" json:"start,omitempty"`
-	CatchingUp       bool                   `protobuf:"varint,10,opt,name=catching_up,json=catchingUp,proto3" json:"catching_up,omitempty"`
-	Notified         bool                   `protobuf:"varint,11,opt,name=notified,proto3" json:"notified,omitempty"`
-	OwnerAbsent      bool                   `protobuf:"varint,12,opt,name=owner_absent,json=ownerAbsent,proto3" json:"owner_absent,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	WitnessRevision       uint64                 `protobuf:"varint,1,opt,name=witness_revision,json=witnessRevision,proto3" json:"witness_revision,omitempty"`
+	SourceVisitId         uint64                 `protobuf:"varint,2,opt,name=source_visit_id,json=sourceVisitId,proto3" json:"source_visit_id,omitempty"`
+	FollowRevision        uint64                 `protobuf:"varint,3,opt,name=follow_revision,json=followRevision,proto3" json:"follow_revision,omitempty"`
+	OwnerGuid             uint64                 `protobuf:"varint,4,opt,name=owner_guid,json=ownerGuid,proto3" json:"owner_guid,omitempty"`
+	SourceMapId           uint32                 `protobuf:"varint,5,opt,name=source_map_id,json=sourceMapId,proto3" json:"source_map_id,omitempty"`
+	DestinationMapId      uint32                 `protobuf:"varint,6,opt,name=destination_map_id,json=destinationMapId,proto3" json:"destination_map_id,omitempty"`
+	TriggerId             uint32                 `protobuf:"varint,7,opt,name=trigger_id,json=triggerId,proto3" json:"trigger_id,omitempty"`
+	Ground                *PortalPoint           `protobuf:"bytes,8,opt,name=ground,proto3" json:"ground,omitempty"`
+	Start                 *ClientPosition        `protobuf:"bytes,9,opt,name=start,proto3" json:"start,omitempty"`
+	CatchingUp            bool                   `protobuf:"varint,10,opt,name=catching_up,json=catchingUp,proto3" json:"catching_up,omitempty"`
+	Notified              bool                   `protobuf:"varint,11,opt,name=notified,proto3" json:"notified,omitempty"`
+	OwnerAbsent           bool                   `protobuf:"varint,12,opt,name=owner_absent,json=ownerAbsent,proto3" json:"owner_absent,omitempty"`
+	SightingAgeKnown      bool                   `protobuf:"varint,13,opt,name=sighting_age_known,json=sightingAgeKnown,proto3" json:"sighting_age_known,omitempty"`
+	SightingAgeMs         uint64                 `protobuf:"varint,14,opt,name=sighting_age_ms,json=sightingAgeMs,proto3" json:"sighting_age_ms,omitempty"`
+	DisappearanceAgeKnown bool                   `protobuf:"varint,15,opt,name=disappearance_age_known,json=disappearanceAgeKnown,proto3" json:"disappearance_age_known,omitempty"`
+	DisappearanceAgeMs    uint64                 `protobuf:"varint,16,opt,name=disappearance_age_ms,json=disappearanceAgeMs,proto3" json:"disappearance_age_ms,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *PortalFollowObservation) Reset() {
@@ -6067,6 +6071,34 @@ func (x *PortalFollowObservation) GetOwnerAbsent() bool {
 		return x.OwnerAbsent
 	}
 	return false
+}
+
+func (x *PortalFollowObservation) GetSightingAgeKnown() bool {
+	if x != nil {
+		return x.SightingAgeKnown
+	}
+	return false
+}
+
+func (x *PortalFollowObservation) GetSightingAgeMs() uint64 {
+	if x != nil {
+		return x.SightingAgeMs
+	}
+	return 0
+}
+
+func (x *PortalFollowObservation) GetDisappearanceAgeKnown() bool {
+	if x != nil {
+		return x.DisappearanceAgeKnown
+	}
+	return false
+}
+
+func (x *PortalFollowObservation) GetDisappearanceAgeMs() uint64 {
+	if x != nil {
+		return x.DisappearanceAgeMs
+	}
+	return 0
 }
 
 type PortalCatchupRequest struct {
@@ -8993,7 +9025,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vPortalPoint\x12\f\n" +
 	"\x01x\x18\x01 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\x02 \x01(\x02R\x01y\x12\f\n" +
-	"\x01z\x18\x03 \x01(\x02R\x01z\"\x84\x04\n" +
+	"\x01z\x18\x03 \x01(\x02R\x01z\"\xc4\x05\n" +
 	"\x17PortalFollowObservation\x12)\n" +
 	"\x10witness_revision\x18\x01 \x01(\x04R\x0fwitnessRevision\x12&\n" +
 	"\x0fsource_visit_id\x18\x02 \x01(\x04R\rsourceVisitId\x12'\n" +
@@ -9010,7 +9042,11 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"catchingUp\x12\x1a\n" +
 	"\bnotified\x18\v \x01(\bR\bnotified\x12!\n" +
-	"\fowner_absent\x18\f \x01(\bR\vownerAbsent\"\xe7\x02\n" +
+	"\fowner_absent\x18\f \x01(\bR\vownerAbsent\x12,\n" +
+	"\x12sighting_age_known\x18\r \x01(\bR\x10sightingAgeKnown\x12&\n" +
+	"\x0fsighting_age_ms\x18\x0e \x01(\x04R\rsightingAgeMs\x126\n" +
+	"\x17disappearance_age_known\x18\x0f \x01(\bR\x15disappearanceAgeKnown\x120\n" +
+	"\x14disappearance_age_ms\x18\x10 \x01(\x04R\x12disappearanceAgeMs\"\xe7\x02\n" +
 	"\x14PortalCatchupRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
