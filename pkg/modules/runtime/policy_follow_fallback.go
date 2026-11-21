@@ -13,9 +13,11 @@ const policyFollowEntryPoint = "follow_formation"
 // Source identity and availability never change after publication. The cache
 // belongs only to this accepted revision; it cannot restore an older policy.
 type policyFollowFallback struct {
-	source    string
-	revision  string
-	available bool
+	source     string
+	revision   string
+	available  bool
+	entryPoint string
+	options    behavior.SessionOptions
 
 	mu        sync.Mutex
 	runtime   *behavior.Runtime
@@ -34,7 +36,7 @@ type policyFollowFallbackMetadata struct {
 // Optional export facts come from that VM's load, without running its hooks.
 func (p *SessionPolicy) publishFollowFallback(source, revision string) {
 	p.followFallback.Store(&policyFollowFallback{source: source, revision: revision,
-		available: p.vm.HasExport(policyFollowEntryPoint)})
+		available: p.vm.HasExport(policyFollowEntryPoint), entryPoint: policyFollowEntryPoint, options: p.vm.Options()})
 }
 
 func (p *SessionPolicy) followFallbackMetadata() policyFollowFallbackMetadata {
@@ -56,6 +58,12 @@ func (p *SessionPolicy) followFallbackMetadata() policyFollowFallbackMetadata {
 // movement authority and the resulting proposal before any packet write.
 func (p *SessionPolicy) followDecision(ctx context.Context, input map[string]any) (available bool, revision string, decision map[string]any, err error) {
 	current := p.followFallback.Load()
+	return p.readonlyExportDecision(ctx, current, func() bool { return p.followFallback.Load() == current }, input)
+}
+
+// A pure accepted-source export never enters the persistent VM or advance.
+// Identity/revision fences are shared by reflected non-gameplay read adapters.
+func (p *SessionPolicy) readonlyExportDecision(ctx context.Context, current *policyFollowFallback, stillCurrent func() bool, input map[string]any) (available bool, revision string, decision map[string]any, err error) {
 	if current == nil {
 		return false, "", nil, nil
 	}
@@ -73,7 +81,7 @@ func (p *SessionPolicy) followDecision(ctx context.Context, input map[string]any
 	if !available {
 		return false, revision, nil, nil
 	}
-	decision, err = current.evaluate(input)
+	decision, err = current.evaluate(ctx, input)
 	if err != nil {
 		return true, revision, nil, err
 	}
@@ -84,21 +92,23 @@ func (p *SessionPolicy) followDecision(ctx context.Context, input map[string]any
 		return true, revision, nil, behavior.ErrSessionClosed
 	}
 	currentVM = p.vm.Status()
-	if currentVM.Closed || currentVM.Swapping || currentVM.Revision != revision || p.followFallback.Load() != current {
+	if currentVM.Closed || currentVM.Swapping || currentVM.Revision != revision || !stillCurrent() {
 		return true, revision, nil, errors.New("follow fallback policy changed during evaluation")
 	}
 	return true, revision, decision, nil
 }
 
-func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, error) {
+func (p *policyFollowFallback) evaluate(ctx context.Context, input map[string]any) (map[string]any, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.attempted {
 		p.attempted = true
 		// The original source already passed the session's configured source
 		// budget. Permit exactly its bytes plus this fixed enclosing wrapper.
-		wrapped := "local policy = (function()\n" + p.source + "\nend)()\nreturn {decide=policy.follow_formation}\n"
-		runtime, err := behavior.NewWithSourceLimit(len(wrapped))
+		wrapped := "local policy = (function()\n" + p.source + "\nend)()\nreturn {decide=policy." + p.entryPoint + "}\n"
+		options := p.options
+		options.SourceBytes = len(wrapped)
+		runtime, err := behavior.NewWithOptions(options)
 		if err == nil {
 			_, err = runtime.Reload(wrapped, "")
 		}
@@ -111,7 +121,7 @@ func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, e
 	if p.runtime == nil {
 		return nil, errors.New(p.lastError)
 	}
-	decision, err := p.runtime.Evaluate(input)
+	decision, err := p.runtime.EvaluateContext(ctx, input)
 	p.recordError(err)
 	if err != nil && p.runtime.Status().Revision == "" {
 		p.runtime = nil // Retain this revision's original quarantine cause.

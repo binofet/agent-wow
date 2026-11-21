@@ -24,13 +24,15 @@ import (
 // the private pure-policy read is intercepted, using the real Lua evaluator.
 type followPolicySession struct {
 	*fakeSession
-	t         *testing.T
-	sid       string
-	self      uint64
-	available bool
-	runtime   *behavior.Runtime
-	inputs    []map[string]any
-	bad       string
+	t             *testing.T
+	sid           string
+	self          uint64
+	available     bool
+	runtime       *behavior.Runtime
+	inputs        []map[string]any
+	bad           string
+	fixedDecision map[string]any
+	fixedRevision string
 }
 
 func newFollowPolicySession(t *testing.T, s *Service, f *fakeSession) *followPolicySession {
@@ -82,12 +84,17 @@ func (f *followPolicySession) InvokeModule(ctx context.Context, req *modv1.Invok
 	decision := map[string]any{}
 	revision := ""
 	if f.available {
-		var err error
-		decision, err = f.runtime.Evaluate(input)
-		if err != nil {
-			return nil, err
+		if f.fixedDecision != nil {
+			decision, revision = f.fixedDecision, f.fixedRevision
+		} else {
+			var err error
+			decision, err = f.runtime.Evaluate(input)
+			if err != nil {
+				f.t.Logf("pure follow evaluation failed: %v; runtime status: %+v", err, f.runtime.Status())
+				return nil, err
+			}
+			revision = f.runtime.Status().Revision
 		}
-		revision = f.runtime.Status().Revision
 	}
 	response := map[string]any{"available": f.available, "revision": revision, "decision": decision}
 	switch f.bad {
@@ -270,12 +277,22 @@ func TestFollowPolicyHostErrorsAndMalformedRepliesPreserveMemoryWithoutBuiltinFa
 			s, f, _ := formationRig(t, 1, 5)
 			s.sessionID = f.party.SessionId
 			f.world.Owner.Health = f.world.Owner.MaxHealth
-			host := newFollowPolicySession(t, s, f)
+			// This test exercises malformed callback replies after a committed
+			// decision. Keep that setup independent of the pure Lua watchdog;
+			// positive source/reload tests above exercise the real evaluator.
+			host := &followPolicySession{fakeSession: f, t: t, sid: s.sessionID, self: s.selfGUID, available: true,
+				fixedRevision: strings.Repeat("a", 64), fixedDecision: map[string]any{
+					"position":      map[string]any{"x": 1, "y": 0, "z": 0, "o": 0},
+					"startDistance": 2, "stopDistance": 1, "ready": true, "hold": true,
+					"phase":  "within_personal_follow_space",
+					"memory": map[string]any{"guid": strconv.FormatUint(s.selfGUID, 10), "marker": "committed"},
+				}}
+			s.session = host
 			s.UseHostFollowPolicy()
 			owner := playerPosition(f.world.Owner)
 			first := s.formation.Plan(s.now(), s.selfGUID, 5, owner, false, playerPosition(f.world.Self), false, false)
 			if !first.Valid || s.formation.memory == nil {
-				t.Fatal("fixture did not retain committed pure Lua memory", first)
+				t.Fatal("fixture did not retain committed callback memory", first)
 			}
 			memory := make(map[string]any, len(s.formation.memory))
 			for key, value := range s.formation.memory {

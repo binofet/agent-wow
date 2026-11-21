@@ -65,7 +65,7 @@ func fixtureGear(t *testing.T, occupied bool) (*Service, *fakeInventory) {
 }
 func gearRequest(t *testing.T, s *Service) *inventoryv1.EquipGearRequest {
 	t.Helper()
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	return &inventoryv1.EquipGearRequest{SessionId: "body", RequestId: "equip-pants", ExpectedRevision: st.Revision, ExpectedInventoryRevision: st.InventoryRevision, Source: &inventoryv1.ItemRef{Slot: 2, ItemGuid: breechesGUID, Entry: 2962, StackCount: 1}, EquipmentSlot: 6, ExpectedEquipmentRevision: st.EquipmentRevision, ExpectedEquippedItemGuid: st.Equipment[6].ItemGuid, RequireConservativeUpgrade: true}
 }
 func gearProof(s *Service, f *fakeInventory) {
@@ -92,7 +92,7 @@ func TestGearNormalEquipAndReplacementRequireActualFullReceipt(t *testing.T) {
 			gearProof(s, f)
 			// Actual server proof wins even if SendPacket returns an ambiguous error.
 			f.sendError = true
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st := waitInventory(t, s)
@@ -113,12 +113,12 @@ func TestGearNormalEquipAndReplacementRequireActualFullReceipt(t *testing.T) {
 			if got := st.InventoryBags[0].Slots[2].ItemGuid; got != want {
 				t.Fatal("displaced item lost", got, want)
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil || len(f.packets) != 1 {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil || len(f.packets) != 1 {
 				t.Fatal("replay wrote", err)
 			}
 			changed := proto.Clone(r).(*inventoryv1.EquipGearRequest)
 			changed.ExpectedEquippedItemGuid = 99
-			if _, err := s.EquipGear(context.Background(), changed); err == nil {
+			if _, err := equipGearPolicyTest(t, s, changed); err == nil {
 				t.Fatal("changed replay accepted")
 			}
 		})
@@ -197,8 +197,8 @@ func TestGearUsabilityAndConflictGatesNeverWrite(t *testing.T) {
 			s, f := fixtureGear(t, true)
 			r := gearRequest(t, s)
 			change(s, f, r)
-			r.ExpectedRevision = stateInventory(t, s).Revision
-			_, err := s.EquipGear(context.Background(), r)
+			r.ExpectedRevision = stateGear(t, s).Revision
+			_, err := equipGearPolicyTest(t, s, r)
 			if err == nil {
 				st := waitInventory(t, s)
 				if st.Operation.Status != "BLOCKED" {
@@ -244,20 +244,20 @@ func TestGearProofRejectsPartialLossAndUnrelatedUpdates(t *testing.T) {
 				f.w = w
 				f.mu.Unlock()
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st := waitInventory(t, s)
 			if st.Operation.Status != "OUTCOME_UNCONFIRMED" || !st.Operation.LeaseReleased {
 				t.Fatal(st)
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil || len(f.packets) != 1 {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil || len(f.packets) != 1 {
 				t.Fatal("ambiguous replay", err)
 			}
 			next := proto.Clone(r).(*inventoryv1.EquipGearRequest)
 			next.RequestId = "new-after-uncertainty"
-			next.ExpectedRevision = stateInventory(t, s).Revision
-			if _, err := s.EquipGear(context.Background(), next); err == nil {
+			next.ExpectedRevision = stateGear(t, s).Revision
+			if _, err := equipGearPolicyTest(t, s, next); err == nil {
 				t.Fatal("new request after ambiguous outcome")
 			}
 		})
@@ -275,7 +275,7 @@ func TestGearFinalLeaseRevalidationAndErrorCorrelation(t *testing.T) {
 			} else {
 				f.afterRenew = hook
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st := waitInventory(t, s)
@@ -299,7 +299,7 @@ func TestGearFinalLeaseRevalidationAndErrorCorrelation(t *testing.T) {
 		bad = append(bad, make([]byte, 9)...)
 		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGInventoryChangeFailure, Payload: bad})
 	}
-	s.EquipGear(context.Background(), r)
+	equipGearPolicyTest(t, s, r)
 	st := waitInventory(t, s)
 	if st.Operation.Status != "SERVER_REJECTED" || st.Operation.EquipmentConfirmed || !st.Operation.LeaseReleased {
 		t.Fatal(st)
@@ -308,7 +308,7 @@ func TestGearFinalLeaseRevalidationAndErrorCorrelation(t *testing.T) {
 
 func TestGearUpgradeDominanceAndEnhancedUnknownRefusal(t *testing.T) {
 	s, f := fixtureGear(t, true)
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	var item *inventoryv1.ItemEligibility
 	for _, i := range st.Items {
 		if i.Item.ItemGuid == breechesGUID {
@@ -341,7 +341,7 @@ func TestGearUpgradeDominanceAndEnhancedUnknownRefusal(t *testing.T) {
 			case "equal":
 				candidate.armor = current.armor
 			}
-			if conservativeArmorUpgrade(candidate, source, current, old) {
+			if compareGearPolicy(t, candidate, source, current, old) {
 				t.Fatal("unsupported upgrade", mode)
 			}
 		})
@@ -349,13 +349,13 @@ func TestGearUpgradeDominanceAndEnhancedUnknownRefusal(t *testing.T) {
 	s, f = fixtureGear(t, false)
 	negative := s.metadata[2962]
 	negative.statCount, negative.stats[0] = 1, itemStat{7, -1}
-	if conservativeArmorUpgrade(negative, f.w.InventoryBags[0].Slots[2], itemMetadata{}, f.w.SelfEquipment[6]) {
+	if compareGearPolicy(t, negative, f.w.InventoryBags[0].Slots[2], itemMetadata{}, f.w.SelfEquipment[6]) {
 		t.Fatal("negative stat armor labeled conservative upgrade to empty slot")
 	}
 	for _, kind := range []uint32{2, 8, 9, 10, 11, 40, 41, 42, 49} {
 		undefined := s.metadata[2962]
 		undefined.statCount, undefined.stats[0] = 1, itemStat{kind, 1}
-		if conservativeArmorUpgrade(undefined, f.w.InventoryBags[0].Slots[2], itemMetadata{}, f.w.SelfEquipment[6]) {
+		if compareGearPolicy(t, undefined, f.w.InventoryBags[0].Slots[2], itemMetadata{}, f.w.SelfEquipment[6]) {
 			t.Fatal("undefined/deprecated modifier labeled upgrade", kind)
 		}
 	}
@@ -407,7 +407,7 @@ func TestGearComparisonPendingIsExplicitAndQueriesEquippedTemplate(t *testing.T)
 	s, f := fixtureGear(t, true)
 	delete(s.metadata, 47)
 	delete(s.queried, 47)
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	var candidate *inventoryv1.ItemEligibility
 	for _, row := range st.Items {
 		if row.Item.ItemGuid == breechesGUID {
@@ -422,7 +422,7 @@ func TestGearComparisonPendingIsExplicitAndQueriesEquippedTemplate(t *testing.T)
 	}
 	s, f = fixtureGear(t, true)
 	f.w.InventoryBags[0].Slots[2].EnhancementsKnown = false
-	st = stateInventory(t, s)
+	st = stateGear(t, s)
 	for _, row := range st.Items {
 		if row.Item.ItemGuid == breechesGUID && (row.GearBlockedReason != "enhancement_context_pending" || row.ConservativeUpgrade || row.GearEquipEligible) {
 			t.Fatal(row)

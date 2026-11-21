@@ -736,4 +736,5 @@ local function decide(frame)
 end
 
 return {decide=decide, on_event=on_event, export_state=export_state, import_state=import_state,
-        follow_formation=encounter_formation and encounter_formation.decide}
+        follow_formation=encounter_formation and encounter_formation.decide,
+        gear_evaluation=encounter_gear and encounter_gear.evaluate}

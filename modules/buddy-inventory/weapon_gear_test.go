@@ -1,7 +1,6 @@
 package buddyinventory
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"testing"
@@ -62,7 +61,7 @@ func fixtureWeapon(t *testing.T, staff bool) (*Service, *fakeInventory, *invento
 		}
 		s.metadata[id], s.queried[id] = m, true
 	}
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	return s, f, &inventoryv1.EquipGearRequest{SessionId: "body", RequestId: "weapon", ExpectedRevision: st.Revision,
 		ExpectedInventoryRevision: st.InventoryRevision, Source: &inventoryv1.ItemRef{Slot: 2, ItemGuid: breechesGUID, Entry: entry, StackCount: 1},
 		EquipmentSlot: 15, ExpectedEquipmentRevision: st.EquipmentRevision, ExpectedEquippedItemGuid: oldPantsGUID, RequireConservativeUpgrade: true}
@@ -74,7 +73,7 @@ func TestWeaponGearActualDaggerAndStaffNormalSwapConservesBothHandsAndBags(t *te
 			s, f, r := fixtureWeapon(t, staff)
 			beforeOH := proto.Clone(f.w.SelfEquipment[16]).(*worldv1.EquipmentSlotState)
 			gearProof(s, f)
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st := waitInventory(t, s)
@@ -86,7 +85,7 @@ func TestWeaponGearActualDaggerAndStaffNormalSwapConservesBothHandsAndBags(t *te
 				binary.LittleEndian.Uint64(f.packets[0].Payload) != breechesGUID || f.packets[0].Payload[8] != 15 {
 				t.Fatal("unexpected weapon packet", f.packets)
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil || len(f.packets) != 1 {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil || len(f.packets) != 1 {
 				t.Fatal("weapon request replay wrote", err)
 			}
 		})
@@ -186,8 +185,8 @@ func TestWeaponGearRequirementsEnhancementsAndHandSetGates(t *testing.T) {
 				f.w.SelfEquipment[16].SlotKnown = false
 			}
 			s.metadata[r.Source.Entry] = m
-			r.ExpectedRevision = stateInventory(t, s).Revision
-			if _, err := s.EquipGear(context.Background(), r); err == nil {
+			r.ExpectedRevision = stateGear(t, s).Revision
+			if _, err := equipGearPolicyTest(t, s, r); err == nil {
 				if st := waitInventory(t, s); st.Operation.Status != "BLOCKED" {
 					t.Fatal("unsafe weapon accepted", st)
 				}
@@ -235,7 +234,7 @@ func TestWeaponGearFinalOffhandChangeAndIncompleteDisplacementNeverConfirm(t *te
 					f.mu.Unlock()
 				}
 			}
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st := waitInventory(t, s)
@@ -250,7 +249,7 @@ func TestWeaponGearUpgradeCannotTradeStatsOrBypassUnknownsIntoEmptySlot(t *testi
 	s, f, r := fixtureWeapon(t, false)
 	candidate, old := s.metadata[r.Source.Entry], s.metadata[2092]
 	carried, equipped := f.w.InventoryBags[0].Slots[2], f.w.SelfEquipment[15]
-	if !conservativeWeaponUpgrade(candidate, carried, old, equipped) {
+	if !compareGearPolicy(t, candidate, carried, old, equipped) {
 		t.Fatal("strict actual dagger improvement refused")
 	}
 	for _, mode := range []string{"negative into empty", "unknown stat into empty", "equal dps plus stats", "old elemental damage"} {
@@ -270,7 +269,7 @@ func TestWeaponGearUpgradeCannotTradeStatsOrBypassUnknownsIntoEmptySlot(t *testi
 			case "old elemental damage":
 				o.damages[0].school = 1
 			}
-			if conservativeWeaponUpgrade(c, carried, o, e) {
+			if compareGearPolicy(t, c, carried, o, e) {
 				t.Fatal("unsupported comparison authorized", mode)
 			}
 		})
