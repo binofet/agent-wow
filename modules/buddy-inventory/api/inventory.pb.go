@@ -3217,9 +3217,10 @@ const file_modules_buddy_inventory_inventory_proto_rawDesc = "" +
 	"request_id\x18\b \x01(\tR\trequestId\x12G\n" +
 	"\toperation\x18\t \x01(\v2).warcraftbuddy.inventory.v1.ConsumableUseR\toperation\x12\x16\n" +
 	"\x06reason\x18\n" +
-	" \x01(\tR\x06reason2\xe4\x06\n" +
+	" \x01(\tR\x06reason2\xaf\a\n" +
 	"\x0eBuddyInventory\x12E\n" +
-	"\bGetState\x12\x16.google.protobuf.Empty\x1a!.warcraftbuddy.inventory.v1.State\x12^\n" +
+	"\bGetState\x12\x16.google.protobuf.Empty\x1a!.warcraftbuddy.inventory.v1.State\x12I\n" +
+	"\fRawGearFacts\x12\x16.google.protobuf.Empty\x1a!.warcraftbuddy.inventory.v1.State\x12^\n" +
 	"\bDiscover\x12+.warcraftbuddy.inventory.v1.DiscoverRequest\x1a%.warcraftbuddy.inventory.v1.Discovery\x12R\n" +
 	"\x04Move\x12'.warcraftbuddy.inventory.v1.MoveRequest\x1a!.warcraftbuddy.inventory.v1.State\x12T\n" +
 	"\x05Equip\x12(.warcraftbuddy.inventory.v1.EquipRequest\x1a!.warcraftbuddy.inventory.v1.State\x12\\\n" +
@@ -3313,27 +3314,29 @@ var file_modules_buddy_inventory_inventory_proto_depIdxs = []int32{
 	15, // 30: warcraftbuddy.inventory.v1.EatBuffFoodReceipt.operation:type_name -> warcraftbuddy.inventory.v1.ConsumableUse
 	6,  // 31: warcraftbuddy.inventory.v1.GearContext.TemplatesEntry.value:type_name -> warcraftbuddy.inventory.v1.GearTemplate
 	32, // 32: warcraftbuddy.inventory.v1.BuddyInventory.GetState:input_type -> google.protobuf.Empty
-	16, // 33: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
-	19, // 34: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
-	20, // 35: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
-	22, // 36: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
-	21, // 37: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
-	23, // 38: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
-	25, // 39: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
-	33, // 40: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	32, // 41: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
-	3,  // 42: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
-	18, // 43: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
-	3,  // 44: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 45: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 46: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
-	3,  // 47: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
-	24, // 48: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
-	26, // 49: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
-	32, // 50: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
-	32, // 51: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
-	42, // [42:52] is the sub-list for method output_type
-	32, // [32:42] is the sub-list for method input_type
+	32, // 33: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:input_type -> google.protobuf.Empty
+	16, // 34: warcraftbuddy.inventory.v1.BuddyInventory.Discover:input_type -> warcraftbuddy.inventory.v1.DiscoverRequest
+	19, // 35: warcraftbuddy.inventory.v1.BuddyInventory.Move:input_type -> warcraftbuddy.inventory.v1.MoveRequest
+	20, // 36: warcraftbuddy.inventory.v1.BuddyInventory.Equip:input_type -> warcraftbuddy.inventory.v1.EquipRequest
+	22, // 37: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:input_type -> warcraftbuddy.inventory.v1.EquipGearRequest
+	21, // 38: warcraftbuddy.inventory.v1.BuddyInventory.Sell:input_type -> warcraftbuddy.inventory.v1.SellRequest
+	23, // 39: warcraftbuddy.inventory.v1.BuddyInventory.Drink:input_type -> warcraftbuddy.inventory.v1.DrinkRequest
+	25, // 40: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:input_type -> warcraftbuddy.inventory.v1.EatBuffFoodRequest
+	33, // 41: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	32, // 42: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:input_type -> google.protobuf.Empty
+	3,  // 43: warcraftbuddy.inventory.v1.BuddyInventory.GetState:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 44: warcraftbuddy.inventory.v1.BuddyInventory.RawGearFacts:output_type -> warcraftbuddy.inventory.v1.State
+	18, // 45: warcraftbuddy.inventory.v1.BuddyInventory.Discover:output_type -> warcraftbuddy.inventory.v1.Discovery
+	3,  // 46: warcraftbuddy.inventory.v1.BuddyInventory.Move:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 47: warcraftbuddy.inventory.v1.BuddyInventory.Equip:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 48: warcraftbuddy.inventory.v1.BuddyInventory.EquipGear:output_type -> warcraftbuddy.inventory.v1.State
+	3,  // 49: warcraftbuddy.inventory.v1.BuddyInventory.Sell:output_type -> warcraftbuddy.inventory.v1.State
+	24, // 50: warcraftbuddy.inventory.v1.BuddyInventory.Drink:output_type -> warcraftbuddy.inventory.v1.DrinkReceipt
+	26, // 51: warcraftbuddy.inventory.v1.BuddyInventory.EatBuffFood:output_type -> warcraftbuddy.inventory.v1.EatBuffFoodReceipt
+	32, // 52: warcraftbuddy.inventory.v1.BuddyInventory.OnPacket:output_type -> google.protobuf.Empty
+	32, // 53: warcraftbuddy.inventory.v1.BuddyInventory.BeforeLogout:output_type -> google.protobuf.Empty
+	43, // [43:54] is the sub-list for method output_type
+	32, // [32:43] is the sub-list for method input_type
 	32, // [32:32] is the sub-list for extension type_name
 	32, // [32:32] is the sub-list for extension extendee
 	0,  // [0:32] is the sub-list for field type_name
