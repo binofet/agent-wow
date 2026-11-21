@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"math"
 	"sort"
 	"time"
@@ -49,6 +50,28 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		Owner: w.Owner, SourceObservation: w.RequestedCreature,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
+	if s.exactCorpse && s.windowRequest != nil && !s.windowRequest.receipt.Terminal && s.unconfirmedItemDelta(w) {
+		s.windowRequest.receipt.SlotRemoved = true
+		s.windowRequest.receipt.InventoryDeltaObserved = true
+		s.windowRequest.receipt.Terminal = true
+		s.itemRequested = false
+		s.state.Phase = "window_ready"
+	}
+	out.Window = s.windowObservation()
+	out.QuestLogKnown, out.QuestLog = w.SelfQuestLogKnown, w.SelfQuestLog
+	for _, q := range w.SelfQuestLog {
+		if q != nil {
+			for _, item := range gamecatalog.RequiredQuestItems(q.QuestId) {
+				out.QuestRequirements = append(out.QuestRequirements, &lootv1.QuestItemRequirement{QuestId: q.QuestId, ItemId: item.ItemID, Count: item.Count})
+			}
+		}
+	}
+	counts, known := completeOwnItemCounts(w, s.selfGUID)
+	out.ItemCountsKnown = known
+	for entry, count := range counts {
+		out.ItemCounts = append(out.ItemCounts, &lootv1.OwnedItemCount{ItemId: entry, Count: count})
+	}
+	sort.Slice(out.ItemCounts, func(i, j int) bool { return out.ItemCounts[i].ItemId < out.ItemCounts[j].ItemId })
 	if s.corpseRequest != nil {
 		out.Operation = s.corpseReceiptLocked()
 	}

@@ -83,6 +83,35 @@ message CorpseObservation {
   warcraftbuddy.world.v1.PlayerState owner = 13;
   // Raw cached observation of the last caller-selected source, including life.
   warcraftbuddy.world.v1.CreatureState source_observation = 14;
+  LootWindow window = 15;
+  bool quest_log_known = 16;
+  repeated warcraftbuddy.world.v1.QuestLogEntry quest_log = 17;
+  repeated QuestItemRequirement quest_requirements = 18;
+  bool item_counts_known = 19;
+  repeated OwnedItemCount item_counts = 20;
+}
+message QuestItemRequirement { uint32 quest_id = 1; uint32 item_id = 2; uint32 count = 3; }
+message OwnedItemCount { uint32 item_id = 1; uint64 count = 2; }
+message LootSlot { uint32 slot = 1; uint32 item_id = 2; uint32 count = 3; uint32 slot_type = 4; bool removed = 5; }
+message LootWindow {
+  uint64 corpse_guid = 1; string open_request_id = 2; uint64 revision = 3;
+  bool observed = 4; uint32 money = 5; bool money_requested = 6; bool money_cleared = 7;
+  repeated LootSlot slots = 8; LootMutation mutation = 9;
+}
+message TakeLootRequest {
+  string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3;
+  string open_request_id = 4; uint64 window_revision = 5; string request_id = 6;
+  uint32 slot = 7; uint32 expected_item_id = 8; uint32 expected_count = 9;
+  uint64 expected_inventory_revision = 10;
+}
+message LootMutation {
+  string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3;
+  string open_request_id = 4; uint64 window_revision = 5; string request_id = 6;
+  string kind = 7; uint32 slot = 8; uint32 item_id = 9; uint32 count = 10;
+  bool transport_attempted = 11; bool transport_written = 12;
+  bool slot_removed = 13; bool item_push_observed = 14; bool money_cleared = 15;
+  bool server_rejected = 16; uint32 inventory_error = 17; bool terminal = 18;
+  bool inventory_delta_observed = 19;
 }
 service BuddyLoot {
   rpc Enable(EnableRequest) returns (State);
@@ -90,6 +119,8 @@ service BuddyLoot {
   rpc ObserveCorpses(google.protobuf.Empty) returns (CorpseObservation);
   rpc OpenCorpse(OpenCorpseRequest) returns (CorpseOperation);
   rpc CloseCorpse(CloseCorpseRequest) returns (CorpseOperation);
+  rpc TakeMoney(TakeLootRequest) returns (LootMutation);
+  rpc TakeSlot(TakeLootRequest) returns (LootMutation);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

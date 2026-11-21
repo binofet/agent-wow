@@ -72,6 +72,9 @@ type Service struct {
 	corpseRequests                             map[string]*corpseRequest
 	corpseRequest                              *corpseRequest
 	exactCorpse                                bool
+	windowRevision                             uint64
+	windowRequests                             map[string]*windowRequest
+	windowRequest                              *windowRequest
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -536,6 +539,15 @@ func (s *Service) Tick(ctx context.Context) {
 		s.tickOrdinaryCleanup(ctx)
 		return
 	}
+	if s.exactCorpse {
+		// Observe settlement only. Lua owns window choice, ordering, timeout,
+		// retry and release; a native timer must never take another item.
+		s.observeWindowMutation()
+		if s.state.Phase == "release_observed" {
+			s.finishReleased(ctx)
+		}
+		return
+	}
 	if s.token != "" {
 		var observed *worldv1.SnapshotResponse
 		var currentActions *actionsv1.State
@@ -983,6 +995,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			break
 		}
 		s.window = window
+		s.windowRevision++
 		s.removedSlots = map[byte]bool{}
 		s.items = nil
 		s.index = 0
@@ -997,11 +1010,11 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			if s.questGather && item.id != s.boundHarvestRecipe().itemID {
 				continue
 			}
-			if item.slotType == 0 || item.slotType == 4 {
+			if s.exactCorpse || item.slotType == 0 || item.slotType == 4 {
 				s.items = append(s.items, item)
 			}
 		}
-		if s.automatic && !s.questGather {
+		if !s.exactCorpse && s.automatic && !s.questGather {
 			slices.SortStableFunc(s.items, func(a, b lootItem) int {
 				return int(b.slotType) - int(a.slotType)
 			})
@@ -1011,7 +1024,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.Phase = "abort"
 			break
 		}
-		if window.gold > 0 && !s.questGather {
+		if s.exactCorpse {
+			s.state.Phase = "window_ready"
+		} else if window.gold > 0 && !s.questGather {
 			s.state.Phase = "ready_money"
 		} else {
 			s.state.Phase = "ready_item"
@@ -1028,6 +1043,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 						s.removedSlots = map[byte]bool{}
 					}
 					s.removedSlots[p[0]] = true
+					s.windowRevision++
 					break
 				}
 			}
@@ -1064,6 +1080,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 		} else if s.token != "" && s.moneySent {
 			s.moneyCleared = true
+			s.windowRevision++
 		}
 	case opcode.SMSGLootMoneyNotify:
 		if len(p) != 5 || p[4] > 1 {
@@ -1120,6 +1137,14 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			// A real inventory rejection settles this request as rejected, not
 			// as an ambiguous pickup. Keep its existing pause/disable policy.
 			s.itemRequested = false
+			if s.exactCorpse && s.windowRequest != nil {
+				s.windowRequest.receipt.ServerRejected = true
+				s.windowRequest.receipt.InventoryError = uint32(p[0])
+				s.windowRequest.receipt.Terminal = true
+				s.windowRevision++
+				s.state.Phase = "window_ready"
+				break
+			}
 			if p[0] == 50 && s.state.Phase == "waiting_item" {
 				s.state.InventoryPaused = true
 				if s.inventoryWriteRevision > s.rejectedInventoryRevision {
@@ -1144,5 +1169,6 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 	if bad {
 		s.state.MalformedPackets++
 	}
+	s.observeWindowMutation()
 	return &emptypb.Empty{}, nil
 }
