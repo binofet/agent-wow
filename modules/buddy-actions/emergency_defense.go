@@ -120,5 +120,5 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 	if s.hostEncounterActiveLocked() {
 		return preempted
 	}
-	return s.interruptHealLocked(ctx, w) || s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
+	return s.selfDefenseLocked(ctx, w) || s.partyDefenseLocked(ctx, w)
 }
