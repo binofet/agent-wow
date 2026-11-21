@@ -963,7 +963,61 @@ message FlightpathObservationResponse {
   FlightpathOperation operation = 6;
 }
 
+message FlightpathReferenceRequest { uint32 node_id = 1; }
+message FlightpathReferenceNode {
+  uint32 node_id = 1;
+  uint32 map_id = 2;
+  double x = 3;
+  double y = 4;
+  double z = 5;
+  string name = 6;
+  // Membership in a pinned Map table only; not installed geometry or arrival.
+  bool map_reference_known = 7;
+}
+message FlightpathReferencePath {
+  uint32 path_id = 1;
+  uint32 source_node = 2;
+  uint32 destination_node = 3;
+  uint32 reference_base_copper = 4;
+  // Distinguishes a real reference zero from absent price information.
+  bool reference_price_known = 5;
+  bool endpoints_known = 6;
+}
+message FlightpathReferenceInfo {
+  uint32 format = 1;
+  uint32 claimed_build = 2;
+  string name_locale = 3;
+  string repository = 4;
+  string upstream_commit = 5;
+  string nodes_sha256 = 6;
+  string paths_sha256 = 7;
+  string map_sha256 = 8;
+  string node_url = 9;
+  string path_url = 10;
+  string map_source = 11;
+  uint32 node_count = 12;
+  uint32 path_count = 13;
+  uint32 unnamed_nodes = 14;
+  uint32 unmapped_nodes = 15;
+  uint32 invalid_endpoint_paths = 16;
+  uint32 duplicate_endpoint_pairs = 17;
+  uint32 zero_price_paths = 18;
+}
+message FlightpathReferenceResponse {
+  bool reference_only = 1;
+  bool node_found = 2;
+  FlightpathReferenceNode node = 3;
+  // All source-keyed raw rows, including duplicate/sentinel endpoints.
+  // Key ordering is factual path ID order, never a route preference.
+  repeated FlightpathReferencePath outgoing_paths = 4;
+  FlightpathReferenceInfo info = 5;
+  // Static references never establish these live facts.
+  bool live_fare_known = 6;
+  bool live_route_known = 7;
+}
+
 service BuddyActions {
+  rpc FlightpathReference(FlightpathReferenceRequest) returns (FlightpathReferenceResponse);
   rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
   rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);

@@ -8,6 +8,7 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  flightpath_reference: /warcraftbuddy.actions.v1.BuddyActions/FlightpathReference
   flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
   query_flightpath: /warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath
   select_target: /warcraftbuddy.actions.v1.BuddyActions/SelectTarget
@@ -101,6 +102,7 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  flightpath_reference: {effect: read, description: Read exact pinned node and outgoing path references; labels base prices and coordinates prove no live route fare or arrival}
   flightpath_observation: {effect: read, description: Observe the bound flightmaster query receipt; known nodes imply no route price or travel completion}
   query_flightpath: {effect: mutation, description: Issue one exact status or learn-menu query to an observed nearby flightmaster under an exploration lease; never activates travel or spends money}
   acquire_movement: {effect: mutation, description: Acquire or renew finite idle and follow movement custody while preserving healing defense casting and explicit actor movement}

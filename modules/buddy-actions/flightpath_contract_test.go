@@ -95,7 +95,8 @@ query_corpse QueryCorpse
 approach_corpse ApproachCorpse
 reclaim_corpse ReclaimCorpse
 flightpath_observation FlightpathObservation
-query_flightpath QueryFlightpath`
+query_flightpath QueryFlightpath
+flightpath_reference FlightpathReference`
 	for _, line := range strings.Split(baseline, "\n") {
 		pair := strings.Fields(line)
 		method, ok := actions.RPC(pair[0])
@@ -115,6 +116,7 @@ query_flightpath QueryFlightpath`
 		}
 	}
 	if actions.Manifest().ScriptAPI["flightpath_observation"].Effect != moddisc.EffectRead ||
+		actions.Manifest().ScriptAPI["flightpath_reference"].Effect != moddisc.EffectRead ||
 		actions.Manifest().ScriptAPI["query_flightpath"].Effect != moddisc.EffectMutation {
 		t.Fatal("flightpath query was mislabeled as a pure read")
 	}
