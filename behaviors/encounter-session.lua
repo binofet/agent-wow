@@ -749,6 +749,9 @@ local function decide(frame)
             (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
              action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
              action.capability=="sap" or action.capability=="polymorph")
+        if healing and healing.needs_access and current.healing then
+            urgent=urgent or healing.needs_access(healing_input(current),current)
+        end
         local quiet=out.action==nil and not out.focusGuid and #frame.pending==0 and
             not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
         local loot=corpse_loot.decide(frame,current,quiet,urgent)

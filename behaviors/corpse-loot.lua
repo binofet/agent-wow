@@ -70,6 +70,7 @@ function M.decide(frame,encounter,quiet,urgent)
  if s.unitFlagsKnown and math.floor((s.unitFlags or 0)/524288)%2==1 then quiet=false;urgent=true end
  for _,player in pairs(encounter.players or {}) do if player.present and player.aliveKnown and player.alive and player.inCombat==true then quiet=false;urgent=true end end
  for _,target in pairs(encounter.targets or {}) do if target.present and target.aliveKnown and target.alive and target.engaged==true then quiet=false;urgent=true end end
+ if urgent then quiet=false end
  local op=o.operation
  local pending=(o.state or {}).pendingCorpseGuid
  if id(pending) then

@@ -64,7 +64,14 @@ func TestEncounterCorpseLootYieldsCustodyForHealingAndPreservesSameSessionState(
 	settle(first, "loot_open")
 	loot["state"] = map[string]any{"pendingCorpseGuid": corpse, "phase": "waiting_open"}
 	loot["operation"] = map[string]any{"corpseGuid": corpse, "requestId": "open", "openingTransportAttempted": true}
-	obs.Healing.Patients = patients
+	// The real busy feed reports not-ready with no patient/rank rows on older
+	// Actions builds. Raw nearby player health still proves support is needed.
+	ranks := obs.Healing.Spells
+	obs.Healing.Patients = nil
+	obs.Healing.Spells = nil
+	obs.Healing.Caster.Ready = false
+	obs.Spells["6063"].Ready = false
+	obs.Spells["6063"].TargetRule = "ally"
 	close := decide()
 	a, _ = close.Output["action"].(map[string]any)
 	if a["capability"] != "loot_close" {
@@ -72,6 +79,8 @@ func TestEncounterCorpseLootYieldsCustodyForHealingAndPreservesSameSessionState(
 	}
 	settle(close, "loot_close")
 	loot["state"].(map[string]any)["phase"] = "waiting_release"
+	obs.Healing.Patients, obs.Healing.Spells, obs.Healing.Caster.Ready = patients, ranks, true
+	obs.Spells["6063"].Ready = true
 	if _, err = host.Reload(context.Background(), source, host.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
