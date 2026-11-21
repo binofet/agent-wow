@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func tradeConsentSource(t *testing.T) string {
@@ -35,7 +36,24 @@ func tradeConsentItem(slot int) map[string]any {
 		"name": "Observed item", "metadataKnown": true}
 }
 
-func tradeConsentResult(t *testing.T, r *Runtime, input map[string]any, want string) map[string]any {
+func tradeConsentFixtureRuntime(t *testing.T, source string) *Runtime {
+	t.Helper()
+	// Only fixture Reload validation has extra allowance under instrumentation.
+	// Evaluate still initializes the chunk and decides within the default 5ms.
+	r, err := NewWithInitializationLimit(SessionOptions{}, 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes, inputNodes, outputNodes := r.valueBudget()
+	if r.evaluationBudget() != EvaluationLimit || EvaluationLimit != 5*time.Millisecond ||
+		bytes != MaxJSONBytes || bytes != 32*1024 || inputNodes != MaxInputNodes || outputNodes != MaxNodes {
+		t.Fatal("fixture changed the actual evaluation or value budgets")
+	}
+	load(t, r, source)
+	return r
+}
+
+func tradeConsentResult(t *testing.T, r *Runtime, source string, input map[string]any, want string) map[string]any {
 	t.Helper()
 	before, err := json.Marshal(input)
 	if err != nil {
@@ -48,6 +66,12 @@ func tradeConsentResult(t *testing.T, r *Runtime, input map[string]any, want str
 	reason, ok := out["reason"].(string)
 	if len(out) != 2 || out["kind"] != want || !ok || len(reason) == 0 || len(reason) > 128 {
 		t.Fatalf("got %v, want bounded two-key %s decision", out, want)
+	}
+	// Independently require this exact source/frame's complete result from the
+	// clean-head ordinary CLI, with default initialization and evaluation limits.
+	production, err := evaluateDisposalProduction(t, source, input)
+	if err != nil || !reflect.DeepEqual(production, out) {
+		t.Fatalf("default production result %v differs from fixture %v: %v", production, out, err)
 	}
 	after, err := json.Marshal(input)
 	if err != nil || !reflect.DeepEqual(before, after) {
@@ -87,20 +111,18 @@ func TestTradeConsentDefaultOwnerAndConsentFacts(t *testing.T) {
 		{"other_session", func(f map[string]any) { f["trade"].(map[string]any)["sessionId"] = "replaced" }, "wait"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := New() // Real default execution/input budgets, including under -race.
-			load(t, r, source)
+			r := tradeConsentFixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			tc.edit(frame)
-			tradeConsentResult(t, r, frame, tc.want)
+			tradeConsentResult(t, r, source, frame, tc.want)
 		})
 	}
 	for _, phase := range []string{"IDLE", "REQUESTED", "INVITED", "ACCEPT_SENT", "COMPLETED", "unknown"} {
 		t.Run(phase, func(t *testing.T) {
-			r := New()
-			load(t, r, source)
+			r := tradeConsentFixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			frame["trade"].(map[string]any)["phase"] = phase
-			tradeConsentResult(t, r, frame, "wait")
+			tradeConsentResult(t, r, source, frame, "wait")
 		})
 	}
 }
@@ -160,18 +182,17 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := New()
-			load(t, r, source)
+			r := tradeConsentFixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			edit(frame)
-			tradeConsentResult(t, r, frame, "wait")
+			tradeConsentResult(t, r, source, frame, "wait")
 		})
 	}
 }
 
 func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
-	r := New()
-	load(t, r, tradeConsentSource(t))
+	source := tradeConsentSource(t)
+	r := tradeConsentFixtureRuntime(t, source)
 	frame := tradeConsentFrame()
 	frame["selfGuid"] = "18446744073709551615"
 	tr := frame["trade"].(map[string]any)
@@ -188,17 +209,17 @@ func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
 		}
 		tr[side.key] = rows
 	}
-	tradeConsentResult(t, r, frame, "accept")
+	tradeConsentResult(t, r, source, frame, "accept")
 	tr["partnerItems"] = append(tr["partnerItems"].([]any), tradeConsentItem(0))
-	tradeConsentResult(t, r, frame, "wait")
+	tradeConsentResult(t, r, source, frame, "wait")
 }
 
 func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {
 	source := tradeConsentSource(t)
-	r := New()
-	revision := load(t, r, source)
+	r := tradeConsentFixtureRuntime(t, source)
+	revision := r.Status().Revision
 	frame := tradeConsentFrame()
-	tradeConsentResult(t, r, frame, "accept")
+	tradeConsentResult(t, r, source, frame, "accept")
 	const tuning = "local accept_owner_trades = true"
 	if strings.Count(source, tuning) != 1 {
 		t.Fatal("editable consent tuning is not unique")
@@ -208,16 +229,17 @@ func TestTradeConsentEditableTuningUsesCurrentSource(t *testing.T) {
 	if err != nil || next == revision {
 		t.Fatal("consent edit was not accepted", next, err)
 	}
-	tradeConsentResult(t, r, frame, "wait")
+	tradeConsentResult(t, r, disabled, frame, "wait")
 	const owner = `local owner_guid = "3"`
 	if strings.Count(source, owner) != 1 {
 		t.Fatal("editable owner tuning is not unique")
 	}
 	large := "18446744073709551615"
-	if _, err := r.Reload(strings.Replace(source, owner, `local owner_guid = "`+large+`"`, 1), next); err != nil {
+	largeOwner := strings.Replace(source, owner, `local owner_guid = "`+large+`"`, 1)
+	if _, err := r.Reload(largeOwner, next); err != nil {
 		t.Fatal(err)
 	}
-	tradeConsentResult(t, r, frame, "wait")
+	tradeConsentResult(t, r, largeOwner, frame, "wait")
 	frame["trade"].(map[string]any)["partnerGuid"] = large
-	tradeConsentResult(t, r, frame, "accept")
+	tradeConsentResult(t, r, largeOwner, frame, "accept")
 }
