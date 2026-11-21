@@ -218,11 +218,17 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 		}
 		r.state.AliveObserved = true
 		r.state.Phase = "alive_observed"
+		if s.controlRecoveryLocked(ctx) {
+			r.state.Reason = "waiting_for_controllable_position_before_owned_stop"
+			return true
+		}
 		s.refreshPositionLocked(w)
-		s.stopLocked(ctx)
-		if s.state.MotionUnconfirmed {
-			r.state.MovementUnconfirmed = true
-			r.state.Reason = "alive_but_stop_unconfirmed"
+		if stopped := s.stopLocked(ctx); !stopped || s.state.MotionUnconfirmed {
+			r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
+			r.state.Reason = "alive_waiting_for_owned_stop"
+			if s.state.MotionUnconfirmed {
+				r.state.Reason = "alive_but_stop_unconfirmed"
+			}
 			return true
 		}
 		r.state.MovementUnconfirmed = false

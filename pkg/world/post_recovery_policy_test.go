@@ -49,7 +49,7 @@ func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.
 	step := func() behavior.Decision {
 		t.Helper()
 		inventorySequence := observeInventory()
-		out, err := p.host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observeSparseEncounter(t, p, obs),
+		out, err := p.host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": p.observe(obs),
 			"observationSequences": map[string]any{"inventory": inventorySequence}})
 		if err != nil {
 			t.Fatal(err)
