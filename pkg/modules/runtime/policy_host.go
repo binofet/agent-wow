@@ -31,6 +31,7 @@ type SessionPolicy struct {
 	gearEvaluation     atomic.Pointer[policyFollowFallback]
 	disposalEvaluation atomic.Pointer[policyFollowFallback]
 	starterSpell       atomic.Pointer[policyFollowFallback]
+	tradeConsent       atomic.Pointer[policyFollowFallback]
 	lastDispatch       atomic.Pointer[policyDispatchRecord]
 }
 
@@ -58,6 +59,7 @@ func (m *Manager) StartPolicyWithOptions(ctx context.Context, source string, opt
 	host.publishGearEvaluation(source, vm.Status().Revision)
 	host.publishDisposalEvaluation(source, vm.Status().Revision)
 	host.publishStarterSpell(source, vm.Status().Revision)
+	host.publishTradeConsent(source, vm.Status().Revision)
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
 		filepath.Base(m.dir) != catalog.SessionID || strconv.FormatUint(m.session.Identity.CharacterGUID, 10) != host.body {
@@ -222,6 +224,7 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 		p.publishGearEvaluation(source, revision)
 		p.publishDisposalEvaluation(source, revision)
 		p.publishStarterSpell(source, revision)
+		p.publishTradeConsent(source, revision)
 	}
 	return revision, err
 }
