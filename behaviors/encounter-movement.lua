@@ -6,6 +6,9 @@ local M = {}
 -- movement ownership, not the legacy Follow toggle. Every goal remains finite.
 M.follow_owner_by_default = true
 local formation_memory, formation_identity
+local function follow_requested(nav)
+    return nav.following == true or nav.following == false and M.follow_owner_by_default == true
+end
 local function portal_revision(value)
     if type(value)~="string" or #value==0 or #value>20 or byte_at(value,1)==48 or
        #value==20 and value>"18446744073709551615" then return false end
@@ -25,8 +28,9 @@ end
 function M.portal_catchup(frame, obs, sequence)
     local nav=obs.navigation or {}
     local portal,self=nav.portal,(obs.players or {})[obs.selfGuid]
-    if not encounter_formation or nav.following~=true or nav.groundNavigationConfigured~=true or
-       type(portal)~="table" or portal.catchingUp~=true or portal.notified~=false or portal.ownerAbsent~=true or
+    local following=follow_requested(nav)
+    if not encounter_formation or not following or nav.groundNavigationConfigured~=true or
+       type(portal)~="table" or type(portal.catchingUp)~="boolean" or portal.notified~=false or portal.ownerAbsent~=true or
        not portal_revision(portal.witnessRevision) or not portal_binding_revision(portal.followRevision) or
        not portal_revision(portal.ownerGuid) or not portal_binding_revision(portal.sourceVisitId) or
        not portal_uint32(portal.triggerId) or portal.triggerId==0 or
@@ -50,7 +54,7 @@ function M.portal_catchup(frame, obs, sequence)
         input.mode="portal_follow"
         input.portal={sightingAgeKnown=portal.sightingAgeKnown,sightingAgeMs=portal_age(portal.sightingAgeMs),
             disappearanceAgeKnown=portal.disappearanceAgeKnown,disappearanceAgeMs=portal_age(portal.disappearanceAgeMs),
-            catchingUp=portal.catchingUp,ownerAbsent=portal.ownerAbsent,following=nav.following,
+            catchingUp=portal.catchingUp,ownerAbsent=portal.ownerAbsent,following=following,
             sourceVisitId=portal.sourceVisitId,currentVisitId=obs.visitId,
             followRevision=portal.followRevision,currentFollowRevision=nav.followRevision}
         local timing=encounter_formation.decide(input)
@@ -67,8 +71,7 @@ end
 function M.follow_formation(frame, obs, sequence)
     local nav = obs.navigation or {}
     local owner, self = nav.followOwner, (obs.players or {})[obs.selfGuid]
-    local following = nav.following == true or
-        nav.following == false and M.follow_owner_by_default == true
+    local following = follow_requested(nav)
     if not following then formation_memory, formation_identity = nil, nil end
     if not encounter_formation or nav.followFormationSupported ~= true or not following or
        not owner or not self or owner.present ~= true or owner.aliveKnown ~= true or owner.alive ~= true or

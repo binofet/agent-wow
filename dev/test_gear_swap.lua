@@ -43,6 +43,12 @@ local function reset()
         if itemTypes[id] then return nil, nil, nil, nil, nil, nil, nil, nil, itemTypes[id] end
     end
     function GetInventoryItemID(_, i) return gear[i] end
+    function GetInventoryItemLink(_, i)
+        return gear[i] and ("item:" .. gear[i] .. ":0:0:0:0:0:0:0:40")
+    end
+    function GetContainerItemLink(_, i)
+        return bag[i] and ("item:" .. bag[i] .. ":0:0:0:0:0:0:0:40")
+    end
     function GetContainerNumSlots(b) return b == 0 and 10 or 0 end
     function GetContainerNumFreeSlots(b) return b == 0 and 5 or 0, 0 end
     function GetContainerItemID(_, i) return bag[i] end
@@ -107,7 +113,7 @@ end
 reset()
 step(10)
 assert(moves == 0, "opening or waiting in the panel cannot equip anything")
-assert(#buttons == 4 and buttons[1].text == "Tank" and buttons[2].text == "DPS"
+assert(#buttons == 8 and buttons[1].text == "Tank" and buttons[2].text == "DPS"
     and buttons[3].text == "Edit Tank" and buttons[4].text == "Edit DPS")
 bag[3] = nil
 watcher.OnEvent()

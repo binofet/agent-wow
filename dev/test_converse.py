@@ -2,6 +2,9 @@
 """Conversation acceptance tests with fake RPC and a local fake Codex process."""
 
 import copy
+import hashlib
+import subprocess
+import sys
 import importlib.machinery
 import importlib.util
 import json
@@ -2464,10 +2467,9 @@ class MissionRuntimeContextTests(unittest.TestCase):
             self.assertIn('last-good source',converse.DEVELOPER_PERMISSIONS)
             self.assertNotIn('sourcePath',converse.CHAT_PERMISSIONS)
 
-    def test_wrong_body_malformed_and_stale_metadata_remain_unavailable(self):
+    def test_wrong_body_and_malformed_metadata_remain_unavailable(self):
         changes=[lambda d:d['identity'].update(guid='4'),lambda d:d['identity'].update(sessionId='aw-old'),
             lambda d:d['identity'].update(rpcUrl='http://127.0.0.1:8087/rpc'),lambda d:d.update(version=True),
-            lambda d:d.update(updatedAt=time.time()-16),lambda d:d.update(updatedAt=time.time()+5),
             lambda d:d.update(updatedAt=float('nan')),lambda d:d.update(goalId=''),
             lambda d:d.update(phase={'invented':'bad'}),lambda d:d.update(goodRevision='bad'),
             lambda d:d.update(pending={}),lambda d:d.update(pending=[{}]),
@@ -2481,6 +2483,14 @@ class MissionRuntimeContextTests(unittest.TestCase):
             path=self.install(repo,'expedition',self.fixture())
             for raw in ('[]','{"version":1,"version":1}','x'*65537):
                 path.write_text(raw);self.assertFalse(self.read()['expedition']['available'])
+
+    def test_metadata_exposes_old_and_future_timestamps_without_compiled_freshness_choice(self):
+        with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
+            for updated in (time.time()-600,time.time()+60):
+                data=self.fixture();data['updatedAt']=updated
+                self.install(Path(temporary),'expedition',data)
+                row=self.read()['expedition']
+                self.assertTrue(row['available']);self.assertEqual(row['updatedAt'],updated)
 
     def test_private_regular_file_and_real_parent_directories_are_required(self):
         with real_temp_directory() as temporary,patch.object(converse,'ROOT',Path(temporary)):
@@ -2612,6 +2622,34 @@ class MissionHandoffTests(unittest.TestCase):
         self.assertFalse(converse.mission_chat_context(1,'aw-current',self.rpc.url)['runtimes']['expedition']['available'])
 
 
+REPAIR_TEST_ROOT=Path(__file__).resolve().parent.parent
+
+def bind_accepted_repair_policy(test,guid):
+    (test.repo/'dev').mkdir(exist_ok=True)
+    (test.repo/'dev/task-runtime').write_bytes((REPAIR_TEST_ROOT/'dev/task-runtime').read_bytes())
+    module=(REPAIR_TEST_ROOT/'behaviors/mission-repair.lua').read_text()
+    test.repair_source=('local repair=(function()\n'+module+'\nend)()\nreturn {mission_repair=repair.decide,decide=function()return {}end,'
+        'on_event=function()return true end,export_state=function()return {version=1,data={}}end,import_state=function()return true end}')
+    test.repair_policy=dict(revision=hashlib.sha256(test.repair_source.encode()).hexdigest(),generation='1')
+    prior=test.rpc.call
+    def call(method,params,**kwargs):
+        if method=='session.policy_source':
+            return dict(test.repair_policy,source=test.repair_source,sourceLimitBytes=8*1024*1024,
+                sessionId=test.actions['sessionId'],characterGuid=str(guid))
+        if method=='session.attach':
+            policy=getattr(test,'policy',test.repair_policy)
+            if not isinstance(policy,dict) and policy is not None:policy=test.repair_policy
+            return dict(sessionId=test.actions['sessionId'],characterGuid=str(guid),policy=copy.deepcopy(policy))
+        return prior(method,params,**kwargs)
+    test.rpc.call=call
+    original=converse.evaluate_mission_repair
+    binary=os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',str(REPAIR_TEST_ROOT/'data/bin/luapolicy'))
+    def evaluate(source,frame,limit):
+        with patch.object(converse,'ROOT',REPAIR_TEST_ROOT):return original(source,frame,limit,binary=binary)
+    guard=patch.object(converse,'evaluate_mission_repair',side_effect=evaluate)
+    guard.start();test.addCleanup(guard.stop)
+
+
 class MissionFaultRepairTests(unittest.TestCase):
     def setUp(self):
         MissionHandoffTests.setUp(self)
@@ -2635,6 +2673,7 @@ class MissionFaultRepairTests(unittest.TestCase):
             if method=='buddy-chat.send':self.rpc.calls.append((method,params));return dict(transportWritten=True)
             return call(method,params)
         self.rpc.call=rpc
+        bind_accepted_repair_policy(self,1)
 
     def new_loop(self):
         loop=converse.Conversation(self.rpc,self.brain,controls=self.controls,status=lambda **kw:self.statuses.append(kw))
@@ -2671,7 +2710,7 @@ class MissionFaultRepairTests(unittest.TestCase):
 
     def test_only_actual_fresh_errors_or_explicit_fresh_stall_are_faults(self):
         baseline=copy.deepcopy(self.data)
-        for mutation in (lambda d:d.update(updatedAt=time.time()-16),lambda d:d['identity'].update(sessionId='aw-old'),
+        for mutation in (lambda d:d['identity'].update(sessionId='aw-old'),
                 lambda d:d.update(policyError='',phase='waiting_for_server_receipt'),
                 lambda d:d.update(policyError='',hostError='task_stopped_or_deadline'),lambda d:d.update(version=2),
                 lambda d:d.update(policyError='',hostError='historical_prior_run_error'),
@@ -2679,14 +2718,74 @@ class MissionFaultRepairTests(unittest.TestCase):
                     d['run'].update(instance='b'*32,active=False,stoppedAt=time.time())),
                 lambda d:d['run'].update(instance='b'*32,active=False,stoppedAt=time.time()),
                 lambda d:d.update(policyErrorInstance=''),
-                lambda d:(d.update(policyError='',hostError='old_stop'),d['run'].update(active=False,stoppedAt=time.time()-16)),
-                lambda d:d.update(policyError='',memory=dict(health=dict(code='stalled',phase='cast',since=time.time()-16),stack=[]))):
+                lambda d:(d.update(policyError='',hostError='old_stop',hostErrorInstance='wrong'),d['run'].update(active=False,stoppedAt=time.time()-16))):
             data=copy.deepcopy(baseline);mutation(data);self.store.write('state.json',json.dumps(data).encode())
             self.assertFalse(converse.mission_faults(1,'aw-current',self.rpc.url))
         data=copy.deepcopy(baseline);data.update(policyError='',memory=dict(health=dict(code='stalled',phase='cast',since=time.time()),stack=[]))
         self.store.save(data);self.loop.tick()
         self.assertEqual(self.brain.states[0]['mission_fault']['field'],'health')
         self.assertEqual(len(self.brain.histories),1)
+
+    def accept_tuning(self,old,new):
+        self.assertIn(old,self.repair_source)
+        self.repair_source=self.repair_source.replace(old,new)
+        self.repair_policy.update(revision=hashlib.sha256(self.repair_source.encode()).hexdigest(),
+            generation=str(int(self.repair_policy['generation'])+1))
+
+    def test_current_accepted_lua_controls_stale_fault_eligibility_in_same_body(self):
+        self.data['updatedAt']=time.time()-30;self.store.write('state.json',json.dumps(self.data).encode())
+        self.assertTrue(converse.mission_faults(1,'aw-current',self.rpc.url))
+        self.loop.tick();self.assertEqual(self.brain.states,[])
+        self.assertEqual(self.statuses[-1]['missionRepairPhase'],'no_eligible_fault')
+        self.accept_tuning('freshSeconds=15','freshSeconds=60')
+        self.loop.tick();self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(self.brain.states[0]['development']['sessionId'],'aw-current')
+        self.assertEqual(self.repair_policy['generation'],'2')
+
+    def test_unknown_history_is_not_a_compiled_64_cap_and_cannot_be_pruned_or_replayed(self):
+        journal=self.host.Store(self.brain.state_dir/'mission-faults',max_bytes=self.host.MAX_CONTROLLER_LIMIT)
+        claims=[dict(key=('%064x'%i),at=time.time()-500,outcome='unknown') for i in range(70)]
+        with journal:journal.save(dict(version=1,identity=dict(guid='1',rpcUrl=self.rpc.url),claims=claims))
+        self.loop.tick();self.assertEqual(self.brain.states,[])
+        self.assertEqual(self.statuses[-1]['missionRepairPhase'],'capacity_reached')
+        self.accept_tuning('maxRetained=64','maxRetained=128')
+        self.loop.tick();self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(len(journal.load()['claims']),71)
+        converse.retain_mission_fault_history(self.brain.state_dir,1,self.rpc.url,{})
+        saved=journal.load()['claims']
+        self.assertTrue(all(row.get('retained',True) for row in saved[:70]))
+        self.assertFalse(saved[-1]['retained'])  # Known model return is diagnostic history, not a successful game repair.
+        self.new_loop().tick();self.assertEqual(len(self.brain.states),1)
+        self.assertEqual(converse.reserve_mission_fault(self.brain.state_dir,1,self.rpc.url,saved[-1]['key']),'already_reserved')
+
+    def test_timeout_keeps_unknown_reservation_even_when_lua_retires_settled_history(self):
+        calls=[]
+        def timeout(history,state):calls.append(state);raise converse.ConversationError('model timed out')
+        self.brain.generate=timeout
+        self.loop.tick();self.new_loop().tick()
+        self.assertEqual(len(calls),1)
+        claims=converse.mission_fault_attempts(self.brain.state_dir,1,self.rpc.url)
+        self.assertEqual(claims[0]['outcome'],'unknown')
+        converse.retain_mission_fault_history(self.brain.state_dir,1,self.rpc.url,{})
+        self.assertTrue(converse.mission_fault_attempts(self.brain.state_dir,1,self.rpc.url)[0]['retained'])
+        self.assertEqual(len(calls),1)
+
+    def test_missing_export_has_no_python_policy_fallback(self):
+        self.repair_source=self.repair_source.replace('mission_repair=repair.decide,','')
+        self.repair_policy['revision']=hashlib.sha256(self.repair_source.encode()).hexdigest()
+        self.loop.tick();self.assertEqual(self.brain.states,[])
+        self.assertEqual(self.statuses[-1]['missionRepairPhase'],'mission_repair_export_unavailable')
+        self.assertFalse((self.brain.state_dir/'mission-faults').exists())
+
+    def test_revision_change_during_pure_read_is_not_used_or_reserved(self):
+        evaluate=converse.evaluate_mission_repair
+        def changed(*args):
+            result=evaluate(*args)
+            self.accept_tuning('freshSeconds=15','freshSeconds=60')
+            return result
+        with patch.object(converse,'evaluate_mission_repair',side_effect=changed):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.assertFalse((self.brain.state_dir/'mission-faults').exists())
 
     def deferred(self,reason='reward_choice_requires_selection',qid=176):
         self.data['policyError']='';self.data['memory']['health']=None
@@ -2790,6 +2889,14 @@ class MissionFaultRepairTests(unittest.TestCase):
             self.assertEqual(len(self.brain.histories),3)
             self.assertEqual(self.statuses[-1]['missionRepairPhase'],'capacity_reached')
             self.assertEqual(len(journal.load()['claims']),64)
+
+    def test_same_session_lua_rate_tuning_is_effective_without_recompiling_host(self):
+        for error in ('first_error','second_error','third_error'):
+            self.data['policyError']=error;self.store.save(self.data);self.loop.tick()
+        self.assertEqual(len(self.brain.histories),2)
+        self.accept_tuning('maxPerWindow=2','maxPerWindow=3')
+        self.loop.tick();self.assertEqual(len(self.brain.histories),3)
+        self.new_loop().tick();self.assertEqual(len(self.brain.histories),3)
 
     def test_private_fault_source_is_not_spoofable_and_is_revalidated_before_developer_tools(self):
         self.loop.tick();state=self.brain.states[0]
@@ -2989,6 +3096,8 @@ class AttachedPolicyRepairTests(unittest.TestCase):
             self.brain.states.append(state)
             return original(history,state)
         self.brain.generate=record
+        bind_accepted_repair_policy(self,5)
+        self.policy=self.repair_policy
         self.loop=self.new_loop()
 
     def call(self, method, params, **kwargs):
@@ -3102,7 +3211,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.world['requestedCreature']['alive']=False
         with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
         self.assertEqual(self.brain.states,[])
-        self.assertEqual(self.loop.attached_failure_progress,{})
+        self.assertTrue(self.loop.attached_failure_progress)  # Raw progress remains; Lua excludes the observed dead target.
 
     def test_explicit_command_rejection_without_cast_receipt_reaches_same_brain(self):
         self.controls.command_fault=dict(sessionId='aw-current',selfGuid='5',
@@ -3126,7 +3235,8 @@ class AttachedPolicyRepairTests(unittest.TestCase):
 
     def test_changed_policy_revision_revisits_same_failure_after_cached_observation(self):
         self.movement_failure();self.loop.tick()
-        self.policy['revision']='b'*64
+        self.repair_source+='\n-- accepted source update'
+        self.policy['revision']=hashlib.sha256(self.repair_source.encode()).hexdigest()
         self.loop.attached_policy_check_at=0
         self.loop.tick()
         self.assertEqual(len(self.brain.states),2)
@@ -3197,6 +3307,37 @@ def load_tests(loader, tests, pattern):
     return tests
 
 
+class MissionRepairLuaPolicyTests(unittest.TestCase):
+    def evaluate(self,source,frame):
+        binary=os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',str(REPAIR_TEST_ROOT/'data/bin/luapolicy'))
+        with patch.object(converse,'ROOT',REPAIR_TEST_ROOT):
+            return converse.evaluate_mission_repair(source,frame,8*1024*1024,binary=binary)
+
+    def test_actual_composed_source_owns_priority_and_observed_freshness(self):
+        source=subprocess.check_output([sys.executable,'-B',str(REPAIR_TEST_ROOT/'dev/encounter-bundle')],text=True)
+        facts=dict(now=1000,body=dict(sessionId='aw-current',characterGuid='1'),attempts=[],faults=[
+            dict(key='a'*64,kind='expedition',updatedAt=999),dict(key='b'*64,kind='gm_task'),
+            dict(key='c'*64,kind='attached_policy')])
+        self.assertEqual(self.evaluate(source,facts)['decision']['key'],'c'*64)
+        tuned=source.replace('attached_policy=30,gm_task=20,expedition=10','attached_policy=1,gm_task=2,expedition=40')
+        self.assertEqual(self.evaluate(tuned,facts)['decision']['key'],'a'*64)
+        facts['faults'][0]['updatedAt']=1001
+        self.assertEqual(self.evaluate(tuned,facts)['decision']['key'],'b'*64)
+
+    def test_settled_retention_is_lua_tunable_and_does_not_change_unknown_ownership(self):
+        module=(REPAIR_TEST_ROOT/'behaviors/mission-repair.lua').read_text()
+        source='local repair=(function()\n'+module+'\nend)()\nreturn {mission_repair=repair.decide}'
+        attempts=[dict(key=('%064x'%i),at=900,outcome='model_returned') for i in range(70)]
+        attempts.append(dict(key='f'*64,at=1,outcome='unknown'))
+        frame=dict(now=1000,attempts=attempts,faults=[])
+        decision=self.evaluate(source,frame)['decision']
+        self.assertEqual(len(decision['retain']),64);self.assertTrue(decision['retain']['f'*64])
+        decision=self.evaluate(source.replace('maxRetained=64','maxRetained=128'),frame)['decision']
+        self.assertEqual(len(decision['retain']),71)
+        decision=self.evaluate(source.replace('retentionSeconds=300','retentionSeconds=10'),frame)['decision']
+        self.assertEqual(decision['retain'],{'f'*64:True})
+
+
 class GMTaskFaultRepairTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -3213,6 +3354,7 @@ class GMTaskFaultRepairTests(unittest.TestCase):
         from test_gm_task_lifecycle import GMTaskLifecycleTests
         self.folder,self.policy=GMTaskLifecycleTests().fixture(self.repo)
         p=patch.object(converse,'ROOT',self.repo);p.start();self.addCleanup(p.stop)
+        bind_accepted_repair_policy(self,87)
         self.loop=self.new_loop()
     def call(self,method,params,**kwargs):
         self.calls.append((method,params))
@@ -3250,6 +3392,143 @@ class GMTaskFaultRepairTests(unittest.TestCase):
         with converse.gm_tasks.runtime.Store(self.folder) as store:
             data=store.load();data['identity']['sessionId']='aw-456';store.save(data)
         self.assertFalse(brain.development_enabled(state))
+
+
+class DeveloperOutcomeRetentionTests(unittest.TestCase):
+    def brain(self,folder,body,timeout=2):
+        repo=DeveloperBrainTests.repository(self,folder/'repo')
+        state=converse.ensure_state(folder/'state')
+        fake=folder/'fake-codex';calls=folder/'calls'
+        fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys,time\n'
+            'sys.stdin.read()\n'+f'p=pathlib.Path({str(calls)!r});p.write_text(p.read_text()+"x" if p.exists() else "x")\n'
+            'print(json.dumps(dict(type="turn.started")),flush=True)\n'+body)
+        fake.chmod(0o700)
+        with patch.object(converse,'ROOT',repo):brain=converse.CodexBrain(fake,state,timeout=timeout,developer_workspace=repo)
+        return brain,DeveloperBrainTests.state(self,repo),calls
+
+    def test_successful_tools_survive_timeout_without_replay_or_raw_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary)
+            ready=folder/'ready'
+            brain,state,calls=self.brain(folder,
+                'print(json.dumps(dict(type="item.completed",item=dict(id="cas1",type="command_execution",status="completed",exit_code=0,command="private source secret",aggregated_output="private credential secret"))),flush=True)\n'
+                'print(json.dumps(dict(type="item.completed",item=dict(id="patch1",type="file_change",status="completed",changes=["private source secret"]))),flush=True)\n'
+                'print(json.dumps(dict(type="item.started",item=dict(id="verify2",type="command_execution",command="private source secret"))),flush=True)\n'
+                f'pathlib.Path({str(ready)!r}).write_text("ready")\n'
+                'time.sleep(30)\n',timeout=.2)
+            clock_calls=[0]
+            def clock():
+                clock_calls[0]+=1
+                return 1 if clock_calls[0]>1 and ready.exists() else 0
+            with patch.object(converse.time,'monotonic',side_effect=clock):
+                with self.assertRaisesRegex(converse.ConversationError,'timed out'):brain.generate([],state)
+            path=brain.state_dir/'development-events-last.json';raw=path.read_text();record=converse.read_json(path)
+            self.assertEqual(calls.read_text(),'x')
+            self.assertEqual((record['sessionId'],record['selfGuid']),('aw-current','1'))
+            self.assertEqual((record['reason'],record['outcome']),('timeout','failed'))
+            self.assertFalse(record['streamComplete']);self.assertFalse(record['turnCompleted'])
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['counts']['completedPatches'],1)
+            self.assertEqual(record['tools'][0],dict(itemId='cas1',type='command_execution',status='completed',exitCode=0))
+            self.assertEqual(record['pendingTools'],['verify2'])
+            self.assertEqual(brain.last_development_events,record['counts'])
+            self.assertEqual(brain.last_development_result,record)
+            self.assertNotIn('private',raw);self.assertNotIn('command"',raw)
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+            self.assertEqual(list(brain.state_dir.iterdir()),[path])
+
+    def test_failed_cli_retains_command_failure_and_concrete_exit_without_error_dump(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="test1",type="command_execution",status="failed",exit_code=7))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.failed",error=dict(message="private prompt/source credential"))),flush=True)\n'
+                'sys.stderr.write("private stderr credential")\n'
+                'sys.exit(9)\n')
+            with self.assertRaisesRegex(converse.ConversationError,'reply failed'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['reason'],record['processExitCode']),('process_failed',9))
+            self.assertEqual(record['lastEventType'],'turn.failed')
+            self.assertEqual(record['counts']['failedCommands'],1)
+            self.assertEqual(record['tools'][0]['exitCode'],7)
+            self.assertGreater(record['stderrBytes'],0)
+            self.assertNotIn('private',json.dumps(record));self.assertEqual(calls.read_text(),'x')
+
+    def test_incomplete_stream_keeps_prior_success_but_never_claims_complete_reply(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="done1",type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="item.started",item=dict(id="pending2",type="file_change"))),flush=True)\n'
+                'sys.stdout.write("{\\\"type\\\":")\n')
+            with self.assertRaisesRegex(converse.ConversationError,'non-JSON events'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual(record['reason'],'event_stream_invalid')
+            self.assertFalse(record['streamComplete']);self.assertTrue(record['partialFinalLine'])
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['pendingTools'],['pending2'])
+            self.assertEqual(record['processExitCode'],0);self.assertEqual(calls.read_text(),'x')
+
+    def test_complete_tools_are_separate_from_invalid_final_reply(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="write1",type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text("invalid JSON")\n')
+            with self.assertRaisesRegex(converse.ConversationError,'invalid JSON'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertTrue(record['streamComplete'])
+            self.assertEqual(record['reason'],'reply_invalid_json')
+            self.assertEqual(record['outcome'],'failed')
+            self.assertEqual(record['counts']['successfulCommands'],1);self.assertEqual(calls.read_text(),'x')
+
+    def test_typed_retention_is_bounded_and_success_keeps_existing_summary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,_=self.brain(Path(temporary),
+                'for i in range(40):print(json.dumps(dict(type="item.completed",item=dict(id="cmd"+str(i),type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Done.",emote="NONE")))\n')
+            self.assertEqual(brain.generate([],state)['text'],'Done.')
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['outcome'],record['reason']),('completed',None))
+            self.assertTrue(record['streamComplete']);self.assertEqual(record['counts']['successfulCommands'],40)
+            self.assertEqual((len(record['tools']),record['omittedTools']),(16,24))
+            self.assertEqual(record['tools'][-1]['itemId'],'cmd39')
+            self.assertEqual(brain.last_development_events,dict(failedCommands=0,successfulCommands=40,failedPatches=0,completedPatches=0))
+
+    def test_maximum_tool_ids_and_pending_records_fit_existing_private_reader(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=converse.ensure_state(Path(temporary)/'state')
+            brain=object.__new__(converse.CodexBrain);brain.state_dir=folder
+            rows=[dict(type='turn.started')]
+            for i in range(40):
+                rows.append(dict(type='item.completed',item=dict(id=str(i).zfill(128),type='command_execution',status='failed',exit_code=-(2**31))))
+            for i in range(20):rows.append(dict(type='item.started',item=dict(id=str(i+100).zfill(128),type='command_execution')))
+            with tempfile.TemporaryFile() as events,tempfile.TemporaryFile() as errors:
+                events.write(('\n'.join(map(json.dumps,rows))+'\n').encode())
+                brain.retain_development_events(events,errors,4*1024*1024,dict(sessionId='x'*128,selfGuid='281474976710655'),
+                    'timeout','ConversationError',types.SimpleNamespace(returncode=-15))
+            path=folder/'development-events-last.json';record=converse.read_json(path)
+            self.assertLessEqual(path.stat().st_size,8192)
+            self.assertEqual((record['omittedTools'],record['omittedPendingTools']),(24,4))
+            self.assertFalse(record['streamComplete']);self.assertEqual(record['counts']['failedCommands'],40)
+
+    def test_broken_stdin_cleanup_preserves_original_error_and_prior_tool_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,_=self.brain(Path(temporary),'')
+            class BrokenInput:
+                closed=False
+                def write(self,data):raise BrokenPipeError('original write failure')
+                def close(self):raise BrokenPipeError('secondary close failure')
+            def launch(*args,**kwargs):
+                kwargs['stdout'].write(b'{"type":"turn.started"}\n{"type":"item.completed","item":{"id":"cas-before-pipe-close","type":"command_execution","status":"completed","exit_code":0}}\n')
+                return types.SimpleNamespace(stdin=BrokenInput(),returncode=1,poll=lambda:1)
+            with patch.object(converse.subprocess,'Popen',side_effect=launch) as process:
+                with self.assertRaisesRegex(BrokenPipeError,'original write failure'):brain.generate([],state)
+            self.assertEqual(process.call_count,1)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['reason'],record['errorType']),('process_io_failed','BrokenPipeError'))
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['tools'][0]['itemId'],'cas-before-pipe-close')
+            self.assertFalse(record['streamComplete'])
 
 
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost

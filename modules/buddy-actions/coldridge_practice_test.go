@@ -34,12 +34,15 @@ func coldStraight(_ context.Context, _ string, a, b position) ([]position, error
 func coldridgeRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.sessionID = f.party.SessionId
+	useStarterSemanticPolicy(t, s)
 	p := f.world.Self
 	p.ClassKnown, p.ClassId, p.LevelKnown, p.Level = true, 9, true, 1
 	p.X, p.Y, p.Z = -6240, 331, 383
 	p.HealthKnown, p.Health, p.MaxHealth = true, 100, 100
 	p.PowerKnown, p.Power, p.MaxPower, p.PowerType = true, 100, 100, 0
 	p.BaseManaKnown, p.BaseMana = true, 100
+	p.ChannelSpellKnown, p.ChannelObjectKnown = true, true
 	f.world.Owner = nil
 	f.world.SelfQuestLogKnown = true
 	f.world.SelfQuestLog = nil
@@ -47,7 +50,7 @@ func coldridgeRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		f.world.SelfQuestLog = append(f.world.SelfQuestLog, &worldv1.QuestLogEntry{Slot: uint32(i)})
 	}
 	f.world.SelfQuestLog[0].QuestId = 179
-	f.world.NearbyCreatures = []*worldv1.CreatureState{{Guid: coldridgeWolfGUID, Entry: 705, Present: true, MapKnown: true, PositionKnown: true, X: -6237, Y: 331, Z: 383, LevelKnown: true, Level: 1, HealthKnown: true, Health: 42, MaxHealth: 42, AliveKnown: true, Alive: true}}
+	f.world.NearbyCreatures = []*worldv1.CreatureState{{Guid: coldridgeWolfGUID, Entry: 705, Present: true, MapKnown: true, PositionKnown: true, X: -6237, Y: 331, Z: 383, LevelKnown: true, Level: 1, HealthKnown: true, Health: 42, MaxHealth: 42, AliveKnown: true, Alive: true, UnitFlagsKnown: true}}
 	learnSpells(s, shadowBolt)
 	s.SetNavigationDataDir("/fixture/client-data")
 	s.planColdridgePath = coldStraight
@@ -308,7 +311,7 @@ func coldThreatGUID(entry uint32) uint64 { return uint64(0xf130)<<48 | uint64(en
 func coldThreatCreature(entry uint32, x float32) *worldv1.CreatureState {
 	// Live public snapshots established these profiles for both quest170
 	// entries. Geometry/GUID low bits here are local navigation fixtures.
-	return &worldv1.CreatureState{Guid: coldThreatGUID(entry), Entry: entry, Present: true, MapKnown: true, MapId: 0, PositionKnown: true, X: x, Y: 331, Z: 383, PositionRevision: 1, LevelKnown: true, Level: 2, HealthKnown: true, Health: 55, MaxHealth: 55, AliveKnown: true, Alive: true, FactionTemplate: 36, UnitFlags_2: 2048, TargetKnown: true}
+	return &worldv1.CreatureState{Guid: coldThreatGUID(entry), Entry: entry, Present: true, MapKnown: true, MapId: 0, PositionKnown: true, X: x, Y: 331, Z: 383, PositionRevision: 1, LevelKnown: true, Level: 2, HealthKnown: true, Health: 55, MaxHealth: 55, AliveKnown: true, Alive: true, FactionTemplate: 36, UnitFlagsKnown: true, UnitFlags_2: 2048, TargetKnown: true}
 }
 
 func coldThreatQuest(f *fakeSession) *worldv1.QuestLogEntry {

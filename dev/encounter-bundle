@@ -12,6 +12,7 @@ def main():
     args = parser.parse_args()
     behaviors = Path(__file__).resolve().parent.parent / "behaviors"
     modules = [
+        ("encounter_mission_repair", behaviors / "mission-repair.lua"),
         ("encounter_tactics", behaviors / "encounter-tactics.lua"),
         ("encounter_gear", behaviors / "gear.lua"),
         ("encounter_disposal", behaviors / "item-disposal.lua"),

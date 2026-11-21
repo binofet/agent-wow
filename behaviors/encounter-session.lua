@@ -777,6 +777,7 @@ local function decide(frame)
 end
 
 return {decide=decide, on_event=on_event, export_state=export_state, import_state=import_state,
+        mission_repair=encounter_mission_repair and encounter_mission_repair.decide,
         follow_formation=encounter_formation and encounter_formation.decide,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
         disposal_evaluation=encounter_disposal and function(input)
