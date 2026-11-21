@@ -138,8 +138,10 @@ func TestEncounterObservationUsesObservedLeaderExactKeysAndProtection(t *testing
 	marks := out.GetParty().GetRaidTargets().GetMarks()
 	if out.GetSessionId() != s.sessionID || out.GetSelfGuid() != 1 || out.HostOwned == nil || out.GetHostOwned() || !out.GetHealing().GetHostOwned() ||
 		out.GetParty().GetGroup().GetLeaderGuid() != leader.Guid || out.GetObservedOwnerFocus() != engagedGUID || len(marks) != 1 || marks[0].GetTargetGuid() != engagedGUID ||
-		out.Players["4"].GetGuid() != leader.Guid || out.Players["8"] != nil || len(out.Targets) != 3 || !out.Targets[key].GetAttackable() || !out.Targets[key].GetEngaged() || out.Targets[ownerKey].GetEngaged() || out.Targets[foreignKey].GetEngaged() ||
-		len(out.Engagement) != 1 || out.Engagement[key].GetVictimGuid() != leader.Guid || out.Engagement[key].GetAgeMs() != 900 {
+		out.Players["4"].GetGuid() != leader.Guid || out.Players["8"] != nil || len(out.Targets) != 3 || !out.Targets[key].GetAttackable() ||
+		out.Targets[key].GetEngaged() || len(out.Engagement) != 0 ||
+		!out.Targets[key].GetAttackObservation().GetVictimKnown() || out.Targets[key].GetAttackObservation().GetVictimGuid() != leader.Guid || out.Targets[key].GetAttackObservation().GetAgeMs() != 900 ||
+		out.Targets[foreignKey].GetAttackObservation().GetVictimGuid() != foreigner.Guid || out.Targets[ownerKey].GetAttackObservation().GetVictimKnown() || !out.Targets[ownerKey].GetAttackObservation().GetTargetKnown() {
 		t.Fatalf("incorrect encounter identity, leader, marks, or attack evidence: %v", out)
 	}
 	if !out.Targets[key].GetProtected() || len(out.ProtectedAuras) != 2 || out.ProtectedAuras[0].GetSlot() != 2 || out.ProtectedAuras[0].GetCasterGuid() != 1 || out.ProtectedAuras[1].GetSlot() != 7 || out.ProtectedAuras[1].GetCasterGuid() != leader.Guid {
@@ -161,14 +163,32 @@ func TestEncounterObservationUsesObservedLeaderExactKeysAndProtection(t *testing
 	encounterTestPacket(t, s, opcode.SMSGAuraUpdate, buffAura(engagedGUID, 1, 2, 0, 0))
 	engaged.TargetKnown, engaged.TargetGuid = true, 1 // Contradicts the older victim observation.
 	out = encounterTestRead(t, s, f)
-	if out.GetObservedOwnerFocus() != engagedGUID || len(out.Engagement) != 0 || !out.Targets[key].GetProtected() || len(out.ProtectedAuras) != 1 || out.ProtectedAuras[0].GetSlot() != 7 {
-		t.Fatalf("contradicted attack or removed slot retained authority: %v", out)
+	if out.GetObservedOwnerFocus() != engagedGUID || len(out.Engagement) != 0 ||
+		out.Targets[key].GetAttackObservation().GetVictimGuid() != leader.Guid || out.Targets[key].GetAttackObservation().GetTargetGuid() != 1 ||
+		!out.Targets[key].GetProtected() || len(out.ProtectedAuras) != 1 || out.ProtectedAuras[0].GetSlot() != 7 {
+		t.Fatalf("raw contradiction or removed protection slot was lost: %v", out)
 	}
 	engaged.TargetGuid = leader.Guid
 	leader.Present = false
 	out = encounterTestRead(t, s, f)
 	if out.GetObservedOwnerFocus() != 0 || len(out.Engagement) != 0 {
 		t.Fatalf("missing leader fell back to fixed-owner focus or attack authority: %v", out)
+	}
+	leader.Present, leader.Alive, leader.Health = true, false, 0
+	engaged.AttackAgeMs = 9007199254740993
+	out = encounterTestRead(t, s, f)
+	if raw := out.Targets[key].GetAttackObservation(); raw.GetVictimGuid() != leader.Guid || raw.GetAgeMs() != engaged.AttackAgeMs {
+		t.Fatal("Go filtered attack facts by dead victim or freshness", out)
+	}
+	selection.AttackVictimKnown, selection.TargetKnown = false, false
+	selection.AttackVictimGuid, selection.TargetGuid = 0, 0
+	wire, err = protojson.Marshal(encounterTestRead(t, s, f))
+	var sparse map[string]any
+	if err != nil || json.Unmarshal(wire, &sparse) != nil {
+		t.Fatal(err)
+	}
+	if _, ok := sparse["targets"].(map[string]any)[ownerKey].(map[string]any)["attackObservation"].(map[string]any); !ok {
+		t.Fatal("new backend's empty raw observation was indistinguishable from legacy feed", string(wire))
 	}
 }
 

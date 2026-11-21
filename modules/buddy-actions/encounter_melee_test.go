@@ -93,8 +93,15 @@ func TestLeaseMeleeLossStopsOnceAndWaitsForExactAck(t *testing.T) {
 			}
 			deliverMeleeReceipt(t, s, opcode.SMSGAttackstop, meleeReceiptStop(s.selfGUID, request.TargetGuid, 0))
 			s.Tick(context.Background())
-			if s.encounterSwing.target != 0 || s.state.AutoAttackUnconfirmed || lastCast(f) != smite || countPackets(f, opcode.CMSGAttackstop) != 1 {
-				t.Fatal("exact stop did not release the body to native fallback", s.stateLocked(), f.packets)
+			if s.encounterSwing.target != 0 || s.state.AutoAttackUnconfirmed || countPackets(f, opcode.CMSGCastSpell) != 0 || countPackets(f, opcode.CMSGAttackstop) != 1 {
+				t.Fatal("exact stop did not settle custody or restarted Go target selection", s.stateLocked(), f.packets)
+			}
+			if _, err := s.RenewPolicyEncounterLease(ctx, wrapperspb.UInt64(request.VisitId)); err != nil {
+				t.Fatal("same Lua writer could not reacquire the settled body", err)
+			}
+			request.Stop = false
+			if _, err := s.Melee(ctx, request); err != nil || countPackets(f, opcode.CMSGAttackswing) != 2 {
+				t.Fatal("settled body lost exact Lua-selected attack capability", err, s.stateLocked())
 			}
 		})
 	}

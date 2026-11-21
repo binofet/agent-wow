@@ -36,7 +36,7 @@ func activateEncounterWriter(t *testing.T, s *Service, f *fakeSession) {
 	}
 }
 
-func TestHostEncounterWriterRequiresUsableVisitAndFallsBackOnExpiry(t *testing.T) {
+func TestHostEncounterWriterRequiresUsableVisitWithoutNativeTargetFallbackOnExpiry(t *testing.T) {
 	s, f, _, advance := selfDefenseRig(t, 8)
 	s.state.Assisting = false
 	if err := s.UseHostEncounterWriter(testEncounterKey); err != nil {
@@ -75,9 +75,7 @@ func TestHostEncounterWriterRequiresUsableVisitAndFallsBackOnExpiry(t *testing.T
 	advance(encounterLeaseDuration)
 	wantInactive()
 	s.Tick(context.Background())
-	if lastCast(f) != fireball || countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("native emergency defense did not resume", s.stateLocked(), f.packets)
-	}
+	assertNoAutonomousOffense(t, s, f)
 }
 
 func TestExactEncounterDispatchRequiresCurrentLeaseAndWorldVisit(t *testing.T) {
@@ -241,13 +239,14 @@ func TestHostEncounterWriterKeepsItsMeleeTargetAfterOwnerSelectionChanges(t *tes
 func TestHostEncounterWriterKeepsHealingAndExactActions(t *testing.T) {
 	ctx := context.Background()
 	t.Run("standing party healing", func(t *testing.T) {
-		s, f, _, _ := partyDefenseRig(t, 5)
+		s, f, _, advance := partyDefenseRig(t, 5)
 		s.state.Assisting = false
 		activateEncounterWriter(t, s, f)
+		advance(encounterLeaseDuration)
 		f.world.NearbyPlayers[0].Health = 40
 		s.Tick(ctx)
 		if got := state(t, s); got.HealAttempts != 1 || got.AssistAttempts != 0 || lastCast(f) != lesserHeal || got.LastCastTargetGuid != 4 {
-			t.Fatal("host encounter ownership interrupted standing healing", got, f.packets)
+			t.Fatal("expired target lease interrupted the separate standing healing lane", got, f.packets)
 		}
 	})
 	t.Run("explicit cast", func(t *testing.T) {
