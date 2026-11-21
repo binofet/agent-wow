@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"encoding/binary"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ func TestBundleWoodUsesBoundOpeningOwnBagItemSlotAndReleaseProof(t *testing.T) {
 	fillBackpack(f.world)
 	extraCapacity(f.world, 41599)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	out := current(t, s)
 	if out.LastGather == nil || out.LastGather.QuestId != 5545 || out.LastGather.ObjectEntry != 176793 || out.LastGather.ObjectGuid != woodGUID || out.LastGather.ItemId != 13872 || !out.LastGather.OpeningTransportWritten || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGCastSpell || binary.LittleEndian.Uint32(f.packets[0].Payload[1:]) != 6478 {
 		t.Fatal("wood recipe was not bound before opening", out, f.packets)
@@ -39,7 +38,7 @@ func TestBundleWoodUsesBoundOpeningOwnBagItemSlotAndReleaseProof(t *testing.T) {
 		t.Fatal("foreign source window accepted")
 	}
 	emit(s, opcode.SMSGLootResponse, harvestWindow(woodGUID, lootItem{slot: 1, id: 11119, count: 1}, lootItem{slot: 2, id: 13872, count: 1, slotType: 4}))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem || f.packets[len(f.packets)-1].Payload[0] != 2 {
 		t.Fatal("stored another recipe's item", f.packets)
 	}
@@ -53,13 +52,13 @@ func TestBundleWoodUsesBoundOpeningOwnBagItemSlotAndReleaseProof(t *testing.T) {
 	f.world.InventoryBags[1].Slots[0] = &worldv1.BackpackSlot{Bag: 1, Slot: 0, ItemGuid: 0x4000000000000888, Entry: 13872, StackCount: 1, MetadataKnown: true}
 	f.world.InventoryRevision++
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.Status != lootv1.GatherStatus_GATHER_ITEM_STORED || current(t, s).LastGather.OwnQuestCompleteObserved {
 		t.Fatal("one bundle became eight or skipped receipt", current(t, s))
 	}
 	f.world.SelfQuestLog[1].QuestId, f.world.SelfQuestLog[1].Complete = 3904, true
 	f.world.SelfQuestLogRevision++
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.OwnQuestCompleteObserved {
 		t.Fatal("Milly completion satisfied wood quest")
 	}
@@ -70,7 +69,7 @@ func TestBundleWoodUsesBoundOpeningOwnBagItemSlotAndReleaseProof(t *testing.T) {
 		t.Fatal("foreign source release accepted")
 	}
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(woodGUID), 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	out = current(t, s)
 	if out.LastGather.Status != lootv1.GatherStatus_GATHER_CONFIRMED || !out.LastGather.ItemPushObserved || !out.LastGather.SlotRemoved || !out.LastGather.ReleaseObserved || !out.LastGather.OwnQuestCompleteObserved || out.LastGather.Count != 1 || out.PendingGameObjectGuid != 0 || out.LastCorpseGuid != 0 || f.leaseOwner != "" || f.world.InventoryBags[1].Slots[0].ItemGuid != 0x4000000000000888 {
 		t.Fatal("missing bound receipt or carried item", out)
@@ -78,7 +77,7 @@ func TestBundleWoodUsesBoundOpeningOwnBagItemSlotAndReleaseProof(t *testing.T) {
 	before := len(f.packets)
 	f.world.SelfQuestLog[0].Complete = false
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if len(f.packets) != before {
 		t.Fatal("same wood source replayed")
 	}
@@ -129,7 +128,7 @@ func TestBundleWoodCannotBorrowMillyQuestSourceOrInventoryCapacity(t *testing.T)
 				}
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" {
 				t.Fatal("unbound wood operation wrote", current(t, s), f.packets)
 			}
@@ -140,9 +139,9 @@ func TestBundleWoodCannotBorrowMillyQuestSourceOrInventoryCapacity(t *testing.T)
 func TestBundleWoodRejectsWrongItemWithoutAnyStoreOrSuccess(t *testing.T) {
 	s, f, _ := woodRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootResponse, harvestWindow(woodGUID, lootItem{slot: 2, id: 11119, count: 1}))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	for _, p := range f.packets {
 		if p.Opcode == opcode.CMSGAutostoreLootItem {
 			t.Fatal("Milly item stored for wood quest")
@@ -160,10 +159,10 @@ func TestBundleWoodNearestRecipeRemainsBoundWhenBothQuestsAreActive(t *testing.T
 	milly.Guid, milly.Entry, milly.X = harvestGUID, 161557, 3
 	f.world.QuestObjects = append(f.world.QuestObjects, milly)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	f.world.SelfQuestLog[0].QuestId = 0 // The other active quest must not replace it.
 	emit(s, opcode.SMSGLootResponse, harvestWindow(woodGUID, lootItem{slot: 2, id: 13872, count: 1}))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.QuestId != 5545 || current(t, s).LastGather.ItemPushObserved || f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal("recipe switched during an operation", current(t, s), f.packets)
 	}

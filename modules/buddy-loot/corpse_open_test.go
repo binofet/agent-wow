@@ -270,7 +270,7 @@ func corpsePolicyPaused(t *testing.T, s *Service) bool {
 
 func tickCorpseLua(t *testing.T, s *Service) {
 	t.Helper()
-	if (s.token == "" || s.exactCorpse) && s.cleanup.source == 0 && !s.questGather {
+	if (s.token == "" || s.policyWindow()) && s.cleanup.source == 0 && (!s.questGather || s.policyWindow()) {
 		o, err := s.ObserveCorpses(context.Background(), &emptypb.Empty{})
 		if err == nil {
 			var vm *behavior.Session
@@ -292,8 +292,14 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				}
 				_ = s.invoke(context.Background(), "buddy-actions", "approach_target", r, &actionsv1.State{})
 			} else if ok && a["capability"] == "loot_close" {
-				retire, _ := a["retireUnconfirmed"].(bool)
-				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid, RetireUnconfirmed: retire})
+				delete(a, "capability")
+				delete(a, "observationSequence")
+				raw, _ := json.Marshal(a)
+				r := &lootv1.CloseCorpseRequest{}
+				if err = protojson.Unmarshal(raw, r); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = s.CloseCorpse(context.Background(), r)
 			} else if ok && a["capability"] == "loot_open" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
@@ -330,4 +336,15 @@ func tickCorpseLua(t *testing.T, s *Service) {
 		}
 	}
 	s.Tick(context.Background())
+}
+
+// Pre-window source/approach fixtures keep exercising the retained workflow;
+// once the server window exists its choices come from the same actual Lua VM.
+func tickGatherWindow(t *testing.T, s *Service) {
+	t.Helper()
+	if s.policyWindow() || s.state.InventoryPaused && s.pausedGather && s.pausedSource != 0 {
+		tickCorpseLua(t, s)
+	} else {
+		s.Tick(context.Background())
+	}
 }

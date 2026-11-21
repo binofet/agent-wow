@@ -23,7 +23,8 @@ func (s *Service) observeWindowMutation() {
 		return
 	}
 	r := s.windowRequest.receipt
-	if r.Terminal || r.OpenRequestId != s.corpseRequest.request.RequestId {
+	binding, _, _ := s.policyWindowBinding()
+	if r.Terminal || r.OpenRequestId != binding {
 		return
 	}
 	if r.Kind == "money" {
@@ -38,12 +39,19 @@ func (s *Service) observeWindowMutation() {
 	}
 }
 func (s *Service) windowObservation() *lootv1.LootWindow {
-	if !s.exactCorpse || s.corpseRequest == nil {
+	binding, source, kind := s.policyWindowBinding()
+	if source == 0 {
 		return nil
 	}
 	s.observeWindowMutation()
-	out := &lootv1.LootWindow{CorpseGuid: s.corpseRequest.request.CorpseGuid, OpenRequestId: s.corpseRequest.request.RequestId,
-		Revision: s.windowRevision, Observed: s.corpseRequest.receipt.WindowObserved, Money: s.window.gold, MoneyRequested: s.moneySent, MoneyCleared: s.moneyCleared}
+	out := &lootv1.LootWindow{SourceGuid: source, SourceKind: kind, OpenRequestId: binding,
+		Revision: s.windowRevision, Observed: s.window.guid == source, Money: s.window.gold, MoneyRequested: s.moneySent, MoneyCleared: s.moneyCleared}
+	if kind == "corpse" {
+		out.CorpseGuid = source
+	} else {
+		out.BoundQuestId = s.state.LastGather.QuestId
+		out.BoundItemId = s.state.LastGather.ItemId
+	}
 	for _, item := range s.window.items {
 		out.Slots = append(out.Slots, &lootv1.LootSlot{Slot: uint32(item.slot), ItemId: item.id, Count: item.count, SlotType: uint32(item.slotType), Removed: s.removedSlots[item.slot]})
 	}
@@ -59,7 +67,7 @@ func (s *Service) TakeSlot(ctx context.Context, r *lootv1.TakeLootRequest) (*loo
 	return s.takeWindow(ctx, r, false)
 }
 func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, money bool) (*lootv1.LootMutation, error) {
-	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetCorpseGuid() == 0 || r.GetOpenRequestId() == "" || r.GetWindowRevision() == 0 || r.GetRequestId() == "" ||
+	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetCorpseGuid() == 0 && r.GetSourceGuid() == 0 || r.GetCorpseGuid() != 0 && r.GetSourceGuid() != 0 || r.GetOpenRequestId() == "" || r.GetWindowRevision() == 0 || r.GetRequestId() == "" ||
 		!money && (r.Slot > 255 || r.ExpectedItemId == 0 || r.ExpectedCount == 0 || r.ExpectedInventoryRevision == 0) ||
 		money && (r.Slot != 0 || r.ExpectedItemId != 0 || r.ExpectedCount != 0) {
 		return nil, status.Error(codes.InvalidArgument, "exact current window, source, request and selected item facts required")
@@ -83,8 +91,11 @@ func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, mon
 		}
 		return proto.Clone(prior.receipt).(*lootv1.LootMutation), nil
 	}
-	if !s.exactCorpse || s.corpseRequest == nil || r.OpenRequestId != s.corpseRequest.request.RequestId || r.CorpseGuid != s.pendingGUID() ||
-		s.window.guid != r.CorpseGuid || !s.corpseRequest.receipt.WindowObserved || s.windowRevision != r.WindowRevision ||
+	binding, source, sourceKind := s.policyWindowBinding()
+	if sourceKind == "quest_container" && r.SourceGuid != source {
+		return nil, status.Error(codes.FailedPrecondition, "quest-container source GUID must use source_guid")
+	}
+	if binding == "" || r.OpenRequestId != binding || takeWindowSource(r) != source || s.window.guid != source || s.windowRevision != r.WindowRevision ||
 		s.token == "" || s.cleanup.source != 0 || s.state.Phase == "waiting_release" || s.state.Phase == "release_observed" || s.hasUnsettledLootMutation() {
 		return nil, status.Error(codes.FailedPrecondition, "exact observed window with settled prior mutation required")
 	}
@@ -109,11 +120,14 @@ func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, mon
 		return nil, status.Error(codes.FailedPrecondition, "exact owned stopped loot custody required")
 	}
 	w := &worldv1.SnapshotResponse{}
-	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{}, w); err != nil {
+	if err := s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w); err != nil {
 		return nil, err
 	}
 	if w.GetSelf().GetGuid() != s.selfGUID || !money && (!w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision) || ctx.Err() != nil {
 		return nil, status.Error(codes.FailedPrecondition, "current body and selected inventory revision required")
+	}
+	if s.questGather && (!s.boundHarvestRecipe().quest(w, s.selfGUID, false) || !s.boundHarvestRecipe().objectCurrent(w, lease.State, source)) {
+		return nil, status.Error(codes.FailedPrecondition, "current exact bound quest container required")
 	}
 	if !money && s.unconfirmedItems[r.ExpectedItemId] {
 		counts, known := completeOwnItemCounts(w, s.selfGUID)
@@ -122,7 +136,7 @@ func (s *Service) takeWindow(ctx context.Context, r *lootv1.TakeLootRequest, mon
 		}
 		s.itemCountBefore, s.itemCountKnown = counts[r.ExpectedItemId], true
 	}
-	receipt := &lootv1.LootMutation{SessionId: r.SessionId, SelfGuid: r.SelfGuid, CorpseGuid: r.CorpseGuid, OpenRequestId: r.OpenRequestId, WindowRevision: r.WindowRevision, RequestId: r.RequestId, Kind: kind, Slot: r.Slot, ItemId: r.ExpectedItemId, Count: r.ExpectedCount, TransportAttempted: true}
+	receipt := &lootv1.LootMutation{SessionId: r.SessionId, SelfGuid: r.SelfGuid, CorpseGuid: r.CorpseGuid, SourceGuid: r.SourceGuid, OpenRequestId: r.OpenRequestId, WindowRevision: r.WindowRevision, RequestId: r.RequestId, Kind: kind, Slot: r.Slot, ItemId: r.ExpectedItemId, Count: r.ExpectedCount, TransportAttempted: true}
 	pending := &windowRequest{request: proto.Clone(r).(*lootv1.TakeLootRequest), receipt: receipt}
 	if s.windowRequests == nil {
 		s.windowRequests = map[string]*windowRequest{}
