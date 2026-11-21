@@ -25,7 +25,11 @@ func TestEncounterCorpseLootYieldsCustodyForHealingAndPreservesSameSessionState(
 	obs := positionedHealObservation()
 	patients := obs.Healing.Patients
 	obs.Healing.Patients = nil
-	obs.Players["8"].Health = obs.Players["8"].MaxHealth
+	for _, player := range obs.Players {
+		if player.HealthKnown {
+			player.Health = player.MaxHealth
+		}
+	}
 	corpse := fallbackGUID(0xf130000001000001)
 	loot := map[string]any{"sessionId": fallbackSession, "selfGuid": fallbackGUID(fallbackSelf),
 		"self":           map[string]any{"present": true, "aliveKnown": true, "alive": true, "unitFlagsKnown": true},
