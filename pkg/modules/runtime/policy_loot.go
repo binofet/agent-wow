@@ -30,6 +30,9 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current session and exact owned body required")
 	}
 	params := map[string]any{"sessionId": sid, "selfGuid": self, "corpseGuid": action["corpseGuid"]}
+	if capability != "loot_open" && action["sourceGuid"] != nil {
+		params["sourceGuid"] = action["sourceGuid"]
+	}
 	method := "close_corpse"
 	if value, ok := action["retireUnconfirmed"]; ok {
 		params["retireUnconfirmed"] = value
@@ -64,15 +67,19 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, err.Error())
 	}
 	selected := &lootv1.CloseCorpseRequest{}
-	base, _ := json.Marshal(map[string]any{"sessionId": sid, "selfGuid": self, "corpseGuid": action["corpseGuid"]})
-	if err = protojson.Unmarshal(base, selected); err != nil || selected.CorpseGuid == 0 {
-		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact observed corpse GUID required")
+	base, _ := json.Marshal(map[string]any{"sessionId": sid, "selfGuid": self, "corpseGuid": action["corpseGuid"], "sourceGuid": action["sourceGuid"]})
+	if err = protojson.Unmarshal(base, selected); err != nil || selected.CorpseGuid == 0 && selected.SourceGuid == 0 || selected.CorpseGuid != 0 && selected.SourceGuid != 0 {
+		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "one exact observed loot source GUID required")
 	}
 	var nonce [32]byte
 	if _, err = rand.Read(nonce[:]); err != nil {
 		return PolicyDispatch{}, err
 	}
-	op := &policySpell{vm: p.vm, capability: capability, target: selected.CorpseGuid,
+	target := selected.CorpseGuid
+	if target == 0 {
+		target = selected.SourceGuid
+	}
+	op := &policySpell{vm: p.vm, capability: capability, target: target,
 		corpse: &policyCorpse{close: capability == "loot_close"}, token: hex.EncodeToString(nonce[:])}
 	if capability == "loot_money" {
 		op.corpse.money = true
@@ -87,7 +94,7 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 	}
 	return PolicyDispatch{Module: "buddy-loot", Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
 		origin := modsession.WriteOriginFromContext(ctx)
-		payload := map[string]any{"capability": capability, "corpse_guid": strconv.FormatUint(op.target, 10), "request_id": action["requestId"]}
+		payload := map[string]any{"capability": capability, "source_guid": strconv.FormatUint(op.target, 10), "corpse_guid": strconv.FormatUint(selected.CorpseGuid, 10), "request_id": action["requestId"]}
 		if origin.Module != "buddy-loot" || origin.Writer != "lua" || origin.ActionID == "" {
 			return behavior.ActionNotDispatched, payload
 		}

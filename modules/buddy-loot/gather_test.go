@@ -37,9 +37,9 @@ func harvestWindow(guid uint64, items ...lootItem) []byte {
 func openHarvest(t *testing.T, s *Service) {
 	t.Helper()
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1, slotType: 4}))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 }
 func TestHarvestOpeningGoldenAndLootType(t *testing.T) {
 	if got := hex.EncodeToString(gatherOpenPacket(7, harvestGUID)); got != "074e1900000000080000f92a15770210f1" {
@@ -68,13 +68,13 @@ func TestHarvestApproachesOnlySelectedObservedCrateThenOpensAfterStopped(t *test
 	s, f, advance := harvestRig(t)
 	f.world.QuestObjects[0].X = 12
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).Phase != "gather_approaching" || len(f.packets) != 0 {
 		t.Fatal(current(t, s), f.packets)
 	}
 	for i := 0; i < 9 && current(t, s).Phase == "gather_approaching"; i++ {
 		advance(200 * time.Millisecond)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if f.actions.Moving && len(f.packets) != 0 {
 			t.Fatal("opened moving", current(t, s))
 		}
@@ -91,7 +91,7 @@ func TestHarvestApproachFailureOrChangedObservationStopsWithoutOpeningOrRetry(t 
 			s, f, advance := harvestRig(t)
 			f.world.QuestObjects[0].X = 12
 			enable(t, s)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			switch mode {
 			case "unavailable":
 				f.failApproach = true
@@ -111,13 +111,13 @@ func TestHarvestApproachFailureOrChangedObservationStopsWithoutOpeningOrRetry(t 
 				s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
 			}
 			advance(200 * time.Millisecond)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" || current(t, s).LastGather.OpeningTransportWritten {
 				t.Fatal(current(t, s), f.packets)
 			}
 			f.afterApproach = nil
 			advance(time.Second)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" {
 				t.Fatal("retried rejected approach", current(t, s))
 			}
@@ -163,7 +163,7 @@ func TestHarvestNeedsEnabledOwnIncompleteQuestAndObservedCrate(t *testing.T) {
 			s, f, _ := harvestRig(t)
 			enable(t, s)
 			tc.change(s, f)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" || current(t, s).LastGather != nil {
 				t.Fatal("unsafe gather", current(t, s), f.packets)
 			}
@@ -192,7 +192,7 @@ func TestHarvestRevalidatesAfterStopAndBeforeItemStore(t *testing.T) {
 				f.afterAcquire = nil
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" || f.releases != 1 {
 				t.Fatal(current(t, s), f.packets, f.releases)
 			}
@@ -200,10 +200,10 @@ func TestHarvestRevalidatesAfterStopAndBeforeItemStore(t *testing.T) {
 	}
 	s, f, _ := harvestRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}))
 	f.world.QuestObjects = nil
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease || current(t, s).LastGather.ItemPushObserved {
 		t.Fatal("stored vanished crate item", current(t, s))
 	}
@@ -220,24 +220,24 @@ func TestHarvestRequiresOwnInventorySlotAndReleaseProof(t *testing.T) {
 	}
 	emit(s, opcode.SMSGItemPushResult, pushPacket(3, 11119, 1))
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.Status != lootv1.GatherStatus_GATHER_REQUESTED {
 		t.Fatal("foreign inventory receipt accepted")
 	}
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 11119, 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.Status != lootv1.GatherStatus_GATHER_ITEM_STORED || current(t, s).LastGather.OwnQuestCompleteObserved {
 		t.Fatal(current(t, s))
 	}
 	// Only a normal own quest-log update establishes completion; never infer8 from this one item.
 	f.world.SelfQuestLog[0].Complete = true
 	f.world.SelfQuestLogRevision++
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal(f.packets)
 	}
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	out = current(t, s)
 	r := out.LastGather
 	if r.Status != lootv1.GatherStatus_GATHER_CONFIRMED || r.Count != 1 || !r.ItemPushObserved || !r.SlotRemoved || !r.ReleaseObserved || !r.OwnQuestCompleteObserved || r.ObservedQuestLogRevision != 8 || out.PendingGameObjectGuid != 0 || out.LastCorpseGuid != 0 || f.releases != 1 || f.leaseOwner != "" {
@@ -246,31 +246,46 @@ func TestHarvestRequiresOwnInventorySlotAndReleaseProof(t *testing.T) {
 	f.world.SelfQuestLog[0].Complete = false
 	advance(time.Second)
 	before := len(f.packets)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if len(f.packets) != before {
 		t.Fatal("same observed crate replayed")
 	}
 }
-func TestHarvestOnlyStoresRequiredServerOfferedItemAndNeverMoney(t *testing.T) {
+func TestHarvestWindowLuaSelectsMoneyThenBoundQuestItems(t *testing.T) {
 	s, f, _ := harvestRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	p := harvestWindow(harvestGUID, lootItem{slot: 1, id: 123, count: 1}, lootItem{slot: 2, id: 11119, count: 1})
 	binary.LittleEndian.PutUint32(p[9:], 500)
 	emit(s, opcode.SMSGLootResponse, p)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
+	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootMoney {
+		t.Fatal("shared window policy did not select observed money", f.packets)
+	}
+	emit(s, opcode.SMSGLootClearMoney, nil)
+	tickGatherWindow(t, s)
 	if f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem || f.packets[len(f.packets)-1].Payload[0] != 2 {
 		t.Fatal(f.packets)
 	}
-	for _, items := range [][]lootItem{{{slot: 1, id: 123, count: 1}}, {{slot: 1, id: 11119, count: 1}, {slot: 2, id: 11119, count: 1}}, {{slot: 1, id: 11119, count: 1, slotType: 2}}} {
+	for _, items := range [][]lootItem{{{slot: 1, id: 123, count: 1}}, {{slot: 1, id: 11119, count: 1, slotType: 2}}} {
 		s, f, _ := harvestRig(t)
 		enable(t, s)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, items...))
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease {
 			t.Fatal("unsupported window used", current(t, s), f.packets)
 		}
+	}
+	// Duplicate item entries are distinct server slots. The shared selector
+	// chooses one exact slot; the native module cannot reject or replace it.
+	s, f, _ = harvestRig(t)
+	enable(t, s)
+	tickGatherWindow(t, s)
+	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}, lootItem{slot: 1, id: 11119, count: 1}))
+	tickGatherWindow(t, s)
+	if last := f.packets[len(f.packets)-1]; last.Opcode != opcode.CMSGAutostoreLootItem || last.Payload[0] != 1 {
+		t.Fatal("duplicate item slots were not selected by Lua", f.packets)
 	}
 }
 func TestHarvestTimeoutFailureAndDisableNeverRetryOrLeakLease(t *testing.T) {
@@ -281,26 +296,26 @@ func TestHarvestTimeoutFailureAndDisableNeverRetryOrLeakLease(t *testing.T) {
 				f.failOpcode = opcode.CMSGCastSpell
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			switch mode {
 			case "timeout":
 				advance(4 * time.Second)
-				s.Tick(context.Background())
+				tickGatherWindow(t, s)
 			case "cast_reject":
 				p := []byte{s.gatherCastCount}
 				p = binary.LittleEndian.AppendUint32(p, 6478)
 				p = append(p, 49)
 				emit(s, opcode.SMSGCastFailed, p)
-				s.Tick(context.Background())
+				tickGatherWindow(t, s)
 			case "disable":
 				s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
-				s.Tick(context.Background())
+				tickGatherWindow(t, s)
 			case "logout":
 				s.BeforeLogout(context.Background(), &emptypb.Empty{})
 			}
 			if f.leaseOwner != "" {
 				emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-				s.Tick(context.Background())
+				tickGatherWindow(t, s)
 			}
 			r := current(t, s).LastGather
 			if r.Status == lootv1.GatherStatus_GATHER_CONFIRMED || r.ItemPushObserved || f.leaseOwner != "" {
@@ -309,10 +324,10 @@ func TestHarvestTimeoutFailureAndDisableNeverRetryOrLeakLease(t *testing.T) {
 			before := len(f.packets)
 			advance(3 * time.Second)
 			f.world.QuestObjects = nil
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			f.world.QuestObjects = []*worldv1.GameObjectState{{Guid: harvestGUID, Entry: 161557, Present: true, MapKnown: true, PositionKnown: true, X: 2, TypeKnown: true, GameObjectType: 3, FlagsKnown: true}}
 			advance(time.Second)
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if len(f.packets) != before {
 				t.Fatal("ambiguous crate replayed", mode)
 			}
@@ -323,9 +338,9 @@ func TestHarvestTimeoutFailureAndDisableNeverRetryOrLeakLease(t *testing.T) {
 func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *testing.T) {
 	s, f, advance := harvestRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	advance(4 * time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if !current(t, s).Enabled || current(t, s).Phase != "waiting_release" {
 		t.Fatal(current(t, s))
 	}
@@ -336,20 +351,20 @@ func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *te
 	// a release ACK. The finite release timeout still retires this source.
 	emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}))
 	advance(3 * time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if !current(t, s).Enabled || f.leaseOwner != "" || current(t, s).LastGather.LootWindowObserved {
 		t.Fatal(current(t, s))
 	}
 	before := len(f.packets)
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if len(f.packets) != before {
 		t.Fatal("reopened timed-out source")
 	}
 	const nextGUID = harvestGUID + 1
 	f.world.QuestObjects[0].Guid = nextGUID
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).PendingGameObjectGuid != nextGUID || current(t, s).Phase != "waiting_open" {
 		t.Fatal(current(t, s))
 	}
@@ -358,20 +373,20 @@ func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *te
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 11119, 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	got := current(t, s)
 	if got.Phase != "waiting_open" || got.LastGather.LootWindowObserved || got.LastGather.ItemPushObserved || got.LastGather.ReleaseObserved || len(f.packets) != before {
 		t.Fatal("late source crossed transaction", got)
 	}
 	emit(s, opcode.SMSGLootResponse, harvestWindow(nextGUID, lootItem{slot: 2, id: 11119, count: 1}))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).Phase != "waiting_item" || f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem {
 		t.Fatal(current(t, s))
 	}
 	// Once storage might have been sent, GUID-less receipt ambiguity requires
 	// the old fail-closed behavior; do not continue to another crate.
 	advance(3 * time.Second)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).Enabled {
 		t.Fatal("ambiguous item timeout preserved intent")
 	}
@@ -380,7 +395,7 @@ func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *te
 func TestHarvestMalformedForeignAndInventoryFailureCannotClaimSuccess(t *testing.T) {
 	s, f, _ := harvestRig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	good := harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1})
 	for i := 0; i < len(good); i++ {
 		emit(s, opcode.SMSGLootResponse, good[:i])
@@ -393,19 +408,19 @@ func TestHarvestMalformedForeignAndInventoryFailureCannotClaimSuccess(t *testing
 		t.Fatal("foreign object supplied loot")
 	}
 	emit(s, opcode.SMSGLootResponse, good)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 11119, 2))
 	emit(s, opcode.SMSGLootRemoved, []byte{3})
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if current(t, s).LastGather.ItemPushObserved || current(t, s).LastGather.SlotRemoved {
 		t.Fatal("wrong item count or slot accepted")
 	}
 	failure := make([]byte, 18)
 	failure[0] = 4
 	emit(s, opcode.SMSGInventoryChangeFailure, failure)
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-	s.Tick(context.Background())
+	tickGatherWindow(t, s)
 	if r := current(t, s); r.Enabled || r.LastGather.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED || r.LastGather.ItemPushObserved || f.leaseOwner != "" {
 		t.Fatal(r)
 	}
@@ -424,22 +439,22 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 		p := make([]byte, 18)
 		p[0] = 50
 		emit(s, opcode.SMSGInventoryChangeFailure, p)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if out := current(t, s); !out.Enabled || !out.InventoryPaused {
 			t.Fatal(out)
 		}
 		before := len(f.packets)
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if len(f.packets) != before {
 			t.Fatal("retried while full")
 		}
 		f.world.Backpack = f.world.Backpack[:15]
 		fixtureCarriedInventory(f.world)
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		if len(f.packets) != before {
 			t.Fatal("partial backpack resumed")
 		}
@@ -449,7 +464,7 @@ func TestInventoryFullPausesOnlyUntilKnownFreeSlotAndPreservesExplicitDisable(t 
 			s.Enable(context.Background(), &lootv1.EnableRequest{Enabled: false})
 		}
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickGatherWindow(t, s)
 		out := current(t, s)
 		if disabled {
 			if out.Enabled || len(f.packets) != before {

@@ -1,5 +1,6 @@
 -- One editable policy for ordinary corpse choice, movement and opening.
--- Exact packet/effect settlement is native; all ordinary window choices are here.
+-- Exact packet/effect settlement is native; corpse and bound-container windows
+-- share this policy. Legacy container source selection/opening remains native.
 local M={tuning={searchRange=12,maxHeight=1.5,openRange=3.75,responseTimeoutMs=2000,windowTimeoutMs=12000,
  reserveQuestSlots=1}}
 local state={seen={},paused={},sequence=0}
@@ -61,7 +62,7 @@ function M.import_state(checkpoint)
 end
 local function window_action(frame,o,capability,slot)
  local w=o.window
- local action={capability=capability,sessionId=o.sessionId,selfGuid=o.selfGuid,corpseGuid=w.corpseGuid,
+ local action={capability=capability,sessionId=o.sessionId,selfGuid=o.selfGuid,corpseGuid=w.corpseGuid,sourceGuid=w.sourceKind=="quest_container" and w.sourceGuid or nil,
   openRequestId=w.openRequestId,windowRevision=w.revision,requestId="loot-"..tostring(state.sequence),
   observationSequence=frame.input.observationSequence}
  if slot then action.slot=slot.slot or 0;action.expectedItemId=slot.itemId;action.expectedCount=slot.count;action.expectedInventoryRevision=o.inventoryRevision end
@@ -70,7 +71,7 @@ local function window_action(frame,o,capability,slot)
 end
 local function close_action(frame,o,pending)
  state.closeStarted=state.closeStarted or (frame.clock and frame.clock.monotonicMs)
- return {capability="loot_close",sessionId=o.sessionId,selfGuid=o.selfGuid,corpseGuid=pending,
+ return {capability="loot_close",sessionId=o.sessionId,selfGuid=o.selfGuid,corpseGuid=(o.window or {}).sourceKind~="quest_container" and pending or nil,sourceGuid=(o.window or {}).sourceKind=="quest_container" and pending or nil,
   observationSequence=frame.input.observationSequence}
 end
 local function needed_items(o)
@@ -84,7 +85,9 @@ local function needed_items(o)
  return needed,o.itemCountsKnown==true
 end
 local function process_window(frame,o,urgent)
- local out={phase="waiting_for_window",corpseGuid=(o.state or {}).pendingCorpseGuid}
+ local pending=(o.state or {}).pendingCorpseGuid
+ if not id(pending) then pending=(o.state or {}).pendingGameObjectGuid end
+ local out={phase="waiting_for_window",corpseGuid=pending}
  local phase=(o.state or {}).phase
  local now=frame.clock and frame.clock.monotonicMs
  local w=o.window or {}
@@ -114,13 +117,21 @@ local function process_window(frame,o,urgent)
   end
   return out
  end
+ if w.sourceKind=="quest_container" then
+  local active=false
+  for _,q in ipairs(o.questLog or {})do if q.questId==w.boundQuestId and not q.complete and not q.failed then active=true end end
+  if (o.state or {}).enabled~=true or o.questLogKnown~=true or not active or
+   (o.sourceObject or {}).present~=true or o.sourceObject.guid~=w.sourceGuid then
+   out.phase="bound_container_or_quest_unavailable";out.action=close_action(frame,o,out.corpseGuid);return out
+  end
+ end
  if (w.money or 0)>0 and not w.moneyRequested and not w.moneyCleared then
   out.phase="take_money";out.action=window_action(frame,o,"loot_money");return out
  end
  local needed,known=needed_items(o)
  local chosen,priority
  for _,slot in ipairs(w.slots or {})do
-  if not slot.removed and ((slot.slotType or 0)==0 or slot.slotType==4) then
+  if not slot.removed and ((slot.slotType or 0)==0 or slot.slotType==4) and (w.sourceKind~="quest_container" or slot.itemId==w.boundItemId) then
    local rank=needed[slot.itemId] and 2 or slot.slotType==4 and 1 or 0
    if not chosen or rank>priority or rank==priority and (slot.slot or 0)<(chosen.slot or 0) then chosen,priority=slot,rank end
   end
@@ -147,7 +158,9 @@ function M.decide(frame,encounter,quiet,urgent)
  if urgent then quiet=false end
  local op=o.operation
  local pending=(o.state or {}).pendingCorpseGuid
+ if not id(pending) then pending=(o.state or {}).pendingGameObjectGuid end
  if id(pending) then
+  if (o.state or {}).pendingGameObjectGuid==pending and (o.window or {}).observed~=true then return {phase="retained_container_opening",corpseGuid=pending} end
   if #frame.pending~=0 then return {phase="existing_action_custody",corpseGuid=pending} end
   return process_window(frame,o,urgent)
  end

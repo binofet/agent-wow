@@ -648,6 +648,7 @@ type CloseCorpseRequest struct {
 	SelfGuid          uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
 	CorpseGuid        uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
 	RetireUnconfirmed bool                   `protobuf:"varint,4,opt,name=retire_unconfirmed,json=retireUnconfirmed,proto3" json:"retire_unconfirmed,omitempty"`
+	SourceGuid        uint64                 `protobuf:"varint,5,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -710,6 +711,13 @@ func (x *CloseCorpseRequest) GetRetireUnconfirmed() bool {
 	return false
 }
 
+func (x *CloseCorpseRequest) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
 type CorpseOperation struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -723,6 +731,7 @@ type CorpseOperation struct {
 	WindowObserved            bool                   `protobuf:"varint,9,opt,name=window_observed,json=windowObserved,proto3" json:"window_observed,omitempty"`
 	ReleaseObserved           bool                   `protobuf:"varint,10,opt,name=release_observed,json=releaseObserved,proto3" json:"release_observed,omitempty"`
 	Terminal                  bool                   `protobuf:"varint,11,opt,name=terminal,proto3" json:"terminal,omitempty"`
+	SourceGuid                uint64                 `protobuf:"varint,12,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -834,6 +843,13 @@ func (x *CorpseOperation) GetTerminal() bool {
 	return false
 }
 
+func (x *CorpseOperation) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
 type CorpseObservation struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -857,8 +873,10 @@ type CorpseObservation struct {
 	QuestRequirements []*QuestItemRequirement `protobuf:"bytes,18,rep,name=quest_requirements,json=questRequirements,proto3" json:"quest_requirements,omitempty"`
 	ItemCountsKnown   bool                    `protobuf:"varint,19,opt,name=item_counts_known,json=itemCountsKnown,proto3" json:"item_counts_known,omitempty"`
 	ItemCounts        []*OwnedItemCount       `protobuf:"bytes,20,rep,name=item_counts,json=itemCounts,proto3" json:"item_counts,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Current cached GameObject facts for the bound container, never a replacement source.
+	SourceObject  *api.GameObjectState `protobuf:"bytes,21,opt,name=source_object,json=sourceObject,proto3" json:"source_object,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CorpseObservation) Reset() {
@@ -1027,6 +1045,13 @@ func (x *CorpseObservation) GetItemCountsKnown() bool {
 func (x *CorpseObservation) GetItemCounts() []*OwnedItemCount {
 	if x != nil {
 		return x.ItemCounts
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetSourceObject() *api.GameObjectState {
+	if x != nil {
+		return x.SourceObject
 	}
 	return nil
 }
@@ -1230,6 +1255,10 @@ type LootWindow struct {
 	MoneyCleared   bool                   `protobuf:"varint,7,opt,name=money_cleared,json=moneyCleared,proto3" json:"money_cleared,omitempty"`
 	Slots          []*LootSlot            `protobuf:"bytes,8,rep,name=slots,proto3" json:"slots,omitempty"`
 	Mutation       *LootMutation          `protobuf:"bytes,9,opt,name=mutation,proto3" json:"mutation,omitempty"`
+	SourceGuid     uint64                 `protobuf:"varint,10,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
+	SourceKind     string                 `protobuf:"bytes,11,opt,name=source_kind,json=sourceKind,proto3" json:"source_kind,omitempty"`
+	BoundQuestId   uint32                 `protobuf:"varint,12,opt,name=bound_quest_id,json=boundQuestId,proto3" json:"bound_quest_id,omitempty"`
+	BoundItemId    uint32                 `protobuf:"varint,13,opt,name=bound_item_id,json=boundItemId,proto3" json:"bound_item_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1327,6 +1356,34 @@ func (x *LootWindow) GetMutation() *LootMutation {
 	return nil
 }
 
+func (x *LootWindow) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
+func (x *LootWindow) GetSourceKind() string {
+	if x != nil {
+		return x.SourceKind
+	}
+	return ""
+}
+
+func (x *LootWindow) GetBoundQuestId() uint32 {
+	if x != nil {
+		return x.BoundQuestId
+	}
+	return 0
+}
+
+func (x *LootWindow) GetBoundItemId() uint32 {
+	if x != nil {
+		return x.BoundItemId
+	}
+	return 0
+}
+
 type TakeLootRequest struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1339,6 +1396,7 @@ type TakeLootRequest struct {
 	ExpectedItemId            uint32                 `protobuf:"varint,8,opt,name=expected_item_id,json=expectedItemId,proto3" json:"expected_item_id,omitempty"`
 	ExpectedCount             uint32                 `protobuf:"varint,9,opt,name=expected_count,json=expectedCount,proto3" json:"expected_count,omitempty"`
 	ExpectedInventoryRevision uint64                 `protobuf:"varint,10,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	SourceGuid                uint64                 `protobuf:"varint,11,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1443,6 +1501,13 @@ func (x *TakeLootRequest) GetExpectedInventoryRevision() uint64 {
 	return 0
 }
 
+func (x *TakeLootRequest) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
 type LootMutation struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	SessionId              string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1464,6 +1529,7 @@ type LootMutation struct {
 	InventoryError         uint32                 `protobuf:"varint,17,opt,name=inventory_error,json=inventoryError,proto3" json:"inventory_error,omitempty"`
 	Terminal               bool                   `protobuf:"varint,18,opt,name=terminal,proto3" json:"terminal,omitempty"`
 	InventoryDeltaObserved bool                   `protobuf:"varint,19,opt,name=inventory_delta_observed,json=inventoryDeltaObserved,proto3" json:"inventory_delta_observed,omitempty"`
+	SourceGuid             uint64                 `protobuf:"varint,20,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1631,6 +1697,13 @@ func (x *LootMutation) GetInventoryDeltaObserved() bool {
 	return false
 }
 
+func (x *LootMutation) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
 var File_modules_buddy_loot_loot_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_loot_loot_proto_rawDesc = "" +
@@ -1695,14 +1768,16 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"request_id\x18\x04 \x01(\tR\trequestId\x12<\n" +
 	"\x1aexpected_position_revision\x18\x05 \x01(\x04R\x18expectedPositionRevision\x128\n" +
 	"\x18expected_corpse_revision\x18\x06 \x01(\x04R\x16expectedCorpseRevision\x12>\n" +
-	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"\xa0\x01\n" +
+	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"\xc1\x01\n" +
 	"\x12CloseCorpseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
 	"\vcorpse_guid\x18\x03 \x01(\x04R\n" +
 	"corpseGuid\x12-\n" +
-	"\x12retire_unconfirmed\x18\x04 \x01(\bR\x11retireUnconfirmed\"\xa7\x03\n" +
+	"\x12retire_unconfirmed\x18\x04 \x01(\bR\x11retireUnconfirmed\x12\x1f\n" +
+	"\vsource_guid\x18\x05 \x01(\x04R\n" +
+	"sourceGuid\"\xc8\x03\n" +
 	"\x0fCorpseOperation\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1718,7 +1793,9 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x0fwindow_observed\x18\t \x01(\bR\x0ewindowObserved\x12)\n" +
 	"\x10release_observed\x18\n" +
 	" \x01(\bR\x0freleaseObserved\x12\x1a\n" +
-	"\bterminal\x18\v \x01(\bR\bterminal\"\x87\t\n" +
+	"\bterminal\x18\v \x01(\bR\bterminal\x12\x1f\n" +
+	"\vsource_guid\x18\f \x01(\x04R\n" +
+	"sourceGuid\"\xd5\t\n" +
 	"\x11CorpseObservation\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1742,7 +1819,8 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x12quest_requirements\x18\x12 \x03(\v2+.warcraftbuddy.loot.v1.QuestItemRequirementR\x11questRequirements\x12*\n" +
 	"\x11item_counts_known\x18\x13 \x01(\bR\x0fitemCountsKnown\x12F\n" +
 	"\vitem_counts\x18\x14 \x03(\v2%.warcraftbuddy.loot.v1.OwnedItemCountR\n" +
-	"itemCounts\"`\n" +
+	"itemCounts\x12L\n" +
+	"\rsource_object\x18\x15 \x01(\v2'.warcraftbuddy.world.v1.GameObjectStateR\fsourceObject\"`\n" +
 	"\x14QuestItemRequirement\x12\x19\n" +
 	"\bquest_id\x18\x01 \x01(\rR\aquestId\x12\x17\n" +
 	"\aitem_id\x18\x02 \x01(\rR\x06itemId\x12\x14\n" +
@@ -1755,7 +1833,7 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\aitem_id\x18\x02 \x01(\rR\x06itemId\x12\x14\n" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1b\n" +
 	"\tslot_type\x18\x04 \x01(\rR\bslotType\x12\x18\n" +
-	"\aremoved\x18\x05 \x01(\bR\aremoved\"\xe9\x02\n" +
+	"\aremoved\x18\x05 \x01(\bR\aremoved\"\xf5\x03\n" +
 	"\n" +
 	"LootWindow\x12\x1f\n" +
 	"\vcorpse_guid\x18\x01 \x01(\x04R\n" +
@@ -1767,7 +1845,14 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x0fmoney_requested\x18\x06 \x01(\bR\x0emoneyRequested\x12#\n" +
 	"\rmoney_cleared\x18\a \x01(\bR\fmoneyCleared\x125\n" +
 	"\x05slots\x18\b \x03(\v2\x1f.warcraftbuddy.loot.v1.LootSlotR\x05slots\x12?\n" +
-	"\bmutation\x18\t \x01(\v2#.warcraftbuddy.loot.v1.LootMutationR\bmutation\"\x83\x03\n" +
+	"\bmutation\x18\t \x01(\v2#.warcraftbuddy.loot.v1.LootMutationR\bmutation\x12\x1f\n" +
+	"\vsource_guid\x18\n" +
+	" \x01(\x04R\n" +
+	"sourceGuid\x12\x1f\n" +
+	"\vsource_kind\x18\v \x01(\tR\n" +
+	"sourceKind\x12$\n" +
+	"\x0ebound_quest_id\x18\f \x01(\rR\fboundQuestId\x12\"\n" +
+	"\rbound_item_id\x18\r \x01(\rR\vboundItemId\"\xa4\x03\n" +
 	"\x0fTakeLootRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1782,7 +1867,9 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x10expected_item_id\x18\b \x01(\rR\x0eexpectedItemId\x12%\n" +
 	"\x0eexpected_count\x18\t \x01(\rR\rexpectedCount\x12>\n" +
 	"\x1bexpected_inventory_revision\x18\n" +
-	" \x01(\x04R\x19expectedInventoryRevision\"\xae\x05\n" +
+	" \x01(\x04R\x19expectedInventoryRevision\x12\x1f\n" +
+	"\vsource_guid\x18\v \x01(\x04R\n" +
+	"sourceGuid\"\xcf\x05\n" +
 	"\fLootMutation\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1806,7 +1893,9 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x0fserver_rejected\x18\x10 \x01(\bR\x0eserverRejected\x12'\n" +
 	"\x0finventory_error\x18\x11 \x01(\rR\x0einventoryError\x12\x1a\n" +
 	"\bterminal\x18\x12 \x01(\bR\bterminal\x128\n" +
-	"\x18inventory_delta_observed\x18\x13 \x01(\bR\x16inventoryDeltaObserved*\x97\x01\n" +
+	"\x18inventory_delta_observed\x18\x13 \x01(\bR\x16inventoryDeltaObserved\x12\x1f\n" +
+	"\vsource_guid\x18\x14 \x01(\x04R\n" +
+	"sourceGuid*\x97\x01\n" +
 	"\fGatherStatus\x12\x0f\n" +
 	"\vGATHER_NONE\x10\x00\x12\x14\n" +
 	"\x10GATHER_REQUESTED\x10\x01\x12\x16\n" +
@@ -1860,8 +1949,9 @@ var file_modules_buddy_loot_loot_proto_goTypes = []any{
 	(*api1.State)(nil),           // 16: warcraftbuddy.actions.v1.State
 	(*api.CreatureState)(nil),    // 17: warcraftbuddy.world.v1.CreatureState
 	(*api.QuestLogEntry)(nil),    // 18: warcraftbuddy.world.v1.QuestLogEntry
-	(*emptypb.Empty)(nil),        // 19: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),       // 20: agentwow.module.v1.WorldPacket
+	(*api.GameObjectState)(nil),  // 19: warcraftbuddy.world.v1.GameObjectState
+	(*emptypb.Empty)(nil),        // 20: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),       // 21: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.loot.v1.GatherReceipt.status:type_name -> warcraftbuddy.loot.v1.GatherStatus
@@ -1879,31 +1969,32 @@ var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
 	18, // 12: warcraftbuddy.loot.v1.CorpseObservation.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
 	9,  // 13: warcraftbuddy.loot.v1.CorpseObservation.quest_requirements:type_name -> warcraftbuddy.loot.v1.QuestItemRequirement
 	10, // 14: warcraftbuddy.loot.v1.CorpseObservation.item_counts:type_name -> warcraftbuddy.loot.v1.OwnedItemCount
-	11, // 15: warcraftbuddy.loot.v1.LootWindow.slots:type_name -> warcraftbuddy.loot.v1.LootSlot
-	14, // 16: warcraftbuddy.loot.v1.LootWindow.mutation:type_name -> warcraftbuddy.loot.v1.LootMutation
-	1,  // 17: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
-	19, // 18: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
-	19, // 19: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
-	5,  // 20: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
-	6,  // 21: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
-	13, // 22: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
-	13, // 23: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
-	20, // 24: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	19, // 25: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
-	4,  // 26: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
-	4,  // 27: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
-	8,  // 28: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
-	7,  // 29: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	7,  // 30: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	14, // 31: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:output_type -> warcraftbuddy.loot.v1.LootMutation
-	14, // 32: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:output_type -> warcraftbuddy.loot.v1.LootMutation
-	19, // 33: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
-	19, // 34: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
-	26, // [26:35] is the sub-list for method output_type
-	17, // [17:26] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	19, // 15: warcraftbuddy.loot.v1.CorpseObservation.source_object:type_name -> warcraftbuddy.world.v1.GameObjectState
+	11, // 16: warcraftbuddy.loot.v1.LootWindow.slots:type_name -> warcraftbuddy.loot.v1.LootSlot
+	14, // 17: warcraftbuddy.loot.v1.LootWindow.mutation:type_name -> warcraftbuddy.loot.v1.LootMutation
+	1,  // 18: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
+	20, // 19: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
+	20, // 20: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
+	5,  // 21: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
+	6,  // 22: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
+	13, // 23: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
+	13, // 24: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
+	21, // 25: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	20, // 26: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
+	4,  // 27: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
+	4,  // 28: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
+	8,  // 29: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
+	7,  // 30: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	7,  // 31: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	14, // 32: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:output_type -> warcraftbuddy.loot.v1.LootMutation
+	14, // 33: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:output_type -> warcraftbuddy.loot.v1.LootMutation
+	20, // 34: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
+	20, // 35: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
+	27, // [27:36] is the sub-list for method output_type
+	18, // [18:27] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_loot_loot_proto_init() }

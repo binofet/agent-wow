@@ -152,7 +152,7 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 		s.until = s.now().Add(maintenanceLootPause)
 	}
 	s.state.Enabled = r.Enabled
-	if s.exactCorpse {
+	if s.policyWindow() {
 		// Compatibility scheduling metadata applies to the remaining named
 		// gather controller, never the current Lua-selected corpse operation.
 		return s.snapshotLocked(), nil
@@ -220,8 +220,8 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	if s.session == nil {
 		return false
 	}
-	if s.exactCorpse && s.corpseRequest != nil && (op == opcode.CMSGLoot || op == opcode.CMSGLootRelease) {
-		if op == opcode.CMSGLoot {
+	if s.policyWindow() && (op == opcode.CMSGLoot || op == opcode.CMSGLootRelease) {
+		if op == opcode.CMSGLoot && s.corpseRequest != nil {
 			s.corpseRequest.receipt.OpeningTransportAttempted = true
 		}
 		ctx = modcb.ForwardPolicySpell(ctx)
@@ -234,7 +234,7 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 			s.state.Reason = "opening_callback_rejected_before_transport"
 			return false
 		}
-		if s.exactCorpse && op == opcode.CMSGLootRelease {
+		if s.policyWindow() && op == opcode.CMSGLootRelease {
 			s.state.Reason = "loot_release_outcome_unconfirmed"
 			return false
 		}
@@ -266,7 +266,7 @@ func (s *Service) retryUnopenedCorpse() {
 func (s *Service) finish(ctx context.Context) {
 	// Every exit must retain an unsettled ordinary mutation. A failed release,
 	// lost lease or disable cannot turn generic cleanup into a success receipt.
-	if !s.questGather && s.cleanup.source == 0 && s.pendingGUID() != 0 && s.hasUnsettledLootMutation() {
+	if (!s.questGather || s.policyWindow()) && s.cleanup.source == 0 && s.pendingGUID() != 0 && s.hasUnsettledLootMutation() {
 		s.finishCorpseReceipt("mutation_unconfirmed", false)
 		s.reserveMutationQuarantine()
 		s.releaseLease(ctx)
@@ -346,7 +346,7 @@ func (s *Service) beginRelease(ctx context.Context) {
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
 	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.pendingGUID())) {
-		if s.exactCorpse {
+		if s.policyWindow() {
 			if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
 				s.state.Phase = previousPhase
 				return
@@ -555,7 +555,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.tickOrdinaryCleanup(ctx)
 		return
 	}
-	if s.exactCorpse {
+	if s.policyWindow() {
 		// Observe settlement only. Lua owns window choice, ordering, timeout,
 		// retry and release; a native timer must never take another item.
 		s.observeWindowMutation()
@@ -1023,10 +1023,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.LastGather.LootWindowObserved = true
 		}
 		for _, item := range window.items {
-			if s.questGather && item.id != s.boundHarvestRecipe().itemID {
-				continue
-			}
-			if s.exactCorpse || item.slotType == 0 || item.slotType == 4 {
+			if s.policyWindow() || item.slotType == 0 || item.slotType == 4 {
 				s.items = append(s.items, item)
 			}
 		}
@@ -1035,12 +1032,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				return int(b.slotType) - int(a.slotType)
 			})
 		}
-		if s.questGather && len(s.items) != 1 {
-			s.state.Reason = "harvest_window_missing_unique_required_item"
-			s.state.Phase = "abort"
-			break
-		}
-		if s.exactCorpse {
+		if s.policyWindow() {
 			s.state.Phase = "window_ready"
 		} else if window.gold > 0 && !s.questGather {
 			s.state.Phase = "ready_money"
@@ -1067,7 +1059,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && p[0] == s.items[s.index].slot && !s.removed {
 			s.removed = true
 			s.state.LootSlotsRemoved++
-			if s.questGather {
+			if s.questGather && s.items[s.index].id == s.state.LastGather.ItemId {
 				s.state.LastGather.SlotRemoved = true
 			}
 		}
@@ -1080,7 +1072,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		if s.token != "" && s.state.Phase == "waiting_item" && s.index < len(s.items) && !s.pushed && !s.unconfirmedItems[push.id] && push.player == s.selfGUID && push.received == 0 && push.created == 0 && push.id == s.items[s.index].id && push.count == s.items[s.index].count {
 			s.pushed = true
 			s.state.ItemsStoredConfirmed += uint64(push.count)
-			if s.questGather {
+			if s.questGather && push.id == s.state.LastGather.ItemId {
 				s.state.LastGather.ItemPushObserved = true
 				s.state.LastGather.Count = push.count
 				s.state.LastGather.Status = lootv1.GatherStatus_GATHER_ITEM_STORED
@@ -1114,6 +1106,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				if p[8] == 1 && !s.cleanup.releaseObserved {
 					s.cleanup.releaseObserved = true
 					s.state.ReleasesObserved++
+					if s.questGather && s.state.LastGather != nil && s.state.LastGather.ObjectGuid == s.cleanup.source {
+						s.state.LastGather.ReleaseObserved = true
+					}
 					if s.exactCorpse && s.corpseRequest != nil {
 						s.corpseRequest.receipt.ReleaseObserved = true
 					}
@@ -1129,7 +1124,10 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 					s.corpseRequest.receipt.ReleaseObserved = true
 				}
 				s.state.ReleasesObserved++
-				if !s.questGather && s.hasUnsettledLootMutation() {
+				if s.questGather {
+					s.state.LastGather.ReleaseObserved = true
+				}
+				if (!s.questGather || s.policyWindow()) && s.hasUnsettledLootMutation() {
 					s.quarantineReleasedMutation(true)
 					break
 				}
@@ -1138,7 +1136,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				}
 				s.state.Phase = "release_observed"
 			} else {
-				if s.exactCorpse {
+				if s.policyWindow() {
 					s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), timedOutPhase: s.state.Phase, safeToContinue: !s.hasUnsettledLootMutation(), releaseRequested: s.state.Phase == "waiting_release", releaseRejected: true}
 					if s.retired == nil {
 						s.retired = map[uint64]bool{}
@@ -1149,7 +1147,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 					break
 				}
 				s.fault("server_release_unconfirmed")
-				if !s.questGather && s.hasUnsettledLootMutation() {
+				if (!s.questGather || s.policyWindow()) && s.hasUnsettledLootMutation() {
 					s.quarantineReleasedMutation(false)
 					break
 				}
@@ -1165,11 +1163,18 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.LastInventoryError = uint32(p[0])
 			// A real inventory rejection settles this request as rejected, not
 			// as an ambiguous pickup. Keep its existing pause/disable policy.
+			if s.policyWindow() && (s.windowRequest == nil || s.windowRequest.receipt.Kind != "slot" || s.windowRequest.receipt.Terminal || s.state.Phase != "waiting_item") {
+				break
+			}
 			s.itemRequested = false
-			if s.exactCorpse && s.windowRequest != nil {
+			if s.policyWindow() && s.windowRequest != nil {
 				s.windowRequest.receipt.ServerRejected = true
 				s.windowRequest.receipt.InventoryError = uint32(p[0])
 				s.windowRequest.receipt.Terminal = true
+				if s.questGather {
+					s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
+					s.state.LastGather.Reason = "server_inventory_rejected"
+				}
 				s.windowRevision++
 				s.state.Phase = "window_ready"
 				break

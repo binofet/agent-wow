@@ -65,12 +65,13 @@ message OpenCorpseRequest {
   string request_id = 4; uint64 expected_position_revision = 5;
   uint64 expected_corpse_revision = 6; uint64 expected_inventory_revision = 7;
 }
-message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; bool retire_unconfirmed = 4; }
+message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; bool retire_unconfirmed = 4; uint64 source_guid = 5; }
 message CorpseOperation {
   string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; string request_id = 4;
   string phase = 5; string reason = 6; bool opening_transport_attempted = 7;
   bool opening_transport_written = 8; bool window_observed = 9; bool release_observed = 10;
   bool terminal = 11;
+  uint64 source_guid = 12;
 }
 message CorpseObservation {
   string session_id = 1; uint64 self_guid = 2;
@@ -89,6 +90,8 @@ message CorpseObservation {
   repeated QuestItemRequirement quest_requirements = 18;
   bool item_counts_known = 19;
   repeated OwnedItemCount item_counts = 20;
+  // Current cached GameObject facts for the bound container, never a replacement source.
+  warcraftbuddy.world.v1.GameObjectState source_object = 21;
 }
 message QuestItemRequirement { uint32 quest_id = 1; uint32 item_id = 2; uint32 count = 3; }
 message OwnedItemCount { uint32 item_id = 1; uint64 count = 2; }
@@ -97,12 +100,15 @@ message LootWindow {
   uint64 corpse_guid = 1; string open_request_id = 2; uint64 revision = 3;
   bool observed = 4; uint32 money = 5; bool money_requested = 6; bool money_cleared = 7;
   repeated LootSlot slots = 8; LootMutation mutation = 9;
+  uint64 source_guid = 10; string source_kind = 11;
+  uint32 bound_quest_id = 12; uint32 bound_item_id = 13;
 }
 message TakeLootRequest {
   string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3;
   string open_request_id = 4; uint64 window_revision = 5; string request_id = 6;
   uint32 slot = 7; uint32 expected_item_id = 8; uint32 expected_count = 9;
   uint64 expected_inventory_revision = 10;
+  uint64 source_guid = 11;
 }
 message LootMutation {
   string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3;
@@ -112,6 +118,7 @@ message LootMutation {
   bool slot_removed = 13; bool item_push_observed = 14; bool money_cleared = 15;
   bool server_rejected = 16; uint32 inventory_error = 17; bool terminal = 18;
   bool inventory_delta_observed = 19;
+  uint64 source_guid = 20;
 }
 service BuddyLoot {
   rpc Enable(EnableRequest) returns (State);
