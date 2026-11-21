@@ -2395,6 +2395,29 @@ class DeveloperBrainTests(unittest.TestCase):
         self.assertIn('No repair was queued',[p['text'] for m,p in rpc.calls if m=='buddy-chat.send'][0])
         controls.actions['sessionId']='new';self.assertFalse(loop.development_context('owner')['enabled'])
 
+    def test_spell_tools_use_canonical_helpers_when_actor_workspace_has_stale_or_missing_copies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            workspace=Path(folder)
+            brain=types.SimpleNamespace(developer_workspace=workspace)
+            rpc=types.SimpleNamespace(url='http://127.0.0.1:8087/rpc')
+            controls=types.SimpleNamespace(actions_available=True,party_available=True,party_session='same-body',
+                actions=dict(sessionId='same-body',selfGuid='4'))
+            loop=converse.Conversation(rpc,brain,controls=controls,character_guid=4,character_name='Mira')
+            data=loop.development_context('owner')
+            self.assertEqual(data['workspace'],str(workspace))
+            self.assertFalse((workspace/'dev/self-edit').exists())
+            for key in ('show','spell','apply','builtin'):
+                command=data['policyCommands'][key]
+                self.assertEqual(command[2],str(converse.ROOT/'dev/self-edit'))
+                self.assertTrue(Path(command[2]).is_file())
+                self.assertIn('same-body',command);self.assertIn('4',command)
+            self.assertEqual(data['policyCommands']['input'][2],str(converse.ROOT/'dev/policy-input'))
+            self.assertTrue(Path(data['policyCommands']['input'][2]).is_file())
+            self.assertEqual(data['spellCasting']['luaExample'],str(converse.ROOT/'behaviors/spell-invocation.lua'))
+            self.assertTrue(Path(data['spellCasting']['luaExample']).is_file())
+            self.assertNotIn('--modules',data['policyCommands']['test'])
+            self.assertIn('not native API validation',data['spellCasting']['testInput'])
+
     def test_peer_tools_need_fresh_membership_in_the_same_core_body(self):
         for fresh_sid in ('aw-current','replacement'):
             loop,rpc,brain,controls,_=ProfilePartyTests().setup_party([poll(),
@@ -3171,7 +3194,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.assertEqual(fault['kind'],'attached_policy')
         self.assertEqual(fault['evidence']['spellId'],6762)
         self.assertIs(type(self.brain.states[0]['current_request']),converse._MissionFaultRequest)
-        self.assertEqual(self.brain.states[0]['development']['policyCommands']['show'][2],str(self.repo/'dev/self-edit'))
+        self.assertEqual(self.brain.states[0]['development']['policyCommands']['show'][2],str(converse.ROOT/'dev/self-edit'))
         self.assertTrue(any(m=='buddy-chat.send' for m,p in self.calls))
         self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
 

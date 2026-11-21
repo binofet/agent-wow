@@ -3451,22 +3451,23 @@ class Conversation:
         try: RPC(url)
         except (ConversationError,TypeError,AttributeError): return {"enabled":False}
         binding=["--guid",str(self.character_guid),"--rpc-url",url,"--session-id",sid]
-        base=["python3","-B",str(Path(workspace)/"dev/self-edit")]
+        base=["python3","-B",str(ROOT/"dev/self-edit")]
         return dict(enabled=True,directDevelopment=True,workspace=str(workspace),rpcUrl=url,
             selfGuid=str(self.character_guid),ownerGuid=str(self.player_guid),sessionId=sid,
             missionRepairPolicy=dict(entryPoint="mission_repair",sourceMethod="session.policy_source",
-                library=str(Path(workspace)/"behaviors/mission-repair.lua"),acceptedSourceRequired=True),
+                library=str(ROOT/"behaviors/mission-repair.lua"),acceptedSourceRequired=True),
             policyCommands={"show":base+["show"]+binding,
                 "spell":base+["spell"]+binding+["--spell-id","<LEARNED_ID>"],
-                "test":[str(ROOT/'data/bin/luapolicy'),"--mode","evaluate","--modules",str(ROOT/'modules'),
+                "test":[str(ROOT/'data/bin/luapolicy'),"--mode","evaluate",
                     "--source","<PATH>","--source-bytes","8388608","--value-bytes","8388608","--execution-ms","1000"],
                 "apply":base+["apply"]+binding+["--source","<PATH>","--expected-revision","<HASH>"],
                 "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"],
-                "input":["python3","-B",str(Path(workspace)/"dev/policy-input")]+binding+["--value","<JSON object>"]},
+                "input":["python3","-B",str(ROOT/"dev/policy-input")]+binding+["--value","<JSON object>"]},
             spellCasting=dict(discoverMethod='session.describe',toolkitMethod='buddy-actions.spell_toolkit',
                 candidateMethod='buddy-actions.cast_spell',requiresAdvertisedMethod=True,
-                luaExample=str(Path(workspace)/'behaviors/spell-invocation.lua'),task='cast_spell',
-                testInput='stdin JSON fixture; evaluation does not dispatch game actions'),
+                luaExample=str(ROOT/'behaviors/spell-invocation.lua'),task='cast_spell',
+                testInput='stdin JSON fixture; pure Lua only, not native API validation or game effects',
+                nativeSchemaSource='live session.describe / spell inspection castInputs; local modules may be older'),
             **({"gmTasks":gm_tasks.tools(ROOT,self.character_guid,url)} if self.character_guid==87 else {}))
 
     def poll_shared_quest(self):
