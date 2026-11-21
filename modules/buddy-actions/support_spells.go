@@ -29,6 +29,11 @@ type supportAttempt struct {
 	cleanseLogs        map[uint32]bool
 	cleanseLogObserved bool
 	policySpellToken   string
+	breakAuraRevision  uint64
+	breakAuraSlot      uint32
+	breakAura          observedBuffAura
+	breakItem          uint64
+	cooldown           *cooldownReservation
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64
@@ -116,7 +121,7 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 			}
 		}
 	}
-	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect") && !s.now().Before(op.until) {
+	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect" || op.view.Capability == fearBreakCapability && op.view.Phase == "transport_unconfirmed_no_retry") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
 		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
 			s.state.CastPending = false
@@ -205,7 +210,7 @@ func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPendi
 		}
 	case "server_rejected_no_replay", "server_cast_go_no_target_hit",
 		"outcome_unconfirmed_no_retry", "channel_ended_effect_unverified", "world_transfer_outcome_unconfirmed",
-		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed", "observed_alive_without_cast_confirmation":
+		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed", "observed_alive_without_cast_confirmation", "observed_control_clear_effect_unverified":
 	default:
 		return
 	}
@@ -275,7 +280,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
-		!((op.view.Capability == selfCastCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
+		!((op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -301,6 +306,18 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		guid, count, spell, off, e := castEvent(p)
 		if e != nil || guid != s.selfGUID || count != op.count || spell != op.view.SpellId {
 			return false, nil
+		}
+		if op.view.Capability == fearBreakCapability {
+			source, _, _ := readGUID(p)
+			expected := s.selfGUID
+			if op.breakItem != 0 {
+				expected = op.breakItem
+			}
+			if source != expected {
+				// This frame matches our pending count/spell but not its exact source.
+				// Consume it here so the legacy generic parser cannot retire custody.
+				return true, nil
+			}
 		}
 		if op.view.Capability == selfCastCapability {
 			source, _, _ := readGUID(p)
@@ -368,6 +385,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {
 			delete(s.resurrectionBindings, op.owner)
+		}
+		if op.view.Capability == fearBreakCapability && s.rejectControlBreakCooldownLocked(op) {
+			delete(s.controlBreakBindings, op.breakAuraSlot)
 		}
 	}
 	s.state.CastPending = false

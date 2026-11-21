@@ -11,6 +11,7 @@ local healing = encounter_healing
 local starter_spells = encounter_starter_spells
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
+local control_recovery = encounter_control_recovery
 local consumables = encounter_consumables
 local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
@@ -27,6 +28,9 @@ local healing_input
 local policy_observation
 local task_view
 local task_support_action
+-- Existing interactions yield to observed needs chosen here, never a native
+-- emergency controller. Loot closes its actual window through corpse-loot.
+local interaction_tuning = {yield_for_healing=true, yield_for_engagement=true}
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 local icons = {star=1, circle=2, diamond=3, triangle=4, moon=5, square=6, x=7, skull=8}
 
@@ -49,6 +53,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if control_recovery and not control_recovery.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if transient_tasks and not transient_tasks.on_event(event) then return false end
@@ -89,7 +94,7 @@ local function on_event(event)
 end
 
 local function export_state()
-    return {version=1, data={encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
+    return {version=1, data={controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
@@ -120,6 +125,7 @@ local function import_state(checkpoint)
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
+    if checkpoint.data.controlRecovery and (not control_recovery or not control_recovery.import_state(checkpoint.data.controlRecovery)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
     if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
@@ -197,6 +203,7 @@ local function owns_current_observation(obs, frame, self)
        not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
        not same_map(self, obs.mapId) then return false end
     if obs.meleeKnown == true then return true end
+    if control_recovery and #(((obs.support or {}).controlRecovery or {}).options or {})>0 then return true end
     for _, spell in pairs(obs.spells or {}) do
         if spell.capability == "offense" and spell.known == true then return true end
     end
@@ -527,6 +534,8 @@ local function decide_encounter(frame)
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
     end
+    local breaking = control_recovery and control_recovery.decide(frame,obs)
+    if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
     local interrupt = support_policy and support_policy.interrupt(obs)
     if interrupt then
         interrupt.observationSequence = state.sequence
@@ -744,6 +753,32 @@ local function decide_policy(frame)
 end
 
 
+local function interaction_access(frame, obs, out)
+    -- An admitted instant self control break needs no custody detour or STOP.
+    -- Preserve its higher-priority proposal when that capability is composed.
+    if out.action and out.action.capability == "fear_break" then return end
+    local held = obs and obs.interaction
+    local self = obs and (obs.players or {})[obs.selfGuid]
+    if type(held) ~= "table" or type(held.owner) ~= "string" or held.owner == "" or
+       held.owner == "loot" or type(held.token) ~= "string" or held.token == "" or
+       #frame.pending ~= 0 or not alive(self) or not current_visit(obs) or
+       not host_can_decide(obs) or frame.input.observationSequence ~= state.sequence or
+       state.settledAt == state.sequence or (obs.navigation or {}).motionUnconfirmed == true then return end
+    local reason
+    if interaction_tuning.yield_for_healing and healing and healing.needs_access and obs.healing and
+       healing.needs_access(healing_input(obs), obs) then reason = "healing_access_needed" end
+    if not reason and interaction_tuning.yield_for_engagement then
+        for _, target in pairs(obs.targets or {}) do
+            if alive(target) and target.engaged == true then reason = "current_encounter_needs_body"; break end
+        end
+    end
+    if not reason then return end
+    out.interaction = {phase="release_for_support_or_defense", reason=reason, owner=held.owner}
+    out.action = {capability="release_interaction", sessionId=obs.sessionId, selfGuid=obs.selfGuid,
+                  visitId=obs.visitId, observationSequence=state.sequence, owner=held.owner, token=held.token}
+    out.followFormation, out.portalCatchup = nil, nil
+end
+
 local function decide(frame)
     local out=decide_policy(frame)
     local current=policy_observation or observation
@@ -751,7 +786,7 @@ local function decide(frame)
         local action=out.action
         local self=(current.players or {})[current.selfGuid]
         local urgent=self and self.aliveKnown==true and self.alive==false or out.focusGuid~=nil or task_support_action or action and
-            (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
+            (action.capability=="fear_break" or action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
              action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
              action.capability=="sap" or action.capability=="polymorph")
         if healing and healing.needs_access and current.healing then
@@ -761,7 +796,7 @@ local function decide(frame)
             not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
         local loot=corpse_loot.decide(frame,current,quiet,urgent)
         out.corpseLoot=loot
-        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+        if #frame.pending==0 and (not out.action or out.action.capability~="fear_break" and loot.action and loot.action.capability=="loot_close") then
             out.action=loot.action
         end
         if loot.action or loot.corpseGuid then out.followFormation=nil;out.portalCatchup=nil end
@@ -773,16 +808,18 @@ local function decide(frame)
         out.deathRecovery=recovery
         if recovery.action then out.action=recovery.action end
     end
+    interaction_access(frame, current, out)
     return out
 end
 
 return {decide=decide, on_event=on_event, export_state=export_state, import_state=import_state,
         mission_repair=encounter_mission_repair and encounter_mission_repair.decide,
         follow_formation=encounter_formation and encounter_formation.decide,
+        service_destination=encounter_formation and encounter_formation.service_destination,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
         trade_consent=encounter_trade_consent and encounter_trade_consent.decide,
         disposal_evaluation=encounter_disposal and function(input)
             if type(input)~="table" then return encounter_disposal.decide(input) end
             return encounter_disposal.classify(input.mode,input.item,input.context,encounter_gear)
         end,
-        starter_spell=starter_spells and function(input) return starter_spells.decide(input,intent.damage) end}
+        starter_spell=starter_spells and function(input) return starter_spells.decide(input,intent.damage,encounter_movement) end}

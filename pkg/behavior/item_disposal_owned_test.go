@@ -1,6 +1,7 @@
 package behavior
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,25 +23,41 @@ func ownedDisposalResult(t *testing.T, r *Runtime, frame map[string]any) map[str
 }
 
 func TestOwnedDisposalMiscellaneousUsesExistingModeWithoutGearOrContext(t *testing.T) {
-	r := New()
-	load(t, r, disposalPolicySource(t))
+	source := disposalPolicySource(t)
+	r := disposalArmorSemanticRuntime(t, source)
+	classify := func(frame map[string]any) map[string]any {
+		beforeJSON, err := json.Marshal(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := ownedDisposalResult(t, r, frame)
+		actual, err := evaluateDisposalProduction(t, source, frame)
+		if err != nil || !reflect.DeepEqual(actual, out) {
+			t.Fatal("default production mode differs from the exact semantic proposal", actual, out, err)
+		}
+		afterJSON, err := json.Marshal(frame)
+		if err != nil || !reflect.DeepEqual(beforeJSON, afterJSON) {
+			t.Fatal("classification changed its observed input or caller-authored keys", err)
+		}
+		return out
+	}
 	for _, price := range []int{0, 5} {
 		item := disposalTemplate(t, false)
 		item["sellPrice"] = price
 		frame := map[string]any{"mode": "misc_destroy", "item": item}
-		existing := ownedDisposalResult(t, r, frame)
+		existing := classify(frame)
 		frame["mode"] = "owned_destroy"
 		// These authored input keys cannot select an action or supply a shared
 		// Lua function. Eligible miscellaneous templates need neither one.
 		frame["capability"] = "destroy_anything"
 		frame["action"] = map[string]any{"capability": "sell", "source": "unobserved"}
 		frame["gear"] = map[string]any{"compare": "caller data is not executable"}
-		owned := ownedDisposalResult(t, r, frame)
+		owned := classify(frame)
 		if existing["status"] != "eligible" || !reflect.DeepEqual(owned, existing) {
 			t.Fatal("owned union changed miscellaneous policy or required armor facts", price, existing, owned)
 		}
 		frame["mode"] = "vendor_sale"
-		vendor := ownedDisposalResult(t, r, frame)
+		vendor := classify(frame)
 		if price == 0 && vendor["status"] != "keep" || price > 0 && vendor["status"] != "eligible" {
 			t.Fatal("owned mode changed existing vendor sale policy", price, vendor)
 		}
@@ -88,8 +105,8 @@ func TestOwnedDisposalArmorDelegatesToActualSharedGearAndReloads(t *testing.T) {
 }
 
 func TestOwnedDisposalUnknownBranchesStayFailClosed(t *testing.T) {
-	r := New()
-	load(t, r, disposalPolicySource(t))
+	source := disposalPolicySource(t)
+	r := disposalArmorSemanticRuntime(t, source)
 	for name, mutate := range map[string]func(map[string]any){
 		"old_template":      func(item map[string]any) { delete(item, "rawTemplateFacts") },
 		"unavailable":       func(item map[string]any) { item["available"] = false },
@@ -103,9 +120,17 @@ func TestOwnedDisposalUnknownBranchesStayFailClosed(t *testing.T) {
 			mutate(item)
 			frame := map[string]any{"mode": "owned_destroy", "item": item, "eligible": true,
 				"action": map[string]any{"capability": "destroy_junk"}}
+			before := disposalArmorClone(t, frame)
 			owned := ownedDisposalResult(t, r, frame)
 			if owned["status"] != "unknown" {
 				t.Fatal("unproven branch became disposal authority", owned)
+			}
+			actual, err := evaluateDisposalProduction(t, source, frame)
+			if err != nil || !reflect.DeepEqual(actual, owned) {
+				t.Fatal("default production refusal differs from the exact semantic proposal", actual, owned, err)
+			}
+			if !reflect.DeepEqual(frame, before) {
+				t.Fatal("classification changed its observed input or caller-authored keys")
 			}
 		})
 	}
