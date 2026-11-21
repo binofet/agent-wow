@@ -739,7 +739,7 @@ local function decide_policy(frame)
         if not out.action and #frame.pending==0 then out.action=resting.action end
         if resting.hold then return out end
     end
-    if loot_roll and not out.action then
+    if loot_roll and not out.action and #frame.pending == 0 then
         local expected = frame.input.kind == "loot_roll" and frame.input.observationSequence or
             (frame.input.observationSequences or {}).loot_roll
         local roll = loot_roll.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
@@ -840,6 +840,7 @@ local function decide(frame)
         if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
     end
     if spell_invocation then spell_invocation.commit(out.action) end
+    if loot_roll then loot_roll.commit(out.action) end
     return out
 end
 

@@ -3,7 +3,7 @@
 -- Joel's assigned disenchanter is the verified Mira body GUID4. This role is
 -- authored Lua intent; the observed self GUID still binds every offer/vote.
 local M = {tuning = {future_levels = 3, pass_below_ms = 1500, disenchanter_guid = "4"}}
-local observation, sequence
+local observation, sequence, proposed
 local state = {reservations = {}}
 local UINT32 = 4294967295
 local armor_slots = {[1]=0,[3]=2,[5]=4,[20]=4,[6]=5,[7]=6,[8]=7,[9]=8,[10]=9,[16]=14}
@@ -145,6 +145,7 @@ function M.on_event(event)
     return true
 end
 function M.decide(frame,gear)
+    proposed=nil
     local input=frame.input or {}
     if input.kind~="loot_roll" or observation==nil or input.observationSequence~=sequence then return {} end
     local view=observation
@@ -179,19 +180,29 @@ function M.decide(frame,gear)
             elseif result=="not_useful" and view.selfGuid==M.tuning.disenchanter_guid and bit(o.offeredMask,3) then choice="disenchant"
             elseif (result=="not_useful" or millis(o.remainingMs)<=M.tuning.pass_below_ms) and bit(o.offeredMask,0) then choice="pass" end
             if choice then
-                state.sessionId,state.selfGuid=view.sessionId,view.selfGuid
-                state.reservations[key(o)]=choice
-                return {action={capability="loot_roll",sessionId=view.sessionId,selfGuid=view.selfGuid,visitId=view.visitId,
+                local action={capability="loot_roll",sessionId=view.sessionId,selfGuid=view.selfGuid,visitId=view.visitId,
                     rollGuid=o.rollGuid,offerRevision=o.revision,choice=choice,lootSlot=o.lootSlot or 0,
                     mapId=o.mapId or 0,itemEntry=o.itemEntry,randomSuffix=o.randomSuffix or 0,
-                    randomProperty=o.randomProperty or 0,count=o.itemCount,offeredMask=o.offeredMask}}
+                    randomProperty=o.randomProperty or 0,count=o.itemCount,offeredMask=o.offeredMask}
+                proposed={action=action,key=key(o),choice=choice,sessionId=view.sessionId,selfGuid=view.selfGuid}
+                return {action=action}
             end
         end
     end
     return {}
 end
+-- Only the final scheduler winner reserves a vote. A cancellation, loot
+-- close or interaction release can replace this proposal before transport.
+function M.commit(action)
+    if proposed and action==proposed.action then
+        state.sessionId,state.selfGuid=proposed.sessionId,proposed.selfGuid
+        state.reservations[proposed.key]=proposed.choice
+    end
+    proposed=nil
+end
 function M.export_state() return {version=1,data=state} end
 function M.import_state(checkpoint)
+    proposed=nil
     if type(checkpoint)~="table" or checkpoint.version~=1 or type(checkpoint.data)~="table" or
         type(checkpoint.data.reservations)~="table" then return false end
     local saved=checkpoint.data

@@ -29,13 +29,14 @@ def weapon(entry=6000, **fields):
 
 class LootRollPolicyTests(unittest.TestCase):
     @staticmethod
-    def compose(gear):
+    def compose(gear, finalize="policy.commit(result.action)"):
         code = (ROOT/'behaviors/loot-roll.lua').read_text()
         return 'local gear=(function()\n'+gear+'\nend)()\nlocal policy=(function()\n'+code+'\nend)()\n'+"""
 return {decide=function(frame)
     if frame.checkpoint then assert(policy.import_state(frame.checkpoint)) end
     for _,event in ipairs(frame.events or {}) do assert(policy.on_event(event)) end
     local result=policy.decide(frame,gear)
+"""+finalize+"""
     return {decision=result,checkpoint=policy.export_state()}
 end}
 """
@@ -285,6 +286,31 @@ return gear
         self.assertEqual(self.tick()['action']['rollGuid'], smaller)
         self.assertEqual(self.tick()['action']['rollGuid'], GUID)
         self.assertEqual(self.tick()['action']['rollGuid'], later)
+
+    def test_only_the_same_final_action_object_can_commit_a_vote(self):
+        self.source = self.compose(self.gear_source, """
+    local copy={}
+    for k,v in pairs(result.action or {}) do copy[k]=v end
+    policy.commit(copy)
+    policy.commit(result.action)
+""")
+        self.assertEqual(self.tick()['action']['choice'], 'need')
+        self.assertFalse(self.checkpoint['data']['reservations'])
+        self.source = self.compose(self.gear_source)
+        self.choice('need')
+        self.assertNotIn('action', self.tick())
+
+    def test_reevaluation_and_import_discard_only_the_ephemeral_proposal(self):
+        for discard in ('policy.decide({input={}})',
+                'assert(policy.import_state(policy.export_state()))'):
+            with self.subTest(discard=discard):
+                self.setUp()
+                self.source = self.compose(self.gear_source, discard+'; policy.commit(result.action)')
+                self.assertEqual(self.tick()['action']['choice'], 'need')
+                self.assertFalse(self.checkpoint['data']['reservations'])
+                self.source = self.compose(self.gear_source)
+                self.choice('need')
+                self.assertNotIn('action', self.tick())
 
     def test_consumed_offer_survives_export_import_lost_reply_and_repeated_observation(self):
         self.choice('need')
