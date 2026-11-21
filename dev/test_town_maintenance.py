@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from test_town_policy import service_source, source_reply, policy_reply, bridge_factory
 
 loader = importlib.machinery.SourceFileLoader("town_test", str(Path(__file__).with_name("town-maintenance")))
 spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -48,6 +49,7 @@ class GearCompatibilityTests(unittest.TestCase):
 class FakeRPC:
     def __init__(self):
         self.current, self.calls, self.before, self.after = initial(), [], None, None
+        self.policy_source = service_source()
         self.ambiguous = False
         self.mail = {"sessionId": "body1", "listKnown": True, "listCurrent": True, "listRevision": "2",
                      "mailboxGuid": str(MAILBOX), "bagMails": [{"mailId": 7, "attachments": [
@@ -61,6 +63,8 @@ class FakeRPC:
 
     def call(self, method, params):
         self.calls.append((method, copy.deepcopy(params)))
+        if method == 'session.policy_source':return source_reply(self.policy_source,self.current)
+        if method == 'session.attach':return policy_reply(self.policy_source,self.current)
         if method == "buddy-inventory.state":
             return copy.deepcopy(self.current)
         if method == "buddy-inventory.discover":
@@ -132,6 +136,8 @@ class FakeRPC:
 
 class TownTests(unittest.TestCase):
     def setUp(self):
+        self.bridge = mock.patch.object(m.destination_policy.runtime,'Bridge',side_effect=bridge_factory(m.destination_policy.runtime.Bridge))
+        self.bridge.start();self.addCleanup(self.bridge.stop)
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)/"private"/"town.json"

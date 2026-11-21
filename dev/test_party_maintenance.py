@@ -994,4 +994,6 @@ class HarvestStatusTests(unittest.TestCase):
         m.harvest_after_maintenance(actor,worker,9)
         self.assertEqual(calls,['tick'])
 
+from test_town_policy import VendorDestinationTests
+
 if __name__=='__main__':unittest.main()
