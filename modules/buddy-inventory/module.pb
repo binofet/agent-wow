@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Èý
+ëý
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -1235,7 +1235,7 @@ candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
-revision (Rrevision"û
+revision (Rrevision"ž
 EncounterPlayer
 guid (Rguid
 present (Rpresent
@@ -1278,7 +1278,8 @@ power_type (R	powerType
 combo_known (R
 comboKnown*
 combo_target_guid  (RcomboTargetGuid!
-combo_points! (RcomboPointsB	
+combo_points! (RcomboPoints!
+player_flags" (RplayerFlagsB	
 _map_idB
 _alive"­
 EncounterCreature
@@ -1537,7 +1538,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-µM
+µ\
 'modules/buddy-inventory/inventory.protowarcraftbuddy.inventory.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto"ƒ
 ItemRef
 bag (Rbag
@@ -1545,7 +1546,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 	item_guid (RitemGuid
 entry (Rentry
 stack_count (R
-stackCount"²
+stackCount"ü
 ItemEligibility7
 item (2#.warcraftbuddy.inventory.v1.ItemRefRitem%
 metadata_known (RmetadataKnown5
@@ -1564,7 +1565,9 @@ normal_bag (R	normalBag'
 gear_blocked_reason (	RgearBlockedReasonN
 
 consumable (2..warcraftbuddy.inventory.v1.ConsumableMetadataR
-consumable"‘
+consumableH
+
+gear_facts (2).warcraftbuddy.inventory.v1.GearItemFactsR	gearFacts"‘
 
 	Operation
 
@@ -1597,8 +1600,7 @@ vendorGuid3
 observed_copper (RobservedCopper>
 baseline_equipment_revision (RbaselineEquipmentRevision>
 observed_equipment_revision (RobservedEquipmentRevision.
-displaced_item_guid (RdisplacedItemGuid"Å
-
+displaced_item_guid (RdisplacedItemGuid"‘
 State
 
 session_id (	R	sessionId
@@ -1630,8 +1632,69 @@ limitation
 buff_food_available (RbuffFoodAvailable-
 mana_drink_count (H RmanaDrinkCountˆY
 last_consumable_use( (2).warcraftbuddy.inventory.v1.ConsumableUseRlastConsumableUse\
-consumable_context) (2-.warcraftbuddy.inventory.v1.ConsumableContextRconsumableContextB
-_mana_drink_count"³
+consumable_context) (2-.warcraftbuddy.inventory.v1.ConsumableContextRconsumableContextJ
+gear_context* (2'.warcraftbuddy.inventory.v1.GearContextRgearContextB
+_mana_drink_count"4
+GearStat
+type (Rtype
+value (Rvalue"X
+
+GearDamage
+minimum (Rminimum
+maximum (Rmaximum
+school (Rschool"¦
+GearTemplate
+item_id (RitemId
+	available (R	available
+name (	Rname
+
+item_class (R	itemClass
+subclass (Rsubclass%
+inventory_type (RinventoryType
+quality (Rquality
+armor (Rarmor:
+stats	 (2$.warcraftbuddy.inventory.v1.GearStatRstats@
+damages
+ (2&.warcraftbuddy.inventory.v1.GearDamageRdamages
+delay_ms (RdelayMs 
+resistances (Rresistances4
+armor_comparison_known (RarmorComparisonKnown
+flags (Rflags
+flags2 (Rflags2
+	has_spell (RhasSpell1
+scaling_distribution (RscalingDistribution#
+scaling_value (RscalingValue%
+required_level (RrequiredLevel"º
+GearDestination%
+equipment_slot (RequipmentSlot=
+expected_equipped_item_guid (RexpectedEquippedItemGuid
+eligible (Religible%
+blocked_reason (	RblockedReason"¬
+GearItemFacts-
+enhancements_known (RenhancementsKnown)
+has_enhancements (RhasEnhancements)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability (RmaxDurabilityO
+destinations (2+.warcraftbuddy.inventory.v1.GearDestinationRdestinations"Â
+GearContext
+class_known (R
+classKnown
+class_id (RclassId
+
+race_known (R	raceKnown
+race_id (RraceId
+level_known (R
+levelKnown
+level (RlevelT
+	templates (26.warcraftbuddy.inventory.v1.GearContext.TemplatesEntryR	templates'
+policy_revision (	RpolicyRevision!
+policy_error	 (	RpolicyErrorf
+TemplatesEntry
+key (	Rkey>
+value (2(.warcraftbuddy.inventory.v1.GearTemplateRvalue:8"³
 GroupRollReceipt
 	roll_guid (RrollGuid
 

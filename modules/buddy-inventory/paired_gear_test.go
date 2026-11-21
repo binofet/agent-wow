@@ -31,7 +31,7 @@ func TestGearEquipsOwnedRingIntoEmptySecondFinger(t *testing.T) {
 			s.metadata[ring.id], s.queried[ring.id] = m, true
 			f.w.SelfEquipment[firstFingerSlot] = &worldv1.EquipmentSlotState{Slot: firstFingerSlot, SlotKnown: true, ItemGuid: oldPantsGUID, Entry: 12006, StackCount: 1, MetadataKnown: true, EnhancementsKnown: true, HasEnhancements: true}
 			before := proto.Clone(f.w.SelfEquipment[firstFingerSlot]).(*worldv1.EquipmentSlotState)
-			verifyPairedGearSwap(t, s, f, stateInventory(t, s), ring.id, secondFingerSlot, 0)
+			verifyPairedGearSwap(t, s, f, stateGear(t, s), ring.id, secondFingerSlot, 0)
 			st := waitInventory(t, s)
 			if st.Operation.Status != "CONFIRMED" || !proto.Equal(st.Equipment[firstFingerSlot], before) || st.Equipment[secondFingerSlot].ItemGuid != breechesGUID {
 				t.Fatal("empty second ring did not equip or overwrote existing ring", st)
@@ -69,7 +69,7 @@ func fixtureDoomspikeGear(t *testing.T) (*Service, *fakeInventory) {
 func TestGearUsesDoomspikeInOffhandAndPreservesEnchantedMainhand(t *testing.T) {
 	s, f := fixtureDoomspikeGear(t)
 	before := proto.Clone(f.w.SelfEquipment[mainhandSlot]).(*worldv1.EquipmentSlotState)
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	verifyPairedGearSwap(t, s, f, st, doomspike, offhandSlot, otherHandGUID)
 	st = waitInventory(t, s)
 	if st.Operation.Status != "CONFIRMED" || !proto.Equal(st.Equipment[mainhandSlot], before) || st.Equipment[offhandSlot].ItemGuid != breechesGUID || st.InventoryBags[0].Slots[2].ItemGuid != otherHandGUID {
@@ -88,7 +88,7 @@ func verifyPairedGearSwap(t *testing.T, s *Service, f *fakeInventory, st *invent
 			r := &inventoryv1.EquipGearRequest{SessionId: "body", RequestId: "paired-gear", ExpectedRevision: st.Revision, ExpectedInventoryRevision: st.InventoryRevision,
 				Source: &inventoryv1.ItemRef{Slot: 2, ItemGuid: breechesGUID, Entry: entry, StackCount: 1}, EquipmentSlot: slot,
 				ExpectedEquipmentRevision: st.EquipmentRevision, ExpectedEquippedItemGuid: displaced, RequireConservativeUpgrade: true}
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			return

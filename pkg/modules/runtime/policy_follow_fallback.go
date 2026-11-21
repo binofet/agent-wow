@@ -13,9 +13,10 @@ const policyFollowEntryPoint = "follow_formation"
 // Source identity and availability never change after publication. The cache
 // belongs only to this accepted revision; it cannot restore an older policy.
 type policyFollowFallback struct {
-	source    string
-	revision  string
-	available bool
+	source     string
+	revision   string
+	available  bool
+	entryPoint string
 
 	mu        sync.Mutex
 	runtime   *behavior.Runtime
@@ -34,7 +35,7 @@ type policyFollowFallbackMetadata struct {
 // Optional export facts come from that VM's load, without running its hooks.
 func (p *SessionPolicy) publishFollowFallback(source, revision string) {
 	p.followFallback.Store(&policyFollowFallback{source: source, revision: revision,
-		available: p.vm.HasExport(policyFollowEntryPoint)})
+		available: p.vm.HasExport(policyFollowEntryPoint), entryPoint: policyFollowEntryPoint})
 }
 
 func (p *SessionPolicy) followFallbackMetadata() policyFollowFallbackMetadata {
@@ -56,6 +57,12 @@ func (p *SessionPolicy) followFallbackMetadata() policyFollowFallbackMetadata {
 // movement authority and the resulting proposal before any packet write.
 func (p *SessionPolicy) followDecision(ctx context.Context, input map[string]any) (available bool, revision string, decision map[string]any, err error) {
 	current := p.followFallback.Load()
+	return p.readonlyExportDecision(ctx, current, func() bool { return p.followFallback.Load() == current }, input)
+}
+
+// A pure accepted-source export never enters the persistent VM or advance.
+// Identity/revision fences are shared by reflected non-gameplay read adapters.
+func (p *SessionPolicy) readonlyExportDecision(ctx context.Context, current *policyFollowFallback, stillCurrent func() bool, input map[string]any) (available bool, revision string, decision map[string]any, err error) {
 	if current == nil {
 		return false, "", nil, nil
 	}
@@ -84,7 +91,7 @@ func (p *SessionPolicy) followDecision(ctx context.Context, input map[string]any
 		return true, revision, nil, behavior.ErrSessionClosed
 	}
 	currentVM = p.vm.Status()
-	if currentVM.Closed || currentVM.Swapping || currentVM.Revision != revision || p.followFallback.Load() != current {
+	if currentVM.Closed || currentVM.Swapping || currentVM.Revision != revision || !stillCurrent() {
 		return true, revision, nil, errors.New("follow fallback policy changed during evaluation")
 	}
 	return true, revision, decision, nil
@@ -97,7 +104,7 @@ func (p *policyFollowFallback) evaluate(input map[string]any) (map[string]any, e
 		p.attempted = true
 		// The original source already passed the session's configured source
 		// budget. Permit exactly its bytes plus this fixed enclosing wrapper.
-		wrapped := "local policy = (function()\n" + p.source + "\nend)()\nreturn {decide=policy.follow_formation}\n"
+		wrapped := "local policy = (function()\n" + p.source + "\nend)()\nreturn {decide=policy." + p.entryPoint + "}\n"
 		runtime, err := behavior.NewWithSourceLimit(len(wrapped))
 		if err == nil {
 			_, err = runtime.Reload(wrapped, "")

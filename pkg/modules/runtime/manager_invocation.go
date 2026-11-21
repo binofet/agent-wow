@@ -186,7 +186,17 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if consumable, legacy := legacyConsumableRequest(name, md.Path(), req); legacy {
 		return m.queueLegacyConsumable(ctx, inst, req, result, consumable)
 	}
+	if name == "buddy-inventory" && md.Path() == "/warcraftbuddy.inventory.v1.BuddyInventory/EquipGear" {
+		var err error
+		req, err = m.resolveLegacyGearComparison(ctx, inst, req)
+		if err != nil {
+			return err
+		}
+	}
 	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
+	if err == nil && name == "buddy-inventory" && md.Path() == "/warcraftbuddy.inventory.v1.BuddyInventory/GetState" {
+		m.decorateGearState(ctx, result)
+	}
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)
 	}
