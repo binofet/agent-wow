@@ -3252,6 +3252,143 @@ class GMTaskFaultRepairTests(unittest.TestCase):
         self.assertFalse(brain.development_enabled(state))
 
 
+class DeveloperOutcomeRetentionTests(unittest.TestCase):
+    def brain(self,folder,body,timeout=2):
+        repo=DeveloperBrainTests.repository(self,folder/'repo')
+        state=converse.ensure_state(folder/'state')
+        fake=folder/'fake-codex';calls=folder/'calls'
+        fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys,time\n'
+            'sys.stdin.read()\n'+f'p=pathlib.Path({str(calls)!r});p.write_text(p.read_text()+"x" if p.exists() else "x")\n'
+            'print(json.dumps(dict(type="turn.started")),flush=True)\n'+body)
+        fake.chmod(0o700)
+        with patch.object(converse,'ROOT',repo):brain=converse.CodexBrain(fake,state,timeout=timeout,developer_workspace=repo)
+        return brain,DeveloperBrainTests.state(self,repo),calls
+
+    def test_successful_tools_survive_timeout_without_replay_or_raw_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=Path(temporary)
+            ready=folder/'ready'
+            brain,state,calls=self.brain(folder,
+                'print(json.dumps(dict(type="item.completed",item=dict(id="cas1",type="command_execution",status="completed",exit_code=0,command="private source secret",aggregated_output="private credential secret"))),flush=True)\n'
+                'print(json.dumps(dict(type="item.completed",item=dict(id="patch1",type="file_change",status="completed",changes=["private source secret"]))),flush=True)\n'
+                'print(json.dumps(dict(type="item.started",item=dict(id="verify2",type="command_execution",command="private source secret"))),flush=True)\n'
+                f'pathlib.Path({str(ready)!r}).write_text("ready")\n'
+                'time.sleep(30)\n',timeout=.2)
+            clock_calls=[0]
+            def clock():
+                clock_calls[0]+=1
+                return 1 if clock_calls[0]>1 and ready.exists() else 0
+            with patch.object(converse.time,'monotonic',side_effect=clock):
+                with self.assertRaisesRegex(converse.ConversationError,'timed out'):brain.generate([],state)
+            path=brain.state_dir/'development-events-last.json';raw=path.read_text();record=converse.read_json(path)
+            self.assertEqual(calls.read_text(),'x')
+            self.assertEqual((record['sessionId'],record['selfGuid']),('aw-current','1'))
+            self.assertEqual((record['reason'],record['outcome']),('timeout','failed'))
+            self.assertFalse(record['streamComplete']);self.assertFalse(record['turnCompleted'])
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['counts']['completedPatches'],1)
+            self.assertEqual(record['tools'][0],dict(itemId='cas1',type='command_execution',status='completed',exitCode=0))
+            self.assertEqual(record['pendingTools'],['verify2'])
+            self.assertEqual(brain.last_development_events,record['counts'])
+            self.assertEqual(brain.last_development_result,record)
+            self.assertNotIn('private',raw);self.assertNotIn('command"',raw)
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+            self.assertEqual(list(brain.state_dir.iterdir()),[path])
+
+    def test_failed_cli_retains_command_failure_and_concrete_exit_without_error_dump(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="test1",type="command_execution",status="failed",exit_code=7))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.failed",error=dict(message="private prompt/source credential"))),flush=True)\n'
+                'sys.stderr.write("private stderr credential")\n'
+                'sys.exit(9)\n')
+            with self.assertRaisesRegex(converse.ConversationError,'reply failed'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['reason'],record['processExitCode']),('process_failed',9))
+            self.assertEqual(record['lastEventType'],'turn.failed')
+            self.assertEqual(record['counts']['failedCommands'],1)
+            self.assertEqual(record['tools'][0]['exitCode'],7)
+            self.assertGreater(record['stderrBytes'],0)
+            self.assertNotIn('private',json.dumps(record));self.assertEqual(calls.read_text(),'x')
+
+    def test_incomplete_stream_keeps_prior_success_but_never_claims_complete_reply(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="done1",type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="item.started",item=dict(id="pending2",type="file_change"))),flush=True)\n'
+                'sys.stdout.write("{\\\"type\\\":")\n')
+            with self.assertRaisesRegex(converse.ConversationError,'non-JSON events'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual(record['reason'],'event_stream_invalid')
+            self.assertFalse(record['streamComplete']);self.assertTrue(record['partialFinalLine'])
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['pendingTools'],['pending2'])
+            self.assertEqual(record['processExitCode'],0);self.assertEqual(calls.read_text(),'x')
+
+    def test_complete_tools_are_separate_from_invalid_final_reply(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="write1",type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text("invalid JSON")\n')
+            with self.assertRaisesRegex(converse.ConversationError,'invalid JSON'):brain.generate([],state)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertTrue(record['streamComplete'])
+            self.assertEqual(record['reason'],'reply_invalid_json')
+            self.assertEqual(record['outcome'],'failed')
+            self.assertEqual(record['counts']['successfulCommands'],1);self.assertEqual(calls.read_text(),'x')
+
+    def test_typed_retention_is_bounded_and_success_keeps_existing_summary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,_=self.brain(Path(temporary),
+                'for i in range(40):print(json.dumps(dict(type="item.completed",item=dict(id="cmd"+str(i),type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Done.",emote="NONE")))\n')
+            self.assertEqual(brain.generate([],state)['text'],'Done.')
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['outcome'],record['reason']),('completed',None))
+            self.assertTrue(record['streamComplete']);self.assertEqual(record['counts']['successfulCommands'],40)
+            self.assertEqual((len(record['tools']),record['omittedTools']),(16,24))
+            self.assertEqual(record['tools'][-1]['itemId'],'cmd39')
+            self.assertEqual(brain.last_development_events,dict(failedCommands=0,successfulCommands=40,failedPatches=0,completedPatches=0))
+
+    def test_maximum_tool_ids_and_pending_records_fit_existing_private_reader(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder=converse.ensure_state(Path(temporary)/'state')
+            brain=object.__new__(converse.CodexBrain);brain.state_dir=folder
+            rows=[dict(type='turn.started')]
+            for i in range(40):
+                rows.append(dict(type='item.completed',item=dict(id=str(i).zfill(128),type='command_execution',status='failed',exit_code=-(2**31))))
+            for i in range(20):rows.append(dict(type='item.started',item=dict(id=str(i+100).zfill(128),type='command_execution')))
+            with tempfile.TemporaryFile() as events,tempfile.TemporaryFile() as errors:
+                events.write(('\n'.join(map(json.dumps,rows))+'\n').encode())
+                brain.retain_development_events(events,errors,4*1024*1024,dict(sessionId='x'*128,selfGuid='281474976710655'),
+                    'timeout','ConversationError',types.SimpleNamespace(returncode=-15))
+            path=folder/'development-events-last.json';record=converse.read_json(path)
+            self.assertLessEqual(path.stat().st_size,8192)
+            self.assertEqual((record['omittedTools'],record['omittedPendingTools']),(24,4))
+            self.assertFalse(record['streamComplete']);self.assertEqual(record['counts']['failedCommands'],40)
+
+    def test_broken_stdin_cleanup_preserves_original_error_and_prior_tool_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,_=self.brain(Path(temporary),'')
+            class BrokenInput:
+                closed=False
+                def write(self,data):raise BrokenPipeError('original write failure')
+                def close(self):raise BrokenPipeError('secondary close failure')
+            def launch(*args,**kwargs):
+                kwargs['stdout'].write(b'{"type":"turn.started"}\n{"type":"item.completed","item":{"id":"cas-before-pipe-close","type":"command_execution","status":"completed","exit_code":0}}\n')
+                return types.SimpleNamespace(stdin=BrokenInput(),returncode=1,poll=lambda:1)
+            with patch.object(converse.subprocess,'Popen',side_effect=launch) as process:
+                with self.assertRaisesRegex(BrokenPipeError,'original write failure'):brain.generate([],state)
+            self.assertEqual(process.call_count,1)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['reason'],record['errorType']),('process_io_failed','BrokenPipeError'))
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['tools'][0]['itemId'],'cas-before-pipe-close')
+            self.assertFalse(record['streamComplete'])
+
+
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
 from test_gm_task_inspection import GMTaskInspectionTests
