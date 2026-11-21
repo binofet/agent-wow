@@ -28,6 +28,20 @@ For recovery/regroup requests, preserve the whole requested outcome, including d
 full health/resources and original roster. Write a goal JSON, inspect/edit the shared Lua
 policy, run the same task host available to Lothar, then inspect its observed completion.
 Use gmTasks.inspect for current GM and per-binding public party/vitals observations.
+Use gmTasks.execute for a direct native GM command. It accepts any native command
+string; the realm decides permissions. For a command acting on the selected unit,
+pass its exact observed GUID with --select-guid. The selection and command share
+one writer reservation, so another task cannot change the selection between them.
+Use --session-id from the current body to reject stale requests. A player name in
+conversation is not an in-game selection. Use gmTasks.select for selection alone.
+After execution, inspect the affected health, target, position or inventory before
+claiming the requested effect. A command acknowledgement only proves transport.
+For an authorized immediate GM combat rescue, .damage <amount> acts on the
+selected enemy; this command is confirmed available on this rank-2 realm.
+For an authorized health refill, select the player and use .modify hp <their
+currently observed natural maximum>; verify health rather than increasing a
+guessed maximum. You have the same authenticated selection/command path as
+Lothar. These examples do not restrict your other native command strings.
 The GM being outside the group does not make teammates unavailable: inspect their
 public party observations before deriving the requested original roster.
 A transport acknowledgement is not arrival or revival. Do not substitute a single .revive
@@ -55,6 +69,13 @@ def tools(root, guid, rpc_url):
         run=command+['run','--rpc-url',rpc_url,'--goal','<GOAL.json>','--state-dir','<STATE_DIR>',
             '--transport',str(root/'data/converse/lotharen/gm-transport.json')],
         bindings=command+['bindings'],source=command+['source'],
+        execute=command+['execute','--rpc-url',rpc_url,
+            '--transport',str(root/'data/converse/lotharen/gm-transport.json'),
+            '--session-id','<current sessionId>','--gm-command','<native dot command>',
+            '--select-guid','<exact observed target GUID; omit for name-based commands>'],
+        select=command+['select','--rpc-url',rpc_url,
+            '--transport',str(root/'data/converse/lotharen/gm-transport.json'),
+            '--session-id','<current sessionId>','--select-guid','<exact observed target GUID>'],
         inspect=command+['inspect','--rpc-url',rpc_url],
         status=command+['status','--state-dir','<STATE_DIR>'],
         cancel=command+['cancel','--state-dir','<STATE_DIR>'],
@@ -119,12 +140,30 @@ def claim_writer(store,state_dir=None):
     return data
 
 
-def single_command(rpc,config,command,root=ROOT):
+def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expected_session=None):
+    if command is not None and (not isinstance(command,str) or
+            re.fullmatch(r'\.[A-Za-z][ -~]{0,253}',command) is None or command!=command.rstrip()):
+        raise ValueError('one native GM command required')
+    if select_guid is not None:
+        text=str(select_guid)
+        if not re.fullmatch(r'[1-9][0-9]{0,19}',text) or int(text)>2**64-1:
+            raise ValueError('exact nonzero target GUID required')
+        select_guid=text
+    if command is None and select_guid is None:raise ValueError('selection or command required')
     live=rpc.call('buddy-actions.status',{});sid=live.get('sessionId')
+    if expected_session is not None and expected_session!=sid:
+        raise ValueError('GM body changed; inspect the current session before acting')
     with runtime.Store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
-        SessionTransport(rpc,config).gm(command,sid)
-    return sid
+        transport=SessionTransport(rpc,config)
+        if select_guid is not None:transport.select(select_guid,sid)
+        if command is not None:transport.gm(command,sid)
+    return dict(sessionId=sid,selectedGuid=select_guid,command=command,
+        transportWritten=True,completion='effect_not_yet_verified')
+
+
+def single_command(rpc,config,command,root=ROOT):
+    return execute_command(rpc,config,command,root)['sessionId']
 
 
 def normalized(world, actions=None):
@@ -446,11 +485,22 @@ def public_status(data):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('inspect','bindings','source','start','run','status','cancel','resume'))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=('inspect','bindings','source','execute','select','start','run','status','cancel','resume'))
     parser.add_argument('--state-dir',type=Path);parser.add_argument('--goal',type=Path);parser.add_argument('--transport',type=Path)
     parser.add_argument('--rpc-url');parser.add_argument('--policy',type=Path,default=ROOT/'behaviors/gm-recovery.lua')
     parser.add_argument('--policy-binary',type=Path,default=ROOT/'data/bin/luapolicy')
+    parser.add_argument('--gm-command');parser.add_argument('--select-guid');parser.add_argument('--session-id')
     args=parser.parse_args(argv)
+    if args.command in ('execute','select'):
+        if not args.rpc_url or not args.transport or not args.session_id:
+            parser.error('direct GM actions require --rpc-url, --transport and --session-id')
+        if args.command=='execute' and not args.gm_command:parser.error('execute requires --gm-command')
+        if args.command=='select' and (not args.select_guid or args.gm_command):
+            parser.error('select requires --select-guid and no command')
+        config=json.loads(args.transport.read_text())
+        result=execute_command(runtime.RPC(args.rpc_url),config,args.gm_command,
+            select_guid=args.select_guid,expected_session=args.session_id)
+        print(json.dumps(result));return 0
     if args.command=='inspect':
         if not args.rpc_url:parser.error('inspect requires --rpc-url')
         print(json.dumps(inspect_clients(args.rpc_url)));return 0
