@@ -249,7 +249,7 @@ func TestFollowStopCorrectionAndLease(t *testing.T) {
 				advance(200 * time.Millisecond)
 				s.Tick(context.Background())
 			}
-			stillFollowing := mode == "correction" || mode == "healer_correction"
+			stillFollowing := mode == "correction" || mode == "healer_correction" || mode == "lost"
 			if got := state(t, s); got.Moving || got.Following != stillFollowing {
 				t.Fatalf("failed to stop %+v", got)
 			}
@@ -368,7 +368,7 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 	if result.CastPending || len(f.packets) != 2 || result.Reason != "movement_stop_unconfirmed_heal_aborted" {
 		t.Fatalf("heal despite stop failure %+v", result)
 	}
-	if !result.MotionUnconfirmed || result.Following {
+	if !result.MotionUnconfirmed || !result.Following {
 		t.Fatalf("unconfirmed stop not latched %+v", result)
 	}
 	f.failSend = false
@@ -377,8 +377,8 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 		t.Fatalf("second heal bypassed unconfirmed stop %+v", result)
 	}
 	toggle(t, s, true)
-	if state(t, s).Following {
-		t.Fatal("follow bypassed unconfirmed stop")
+	if got := state(t, s); !got.Following || !got.MotionUnconfirmed || len(f.packets) != 2 {
+		t.Fatal("renewal canceled intent or bypassed unknown physical state", got)
 	}
 	toggle(t, s, false)
 	if state(t, s).MotionUnconfirmed || len(f.packets) != 3 || f.packets[2].Opcode != opcode.MSGMoveStop {

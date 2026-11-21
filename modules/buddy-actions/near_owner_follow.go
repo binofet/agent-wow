@@ -78,7 +78,6 @@ func (s *Service) nearOwnerFollowLocked(ctx context.Context, snapshot *worldv1.S
 	if s.movementLocked(ctx, op, p, true) {
 		s.state.Reason = "following_client_navmesh_estimate"
 	} else {
-		s.state.Following = false
 		s.stopLocked(ctx)
 	}
 }

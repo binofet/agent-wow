@@ -178,7 +178,6 @@ func (s *Service) assistObservedTargetLocked(ctx context.Context, w *worldv1.Sna
 		return fail("assist_mana_reserved_for_healing")
 	}
 	if !s.stopLocked(ctx) {
-		s.state.Assisting = false
 		s.state.Reason = "movement_stop_unconfirmed_assist_aborted"
 		return false
 	}
@@ -195,8 +194,6 @@ func (s *Service) faceEnemyLocked(ctx context.Context, target position) bool {
 		facing.o += 2 * math.Pi
 	}
 	if !s.movementLocked(ctx, opcode.MSGMoveSetFacing, facing, false) {
-		s.state.Assisting = false
-		s.stopAutoAttackLocked(ctx)
 		return false
 	}
 	return true
