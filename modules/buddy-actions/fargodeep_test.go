@@ -638,7 +638,7 @@ func TestFargodeepOrdinaryPatrolCanPullWithVerifiedCurrentEndpoint(t *testing.T)
 					wantPlans = 1
 				}
 				if plans != wantPlans || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
-					t.Fatal(got, plans, f.packets)
+					t.Fatalf("state=%v plans=%d packets=%v starterPolicyError=%q", got, plans, f.packets, s.starterSpells.lastError)
 				}
 			})
 		}
