@@ -155,6 +155,11 @@ func (m *Manager) readPolicyObservation(ctx context.Context, sid, method string)
 	if err != nil {
 		return nil, err
 	}
+	if method == inventoryModule+".rolls" {
+		if err := m.reconcileRollReceipts(sid, body); err != nil {
+			return nil, err
+		}
+	}
 	var observed map[string]any
 	if err := json.Unmarshal(body, &observed); err != nil {
 		return nil, err

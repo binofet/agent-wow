@@ -13,6 +13,7 @@ local support_policy = encounter_support
 local movement = encounter_movement
 local commands = encounter_commands
 local transient_tasks = encounter_tasks
+local loot_roll = encounter_loot_roll
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
@@ -43,6 +44,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if loot_roll and not loot_roll.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if transient_tasks and not transient_tasks.on_event(event) then return false end
@@ -83,7 +85,8 @@ local function export_state()
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
-                            movement=movement and movement.export_state and movement.export_state()}}
+                            movement=movement and movement.export_state and movement.export_state(),
+                            lootRoll=loot_roll and loot_roll.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -109,6 +112,7 @@ local function import_state(checkpoint)
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
        not movement.import_state(checkpoint.data.movement)) then return false end
+    if checkpoint.data.lootRoll and (not loot_roll or not loot_roll.import_state(checkpoint.data.lootRoll)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -648,6 +652,13 @@ local function decide(frame)
         out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
+    if loot_roll and not out.action then
+        local expected = frame.input.kind == "loot_roll" and frame.input.observationSequence or
+            (frame.input.observationSequences or {}).loot_roll
+        local roll = loot_roll.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
+            input={kind="loot_roll", observationSequence=expected}})
+        if roll.action then out.action=roll.action end
+    end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, policy_observation or observation
     local expected

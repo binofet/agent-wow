@@ -81,6 +81,12 @@ jobs:
           go build -o "${RUNNER_TEMP}/luapolicy" ./cmd/luapolicy
           BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_party_disenchant.py
 
+      - name: Test observed Lua group rolls
+        run: |
+          BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_loot_roll_policy.py
+          go build -o "${RUNNER_TEMP}/buddy-inventory" ./modules/buddy-inventory/cmd
+          BUDDY_INVENTORY_PACKAGED_BINARY="${RUNNER_TEMP}/buddy-inventory" go test -race -count=1 ./pkg/modules/runtime -run '^TestPackagedInventoryObservedLuaRoll$'
+
       - name: Test legacy client quest addon
         run: |
           sudo apt-get update -qq

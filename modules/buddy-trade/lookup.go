@@ -158,7 +158,7 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		item.Stats = append(item.Stats, &tradev1.ItemStat{Type: read(), Value: int32(read())})
 	}
 	scalingDistribution, scalingValue := read(), read()
-	comparisonKnown := meta.class == 4 && meta.containerSlots == 0 && scalingDistribution == 0 && scalingValue == 0
+	comparisonKnown := (meta.class == 4 || meta.class == 2) && meta.containerSlots == 0 && scalingDistribution == 0 && scalingValue == 0
 	for range 2 {
 		minimum, maximum, school := math.Float32frombits(read()), math.Float32frombits(read()), read()
 		if math.IsNaN(float64(minimum)) || math.IsInf(float64(minimum), 0) || math.IsNaN(float64(maximum)) || math.IsInf(float64(maximum), 0) || minimum < 0 || maximum < minimum || school > 6 {
@@ -188,6 +188,8 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 	for _, i := range []int{0, 1, 2, 3, 4, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28} {
 		comparisonKnown = comparisonKnown && tail[i] == 0
 	}
-	item.ArmorComparisonKnown = comparisonKnown && bonding <= 2 && prefix[18] == 0 && prefix[19] == 1
+	comparisonKnown = comparisonKnown && bonding <= 2 && prefix[18] == 0 && prefix[19] == 1
+	item.ArmorComparisonKnown = meta.class == 4 && comparisonKnown
+	item.WeaponComparisonKnown = meta.class == 2 && comparisonKnown
 	return item, nil
 }

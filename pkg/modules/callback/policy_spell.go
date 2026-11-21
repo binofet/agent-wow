@@ -23,11 +23,16 @@ const PolicySupportSpellService = "agentwow.policy-support-spell.v1"
 // and stop operations on the policy callback bridge.
 const PolicyMeleeService = "agentwow.policy-melee.v1"
 
+// PolicyRollService identifies Inventory builds with exact vote attribution.
+const PolicyRollService = "agentwow.policy-roll.v1"
+
 const (
 	policySpellKey        = "agentwow-policy-spell"
 	policyReceiptKey      = "agentwow-policy-spell-receipt-bin"
 	policyMeleeKey        = "agentwow-policy-melee"
 	policyMeleeReceiptKey = "agentwow-policy-melee-receipt-bin"
+	policyRollKey         = "agentwow-policy-roll"
+	policyRollReceiptKey  = "agentwow-policy-roll-receipt-bin"
 )
 
 // WithPolicySpell sends one host-issued token on a typed Actions RPC.
@@ -78,6 +83,16 @@ func ReportPolicyMeleeEffect(ctx context.Context, token string, effect proto.Mes
 // PolicyMeleeEffect reads a typed attack acknowledgement from packet delivery.
 func PolicyMeleeEffect(trailer metadata.MD) (token string, body []byte, ok bool) {
 	return readPolicyEffect(trailer, policyMeleeKey, policyMeleeReceiptKey)
+}
+
+// ReportPolicyRollEffect returns the exact own vote echo or operation retirement.
+func ReportPolicyRollEffect(ctx context.Context, token string, effect proto.Message) bool {
+	return reportPolicyEffect(ctx, policyRollKey, policyRollReceiptKey, token, effect)
+}
+
+// PolicyRollEffect reads a native Inventory vote receipt from packet delivery.
+func PolicyRollEffect(trailer metadata.MD) (token string, body []byte, ok bool) {
+	return readPolicyEffect(trailer, policyRollKey, policyRollReceiptKey)
 }
 
 func reportPolicyEffect(ctx context.Context, tokenKey, bodyKey, token string, effect proto.Message) bool {

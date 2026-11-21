@@ -45,31 +45,39 @@ type operation struct {
 }
 type Service struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
-	mu           sync.Mutex
-	sendMu       sync.Mutex
-	observeMu    sync.Mutex
-	session      sessionAPI
-	selfGUID     uint64
-	now          func() time.Time
-	state        *inventoryv1.State
-	view         view
-	known        bool
-	actions      *actionsv1.State
-	trade        *tradev1.State
-	loot         *lootv1.State
-	prof         *professionsv1.State
-	metadata     map[uint32]itemMetadata
-	queried      map[uint32]bool
-	queryAfter   time.Time
-	requests     map[string]*operation
-	active, last *operation
-	closed       bool
-	addon        *addonBridge
+	mu                            sync.Mutex
+	sendMu                        sync.Mutex
+	observeMu                     sync.Mutex
+	session                       sessionAPI
+	selfGUID                      uint64
+	now                           func() time.Time
+	state                         *inventoryv1.State
+	view                          view
+	known                         bool
+	actions                       *actionsv1.State
+	trade                         *tradev1.State
+	loot                          *lootv1.State
+	prof                          *professionsv1.State
+	metadata                      map[uint32]itemMetadata
+	queried                       map[uint32]bool
+	queryAfter                    time.Time
+	requests                      map[string]*operation
+	active, last                  *operation
+	closed                        bool
+	addon                         *addonBridge
+	groupRolls                    map[uint64]*groupRoll
+	rollRequests                  map[string]*rollAttempt
+	rollRevision                  uint64
+	rollVisitID                   uint64
+	rollVisitMap                  uint32
+	rollVisitBound, rollSaturated bool
 }
 
 func NewService(session sessionAPI, sessionID string, self uint64) *Service {
 	s := &Service{session: session, selfGUID: self, now: time.Now, state: &inventoryv1.State{SessionId: sessionID, SelfGuid: self, Revision: 1, Limitation: limitation}, metadata: map[uint32]itemMetadata{}, queried: map[uint32]bool{}, requests: map[string]*operation{}}
 	s.addon = newAddonBridge(s)
+	s.groupRolls, s.rollRequests = map[uint64]*groupRoll{}, map[string]*rollAttempt{}
+	s.rollRevision = 1
 	return s
 }
 func fail(reason string) error { return status.Error(codes.FailedPrecondition, reason) }
@@ -739,7 +747,7 @@ func (s *Service) evidenceLocked(v view) {
 		}
 	}
 }
-func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Empty, error) {
+func (s *Service) OnPacket(ctx context.Context, p *modv1.WorldPacket) (*emptypb.Empty, error) {
 	if p == nil {
 		return &emptypb.Empty{}, nil
 	}
@@ -751,6 +759,10 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.reportRollEffectsLocked(ctx)
+	if s.observeRollPacketLocked(p) {
+		return &emptypb.Empty{}, nil
+	}
 	if p.Opcode == opcode.SMSGItemQuerySingleResponse {
 		m, e := parseItemMetadata(p.Payload)
 		if e != nil {
@@ -792,6 +804,9 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	return &emptypb.Empty{}, nil
 }
 func (s *Service) Tick(ctx context.Context) {
+	s.mu.Lock()
+	s.expireRollsLocked()
+	s.mu.Unlock()
 	if s.addon != nil {
 		s.addon.tick(ctx)
 	}
@@ -804,6 +819,10 @@ func (s *Service) BeforeLogout(_ context.Context, _ *emptypb.Empty) (*emptypb.Em
 	s.mu.Lock()
 	s.closed = true
 	s.state.Closing = true
+	s.rollVisitBound = false
+	for _, roll := range s.groupRolls {
+		s.retireRollLocked(roll, "world_retired")
+	}
 	op := s.active
 	if op != nil {
 		op.cancel()
