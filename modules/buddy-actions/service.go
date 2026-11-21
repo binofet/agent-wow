@@ -284,6 +284,9 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.bodyMoving {
+		return nil, status.Error(codes.FailedPrecondition, "bounded body input still owns movement")
+	}
 	s.expireInteractionLocked()
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
@@ -1024,6 +1027,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 }
 
 func (s *Service) stopLocked(ctx context.Context) bool {
+	if s.bodyMoving {
+		// The finite input already owns its landing and terminal STOP. A
+		// competing request has not written anything and cannot make it unknown.
+		s.state.Reason = "bounded_body_input_active"
+		return false
+	}
 	// Corrections can coincide with an unsafe owner/self movement flag. Those
 	// paths stop before normal follow position refresh, so rebase here too.
 	if s.lastWorld != nil && s.lastWorld.Self != nil {
@@ -1044,8 +1053,13 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 	// Consume the movement intent before a possibly ambiguous transport write.
 	s.state.Moving = false
 	written := s.movementLocked(ctx, opcode.MSGMoveStop, s.pos, false)
-	s.state.MotionUnconfirmed = !written
-	if !written {
+	if !written && !s.state.MotionUnconfirmed {
+		// Validation/clock rejection occurred before SendPacket. The previous
+		// motion remains known and still owes a STOP; preserve standing intent
+		// so a fresh ordinary tick can retry that undispatched stop.
+		s.state.Moving = true
+	} else if !written {
+		// writeMovementLocked itself fences an actual ambiguous transport.
 		s.state.Following = false
 		s.state.Assisting = false
 		s.stopAutoAttackLocked(ctx)
@@ -1054,6 +1068,9 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 }
 
 func (s *Service) explicitStopLocked(ctx context.Context) bool {
+	if s.bodyMoving {
+		return s.stopLocked(ctx)
+	}
 	if s.state.MotionUnconfirmed {
 		// A fresh user stop/logout command authorizes one new stop attempt.
 		s.state.MotionUnconfirmed = false
