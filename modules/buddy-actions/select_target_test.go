@@ -175,4 +175,15 @@ func TestSelectTargetPublishedContractRoutesExactRPC(t *testing.T) {
 	if field == nil || !output.Get(field).Bool() || countPackets(f, opcode.CMSGSetSelection) != 1 {
 		t.Fatal("release contract did not report the exact selection write", output, f.packets)
 	}
+	body, ok := actions.RPC("move_body")
+	if !ok || actions.Manifest().ScriptAPI["move_body"].Effect != moddisc.EffectMutation {
+		t.Fatal("body movement missing from matched manifest/descriptor")
+	}
+	request, response := dynamicpb.NewMessage(body.Descriptor().Input()), dynamicpb.NewMessage(body.Descriptor().Output())
+	if err := protojson.Unmarshal([]byte(`{"sessionId":"selection-body","selfGuid":"1","visitId":"1","sequenceId":"7","durationMs":200}`), request); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Invoke(ctx, body.Path(), request, response); status.Code(err) != codes.PermissionDenied {
+		t.Fatal("published body movement RPC did not route to its normal policy precondition", err)
+	}
 }
