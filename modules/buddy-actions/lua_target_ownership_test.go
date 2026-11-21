@@ -72,6 +72,7 @@ func TestLuaTargetLeaseExpiryPreservesSeparateFollowAndExactSupport(t *testing.T
 	})
 	t.Run("resurrect", func(t *testing.T) {
 		s, f, advance := resRig(t)
+		learnSpells(s, 2006)
 		s.sessionID = f.party.SessionId
 		f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
 		f.world.Owner.RaceKnown, f.world.Owner.RaceId = true, 1
