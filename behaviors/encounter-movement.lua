@@ -68,8 +68,8 @@ local function recovery_probe(obs,sequence,key,phase,goal)
     end
     if recovery.checkRoute then recovery.checkRoute=false; return end
     if not rejected_route[phase] then
-        if phase == "following_formation" or phase == "within_follow_formation" or
-           phase == "within_personal_follow_space" or phase == "approaching" or phase == "in_position" then recovery=nil end
+        if phase == "within_follow_formation" or
+           phase == "within_personal_follow_space" or phase == "in_position" then recovery=nil end
         return
     end
     if recovery.sequence ~= sequence then
