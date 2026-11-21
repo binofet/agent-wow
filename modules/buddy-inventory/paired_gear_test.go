@@ -1,7 +1,6 @@
 package buddyinventory
 
 import (
-	"context"
 	"testing"
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"

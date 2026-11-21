@@ -1,7 +1,6 @@
 package buddyinventory
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"testing"

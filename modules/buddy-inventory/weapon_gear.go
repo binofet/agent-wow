@@ -2,8 +2,6 @@ package buddyinventory
 
 import (
 	"math"
-
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
 
 // These ordinary weapon families have one supported destination: mainhand.
