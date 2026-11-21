@@ -21,7 +21,7 @@ func healingRejectionPacket(op uint32, caster uint64, count byte, spell uint32) 
 	return &modv1.WorldPacket{Opcode: op, Payload: p}
 }
 
-func TestHealingRejectionSelectsFreshPartyTargetAfterCooldown(t *testing.T) {
+func TestHealingRejectionSelectsFreshPartyTargetAfterNormalGlobalCooldown(t *testing.T) {
 	for _, op := range []uint32{opcode.SMSGCastFailed, opcode.SMSGSpellFailure, opcode.SMSGSpellFailedOther} {
 		t.Run(opcode.WorldName(op), func(t *testing.T) {
 			s, f, advance := rig(t)
@@ -35,6 +35,10 @@ func TestHealingRejectionSelectsFreshPartyTargetAfterCooldown(t *testing.T) {
 				t.Fatal("initial actual heal missing", state(t, s))
 			}
 			oldCount, oldSpell := s.castCount, s.pendingSpell
+			gcd := s.nextHeal.Sub(s.now())
+			if gcd <= 0 || gcd >= 5*time.Second {
+				t.Fatal("fixture must exercise a real shorter global cooldown", gcd)
+			}
 			s.OnPacket(context.Background(), healingRejectionPacket(op, 1, oldCount, oldSpell))
 			got := state(t, s)
 			if got.CastPending || got.LastCastFailure != 47 || got.ServerCastGo != 0 || s.pendingSpell != 0 || s.pendingTarget != 0 {
@@ -48,7 +52,7 @@ func TestHealingRejectionSelectsFreshPartyTargetAfterCooldown(t *testing.T) {
 			f.party.Group.Members[1].Online = false
 			f.world.Owner = nil
 			mira.Health = 10
-			advance(5*time.Second - time.Millisecond)
+			advance(gcd - time.Millisecond)
 			s.Tick(context.Background())
 			if countPackets(f, opcode.CMSGCastSpell) != 1 {
 				t.Fatal("cooldown bypass", state(t, s))

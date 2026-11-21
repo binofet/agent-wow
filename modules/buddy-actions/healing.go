@@ -302,12 +302,12 @@ func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerStat
 	now := s.now()
 	s.castCount++
 	s.reserveSpellCooldownLocked(heal)
-	s.nextHeal = now.Add(3 * time.Second)
+	s.nextHeal = now.Add(time.Duration(heal.GcdMs) * time.Millisecond)
 	s.castUntil = now.Add(max(5*time.Second, (time.Duration(heal.CastMs)*time.Millisecond)+1500*time.Millisecond))
 	s.state.CastPending = true
 	s.state.HealAttempts++
 	s.pendingSpell, s.pendingTarget = heal.ID, target.Guid
-	s.nextAssist = now.Add(3 * time.Second)
+	s.nextAssist = s.nextHeal
 	s.state.LastCastSpellId, s.state.LastCastTargetGuid = heal.ID, target.Guid
 	s.state.LastCastFailure = 0
 	var receipt *supportAttempt

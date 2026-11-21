@@ -105,12 +105,16 @@ func TestHealingTakesPriorityAndSmiteSharesCooldown(t *testing.T) {
 	}
 	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: serverSpellPacket(true, 1)})
 	f.world.Owner.Health = 100
-	advance(1600 * time.Millisecond)
+	gcd := time.Duration(s.learnedContractsLocked()[lesserHeal].GcdMs) * time.Millisecond
+	if gcd <= 0 || s.nextHeal != s.now().Add(gcd) || s.nextAssist != s.nextHeal {
+		t.Fatal("healing and offense did not share the learned heal's real GCD", s.stateLocked())
+	}
+	advance(gcd - time.Millisecond)
 	s.Tick(context.Background())
 	if state(t, s).AssistAttempts != 0 {
 		t.Fatal("ignored shared cooldown")
 	}
-	advance(1500 * time.Millisecond)
+	advance(time.Millisecond)
 	s.Tick(context.Background())
 	if state(t, s).AssistAttempts != 1 {
 		t.Fatal(state(t, s))
