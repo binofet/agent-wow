@@ -1,8 +1,10 @@
 package buddyactions
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
@@ -24,7 +26,9 @@ func pendingChannelFixture(t *testing.T, spell uint32, target uint64, channel bo
 	s.castCount = 9
 	s.pendingSpell, s.pendingTarget, s.state.CastPending = spell, target, true
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: spell, TargetGuid: target, Capability: "cast_spell", Phase: "waiting_server", TransportWritten: true}, count: s.castCount, until: s.now().Add(3 * time.Second), policySpellToken: "original-cast-token"}
-	s.initializeSpellLifecycleLocked(s.supportOp, channel, f.world.VisitRevision)
+	if err := s.initializeSpellLifecycleLocked(s.supportOp, channel, f.world.VisitRevision); err != nil {
+		t.Fatal(err)
+	}
 	return s, f, advance
 }
 func channelFrame(actor uint64, spell, remaining uint32, start bool) []byte {
@@ -224,5 +228,50 @@ func TestChannelLifecycleUnknownMetadataGOThenStartRetainsExactLearnedOperation(
 	advance(time.Hour)
 	if len(f.packets) != 2 {
 		t.Fatal("settled channel replayed")
+	}
+}
+
+func TestCancelSpellSameSIDModuleRecreationCannotReuseOperationRevision(t *testing.T) {
+	s, _, _ := genericCastRig(t)
+	seed := func(n uint64) *bytes.Reader { return bytes.NewReader(binary.LittleEndian.AppendUint64(nil, n)) }
+	s.spellOperationEntropy = seed(1000)
+	r := genericRequest(s, 133)
+	if _, err := s.CastSpell(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	stale := cancelOperation(s, false)
+	// A freshly recreated module can use the exact same live body, visit and spell.
+	next, f, _ := genericCastRig(t)
+	next.spellOperationEntropy = seed(2000)
+	if _, err := next.CastSpell(context.Background(), genericRequest(next, 133)); err != nil {
+		t.Fatal(err)
+	}
+	if next.supportOp.view.OperationRevision == stale.ExpectedOperationRevision {
+		t.Fatal("module recreation reused cancellation identity")
+	}
+	if _, err := next.CancelSpell(context.Background(), stale); err == nil || len(f.packets) != 1 {
+		t.Fatal("old module cancellation touched new cast", err, f.packets)
+	}
+	if _, err := next.CancelSpell(context.Background(), cancelOperation(next, false)); err != nil || len(f.packets) != 2 {
+		t.Fatal("current exact cancellation unavailable", err, f.packets)
+	}
+}
+func TestChannelLifecycleIdentityFailureAndExhaustionNeverWrite(t *testing.T) {
+	for _, mode := range []string{"entropy_unavailable", "zero_entropy", "exhausted"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := genericCastRig(t)
+			switch mode {
+			case "entropy_unavailable":
+				s.spellOperationEntropy = bytes.NewReader(nil)
+			case "zero_entropy":
+				s.spellOperationEntropy = bytes.NewReader(make([]byte, 8))
+			case "exhausted":
+				s.spellOperationEpoch = math.MaxUint64 - 1
+				s.spellOperationSequence = 1
+			}
+			if _, err := s.CastSpell(context.Background(), genericRequest(s, 133)); err == nil || len(f.packets) != 0 || s.state.CastPending {
+				t.Fatal("identity failure wrote/reserved cast", err, f.packets, s.stateLocked())
+			}
+		})
 	}
 }

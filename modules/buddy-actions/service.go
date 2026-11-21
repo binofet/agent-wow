@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -76,6 +77,8 @@ type Service struct {
 	positionRevision                           uint64
 	castCount, cancelCastCount                 byte
 	spellOperationSequence                     uint64
+	spellOperationEpoch                        uint64
+	spellOperationEntropy                      io.Reader
 	protectedCastCancelAttempted               bool
 	lastWorld                                  *worldv1.SnapshotResponse
 	posMap                                     uint32

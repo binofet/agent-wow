@@ -92,7 +92,9 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 		until = until.Add(time.Duration(spell.CastMs) * time.Millisecond)
 	}
 	op := &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.SpellId, TargetGuid: target, Capability: genericCastCapability, Phase: "waiting_server"}, count: s.castCount, until: until, genericSpell: true, genericChannelUnknown: !channelMetadataKnown, policySpellToken: modcb.PolicySpellToken(ctx)}
-	s.initializeSpellLifecycleLocked(op, isChanneledSpell(spell), r.VisitId)
+	if err := s.initializeSpellLifecycleLocked(op, isChanneledSpell(spell), r.VisitId); err != nil {
+		return nil, err
+	}
 	s.supportOp = op
 	s.pendingSpell = r.SpellId
 	s.pendingTarget = target

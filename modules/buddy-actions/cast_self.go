@@ -73,7 +73,14 @@ func (s *Service) CastSelf(ctx context.Context, r *actionsv1.CastSelfRequest) (*
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	// Reserve cancellation identity before the legacy helper can write.
+	lifecycle := &supportAttempt{}
+	if err := s.initializeSpellLifecycleLocked(lifecycle, isChanneledSpell(spell), w.VisitRevision); err != nil {
+		return nil, err
+	}
 	s.castTargetedSupportLocked(ctx, spell, s.selfGUID, 0, selfCastCapability)
-	s.initializeSpellLifecycleLocked(s.supportOp, isChanneledSpell(spell), w.VisitRevision)
+	s.supportOp.view.OperationRevision = lifecycle.view.OperationRevision
+	s.supportOp.view.VisitId = lifecycle.view.VisitId
+	s.supportOp.selfChannel = lifecycle.selfChannel
 	return s.stateLocked(), nil
 }

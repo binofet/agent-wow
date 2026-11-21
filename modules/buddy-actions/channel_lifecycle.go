@@ -1,19 +1,44 @@
 package buddyactions
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"io"
+	"math"
 	"time"
 )
 
 // Every operation is identified within the authenticated body, independently
 // of its self/unit/object/ground target and the byte-sized wire cast counter.
-func (s *Service) initializeSpellLifecycleLocked(op *supportAttempt, channel bool, visit uint64) {
+func (s *Service) initializeSpellLifecycleLocked(op *supportAttempt, channel bool, visit uint64) error {
+	if s.spellOperationEpoch == 0 {
+		entropy := s.spellOperationEntropy
+		if entropy == nil {
+			entropy = rand.Reader
+		}
+		var epoch [8]byte
+		if _, err := io.ReadFull(entropy, epoch[:]); err != nil {
+			return status.Error(codes.Unavailable, "spell operation identity entropy unavailable")
+		}
+		s.spellOperationEpoch = binary.LittleEndian.Uint64(epoch[:])
+		if s.spellOperationEpoch == 0 {
+			return status.Error(codes.Unavailable, "nonzero spell operation identity required")
+		}
+	}
+	// Random instance identity prevents a same-SID module recreation from
+	// restarting the exact cancellation revision at one. Never wrap/reuse it.
+	if s.spellOperationSequence == math.MaxUint64 || s.spellOperationEpoch > math.MaxUint64-(s.spellOperationSequence+1) {
+		return status.Error(codes.ResourceExhausted, "spell operation revision exhausted")
+	}
 	s.spellOperationSequence++
-	op.view.OperationRevision = s.spellOperationSequence
+	op.view.OperationRevision = s.spellOperationEpoch + s.spellOperationSequence
 	op.view.VisitId = visit
 	op.selfChannel = channel
+	return nil
 }
 
 // The legacy helper name remains internal compatibility. Channels belong to
