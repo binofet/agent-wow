@@ -17,6 +17,8 @@ func TestOwnerAFKDoesNotVetoFollowAndRemainsVisibleToLua(t *testing.T) {
 	// inability of the following player to execute a legal movement packet.
 	s, f, advance := formationRig(t, 87, 2)
 	s.sessionID = f.party.SessionId
+	f.world.VisitRevision = 1
+	s.encounterVisit.bound, s.encounterVisit.revision, s.encounterVisit.mapID = true, 1, f.world.Self.MapId
 	f.world.Owner.PlayerFlags = 2
 	if reason := safePlayers(f.world, s.selfGUID); reason != "" {
 		t.Fatal("AFK owner failed mechanical movement admission", reason)
