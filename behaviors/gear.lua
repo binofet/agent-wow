@@ -20,7 +20,7 @@ end
 local function stats(item)
  local out={}
  for _,stat in ipairs(item.stats or {}) do
-  local kind,value=number(stat.type),number(stat.value)
+  local kind,value=number(stat.type or 0),number(stat.value or 0)
   if not kind or kind%1~=0 or out[kind]~=nil or not value or value<0 or
    not (kind<=1 or kind>=3 and kind<=7 or kind>=12 and kind<=39 or kind>=43 and kind<=48) then return end
   out[kind]=value
@@ -154,7 +154,8 @@ function M.evaluate(frame)
    elseif row.gearBlockedReason=="no_observed_legal_equipment_destination" and dest.blockedReason then row.gearBlockedReason=dest.blockedReason end
   end
   if best then
-   row.gearEquipEligible,row.conservativeUpgrade=true,best.upgrade
+   row.gearEquipEligible=(best.reason=="" or best.reason=="comparison_not_an_upgrade" or best.reason=="empty_equipment_slot")
+   row.conservativeUpgrade=best.upgrade
    row.gearEquipmentSlot,row.expectedEquippedItemGuid=best.slot,best.old
    row.gearBlockedReason=best.reason or ""
    -- Empty-slot infinity is only an internal ordering value, never JSON data.

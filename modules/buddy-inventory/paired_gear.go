@@ -45,7 +45,10 @@ func gearDestinationSlots(w *worldv1.SnapshotResponse, m itemMetadata, equipment
 			main := equipment[mainhandSlot]
 			base := templates[main.Entry]
 			skills, _ := ownedSkills(w)
-			if (main.ItemGuid == 0 || main.MetadataKnown && base.known && base.inventoryType != 17) && skills[dualWieldSkill] != 0 {
+			off := equipment[offhandSlot]
+			old := templates[off.Entry]
+			observedOffhandWeapon := off.MetadataKnown && old.known && old.class == 2 && old.subclass == 15 && old.inventoryType == 13
+			if (main.ItemGuid == 0 || main.MetadataKnown && base.known && base.inventoryType != 17) && (skills[dualWieldSkill] != 0 || observedOffhandWeapon) {
 				return []uint32{mainhandSlot, offhandSlot}
 			}
 		}

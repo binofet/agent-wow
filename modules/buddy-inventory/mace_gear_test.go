@@ -26,13 +26,13 @@ func fixtureMace(t *testing.T) (*Service, *fakeInventory, *inventoryv1.EquipGear
 	}
 	s.metadata[1158], s.queried[1158] = m, true
 	r.RequestId, r.Source.Entry = "mace", 1158
-	r.ExpectedRevision = stateInventory(t, s).Revision
+	r.ExpectedRevision = stateGear(t, s).Revision
 	return s, f, r
 }
 
 func TestMainhandMaceKnownPriestNormalSwapAndDisplacedStaffProof(t *testing.T) {
 	s, f, r := fixtureMace(t)
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	var qualified bool
 	for _, item := range st.Items {
 		if item.Item.ItemGuid == r.Source.ItemGuid {
@@ -44,7 +44,7 @@ func TestMainhandMaceKnownPriestNormalSwapAndDisplacedStaffProof(t *testing.T) {
 	}
 	beforeOH := proto.Clone(f.w.SelfEquipment[16]).(*worldv1.EquipmentSlotState)
 	gearProof(s, f)
-	if _, err := s.EquipGear(context.Background(), r); err != nil {
+	if _, err := equipGearPolicyTest(t, s, r); err != nil {
 		t.Fatal(err)
 	}
 	st = waitInventory(t, s)
@@ -54,7 +54,7 @@ func TestMainhandMaceKnownPriestNormalSwapAndDisplacedStaffProof(t *testing.T) {
 	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGAutoequipItemSlot || len(f.packets[0].Payload) != 9 || binary.LittleEndian.Uint64(f.packets[0].Payload) != r.Source.ItemGuid || f.packets[0].Payload[8] != 15 {
 		t.Fatal("not the normal one-slot equip packet", f.packets)
 	}
-	if _, err := s.EquipGear(context.Background(), r); err != nil || len(f.packets) != 1 {
+	if _, err := equipGearPolicyTest(t, s, r); err != nil || len(f.packets) != 1 {
 		t.Fatal("mace request replayed", err)
 	}
 }
@@ -106,8 +106,8 @@ func TestMainhandMaceKeepsKnownProficiencyUsabilityAndComparisonGates(t *testing
 				f.afterRenew = func() { f.mu.Lock(); f.w.SelfSkills[0].Value = 0; f.w.SelfSkillsRevision++; f.mu.Unlock() }
 			}
 			s.metadata[1158] = m
-			r.ExpectedRevision = stateInventory(t, s).Revision
-			if _, err := s.EquipGear(context.Background(), r); err == nil {
+			r.ExpectedRevision = stateGear(t, s).Revision
+			if _, err := equipGearPolicyTest(t, s, r); err == nil {
 				if st := waitInventory(t, s); st.Operation.Status != "BLOCKED" {
 					t.Fatal("unsafe mace accepted", st)
 				}
@@ -133,10 +133,10 @@ func TestMainhandMaceRetainsAlreadyEquippedOffhandWithOneHandBaseline(t *testing
 		t.Fatal(err)
 	}
 	s.metadata[15944], s.queried[15944] = offhand, true
-	r.ExpectedRevision = stateInventory(t, s).Revision
+	r.ExpectedRevision = stateGear(t, s).Revision
 	before := proto.Clone(f.w.SelfEquipment[16]).(*worldv1.EquipmentSlotState)
 	gearProof(s, f)
-	if _, err := s.EquipGear(context.Background(), r); err != nil {
+	if _, err := equipGearPolicyTest(t, s, r); err != nil {
 		t.Fatal(err)
 	}
 	st := waitInventory(t, s)

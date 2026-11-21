@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers/maces and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and ordinary general bags of 1-36 slots into empty bag equipment slots; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
+const limitation = "Exact owned gear destinations and proficiency facts, with current Lua upgrade comparisons and slot preferences. Supported gear moves retain the displaced item in the source slot; equipment success needs newer exact equipment and inventory receipts. Two-handed swaps require an observed empty offhand. Bag moves and vendor sales retain their own exact ownership and receipt checks; uncertain transport is never success."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
