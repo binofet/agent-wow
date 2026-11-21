@@ -29,7 +29,7 @@ func TestPolicyInteractionReleaseUsesRealNativeLeaseAndRetiresLedger(t *testing.
 			if mode == "stale_visit" {
 				visit = "2"
 			}
-			source := fmt.Sprintf(`return {decide=function(f)return {action={capability="release_interaction",sessionId=f.session_id,selfGuid=%q,visitId=%q,owner="trade",token=%q}}end}`, body, visit, token)
+			source := fmt.Sprintf(`return {on_event=function(e)return true end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end,decide=function(f)return {action={capability="release_interaction",sessionId=f.session_id,selfGuid=%q,visitId=%q,owner="trade",token=%q}}end}`, body, visit, token)
 			policy, err := m.StartPolicy(context.Background(), source)
 			if err != nil {
 				t.Fatal(err)

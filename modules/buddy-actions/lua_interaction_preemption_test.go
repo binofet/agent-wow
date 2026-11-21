@@ -106,6 +106,7 @@ func TestSharedLuaInteractionKeepsFuturePackAndRetunesSameSession(t *testing.T) 
 func TestSharedLuaInteractionYieldsForActualBusyHealingFacts(t *testing.T) {
 	x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
 	x.s.spellData = nil // Use actual learned heal catalog metadata.
+	x.f.party.Group.GroupGuid, x.f.party.Group.LeaderGuid = 7, ownerGUID
 	x.s.applySpellbookLocked(map[uint32]bool{2050: true})
 	c := x.f.world.RequestedCreature
 	c.AttackVictimKnown, c.TargetKnown = false, false
