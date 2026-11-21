@@ -31,7 +31,7 @@ class Error(Exception): pass
 
 
 class BridgeFailure(Error):
-    def __init__(self, mode, detail, raw):
+    def __init__(self, mode, detail, raw, value_bytes=MAX_INPUT):
         super().__init__('typed_bridge_rejected' + (': ' + detail if detail else ''))
         self.frame = raw if mode == 'evaluate' else None
         self.evidence = dict(mode=mode, reason=detail, inputBytes=len(raw or b''),
@@ -47,7 +47,7 @@ class BridgeFailure(Error):
             parts = {k: value[k] for k in ('goal','memory','observations','last','pending') if k in value}
             if isinstance(value.get('observations'), dict):
                 parts.update(('observations.'+k, v) for k,v in value['observations'].items())
-            self.evidence['components'] = {k:dict(bytes=len(packed(v, MAX_INPUT)), conversionNodes=nodes(v))
+            self.evidence['components'] = {k:dict(bytes=len(packed(v, value_bytes)), conversionNodes=nodes(v))
                                            for k,v in parts.items()}
 
 
@@ -263,13 +263,20 @@ class RPC:
 
 
 class Bridge:
-    def __init__(self, binary, modules, source_bytes=MAX_SOURCE):
+    def __init__(self, binary, modules, source_bytes=MAX_SOURCE, value_bytes=MAX_INPUT, execution_ms=None):
         require(type(source_bytes) is int and source_bytes>0,'positive_source_budget_required')
+        require(type(value_bytes) is int and value_bytes>0,'positive_value_budget_required')
+        require(execution_ms is None or (type(execution_ms) is int and 0<execution_ms<=(2**63-1)//1000000),
+                'positive_execution_budget_required')
         self.binary, self.modules, self.source_bytes = str(binary), str(modules), source_bytes
+        self.value_bytes = value_bytes
+        self.execution_ms = execution_ms
 
     def call(self, mode, value=None, method=None, source=None):
         command = [self.binary, '--mode', mode, '--modules', self.modules]
-        raw_input = packed(value, MAX_INPUT) if value is not None else None
+        if self.value_bytes != MAX_INPUT: command += ['--value-bytes',str(self.value_bytes)]
+        if self.execution_ms is not None: command += ['--execution-ms',str(self.execution_ms)]
+        raw_input = packed(value, self.value_bytes) if value is not None else None
         if method is not None: command += ['--method', method]
         with tempfile.TemporaryDirectory(prefix='buddy-task-policy-') as folder:
             if source is not None:
@@ -286,8 +293,10 @@ class Bridge:
             # diagnosis or permission to retry an already-issued game call.
             detail = result.stderr.decode('utf-8', errors='replace')
             detail = ''.join(c if 32 <= ord(c) < 127 else ' ' for c in detail).strip()[:192]
-            raise BridgeFailure(mode, detail, raw_input)
-        require(len(result.stdout) <= (2097152 if mode == 'describe' else MAX_INPUT), 'typed_bridge_output_bound')
+            raise BridgeFailure(mode, detail, raw_input, self.value_bytes)
+        # Encoder's final newline frames the value; it is not part of its
+        # configured JSON byte budget. Other task clients keep their defaults.
+        require(len(result.stdout.removesuffix(b'\n')) <= (2097152 if mode == 'describe' else self.value_bytes), 'typed_bridge_output_bound')
         return decoded(result.stdout)
 
     def describe(self): return self.call('describe')

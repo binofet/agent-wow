@@ -56,6 +56,57 @@ class FakeRPC:
 
 
 class BridgeDiagnosticsTests(unittest.TestCase):
+    @staticmethod
+    def multi_body_frame():
+        return {'observations': [{'guid': str(body), 'items': [
+            {'itemGuid': str(0x4000000000000000 + body*1000 + slot),
+             'entry': 100, 'stackCount': 1, 'metadataKnown': True}
+            for slot in range(100)]} for body in range(8)], 'memory': {'stage': 'observe'}}
+
+    def test_explicit_value_budget_roundtrips_large_frame_and_keeps_default_argv(self):
+        value = self.multi_body_frame()
+        self.assertGreater(len(m.packed(value, 262144)), m.MAX_INPUT)
+        with patch.object(m.subprocess, 'run') as child:
+            with self.assertRaisesRegex(m.Error, 'json_size_bound'):
+                m.Bridge('/not/executed', '/unused').evaluate('return {}', value)
+            child.assert_not_called()
+        def echo(command, **kwargs):
+            self.assertEqual(command[command.index('--value-bytes')+1], '262144')
+            self.assertEqual(command[command.index('--execution-ms')+1], '1000')
+            self.assertFalse(kwargs.get('shell', False))
+            self.assertEqual(m.decoded(kwargs['input']), value)
+            return subprocess.CompletedProcess(command, 0, stdout=kwargs['input']+b'\n', stderr=b'')
+        with patch.object(m.subprocess, 'run', side_effect=echo):
+            self.assertEqual(m.Bridge('/not/executed', '/unused', value_bytes=262144, execution_ms=1000).evaluate('return {}', value), value)
+        with patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout=b'{}\n', stderr=b'')) as child:
+            m.Bridge('/not/executed', '/unused').evaluate('return {}', {})
+            self.assertNotIn('--value-bytes', child.call_args.args[0])
+            self.assertNotIn('--execution-ms', child.call_args.args[0])
+        for bad in (0, -1, True, 1.5):
+            with self.assertRaisesRegex(m.Error, 'positive_value_budget_required'):
+                m.Bridge('/not/executed', '/unused', value_bytes=bad)
+        for bad in (0, -1, True, 1.5, 9223372036855):
+            with self.assertRaisesRegex(m.Error, 'positive_execution_budget_required'):
+                m.Bridge('/not/executed', '/unused', execution_ms=bad)
+
+    def test_value_budget_bounds_child_output_and_large_failure_evidence(self):
+        value = {'memory': {'text': 'x'*(40*1024)}}
+        failure = subprocess.CompletedProcess([], 1, stdout=b'', stderr=b'actual native rejection')
+        with patch.object(m.subprocess, 'run', return_value=failure):
+            with self.assertRaisesRegex(m.BridgeFailure, 'actual native rejection') as caught:
+                m.Bridge('/not/executed', '/unused', value_bytes=131072).evaluate('return {}', value)
+            self.assertGreater(caught.exception.evidence['components']['memory']['bytes'], m.MAX_INPUT)
+        oversized = subprocess.CompletedProcess([], 0, stdout=b'"'+b'x'*131072+b'"\n', stderr=b'')
+        with patch.object(m.subprocess, 'run', return_value=oversized):
+            with self.assertRaisesRegex(m.Error, 'typed_bridge_output_bound'):
+                m.Bridge('/not/executed', '/unused', value_bytes=131072).evaluate('return {}', {})
+
+    @unittest.skipUnless(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY'), 'compiled typed bridge not requested')
+    def test_real_configured_bridge_roundtrips_larger_observation_objects(self):
+        value = self.multi_body_frame()
+        bridge = m.Bridge(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY'), m.ROOT/'modules', value_bytes=262144, execution_ms=1000)
+        self.assertEqual(bridge.evaluate('return {decide=function(frame)return frame end}', value), value)
+
     def test_rpc_keeps_bound_server_rejection_distinct_from_unknown_transport(self):
         rpc=m.RPC('http://127.0.0.1:8090/rpc')
         response=io.BytesIO(json.dumps({'jsonrpc':'2.0','id':1,'error':{
