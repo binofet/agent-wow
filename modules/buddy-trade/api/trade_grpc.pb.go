@@ -21,6 +21,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyTrade_TransferStep_FullMethodName = "/warcraftbuddy.trade.v1.BuddyTrade/TransferStep"
+	BuddyTrade_WaterGift_FullMethodName    = "/warcraftbuddy.trade.v1.BuddyTrade/WaterGift"
 	BuddyTrade_GetState_FullMethodName     = "/warcraftbuddy.trade.v1.BuddyTrade/GetState"
 	BuddyTrade_Open_FullMethodName         = "/warcraftbuddy.trade.v1.BuddyTrade/Open"
 	BuddyTrade_OfferItem_FullMethodName    = "/warcraftbuddy.trade.v1.BuddyTrade/OfferItem"
@@ -37,6 +39,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyTradeClient interface {
+	TransferStep(ctx context.Context, in *TransferStepRequest, opts ...grpc.CallOption) (*State, error)
+	WaterGift(ctx context.Context, in *WaterGiftRequest, opts ...grpc.CallOption) (*State, error)
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Open(ctx context.Context, in *BoundRequest, opts ...grpc.CallOption) (*State, error)
 	OfferItem(ctx context.Context, in *ItemRequest, opts ...grpc.CallOption) (*State, error)
@@ -55,6 +59,26 @@ type buddyTradeClient struct {
 
 func NewBuddyTradeClient(cc grpc.ClientConnInterface) BuddyTradeClient {
 	return &buddyTradeClient{cc}
+}
+
+func (c *buddyTradeClient) TransferStep(ctx context.Context, in *TransferStepRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyTrade_TransferStep_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyTradeClient) WaterGift(ctx context.Context, in *WaterGiftRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyTrade_WaterGift_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyTradeClient) GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error) {
@@ -161,6 +185,8 @@ func (c *buddyTradeClient) BeforeLogout(ctx context.Context, in *emptypb.Empty, 
 // All implementations must embed UnimplementedBuddyTradeServer
 // for forward compatibility.
 type BuddyTradeServer interface {
+	TransferStep(context.Context, *TransferStepRequest) (*State, error)
+	WaterGift(context.Context, *WaterGiftRequest) (*State, error)
 	GetState(context.Context, *emptypb.Empty) (*State, error)
 	Open(context.Context, *BoundRequest) (*State, error)
 	OfferItem(context.Context, *ItemRequest) (*State, error)
@@ -181,6 +207,12 @@ type BuddyTradeServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyTradeServer struct{}
 
+func (UnimplementedBuddyTradeServer) TransferStep(context.Context, *TransferStepRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TransferStep not implemented")
+}
+func (UnimplementedBuddyTradeServer) WaterGift(context.Context, *WaterGiftRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WaterGift not implemented")
+}
 func (UnimplementedBuddyTradeServer) GetState(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
 }
@@ -230,6 +262,42 @@ func RegisterBuddyTradeServer(s grpc.ServiceRegistrar, srv BuddyTradeServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyTrade_ServiceDesc, srv)
+}
+
+func _BuddyTrade_TransferStep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransferStepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTradeServer).TransferStep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTrade_TransferStep_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTradeServer).TransferStep(ctx, req.(*TransferStepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyTrade_WaterGift_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WaterGiftRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyTradeServer).WaterGift(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyTrade_WaterGift_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyTradeServer).WaterGift(ctx, req.(*WaterGiftRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyTrade_GetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -419,6 +487,14 @@ var BuddyTrade_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.trade.v1.BuddyTrade",
 	HandlerType: (*BuddyTradeServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "TransferStep",
+			Handler:    _BuddyTrade_TransferStep_Handler,
+		},
+		{
+			MethodName: "WaterGift",
+			Handler:    _BuddyTrade_WaterGift_Handler,
+		},
 		{
 			MethodName: "GetState",
 			Handler:    _BuddyTrade_GetState_Handler,
