@@ -55,6 +55,16 @@ func (m *Manager) StartObservedPolicyWithOptions(ctx context.Context, source, bi
 		}
 		feeds = append(feeds, policyFeed{phase: phase, method: method})
 	}
+	// Inventory is an optional factual context for the shared encounter policy.
+	// Older/absent modules remain usable; new manifests advertise this read.
+	if feeds[len(feeds)-1].method == encounterObservationMethod && !phases["inventory"] {
+		if facts, err := catalog.Catalog.ForMethod("buddy-inventory.state"); err == nil && facts.Methods[0].Effect == moddisc.EffectRead {
+			if _, err = m.readPolicyObservation(ctx, catalog.SessionID, "buddy-inventory.state"); err != nil {
+				return err
+			}
+			feeds = append([]policyFeed{{phase: "inventory", method: "buddy-inventory.state"}}, feeds...)
+		}
+	}
 	host, err := m.StartPolicyWithOptions(ctx, source, options)
 	if err != nil {
 		return err

@@ -9,9 +9,11 @@ import (
 	professionsv1 "github.com/agent-wow/agent-wow/modules/buddy-professions/api"
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/maps"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -45,30 +47,34 @@ type operation struct {
 }
 type Service struct {
 	inventoryv1.UnimplementedBuddyInventoryServer
-	mu           sync.Mutex
-	sendMu       sync.Mutex
-	observeMu    sync.Mutex
-	session      sessionAPI
-	selfGUID     uint64
-	now          func() time.Time
-	state        *inventoryv1.State
-	view         view
-	known        bool
-	actions      *actionsv1.State
-	trade        *tradev1.State
-	loot         *lootv1.State
-	prof         *professionsv1.State
-	metadata     map[uint32]itemMetadata
-	queried      map[uint32]bool
-	queryAfter   time.Time
-	requests     map[string]*operation
-	active, last *operation
-	closed       bool
-	addon        *addonBridge
+	mu             sync.Mutex
+	sendMu         sync.Mutex
+	observeMu      sync.Mutex
+	session        sessionAPI
+	selfGUID       uint64
+	now            func() time.Time
+	state          *inventoryv1.State
+	view           view
+	known          bool
+	actions        *actionsv1.State
+	trade          *tradev1.State
+	loot           *lootv1.State
+	prof           *professionsv1.State
+	metadata       map[uint32]itemMetadata
+	queried        map[uint32]bool
+	queryAfter     time.Time
+	requests       map[string]*operation
+	active, last   *operation
+	consumableBusy bool
+	itemUseCount   byte
+	consumableUses map[string]*consumableAttempt
+	lastConsumable *consumableAttempt
+	closed         bool
+	addon          *addonBridge
 }
 
 func NewService(session sessionAPI, sessionID string, self uint64) *Service {
-	s := &Service{session: session, selfGUID: self, now: time.Now, state: &inventoryv1.State{SessionId: sessionID, SelfGuid: self, Revision: 1, Limitation: limitation}, metadata: map[uint32]itemMetadata{}, queried: map[uint32]bool{}, requests: map[string]*operation{}}
+	s := &Service{session: session, selfGUID: self, now: time.Now, state: &inventoryv1.State{SessionId: sessionID, SelfGuid: self, Revision: 1, Limitation: limitation, DrinkingSupported: true, FoodBuffSupported: true}, metadata: map[uint32]itemMetadata{}, queried: map[uint32]bool{}, requests: map[string]*operation{}}
 	s.addon = newAddonBridge(s)
 	return s
 }
@@ -121,6 +127,26 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 			e = s.invoke(ctx, d.module, d.method, &emptypb.Empty{}, d.out)
 		}
 	}
+	var selfAuras *actionsv1.PlayerAuras
+	s.mu.Lock()
+	needAuras := s.lastConsumable != nil
+	for _, m := range s.metadata {
+		for _, id := range m.onUseSpells {
+			needAuras = needAuras || id != 0
+		}
+	}
+	s.mu.Unlock()
+	if e == nil && needAuras {
+		toolkit := &actionsv1.SpellToolkitState{}
+		if s.invoke(ctx, "buddy-actions", "spell_toolkit", &emptypb.Empty{}, toolkit) == nil && toolkit.SessionId == s.state.SessionId && toolkit.SelfGuid == s.selfGUID {
+			for _, set := range toolkit.PlayerAuras {
+				if set.TargetGuid == s.selfGUID {
+					selfAuras = set
+					break
+				}
+			}
+		}
+	}
 	s.mu.Lock()
 	before := proto.Clone(s.state).(*inventoryv1.State)
 	if e == nil && (t.SessionId != s.state.SessionId || l.SessionId != s.state.SessionId || p.SessionId != s.state.SessionId || p.SelfGuid != s.selfGUID) {
@@ -149,6 +175,25 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 		s.state.CopperRevision = w.SelfCopperRevision
 		s.equipmentStateLocked(v)
 		s.evidenceLocked(v)
+		s.consumableEvidenceLocked(v, selfAuras)
+	}
+	s.state.ConsumableContext = &inventoryv1.ConsumableContext{BodyReady: s.consumableReadyLocked(), SelfAuras: selfAuras}
+	if selfAuras != nil && selfAuras.Complete {
+		s.state.ConsumableContext.FoodBuffKnown = true
+		for _, aura := range selfAuras.Auras {
+			if aura.Positive && (!aura.DurationKnown || aura.RemainingMs > 0) {
+				spell, known := spellcatalog.Default().Lookup(aura.SpellId)
+				if !known {
+					s.state.ConsumableContext.FoodBuffKnown = false
+				}
+				if known && spell.Name == "Well Fed" {
+					s.state.ConsumableContext.FoodBuffPresent = true
+				}
+			}
+		}
+	}
+	if e == nil {
+		s.state.ConsumableContext.Dungeon = maps.IsDungeon(w.Self.MapId)
 	}
 	s.eligibilityLocked()
 	if !proto.Equal(before, s.state) {
@@ -213,6 +258,8 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 }
 func (s *Service) eligibilityLocked() {
 	s.state.Items = nil
+	s.state.ManaDrinkCount = nil
+	s.state.BuffFoodAvailable = false
 	if !s.known {
 		return
 	}
@@ -232,6 +279,7 @@ func (s *Service) eligibilityLocked() {
 		i := s.view.slots[k]
 		m := s.metadata[i.Entry]
 		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && bagUsability(s.view.w, m) == "", ContainerSlots: m.containerSlots, Name: m.name}
+		r.Consumable = consumableMetadata(m, s.view.w.Self)
 		r.GearEquipmentSlot, r.ExpectedEquippedItemGuid, r.ConservativeUpgrade, r.GearBlockedReason = s.gearEligibilityLocked(i)
 		r.GearEquipEligible = r.GearBlockedReason == "" && s.ordinaryBagLocked(i.Bag)
 		if !i.MetadataKnown || !m.known {
@@ -241,6 +289,7 @@ func (s *Service) eligibilityLocked() {
 		}
 		s.state.Items = append(s.state.Items, r)
 	}
+	s.consumableTotalsLocked()
 }
 func (s *Service) GetState(ctx context.Context, _ *emptypb.Empty) (*inventoryv1.State, error) {
 	call, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -479,7 +528,7 @@ func (s *Service) submit(ctx context.Context, kind, id, session string, revision
 	if s.closed || session != s.state.SessionId || revision != s.state.Revision {
 		return nil, fail("session_or_state_revision_changed")
 	}
-	if s.active != nil {
+	if s.active != nil || s.consumableBusy {
 		return nil, fail("inventory_operation_active")
 	}
 	for _, old := range s.requests {
@@ -751,6 +800,7 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.observeConsumableErrorLocked(p)
 	if p.Opcode == opcode.SMSGItemQuerySingleResponse {
 		m, e := parseItemMetadata(p.Payload)
 		if e != nil {

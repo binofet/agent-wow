@@ -163,6 +163,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
+	if consumable, legacy := legacyConsumableRequest(name, md.Path(), req); legacy {
+		return m.queueLegacyConsumable(ctx, inst, req, result, consumable)
+	}
 	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)

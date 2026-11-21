@@ -10,6 +10,7 @@ local spells = assert(encounter_spells)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
+local consumables = encounter_consumables
 local movement = encounter_movement
 local commands = encounter_commands
 local transient_tasks = encounter_tasks
@@ -49,6 +50,7 @@ local function on_event(event)
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
+    if consumables and not consumables.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
         observation = obs
@@ -83,6 +85,7 @@ local function export_state()
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
+                            consumables=consumables and consumables.export_state(),
                             movement=movement and movement.export_state and movement.export_state()}}
 end
 
@@ -107,6 +110,7 @@ local function import_state(checkpoint)
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
+    if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
        not movement.import_state(checkpoint.data.movement)) then return false end
     state = saved
@@ -648,6 +652,13 @@ local function decide(frame)
         out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
+    if consumables and (policy_observation or observation) then
+        local resting=consumables.decide(frame,policy_observation or observation,out.action==nil and #frame.pending==0)
+        out.consumable=resting
+        if resting.hold then out.followFormation=nil end
+        if not out.action and #frame.pending==0 then out.action=resting.action end
+        if resting.hold then return out end
+    end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, policy_observation or observation
     local expected

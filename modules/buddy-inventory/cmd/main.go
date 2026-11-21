@@ -13,6 +13,7 @@ import (
 
 	buddyinventory "github.com/agent-wow/agent-wow/modules/buddy-inventory"
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -68,6 +69,7 @@ func run() error {
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
 	readiness.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	readiness.SetServingStatus(modcb.PolicyConsumableService, grpc_health_v1.HealthCheckResponse_SERVING)
 	go func() { <-ctx.Done(); readiness.Shutdown(); server.Stop() }()
 	err = server.Serve(listener)
 	if errors.Is(err, grpc.ErrServerStopped) {
