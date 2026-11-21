@@ -52,7 +52,8 @@ type observed struct {
 	trajectory                  observedTrajectory
 	receivedMovement            bool
 	receivedMovementInfo        movementinfo.Info
-	receivedMovementWire        []byte
+	receivedMovementWire        [movementinfo.MaxEncodedSize]byte
+	receivedMovementWireLen     uint8
 	receivedSpline              bool
 	receivedSplineHeader        observedTrajectory
 	cast                        observedCreatureCast

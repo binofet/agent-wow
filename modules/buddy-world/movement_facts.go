@@ -47,7 +47,7 @@ func (s *observations) commitOwnMovementFacts(old observed, source uint32, now t
 			sourceOpcode: source, at: now, mapKnown: bound, mapID: p.mapID}
 		if p.receivedMovement && bound && p.receivedMovementInfo.AllFinite() {
 			m.known, m.info = true, p.receivedMovementInfo
-			m.wire = append([]byte(nil), p.receivedMovementWire...)
+			m.wire = append([]byte(nil), p.receivedMovementWire[:p.receivedMovementWireLen]...)
 		}
 		s.ownMovement = m
 	}
@@ -62,7 +62,8 @@ func (s *observations) commitOwnMovementFacts(old observed, source uint32, now t
 	}
 	p.receivedMovement, p.receivedSpline = false, false
 	p.receivedMovementInfo, p.receivedSplineHeader = movementinfo.Info{}, observedTrajectory{}
-	p.receivedMovementWire = nil
+	clear(p.receivedMovementWire[:])
+	p.receivedMovementWireLen = 0
 }
 
 func (m ownMovementObservation) snapshot(now time.Time) *worldv1.OwnMovementFacts {

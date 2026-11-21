@@ -190,7 +190,7 @@ func TestOwnMovementFactsClearAtActualWorldAndBodyBoundaries(t *testing.T) {
 					packet(t, s, opcode.SMSGUpdateObject, createFixture(1, vitalFields()))
 				}
 			case "destroy":
-				packet(t, s, opcode.SMSGDestroyObject, binary.LittleEndian.AppendUint64(nil, 1))
+				packet(t, s, opcode.SMSGDestroyObject, append(binary.LittleEndian.AppendUint64(nil, 1), 0))
 			case "out_of_range":
 				b := binary.LittleEndian.AppendUint32(nil, 1)
 				b = append(b, 4)
@@ -198,7 +198,7 @@ func TestOwnMovementFactsClearAtActualWorldAndBodyBoundaries(t *testing.T) {
 				packet(t, s, opcode.SMSGUpdateObject, append(b, packedFixture(1)...))
 			}
 			r := ownMovementSnapshot(t, s)
-			if r.SelfMovementFacts.Known || r.SelfMovementFacts.Info != nil || len(r.SelfMovementFacts.WireImage) != 0 || r.SelfSplineFacts.Known || r.SelfSplineFacts.IdKnown ||
+			if r.MalformedPackets != 0 || r.SelfMovementFacts.Known || r.SelfMovementFacts.Info != nil || len(r.SelfMovementFacts.WireImage) != 0 || r.SelfSplineFacts.Known || r.SelfSplineFacts.IdKnown ||
 				r.SelfMovementFacts.VisitRevision != r.VisitRevision || r.SelfSplineFacts.VisitRevision != r.VisitRevision {
 				t.Fatal("world/body boundary retained or rebound old own raw facts", name, r)
 			}

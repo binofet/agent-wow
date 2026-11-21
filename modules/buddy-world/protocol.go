@@ -447,7 +447,9 @@ func movement(c *cursor, p *observed, now time.Time) error {
 		if p.isSelf {
 			p.receivedMovement = true
 			p.receivedMovementInfo = info
-			p.receivedMovementWire = append([]byte(nil), c.b[start:start+consumed]...)
+			clear(p.receivedMovementWire[:])
+			copy(p.receivedMovementWire[:], c.b[start:start+consumed])
+			p.receivedMovementWireLen = uint8(consumed)
 		}
 	}
 	return nil
