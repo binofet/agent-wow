@@ -233,6 +233,27 @@ def _active_quests(rows):
     return active
 
 
+def _physical_candidates(facts, equipment):
+    facts = _object(facts)
+    destinations = _array(facts.get("destinations"), 19)
+    if not destinations:
+        raise ValueError("actual physical gear destinations required")
+    slots = {row.get("slot", 0): row for row in equipment}
+    seen, candidates = set(), []
+    for row in destinations:
+        destination = _typed(row, uints=("equipmentSlot",), bools=("eligible",), counters=("expectedEquippedItemGuid",))
+        slot = destination.get("equipmentSlot", 0)
+        expected = destination.get("expectedEquippedItemGuid", "0")
+        blocked = row.get("blockedReason", "")
+        if (slot > 18 or slot in seen or type(blocked) is not str or len(blocked) > 128
+                or expected != slots[slot].get("itemGuid", "0")):
+            raise ValueError("exact unique physical gear destination join required")
+        seen.add(slot)
+        candidates.append({"destination": {"equipmentSlot": slot, "expectedEquippedItemGuid": expected,
+            "eligible": destination.get("eligible", False), "blockedReason": blocked}, "equipment": slots[slot].copy()})
+    return candidates
+
+
 def project_context(context):
     """Retain typed facts referenced by this source, without choosing its use."""
     try:
@@ -247,8 +268,9 @@ def project_context(context):
         if inventory.get("inventoryKnown") is not True:
             raise ValueError("known carried layout required")
         carried_source, carried_guids = _layout(inv.get("inventoryBags"), source)
-        inventory["equipment"] = _equipment(inv.get("equipment"))
+        equipment = _equipment(inv.get("equipment"))
         inventory["items"] = []
+        selected_facts = []
         for row in _array(inv.get("items"), 160):
             row = _object(row)
             if _reference(row.get("item")) == source:
@@ -256,18 +278,22 @@ def project_context(context):
                     bools=("enhancementsKnown", "hasEnhancements", "durabilityKnown"))
                 inventory["items"].append({"item": source.copy(), "gearFacts": facts,
                     **_typed(row, bools=("metadataKnown",))})
-        gear_context = _object(inv.get("gearContext"))
-        templates = _object(gear_context.get("templates"))
-        referenced = {source["entry"], *(_uint(row.get("entry", 0)) for row in inventory["equipment"])}
-        inventory["gearContext"] = {"templates": {str(entry): _template(templates[str(entry)])
-            for entry in referenced if entry and str(entry) in templates}}
+                selected_facts.append(row["gearFacts"])
         raw = _typed(world, counters=("inventoryRevision", "selfEquipmentRevision", "selfQuestLogRevision"),
                      bools=("inventoryKnown", "selfEquipmentKnown", "selfQuestLogKnown"))
         raw["self"] = _typed(world.get("self"), counters=("guid",), bools=("present",))
         world_equipment = _equipment(world.get("selfEquipment"))
         if inventory.get("equipmentKnown") is not True or raw.get("selfEquipmentKnown") is not True:
             raise ValueError("known raw equipment frames required")
-        _equipment_match(inventory["equipment"], world_equipment, carried_guids)
+        _equipment_match(equipment, world_equipment, carried_guids)
+        if len(selected_facts) != 1:
+            raise ValueError("one exact owned item eligibility row required")
+        equipment_candidates = _physical_candidates(selected_facts[0], equipment)
+        gear_context = _object(inv.get("gearContext"))
+        templates = _object(gear_context.get("templates"))
+        referenced = {_uint(row["equipment"].get("entry", 0)) for row in equipment_candidates}
+        inventory["gearContext"] = {"templates": {str(entry): _template(templates[str(entry)])
+            for entry in referenced if entry and str(entry) in templates}}
         if raw.get("selfQuestLogKnown") is not True:
             raise ValueError("known raw quest log required")
         active_quests = _active_quests(world.get("selfQuestLog"))
@@ -293,8 +319,9 @@ def project_context(context):
                     "requiredCount": _uint(target.get("requiredCount", 0))})
             log["entries"].append(projected)
         return {"inventory": inventory, "world": raw, "journal": log, "source": source,
-                "carriedSource": carried_source, "activeQuestRows": active_quests,
-                "facts": {"inventoryLayoutKnown": True, "equipmentFramesMatch": True, "questLogFrameKnown": True}}
+                "carriedSource": carried_source, "activeQuestRows": active_quests, "equipmentCandidates": equipment_candidates,
+                "facts": {"inventoryLayoutKnown": True, "equipmentFramesMatch": True, "questLogFrameKnown": True,
+                          "physicalDestinationsKnown": True}}
     except ValueError:
         return None
 

@@ -65,6 +65,12 @@ func disposalArmorFrame(t *testing.T) map[string]any {
 	for k, v := range facts {
 		carried[k] = v
 	}
+	// Inventory.gearFactsLocked reports the physical chest destination even
+	// when actual_class_race_level_required blocks equipping this source.
+	// A retention comparison must not filter it by the Eligible bit.
+	facts["destinations"] = []any{map[string]any{"equipmentSlot": 4,
+		"expectedEquippedItemGuid": disposalArmorWornGUID, "eligible": false,
+		"blockedReason": "actual_class_race_level_required"}}
 	bags[0].(map[string]any)["slots"].([]any)[3] = carried
 	equipment := []any{}
 	for slot := 0; slot < 19; slot++ {
@@ -166,9 +172,13 @@ func disposalArmorResult(t *testing.T, r *Runtime, frame map[string]any, want st
 	}
 	if out == nil {
 		var err error
+		before := r.Status()
+		started := time.Now()
 		out, err = r.Evaluate(frame)
-		if err != nil {
-			t.Fatal(err)
+		elapsed, status := time.Since(started), r.Status()
+		if err != nil || status.Failures > before.Failures ||
+			status.QuarantinedRevision != "" && status.QuarantinedRevision != before.QuarantinedRevision {
+			t.Fatalf("Evaluate failed after %s (default limit %s); Runtime.Status=%+v: %v", elapsed, EvaluationLimit, status, err)
 		}
 	}
 	if want == "retained" {
@@ -411,6 +421,53 @@ func TestItemDisposalArmorExactCarriedSourceAndCompleteLayout(t *testing.T) {
 	}
 }
 
+func TestItemDisposalArmorRequiresActualNativeDestinationBindings(t *testing.T) {
+	t.Run("blocked_physical_destination_still_compares", func(t *testing.T) {
+		frame := disposalArmorFrame(t)
+		destination := disposalArmorSelected(frame)["gearFacts"].(map[string]any)["destinations"].([]any)[0].(map[string]any)
+		destination["eligible"] = false
+		disposalArmorResult(t, disposalArmorRuntime(t), frame, "eligible")
+	})
+	t.Run("fresh_actual_equipment_guid_matches_destination", func(t *testing.T) {
+		frame := disposalArmorFrame(t)
+		const replacement = "4611686018427387910"
+		for _, rows := range [][]any{disposalArmorEquipment(frame, false), disposalArmorEquipment(frame, true)} {
+			rows[4].(map[string]any)["itemGuid"] = replacement
+		}
+		disposalArmorSelected(frame)["gearFacts"].(map[string]any)["destinations"].([]any)[0].(map[string]any)["expectedEquippedItemGuid"] = replacement
+		disposalArmorResult(t, disposalArmorRuntime(t), frame, "eligible")
+	})
+	for name, change := range map[string]func(map[string]any){
+		"old_missing_destinations": func(v map[string]any) { delete(disposalArmorSelected(v)["gearFacts"].(map[string]any), "destinations") },
+		"empty_destinations": func(v map[string]any) {
+			disposalArmorSelected(v)["gearFacts"].(map[string]any)["destinations"] = []any{}
+		},
+		"malformed_destinations": func(v map[string]any) { disposalArmorSelected(v)["gearFacts"].(map[string]any)["destinations"] = false },
+		"duplicate_destination": func(v map[string]any) {
+			facts := disposalArmorSelected(v)["gearFacts"].(map[string]any)
+			rows := facts["destinations"].([]any)
+			facts["destinations"] = append(rows, rows[0])
+		},
+		"wrong_destination_guid": func(v map[string]any) {
+			disposalArmorSelected(v)["gearFacts"].(map[string]any)["destinations"].([]any)[0].(map[string]any)["expectedEquippedItemGuid"] = "4611686018427387910"
+		},
+		"malformed_destination_slot": func(v map[string]any) {
+			disposalArmorSelected(v)["gearFacts"].(map[string]any)["destinations"].([]any)[0].(map[string]any)["equipmentSlot"] = false
+		},
+		"equipment_changed_since_destination": func(v map[string]any) {
+			for _, rows := range [][]any{disposalArmorEquipment(v, false), disposalArmorEquipment(v, true)} {
+				rows[4].(map[string]any)["itemGuid"] = "4611686018427387910"
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			frame := disposalArmorFrame(t)
+			change(frame)
+			disposalArmorResult(t, disposalArmorRuntime(t), frame, "unknown")
+		})
+	}
+}
+
 func TestItemDisposalArmorContextDoesNotChangeOtherModes(t *testing.T) {
 	for _, mode := range []string{"vendor_sale", "misc_destroy"} {
 		for _, armor := range []bool{false, true} {
@@ -517,6 +574,44 @@ func disposalArmorHostProjection(t *testing.T, frame map[string]any) (string, ma
 	if context["facts"].(map[string]any)["questLogFrameKnown"] != true {
 		t.Fatal("projected quest-log coverage is not positively known")
 	}
+	if context["facts"].(map[string]any)["physicalDestinationsKnown"] != true {
+		t.Fatal("projected native physical destinations are not positively known")
+	}
+	if _, exists := disposalArmorInventory(projected.Frame)["equipment"]; exists {
+		t.Fatal("compact context retained the unrelated equipment vector")
+	}
+	rawDestinations := disposalArmorSelected(frame)["gearFacts"].(map[string]any)["destinations"].([]any)
+	candidates := context["equipmentCandidates"].([]any)
+	if len(candidates) != len(rawDestinations) {
+		t.Fatal("projection filtered or invented a native physical destination")
+	}
+	for index, value := range candidates {
+		candidate := value.(map[string]any)
+		destination := candidate["destination"].(map[string]any)
+		raw := rawDestinations[index].(map[string]any)
+		gotEligible, _ := destination["eligible"].(bool)
+		wantEligible, _ := raw["eligible"].(bool)
+		if destination["equipmentSlot"] != raw["equipmentSlot"] ||
+			destination["expectedEquippedItemGuid"] != raw["expectedEquippedItemGuid"] ||
+			gotEligible != wantEligible || destination["blockedReason"] != raw["blockedReason"] {
+			t.Fatal("projection changed a factual native destination", candidate, raw)
+		}
+		var observed map[string]any
+		for _, row := range disposalArmorEquipment(frame, false) {
+			equipment := row.(map[string]any)
+			slot := equipment["slot"]
+			if slot == nil {
+				slot = float64(0)
+			}
+			if slot == destination["equipmentSlot"] {
+				observed = equipment
+			}
+		}
+		if observed == nil || candidate["equipment"].(map[string]any)["itemGuid"] != observed["itemGuid"] ||
+			destination["expectedEquippedItemGuid"] != observed["itemGuid"] {
+			t.Fatal("projection did not join the actual observed equipment GUID", candidate, observed)
+		}
+	}
 	if _, exists := disposalArmorWorld(projected.Frame)["selfQuestLog"]; exists {
 		t.Fatal("compact context unexpectedly retained the raw quest-log vector")
 	}
@@ -586,7 +681,7 @@ func TestItemDisposalArmorRequiresPositiveMechanicalCoverageFacts(t *testing.T) 
 	}
 	t.Run("complete_facts", func(t *testing.T) { disposalArmorResult(t, fresh(t), frame, "eligible") })
 	t.Run("missing_scorer", func(t *testing.T) { disposalArmorResult(t, disposalRuntime(t), frame, "unknown") })
-	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch", "questLogFrameKnown"} {
+	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch", "questLogFrameKnown", "physicalDestinationsKnown"} {
 		for _, condition := range []struct {
 			name  string
 			value any
@@ -604,6 +699,16 @@ func TestItemDisposalArmorRequiresPositiveMechanicalCoverageFacts(t *testing.T) 
 		}
 	}
 	for name, change := range map[string]func(map[string]any){
+		"equipment_candidates_missing": func(v map[string]any) { delete(disposalArmorContext(v), "equipmentCandidates") },
+		"equipment_candidates_empty":   func(v map[string]any) { disposalArmorContext(v)["equipmentCandidates"] = []any{} },
+		"equipment_candidates_duplicate": func(v map[string]any) {
+			context := disposalArmorContext(v)
+			rows := context["equipmentCandidates"].([]any)
+			context["equipmentCandidates"] = append(rows, rows[0])
+		},
+		"equipment_candidate_guid_mismatch": func(v map[string]any) {
+			disposalArmorContext(v)["equipmentCandidates"].([]any)[0].(map[string]any)["destination"].(map[string]any)["expectedEquippedItemGuid"] = "4611686018427387910"
+		},
 		"active_rows_missing": func(v map[string]any) { delete(disposalArmorContext(v), "activeQuestRows") },
 		"active_rows_duplicate": func(v map[string]any) {
 			context := disposalArmorContext(v)

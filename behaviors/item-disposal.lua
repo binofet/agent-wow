@@ -108,15 +108,20 @@ local function same_instance(a,b)
     return zero(a.durability)==zero(b.durability) and zero(a.maxDurability)==zero(b.maxDurability)
 end
 
-local function matching_equipment(inventory,world)
+local function matching_equipment(inventory,world,candidates)
     if inventory.equipmentKnown~=true or world.selfEquipmentKnown~=true or
         not decimal(inventory.equipmentRevision) or inventory.equipmentRevision~=world.selfEquipmentRevision or
-        not array(inventory.equipment,19) or #inventory.equipment~=19 then return end
+        not array(candidates,19) or #candidates==0 then return end
     local rows={}
-    for _,row in ipairs(inventory.equipment) do
-        if type(row)~="table" or row.slotKnown~=true or not uint(zero(row.slot)) or zero(row.slot)>18 or
-            rows[zero(row.slot)] then return end
-        rows[zero(row.slot)]=row
+    for _,candidate in ipairs(candidates) do
+        if type(candidate)~="table" or type(candidate.destination)~="table" or type(candidate.equipment)~="table" then return end
+        local destination,row=candidate.destination,candidate.equipment
+        local slot=zero(destination.equipmentSlot)
+        local observed=row.itemGuid
+        if observed==nil then observed="0" end
+        if not uint(slot) or slot>18 or rows[slot] or row.slotKnown~=true or zero(row.slot)~=slot or
+            type(destination.expectedEquippedItemGuid)~="string" or observed~=destination.expectedEquippedItemGuid then return end
+        rows[slot]=row
     end
     return rows
 end
@@ -168,9 +173,11 @@ end
 
 -- Gray armor needs a factual projection of Inventory.State, World and Journal.
 -- The caller validates the full five-bag layout and both full equipment frames,
--- then retains carriedSource, one equipment frame and facts.inventoryLayoutKnown
--- / equipmentFramesMatch. These attest shape/identity consistency, not fullness
--- or disposal eligibility. Lua owns protection, retention and worn-slot choice.
+-- then joins every native physical destination to its exact equipped GUID.
+-- It retains carriedSource and equipmentCandidates, including blocked rows,
+-- with positive inventoryLayoutKnown/equipmentFramesMatch/physicalDestinationsKnown
+-- facts. These prove observation consistency, not fullness or disposal choice.
+-- Lua owns protection, retention and the wanted armor slot.
 -- A checked full 25-slot quest frame becomes activeQuestRows plus the positive
 -- questLogFrameKnown fact. Lua still matches every active row to its Journal.
 -- The fourth argument is the actual shared gear module, composed by the caller.
@@ -218,10 +225,12 @@ local function gray_armor(item,context,gear)
     end
     if not facts or not same_instance(facts,carried) or facts.enhancementsKnown~=true then return result("unknown","owned_armor_enhancement_context_required") end
     if facts.hasEnhancements==true then return result("keep","enhanced_armor_retained") end
-    local equipment=matching_equipment(inventory,world)
+    if context.facts.physicalDestinationsKnown~=true then return result("unknown","observed_physical_armor_destinations_required") end
+    local equipment=matching_equipment(inventory,world,context.equipmentCandidates)
     if not equipment then return result("unknown","matching_full_equipment_context_required") end
     local worn=equipment[equipment_slots[item.inventoryType]]
-    if not worn or guid(worn.itemGuid)=="0" or worn.itemGuid==source.itemGuid then return result("keep","worn_armor_replacement_required") end
+    if not worn then return result("unknown","observed_physical_armor_destination_required") end
+    if guid(worn.itemGuid)=="0" or worn.itemGuid==source.itemGuid then return result("keep","worn_armor_replacement_required") end
     if not guid(worn.itemGuid) or worn.metadataKnown~=true or not uint(worn.entry) or worn.entry==0 or worn.stackCount~=1 then
         return result("unknown","usable_worn_armor_facts_required")
     end
