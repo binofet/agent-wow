@@ -152,6 +152,7 @@ type Service struct {
 	formation                            followFormation
 	starterSpells                        starterSpellPolicy
 	followGoal                           followFormationGoal
+	followGoalExecuting                  *followFormationGoal
 	followRevision                       uint64
 	followNav                            followNavigation
 	followPortal                         dungeonPortalFollow
@@ -872,6 +873,11 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "target_movement_visit_changed"
 		return false
 	}
+	if moving && s.followGoalExecuting != nil &&
+		(!s.currentFollowFormationGoalLocked(*s.followGoalExecuting, w) || safeFollowPlayers(w, s.selfGUID, s.navDataDir != "") != "") {
+		s.state.Reason = "follow_formation_goal_changed_before_movement"
+		return false
+	}
 	if moving && s.followPortal.movementInProgress {
 		if !s.portalMovementAllowedLocked(w) {
 			s.state.Reason = "follow_instance_source_changed"
@@ -1221,6 +1227,8 @@ func (s *Service) Tick(ctx context.Context) {
 		formationUsed = true
 		return
 	}
+	ownedFollow := s.currentFollowFormationGoalLocked(s.followGoal, snapshot)
+	following := s.state.Following || ownedFollow
 	swimFollow := s.state.Following && s.navDataDir != "" && (s.swimming ||
 		snapshot.GetSelf().GetMovementFlags()&swimMovementFlag != 0 ||
 		snapshot.GetOwner().GetMovementFlags()&swimMovementFlag != 0 ||
@@ -1229,7 +1237,7 @@ func (s *Service) Tick(ctx context.Context) {
 	if swimFollow {
 		reason = safePlayerMovement(snapshot, s.selfGUID, true)
 	} else {
-		reason = safeFollowPlayers(snapshot, s.selfGUID, s.state.Following && s.navDataDir != "")
+		reason = safeFollowPlayers(snapshot, s.selfGUID, following && s.navDataDir != "")
 	}
 	if reason != "" {
 		// Unknown or temporarily unsafe observations pause enabled intent. A
@@ -1254,7 +1262,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "motion_unconfirmed_waiting_for_fresh_pose"
 		return
 	}
-	if s.state.Following && s.navDataDir != "" {
+	if s.state.Following && !ownedFollow && s.navDataDir != "" {
 		// Observe travel heading even while this actor is casting or assisting,
 		// so each role keeps the same formation frame after combat ends.
 		classID := uint32(0)
@@ -1276,12 +1284,17 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return
 	}
-	if !s.state.Following {
+	if !following {
 		// The prior movement can belong to a rogue approach even when the
 		// separate Follow intent has never been enabled.
 		s.stopLocked(ctx)
 		s.lastStep = now
 		return
+	}
+	if ownedFollow {
+		goal := s.followGoal
+		s.followGoalExecuting = &goal
+		defer func() { s.followGoalExecuting = nil }()
 	}
 	if s.navDataDir != "" {
 		formationUsed = true

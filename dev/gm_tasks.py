@@ -265,9 +265,12 @@ class Host:
             if rpc:member['landingRoute']=self.route(rpc,member,route_target)
         return dict(gm=gm,members=members,group=group,destinationPlayer=destination,threats=threats,destinationRoute=route,
             selection=selection,provenance=dict(observedAtUnixMs=int(self.clock()*1000),gmSessionId=actions['sessionId'],partyRevision=party.get('revision'),destination=self.goal.get('provenance')))
+    def hold_rpcs(self):
+        # The GM is a writer too, but is not part of the requested roster.
+        return dict({'87':self.rpc},**{g:r for g,r in self.member_rpcs.items() if g!='87'})
     def install_holds(self):
         wrapper=self.hold.read_text()
-        for guid,rpc in self.member_rpcs.items():
+        for guid,rpc in self.hold_rpcs().items():
             record=self.data['holds'].get(guid)
             if record and record.get('restored'):continue
             state=rpc.call('buddy-actions.status',{})
@@ -291,14 +294,31 @@ class Host:
                 record['heldRevision']=receipt['revision']
             else:raise ValueError('member policy changed independently:'+guid)
             self.persist()
-            if state.get('following') is True:rpc.call('buddy-actions.follow',dict(enabled=False))
+            stop=record.get('movementStop')
+            if stop and stop.get('outcome')!='written':raise ValueError('hold movement stop outcome is unconfirmed:'+guid)
+            if stop is None and (guid=='87' or state.get('following') is True):
+                # Follow(false) explicitly retires physical motion even when
+                # Following was already false. Reserve before the identity-less
+                # legacy RPC; an unknown return must never replay that write.
+                state=rpc.call('buddy-actions.status',{})
+                if str(state.get('selfGuid'))!=guid or state.get('sessionId')!=identity['sessionId']:
+                    raise ValueError('hold body session changed before stop:'+guid)
+                stop=dict(outcome='reserved');record['movementStop']=stop
+                record['followPaused']=True;self.persist()
+                try:
+                    result=rpc.call('buddy-actions.follow',dict(enabled=False))
+                    if str(result.get('selfGuid'))!=guid or result.get('sessionId')!=identity['sessionId'] or result.get('following') is True or result.get('moving') is True or result.get('motionUnconfirmed') is True or result.get('reason')!='follow_disabled':
+                        raise ValueError('explicit movement stop was not confirmed:'+guid)
+                    stop['outcome']='written'
+                except Exception as error:
+                    stop.update(outcome='unconfirmed',error=str(error));self.persist();raise
             record['followPaused']=True;self.persist()
     def restore_holds(self):
         errors=[]
         for guid,record in self.data.get('holds',{}).items():
             if record.get('restored'):continue
             try:
-                rpc=self.member_rpcs[guid];current=rpc.call('session.policy_source',record['identity'])
+                rpc=self.hold_rpcs()[guid];current=rpc.call('session.policy_source',record['identity'])
                 source_hash=hashlib.sha256(current['source'].encode()).hexdigest()
                 if current['source']!=record['source']:
                     if source_hash!=record.get('heldSourceSHA256'):raise ValueError('policy changed independently; original source was not overwritten')
