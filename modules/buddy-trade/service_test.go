@@ -74,7 +74,14 @@ func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleReque
 		if f.leaseChange != nil {
 			f.leaseChange()
 		}
-		result = &actionsv1.InteractionLease{Token: "lease-token", State: f.actions}
+		leaseState := proto.Clone(f.actions).(*actionsv1.State)
+		if leaseState.InteractionOwner == "" {
+			leaseState.InteractionOwner = "trade"
+		}
+		if leaseState.InteractionLeaseRemainingMs == 0 {
+			leaseState.InteractionLeaseRemainingMs = 30000
+		}
+		result = &actionsv1.InteractionLease{Token: "lease-token", State: leaseState}
 	case "buddy-actions.release_interaction":
 		f.releases++
 		result = f.actions
