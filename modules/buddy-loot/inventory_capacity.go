@@ -86,7 +86,7 @@ func stoppedLootLease(a *actionsv1.State) bool {
 
 func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse {
 	baseline := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), baseline) != nil || !ownKnownFreeSlot(baseline, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), baseline) != nil || !s.exactCorpse && !ownKnownFreeSlot(baseline, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -126,7 +126,7 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 	// from this response, against the renewed stopped position. A newer actual
 	// self position invalidates that position, even if the target remains near it.
 	w := &worldv1.SnapshotResponse{}
-	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w) != nil || !ownKnownFreeSlot(w, s.selfGUID) {
+	if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), w) != nil || !s.exactCorpse && !ownKnownFreeSlot(w, s.selfGUID) {
 		s.pauseForCapacity()
 		s.finish(ctx)
 		return nil
@@ -142,7 +142,7 @@ func (s *Service) openingCapacity(ctx context.Context) *worldv1.SnapshotResponse
 
 // Pure validation: no dependency read may supersede the final world response.
 func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
-	if w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || w.Self.UnitFlags&0x80000 != 0 {
+	if w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || !s.exactCorpse && w.Self.UnitFlags&0x80000 != 0 {
 		return false
 	}
 	if s.questGather {

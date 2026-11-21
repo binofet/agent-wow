@@ -46,9 +46,9 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 			s := NewAutomaticService(f, 1, "session")
 			now := time.Unix(1000, 0)
 			s.now = func() time.Time { return now }
-			s.Tick(ctx)
+			tickCorpseLua(t, s)
 			emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, items...))
-			s.Tick(ctx)
+			tickCorpseLua(t, s)
 			if len(f.packets) != 2 || f.packets[1].Opcode != tc.wantOpcode {
 				t.Fatalf("unexpected loot request: %+v, state=%v", f.packets, current(t, s))
 			}
@@ -58,7 +58,7 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 			if tc.wantOpcode == opcode.CMSGLootRelease {
 				emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
 				now = now.Add(time.Minute)
-				s.Tick(ctx)
+				tickCorpseLua(t, s)
 				if len(f.packets) != 2 {
 					t.Fatalf("reopened the ordinary corpse while holding the reserve: %+v", f.packets)
 				}

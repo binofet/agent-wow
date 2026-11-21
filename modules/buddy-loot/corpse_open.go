@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"math"
 	"sort"
 	"time"
 
@@ -55,7 +56,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 
 func exactCorpseCurrent(r *lootv1.OpenCorpseRequest, w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
 	if r == nil || w.GetSelf().GetGuid() != r.SelfGuid || a.GetSessionId() != r.SessionId || a.Position == nil ||
-		a.Position.Revision != r.ExpectedPositionRevision || w.InventoryRevision != r.ExpectedInventoryRevision || a.MotionUnconfirmed {
+		a.Position.Revision != r.ExpectedPositionRevision || !w.InventoryKnown || w.InventoryRevision != r.ExpectedInventoryRevision || a.MotionUnconfirmed {
 		return false
 	}
 	var found *worldv1.CreatureState
@@ -67,7 +68,9 @@ func exactCorpseCurrent(r *lootv1.OpenCorpseRequest, w *worldv1.SnapshotResponse
 			found = c
 		}
 	}
-	return found != nil && found.PositionRevision == r.ExpectedCorpseRevision && eligible(w.Self, a.Position, found)
+	// The server checks ordinary three-dimensional interaction distance; a
+	// second height or combat policy is not an OPEN packet precondition.
+	return found != nil && found.PositionRevision == r.ExpectedCorpseRevision && corpseWithin(w.Self, a.Position, found, 5, math.Inf(1), true)
 }
 
 func (s *Service) corpseReceiptLocked() *lootv1.CorpseOperation {
@@ -126,8 +129,8 @@ func (s *Service) OpenCorpse(ctx context.Context, r *lootv1.OpenCorpseRequest) (
 	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a); err != nil {
 		return nil, err
 	}
-	if !exactCorpseCurrent(r, w, a) || !ownKnownFreeSlot(w, s.selfGUID) || a.Moving || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.InteractionOwner != "" {
-		return nil, status.Error(codes.FailedPrecondition, "current exact in-range corpse, owned position, capacity and unoccupied body required")
+	if !exactCorpseCurrent(r, w, a) || a.Moving || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.InteractionOwner != "" {
+		return nil, status.Error(codes.FailedPrecondition, "current exact in-range corpse, owned position and unoccupied body required")
 	}
 	lease := &actionsv1.InteractionLease{}
 	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}, lease); err != nil {

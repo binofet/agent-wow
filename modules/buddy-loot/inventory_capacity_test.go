@@ -94,14 +94,14 @@ func TestLootCapacityBlocksNewOpenAndRechecksAfterLease(t *testing.T) {
 				f.world.InventoryKnown = false
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if len(f.packets) != 0 || f.leaseOwner != "" || !current(t, s).InventoryPaused {
 				t.Fatal(gather, afterLease, current(t, s), f.packets)
 			}
 			f.afterAcquire = nil
 			f.world.InventoryKnown = true
 			advance(time.Second)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if len(f.packets) != 1 || current(t, s).InventoryPaused {
 				t.Fatal("actual free capacity did not resume", current(t, s), f.packets)
 			}
@@ -112,21 +112,21 @@ func TestLootCapacityBlocksNewOpenAndRechecksAfterLease(t *testing.T) {
 func TestLootCapacityRechecksBeforeAutostoreAndPreservesPendingWrite(t *testing.T) {
 	s, f, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 2, id: 123, count: 1}))
 	fillBackpack(f.world)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if !current(t, s).InventoryPaused || len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal("autostore ignored full carried inventory", current(t, s), f.packets)
 	}
 	s, f, _ = rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 2, id: 123, count: 1}))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	f.world.InventoryKnown = false
 	before := len(f.packets)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if len(f.packets) != before || current(t, s).Phase != "waiting_item" || current(t, s).InventoryPaused {
 		t.Fatal("capacity change reset an outstanding ambiguous item write", current(t, s), f.packets)
 	}
@@ -177,7 +177,7 @@ func TestLootFinalCapacityReadRevalidatesSelectedSourceAndBody(t *testing.T) {
 					}
 				}
 				enable(t, s)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				if f.snapshotReads != finalRead || len(f.packets) != 0 || s.token != "" || f.releases != 1 {
 					t.Fatal("final observation change reached write", current(t, s), f.snapshotReads, f.packets, f.releases)
 				}
@@ -189,7 +189,7 @@ func TestLootFinalCapacityReadRevalidatesSelectedSourceAndBody(t *testing.T) {
 				if mode == "capacity" {
 					return
 				} // A newly complete free observation may resume a capacity pause.
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				if len(f.packets) != 0 {
 					t.Fatal("rejected source retried", f.packets)
 				}
@@ -208,24 +208,24 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 				guid = harvestGUID
 			}
 			enable(t, s)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			window := windowPacket(guid, 0, lootItem{slot: 2, id: 123, count: 1})
 			if gather {
 				window = harvestWindow(guid, lootItem{slot: 2, id: harvestItemID, count: 1, slotType: 4})
 			}
 			emit(s, opcode.SMSGLootResponse, window)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			writtenRevision := f.world.InventoryRevision
 			failure := make([]byte, 18)
 			failure[0] = 50
 			emit(s, opcode.SMSGInventoryChangeFailure, failure)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(guid), 1))
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			before := len(f.packets)
 			for range 2 {
 				advance(time.Second)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 			}
 			if !current(t, s).InventoryPaused || f.world.InventoryRevision != writtenRevision || len(f.packets) != before {
 				t.Fatal("same cached free view retried rejected write", current(t, s), f.packets)
@@ -233,13 +233,13 @@ func TestLootInventoryFullRequiresNewerFreeInventoryRevision(t *testing.T) {
 			f.world.InventoryRevision++
 			f.world.InventoryKnown = false
 			advance(time.Second)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if len(f.packets) != before {
 				t.Fatal("new unknown view resumed")
 			}
 			f.world.InventoryKnown = true
 			advance(time.Second)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if current(t, s).InventoryPaused || len(f.packets) != before+1 {
 				t.Fatal("newer complete free view did not resume", current(t, s), f.packets)
 			}
@@ -255,7 +255,7 @@ func TestLootFinalCapacityReadRetainsOwnWolfQuestAuthority(t *testing.T) {
 		}
 	}
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if f.snapshotReads != 4 || len(f.packets) != 0 || s.token != "" || f.releases != 1 {
 		t.Fatal("final quest loss reached corpse loot write", current(t, s), f.snapshotReads, f.packets)
 	}
@@ -291,7 +291,7 @@ func TestLootOpeningRenewsExactTokenBeforeFinalWorldRead(t *testing.T) {
 					}
 				}
 				enable(t, s)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				if mode == "success" {
 					want := []string{"buddy-world.snapshot", "buddy-actions.status", "buddy-actions.acquire_interaction", "buddy-world.snapshot", "packet"}
 					if len(f.packets) != 1 || len(f.calls) < len(want) || !reflect.DeepEqual(f.calls[len(f.calls)-len(want):], want) {

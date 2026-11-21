@@ -21,7 +21,7 @@ func uncertainItem(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	healthyLootInventory(f)
 	openItem(t, s)
 	advance(3 * time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if s.cleanup.source != corpseGUID || !s.itemRequested || s.cleanup.safeToContinue {
 		t.Fatal("missing uncertain item", current(t, s))
 	}
@@ -34,12 +34,12 @@ func nextOrdinarySource(t *testing.T, s *Service, f *fakeSession, advance func(t
 	other.Guid++
 	f.world.LootableCorpses = append(f.world.LootableCorpses, other)
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if current(t, s).Phase != "waiting_open" || s.pendingGUID() != other.Guid {
 		t.Fatal("other source not opened", current(t, s))
 	}
 	emit(s, opcode.SMSGLootResponse, windowPacket(other.Guid, 0, lootItem{slot: 2, id: id, count: 3}))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if current(t, s).Phase != "waiting_item" {
 		t.Fatal("new item not requested", current(t, s))
 	}
@@ -49,28 +49,28 @@ func nextOrdinarySource(t *testing.T, s *Service, f *fakeSession, advance func(t
 func TestOrdinarySharedWindowRemovalSkipsOnlyActualRemovedSlots(t *testing.T) {
 	s, f, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 5,
 		lootItem{slot: 0, id: 1195, count: 1}, lootItem{slot: 1, id: 2589, count: 2}, lootItem{slot: 2, id: 772, count: 1}, lootItem{slot: 3, id: 773, count: 1}))
-	s.Tick(context.Background()) // money
+	tickCorpseLua(t, s) // money
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(4, 772, 1))
 	emit(s, opcode.SMSGLootRemoved, []byte{19}) // not in this window
 	emit(s, opcode.SMSGLootClearMoney, nil)
-	s.Tick(context.Background())
-	s.Tick(context.Background()) // request0
+	tickCorpseLua(t, s)
+	tickCorpseLua(t, s) // request0
 	emit(s, opcode.SMSGLootRemoved, []byte{0})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 1195, 1))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootRemoved, []byte{3})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(4, 773, 1))
-	s.Tick(context.Background()) // request1, not stale slot2/3
+	tickCorpseLua(t, s) // request1, not stale slot2/3
 	emit(s, opcode.SMSGLootRemoved, []byte{1})
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 2589, 2))
-	s.Tick(context.Background())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	got := current(t, s)
 	var slots []byte
 	for _, p := range f.packets {
@@ -97,7 +97,7 @@ func TestOrdinaryClosedUnknownItemRetiresWithoutInventingReceipt(t *testing.T) {
 			}
 			before := current(t, s)
 			advance(3 * time.Second)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if mode == "full_bags" {
 				for i, slot := range f.world.InventoryBags[0].Slots {
 					slot.ItemGuid = uint64(0x4000000000000000) + uint64(i+1)
@@ -111,7 +111,7 @@ func TestOrdinaryClosedUnknownItemRetiresWithoutInventingReceipt(t *testing.T) {
 				disableLoot(t, s)
 			}
 			emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			got := current(t, s)
 			if got.Enabled == (mode == "explicit_disable") || got.PendingCorpseGuid != 0 || got.LastCorpseGuid != 0 || got.ItemsStoredConfirmed != before.ItemsStoredConfirmed || got.LootSlotsRemoved != before.LootSlotsRemoved || got.ReleasesObserved != 1 || len(f.packets) != 3 || !s.retired[corpseGUID] || !s.unconfirmedItems[123] || s.cleanup.source != 0 || f.leaseOwner != "" {
 				t.Fatal("unknown item not safely retired", got)
@@ -177,7 +177,7 @@ func TestOrdinaryUnknownItemRequiresExactReleaseAndCompleteFreshInventory(t *tes
 			before := len(f.packets)
 			for range 3 {
 				advance(time.Second)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 			}
 			if s.cleanup.source != corpseGUID || s.state.PendingCorpseGuid != corpseGUID || len(f.packets) != before || s.unconfirmedItems[123] || s.state.ItemsStoredConfirmed != 0 {
 				t.Fatal("unsafe barrier retired or wrote", current(t, s))
@@ -190,20 +190,20 @@ func TestOrdinaryLateUnknownPushCannotBindNewWindow(t *testing.T) {
 	s, f, advance := uncertainItem(t)
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3)) // after timeout, before ACK
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3)) // after cleanup
 	other := proto.Clone(f.world.LootableCorpses[0]).(*worldv1.CreatureState)
 	other.Guid++
 	f.world.LootableCorpses = append(f.world.LootableCorpses, other)
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3)) // waiting for a different window
 	emit(s, opcode.SMSGLootResponse, windowPacket(other.Guid, 0, lootItem{slot: 2, id: 123, count: 3}))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	before := len(f.packets)
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3)) // same ID/count in new window still has no source
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if got := current(t, s); got.Phase != "waiting_item" || got.ItemsStoredConfirmed != 0 || len(got.RecentItems) != 0 || s.pushed || len(f.packets) != before {
 		t.Fatal("old push bound new request", got)
 	}
@@ -213,18 +213,18 @@ func TestOrdinaryLateUnknownPushCannotBindNewWindow(t *testing.T) {
 	slot.MetadataKnown = true
 	slot.Entry = 123
 	slot.StackCount = 3
-	s.Tick(context.Background()) // same revision cannot advance
+	tickCorpseLua(t, s) // same revision cannot advance
 	if s.state.Phase != "waiting_item" {
 		t.Fatal("same revision accepted")
 	}
 	f.world.InventoryRevision++
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if got := current(t, s); got.Phase != "ready_item" || got.ItemsStoredConfirmed != 0 || len(got.RecentItems) != 0 {
 		t.Fatal("actual newer owned delta not isolated", got)
 	}
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(other.Guid), 1))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if current(t, s).Phase != "idle" || !s.unconfirmedItems[123] || len(f.packets) != before+1 {
 		t.Fatal("safe new source did not finish once", current(t, s))
 	}
@@ -239,7 +239,7 @@ func TestOrdinaryUnknownItemDeltaRequiresCurrentRemovalAndExactOwnedIncrease(t *
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := uncertainItem(t)
 			emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			nextOrdinarySource(t, s, f, advance, 123)
 			slot := f.world.InventoryBags[0].Slots[0]
 			slot.ItemGuid = 0x4000000000000001
@@ -279,15 +279,15 @@ func TestOrdinaryEarlyServerCloseCannotBypassUnknownMutationBarrier(t *testing.T
 			healthyLootInventory(f)
 			if mode == "money" {
 				enable(t, s)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 5))
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 			} else if mode == "gather" {
 				s, f, _ = harvestRig(t)
 				enable(t, s)
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				emit(s, opcode.SMSGLootResponse, harvestWindow(harvestGUID, lootItem{slot: 2, id: 11119, count: 1}))
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 			} else {
 				openItem(t, s)
 			}
@@ -309,7 +309,7 @@ func TestOrdinaryEarlyServerCloseCannotBypassUnknownMutationBarrier(t *testing.T
 			if s.cleanup.source != guid || !s.cleanup.releaseObserved || s.state.ReleasesObserved != 1 {
 				t.Fatal("early close bypassed barrier", current(t, s))
 			}
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if mode == "item" {
 				if s.cleanup.source != 0 || s.state.PendingCorpseGuid != 0 || !s.unconfirmedItems[123] {
 					t.Fatal("early close not retired", current(t, s))
@@ -330,7 +330,7 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 			s, f, advance := rig(t)
 			healthyLootInventory(f)
 			enable(t, s)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if mode == "money_transport_ack" {
 				emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 5))
 				f.failOpcode = opcode.CMSGLootMoney
@@ -340,26 +340,26 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 					f.failOpcode = opcode.CMSGAutostoreLootItem
 				}
 			}
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if mode == "disabled_ack" || mode == "disabled_timeout" {
 				disableLoot(t, s)
 			}
 			f.failOpcode = 0
-			s.Tick(context.Background()) // abort cleanup, one release
+			tickCorpseLua(t, s) // abort cleanup, one release
 			if s.state.Phase != "waiting_release" || s.state.Enabled {
 				t.Fatal("fixture not disabled/releasing", current(t, s))
 			}
 			before := len(f.packets)
 			if mode == "transport_timeout" || mode == "disabled_timeout" {
 				advance(3 * time.Second)
-				s.Tick(context.Background())
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
+				tickCorpseLua(t, s)
 				if s.cleanup.source != corpseGUID || s.cleanup.releaseObserved {
 					t.Fatal("unacknowledged close escaped", current(t, s))
 				}
 			}
 			emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if mode == "money_transport_ack" {
 				if s.cleanup.source != corpseGUID || s.state.Phase != "loot_mutation_unconfirmed" {
 					t.Fatal("uncertain money escaped", current(t, s))
@@ -373,7 +373,7 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 			nextOrdinarySource(t, s, f, advance, 123)
 			emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3))
 			emit(s, opcode.SMSGLootRemoved, []byte{2})
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if s.pushed || s.state.ItemsStoredConfirmed != 0 || s.state.Phase != "waiting_item" {
 				t.Fatal("abort push crossed source", current(t, s))
 			}
@@ -386,12 +386,12 @@ func TestOrdinaryUnsettledNegativeReleaseNeverAuthorizesAnotherSource(t *testing
 	healthyLootInventory(f)
 	openItem(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(corpseGUID), 0))
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	enable(t, s)
 	before := len(f.packets)
 	for range 3 {
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 	}
 	if s.cleanup.source != corpseGUID || !s.cleanup.releaseRejected || s.cleanup.releaseObserved || s.state.ReleasesObserved != 0 || s.state.PendingCorpseGuid != corpseGUID || len(f.packets) != before || s.unconfirmedItems[123] {
 		t.Fatal("negative close authorized continuation", current(t, s))
@@ -411,7 +411,7 @@ func TestOrdinaryGenericFinishCannotDiscardUnsettledStore(t *testing.T) {
 				f.leaseOwner = "trade"
 				f.leaseToken = "replacement-token"
 			}
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if s.cleanup.source != corpseGUID || !s.itemRequested || s.state.LastCorpseGuid != 0 || s.state.PendingCorpseGuid != corpseGUID || s.cleanup.releaseObserved || s.state.ItemsStoredConfirmed != 0 {
 				t.Fatal("generic finish discarded ambiguous mutation", current(t, s), s.cleanup)
 			}
@@ -419,7 +419,7 @@ func TestOrdinaryGenericFinishCannotDiscardUnsettledStore(t *testing.T) {
 			enable(t, s)
 			emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3))
 			advance(3 * time.Second)
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if s.cleanup.source != corpseGUID || len(f.packets) != before || s.state.ItemsStoredConfirmed != 0 {
 				t.Fatal("enable/retry escaped unknown cleanup", current(t, s))
 			}
@@ -428,7 +428,7 @@ func TestOrdinaryGenericFinishCannotDiscardUnsettledStore(t *testing.T) {
 					t.Fatal("replacement lease touched")
 				}
 				emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-				s.Tick(context.Background())
+				tickCorpseLua(t, s)
 				if s.cleanup.releaseObserved || s.cleanup.source == 0 {
 					t.Fatal("unrequested close accepted")
 				}
@@ -438,14 +438,14 @@ func TestOrdinaryGenericFinishCannotDiscardUnsettledStore(t *testing.T) {
 			f.world.Self.UnitFlags &= ^uint32(0x80000)
 			f.failOpcode = 0
 			emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if s.cleanup.source != 0 || !s.unconfirmedItems[123] || s.state.LastCorpseGuid != 0 || len(f.packets) != before {
 				t.Fatal("actual late close not isolated", current(t, s))
 			}
 			nextOrdinarySource(t, s, f, advance, 123)
 			emit(s, opcode.SMSGItemPushResult, pushPacket(1, 123, 3))
 			emit(s, opcode.SMSGLootRemoved, []byte{2})
-			s.Tick(context.Background())
+			tickCorpseLua(t, s)
 			if s.pushed || s.state.ItemsStoredConfirmed != 0 || s.state.Phase != "waiting_item" {
 				t.Fatal("failed-release late push rebound", current(t, s))
 			}

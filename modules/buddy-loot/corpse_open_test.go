@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +122,21 @@ func TestProductionLootTicksCannotSelectOrdinaryCorpses(t *testing.T) {
 	}
 }
 
+func TestExactCorpseOpenDoesNotChooseCombatOrBagSpacePolicy(t *testing.T) {
+	s, f, r := exactCorpseRig(t)
+	f.world.Self.UnitFlags |= 0x80000
+	for i, item := range f.world.InventoryBags[0].Slots {
+		item.ItemGuid = 0x4000000000000100 + uint64(i)
+		item.Entry = 25
+		item.StackCount = 1
+		item.MetadataKnown = true
+	}
+	op, err := s.OpenCorpse(context.Background(), r)
+	if err != nil || !op.OpeningTransportWritten || len(f.packets) != 1 {
+		t.Fatal("packet-valid exact OPEN still imposed native combat/free-slot preference", op, err, f.packets)
+	}
+}
+
 func corpsePolicyVM(t *testing.T, sid string) *behavior.Session {
 	t.Helper()
 	raw, err := os.ReadFile("../../behaviors/corpse-loot.lua")
@@ -192,12 +208,21 @@ func TestSharedLuaChoosesNearestCorpseAndApproachesBeforeCustody(t *testing.T) {
 
 // Existing wire/settlement tests call this helper instead of granting native
 // target policy. Their actual OPEN source now comes from the shared Lua module.
+var corpseTestVMs sync.Map
+
 func tickCorpseLua(t *testing.T, s *Service) {
 	t.Helper()
 	if s.token == "" && s.cleanup.source == 0 && !s.questGather {
 		o, err := s.ObserveCorpses(context.Background(), &emptypb.Empty{})
 		if err == nil {
-			vm := corpsePolicyVM(t, o.SessionId)
+			var vm *behavior.Session
+			if previous, ok := corpseTestVMs.Load(s); ok {
+				vm = previous.(*behavior.Session)
+			} else {
+				vm = corpsePolicyVM(t, o.SessionId)
+				corpseTestVMs.Store(s, vm)
+				t.Cleanup(func() { corpseTestVMs.Delete(s) })
+			}
 			out := corpsePolicyDecision(t, vm, o, true, false)
 			if a, ok := out["action"].(map[string]any); ok && a["capability"] == "approach_target" {
 				delete(a, "capability")

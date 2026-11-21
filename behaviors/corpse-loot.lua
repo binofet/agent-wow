@@ -70,6 +70,7 @@ function M.decide(frame,encounter,quiet,urgent)
   return out
  end
  if not quiet or #frame.pending~=0 or s.present~=true or s.aliveKnown~=true or s.alive~=true or
+  s.unitFlagsKnown~=true or math.floor((s.unitFlags or 0)/524288)%2==1 or
   a.castPending or a.autoAttacking or a.autoAttackRequested or a.autoAttackUnconfirmed or a.motionUnconfirmed or
   a.interactionOwner and a.interactionOwner~="" or not p or not p.known or not p.mapKnown or
   o.inventoryKnown~=true or (o.generalFreeSlots or 0)<1 then out.phase="higher_priority_or_unavailable";return out end

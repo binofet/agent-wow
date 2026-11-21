@@ -27,7 +27,7 @@ func TestEncounterCorpseLootYieldsCustodyForHealingAndPreservesSameSessionState(
 	obs.Healing.Patients = nil
 	corpse := fallbackGUID(0xf130000001000001)
 	loot := map[string]any{"sessionId": fallbackSession, "selfGuid": fallbackGUID(fallbackSelf),
-		"self":           map[string]any{"present": true, "aliveKnown": true, "alive": true},
+		"self":           map[string]any{"present": true, "aliveKnown": true, "alive": true, "unitFlagsKnown": true},
 		"actions":        map[string]any{"position": map[string]any{"known": true, "mapKnown": true, "mapId": float64(0), "x": float64(10), "y": float64(10), "z": float64(10), "revision": "1"}},
 		"inventoryKnown": true, "inventoryRevision": "1", "generalFreeSlots": float64(5),
 		"corpses": []any{map[string]any{"guid": corpse, "present": true, "mapKnown": true, "mapId": float64(0), "positionKnown": true, "positionRevision": "1", "x": float64(12), "y": float64(10), "z": float64(10), "aliveKnown": true, "healthKnown": true, "dynamicFlags": float64(1)}},

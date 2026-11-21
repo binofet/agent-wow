@@ -18,17 +18,17 @@ func storedLootWaitingRelease(t *testing.T, gather bool) (*Service, *fakeSession
 		guid, item = harvestGUID, 11119
 	}
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	window := windowPacket(guid, 0, lootItem{slot: 2, id: item, count: 1})
 	if gather {
 		window = harvestWindow(guid, lootItem{slot: 2, id: item, count: 1})
 	}
 	emit(s, opcode.SMSGLootResponse, window)
-	s.Tick(context.Background()) // store exactly one server-offered item
+	tickCorpseLua(t, s) // store exactly one server-offered item
 	emit(s, opcode.SMSGItemPushResult, pushPacket(1, item, 1))
 	emit(s, opcode.SMSGLootRemoved, []byte{2})
-	s.Tick(context.Background()) // consume the two item receipts
-	s.Tick(context.Background()) // send the single loot release
+	tickCorpseLua(t, s) // consume the two item receipts
+	tickCorpseLua(t, s) // send the single loot release
 	if got := current(t, s); got.Phase != "waiting_release" || got.ItemsStoredConfirmed != 1 || got.LootSlotsRemoved != 1 || len(got.RecentItems) != 1 || len(f.packets) != 3 {
 		t.Fatal("fixture did not reach actual stored item + pending release", got, f.packets)
 	}
@@ -70,7 +70,7 @@ func TestDisableAfterReleaseReceiptFinishesOnceAndPreservesStoredItemProof(t *te
 			t.Fatal(got)
 		}
 		advance(3 * time.Second)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		disableLoot(t, s)
 		if got := current(t, s); len(f.packets) != 3 || f.releases != 1 || got.Reason != "disabled_by_request" || got.ReleasesObserved != 1 {
 			t.Fatal("finished disable invented another write/timeout", got, f.packets)
@@ -88,13 +88,13 @@ func TestDisableDuringOutstandingReleasePreservesDeadlineAndReceiptBinding(t *te
 		}
 		advance(time.Second)
 		disableLoot(t, s)
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(guid+1), 1))
 		if got := current(t, s); got.Phase != "waiting_release" || got.ReleasesObserved != 0 || !s.deadline.Equal(deadline) || len(f.packets) != 3 {
 			t.Fatal(got)
 		}
 		emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(guid), 1))
-		s.Tick(context.Background())
+		tickCorpseLua(t, s)
 		got = current(t, s)
 		if got.Enabled || got.Phase != "disabled" || got.ReleasesObserved != 1 || got.ItemsStoredConfirmed != 1 || len(f.packets) != 3 || f.releases != 1 {
 			t.Fatal(got, f.packets)
@@ -115,7 +115,7 @@ func TestDisabledOutstandingReleaseStillTimesOutWithoutResend(t *testing.T) {
 		t.Fatal("disable extended original receipt deadline")
 	}
 	advance(600 * time.Millisecond)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	got := current(t, s)
 	if got.Enabled || got.Phase != "disabled" || got.Reason != "loot_response_timeout_no_retry" || got.ReleasesObserved != 0 || got.ItemsStoredConfirmed != 1 || got.LootSlotsRemoved != 1 || len(f.packets) != 3 || f.releases != 1 {
 		t.Fatal("timeout retried or invented release proof", got, f.packets)
@@ -125,12 +125,12 @@ func TestDisabledOutstandingReleaseStillTimesOutWithoutResend(t *testing.T) {
 func TestDisableBeforeReleaseKeepsExistingAbortAndFailureGuards(t *testing.T) {
 	s, f, _ := rig(t)
 	enable(t, s)
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	got := disableLoot(t, s)
 	if got.Phase != "abort" || len(f.packets) != 1 {
 		t.Fatal(got, f.packets)
 	}
-	s.Tick(context.Background())
+	tickCorpseLua(t, s)
 	if got := current(t, s); got.Phase != "waiting_release" || len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGLootRelease {
 		t.Fatal(got, f.packets)
 	}

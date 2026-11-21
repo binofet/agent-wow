@@ -453,7 +453,15 @@ func corpsePosition(c *worldv1.CreatureState) (float32, float32, float32, bool) 
 }
 
 func eligibleWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState, maxRange, maxHeight float64) bool {
-	if self == nil || p == nil || c == nil || !self.Present || !self.AliveKnown || !self.Alive || !self.UnitFlagsKnown || self.UnitFlags&(0x1|0x4|0x40000|0x80000|0x100000|0x400000|0x800000|0x1000000|0x8000000) != 0 {
+	return corpseWithin(self, p, c, maxRange, maxHeight, false)
+}
+
+func corpseWithin(self *worldv1.PlayerState, p *actionsv1.ClientPosition, c *worldv1.CreatureState, maxRange, maxHeight float64, allowCombat bool) bool {
+	blocked := uint32(0x1 | 0x4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x8000000)
+	if allowCombat {
+		blocked &^= 0x80000
+	}
+	if self == nil || p == nil || c == nil || !self.Present || !self.AliveKnown || !self.Alive || !self.UnitFlagsKnown || self.UnitFlags&blocked != 0 {
 		return false
 	}
 	if !p.Known || !p.MapKnown || !c.Present || !c.MapKnown || p.MapId != c.MapId || !c.HealthKnown || c.Health != 0 || !c.AliveKnown || c.Alive || c.DynamicFlags&1 == 0 {
@@ -548,7 +556,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		if s.state.Phase != "waiting_release" {
 			world := &worldv1.SnapshotResponse{}
-			if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || world.Self.UnitFlags&0x80000 != 0 {
+			if s.invoke(ctx, "buddy-world", "snapshot", s.lootWorldRequest(), world) != nil || world.Self == nil || !world.Self.AliveKnown || !world.Self.Alive || !s.exactCorpse && world.Self.UnitFlags&0x80000 != 0 {
 				s.retryUnopenedCorpse()
 				s.state.Reason = "loot_preempted_by_combat_or_unknown_state"
 				s.beginRelease(ctx)
