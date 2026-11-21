@@ -738,9 +738,6 @@ func safePlayerMovement(snapshot *worldv1.SnapshotResponse, selfGUID uint64, swi
 	if !a.Present || !b.Present {
 		return "players_missing"
 	}
-	if b.PlayerFlags&2 != 0 {
-		return "owner_afk_actions_paused"
-	}
 	if !a.MapKnown || !b.MapKnown || a.MapId != b.MapId {
 		return "map_unknown_or_different"
 	}

@@ -84,7 +84,6 @@ func TestSmiteRequiresCombatProofHealthyOwnerManaAndAttackableTarget(t *testing.
 		"immune":        func(s *Service, f *fakeSession) { f.world.OwnerTarget.UnitFlags = 0x100 },
 		"feign death":   func(s *Service, f *fakeSession) { f.world.OwnerTarget.UnitFlags_2 = 1 },
 		"silenced":      func(s *Service, f *fakeSession) { f.world.Self.UnitFlags = 0x2000 },
-		"AFK":           func(s *Service, f *fakeSession) { f.world.Owner.PlayerFlags = 2 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := assistRig(t)

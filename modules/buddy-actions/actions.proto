@@ -666,6 +666,7 @@ message EncounterPlayer {
   bool combo_known = 31;
   uint64 combo_target_guid = 32;
   uint32 combo_points = 33;
+  uint32 player_flags = 34;
 }
 message EncounterCreature {
   uint64 guid = 1;

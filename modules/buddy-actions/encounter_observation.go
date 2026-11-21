@@ -196,9 +196,9 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 		view := &actionsv1.EncounterPlayer{
 			Guid: guid, Present: p.Present, MapKnown: p.MapKnown, MapId: proto.Uint32(p.MapId),
 			AliveKnown: p.AliveKnown, HealthKnown: p.HealthKnown, Health: p.Health, MaxHealth: p.MaxHealth,
-			FactionTemplate: p.FactionTemplate,
-			PositionKnown:   p.PositionKnown && finite(playerPosition(p)),
-			ClassKnown:      p.ClassKnown, ClassId: p.ClassId, RaceKnown: p.RaceKnown, RaceId: p.RaceId,
+			FactionTemplate: p.FactionTemplate, PlayerFlags: p.PlayerFlags,
+			PositionKnown: p.PositionKnown && finite(playerPosition(p)),
+			ClassKnown:    p.ClassKnown, ClassId: p.ClassId, RaceKnown: p.RaceKnown, RaceId: p.RaceId,
 			LevelKnown: p.LevelKnown, Level: p.Level,
 			PowerKnown: p.PowerKnown, PowerType: p.PowerType, Power: p.Power, MaxPower: p.MaxPower,
 			MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0xff != 0,
@@ -398,7 +398,7 @@ func encounterFollowOwner(p *worldv1.PlayerState) *actionsv1.EncounterPlayer {
 	out := &actionsv1.EncounterPlayer{Guid: p.Guid, Present: p.Present, MapKnown: p.MapKnown,
 		MapId: proto.Uint32(p.MapId), AliveKnown: p.AliveKnown, PositionKnown: p.PositionKnown && finite(playerPosition(p)),
 		PositionRevision: p.PositionRevision, X: p.X, Y: p.Y, Z: p.Z, Orientation: p.Orientation,
-		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0}
+		MovementKnown: p.MovementFlagsKnown, Moving: p.MovementFlags&0x3f != 0, PlayerFlags: p.PlayerFlags}
 	if p.AliveKnown {
 		out.Alive = proto.Bool(p.Alive)
 	}
