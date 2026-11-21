@@ -4,6 +4,7 @@ import (
 	"context"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
@@ -64,7 +65,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 		return nil, status.Error(codes.FailedPrecondition, "current living caster observation required")
 	}
 	self, c := w.Self, w.RequestedCreature
-	if !self.ClassKnown || self.ClassId != class || self.MovementFlags&0xff != 0 || self.ChannelSpellId != 0 ||
+	if !self.ClassKnown || self.ClassId != class || self.MovementFlags&0xff != 0 || !channelstate.Idle(self) ||
 		!self.PowerKnown || int32(self.PowerType) != spell.Power || uint64(self.Power) < spellCost(spell, self) {
 		return nil, status.Error(codes.FailedPrecondition, "stationary caster with observed power and spell requirements required")
 	}
@@ -79,7 +80,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	observed := position{c.X, c.Y, c.Z, c.Orientation}
 	observedKnown := c.PositionKnown && finite(observed)
 	if kind == spellcatalog.Sap {
-		if !s.stealthedLocked() || self.ChannelObjectGuid != 0 || policySap && !self.ChannelSpellKnown {
+		if !s.stealthedLocked() {
 			return nil, status.Error(codes.FailedPrecondition, "policy Sap requires observed Stealth and no active channel")
 		}
 		pos, known, _ := creaturePosition(c)

@@ -5,6 +5,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
@@ -14,7 +15,7 @@ import (
 func (s *Service) buffCasterAvailableLocked(w *worldv1.SnapshotResponse, spell spellcatalog.Spell) bool {
 	self := w.GetSelf()
 	return !s.closed && self.GetGuid() == s.selfGUID && waterBreathPlayer(self, self.GetMapId()) &&
-		self.UnitFlags&(0x2000|0x00040000|0x00400000|0x00800000) == 0 && self.ChannelSpellId == 0 &&
+		self.UnitFlags&(0x2000|0x00040000|0x00400000|0x00800000) == 0 && channelstate.Idle(self) &&
 		!s.clientControlLost && !s.clientControlRestoring && !s.state.CastPending &&
 		!s.state.MotionUnconfirmed && s.state.InteractionOwner == "" &&
 		(spell.CastMs == 0 || !s.state.Moving && self.MovementFlags&0xff == 0) &&

@@ -143,7 +143,10 @@ func TestConsumablePersistentLuaExecutesActualInventoryPrimitiveAndObservesItsEf
 		return nil
 	}
 	w := &worldv1.SnapshotResponse{Self: &worldv1.PlayerState{Guid: 6, Present: true, AliveKnown: true, Alive: true, HealthKnown: true, Health: 100, MaxHealth: 100,
-		MapKnown: true, PositionKnown: true, UnitFlagsKnown: true, MovementFlagsKnown: true, LevelKnown: true, Level: 30, PowerKnown: true, Power: 60, MaxPower: 100}, InventoryKnown: true, InventoryRevision: 1, SelfCopperKnown: true, SelfCopperRevision: 1}
+		MapKnown: true, PositionKnown: true, UnitFlagsKnown: true, MovementFlagsKnown: true, LevelKnown: true, Level: 30, PowerKnown: true, Power: 60, MaxPower: 100,
+		// This integration fixture supplies a complete own CREATE baseline,
+		// including zero channel words; unknown channel cases stay separate.
+		ChannelSpellKnown: true, ChannelObjectKnown: true}, InventoryKnown: true, InventoryRevision: 1, SelfCopperKnown: true, SelfCopperRevision: 1}
 	for b := uint32(0); b < 5; b++ {
 		bag := &worldv1.InventoryBag{Bag: b, SlotKnown: true, ContentsKnown: true}
 		if b == 0 {
