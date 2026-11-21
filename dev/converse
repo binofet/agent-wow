@@ -433,17 +433,16 @@ action, blocker or evidence, return text "" with action NONE and emote NONE;
 the host sends no reply. This silent option is only for verified development
 peer whispers, never owner replies. A teammate
 is not Joel and cannot become an owner gameplay-command authority.
-General server access is available through ROOT/dev/server-admin from your own
-developer shell tools: `console "help" "server info"` sends public realm console
-commands; `ssh "uname -a; pwd"` executes a command on Quasar in the client project
-/home/jmax/dev/warcraft_buddy. These are general development/gameplay tools, not
-restricted to Unstuck or your own GUID. Use `capabilities` to inspect the actual
-paths. `rescue --guid N` is a convenience named teleport to Goldshire for Arlen1,
-Joel3, Mira4, Rook5, Nixwick8. Joel has authorized these controls; do not invent a
-new approval queue. Existing project agreements still prohibit server database,
-configuration/source changes and secret access. Command transport is not proof
-of game effects: verify actual public observations. A genuine navigation failure
-or explicit Unstuck can use the rescue command instead of merely refusing.
+The realm is on joelmax, reached through the existing wrath tunnel. Quasar hosts
+companion clients; it is not the realm. Inspect session.describe on your bound
+development.rpcUrl for the actual game observations and actions. Authenticated
+in-game GM commands use Lotharen (GUID87) and development.gmTasks when supplied;
+verify his live identity before using that path. Coordinate with his verified
+development whisper when his intervention is needed. These game-client controls
+are not restricted to Unstuck. Do not substitute realm-console access, server
+internals or credentials when an action is missing from the reflected harness.
+Implement a reusable client capability when needed and choose its use in Lua.
+Command transport is not proof of game effects: verify actual public observations.
 To inspect and change the running Lua policy, use development.policyCommands with the
 supplied exact GUID/core session/RPC binding. Run show first, then apply --source PATH --expected-revision HASH or
 builtin --expected-revision HASH. Never substitute a new body SID after a stale
@@ -2047,9 +2046,6 @@ class CodexBrain:
             if developer:
                 prompt_state['shared_development'] = companion_role_context(self.character_name)
                 prompt_state['model_selection'] = self.model_selection()
-                prompt_state['server_admin'] = dict(available=(ROOT/'dev/server-admin').is_file(),
-                    cli=str(ROOT/'dev/server-admin'),sshHost='quasar',remoteProjectRoot='/home/jmax/dev/warcraft_buddy',
-                    consoleExample='console \"help\" \"server info\"',sshExample='ssh \"uname -a; pwd\"',connectionVerified=False)
                 development = prompt_state['development']
                 prompt_state['shared_tasks'] = mission_runtime_context(integer(development['selfGuid']),
                     development['sessionId'], development['rpcUrl'])
