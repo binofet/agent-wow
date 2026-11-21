@@ -11,6 +11,7 @@ import (
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -25,6 +26,7 @@ type observed struct {
 	mapID, movementFlags, extraFlags, movementTime               uint32
 	x, y, z, orientation, walkSpeed, runSpeed                    float32
 	positionRevision                                             uint64
+	positionInferred                                             bool
 	positionAt, vitalsAt, observedAt                             time.Time
 	// Only fields up to PLAYER_FLAGS are needed, regardless of nearby population.
 	fields                      [playerFlags + 1]uint32
@@ -48,6 +50,12 @@ type observed struct {
 	attackVictim                uint64
 	attackAt                    time.Time
 	trajectory                  observedTrajectory
+	receivedMovement            bool
+	receivedMovementInfo        movementinfo.Info
+	receivedMovementWire        [movementinfo.MaxEncodedSize]byte
+	receivedMovementWireLen     uint8
+	receivedSpline              bool
+	receivedSplineHeader        observedTrajectory
 	cast                        observedCreatureCast
 	mainhandKnown               bool
 	mainhand                    uint64
@@ -95,7 +103,7 @@ func age(now, observed time.Time) uint64 {
 func snapshot(p observed, now time.Time) *worldv1.PlayerState {
 	r := &worldv1.PlayerState{
 		Guid: p.guid, Present: p.present, MapKnown: p.mapKnown, MapId: p.mapID,
-		PositionKnown: p.positionKnown, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation,
+		PositionKnown: p.positionKnown, PositionInferred: p.positionInferred, X: p.x, Y: p.y, Z: p.z, Orientation: p.orientation,
 		PositionAgeMs: age(now, p.positionAt), PositionRevision: p.positionRevision,
 		MovementFlagsKnown: p.movementKnown, MovementFlags: p.movementFlags,
 		ExtraMovementFlags: p.extraFlags, MovementTime: p.movementTime,
@@ -154,6 +162,8 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	if r.Self.Guid != 0 && r.Self.Present && r.Self.MapKnown {
 		r.VisitRevision = s.state.visitRevision
 	}
+	r.SelfMovementFacts = s.state.ownMovement.snapshot(now)
+	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
 	if owner := s.state.players[1]; owner.guid != 0 {
 		r.Owner = snapshot(owner, now)
 	}
@@ -183,12 +193,14 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	s.lastOpcode = packet.Opcode
 	s.observeCombatPacketLocked(packet.Opcode, packet.Payload, s.now())
 	next := s.state.clone()
-	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, s.now())
+	observedAt := s.now()
+	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
+		next.commitOwnMovementFacts(old, packet.Opcode, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}
 		}
