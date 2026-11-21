@@ -754,6 +754,9 @@ end
 
 
 local function interaction_access(frame, obs, out)
+    -- An admitted instant self control break needs no custody detour or STOP.
+    -- Preserve its higher-priority proposal when that capability is composed.
+    if out.action and out.action.capability == "fear_break" then return end
     local held = obs and obs.interaction
     local self = obs and (obs.players or {})[obs.selfGuid]
     if type(held) ~= "table" or type(held.owner) ~= "string" or held.owner == "" or
