@@ -57,12 +57,24 @@ func (s *Service) observeInitialCooldownsLocked(p []byte) {
 	if s.categoryReady == nil {
 		s.categoryReady = make(map[uint32]time.Time)
 	}
+	if s.serverSpellReady == nil {
+		s.serverSpellReady = map[uint32]time.Time{}
+	}
+	if s.serverCategoryReady == nil {
+		s.serverCategoryReady = map[uint32]time.Time{}
+	}
 	now := s.now()
 	for at := end + 2; at < len(p); at += 16 {
 		id := binary.LittleEndian.Uint32(p[at:])
 		category := uint32(binary.LittleEndian.Uint16(p[at+6:]))
 		spellMs, categoryMs := binary.LittleEndian.Uint32(p[at+8:]), binary.LittleEndian.Uint32(p[at+12:])
 		expires := now.Add(time.Duration(max(spellMs, categoryMs)) * time.Millisecond)
+		if id != 0 && expires.After(s.serverSpellReady[id]) {
+			s.serverSpellReady[id] = expires
+		}
+		if categoryEnd := now.Add(time.Duration(categoryMs) * time.Millisecond); category != 0 && categoryMs != 0 && categoryEnd.After(s.serverCategoryReady[category]) {
+			s.serverCategoryReady[category] = categoryEnd
+		}
 		if id != 0 && expires.After(s.spellReady[id]) {
 			s.spellReady[id] = expires
 		}
