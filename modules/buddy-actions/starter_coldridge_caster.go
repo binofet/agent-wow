@@ -10,24 +10,32 @@ import (
 // The bound Coldridge mission supplies target and pull authority. The same
 // shared Lua selector used by the other named missions chooses the exact rank.
 func (s *Service) starterColdridgeCasterLocked(ctx context.Context, original *worldv1.SnapshotResponse, target *worldv1.CreatureState, aimed position) bool {
-	session, self, until, quest, guid := s.sessionID, s.selfGUID, s.practiceUntil, s.coldridgeGoal.questID, target.Guid
-	pulled := s.practicePullStarted
-	current := func() bool {
-		return ctx.Err() == nil && s.sessionID == session && s.selfGUID == self && !s.closed &&
-			!s.clientControlLost && !s.clientControlRestoring && s.state.Practicing &&
-			s.practiceUntil == until && s.now().Before(until) && s.coldridgeGoal.questID == quest &&
-			s.practiceTarget == guid && s.state.PracticeTargetGuid == guid && s.practicePullStarted == pulled &&
-			!s.fargodeep.active && !s.questApproaching && !s.recovery.state.Active && s.state.InteractionOwner == ""
-	}
-	if !current() || s.blockProtectedOffenseLocked(ctx, guid) || !s.starterNamedOffenseAvailableLocked(original, target) {
+	guid := target.Guid
+	current := s.coldridgePracticeCurrentLocked(ctx, guid)
+	if !current() {
 		return false
 	}
-	selected := s.starterSpellDecisionLocked(ctx, original, target, aimed)
+	protected := s.blockProtectedOffenseLocked(ctx, guid)
+	if !current() {
+		return false
+	}
+	selected := s.starterColdridgeSpellDecisionLocked(ctx, original, target, aimed)
 	if !current() {
 		return false
 	}
 	if !selected.valid {
-		s.state.Reason = s.starterSpells.failure()
+		failure := s.starterSpells.failure()
+		s.stopColdridgeUnreadyPullLocked(ctx, nil, current)
+		if current() {
+			s.state.Reason = failure
+		}
+		return false
+	}
+	if selected.kind == "pull_wait" {
+		s.stopPracticeLocked(ctx, "pull_prerequisites_changed")
+		return false
+	}
+	if protected || !s.starterNamedOffenseAvailableLocked(original, target) {
 		return false
 	}
 	if selected.kind != "cast" {
@@ -71,13 +79,30 @@ func (s *Service) coldridgeCasterWriteAllowedLocked(ctx context.Context, origina
 	if !valid || !current() {
 		return spellcatalog.Spell{}, false
 	}
-	selected := s.starterSpellDecisionLocked(ctx, w, target, point)
-	if !current() || !selected.valid || selected.kind != "cast" || selected.spell.ID != spell {
+	selected := s.starterColdridgeSpellDecisionLocked(ctx, w, target, point)
+	if !current() {
+		return spellcatalog.Spell{}, false
+	}
+	if selected.valid && selected.kind == "pull_wait" {
+		s.stopPracticeLocked(ctx, "coldridge_precast_fresh_pull_authority_changed")
+		return spellcatalog.Spell{}, false
+	}
+	if !selected.valid {
+		s.stopColdridgeUnreadyPullLocked(ctx, nil, current)
+		return spellcatalog.Spell{}, false
+	}
+	if selected.kind != "cast" || selected.spell.ID != spell {
 		return spellcatalog.Spell{}, false
 	}
 	w, target, point, valid = s.coldridgeCastObservationsLocked(ctx, original, aimed, current)
-	if !valid || !current() || !s.starterSpellFactsMatchLocked(selected, w, target, point) ||
-		!s.starterNamedOffenseAvailableLocked(w, target) || w.Self.ClassId != 9 || !observedOffenseCaster(w.Self) ||
+	if !valid || !current() {
+		return spellcatalog.Spell{}, false
+	}
+	if !s.starterSpellFactsMatchLocked(selected, w, target, point) {
+		s.stopColdridgeUnreadyPullLocked(ctx, w, current)
+		return spellcatalog.Spell{}, false
+	}
+	if !s.starterNamedOffenseAvailableLocked(w, target) || w.Self.ClassId != 9 || !observedOffenseCaster(w.Self) ||
 		selected.spell.Capability().Kind != spellcatalog.Damage || !s.offenseRankReadyLocked(w.Self, selected.spell) ||
 		!offenseLineInRange(s.pos, point, selected.spell) {
 		return spellcatalog.Spell{}, false

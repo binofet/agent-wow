@@ -149,9 +149,11 @@ func TestColdridgeCasterLuaFinalPolicyReadRechecksFactsAndGoalAuthority(t *testi
 			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 			reads := 0
 			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-				reads++
+				if input["selection"] == "coldridge_cast" {
+					reads++
+				}
 				out, err := runtime.EvaluateContext(ctx, input)
-				if reads == 2 {
+				if input["selection"] == "coldridge_cast" && reads == 2 {
 					switch mode {
 					case "mana":
 						f.world.Self.Power = 0
@@ -217,7 +219,9 @@ func TestColdridgeCasterLuaCallbacksCannotReplaceCurrentBinding(t *testing.T) {
 			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 			reads := 0
 			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-				reads++
+				if input["selection"] == "coldridge_cast" {
+					reads++
+				}
 				out, err := runtime.EvaluateContext(ctx, input)
 				return true, runtime.Status().Revision, out, err
 			}

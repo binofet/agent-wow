@@ -3,6 +3,7 @@
 local spells = assert(encounter_spells)
 local healing = assert(encounter_healing)
 local M = {}
+M.coldridge_pull = {health_percent=95, base_mana_percent=60}
 
 local function decimal(value)
     if type(value) ~= "string" or #value == 0 or #value > 20 or #value>1 and byte_at(value, 1) == 48 or
@@ -15,6 +16,21 @@ local function guid(value) return decimal(value) and value~="0" end
 
 local function uint(value)
     return type(value)=="number" and value>=0 and value<=4294967295 and value%1==0
+end
+
+local function pull_readiness(self)
+    local wait={kind="wait",spellId=0}
+    local tuning=M.coldridge_pull
+    if type(tuning)~="table" or not uint(tuning.health_percent) or tuning.health_percent>100 or
+       not uint(tuning.base_mana_percent) or tuning.base_mana_percent>100 or
+       self.classId~=9 or self.healthKnown~=true or not uint(self.health) or
+       not uint(self.maxHealth) or self.maxHealth==0 or self.health>self.maxHealth or
+       self.powerKnown~=true or self.powerType~=0 or not uint(self.power) or
+       self.baseManaKnown~=true or not uint(self.baseMana) or self.baseMana==0 then return wait end
+    -- uint32 observations multiplied by a percentage remain exact Lua numbers.
+    local mana=math.floor((self.baseMana*tuning.base_mana_percent+99)/100)
+    if self.health*100<self.maxHealth*tuning.health_percent or self.power<mana then return wait end
+    return {kind="ready",spellId=0}
 end
 
 local function scalar(value, integral)
@@ -114,15 +130,18 @@ function M.decide(input, override)
        not guid(input.selfGuid) or type(input.autoAttackKnown)~="boolean" then return wait end
     local obs,target=input.observation,input.target
     if type(obs)~="table" or obs.sessionId~=input.sessionId or obs.selfGuid~=input.selfGuid or
-       type(obs.players)~="table" or type(obs.spells)~="table" or type(target)~="table" or
-       not guid(target.guid) then return wait end
+       type(obs.players)~="table" then return wait end
     local self=obs.players[input.selfGuid]
     if type(self)~="table" or self.guid~=input.selfGuid or self.classKnown~=true or
        not uint(self.classId) or self.classId==0 or self.powerKnown~=true or
-       not uint(self.power) or not uint(self.powerType) or not pose(self) or not pose(target) then return wait end
+       not uint(self.power) or not uint(self.powerType) then return wait end
+    if input.selection=="coldridge_pull_readiness" then return pull_readiness(self) end
+    if type(obs.spells)~="table" or type(target)~="table" or not guid(target.guid) or
+       not pose(self) or not pose(target) then return wait end
     if input.selection~=nil then
-        if input.selection~="weapon_strike" then return wait end
-        return weapon_choice(obs,target,self,override)
+        if input.selection=="weapon_strike" then return weapon_choice(obs,target,self,override) end
+        if input.selection~="coldridge_cast" or self.classId~=9 or type(input.pullRequired)~="boolean" then return wait end
+        if input.pullRequired and pull_readiness(self).kind~="ready" then return {kind="pull_wait",spellId=0} end
     end
     local reserve=healing.resource_reserve(obs)
     if reserve==nil or not offense_mechanics(obs) then return wait end
