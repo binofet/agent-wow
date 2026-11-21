@@ -93,7 +93,7 @@ func TestHarvestFollowHandoffNeverAdmitsOtherMovementOrDefense(t *testing.T) {
 	}
 }
 
-func TestHarvestFollowHandoffStopFailureNeverGrantsOrRetries(t *testing.T) {
+func TestHarvestFollowHandoffStopFailurePreservesDispatchCertainty(t *testing.T) {
 	for _, mode := range []string{"clock", "transport", "last_snapshot"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f := harvestFollowingRig(t)
@@ -106,14 +106,23 @@ func TestHarvestFollowHandoffStopFailureNeverGrantsOrRetries(t *testing.T) {
 				f.onClock = func() { f.failSnapshot = true }
 			}
 			got, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "exploration", Harvest: true})
-			if status.Code(err) != codes.FailedPrecondition || got != nil || !s.state.MotionUnconfirmed || s.state.InteractionOwner != "" || s.interactionToken != "" || countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
-				t.Fatal("ambiguous STOP granted custody", got, err, &s.state, f.packets)
+			ambiguous := mode != "clock"
+			if status.Code(err) != codes.FailedPrecondition || got != nil || s.state.MotionUnconfirmed != ambiguous || s.state.InteractionOwner != "" || s.interactionToken != "" || countPackets(f, opcode.MSGMoveStartForward) != 0 || countPackets(f, opcode.MSGMoveHeartbeat) != 0 {
+				t.Fatal("failed STOP granted custody or lost dispatch certainty", got, err, &s.state, f.packets)
+			}
+			if !ambiguous && (!s.state.Moving || len(f.packets) != 0) {
+				t.Fatal("clock refusal changed known movement or wrote a STOP", &s.state, f.packets)
 			}
 			harvestIntents(t, s)
 			writes := len(f.packets)
 			f.failClock, f.failSend, f.failSnapshot, f.onClock = false, false, false, nil
-			if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "exploration", Harvest: true}); err == nil || len(f.packets) != writes {
-				t.Fatal("unconfirmed STOP was silently retried", err, f.packets)
+			retry, retryErr := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "exploration", Harvest: true})
+			if ambiguous {
+				if retryErr == nil || len(f.packets) != writes {
+					t.Fatal("unconfirmed STOP was silently retried", retryErr, f.packets)
+				}
+			} else if retryErr != nil || retry == nil || retry.Token == "" || retry.State.Moving || retry.State.MotionUnconfirmed || len(f.packets) != writes+1 || f.packets[writes].Opcode != opcode.MSGMoveStop {
+				t.Fatal("known undispatched STOP did not recover with the clock", retry, retryErr, f.packets)
 			}
 		})
 	}

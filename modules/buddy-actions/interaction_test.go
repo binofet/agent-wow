@@ -157,8 +157,12 @@ func TestInteractionExpiryAndFailedStop(t *testing.T) {
 	if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot"}); err == nil {
 		t.Fatal("lease granted after stop failure")
 	}
-	if !state(t, s).MotionUnconfirmed {
-		t.Fatal("stop failure not latched")
+	if got := state(t, s); got.MotionUnconfirmed || !got.Moving || !got.Following || got.InteractionOwner != "" {
+		t.Fatal("known clock refusal lost movement certainty", got)
+	}
+	f.failClock = false
+	if retry, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot"}); err != nil || retry == nil || retry.Token == "" || retry.State.Moving || retry.State.MotionUnconfirmed {
+		t.Fatal("undispatched STOP did not recover", retry, err)
 	}
 }
 
