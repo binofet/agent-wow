@@ -998,6 +998,11 @@ do
         end
         return next(expected)==nil
     end
+    WarcraftBuddyReadProtection31=function()
+        local group=GetActiveTalentGroup()
+        local spent,ranks=actualState(group)
+        return {group=group,spent=spent,unspent=GetUnspentTalentPoints(),ranks=ranks,protection31=matches(group)}
+    end
     local function finishIfObserved()
         if not pending or GetActiveTalentGroup()~=pending.group or not matches(pending.group) then return end
         local record=WarcraftBuddyQuestSyncDB.prepTalentApplication
@@ -1110,3 +1115,290 @@ do
     end
 end
 -- END WB PROTECTION 31 20261121
+
+-- BEGIN WB WARRIOR ACTION BARS 20261121
+do
+    local version="warrior-bars-20261121-v1"
+    local stancePages={
+        {name="Battle Stance",spells={"Charge","Heroic Strike","Rend","Thunder Clap",
+            "Overpower","Execute","Hamstring","Mocking Blow","Retaliation","Cleave","Slam","Victory Rush"}},
+        {name="Defensive Stance",spells={"Shield Slam","Revenge","Sunder Armor","Thunder Clap",
+            "Shield Bash","Taunt","Shield Block","Shield Wall","Disarm","Concussion Blow","Heroic Strike","Vigilance"}},
+        {name="Berserker Stance",spells={"Intercept","Whirlwind","Pummel","Berserker Rage",
+            "Heroic Strike","Cleave","Execute","Slam","Hamstring","Victory Rush","Intimidating Shout","Bloodrage"}},
+    }
+    local sharedPages={6,5,3,4}
+    local pending
+    local savePending=false
+    local watcher=CreateFrame("Frame")
+    local function notify(message)
+        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(message) end
+    end
+    local function action(slot)
+        local kind,id,subtype=GetActionInfo(slot)
+        if not kind then return nil end
+        local result={kind=kind,id=id,subtype=subtype}
+        if kind=="macro" then result.name,result.icon,result.body=GetMacroInfo(id) end
+        return result
+    end
+    local function allActions()
+        local result={}
+        for slot=1,120 do result[slot]=action(slot) end
+        return result
+    end
+    local function collectAbilities()
+        local byName,order,passives={},{},{}
+        for tab=1,GetNumSpellTabs() do
+            local _,_,offset,count=GetSpellTabInfo(tab)
+            for index=offset+1,offset+count do
+                local name,rank=GetSpellName(index,BOOKTYPE_SPELL)
+                local link=GetSpellLink(index,BOOKTYPE_SPELL)
+                local id=link and tonumber(link:match("spell:(%d+)"))
+                if name and id then
+                    if IsPassiveSpell(index,BOOKTYPE_SPELL) then
+                        passives[#passives+1]={id=id,name=name}
+                    else
+                        local entry={kind="spell",id=id,name=name,rank=rank,index=index}
+                        local previous=byName[name]
+                        local level=tonumber((rank or ""):match("%d+")) or 0
+                        local oldLevel=previous and (tonumber((previous.rank or ""):match("%d+")) or 0) or -1
+                        if not previous then order[#order+1]=name end
+                        if not previous or level>oldLevel or level==oldLevel and index>previous.index then byName[name]=entry end
+                    end
+                end
+            end
+        end
+        return byName,order,passives
+    end
+    local function mounts()
+        local result={}
+        if not GetNumCompanions or not GetCompanionInfo or not PickupCompanion then return result end
+        for index=1,GetNumCompanions("MOUNT") do
+            local creature,name,spell=GetCompanionInfo("MOUNT",index)
+            if spell then result[#result+1]={kind="companion",id=spell,name=name,index=index,creatureID=creature,subtype="MOUNT"} end
+        end
+        table.sort(result,function(a,b)
+            if a.id==23229 or b.id==23229 then return a.id==23229 and b.id~=23229 end
+            return a.index<b.index
+        end)
+        return result
+    end
+    local function isExpected(slot,expected)
+        local kind,id,subtype=GetActionInfo(slot)
+        if expected.kind=="spell" then return kind=="spell" and id==expected.id end
+        if expected.kind=="companion" then
+            if (kind=="spell" or kind=="companion") and id==expected.id then return true end
+            if kind=="companion" and type(subtype)=="string" and subtype:upper()=="MOUNT" then
+                local _,_,spell=GetCompanionInfo("MOUNT",id)
+                return spell==expected.id
+            end
+            return false
+        end
+        return kind==expected.kind and id==expected.id and subtype==expected.subtype
+    end
+    local function ammo()
+        return {slot=0,id=GetInventoryItemID("player",0),link=GetInventoryItemLink("player",0),
+            count=GetInventoryItemCount and GetInventoryItemCount("player",0) or nil}
+    end
+    local captureAudit=WarcraftBuddyCapturePrepAudit
+    if type(captureAudit)=="function" then
+        WarcraftBuddyCapturePrepAudit=function(...)
+            local result=captureAudit(...)
+            if type(result)=="table" then
+                result.actionBarLayout=WarcraftBuddyQuestSyncDB.actionBarLayout
+                result.ammo=ammo()
+                if result.ammo.id then
+                    if type(result.equipment)~="table" then result.equipment={} end
+                    result.equipment[0]={id=result.ammo.id,link=result.ammo.link,count=result.ammo.count,
+                        enchantID=result.ammo.link and tonumber(result.ammo.link:match("item:%d+:(%d+):"))}
+                end
+            end
+            return result
+        end
+    end
+    local function finalize()
+        local record=pending.record
+        record.actual=allActions()
+        record.mismatches={}
+        for slot,expected in pairs(record.expected) do
+            if not isExpected(slot,expected) then record.mismatches[#record.mismatches+1]=slot end
+        end
+        record.missingActive={}
+        for _,entry in ipairs(record.abilities) do
+            local found=false
+            for slot in pairs(record.managedSlots) do
+                if isExpected(slot,entry) then found=true;break end
+            end
+            if not found then record.missingActive[#record.missingActive+1]={name=entry.name,id=entry.id} end
+        end
+        record.ammo=ammo()
+        record.bars={GetActionBarToggles()}
+        record.talents=WarcraftBuddyReadProtection31 and WarcraftBuddyReadProtection31() or nil
+        record.completedAt=time()
+        record.verified=#record.errors==0 and #record.mismatches==0 and #record.missingActive==0
+        if record.ammoRequested and record.ammo.id~=11285 then
+            record.errors[#record.errors+1]="Jagged Arrows were not observed in ammo slot 0."
+            record.verified=false
+        end
+        pending=nil
+        watcher:SetScript("OnUpdate",nil)
+        notify(record.verified and "Warrior action bars verified. Saving the layout audit."
+            or "Warrior action bars saved with reported gaps. See the layout audit.")
+        if WarcraftBuddyCapturePrepAudit then WarcraftBuddyCapturePrepAudit() end
+        if InCombatLockdown() or UnitAffectingCombat("player") then
+            savePending=true
+            watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+        else ReloadUI() end
+    end
+    watcher:SetScript("OnEvent",function()
+        if savePending and not InCombatLockdown() and not UnitAffectingCombat("player") then
+            savePending=false
+            watcher:UnregisterAllEvents()
+            if WarcraftBuddyCapturePrepAudit then WarcraftBuddyCapturePrepAudit() end
+            ReloadUI()
+        end
+    end)
+    SLASH_WBWARRIORBARS1="/wbbars"
+    SlashCmdList.WBWARRIORBARS=function()
+        if pending then notify("The action-bar audit is finishing."); return end
+        local guid=UnitGUID("player")
+        local normalized=type(guid)=="string" and guid:lower():gsub("^0x",""):gsub("^0+","")
+        local _,class=UnitClass("player")
+        if normalized~="3" or class~="WARRIOR" then notify("This layout belongs to Joel's warrior."); return end
+        if InCombatLockdown() or UnitAffectingCombat("player") then notify("Leave combat before changing action bars."); return end
+        if GetCursorInfo() then notify("Clear your cursor before changing action bars."); return end
+        local form=GetShapeshiftForm()
+        if not form or form<1 then notify("Select a warrior stance before laying out its bonus pages."); return end
+        local _,formName=GetShapeshiftFormInfo(form)
+        local offset=GetBonusBarOffset()
+        -- The 3.3.5 bonus buttons use NUM_ACTIONBAR_PAGES + the live bonus offset.
+        -- Verify the active warrior form follows its observed form index before
+        -- mapping the remaining named forms. Base pages 1 and 2 are untouched.
+        if offset~=form or (NUM_ACTIONBAR_PAGES or 6)~=6 then
+            notify("The live bonus-page mapping does not match this 3.3.5 warrior layout. No bars changed.")
+            return
+        end
+        for _,stance in ipairs(stancePages) do
+            stance.page=nil
+            for index=1,GetNumShapeshiftForms() do
+                local _,name=GetShapeshiftFormInfo(index)
+                if name==stance.name then stance.page=6+index;stance.offset=index end
+            end
+            if not stance.page or stance.page<7 or stance.page>9 then
+                notify("All three warrior stance pages must be present. No bars changed.")
+                return
+            end
+        end
+        local byName,order,passives=collectAbilities()
+        local before=allActions()
+        local expected,managed,covered,abilities={},{},{},{}
+        local function slotsFor(page)
+            local available={}
+            for button=1,12 do
+                local slot=(page-1)*12+button
+                managed[slot]=true
+                if before[slot] and before[slot].kind~="spell" then expected[slot]=before[slot]
+                else available[#available+1]=slot end
+            end
+            return available
+        end
+        for _,stance in ipairs(stancePages) do
+            local slots=slotsFor(stance.page)
+            local nextSlot=1
+            for _,name in ipairs(stance.spells) do
+                local entry=byName[name]
+                if entry and slots[nextSlot] then
+                    expected[slots[nextSlot]]=entry
+                    covered[name]=true
+                    nextSlot=nextSlot+1
+                end
+            end
+        end
+        local shared={}
+        for _,page in ipairs(sharedPages) do
+            for _,slot in ipairs(slotsFor(page)) do shared[#shared+1]=slot end
+        end
+        local nextShared=1
+        local missing={}
+        local function addShared(entry)
+            if shared[nextShared] then
+                expected[shared[nextShared]]=entry
+                nextShared=nextShared+1
+            else missing[#missing+1]=entry.name end
+        end
+        for _,name in ipairs({"Battle Stance","Defensive Stance","Berserker Stance"}) do
+            if byName[name] and not covered[name] then addShared(byName[name]);covered[name]=true end
+        end
+        local knownMounts=mounts()
+        local bookIDs={}
+        for _,entry in pairs(byName) do bookIDs[entry.id]=entry end
+        local mountKnown=bookIDs[23229]~=nil
+        for _,entry in ipairs(knownMounts) do
+            if entry.id==23229 then mountKnown=true end
+            local bookEntry=bookIDs[entry.id]
+            if bookEntry then addShared(bookEntry);covered[bookEntry.name]=true
+            else addShared(entry);abilities[#abilities+1]=entry end
+        end
+        for _,name in ipairs(order) do
+            local entry=byName[name]
+            abilities[#abilities+1]=entry
+            if not covered[name] then addShared(entry);covered[name]=true end
+        end
+        if #missing>0 then notify("Not enough free shared slots for: "..table.concat(missing,", ")); return end
+        local record={version=version,requestedAt=time(),before=before,expected=expected,managedSlots=managed,
+            abilities=abilities,passivesSkipped=passives,errors={},stancePages=stancePages,
+            currentStance={index=form,name=formName,bonusOffset=offset},sharedPages=sharedPages,mount23229Known=mountKnown}
+        if not mountKnown then record.errors[#record.errors+1]="Swift Brown Steed 23229 was not found in the learned book or mount collection." end
+        WarcraftBuddyQuestSyncDB.actionBarLayout=record
+        local ok,message=pcall(function()
+            for slot=1,120 do
+                if managed[slot] then
+                    local entry=expected[slot]
+                    if entry and not isExpected(slot,entry) then
+                        if entry.kind=="spell" then PickupSpell(entry.index,BOOKTYPE_SPELL)
+                        elseif entry.kind=="companion" then PickupCompanion("MOUNT",entry.index)
+                        else error("A protected action changed during layout.") end
+                        if not GetCursorInfo() then error("The client did not pick up "..entry.name) end
+                        PlaceAction(slot)
+                        ClearCursor()
+                        if not isExpected(slot,entry) then error("The client did not place "..entry.name.." in slot "..slot) end
+                    elseif not entry and before[slot] and before[slot].kind=="spell" then
+                        PickupAction(slot)
+                        ClearCursor()
+                    end
+                end
+            end
+            SHOW_MULTI_ACTIONBAR_1,SHOW_MULTI_ACTIONBAR_2,SHOW_MULTI_ACTIONBAR_3,SHOW_MULTI_ACTIONBAR_4=1,1,1,1
+            ALWAYS_SHOW_MULTIBARS=1
+            SetActionBarToggles(1,1,1,1,1)
+            SetCVar("alwaysShowActionBars","1")
+            if MultiActionBar_Update then MultiActionBar_Update() end
+            if MultiActionBar_UpdateGridVisibility then MultiActionBar_UpdateGridVisibility() end
+            if UIParent_ManageFramePositions then UIParent_ManageFramePositions() end
+            if GetInventoryItemID("player",0)~=11285 then
+                for bag=0,NUM_BAG_SLOTS do
+                    for slot=1,GetContainerNumSlots(bag) do
+                        local link=GetContainerItemLink(bag,slot)
+                        if link and tonumber(link:match("item:(%d+)"))==11285 then
+                            record.ammoRequested=true
+                            EquipItemByName(link,0)
+                            return
+                        end
+                    end
+                end
+                record.errors[#record.errors+1]="Jagged Arrows were not found in bags."
+            else record.ammoRequested=true end
+        end)
+        if not ok then
+            if GetCursorInfo() then ClearCursor() end
+            record.errors[#record.errors+1]=tostring(message)
+        end
+        pending={record=record,due=GetTime()+0.5,deadline=GetTime()+5}
+        watcher:SetScript("OnUpdate",function()
+            if GetTime()<pending.due then return end
+            if record.ammoRequested and GetInventoryItemID("player",0)~=11285 and GetTime()<pending.deadline then return end
+            finalize()
+        end)
+    end
+end
+-- END WB WARRIOR ACTION BARS 20261121
