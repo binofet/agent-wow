@@ -14,6 +14,12 @@ function M.on_event(event)
     if event.kind=='death_recovery_request' then state.ensureRequested=true end
     local receipt=event.receipt
     local p=receipt and receipt.payload or {}
+    local irreversible=p.capability=='release_spirit' or p.capability=='query_corpse' or p.capability=='reclaim_corpse'
+    if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and irreversible and receipt.outcome~='not_dispatched' then
+        -- Only an actual reserved action receipt can create private custody.
+        -- A wrapper/task may suppress a proposal before the host reserves it.
+        state[p.capability]=true
+    end
     if state.session and p.self_guid==state.self and p.death_epoch==state.epoch and receipt.outcome=='not_dispatched' then
         -- A known no-write may be reconsidered. Uncertain release/query/reclaim
         -- reservations survive reload until actual observations settle them.
@@ -58,14 +64,12 @@ function M.decide(frame,obs,sequence)
         if r.releaseAttempted==true or state.release_spirit then return {phase='waiting_for_actual_ghost'} end
         if self.health~=0 then return {phase='waiting_for_zero_health'} end
         if M.tuning.release_delay_ms>0 and (not now or not state.observedAt or now-state.observedAt<M.tuning.release_delay_ms) then return {phase='release_delay'} end
-        state.release_spirit=true
         return {phase='release_spirit',action=action('release_spirit')}
     end
     state.ghostAt=state.ghostAt or now
     if r.ghostMovementSupported==true and r.motionPending==true and r.active~=true and (obs.navigation or {}).motionUnconfirmed~=true then return stop('graveyard_stationary_baseline_stop') end
     if r.corpseQueryKnown~=true then
         if r.corpseQueryPending==true or state.query_corpse then return {phase='waiting_for_actual_corpse_response'} end
-        state.query_corpse=true
         return {phase='query_corpse',action=action('query_corpse')}
     end
     if r.corpseFound~=true or not r.corpseLocation then return {phase='server_reports_no_reclaimable_corpse'} end
@@ -95,7 +99,6 @@ function M.decide(frame,obs,sequence)
     if not c or not valid_id(c.guid) or c.ownerGuid~=obs.selfGuid or c.present~=true or c.flagsKnown~=true or
        (c.flags or 0)%2~=0 or not cp or cp.known~=true or cp.mapKnown~=true or cp.mapId~=self.mapId or
        not valid_id(cp.revision) or distance(cp,location)>2 or distance(self,cp)>M.tuning.reclaim_range then return {phase='waiting_for_actual_own_corpse'} end
-    state.reclaim_corpse=true
     local a=action('reclaim_corpse');a.corpseGuid=c.guid;a.expectedCorpseRevision=cp.revision
     return {phase='reclaiming_own_corpse',action=a}
 end
