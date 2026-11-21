@@ -18,6 +18,7 @@ local death_recovery = encounter_death_recovery
 local movement = encounter_movement
 local commands = encounter_commands
 local transient_tasks = encounter_tasks
+local loot_roll = encounter_loot_roll
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
@@ -49,6 +50,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if loot_roll and not loot_roll.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if transient_tasks and not transient_tasks.on_event(event) then return false end
@@ -95,7 +97,8 @@ local function export_state()
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
                             consumables=consumables and consumables.export_state(),
                             corpseLoot=corpse_loot and corpse_loot.export_state(),
-                            movement=movement and movement.export_state and movement.export_state()}}
+                            movement=movement and movement.export_state and movement.export_state(),
+                            lootRoll=loot_roll and loot_roll.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -125,6 +128,7 @@ local function import_state(checkpoint)
     if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
        not movement.import_state(checkpoint.data.movement)) then return false end
+    if checkpoint.data.lootRoll and (not loot_roll or not loot_roll.import_state(checkpoint.data.lootRoll)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -715,6 +719,13 @@ local function decide_policy(frame)
         if resting.hold then out.followFormation=nil end
         if not out.action and #frame.pending==0 then out.action=resting.action end
         if resting.hold then return out end
+    end
+    if loot_roll and not out.action then
+        local expected = frame.input.kind == "loot_roll" and frame.input.observationSequence or
+            (frame.input.observationSequences or {}).loot_roll
+        local roll = loot_roll.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
+            input={kind="loot_roll", observationSequence=expected}},encounter_gear)
+        if roll.action then out.action=roll.action end
     end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, policy_observation or observation

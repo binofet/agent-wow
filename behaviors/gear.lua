@@ -89,6 +89,7 @@ function M.compare(candidate,carried,current,equipped,options)
  local occupancy=M.occupancy(equipped)
  if occupancy=="unknown" then return false,0,"equipment_slot_observation_pending" end
  if occupancy=="empty" then
+  if candidate.itemClass==2 and not dps(candidate) then return false,0,"weapon_damage_unknown" end
   for _,value in pairs(next) do if value<0 and not options.statWeights then return false,0,"comparison_not_an_upgrade" end end
   return true,1,"empty_equipment_slot"
  end
