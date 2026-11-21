@@ -38,11 +38,10 @@ func portalDistanceFixture(t *testing.T, offset position) (*Service, *fakeSessio
 func portalDistanceSource(t *testing.T, yards string) string {
 	t.Helper()
 	const declaration = "local portal_approach_yards = 45"
-	source := strings.Replace(behaviors.FollowFormationSource, declaration, "local portal_approach_yards = "+yards, 1)
-	if source == behaviors.FollowFormationSource {
-		t.Fatal("test did not edit the actual shared Lua distance constant")
+	if !strings.Contains(behaviors.FollowFormationSource, declaration) {
+		t.Fatal("shared Lua distance declaration is missing")
 	}
-	return source
+	return strings.Replace(behaviors.FollowFormationSource, declaration, "local portal_approach_yards = "+yards, 1)
 }
 
 func TestPortalDistanceDefaultSightingUsesExactThreeDimensionalBoundary(t *testing.T) {
