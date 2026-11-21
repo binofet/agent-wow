@@ -460,6 +460,12 @@ class CharacterSync:
         self.status["confirmedPrerequisiteQuestIds"] = sorted(confirmed)
 
     def reward(self, state, session, candidates, active, quest_id=INTRO):
+        def counter(value, text=False):
+            try:
+                value = integer(value)
+            except Error:
+                return False  # An invalid fact, consulted conditionally by Lua.
+            return str(value) if text or value > 2**53 - 1 else value
         offer = state.get("turnInOffer", {})
         if not isinstance(offer, dict):
             offer = {}
@@ -468,24 +474,23 @@ class CharacterSync:
         if isinstance(choices, list) and len(choices) <= 6:
             rows = []
             for item in choices:
-                try:
-                    row = {key: integer(item.get(key, 0)) for key in ("itemId", "count", "index")} if isinstance(item, dict) else {}
-                except Error:
-                    row = {}  # Lua rejects malformed choices only on the matching live offer.
+                row = {key: counter(item.get(key, 0)) for key in ("itemId", "count", "index")} if isinstance(item, dict) else {}
                 rows.append(row)
         last = self.data.get("lastMutation", {})
         facts = dict(sessionId=session, now=self.now(), questId=quest_id, ownQuestIds=sorted(active), autonomous=self.autonomous,
             candidates=[dict(priority=priority, distance=distance, guid=str(npc), entry=entry)
                         for priority, distance, npc, entry in candidates],
-            turnInOffer=dict(npcGuid=str(integer(offer.get("npcGuid", 0))), questId=integer(offer.get("questId", 0)),
-                revision=str(integer(offer.get("revision", 0))), expiresInMs=str(integer(offer.get("expiresInMs", 0))),
-                source=offer.get("source", ""), canComplete=offer.get("canComplete") is True,
+            turnInOffer=dict(npcGuid=counter(offer.get("npcGuid", 0), True), questId=counter(offer.get("questId", 0)),
+                revision=counter(offer.get("revision", 0), True), expiresInMs=counter(offer.get("expiresInMs", 0), True),
+                source=offer.get("source", "") if isinstance(offer.get("source", ""), str) else False, canComplete=offer.get("canComplete") is True,
                 rewardRequested=offer.get("rewardRequested") is True, choices=rows),
             classKnown=self.self_player.get("classKnown") is True,
-            classId=integer(self.self_player.get("classId", 0)) if self.self_player.get("classKnown") is True else 0,
+            classId=counter(self.self_player.get("classId", 0)),
             claimReservation=self.data["reservations"].get("claim:" + str(quest_id), False),
-            lastMutation=dict(method=last.get("method", ""), questId=integer(last.get("questId", 0)), at=last.get("at", 0)),
-            questLogRevision=str(integer(state.get("questLogRevision", 0))))
+            lastMutation=dict(method=last.get("method", "") if isinstance(last.get("method", ""), str) else False,
+                questId=counter(last.get("questId", 0)), at=last.get("at", 0) if type(last.get("at", 0)) in (int, float)
+                    and math.isfinite(last.get("at", 0)) else False) if isinstance(last, dict) else False,
+            questLogRevision=counter(state.get("questLogRevision", 0), True))
         decision = converse.quest_rewards.starter_handoff(facts)
         if not isinstance(decision, dict) or decision.get("status") == "pending":
             self.status["phase"] = "waiting_for_shared_lua_prerequisite_reward_policy"

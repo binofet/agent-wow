@@ -273,6 +273,27 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(claim["expectedItemId"],80)
         self.assertEqual(claim["choiceIndex"],4)
 
+    def test_unrelated_reward_offer_does_not_validate_its_unused_revision(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        state=rpc.state()
+        state["turnInOffer"]={"questId":33,"revision":False,"npcGuid":False,"expiresInMs":False}
+        self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+        self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.turn_in")
+
+    def test_single_reward_does_not_validate_unused_class_log_revision_or_last_mutation(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        rpc.reward={"questId":783,"npcGuid":str(MCBRIDE),"revision":"5","expiresInMs":"60000",
+                    "source":"reward_offer","canComplete":True,"choices":[{"itemId":80,"count":1}]}
+        profile.self_player={"classKnown":True,"classId":False}
+        profile.data["lastMutation"]=False
+        state=rpc.state();state["questLogRevision"]=False
+        self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+        claim=self.mutate_calls(rpc)[-1]
+        self.assertEqual(claim[0],"buddy-quests.claim_reward")
+        self.assertEqual(claim[1]["expectedItemId"],80)
+
     def test_claim_timeout_never_replays_same_offer_and_needs_both_reward_proofs(self):
         profile, rpc, clock, _ = self.rig()
         rpc.active, rpc.apply_claim = {783}, False
@@ -627,6 +648,8 @@ class SyncTests(unittest.TestCase):
     def test_malformed_prerequisite_reward_choice_never_emits_claim(self):
         for choices in ([{"index":6,"itemId":80,"count":1}],
                         [{"index":0,"itemId":80,"count":0}],
+                        [{"index":0,"itemId":2**64-1,"count":1}],
+                        [{"index":0,"itemId":80,"count":2**64-1}],
                         [{"index":0,"itemId":80,"count":1},{"index":0,"itemId":6070,"count":1}]):
             profile,rpc,clock,_=self.rig()
             rpc.active,rpc.rewards={7,18,33},choices

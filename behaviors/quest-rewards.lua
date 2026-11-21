@@ -179,6 +179,10 @@ local function decimal(value)
     for i=1,#value do local c=byte_at(value,i); if c<48 or c>57 then return false end end
     return true
 end
+local function wire_uint(value)
+    return integer(value,9007199254740991) or decimal(value)
+end
+local function matches_uint(value,expected) return value==expected or value==tostring(expected) end
 local function starter_handoff(input)
     local function ready(choice) return {status="ready",choice=choice} end
     local function invalid() return result("invalid","starter_reward_facts_invalid") end
@@ -193,7 +197,7 @@ local function starter_handoff(input)
     if not active or not entry then return ready({kind="ignore"}) end
     if type(input.sessionId)~="string" or #input.sessionId==0 or #input.sessionId>128 or
        type(input.now)~="number" or input.now-input.now~=0 or type(input.autonomous)~="boolean" or
-       not array(input.candidates,64) or not decimal(input.questLogRevision) then return invalid() end
+       not array(input.candidates,64) then return invalid() end
     if input.claimReservation~=nil and input.claimReservation~=false then
         if not array(input.claimReservation,3) or #input.claimReservation~=3 then return invalid() end
         for _,part in ipairs(input.claimReservation) do
@@ -214,9 +218,18 @@ local function starter_handoff(input)
         return ready({kind="wait",phase="waiting_for_observed_prerequisite_reward_giver"})
     end
     local offer=input.turnInOffer
-    if type(offer)=="table" and offer.questId==input.questId and offer.npcGuid==giver.guid and
-       offer.source=="reward_offer" and offer.canComplete==true and offer.rewardRequested~=true and
-       decimal(offer.expiresInMs) and offer.expiresInMs~="0" then
+    local offered=false
+    if type(offer)=="table" then
+        if not wire_uint(zero(offer.questId)) then return invalid() end
+        if matches_uint(zero(offer.questId),input.questId) then
+            if not decimal(offer.npcGuid) then return invalid() end
+            if offer.npcGuid==giver.guid and offer.source=="reward_offer" and offer.canComplete==true then
+                if not decimal(offer.expiresInMs) then return invalid() end
+                offered=offer.expiresInMs~="0" and offer.rewardRequested~=true
+            end
+        end
+    end
+    if offered then
         local choices=offer.choices
         if not array(choices,6) then return result("invalid","reward_choices_invalid") end
         local indices={}
@@ -229,7 +242,12 @@ local function starter_handoff(input)
         end
         local position=#choices==0 and 0 or 1
         if #choices>1 then
-            local preferred=preferred_choice(choices,input.questId,input.classKnown==true and input.classId or 0)
+            local class=0
+            if input.classKnown==true then
+                if not wire_uint(input.classId) then return invalid() end
+                class=type(input.classId)=="string" and tonumber(input.classId) or input.classId
+            end
+            local preferred=preferred_choice(choices,input.questId,class)
             if preferred.status~="selected" then
                 return ready({kind="wait",phase="waiting_for_verified_prerequisite_reward_choice"})
             end
@@ -244,16 +262,18 @@ local function starter_handoff(input)
                 choicePosition=position,choiceIndex=choice and zero(choice.index) or 0,itemId=choice and choice.itemId or 0})
         end
     end
-    local last=input.lastMutation or {}
+    local last=input.lastMutation
+    if last==nil then last={} end
     if type(last)~="table" then return invalid() end
     if last.method=="buddy-quests.turn_in" then
-        if not integer(zero(last.questId),uint32) then return invalid() end
-        if last.questId==input.questId then
+        if not wire_uint(zero(last.questId)) then return invalid() end
+        if matches_uint(zero(last.questId),input.questId) then
             local at=zero(last.at)
             if type(at)~="number" or at-at~=0 then return invalid() end
             if input.now-at<60 then return ready({kind="wait",phase="waiting_for_prerequisite_turn_in_response"}) end
         end
     end
+    if not decimal(input.questLogRevision) then return invalid() end
     return ready({kind="turn_in",questId=input.questId,npcGuid=giver.guid})
 end
 local function decide(input)
