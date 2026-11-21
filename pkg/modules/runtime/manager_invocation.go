@@ -62,6 +62,8 @@ func (m *Manager) InvokeJSON(ctx context.Context, full string, params json.RawMe
 		return m.attach(ctx, params)
 	case "session.clock":
 		return m.readPolicyClock(ctx, params)
+	case "session.policy_state":
+		return m.readPolicyState(ctx, params)
 	case "session.send_event":
 		return m.sendPolicyEvent(ctx, params)
 	case "session.policy_source", "session.reload_policy":

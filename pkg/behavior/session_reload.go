@@ -116,6 +116,7 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 		if consumed == len(s.queue) {
 			old := s.vm
 			s.vm, s.state, s.rev, s.fault = candidate, state, version, nil
+			s.latest = nil // the replacement has not made a decision yet
 			s.commitEvents(consumed)
 			s.swapping = false
 			committed = true

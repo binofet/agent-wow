@@ -1810,8 +1810,11 @@ class RPC:
             response_limit = (8192 if method in ("session.describe", "session.attach") else
                               1024 if method == "session.policy_source" else 256) * 1024
             with self.opener.open(request, timeout=request_timeout) as response:
-                raw = response.read(response_limit + 1)
-            if len(raw) > response_limit:
+                # policy_state contains both checkpoint and decision, each
+                # already bounded by the session's configurable value budget.
+                # A second fixed chat cap would hide valid running Lua state.
+                raw = response.read() if method == "session.policy_state" else response.read(response_limit + 1)
+            if method != "session.policy_state" and len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
         except (OSError, ValueError, urllib.error.URLError):

@@ -66,7 +66,8 @@ type Session struct {
 	step     chan struct{} // VM execution, replacement, and close
 	mu       sync.Mutex    // ingress, status, and action reservation
 	vm       *sessionVM
-	state    map[string]any // detached last successfully exported state
+	state    map[string]any    // detached last successfully exported state
+	latest   *DecisionSnapshot // immutable last committed decision, guarded by mu
 	rev      string
 	epoch    uint64
 	cursor   uint64
@@ -248,9 +249,12 @@ func (s *Session) Decide(ctx context.Context, input map[string]any) (Decision, e
 	if err != nil {
 		return Decision{}, s.fail(err)
 	}
-	s.state = state
+	latestOutput := cloneSessionObject(output)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.state = state
+	s.latest = &DecisionSnapshot{Revision: s.rev, Generation: strconv.FormatUint(s.epoch, 10),
+		Cursor: strconv.FormatUint(s.cursor, 10), Clock: clock, Output: latestOutput}
 	out := Decision{Output: output}
 	if hasAction {
 		if s.serial == ^uint64(0) {
@@ -328,8 +332,8 @@ func (s *Session) drain(ctx context.Context) error {
 		if err != nil {
 			return s.fail(err)
 		}
-		s.state = state
 		s.mu.Lock()
+		s.state = state
 		s.commitEvents(1)
 		s.mu.Unlock()
 	}
