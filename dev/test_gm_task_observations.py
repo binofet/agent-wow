@@ -105,12 +105,18 @@ class GMTaskObservationTests(unittest.TestCase):
         self.assertFalse(selection.get('transportWritten', False))
 
     def test_route_distinguishes_client_and_server_position_revisions(self):
+        self.host.goal['walkTarget'] = dict(self.goal['destination'])
         observed = self.host.observe()
         queries = [params for method, params in self.gm.calls if method == 'buddy-actions.plan_route_leg']
         self.assertTrue(queries)
         self.assertEqual(queries[-1]['expectedPositionRevision'], '11')
         self.assertEqual(observed['gm']['observationRevision'], '7')
         self.assertEqual(observed['destinationRoute']['endpoint']['mapId'], 0)
+
+    def test_teleport_observations_do_not_query_a_walkable_corridor(self):
+        self.host.observe()
+        for rpc in (self.gm, self.member):
+            self.assertFalse(any(m == 'buddy-actions.plan_route_leg' for m, _ in rpc.calls))
 
     def test_real_faction_only_creature_keeps_raw_classification_facts(self):
         self.gm.world['nearbyCreatures'] = [dict(guid='17379390969991956137', present=True,
