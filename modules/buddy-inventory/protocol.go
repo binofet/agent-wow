@@ -6,12 +6,31 @@ import (
 	"errors"
 	"unicode"
 	"unicode/utf8"
+
+	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
 )
 
 var malformed = errors.New("malformed inventory packet")
 
 func itemGUID(g uint64) bool     { return g>>48 == 0x4000 && g&0x0000ffffffffffff != 0 }
 func creatureGUID(g uint64) bool { return g>>48 == 0xf130 && g>>24&0xffffff != 0 && g&0xffffff != 0 }
+
+// Wrath CMSG_USE_ITEM: bag/slot/count, use spell, full owned item GUID,
+// zero glyph/flags and the implicit-self target mask. It does not select an item.
+func itemUsePayload(item *inventoryv1.ItemRef, spell uint32, count byte) []byte {
+	if item == nil || !itemGUID(item.ItemGuid) || item.Entry == 0 || item.StackCount == 0 || spell == 0 {
+		return nil
+	}
+	bag, slot, ok := wireSlot(item.Bag, item.Slot)
+	if !ok {
+		return nil
+	}
+	p := make([]byte, 24)
+	p[0], p[1], p[2] = bag, slot, count
+	binary.LittleEndian.PutUint32(p[3:], spell)
+	binary.LittleEndian.PutUint64(p[7:], item.ItemGuid)
+	return p
+}
 func wireSlot(bag, slot uint32) (byte, byte, bool) {
 	if bag == 0 && slot < 16 {
 		return 255, byte(23 + slot), true

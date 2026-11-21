@@ -13,6 +13,7 @@ rpc:
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
   interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
   set_follow_formation: /warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation
+  set_portal_catchup: /warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
@@ -102,6 +103,7 @@ script_api:
   behavior: {effect: read}
   spell_toolkit: {effect: read}
   set_follow_formation: {effect: mutation, description: Refresh a finite exact Lua follow destination without moving or changing standing intent}
+  set_portal_catchup: {effect: mutation, description: Refresh finite ordered Lua portal catchup candidates bound to a witnessed entrance and current pose without moving}
   follow: {effect: mutation}
   assist: {effect: mutation, description: Legacy starter intent only; ordinary combat and defense are always selected by the attached Lua policy}
   engage_npc: {effect: mutation, description: Queue explicit target intent in the current attached Lua policy; false cancels only that request and never disables defense}

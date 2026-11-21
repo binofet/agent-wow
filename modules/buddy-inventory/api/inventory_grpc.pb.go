@@ -27,6 +27,8 @@ const (
 	BuddyInventory_Equip_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Equip"
 	BuddyInventory_EquipGear_FullMethodName    = "/warcraftbuddy.inventory.v1.BuddyInventory/EquipGear"
 	BuddyInventory_Sell_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Sell"
+	BuddyInventory_Drink_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Drink"
+	BuddyInventory_EatBuffFood_FullMethodName  = "/warcraftbuddy.inventory.v1.BuddyInventory/EatBuffFood"
 	BuddyInventory_OnPacket_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/OnPacket"
 	BuddyInventory_BeforeLogout_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/BeforeLogout"
 )
@@ -41,6 +43,8 @@ type BuddyInventoryClient interface {
 	Equip(ctx context.Context, in *EquipRequest, opts ...grpc.CallOption) (*State, error)
 	EquipGear(ctx context.Context, in *EquipGearRequest, opts ...grpc.CallOption) (*State, error)
 	Sell(ctx context.Context, in *SellRequest, opts ...grpc.CallOption) (*State, error)
+	Drink(ctx context.Context, in *DrinkRequest, opts ...grpc.CallOption) (*DrinkReceipt, error)
+	EatBuffFood(ctx context.Context, in *EatBuffFoodRequest, opts ...grpc.CallOption) (*EatBuffFoodReceipt, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -113,6 +117,26 @@ func (c *buddyInventoryClient) Sell(ctx context.Context, in *SellRequest, opts .
 	return out, nil
 }
 
+func (c *buddyInventoryClient) Drink(ctx context.Context, in *DrinkRequest, opts ...grpc.CallOption) (*DrinkReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DrinkReceipt)
+	err := c.cc.Invoke(ctx, BuddyInventory_Drink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyInventoryClient) EatBuffFood(ctx context.Context, in *EatBuffFoodRequest, opts ...grpc.CallOption) (*EatBuffFoodReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EatBuffFoodReceipt)
+	err := c.cc.Invoke(ctx, BuddyInventory_EatBuffFood_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyInventoryClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -143,6 +167,8 @@ type BuddyInventoryServer interface {
 	Equip(context.Context, *EquipRequest) (*State, error)
 	EquipGear(context.Context, *EquipGearRequest) (*State, error)
 	Sell(context.Context, *SellRequest) (*State, error)
+	Drink(context.Context, *DrinkRequest) (*DrinkReceipt, error)
+	EatBuffFood(context.Context, *EatBuffFoodRequest) (*EatBuffFoodReceipt, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyInventoryServer()
@@ -172,6 +198,12 @@ func (UnimplementedBuddyInventoryServer) EquipGear(context.Context, *EquipGearRe
 }
 func (UnimplementedBuddyInventoryServer) Sell(context.Context, *SellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Sell not implemented")
+}
+func (UnimplementedBuddyInventoryServer) Drink(context.Context, *DrinkRequest) (*DrinkReceipt, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Drink not implemented")
+}
+func (UnimplementedBuddyInventoryServer) EatBuffFood(context.Context, *EatBuffFoodRequest) (*EatBuffFoodReceipt, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EatBuffFood not implemented")
 }
 func (UnimplementedBuddyInventoryServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -308,6 +340,42 @@ func _BuddyInventory_Sell_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyInventory_Drink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DrinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).Drink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_Drink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).Drink(ctx, req.(*DrinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyInventory_EatBuffFood_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EatBuffFoodRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).EatBuffFood(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_EatBuffFood_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).EatBuffFood(ctx, req.(*EatBuffFoodRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyInventory_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -374,6 +442,14 @@ var BuddyInventory_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Sell",
 			Handler:    _BuddyInventory_Sell_Handler,
+		},
+		{
+			MethodName: "Drink",
+			Handler:    _BuddyInventory_Drink_Handler,
+		},
+		{
+			MethodName: "EatBuffFood",
+			Handler:    _BuddyInventory_EatBuffFood_Handler,
 		},
 		{
 			MethodName: "OnPacket",

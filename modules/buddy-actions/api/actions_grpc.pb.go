@@ -26,6 +26,7 @@ const (
 	BuddyActions_MoveBody_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
 	BuddyActions_InterruptCast_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/InterruptCast"
 	BuddyActions_SetFollowFormation_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation"
+	BuddyActions_SetPortalCatchup_FullMethodName     = "/warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup"
 	BuddyActions_Follow_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Follow"
 	BuddyActions_Assist_FullMethodName               = "/warcraftbuddy.actions.v1.BuddyActions/Assist"
 	BuddyActions_EngageNPC_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC"
@@ -78,6 +79,7 @@ type BuddyActionsClient interface {
 	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
 	InterruptCast(ctx context.Context, in *InterruptCastRequest, opts ...grpc.CallOption) (*State, error)
 	SetFollowFormation(ctx context.Context, in *FollowFormationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	SetPortalCatchup(ctx context.Context, in *PortalCatchupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Follow(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	Assist(ctx context.Context, in *ToggleRequest, opts ...grpc.CallOption) (*State, error)
 	EngageNPC(ctx context.Context, in *EngageNPCRequest, opts ...grpc.CallOption) (*State, error)
@@ -175,6 +177,16 @@ func (c *buddyActionsClient) SetFollowFormation(ctx context.Context, in *FollowF
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, BuddyActions_SetFollowFormation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SetPortalCatchup(ctx context.Context, in *PortalCatchupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BuddyActions_SetPortalCatchup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -600,6 +612,7 @@ type BuddyActionsServer interface {
 	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
 	InterruptCast(context.Context, *InterruptCastRequest) (*State, error)
 	SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error)
+	SetPortalCatchup(context.Context, *PortalCatchupRequest) (*emptypb.Empty, error)
 	Follow(context.Context, *ToggleRequest) (*State, error)
 	Assist(context.Context, *ToggleRequest) (*State, error)
 	EngageNPC(context.Context, *EngageNPCRequest) (*State, error)
@@ -667,6 +680,9 @@ func (UnimplementedBuddyActionsServer) InterruptCast(context.Context, *Interrupt
 }
 func (UnimplementedBuddyActionsServer) SetFollowFormation(context.Context, *FollowFormationRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetFollowFormation not implemented")
+}
+func (UnimplementedBuddyActionsServer) SetPortalCatchup(context.Context, *PortalCatchupRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetPortalCatchup not implemented")
 }
 func (UnimplementedBuddyActionsServer) Follow(context.Context, *ToggleRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Follow not implemented")
@@ -898,6 +914,24 @@ func _BuddyActions_SetFollowFormation_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).SetFollowFormation(ctx, req.(*FollowFormationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SetPortalCatchup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PortalCatchupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SetPortalCatchup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SetPortalCatchup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SetPortalCatchup(ctx, req.(*PortalCatchupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1666,6 +1700,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetFollowFormation",
 			Handler:    _BuddyActions_SetFollowFormation_Handler,
+		},
+		{
+			MethodName: "SetPortalCatchup",
+			Handler:    _BuddyActions_SetPortalCatchup_Handler,
 		},
 		{
 			MethodName: "Follow",

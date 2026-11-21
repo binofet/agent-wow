@@ -137,10 +137,12 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		x.f.world.Self.UnitFlags = 0
 		x.f.world.Owner.Health = 100
 		x.f.world.NearbyCreatures = nil
+		x.f.world.RequestedCreature = nil
 		x.s.state.Following = true
 		x.s.followUntil = x.s.now().Add(lease)
 		harvestLease(t, x.s, "professions")
 		x.f.world.NearbyCreatures = []*worldv1.CreatureState{c}
+		x.f.world.RequestedCreature = c
 		x.s.Tick(context.Background())
 		if x.s.state.InteractionOwner != "" || x.s.state.InteractionHarvest {
 			t.Fatal("real attack did not release harvest custody", x.s.stateLocked())

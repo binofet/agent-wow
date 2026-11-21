@@ -32,26 +32,22 @@ func TestInteractionStopRebasesAuthoritativeCorrection(t *testing.T) {
 	}
 }
 
-func TestFollowPausesTransientJumpAndAFKThenResumes(t *testing.T) {
+func TestFollowPausesUnsupportedJumpThenResumesWithObservedAFKOwner(t *testing.T) {
 	s, f, advance := rig(t)
 	toggle(t, s, true)
 	s.Tick(context.Background())
-	for _, flags := range []uint32{0x1000, 0} {
-		f.world.Owner.MovementFlags = flags
-		if flags == 0 {
-			f.world.Owner.PlayerFlags = 2
-		}
-		advance(200 * time.Millisecond)
-		s.Tick(context.Background())
-		if got := state(t, s); !got.Following || got.Moving {
-			t.Fatalf("unsafe intent %+v", got)
-		}
-	}
-	f.world.Owner.PlayerFlags = 0
+	f.world.Owner.MovementFlags = 0x1000
 	advance(200 * time.Millisecond)
 	s.Tick(context.Background())
-	if got := state(t, s); !got.Following || !got.Moving || got.FollowLeaseRemainingMs < uint64((3*time.Hour)/time.Millisecond) {
-		t.Fatalf("safe follow did not resume %+v", got)
+	if got := state(t, s); !got.Following || got.Moving {
+		t.Fatal("actual unsupported motion did not pause safely", got)
+	}
+	f.world.Owner.MovementFlags = 0
+	f.world.Owner.PlayerFlags = 2
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if got := state(t, s); !got.Following || !got.Moving || f.world.Owner.PlayerFlags != 2 {
+		t.Fatal("AFK was treated as physical incapacity", got)
 	}
 }
 

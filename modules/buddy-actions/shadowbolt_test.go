@@ -57,7 +57,7 @@ func TestShadowBoltRejectsUnknownHigherRankWrongClassManaAndRange(t *testing.T) 
 			case "mana":
 				f.world.Self.Power = 9
 			case "range":
-				f.world.OwnerTarget.X = f.world.Self.X + 28.01
+				f.world.OwnerTarget.X = f.world.Self.X + 30.01
 			case "silenced":
 				f.world.Self.UnitFlags |= 0x2000
 			}

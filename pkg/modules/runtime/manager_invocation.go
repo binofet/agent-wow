@@ -176,6 +176,12 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 			return m.queueLegacyEngage(ctx, inst, req, result)
 		}
 	}
+	if legacyResurrectionRequest(name, md.Path(), req) {
+		return m.queueLegacyResurrection(ctx, inst, req, result)
+	}
+	if consumable, legacy := legacyConsumableRequest(name, md.Path(), req); legacy {
+		return m.queueLegacyConsumable(ctx, inst, req, result, consumable)
+	}
 	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)

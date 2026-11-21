@@ -17,15 +17,18 @@ import (
 // not a second patient/rank selector. Returning a State acknowledges the queued
 // request only; normal observations and exact CastHeal produce cast receipts.
 func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result proto.Message) error {
-	return m.queueActionPolicyInput(ctx, inst, result, "healing_request", map[string]any{"source": "heal_once"}, "lua_healing_request_queued:")
+	return m.queuePolicyActionInput(ctx, inst, result, "healing_request", map[string]any{"source": "heal_once"}, "lua_healing_request_queued:")
 }
 
 // Identity/order/acknowledgment only; gameplay interpretation belongs to the
 // currently attached Lua source, including edits made in this same session.
-func (m *Manager) queueActionPolicyInput(ctx context.Context, inst *instance, result proto.Message, kind string, value map[string]any, ack string) error {
+func (m *Manager) queuePolicyActionInput(ctx context.Context, inst *instance, result proto.Message, kind string, value map[string]any, ack string) error {
 	catalog, _, err := m.observedSession()
 	if err != nil {
 		return err
+	}
+	if sid, provided := value["sessionId"]; provided && (sid != catalog.SessionID || value["selfGuid"] != catalog.CharacterGUID) {
+		return status.Error(codes.FailedPrecondition, "request does not match the current attached body")
 	}
 	m.mu.Lock()
 	host := m.policy

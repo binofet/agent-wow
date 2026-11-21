@@ -2873,6 +2873,7 @@ class SharedRoleConfigurationTests(unittest.TestCase):
                 state=DeveloperBrainTests().state(repo)
                 state['shared_development']={'untrusted':'ignored'};state['model_selection']={'requestedModel':'made-up'}
                 state['shared_tasks']={'untrusted':'ignored'}
+                state['server_admin']={'cli':'obsolete-console','sshHost':'quasar'}
                 brain.generate([],state)
                 data['roles']['Arlen']['development']=['profession_verification'];path.write_text(json.dumps(data));brain.generate([],state)
                 state['current_request']['source']='initiative';brain.generate([],state)
@@ -2881,6 +2882,13 @@ class SharedRoleConfigurationTests(unittest.TestCase):
                 explicit.generate([],state)
             rows=[json.loads(row) for row in audit.read_text().splitlines()]
             states=[json.loads(row['prompt'].split('Current observations and control state JSON:\n',1)[1].split('\nConversation JSON:\n',1)[0]) for row in rows]
+            self.assertTrue(all('server_admin' not in state for state in states))
+            for row in (rows[0],rows[1],rows[3]):
+                self.assertIn('realm is on joelmax',row['prompt'])
+                self.assertIn('development.rpcUrl',row['prompt'])
+                self.assertIn('development.gmTasks',row['prompt'])
+                self.assertNotIn('General server access is available',row['prompt'])
+                self.assertNotIn('obsolete-console',row['prompt'])
             self.assertEqual(states[0]['shared_development']['self']['development'],['mission_acceptance'])
             self.assertEqual(states[1]['shared_development']['self']['development'],['profession_verification'])
             self.assertIn(str(repo/'dev/task-claim'),rows[0]['prompt']);self.assertIn('semantic task AND every touched file',rows[0]['prompt'])

@@ -19,5 +19,5 @@ func (m *Manager) queueLegacyEngage(ctx context.Context, inst *instance, req, re
 	if target != 0 {
 		value["targetGuid"] = strconv.FormatUint(target, 10)
 	}
-	return m.queueActionPolicyInput(ctx, inst, result, "command", value, "lua_combat_request_queued:")
+	return m.queuePolicyActionInput(ctx, inst, result, "command", value, "lua_combat_request_queued:")
 }
