@@ -72,9 +72,12 @@ end
 function ReloadUI() reloads=reloads+1 end
 function WarcraftBuddyCapturePrepAudit() captures=captures+1 end
 WarcraftBuddyQuestSyncDB={}
-WarcraftBuddyGearLoadouts={characterGUID="0x3",tank={[5]=10775},dps={[5]=10775}}
+WarcraftBuddyGearLoadouts=nil
 dofile(configSource)
+assert(WarcraftBuddyGearLoadouts, "TOC configuration did not provide a usable base plan")
 dofile(source)
+assert(SlashCmdList.WBGEAR and SlashCmdList.WBPROTECTION31 and WarcraftBuddyReadGearMacros,
+    "The normal config/source entry did not register all player helpers")
 local config=WarcraftBuddyLevel40Loadouts
 local function add(id,enchant,count)
  for slot=1,100 do
