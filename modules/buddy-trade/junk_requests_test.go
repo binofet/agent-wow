@@ -23,6 +23,17 @@ import (
 func junkHistoryFixture(carried bool, id string) (*Service, *fakeSession, *junkDispatchSession, *tradev1.JunkRequest) {
 	s, f, wrapper, request := junkDispatchFixture(carried)
 	if !carried {
+		f.world.InventoryKnown, f.world.InventoryRevision = true, 42
+		for bag := uint32(0); bag < 5; bag++ {
+			row := &worldv1.InventoryBag{Bag: bag, SlotKnown: true, ContentsKnown: true}
+			if bag == 0 {
+				row.SlotCount = 16
+				for _, item := range f.world.Backpack {
+					row.Slots = append(row.Slots, proto.Clone(item).(*worldv1.BackpackSlot))
+				}
+			}
+			f.world.InventoryBags = append(f.world.InventoryBags, row)
+		}
 		f.world.SelfEquipmentKnown, f.world.SelfEquipmentRevision = true, 9
 		for slot := uint32(0); slot < 19; slot++ {
 			f.world.SelfEquipment = append(f.world.SelfEquipment, &worldv1.EquipmentSlotState{Slot: slot, SlotKnown: true})
@@ -33,6 +44,7 @@ func junkHistoryFixture(carried bool, id string) (*Service, *fakeSession, *junkD
 		f.world.SelfQuestLog = append(f.world.SelfQuestLog, &worldv1.QuestLogEntry{Slot: slot})
 	}
 	request.RequestId, request.ExpectedEquipmentRevision, request.ExpectedQuestLogRevision = id, 9, 13
+	installJunkPolicyFixture(s, wrapper, nil)
 	return s, f, wrapper, request
 }
 
@@ -54,6 +66,8 @@ func removeJunkHistorySource(s *Service, f *fakeSession, carried bool) {
 	} else {
 		f.world.Backpack[2] = &worldv1.BackpackSlot{Slot: 2}
 		f.world.BackpackRevision++
+		f.world.InventoryBags[0].Slots[2] = proto.Clone(f.world.Backpack[2]).(*worldv1.BackpackSlot)
+		f.world.InventoryRevision++
 	}
 	s.Tick(context.Background())
 }
@@ -68,6 +82,8 @@ func refillJunkHistorySource(f *fakeSession, carried bool, sequence int) {
 		item.Slot = 2
 		f.world.Backpack[2] = item
 		f.world.BackpackRevision++
+		f.world.InventoryBags[0].Slots[2] = proto.Clone(item).(*worldv1.BackpackSlot)
+		f.world.InventoryRevision++
 	}
 }
 
