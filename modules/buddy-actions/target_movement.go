@@ -149,7 +149,10 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 				movement.nav = followNavigation{path: path, target: goal, expected: s.pos, selfRevision: s.positionRevision, mapID: s.posMap,
 					arrival: goal, arrivalStop: .25, arrivalKnown: true}
 				movement.constraintTarget = target
-			} else {
+			} else if r.Behind {
+				// Never cut through the body when the requested rear route
+				// cannot be proved. A ranged LoS request can still advance
+				// along its ordinary verified route and re-observe LoS.
 				movement.nav.Reset()
 				movement.view.Phase = "positioning_route_unavailable"
 				s.stopLocked(ctx)
