@@ -76,6 +76,9 @@ func (s *Service) junkFinalWorld(ctx context.Context, request *tradev1.JunkReque
 	if prior == nil || selected == nil || selected.Entry != prior.Entry || selected.StackCount != prior.StackCount {
 		return nil, nil, guard, status.Error(codes.FailedPrecondition, "inventory_source_changed_before_disposal")
 	}
+	if err := junkRequestContextSafe(w, request); err != nil {
+		return nil, nil, guard, err
+	}
 	if err := s.junkDispatchReady(ctx, guard); err != nil {
 		return nil, nil, guard, err
 	}

@@ -41,6 +41,7 @@ message State {
   JunkDisposal last_junk_disposal = 24;
   uint64 junk_stacks_destroyed = 25;
   string junk_reason = 26;
+  repeated JunkDisposal junk_operations = 35;
 }
 message JunkDisposal {
   uint32 backpack_slot = 1;
@@ -53,6 +54,9 @@ message JunkDisposal {
   uint32 source_bag = 8;
   uint32 source_slot = 9;
   uint64 inventory_revision = 10;
+  string request_id = 11;
+  uint64 equipment_revision = 12;
+  uint64 quest_log_revision = 13;
 }
 message JunkToggle { bool enabled = 1; }
 message JunkRequest {
@@ -64,6 +68,9 @@ message JunkRequest {
   uint32 source_bag = 6;
   uint32 source_slot = 7;
   uint64 inventory_revision = 8;
+  string request_id = 9;
+  uint64 expected_equipment_revision = 10;
+  uint64 expected_quest_log_revision = 11;
 }
 message BoundRequest { string session_id = 1; uint64 revision = 2; }
 message ItemRequest {

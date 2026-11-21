@@ -102,6 +102,25 @@ class StarterPickupPolicyTests(unittest.TestCase):
                                       dict(questId=18, available=True)]))
         self.choice(value, "accept", npc, 18)
 
+    def test_sparse_uint32_allowed_ids_sort_numerically_and_active_ids_suppress_acceptance(self):
+        npc = candidate()
+        for encode in (int, str):
+            with self.subTest(encoding=encode.__name__):
+                value = facts(allowedQuestIds=[4294967295, 99000], offer=offer(npc, [
+                    dict(questId=encode(4294967295), available=True),
+                    dict(questId=encode(99000), available=True)]))
+                self.choice(value, "accept", npc, 99000)
+                value["activeQuestIds"] = [99000]
+                self.choice(value, "accept", npc, 4294967295)
+                value["activeQuestIds"].append(4294967295)
+                self.choice(value, "offer", npc)
+
+    def test_sparse_quest_sets_still_reject_duplicate_and_overflow_ids(self):
+        for field in ("activeQuestIds", "allowedQuestIds"):
+            for rows in ([99000, 99000], [4294967295, 4294967295], [4294967296]):
+                with self.subTest(field=field, rows=rows):
+                    self.invalid(facts(**{field: rows}))
+
     def test_whole_menu_accept_reservation_requires_matching_session_npc_and_revision(self):
         npc = candidate()
         value = facts(offer=offer(npc, [dict(questId=18, available=True)]),
