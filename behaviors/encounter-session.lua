@@ -13,6 +13,7 @@ local support_policy = encounter_support
 local consumables = encounter_consumables
 local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
+local death_recovery = encounter_death_recovery
 local movement = encounter_movement
 local commands = encounter_commands
 local transient_tasks = encounter_tasks
@@ -56,6 +57,7 @@ local function on_event(event)
     if consumables and not consumables.on_event(event) then return false end
     if corpse_loot and not corpse_loot.on_event(event) then return false end
     if buffs and not buffs.on_event(event) then return false end
+    if death_recovery and not death_recovery.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
         observation = obs
@@ -86,7 +88,7 @@ local function on_event(event)
 end
 
 local function export_state()
-    return {version=1, data={encounter=state,buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
+    return {version=1, data={encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
@@ -97,6 +99,7 @@ end
 
 local function import_state(checkpoint)
     if checkpoint.version ~= 1 or type(checkpoint.data) ~= "table" then return false end
+    if checkpoint.data.deathRecovery and (not death_recovery or not death_recovery.import_state(checkpoint.data.deathRecovery)) then return false end
     if checkpoint.data.buffs and (not buffs or not buffs.import_state(checkpoint.data.buffs)) then return false end
     local saved = checkpoint.data.encounter
     if type(saved) ~= "table" or type(saved.bindings) ~= "table" or type(saved.defeated) ~= "table"
@@ -745,7 +748,8 @@ local function decide(frame)
     local current=policy_observation or observation
     if corpse_loot and current then
         local action=out.action
-        local urgent=out.focusGuid~=nil or task_support_action or action and
+        local self=(current.players or {})[current.selfGuid]
+        local urgent=self and self.aliveKnown==true and self.alive==false or out.focusGuid~=nil or task_support_action or action and
             (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
              action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
              action.capability=="sap" or action.capability=="polymorph")
@@ -760,6 +764,13 @@ local function decide(frame)
             out.action=loot.action
         end
         if loot.action or loot.phase=="native_window_settlement" then out.followFormation=nil;out.portalCatchup=nil end
+    end
+    -- Do not reserve a release proposal that a loot-window close will replace.
+    -- Dead-body window cleanup retains its own exact receipt custody first.
+    if not out.action and death_recovery then
+        local recovery=death_recovery.decide(frame,current,state.sequence)
+        out.deathRecovery=recovery
+        if recovery.action then out.action=recovery.action end
     end
     return out
 end

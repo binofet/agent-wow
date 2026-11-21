@@ -187,8 +187,15 @@ message RecoveryState {
   bool rested = 20;
   bool movement_unconfirmed = 21;
   uint32 verified_legs = 22;
+  // Reserved before the exact query write; unknown transport is never replayed.
+  bool corpse_query_pending = 23;
 }
 // Only actual server spellbook IDs are returned. Unknown metadata stays unknown.
+message DeathActionRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 death_epoch = 3;
+}
 message KnownSpell {
   uint32 spell_id = 1;
   bool metadata_known = 2;
@@ -534,6 +541,7 @@ message EncounterObservationResponse {
   EncounterSupport support = 24;
   NavigationObservation navigation = 25;
   TransportFailure last_transport_failure = 26;
+  RecoveryState recovery = 27;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -892,6 +900,8 @@ service BuddyActions {
   rpc FargodeepEncounter(FargodeepEncounterRequest) returns (State);
   // Normal release, validated same-map ghost route, and corpse reclamation.
   rpc Recovery(ToggleRequest) returns (State);
+  rpc ReleaseSpirit(DeathActionRequest) returns (State);
+  rpc QueryCorpse(DeathActionRequest) returns (State);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc ResurrectOnce(ResurrectOnceRequest) returns (State);

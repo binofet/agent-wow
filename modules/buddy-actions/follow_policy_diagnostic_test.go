@@ -208,9 +208,9 @@ func TestFollowPolicyFailurePublishedStateContractMatchesGeneratedAPI(t *testing
 			t.Fatal("diagnostic field lost its published string contract", name, got)
 		}
 	}
-	// CorpseObservation embeds Actions.State, so its imported descriptor is
-	// part of the exposed status contract as well as buddy-actions.status.
-	for _, path := range []string{"module.pb", "../buddy-loot/module.pb"} {
+	// Keep the imported Actions contract aligned throughout the descriptor
+	// cohort, including the State exposed by CorpseObservation.actions.
+	for _, path := range []string{"module.pb", "../buddy-inventory/module.pb", "../buddy-loot/module.pb"} {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

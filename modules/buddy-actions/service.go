@@ -647,6 +647,7 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 		s.swimTrail.observe(out, s.selfGUID)
 	}
 	s.lastWorld = out
+	s.observeRecoveryLifeLocked(out)
 	s.updateClassLocked()
 	return out, nil
 }
@@ -775,12 +776,18 @@ func (s *Service) observePositionLocked(p *worldv1.PlayerState) {
 }
 
 func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) bool {
+	return s.sendPacketLocked(ctx, op, payload) == nil
+}
+
+// Keep the typed pre-transport refusal available to exact operations. A plain
+// RPC error cannot prove that a packet did not reach the game transport.
+func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byte) error {
 	if s.session == nil {
 		s.state.Reason = "session_unavailable"
-		return false
+		return errors.New("session unavailable")
 	}
 	if s.fargodeep.active && op == opcode.CMSGAttackswing && (len(payload) != 8 || !s.fargodeepWriteAllowedLocked(ctx, binary.LittleEndian.Uint64(payload), 0)) {
-		return false
+		return errors.New("packet outside current Fargodeep binding")
 	}
 	sendCtx := ctx
 	if op == opcode.CMSGCastSpell {
@@ -788,15 +795,15 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	}
 	s.transportSequence++
 	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: op, Payload: payload}); err != nil {
-		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: true}
+		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: !modcb.PacketWasNotDispatched(err)}
 		s.state.Reason = "transport_error_outcome_unconfirmed"
 		// Only the exact operation's caller can fence its uncertain physical
 		// state. A failed packet cannot revoke goals or send unrelated packets.
-		return false
+		return err
 	}
 
 	s.state.TransportWrites++
-	return true
+	return nil
 }
 
 func (s *Service) movementLocked(ctx context.Context, op uint32, p position, moving bool) bool {
