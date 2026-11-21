@@ -21,6 +21,8 @@ import (
 // MoveBody executes one caller-selected input. It neither chooses a direction
 // nor retries a failed route. Local physical proof does not call FindPath.
 func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest) (*actionsv1.State, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetVisitId() == 0 || r.GetSequenceId() == 0 ||
 		math.IsNaN(float64(r.BearingRadians)) || math.IsInf(float64(r.BearingRadians), 0) || math.Abs(float64(r.BearingRadians)) > math.Pi+.001 ||
 		!r.Jump && (r.DurationMs < 100 || r.DurationMs > 500) {
@@ -60,7 +62,24 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		plan = buddynav.PlanBodyMotionContext
 	}
 	s.bodyMoving = true
-	defer func() { s.bodyMoving = false }()
+	ownerEpoch, priorUntil := s.hostEncounterEpoch, s.hostEncounterUntil
+	reservedUntil := s.now().Add(3 * time.Second)
+	// Step cannot publish a new ownership decision during a synchronous
+	// dispatch. Reserve only this bounded input; explicit revocation changes
+	// the epoch and still fences every subsequent packet.
+	if s.hostEncounterKey != "" && s.hostEncounterUntil.Before(reservedUntil) {
+		s.hostEncounterUntil = reservedUntil
+	}
+	defer func() {
+		s.bodyMoving = false
+		s.lastStep = s.now()
+		if s.hostEncounterEpoch == ownerEpoch && s.hostEncounterVisit == r.VisitId && s.hostEncounterUntil.Equal(reservedUntil) {
+			s.hostEncounterUntil = priorUntil
+			if ctx.Err() == nil && !s.state.MotionUnconfirmed && s.encounterVisit.bound && s.encounterVisit.revision == r.VisitId {
+				s.hostEncounterUntil = s.now().Add(encounterLeaseDuration)
+			}
+		}
+	}()
 	dataDir := s.navDataDir
 	s.mu.Unlock()
 	points, err := plan(ctx, dataDir, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, bearing, speed, time.Duration(r.DurationMs)*time.Millisecond, r.Jump)
@@ -74,9 +93,13 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	var motionClock uint32
 	valid := func() bool {
 		fresh, e := s.snapshot(ctx)
-		if e != nil || !s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
-			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID || !s.admitsPolicyEncounterLocked(ctx, fresh) ||
+		owner := s.hostEncounterKey == "" || s.trustedEncounterHostLocked(ctx) && s.hostEncounterVisit == r.VisitId && s.hostEncounterEpoch == ownerEpoch
+		if e != nil || s.closed || !owner || !s.matchesCurrentEncounterVisitLocked(fresh) || fresh.VisitRevision != r.VisitId ||
+			fresh.Self.PositionRevision != revision || fresh.Self.MapId != mapID ||
 			safeSelfCombat(fresh, s.selfGUID) != "" || s.clientControlLost || s.clientControlRestoring {
+			if s.state.Moving && (e != nil || fresh.GetSelf().GetPositionRevision() == revision) {
+				s.state.MotionUnconfirmed = true
+			}
 			if e == nil {
 				s.refreshPositionLocked(fresh)
 			}
@@ -87,12 +110,21 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 		return true
 	}
 	write := func(code uint32, p position, elapsed time.Duration, falling, moving bool) bool {
-		if ctx.Err() != nil || !valid() {
+		if ctx.Err() != nil {
+			view.Phase = "body_input_interrupted"
+			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
+			return false
+		}
+		if !valid() {
 			return false
 		}
 		clock, e := s.session.GetClock(ctx, &emptypb.Empty{})
-		if e != nil || clock == nil || !valid() {
+		if e != nil || clock == nil {
 			view.Phase = "body_clock_or_position_unavailable"
+			s.state.MotionUnconfirmed = s.state.MotionUnconfirmed || s.state.Moving
+			return false
+		}
+		if !valid() {
 			return false
 		}
 		p.o = float32(math.Remainder(bearing, 2*math.Pi))
