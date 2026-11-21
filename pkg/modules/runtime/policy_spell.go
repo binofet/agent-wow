@@ -175,7 +175,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 			text, isString := raw.(string)
 			value, err := strconv.ParseUint(text, 10, 64)
 			slot, slotOK := action["itemSlot"].(float64)
-			if !isString || err != nil || value>>48 != 0x4000 || text != strconv.FormatUint(value, 10) || !slotOK || slot != 13 && slot != 14 {
+			if !isString || err != nil || value>>48 != 0x4000 || text != strconv.FormatUint(value, 10) || !slotOK || slot != 12 && slot != 13 {
 				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact equipped control-break item and slot required")
 			}
 			op.controlItem, op.controlSlot = value, uint32(slot)

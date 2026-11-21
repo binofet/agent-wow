@@ -120,13 +120,17 @@ func TestPolicyControlBreakKnownNoWriteCanRetrySameApplication(t *testing.T) {
 	}
 }
 func TestPolicyControlBreakOwnedTrinketExactPacketAndForeignVisit(t *testing.T) {
-	for _, mode := range []string{"valid", "foreign_key", "stale_visit", "stale_aura"} {
+	for _, mode := range []string{"valid_first", "valid_second", "foreign_key", "stale_visit", "stale_aura"} {
 		t.Run(mode, func(t *testing.T) {
 			m, native, cb := friendlyEncounterManager(t)
 			cb.world.Self.UnitFlags |= 0x800000
 			runtimeControlFear(t, native, 7399)
 			cb.world.SelfEquipmentKnown = true
-			cb.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: 14, SlotKnown: true, MetadataKnown: true, ItemGuid: 0x4000000000000059, Entry: 18854, StackCount: 1}}
+			slot := uint32(12)
+			if mode == "valid_second" {
+				slot = 13
+			}
+			cb.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: slot, SlotKnown: true, MetadataKnown: true, ItemGuid: 0x4000000000000059, Entry: 18854, StackCount: 1}}
 			p, err := m.StartPolicy(context.Background(), controlBreakRuntimeSource(t))
 			if err != nil {
 				t.Fatal(err)
@@ -142,7 +146,7 @@ func TestPolicyControlBreakOwnedTrinketExactPacketAndForeignVisit(t *testing.T) 
 				runtimeControlFear(t, native, 7399)
 			}
 			_, r, err := p.Step(ctx, map[string]any{"observationSequence": seq}, nil)
-			if mode != "valid" {
+			if mode != "valid_first" && mode != "valid_second" {
 				if len(cb.writes) != 0 || err == nil && (r == nil || r.Outcome != behavior.ActionNotDispatched) {
 					t.Fatal("foreign/stale control authority wrote", mode, r, err, cb.writes)
 				}
@@ -152,10 +156,10 @@ func TestPolicyControlBreakOwnedTrinketExactPacketAndForeignVisit(t *testing.T) 
 				t.Fatal(r, err, cb.writes)
 			}
 			packet := cb.writes[0]
-			if packet.Opcode != opcode.CMSGUseItem || len(packet.Payload) != 24 || packet.Payload[0] != 255 || packet.Payload[1] != 14 || binary.LittleEndian.Uint32(packet.Payload[3:]) != 42292 || binary.LittleEndian.Uint64(packet.Payload[7:]) != 0x4000000000000059 {
+			if packet.Opcode != opcode.CMSGUseItem || len(packet.Payload) != 24 || packet.Payload[0] != 255 || uint32(packet.Payload[1]) != slot || binary.LittleEndian.Uint32(packet.Payload[3:]) != 42292 || binary.LittleEndian.Uint64(packet.Payload[7:]) != 0x4000000000000059 {
 				t.Fatal(packet)
 			}
-			op := &policySpell{capability: "fear_break", spell: 42292, target: friendlyEncounterSelf, controlItem: 0x4000000000000059, controlSlot: 14}
+			op := &policySpell{capability: "fear_break", spell: 42292, target: friendlyEncounterSelf, controlItem: 0x4000000000000059, controlSlot: slot}
 			if !op.matchesActionPacket(packet.Opcode, packet.Payload) {
 				t.Fatal("exact item packet refused")
 			}

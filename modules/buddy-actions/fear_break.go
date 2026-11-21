@@ -59,7 +59,7 @@ func fearBreakSpell(spell spellcatalog.Spell) bool {
 }
 
 func observedFearBreakItem(item *worldv1.EquipmentSlotState) bool {
-	return item != nil && (item.GetSlot() == 13 || item.GetSlot() == 14) && item.GetSlotKnown() && item.GetMetadataKnown() &&
+	return item != nil && (item.GetSlot() == 12 || item.GetSlot() == 13) && item.GetSlotKnown() && item.GetMetadataKnown() &&
 		item.GetItemGuid()>>48 == 0x4000 && item.GetStackCount() == 1 && gamecatalog.TrinketHasUseSpell(item.GetEntry(), pvpBreakSpell)
 }
 

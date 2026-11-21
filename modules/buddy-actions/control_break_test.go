@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -145,25 +146,29 @@ func TestControlBreakTypedNoWriteRearmsButUnknownWaitsForObservedApplication(t *
 }
 
 func TestControlBreakExactTrinketIdentityAndSharedCooldown(t *testing.T) {
-	s, f, _ := buffRig(t, 9)
-	applyTestFear(s, 7399)
-	f.world.Self.UnitFlags |= fleeingUnitFlag
-	f.world.SelfEquipmentKnown = true
-	f.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: 13, SlotKnown: true, MetadataKnown: true, ItemGuid: 0x4000000000012345, Entry: 18854, StackCount: 1}}
-	r := exactFearRequest(s, pvpBreakSpell)
-	r.ItemGuid = f.world.SelfEquipment[0].ItemGuid
-	r.ItemSlot = 13
-	for _, mutate := range []func(*actionsv1.BreakControlRequest){func(r *actionsv1.BreakControlRequest) { r.ItemGuid++ }, func(r *actionsv1.BreakControlRequest) { r.ItemSlot = 14 }, func(r *actionsv1.BreakControlRequest) { r.SpellId = humanBreakSpell }} {
-		bad := proto.Clone(r).(*actionsv1.BreakControlRequest)
-		mutate(bad)
-		if _, err := s.BreakControl(context.Background(), bad); err == nil || len(f.packets) != 0 {
-			t.Fatal("foreign item admitted", bad, err)
-		}
-	}
-	if _, err := s.BreakControl(context.Background(), r); err != nil || len(f.packets) != 1 {
-		t.Fatal(err, f.packets)
-	}
-	if !s.fearBreakReady.After(s.now()) {
-		t.Fatal("server shared trinket cooldown lost")
+	for _, slot := range []uint32{12, 13} {
+		t.Run(fmt.Sprint(slot), func(t *testing.T) {
+			s, f, _ := buffRig(t, 9)
+			applyTestFear(s, 7399)
+			f.world.Self.UnitFlags |= fleeingUnitFlag
+			f.world.SelfEquipmentKnown = true
+			f.world.SelfEquipment = []*worldv1.EquipmentSlotState{{Slot: slot, SlotKnown: true, MetadataKnown: true, ItemGuid: 0x4000000000012345, Entry: 18854, StackCount: 1}}
+			r := exactFearRequest(s, pvpBreakSpell)
+			r.ItemGuid = f.world.SelfEquipment[0].ItemGuid
+			r.ItemSlot = slot
+			for _, mutate := range []func(*actionsv1.BreakControlRequest){func(r *actionsv1.BreakControlRequest) { r.ItemGuid++ }, func(r *actionsv1.BreakControlRequest) { r.ItemSlot = 14 }, func(r *actionsv1.BreakControlRequest) { r.SpellId = humanBreakSpell }} {
+				bad := proto.Clone(r).(*actionsv1.BreakControlRequest)
+				mutate(bad)
+				if _, err := s.BreakControl(context.Background(), bad); err == nil || len(f.packets) != 0 {
+					t.Fatal("foreign item admitted", bad, err)
+				}
+			}
+			if _, err := s.BreakControl(context.Background(), r); err != nil || len(f.packets) != 1 {
+				t.Fatal(err, f.packets)
+			}
+			if !s.fearBreakReady.After(s.now()) {
+				t.Fatal("server shared trinket cooldown lost")
+			}
+		})
 	}
 }
