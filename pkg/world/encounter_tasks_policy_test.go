@@ -172,6 +172,23 @@ func TestEncounterTemporaryWaitSupersedingTaskCleansOldOwnerFirst(t *testing.T) 
 	}
 }
 
+func TestEncounterTemporaryWaitCanceledQueuedIntentCannotStartLater(t *testing.T) {
+	p, obs := beginWaitTask(t)
+	waitTaskCommand(t, p, map[string]any{"task": "wait_for_pull", "id": "pull-2"})
+	waitTaskCommand(t, p, map[string]any{"task": "cancel_task", "id": "pull-2"})
+	decision := p.decide(observeSparseEncounter(t, p, obs))
+	if decision.Output["action"].(map[string]any)["owner"] != "task:pull-1" {
+		t.Fatal("queued cancellation changed current cleanup owner", decision.Output)
+	}
+	settleWaitOwnership(t, p, decision, behavior.ActionConfirmed, "release", "task:pull-1", "")
+	obs.Navigation.MovementOwner = &actionsv1.MovementOwnerState{Revision: 2}
+	p.decide(observeSparseEncounter(t, p, obs))
+	waitTaskCommand(t, p, map[string]any{"task": "wait_for_pull", "id": "pull-2"})
+	if out := p.decide(observeSparseEncounter(t, p, obs)).Output; out["action"] != nil {
+		t.Fatal("canceled queued intent later acquired movement", out)
+	}
+}
+
 func boolPointer(value bool) *bool          { return &value }
 func float64Pointer(value float64) *float64 { return &value }
 
@@ -197,6 +214,11 @@ func TestTemporaryTaskRequiresClockAndLeaseAndReconcilesUnknownGrant(t *testing.
 		out, err := host.Decide(context.Background(), input)
 		if err != nil || out.Output["status"].(map[string]any)["phase"] != want || out.Output["action"] != nil {
 			t.Fatal("missing mechanic was hidden or task claimed to hold", out.Output, err)
+		}
+		input["command"] = map[string]any{"task": "cancel_task", "id": "w"}
+		out, err = host.Decide(context.Background(), input)
+		if err != nil || out.Output["status"].(map[string]any)["phase"] != "complete" || out.Output["action"] != nil {
+			t.Fatal("unstarted task could not be canceled without a missing mechanic", out.Output, err)
 		}
 	}
 	obs["navigation"].(map[string]any)["movementOwner"] = map[string]any{}

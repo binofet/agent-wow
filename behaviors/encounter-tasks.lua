@@ -61,8 +61,13 @@ function M.on_event(event)
     if event.kind~="command" or type(event.value)~="table" then return true end
     local v=event.value
     if v.task=="cancel_task" or v.task=="wait_for_pull" and v.cancel==true then
-        if task and (v.id==nil or v.id==task.id) then finish(task,"canceled") end
-        if state.next and (v.id==nil or v.id==state.next.id) then state.next=nil end
+        if task and (v.id==nil or v.id==task.id) then
+            finish(task,"canceled")
+            if not task.sessionId and not task.operation then pop(task) end
+        end
+        if state.next and (v.id==nil or v.id==state.next.id) then
+            state.retired[state.next.id]="canceled";state.next=nil
+        end
     elseif v.task=="wait_for_pull" then
         local next_task=request(v)
         if not next_task then state.inputError="invalid_wait_for_pull_intent"
