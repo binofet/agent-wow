@@ -80,6 +80,9 @@ func (s *Service) serviceTravelArrivalLocked(ctx context.Context, kind string, r
 		return false, prefix + "policy_observation_changed"
 	}
 	if !valid {
+		if output != nil {
+			s.formation.recordFailure("service_travel", "decision", s.formation.sourceRevision, "service travel requires an explicit boolean arrived")
+		}
 		return false, prefix + "policy_unavailable"
 	}
 	return arrived, ""
