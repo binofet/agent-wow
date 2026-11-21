@@ -255,3 +255,25 @@ func TestCombatEventsPeriodicDamageHealingAndUnsupportedPower(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+type partialCombatWriter struct{ calls int }
+
+func (w *partialCombatWriter) Write(data []byte) (int, error) {
+	w.calls++
+	if w.calls == 1 {
+		return len(data) / 2, io.ErrShortWrite
+	}
+	return len(data), nil
+}
+func TestCombatEventsShortDurableAppendCannotHideLaterLoss(t *testing.T) {
+	writer := &partialCombatWriter{}
+	s := NewService(1)
+	s.ConfigureCombatJournal("aw-short", writer)
+	for i := 0; i < 2; i++ {
+		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGPartykilllog, Payload: combatKillFixture(1, npcGUID)})
+	}
+	response, _ := s.CombatEvents(context.Background(), &worldv1.CombatEventsRequest{SessionId: "aw-short"})
+	if writer.calls != 1 || len(response.Events) != 2 || len(response.Gaps) != 1 || response.Gaps[0].ThroughSequence != 2 {
+		t.Fatal(writer.calls, response)
+	}
+}

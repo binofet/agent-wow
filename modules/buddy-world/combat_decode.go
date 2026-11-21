@@ -56,7 +56,7 @@ func decodeCombatEvent(op uint32, payload []byte, self uint64) *worldv1.CombatEv
 	case opcode.SMSGPeriodicauralog:
 		event, err = combatPeriodic(payload)
 	case opcode.SMSGSpelldamageshield:
-		// Unit::SendAttackStateUpdate's shield proc log uses unpacked GUIDs.
+		// Unit::DealMeleeDamage's shield proc log uses unpacked GUIDs.
 		if len(payload) != 32 {
 			err = errLayout
 			break

@@ -51,6 +51,10 @@ func (s *Service) observeCombatPacketLocked(op uint32, payload []byte, at time.T
 		}
 	}
 	if !durable {
+		// A short/failed append can leave an incomplete JSON line. Do not claim
+		// later appends to that file are parseable durable records; retain the
+		// entire remainder in memory with an explicit persistence gap.
+		s.combat.durable = nil
 		gaps := s.combat.gaps
 		if len(gaps) != 0 && gaps[len(gaps)-1].ThroughSequence+1 == event.Sequence {
 			gaps[len(gaps)-1].ThroughSequence = event.Sequence
