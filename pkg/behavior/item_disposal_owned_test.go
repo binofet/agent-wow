@@ -131,8 +131,8 @@ end}`
 		"missing_context":   {func(frame map[string]any) { delete(frame, "context") }, "unknown"},
 		"missing_raw_facts": {func(frame map[string]any) { delete(frame["item"].(map[string]any), "rawTemplateFacts") }, "unknown"},
 		"unknown_armor":     {func(frame map[string]any) { frame["item"].(map[string]any)["armorComparisonKnown"] = false }, "unknown"},
-		"non_gray":          {func(frame map[string]any) { frame["item"].(map[string]any)["quality"] = 1 }, "keep"},
-		"functional_flags":  {func(frame map[string]any) { frame["item"].(map[string]any)["flags"] = 1 }, "keep"},
+		"non_gray":          {func(frame map[string]any) { frame["item"].(map[string]any)["quality"] = float64(1) }, "keep"},
+		"functional_flags":  {func(frame map[string]any) { frame["item"].(map[string]any)["flags"] = float64(1) }, "keep"},
 		"functional_spell":  {func(frame map[string]any) { frame["item"].(map[string]any)["hasSpell"] = true }, "keep"},
 	} {
 		t.Run(name, func(t *testing.T) {
