@@ -2874,6 +2874,8 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.policy=dict(revision='a'*64,generation='1')
         self.actions=dict(sessionId='aw-current',selfGuid='5',reason='within_personal_follow_space')
         self.calls=[];self.polls=[];self.statuses=[]
+        self.npc_guid='17379391033929892034'
+        self.world=dict(self=dict(guid='5'),requestedCreature=dict(guid=self.npc_guid,present=True,aliveKnown=True,alive=True))
         self.rpc=types.SimpleNamespace(url='http://127.0.0.1:8088/rpc',call=self.call)
         self.controls=types.SimpleNamespace(actions=self.actions,actions_available=True,party_available=True,
             party_session='aw-current',refresh=lambda:None,context=lambda:{},events=[],execute=lambda *a,**kw:None)
@@ -2894,6 +2896,7 @@ class AttachedPolicyRepairTests(unittest.TestCase):
             return dict(sessionId='aw-current',characterGuid='5',policy=copy.deepcopy(self.policy))
         if method=='buddy-chat.poll':
             return self.polls.pop(0) if self.polls else poll(sessionId='aw-current')
+        if method=='buddy-world.snapshot':return copy.deepcopy(self.world)
         if method=='buddy-party.state':return dict(sessionId='aw-current')
         if method=='buddy-actions.status':return copy.deepcopy(self.actions)
         if method=='buddy-chat.send':return dict(transportWritten=True)
@@ -2923,6 +2926,82 @@ class AttachedPolicyRepairTests(unittest.TestCase):
         self.assertEqual(self.brain.states[0]['development']['policyCommands']['show'][2],str(self.repo/'dev/self-edit'))
         self.assertTrue(any(m=='buddy-chat.send' for m,p in self.calls))
         self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
+
+    def spatial_failure(self, code=57):
+        self.actions.update(lastCastFailure=code,
+            lastSpellOperation=dict(spellId=53,targetGuid=self.npc_guid,capability='offense',phase='server_rejected_no_replay'))
+
+    def test_bad_targets_on_dead_or_absent_exact_npc_does_not_spend_a_model_turn(self):
+        self.spatial_failure(12)
+        self.world['requestedCreature']['alive']=False
+        self.loop.tick()
+        self.world.pop('requestedCreature')
+        self.loop.attached_target_observations.clear()
+        self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.assertFalse((self.brain.state_dir/'attached-policy-faults').exists())
+        snapshots=[p for m,p in self.calls if m=='buddy-world.snapshot']
+        self.assertEqual(snapshots,[dict(creatureGuid=self.npc_guid)]*2)
+
+    def test_bad_targets_for_live_npc_and_true_policy_fault_still_escalate_immediately(self):
+        self.spatial_failure(12)
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        self.policy['faulted']=True
+        self.loop.attached_policy_check_at=0
+        self.loop.tick()
+        self.assertEqual(len(self.brain.states),2)
+        self.assertEqual(self.brain.states[-1]['mission_fault']['field'],'policy')
+
+    def test_expected_position_misses_stay_in_lua_while_progress_advances_then_escalate_stall(self):
+        self.spatial_failure()
+        self.actions['position']=dict(x=0,y=0,z=0)
+        with patch.object(converse.time,'monotonic',return_value=100):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.actions['position']['x']=1
+        with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.actions['assistDamageEvents']='1'
+        with patch.object(converse.time,'monotonic',return_value=122):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        with patch.object(converse.time,'monotonic',return_value=133):self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+        with patch.object(converse.time,'monotonic',return_value=144):self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_new_target_after_expected_miss_gets_correction_time_without_a_new_model(self):
+        self.spatial_failure(97)
+        with patch.object(converse.time,'monotonic',return_value=100):self.loop.tick()
+        self.actions['lastSpellOperation']['targetGuid']=str(int(self.npc_guid)+1)
+        self.world['requestedCreature']['guid']=self.actions['lastSpellOperation']['targetGuid']
+        with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        with patch.object(converse.time,'monotonic',return_value=122):self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_position_age_and_revision_alone_do_not_disguise_a_stall(self):
+        self.spatial_failure()
+        self.actions['position']=dict(x=0,y=0,z=0,ageMs='1',revision='1')
+        with patch.object(converse.time,'monotonic',return_value=100):self.loop.tick()
+        self.actions['position'].update(ageMs='11001',revision='2')
+        with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_movement_phase_churn_alone_is_not_physical_progress(self):
+        self.spatial_failure()
+        self.actions['targetMovement']=dict(targetGuid=self.npc_guid,phase='in_position',ready=True)
+        with patch.object(converse.time,'monotonic',return_value=100):self.loop.tick()
+        self.actions['targetMovement'].update(phase='approaching',ready=False)
+        with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
+        self.assertEqual(len(self.brain.states),1)
+
+    def test_expected_miss_for_now_dead_target_does_not_become_a_stall(self):
+        self.spatial_failure()
+        with patch.object(converse.time,'monotonic',return_value=100):self.loop.tick()
+        self.world['requestedCreature']['alive']=False
+        with patch.object(converse.time,'monotonic',return_value=111):self.loop.tick()
+        self.assertEqual(self.brain.states,[])
+        self.assertEqual(self.loop.attached_failure_progress,{})
 
     def test_explicit_command_rejection_without_cast_receipt_reaches_same_brain(self):
         self.controls.command_fault=dict(sessionId='aw-current',selfGuid='5',

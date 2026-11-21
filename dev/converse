@@ -729,6 +729,10 @@ ATTACHED_MOVEMENT_FAILURES = frozenset((
     'follow_navigation_invalid_target', 'follow_navigation_unavailable',
     'follow_navigation_invalid_step', 'follow_speed_unknown',
     'motion_unconfirmed_explicit_stop_required'))
+# Wrath SpellCastResult values, not a list of unsupported abilities. These
+# ordinary spatial failures belong to Lua's existing correction loop first.
+# AzerothCore src/server/shared/SharedDefines.h (SpellCastResult).
+ATTACHED_POSITION_FAILURES = frozenset((47, 51, 57, 61, 97, 133, 134))
 ATTACHED_OPERATION_FAILURES = frozenset((
     'server_rejected_no_replay', 'transport_unconfirmed_no_retry',
     'outcome_unconfirmed_no_retry'))
@@ -775,6 +779,15 @@ def attached_policy_faults(guid, sid, policy, actions):
             evidence=evidence, policy={k: policy[k] for k in
                 ('revision', 'generation', 'faulted', 'pendingActionIds') if k in policy}))
     return result
+
+
+def attached_repair_progress(actions):
+    position = actions.get('position', {})
+    movement = actions.get('targetMovement', {})
+    return json.dumps([{k: position.get(k) for k in ("known", "mapId", "x", "y", "z", "orientation")}, movement.get('targetGuid'),
+        *[actions.get(k) for k in ('serverCastGo', 'serverAssistGo', 'assistDamageEvents',
+            'meleeDamageEvents', 'smiteDamageEvents', 'fireballDamageEvents',
+            'sinisterStrikeDamageEvents', 'shadowBoltDamageEvents')]], sort_keys=True)
 
 
 def reserve_attached_fault(folder, guid, url, fault, reserve=True):
@@ -3109,6 +3122,8 @@ class Conversation:
         self.attached_policy_metadata = None
         self.attached_policy_check_at = 0
         self.attached_failure_signature = None
+        self.attached_failure_progress = {}
+        self.attached_target_observations = {}
 
     def development_context(self, source, peer_verified=False):
         workspace = getattr(self.brain,"developer_workspace",None)
@@ -3558,8 +3573,54 @@ class Conversation:
                 self.attached_policy_metadata = (development['sessionId'], policy if isinstance(policy, dict) else {})
             except ConversationError:
                 return []  # Missing attachment is not proof of a controller bug.
-        return attached_policy_faults(self.character_guid, development['sessionId'],
+        faults = attached_policy_faults(self.character_guid, development['sessionId'],
             self.attached_policy_metadata[1], actions)
+        return self.attached_repair_candidates(faults, actions, now)
+
+    def attached_repair_candidates(self, faults, actions, now):
+        progress = attached_repair_progress(actions)
+        current_keys = {fault['key'] for fault in faults}
+        self.attached_failure_progress = {k: v for k, v in self.attached_failure_progress.items() if k in current_keys}
+        targets, result = {}, []
+        for fault in faults:
+            evidence = fault['evidence']
+            code = evidence.get('lastCastFailure')
+            positional = fault['field']=='lastSpellOperation' and code in ATTACHED_POSITION_FAILURES
+            target = evidence.get('targetGuid')
+            # Query the existing exact NPC cache, never a nearby/truncated list.
+            # An absent/dead former enemy is not evidence of a broken policy.
+            if (fault['field']=='lastSpellOperation' and code in (12, *ATTACHED_POSITION_FAILURES)
+                    and evidence.get('capability') in ('offense','polymorph','sap','interrupt')
+                    and isinstance(target,str) and target.isdecimal() and int(target)>>48==0xf130):
+                cache_key = (fault['sessionId'], target)
+                cached = self.attached_target_observations.get(cache_key)
+                if cached is None or now-cached['at']>=ATTACHED_POLICY_OBSERVE_SECONDS:
+                    cached = dict(at=now, obsolete=False)
+                    try:
+                        world = self.rpc.call('buddy-world.snapshot',{'creatureGuid':target},timeout=0.5)
+                        npc = world.get('requestedCreature',{})
+                        if str(world.get('self',{}).get('guid'))==str(self.character_guid):
+                            cached['obsolete'] = (not npc or npc.get('present') is not True or
+                                str(npc.get('guid'))==target and npc.get('aliveKnown') is True and npc.get('alive') is not True)
+                    except ConversationError:
+                        pass  # Unknown target liveness is not a death receipt.
+                targets[cache_key] = cached
+                if cached['obsolete']:
+                    self.attached_failure_progress.pop(fault['key'],None)
+                    continue
+            if positional:
+                marker = (target, progress)
+                previous = self.attached_failure_progress.get(fault['key'])
+                if previous is None or previous['progress']!=marker:
+                    self.attached_failure_progress[fault['key']] = dict(progress=marker,since=now)
+                    continue
+                if now-previous['since']<ATTACHED_POLICY_OBSERVE_SECONDS:
+                    continue
+            # VM, ownership, missing-capability and unsupported-action failures
+            # remain immediate. Only a spatial rejection gets time to self-correct.
+            result.append(fault)
+        self.attached_target_observations = targets
+        return result
 
     def attached_fault_current(self, guid, sid, url, key):
         if guid != self.character_guid or sid != self.controls.party_session or url != self.rpc.url:
