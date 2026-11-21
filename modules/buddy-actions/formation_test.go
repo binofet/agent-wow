@@ -1,6 +1,7 @@
 package buddyactions
 
 import (
+	"maps"
 	"math"
 	"reflect"
 	"testing"
@@ -151,20 +152,23 @@ func TestFormationPlanRejectsInvalidInputsWithoutUsableTarget(t *testing.T) {
 func TestFormationRuntimeFailureStopsOneBodyAndRecoversNextTick(t *testing.T) {
 	now := time.Unix(1000, 0)
 	var failed, sibling followFormation
-	if !failed.Target(now, 4, 8, position{}, false).Valid || !sibling.Target(now, 1, 5, position{}, false).Valid {
+	first := failed.Target(now, 4, 8, position{}, false)
+	if !first.Valid || !sibling.Target(now, 1, 5, position{}, false).Valid {
 		t.Fatal("builtin formation could not initialize")
 	}
 	kept := sibling.runtime
+	checkpoint := maps.Clone(failed.memory)
 	failed.runtime = behavior.New() // An unavailable policy must fail closed.
 	got := failed.Target(now.Add(time.Second), 4, 8, position{}, false)
-	if got.Valid || got.Ready || got.Position != (position{}) || failed.runtime != nil || failed.memory != nil {
-		t.Fatal("runtime failure retained usable formation state", got, failed)
+	if got.Valid || got.Ready || got.Position != (position{}) || failed.runtime != nil ||
+		failed.memory == nil || !maps.Equal(failed.memory, checkpoint) {
+		t.Fatal("runtime failure produced a target or discarded committed memory", got, failed)
 	}
 	if next := sibling.Target(now.Add(time.Second), 1, 5, position{}, false); !next.Valid || sibling.runtime != kept {
 		t.Fatal("another body's runtime failure disturbed this body", next)
 	}
-	if next := failed.Target(now.Add(2*time.Second), 4, 8, position{}, false); !next.Valid || next.Ready {
-		t.Fatal("fresh runtime did not recover with a new reaction delay", next)
+	if next := failed.Target(now.Add(2*time.Second), 4, 8, position{o: math.Pi}, false); !next.Valid || !next.Ready || next.Position != first.Position {
+		t.Fatal("fresh runtime did not recover the committed formation", next)
 	}
 	kept = failed.runtime
 	failed.Reset()

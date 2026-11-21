@@ -64,7 +64,6 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 	if f.runtime == nil {
 		runtime := behavior.New()
 		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
-			f.Reset()
 			return formationTarget{}
 		}
 		f.runtime = runtime
@@ -85,7 +84,8 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 	}
 	output, err := f.runtime.Evaluate(input)
 	if err != nil {
-		f.Reset()
+		// A failed pure evaluation cannot replace the last committed Lua
+		// memory. Rebuild only the evaluator before the next observation.
 		f.runtime = nil
 		return formationTarget{}
 	}
