@@ -31,6 +31,7 @@ type policyStateResponse struct {
 	Clock            behavior.ClockReading      `json:"clock"`
 	Checkpoint       map[string]any             `json:"checkpoint"`
 	LatestDecision   *behavior.DecisionSnapshot `json:"latestDecision"`
+	LastDispatch     *policyDispatchSnapshot    `json:"lastDispatch"`
 }
 
 func (m *Manager) readPolicyState(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
@@ -76,7 +77,8 @@ func (m *Manager) readPolicyState(ctx context.Context, params json.RawMessage) (
 		Revision:         view.Status.Revision, Generation: strconv.FormatUint(view.Status.Epoch, 10),
 		Cursor: strconv.FormatUint(view.Status.Cursor, 10), BufferedEvents: view.Status.Buffered,
 		PendingActionIDs: make([]string, 0, len(view.Pending)), Swapping: view.Status.Swapping,
-		Fault: view.Status.Fault, Clock: view.Clock, Checkpoint: view.Checkpoint, LatestDecision: view.LatestDecision}
+		Fault: view.Status.Fault, Clock: view.Clock, Checkpoint: view.Checkpoint, LatestDecision: view.LatestDecision,
+		LastDispatch: host.dispatchSnapshot(view.Status)}
 	for _, receipt := range view.Pending {
 		out.PendingActionIDs = append(out.PendingActionIDs, strconv.FormatUint(receipt.ActionID, 10))
 	}
