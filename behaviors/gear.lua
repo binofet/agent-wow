@@ -74,7 +74,10 @@ function M.compare(candidate,carried,current,equipped,options)
  end
  local next=stats(candidate)
  if not next then return false,0,"candidate_stats_unknown" end
- if tostring(equipped.itemGuid or "0")=="0" then return true,1,"empty_equipment_slot" end
+ if tostring(equipped.itemGuid or "0")=="0" then
+  for _,value in pairs(next) do if value<0 and not options.statWeights then return false,0,"comparison_not_an_upgrade" end end
+  return true,1,"empty_equipment_slot"
+ end
  if not item_known(current) then return false,0,"displaced_item_template_pending" end
  reason=enhanced_block(equipped,options)
  if reason then return false,0,reason end
@@ -94,7 +97,10 @@ function M.compare(candidate,carried,current,equipped,options)
   local delta=(next[kind] or 0)-value
   if delta<0 then dominates=false;losses[kind]=-delta end
  end
- for kind,value in pairs(next) do gain=gain+value-(old[kind] or 0) end
+ for kind,value in pairs(next) do
+  gain=gain+value-(old[kind] or 0)
+  if old[kind]==nil and value<0 then dominates=false;losses[kind]=-value end
+ end
  for kind,value in pairs(old) do if next[kind]==nil then gain=gain-value end end
  if options.statWeights then
   gain=((candidate.armor or 0)-(current.armor or 0))*(options.armorWeight or 0)

@@ -92,6 +92,21 @@ func TestGearPolicyComparesObservedSignedStatsWithoutInventingUnknowns(t *testin
 	}
 }
 
+func TestGearPolicyNewStatPenaltyCannotHideBehindArmorOrWeaponDPS(t *testing.T) {
+	for _, class := range []uint32{4, 2} {
+		candidate := map[string]any{"itemId": 90001, "available": true, "itemClass": class, "inventoryType": 5, "armorComparisonKnown": true,
+			"armor": 20, "stats": []any{map[string]any{"type": 7, "value": -3}}, "delayMs": 2000,
+			"damages": []any{map[string]any{"minimum": 8, "maximum": 12}}}
+		current := map[string]any{"itemId": 90002, "available": true, "itemClass": class, "inventoryType": 5, "armorComparisonKnown": true,
+			"armor": 10, "delayMs": 2000, "damages": []any{map[string]any{"minimum": 4, "maximum": 6}}}
+		out := runGearPolicy(t, map[string]any{"candidate": candidate, "current": current,
+			"source": map[string]any{"enhancementsKnown": true}, "equipped": map[string]any{"itemGuid": "1", "enhancementsKnown": true}}, true)
+		if out["upgrade"] != false || out["reason"] != "comparison_not_an_upgrade" {
+			t.Fatal("positive armor/DPS hid a newly introduced stat loss", class, out)
+		}
+	}
+}
+
 // Native packet/effect fixtures use the same Lua comparison as the public host
 // bridge before forwarding an exact action. No Go upgrade formula lives here.
 func equipGearPolicyTest(t *testing.T, s *Service, r *inventoryv1.EquipGearRequest) (*inventoryv1.State, error) {
