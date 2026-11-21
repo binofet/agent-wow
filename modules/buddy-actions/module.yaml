@@ -108,7 +108,7 @@ script_api:
   cast_self: {effect: mutation, description: Cast one exact learned spell on the current body and report cast or channel observations}
   healing_options: {effect: read, description: Observe injured eligible patients and available learned heal ranks}
   self_mana_observation: {effect: read, description: 'Observe current caster resources, activity, nearby attackers and learned spell mechanics'}
-  encounter_observation: {effect: read, description: Observe the current encounter body and map visit with raw attack and selection facts for Lua engagement policy, party marks and learned spell facts}
+  encounter_observation: {effect: read, description: 'Observe the current encounter body and map visit with raw attack and selection facts for Lua engagement policy, party marks and learned spell facts'}
   cast_heal: {effect: mutation, description: Cast the exact learned heal on the selected observed eligible player}
   cast_offense: {effect: mutation, description: Cast one exact learned damage spell on the selected current attacker}
   melee: {effect: mutation, description: Start autoattack on the selected observed creature independent of hit range or facing; stop the exact acknowledged own target}
