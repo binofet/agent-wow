@@ -49,6 +49,7 @@ type policySpell struct {
 	movement       *policyMovement
 	recovery       *policyRecovery
 	consumable     *policyConsumable
+	corpse         *policyCorpse
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -62,6 +63,9 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	capability, _ := action["capability"].(string)
 	if capability == "release_spirit" || capability == "query_corpse" {
 		return p.resolveDeathAction(action, capability)
+	}
+	if capability == "loot_open" || capability == "loot_close" {
+		return p.resolveCorpseLoot(action, capability)
 	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
@@ -294,7 +298,7 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 	if op == nil || !op.admitted || op.attempted && op.movement == nil || op.origin.SessionID != sessionID ||
 		op.origin.Module != module || !op.matchesActionPacket(code, payload) {
 		spells.mu.Unlock()
-		return status.Error(codes.PermissionDenied, "invalid policy spell callback")
+		return modcb.PacketNotDispatchedError("invalid policy spell callback")
 	}
 	op.attempted = true
 	spells.mu.Unlock()
@@ -309,6 +313,13 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 	if op.recovery != nil {
 		return op.matchesRecoveryPacket(code, payload)
+	}
+	if op.corpse != nil {
+		want := uint32(opcode.CMSGLoot)
+		if op.corpse.close {
+			want = opcode.CMSGLootRelease
+		}
+		return code == want && len(payload) == 8 && binary.LittleEndian.Uint64(payload) == op.target
 	}
 	if op.consumable != nil {
 		return op.matchesConsumablePacket(code, payload)

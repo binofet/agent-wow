@@ -39,13 +39,18 @@ type friendlyEncounterCallback struct {
 	world   *worldv1.SnapshotResponse
 	writes  []*modv1.SendPacketRequest
 	visits  []uint64
+	reject  bool
 }
 
 func (f *friendlyEncounterCallback) SendPacket(ctx context.Context, r *modv1.SendPacketRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	if md, ok := metadata.FromOutgoingContext(ctx); ok {
 		ctx = metadata.NewIncomingContext(ctx, md)
 	}
-	err := f.manager.modulePacketWriter(friendlyEncounterSession, actionsModule)(ctx, r.Opcode, r.Payload)
+	sid := friendlyEncounterSession
+	if f.reject {
+		sid = "replaced-death-callback-session"
+	}
+	err := f.manager.modulePacketWriter(sid, actionsModule)(ctx, r.Opcode, r.Payload)
 	return &emptypb.Empty{}, err
 }
 func (f *friendlyEncounterCallback) GetClock(context.Context, *emptypb.Empty, ...grpc.CallOption) (*modv1.ClockResponse, error) {

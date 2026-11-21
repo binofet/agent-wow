@@ -53,7 +53,12 @@ func (s *Service) deathAction(ctx context.Context, request *actionsv1.DeathActio
 		// actual response or a positively observed new life/death, including reload.
 		r.queryPending = true
 		r.state.Phase = "querying_actual_corpse"
-		if !s.sendLocked(modcb.ForwardPolicySpell(ctx), opcode.MSGCorpseQuery, nil) {
+		if err := s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.MSGCorpseQuery, nil); err != nil {
+			if modcb.PacketWasNotDispatched(err) {
+				r.queryPending = false
+				r.state.Phase = "corpse_query_not_dispatched"
+				return s.stateLocked(), err
+			}
 			r.state.Reason = "corpse_query_transport_unconfirmed_no_retry"
 		}
 	} else {
@@ -66,7 +71,13 @@ func (s *Service) deathAction(ctx context.Context, request *actionsv1.DeathActio
 		r.releasePositionRevision, r.releaseMap = p.PositionRevision, p.MapId
 		r.state.ReleaseAttempted = true
 		r.state.Phase = "release_requested"
-		r.state.ReleaseWritten = s.sendLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGRepopRequest, []byte{0})
+		err := s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGRepopRequest, []byte{0})
+		r.state.ReleaseWritten = err == nil
+		if modcb.PacketWasNotDispatched(err) {
+			r.state.ReleaseAttempted = false
+			r.state.Phase = "release_not_dispatched"
+			return s.stateLocked(), err
+		}
 		if !r.state.ReleaseWritten {
 			r.state.Reason = "release_transport_unconfirmed_no_retry"
 		}

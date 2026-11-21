@@ -92,10 +92,12 @@ func (s *Service) healingOptionsLocked(w *worldv1.SnapshotResponse, onlineMember
 		out.Caster.Mana = proto.Uint32(self.Power)
 	}
 	out.Reason = s.healCasterReadyLocked(w)
-	if out.Reason != "" {
+	if out.Reason != "" && out.Reason != "healing_caster_busy" {
 		return out
 	}
-	out.Caster.Ready = true
+	// Custody/readiness may prevent a cast without hiding real available ranks
+	// or injured allies from the Lua policy that can release that custody.
+	out.Caster.Ready = out.Reason == ""
 	for _, r := range s.learnedContractsLocked() {
 		if s.healRankAvailableLocked(self, r) {
 			out.Spells = append(out.Spells, &actionsv1.HealingRank{SpellId: r.ID, Rank: proto.Uint32(r.Rank),

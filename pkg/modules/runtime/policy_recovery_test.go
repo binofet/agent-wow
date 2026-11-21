@@ -123,3 +123,59 @@ func TestPolicyDeathRecoveryPacketFenceAndEpochValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyDeathRecoveryDefiniteCoreRefusalAllowsSameDeathFreshRetry(t *testing.T) {
+	m, native, cb := friendlyEncounterManager(t)
+	cb.world.Self.Alive = false
+	cb.world.Self.Health = 0
+	if _, err := native.Recovery(context.Background(), &actionsv1.ToggleRequest{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := m.StartPolicy(context.Background(), recoveryRuntimeSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer policy.close()
+	step := func() *behavior.ActionReceipt {
+		t.Helper()
+		view, err := m.readPolicyObservation(context.Background(), friendlyEncounterSession, encounterObservationMethod)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seq, err := policy.Enqueue(behavior.Event{Kind: "encounter_observation", Value: view})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, r, err := policy.Step(context.Background(), map[string]any{"observationSequence": strconv.FormatUint(seq, 10)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	for _, query := range []bool{false, true} {
+		if query {
+			cb.world.Self.Health = 1
+			cb.world.Self.PlayerFlags = 0x10
+			cb.world.Self.PositionRevision++
+		}
+		cb.reject = true
+		r := step()
+		state, err := native.Status(context.Background(), &emptypb.Empty{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r == nil || r.Outcome != behavior.ActionNotDispatched || state.Recovery.ReleaseAttempted && !query || state.Recovery.CorpseQueryPending || state.LastTransportFailure == nil || state.LastTransportFailure.OutcomeUnknown {
+			t.Fatal("definite core no-write poisoned the death", query, r, state)
+		}
+		before := len(cb.writes)
+		cb.reject = false
+		r = step()
+		want := uint32(opcode.CMSGRepopRequest)
+		if query {
+			want = opcode.MSGCorpseQuery
+		}
+		if r == nil || r.Outcome != behavior.ActionSettledUnverified || len(cb.writes) != before+1 || cb.writes[before].Opcode != want {
+			t.Fatal("same death fresh retry not dispatched", query, r, cb.writes)
+		}
+	}
+}
