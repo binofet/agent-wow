@@ -26,6 +26,7 @@ func TestTargetProtectionObservesOwnAndForeignPolymorphAndReleasesOnWireEvidence
 		t.Run(tc.name, func(t *testing.T) {
 			s, f, request, _ := exactOffenseFixture(t)
 			s.state.Assisting = true
+			s.assistUntil = s.now().Add(time.Hour) // Keep this legacy intent live while testing independent mechanical protection.
 			ctx := context.Background()
 			before := state(t, s)
 			emitPolymorph(s, tc.apply, sheepAura(enemyGUID, tc.caster, 118, 20000))
@@ -131,6 +132,7 @@ func TestTargetProtectionExpiresAtObservedRemainingDuration(t *testing.T) {
 func TestTargetProtectionStopsExistingSwingThroughServerStopFence(t *testing.T) {
 	s, f, request, _ := exactMeleeFixture(t)
 	s.state.Assisting = true
+	s.assistUntil = s.now().Add(time.Hour) // Keep this legacy intent live while testing independent mechanical protection.
 	ctx := exactMeleeContext()
 	if _, err := s.Melee(ctx, request); err != nil {
 		t.Fatal(err)
@@ -172,6 +174,7 @@ func TestTargetProtectionStopsExistingSwingThroughServerStopFence(t *testing.T) 
 func TestTargetProtectionDoesNotBlockDifferentOrdinaryAssistTarget(t *testing.T) {
 	s, f, request, _ := exactOffenseFixture(t)
 	s.state.Assisting = true
+	s.assistUntil = s.now().Add(time.Hour) // Keep this legacy intent live while testing independent mechanical protection.
 	const other = enemyGUID + 1
 	emitPolymorph(s, opcode.SMSGAuraUpdateAll, sheepAura(other, 9, 118, 20000))
 	if _, err := s.CastOffense(context.Background(), request); err != nil {
