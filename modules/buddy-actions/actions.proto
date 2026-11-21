@@ -239,6 +239,10 @@ message ObservedAura {
   bool duration_known = 5;
   uint32 remaining_ms = 6;
   uint64 revision = 7;
+  bool negative = 8;
+  bool metadata_known = 9;
+  uint32 dispel_type = 10;
+  repeated uint32 aura_types = 11;
 }
 message PlayerAuras {
   uint64 target_guid = 1;
@@ -559,6 +563,7 @@ message FollowFormationRequest {
   bool ready = 12;
   bool hold = 13;
   uint64 follow_revision = 14;
+  string phase = 15;
 }
 message NavigationObservation {
   bool body_movement_supported = 1;
@@ -579,6 +584,7 @@ message NavigationObservation {
   // The followed owner is observable even outside the current party.
   EncounterPlayer follow_owner = 16;
   uint64 follow_revision = 17;
+  bool ground_navigation_configured = 18;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -702,6 +708,7 @@ message EncounterSpell {
   // Base weapon/combo estimate only; excludes AP, armor and combat modifiers.
   bool damage_model_known = 30;
   bool requires_facing = 31;
+  uint32 friendly_dispel_mask = 32;
 }
 message EncounterPeriodicDamage {
   double damage_per_tick = 1;
@@ -731,6 +738,7 @@ message EncounterSupport {
   bool caster_in_combat = 1;
   repeated ResurrectionOption resurrections = 2;
   repeated InterruptOption interrupts = 3;
+  repeated PlayerAuras player_auras = 4;
 }
 message ResurrectionOption {
   uint64 patient_guid = 1;
@@ -757,6 +765,15 @@ message InterruptCastRequest {
   uint64 target_guid = 3;
   uint32 spell_id = 4;
   uint64 cast_revision = 5;
+}
+message CastCleanseRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint32 spell_id = 4;
+  uint32 aura_slot = 5;
+  uint64 aura_revision = 6;
+  uint32 aura_spell_id = 7;
 }
 message EncounterControlCapability {
   uint64 guid = 1;
@@ -812,6 +829,7 @@ service BuddyActions {
   rpc EncounterObservation(google.protobuf.Empty) returns (EncounterObservationResponse);
   rpc CastHeal(CastHealRequest) returns (State);
   rpc CastOffense(CastOffenseRequest) returns (State);
+  rpc CastCleanse(CastCleanseRequest) returns (State);
   rpc Melee(MeleeRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

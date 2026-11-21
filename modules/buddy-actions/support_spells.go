@@ -14,17 +14,21 @@ import (
 )
 
 type supportAttempt struct {
-	view              actionsv1.SpellOperation
-	owner             uint64
-	count             byte
-	until             time.Time
-	controlAura       observedBuffAura
-	controlSlot       uint8
-	creation          *itemCreation
-	selfChannel       bool
-	effectLogEligible bool
-	cleanseAura       uint32
-	policySpellToken  string
+	view               actionsv1.SpellOperation
+	owner              uint64
+	count              byte
+	until              time.Time
+	controlAura        observedBuffAura
+	controlSlot        uint8
+	creation           *itemCreation
+	selfChannel        bool
+	effectLogEligible  bool
+	cleanseAura        uint32
+	cleanseBaseline    map[uint8]observedBuffAura
+	cleanseEligible    map[uint32]bool
+	cleanseLogs        map[uint32]bool
+	cleanseLogObserved bool
+	policySpellToken   string
 }
 type resurrectionOffer struct {
 	caster   uint64
@@ -97,7 +101,7 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 			}
 		}
 	}
-	if op := s.supportOp; op != nil && op.view.Phase == "waiting_server" && !s.now().Before(op.until) {
+	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
 		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
 			s.state.CastPending = false
@@ -135,7 +139,7 @@ func (s *Service) castSupportPacketLocked(ctx context.Context, r spellcatalog.Sp
 	s.pendingSpell = r.ID
 	s.pendingTarget = target
 	s.castUntil = until
-	if capability == fearBreakCapability {
+	if capability == fearBreakCapability || capability == string(spellcatalog.Cleanse) {
 		s.state.LastCastFailure = 0
 		ready := s.now().Add(time.Duration(r.GcdMs) * time.Millisecond)
 		if s.nextHeal.Before(ready) {
@@ -245,7 +249,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		return false, nil
 	}
 	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
-		!(op.view.Capability == selfCastCapability && op.view.Phase == "transport_unconfirmed_no_retry") {
+		!((op.view.Capability == selfCastCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}
 	rejected := false
@@ -308,6 +312,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_cast_go_effect_unverified"
+		if op.cleanseAura != 0 {
+			op.view.Phase = "waiting_cleanse_effect"
+		}
 		if op.creation != nil {
 			op.view.Phase = "waiting_created_item"
 			return true, nil
@@ -330,7 +337,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, nil
 		}
 		op.view.Phase = "server_rejected_no_replay"
-		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability) && code == opcode.SMSGCastFailed {
+		if (op.view.Capability == pickLockCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && code == opcode.SMSGCastFailed {
 			s.state.LastCastFailure = uint32(p[5])
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {

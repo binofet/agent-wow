@@ -22,7 +22,7 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetVisitId() == 0 || r.GetOwnerGuid() == 0 ||
 		r.GetOwnerPositionRevision() == 0 || !finite(position{r.X, r.Y, r.Z, r.Orientation}) ||
 		math.IsNaN(r.StartDistance) || math.IsInf(r.StartDistance, 0) || r.StartDistance < .2 || r.StartDistance > 12 ||
-		math.IsNaN(r.StopDistance) || math.IsInf(r.StopDistance, 0) || r.StopDistance < .1 || r.StopDistance > 4 || r.StartDistance <= r.StopDistance {
+		math.IsNaN(r.StopDistance) || math.IsInf(r.StopDistance, 0) || r.StopDistance < .1 || r.StopDistance > 4 || r.StartDistance < r.StopDistance {
 		return nil, status.Error(codes.InvalidArgument, "exact current body, visit, owner pose and bounded formation radii required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -34,7 +34,7 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 		return nil, status.Error(codes.PermissionDenied, "current attached encounter host required")
 	}
 	if !s.hasPolicyEncounterAccessLocked(ctx) || s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || !s.hostEncounterActiveLocked() ||
-		r.VisitId != s.encounterVisit.revision || r.FollowRevision != s.followRevision || !s.state.Following || s.navDataDir == "" {
+		r.VisitId != s.encounterVisit.revision || r.FollowRevision != s.followRevision || !s.state.Following {
 		return nil, status.Error(codes.FailedPrecondition, "current following body and observed visit required")
 	}
 	w, err := s.readWorldSnapshot(ctx)
@@ -54,6 +54,15 @@ func (s *Service) SetFollowFormation(ctx context.Context, r *actionsv1.FollowFor
 	if r.Ready {
 		phase = "within_personal_follow_space"
 	}
+	if r.Phase != "" {
+		switch r.Phase {
+		case "formation_reaction_delay", "within_personal_follow_space", "within_follow_distance",
+			"follow_target_too_far_or_vertical", "following_formation":
+			phase = r.Phase
+		default:
+			return nil, status.Error(codes.InvalidArgument, "known formation phase required")
+		}
+	}
 	s.followGoal = followFormationGoal{visit: r.VisitId, owner: r.OwnerGuid,
 		until: s.now().Add(encounterLeaseDuration), target: formationTarget{
 			Position: target, StartDistance: r.StartDistance, StopDistance: r.StopDistance, Ready: r.Ready, Hold: r.Hold, Phase: phase, Valid: true}}
@@ -69,6 +78,9 @@ func (s *Service) followFormationPlanLocked(now time.Time, w *worldv1.SnapshotRe
 	if !goal.until.IsZero() {
 		s.followGoal = followFormationGoal{}
 		s.formation.Reset()
+	}
+	if s.navDataDir == "" {
+		return s.formation.NearOwner(now, s.selfGUID, owner, moving, s.pos, s.state.Moving)
 	}
 	return s.formation.Plan(now, s.selfGUID, classID, owner, moving, s.pos, s.state.Moving, s.followNav.ownerArrival)
 }

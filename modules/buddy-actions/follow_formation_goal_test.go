@@ -94,7 +94,7 @@ func TestFollowFormationGoalRequiresCurrentHostBodyVisitIntentAndOwner(t *testin
 			case "nonfinite radius":
 				req.StartDistance, want = math.Inf(1), codes.InvalidArgument
 			case "radius ordering":
-				req.StartDistance, want = req.StopDistance, codes.InvalidArgument
+				req.StartDistance, want = req.StopDistance-.1, codes.InvalidArgument
 			case "destination envelope":
 				req.X = f.world.Owner.X + 17
 			case "cancelled":

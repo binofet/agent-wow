@@ -111,9 +111,7 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 			return true
 		}
 	}
-	if s.potentialCleanseLocked() && s.cleanseTickLocked(ctx, w) {
-		return true
-	}
+
 	if s.hostEncounterActiveLocked() {
 		return preempted
 	}

@@ -146,16 +146,6 @@ func (s *Service) healingAllyLocked(w *worldv1.SnapshotResponse, patient *worldv
 	return team != 0 && observedPlayerTeam(patient) == team
 }
 
-func healingTiePriority(guid, self uint64) int {
-	if guid == ownerGUID {
-		return 0
-	}
-	if guid == self {
-		return 1
-	}
-	return 2
-}
-
 func (s *Service) castHealLocked(ctx context.Context, target *worldv1.PlayerState, heal spellcatalog.Spell) bool {
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
