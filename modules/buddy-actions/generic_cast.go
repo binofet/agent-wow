@@ -87,11 +87,11 @@ func (s *Service) CastSpell(ctx context.Context, r *actionsv1.CastSpellRequest) 
 	until := s.now().Add(3 * time.Second)
 	// Optional catalog facts improve lifecycle timing; missing semantics never
 	// prevent the normal learned-ID packet from being sent.
-	spell := s.learnedContractsLocked()[r.SpellId]
+	spell, channelMetadataKnown := s.learnedContractsLocked()[r.SpellId]
 	if spell.CastMs > 0 {
 		until = until.Add(time.Duration(spell.CastMs) * time.Millisecond)
 	}
-	op := &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.SpellId, TargetGuid: target, Capability: genericCastCapability, Phase: "waiting_server"}, count: s.castCount, until: until, genericSpell: true, policySpellToken: modcb.PolicySpellToken(ctx)}
+	op := &supportAttempt{view: actionsv1.SpellOperation{SpellId: r.SpellId, TargetGuid: target, Capability: genericCastCapability, Phase: "waiting_server"}, count: s.castCount, until: until, genericSpell: true, genericChannelUnknown: !channelMetadataKnown, policySpellToken: modcb.PolicySpellToken(ctx)}
 	s.initializeSpellLifecycleLocked(op, isChanneledSpell(spell), r.VisitId)
 	s.supportOp = op
 	s.pendingSpell = r.SpellId
@@ -231,6 +231,14 @@ func (s *Service) genericCastEventLocked(op *supportAttempt, code uint32, p []by
 		if op.view.ChannelEnded {
 			s.finishSelfChannelLocked("channel_ended_effect_unverified")
 		}
+		return nil
+	}
+	if op.genericChannelUnknown {
+		// GO precedes CHANNEL_START on the ordinary server path. Without
+		// channel metadata it cannot establish that physical casting ended.
+		// Keep the existing bounded operation until actual lifecycle evidence
+		// or its original uncertainty deadline; never replay the learned cast.
+		op.view.Phase = "waiting_channel_observation"
 		return nil
 	}
 	op.view.Phase = "server_cast_go_effect_unverified"

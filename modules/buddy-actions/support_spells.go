@@ -14,27 +14,28 @@ import (
 )
 
 type supportAttempt struct {
-	view               actionsv1.SpellOperation
-	owner              uint64
-	count              byte
-	until              time.Time
-	controlAura        observedBuffAura
-	controlSlot        uint8
-	creation           *itemCreation
-	selfChannel        bool
-	genericSpell       bool
-	effectLogEligible  bool
-	cleanseAura        uint32
-	cleanseBaseline    map[uint8]observedBuffAura
-	cleanseEligible    map[uint32]bool
-	cleanseLogs        map[uint32]bool
-	cleanseLogObserved bool
-	policySpellToken   string
-	breakAuraRevision  uint64
-	breakAuraSlot      uint32
-	breakAura          observedBuffAura
-	breakItem          uint64
-	cooldown           *cooldownReservation
+	view                  actionsv1.SpellOperation
+	owner                 uint64
+	count                 byte
+	until                 time.Time
+	controlAura           observedBuffAura
+	controlSlot           uint8
+	creation              *itemCreation
+	selfChannel           bool
+	genericSpell          bool
+	genericChannelUnknown bool
+	effectLogEligible     bool
+	cleanseAura           uint32
+	cleanseBaseline       map[uint8]observedBuffAura
+	cleanseEligible       map[uint32]bool
+	cleanseLogs           map[uint32]bool
+	cleanseLogObserved    bool
+	policySpellToken      string
+	breakAuraRevision     uint64
+	breakAuraSlot         uint32
+	breakAura             observedBuffAura
+	breakItem             uint64
+	cooldown              *cooldownReservation
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64
@@ -280,7 +281,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.castCount != op.count {
 		return false, nil
 	}
-	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" &&
+	if op.view.Phase != "waiting_server" && op.view.Phase != "channeling" && op.view.Phase != "waiting_channel_observation" &&
 		!((op.genericSpell || op.view.Capability == selfCastCapability || op.view.Capability == fearBreakCapability || op.view.Capability == string(spellcatalog.Cleanse)) && op.view.Phase == "transport_unconfirmed_no_retry") {
 		return false, nil
 	}

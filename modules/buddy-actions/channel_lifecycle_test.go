@@ -191,3 +191,38 @@ func TestChannelLifecycleActualStartPromotesFutureLearnedSpellWithoutCatalogHand
 		t.Fatal("actual unknown-spell channel end not settled honestly", s.stateLocked())
 	}
 }
+
+func TestChannelLifecycleUnknownMetadataGOThenStartRetainsExactLearnedOperation(t *testing.T) {
+	const future = uint32(4000000000)
+	s, f, advance := genericCastRig(t)
+	s.applySpellbookLocked(map[uint32]bool{future: true})
+	r := genericRequest(s, future)
+	r.Targets = &actionsv1.SpellCastTargets{Mask: 64, Destination: &actionsv1.SpellCastLocation{X: 1, Y: 2, Z: 3}}
+	if _, err := s.CastSpell(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	original := s.supportOp
+	_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: genericGo(s, future, r.Targets)})
+	if !s.state.CastPending || !original.view.ServerCastGo || original.view.Phase != "waiting_channel_observation" || original.view.EffectObserved {
+		t.Fatal("GO ended unknown channel or invented effect", s.stateLocked())
+	}
+	emitChannel(t, s, true, s.selfGUID, future, 8000)
+	if s.supportOp != original || !original.selfChannel || !original.view.ChannelStarted || !s.state.CastPending {
+		t.Fatal("real GO-before-START lost operation custody", s.stateLocked())
+	}
+	// Missing catalog metadata never disables cancellation of a real channel.
+	if _, err := s.CancelSpell(context.Background(), cancelOperation(s, true)); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.packets) != 2 || f.packets[1].Opcode != opcode.CMSGCancelChannelling || !s.state.CastPending {
+		t.Fatal("channel cancel missing or fabricated completion", f.packets, s.stateLocked())
+	}
+	emitChannel(t, s, false, s.selfGUID, 0, 0)
+	if s.state.CastPending || !original.view.ChannelEnded || !original.view.ServerCastGo || original.view.EffectObserved {
+		t.Fatal("actual end lost execution evidence or invented effect", s.stateLocked())
+	}
+	advance(time.Hour)
+	if len(f.packets) != 2 {
+		t.Fatal("settled channel replayed")
+	}
+}

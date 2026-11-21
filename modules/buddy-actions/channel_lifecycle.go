@@ -18,10 +18,17 @@ func (s *Service) initializeSpellLifecycleLocked(op *supportAttempt, channel boo
 
 // The legacy helper name remains internal compatibility. Channels belong to
 // the caster; target shape does not select a different lifecycle handler.
-func (s *Service) pendingSelfChannelLocked() *supportAttempt {
+func (s *Service) pendingSpellLifecycleLocked() *supportAttempt {
 	op := s.supportOp
-	if op != nil && op.selfChannel && s.state.CastPending && s.pendingSpell == op.view.SpellId &&
+	if op != nil && s.state.CastPending && s.pendingSpell == op.view.SpellId &&
 		s.pendingTarget == op.view.TargetGuid && s.castCount == op.count {
+		return op
+	}
+	return nil
+}
+
+func (s *Service) pendingSelfChannelLocked() *supportAttempt {
+	if op := s.pendingSpellLifecycleLocked(); op != nil && op.selfChannel {
 		return op
 	}
 	return nil
@@ -35,15 +42,16 @@ func (s *Service) finishSelfChannelLocked(phase string) {
 }
 
 func (s *Service) expireSelfChannelLocked() {
-	if op := s.pendingSelfChannelLocked(); op != nil && !s.now().Before(op.until) {
-		s.finishSelfChannelLocked("outcome_unconfirmed_no_retry")
+	if op := s.pendingSpellLifecycleLocked(); op != nil && (op.selfChannel || op.genericSpell && op.genericChannelUnknown) && !s.now().Before(op.until) {
+		op.view.Phase = "outcome_unconfirmed_no_retry"
+		s.pendingSpell, s.pendingTarget, s.state.CastPending = 0, 0, false
 	}
 }
 
 func (s *Service) observeSelfChannelLocked(code uint32, p []byte) error {
 	s.expireSelfChannelLocked()
-	op := s.supportOp
-	if op == nil || !s.state.CastPending || s.pendingSpell != op.view.SpellId || s.pendingTarget != op.view.TargetGuid || s.castCount != op.count {
+	op := s.pendingSpellLifecycleLocked()
+	if op == nil {
 		return nil
 	}
 	actor, n, err := readGUID(p)
