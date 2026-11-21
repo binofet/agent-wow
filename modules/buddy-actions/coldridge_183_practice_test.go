@@ -16,7 +16,10 @@ func cold183Setup(t *testing.T, progress uint32) (*Service, *fakeSession, func(t
 	t.Helper()
 	f := &fakeSession{world: cold183World(progress)}
 	f.world.NearbyCreatures = []*worldv1.CreatureState{cold183Creature(-6237)}
-	s := NewIndependentService(f, 8)
+	f.world.Self.ChannelSpellKnown, f.world.Self.ChannelObjectKnown = true, true
+	f.world.NearbyCreatures[0].UnitFlagsKnown = true
+	s := NewIndependentService(f, 8, "coldridge-183-test-body")
+	useStarterSemanticPolicy(t, s)
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	s.SetNavigationDataDir("/fixture/client-data")
@@ -176,10 +179,13 @@ func TestColdridge183PracticeFinishesOnlyExistingRecentOwnFight(t *testing.T) {
 			s.Tick(context.Background())
 			// Adapt the complete source-shaped frame to this fixture's self8,
 			// pending Shadow Bolt and selected708, rather than the old self1 wolf.
+			pendingSpell := s.pendingSpell
 			goPacket := smiteEvent(true, s.castCount, cold183GUID)
 			goPacket[1], goPacket[3] = 8, 8
 			binary.LittleEndian.PutUint32(goPacket[5:], shadowBolt)
 			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goPacket})
+			deliverHealReceiptPacket(t, s, opcode.SMSGSpellnonmeleedamagelog,
+				exactOffenseDamageLog(s.selfGUID, cold183GUID, pendingSpell, 10))
 			if state(t, s).CastPending || state(t, s).ServerAssistGo != 1 {
 				t.Fatal("fixture server receipt did not bind the own pending cast", state(t, s))
 			}

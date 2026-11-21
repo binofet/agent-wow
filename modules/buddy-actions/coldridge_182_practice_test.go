@@ -26,14 +26,17 @@ func cold182Setup(t *testing.T, progress, ownLevel, bodyLevel uint32) (*Service,
 	w.Self.X, w.Self.Y, w.Self.Z = cold182TestBaseline.x, cold182TestBaseline.y, cold182TestBaseline.z
 	w.Self.Health, w.Self.MaxHealth = 98, 98
 	w.Self.Power, w.Self.MaxPower, w.Self.BaseMana = 257, 257, 102
+	w.Self.ChannelSpellKnown, w.Self.ChannelObjectKnown = true, true
 	c := cold182GoalCreature(bodyLevel)
 	// The raw Talin baseline and Grelin client estimate remain distinct. The
 	// nearby body and straight path are synthetic, not live706/route claims.
 	c.PositionKnown, c.PositionRevision = true, 1
+	c.UnitFlagsKnown = true
 	c.X, c.Y, c.Z = cold182TestStage.x+3, cold182TestStage.y, cold182TestStage.z
 	w.NearbyCreatures = []*worldv1.CreatureState{c}
 	f := &fakeSession{world: w}
-	s := NewIndependentService(f, 8)
+	s := NewIndependentService(f, 8, "coldridge-182-test-body")
+	useStarterSemanticPolicy(t, s)
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	s.lastWorld = w
@@ -180,10 +183,13 @@ func TestColdridge182PracticeFinishesOnlyItsStartedOwnFightAndExpires(t *testing
 			started := proof != "not_started"
 			if started {
 				s.Tick(context.Background())
+				pendingSpell := s.pendingSpell
 				goPacket := smiteEvent(true, s.castCount, cold182GoalGUID)
 				goPacket[1], goPacket[3] = 8, 8
 				binary.LittleEndian.PutUint32(goPacket[5:], shadowBolt)
 				s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goPacket})
+				deliverHealReceiptPacket(t, s, opcode.SMSGSpellnonmeleedamagelog,
+					exactOffenseDamageLog(s.selfGUID, cold182GoalGUID, pendingSpell, 10))
 				if state(t, s).CastPending || state(t, s).ServerAssistGo != 1 {
 					t.Fatal("complete own cast receipt did not bind", state(t, s))
 				}

@@ -35,7 +35,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 	}
 	w, a := &worldv1.SnapshotResponse{}, &actionsv1.State{}
 	request := &worldv1.SnapshotRequest{}
-	if s.corpseRequest != nil {
+	if !s.questGather && s.corpseRequest != nil {
 		request.CreatureGuid = s.corpseRequest.request.CorpseGuid
 	}
 	if err := s.invoke(ctx, "buddy-world", "snapshot", request, w); err != nil {
@@ -51,12 +51,21 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		Owner: w.Owner, SourceObservation: w.RequestedCreature,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
-	if s.exactCorpse && s.windowRequest != nil && !s.windowRequest.receipt.Terminal && s.unconfirmedItemDelta(w) {
+	if s.policyWindow() && s.windowRequest != nil && !s.windowRequest.receipt.Terminal && s.unconfirmedItemDelta(w) {
 		s.windowRequest.receipt.SlotRemoved = true
 		s.windowRequest.receipt.InventoryDeltaObserved = true
 		s.windowRequest.receipt.Terminal = true
 		s.itemRequested = false
 		s.state.Phase = "window_ready"
+	}
+	if s.questGather {
+		s.observeGatherQuest(w)
+		for _, object := range w.QuestObjects {
+			if object != nil && object.Guid == s.pendingGUID() {
+				out.SourceObject = object
+				break
+			}
+		}
 	}
 	out.Window = s.windowObservation()
 	out.QuestLogKnown, out.QuestLog = w.SelfQuestLogKnown, w.SelfQuestLog
@@ -73,7 +82,9 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		out.ItemCounts = append(out.ItemCounts, &lootv1.OwnedItemCount{ItemId: entry, Count: count})
 	}
 	sort.Slice(out.ItemCounts, func(i, j int) bool { return out.ItemCounts[i].ItemId < out.ItemCounts[j].ItemId })
-	if s.corpseRequest != nil {
+	if s.questGather {
+		out.Operation = s.windowOperation(s.pendingGUID())
+	} else if s.corpseRequest != nil {
 		out.Operation = s.corpseReceiptLocked()
 	}
 	for guid := range s.retired {
@@ -203,27 +214,30 @@ func (s *Service) OpenCorpse(ctx context.Context, r *lootv1.OpenCorpseRequest) (
 // CloseCorpse yields physical custody immediately after reserving the normal
 // release. Its source-bound receipt may remain unknown; no mutation is replayed.
 func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest) (*lootv1.CorpseOperation, error) {
-	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetCorpseGuid() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "exact session, body and active corpse required")
+	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || (r.GetCorpseGuid() == 0 && r.GetSourceGuid() == 0) || (r.GetCorpseGuid() != 0 && r.GetSourceGuid() != 0) {
+		return nil, status.Error(codes.InvalidArgument, "exact session, body and one active loot source required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || r.SessionId != s.state.SessionId || r.SelfGuid != s.selfGUID || s.corpseRequest == nil || r.CorpseGuid != s.corpseRequest.request.CorpseGuid {
-		return nil, status.Error(codes.FailedPrecondition, "current exact corpse operation required")
+	if s.questGather && r.SourceGuid == 0 {
+		return nil, status.Error(codes.FailedPrecondition, "quest-container source GUID must use source_guid")
 	}
-	if s.corpseRequest.receipt.Terminal || !s.exactCorpse || s.token == "" || s.cleanup.source != 0 {
-		return s.corpseReceiptLocked(), nil
+	if s.closed || r.SessionId != s.state.SessionId || r.SelfGuid != s.selfGUID || s.windowOperation(closeWindowSource(r)) == nil {
+		return nil, status.Error(codes.FailedPrecondition, "current exact loot source operation required")
+	}
+	if s.windowOperation(closeWindowSource(r)).Terminal || !s.policyWindow() || s.token == "" || s.cleanup.source != 0 {
+		return s.windowOperation(closeWindowSource(r)), nil
 	}
 	if s.state.Phase == "release_observed" {
 		s.finishReleased(ctx)
-		return s.corpseReceiptLocked(), nil
+		return s.windowOperation(closeWindowSource(r)), nil
 	}
 	if s.state.Phase == "waiting_release" && r.RetireUnconfirmed {
 		s.beginOrdinaryTimeout(ctx, "caller_retired_unconfirmed_release")
-		return s.corpseReceiptLocked(), nil
+		return s.windowOperation(closeWindowSource(r)), nil
 	}
 	if s.state.Phase != "waiting_release" && s.state.Phase != "release_observed" {
 		lease := &actionsv1.InteractionLease{}
@@ -231,17 +245,17 @@ func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest)
 			s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), safeToContinue: !s.hasUnsettledLootMutation()}
 			s.state.Reason = "loot_release_exact_custody_lost"
 			s.pauseOrdinaryCleanup(ctx)
-			return s.corpseReceiptLocked(), nil
+			return s.windowOperation(closeWindowSource(r)), nil
 		}
 		s.state.Reason = "caller_released_corpse_operation"
 		s.lastLootWriteError = nil
-		if !s.corpseRequest.receipt.WindowObserved || s.hasUnsettledLootMutation() {
+		if !s.windowOperation(closeWindowSource(r)).WindowObserved || s.hasUnsettledLootMutation() {
 			s.beginOrdinaryTimeout(ctx, "caller_abandoned_unconfirmed_corpse")
 		} else {
 			s.beginRelease(ctx)
 		}
 		if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
-			return s.corpseReceiptLocked(), s.lastLootWriteError
+			return s.windowOperation(closeWindowSource(r)), s.lastLootWriteError
 		}
 	}
 	if s.token != "" {
@@ -249,5 +263,5 @@ func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest)
 		// but it must no longer occupy the shared movement/cast writer.
 		_ = s.invoke(ctx, "buddy-actions", "release_interaction", &actionsv1.InteractionRelease{Owner: "loot", Token: s.token}, &actionsv1.State{})
 	}
-	return s.corpseReceiptLocked(), nil
+	return s.windowOperation(closeWindowSource(r)), nil
 }
