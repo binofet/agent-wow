@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"testing"
-	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -122,40 +121,17 @@ func TestSapUsesCompletedMovementWhenBothObservedPositionsAreInRange(t *testing.
 	}
 }
 
-func TestSapPreparesSelfStealthBeforeRangeWithoutAttackingOrMoving(t *testing.T) {
+func TestExactSapNeverChoosesOrPreparesLearnedStealth(t *testing.T) {
 	s, f, req := sapFixture(t)
-	ctx := context.Background()
 	emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(1, 1, 1, 0, 0))
 	f.world.Self.ShapeshiftForm = 0
-	s.setKnownSpell(1784, true)
+	learnSpells(s, 6770, 1784, 1785)
 	s.controlTemplates = map[uint32]controlTemplate{555: {creatureType: 7}}
-	f.lookupCreatures[sheepTarget].X = 37
-
-	st, err := s.Sap(ctx, req)
-	if err != nil || st.Reason != "sap_waiting_for_stealth" || !st.LastSpellOperation.TransportWritten || len(f.packets) != 1 {
-		t.Fatalf("Stealth preparation: %v %v %v", st, err, f.packets)
+	if _, err := s.Sap(context.Background(), req); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
+		t.Fatal("exact Sap chose a Stealth rank or moved", err, f.packets)
 	}
-	write := f.packets[0]
-	target, _, _ := readGUID(write.Payload[10:])
-	if write.Opcode != opcode.CMSGCastSpell || binary.LittleEndian.Uint32(write.Payload[1:]) != 1784 || target != 1 {
-		t.Fatal("only a self Stealth cast is allowed during preparation", write)
-	}
-	goPacket := polymorphGo(s.castCount, 1, 1, true)
-	binary.LittleEndian.PutUint32(goPacket[2*len(packedGUID(1))+1:], 1784)
-	emitPolymorph(s, opcode.SMSGSpellGo, goPacket)
-	now := s.now().Add(2 * time.Second)
-	s.now = func() time.Time { return now }
-	if _, err := s.Sap(ctx, req); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 1 {
-		t.Fatalf("cast GO alone authorized another operation: %v %v", err, f.packets)
-	}
-	emitPolymorph(s, opcode.SMSGAuraUpdate, buffAura(1, 1, 1, 1784, 20000))
-	f.world.Self.ShapeshiftForm = 30
-	if _, err := s.Sap(ctx, req); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 1 {
-		t.Fatalf("Stealth authorized an out-of-range Sap: %v %v", err, f.packets)
-	}
-	f.lookupCreatures[sheepTarget].X = 4
-	st, err = s.Sap(ctx, req)
-	if err != nil || st.LastSpellOperation.Capability != "sap" || !st.LastSpellOperation.TransportWritten || len(f.packets) != 2 {
-		t.Fatalf("in-range Sap after observed Stealth: %v %v %v", st, err, f.packets)
+	s.Tick(context.Background())
+	if countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("native tick prepared Stealth")
 	}
 }

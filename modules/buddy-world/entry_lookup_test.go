@@ -62,6 +62,7 @@ func TestEntryFilteredCacheLookupsReturnBoundedRealBarrelsAndPracticeFires(t *te
 
 func TestEntryLookupIdentityValidationAndDefaultCompatibility(t *testing.T) {
 	s := NewService(1)
+	s.now = func() time.Time { return time.Unix(1000, 0) }
 	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 	before, _ := s.Snapshot(context.Background(), nil)
 	zero, err := s.Snapshot(context.Background(), &worldv1.SnapshotRequest{})
@@ -81,6 +82,7 @@ func TestEntryLookupIdentityValidationAndDefaultCompatibility(t *testing.T) {
 
 func TestEntryLookupRemovalAndMalformedWholePacketPreserveObservedFacts(t *testing.T) {
 	s := NewService(1)
+	s.now = func() time.Time { return time.Unix(1000, 0) }
 	packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 	guid := uint64(0xf110000000000000) | uint64(186234)<<24 | 1
 	packet(t, s, opcode.SMSGUpdateObject, gameObjectFixture(guid, map[int]uint32{3: 186234, 0x11: 10<<8 | 1}))

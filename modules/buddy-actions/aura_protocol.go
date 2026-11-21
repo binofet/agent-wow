@@ -182,9 +182,6 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 		s.targetProtection.reset()
 		s.finishCrowdControlLocked("world_transfer_outcome_unconfirmed")
 		s.finishItemCreationLocked("map_changed_outcome_unconfirmed")
-		if s.crowdControl.active {
-			s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "world_transfer", nil
-		}
 		if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" {
 			s.buffUnconfirmedLocked("world_transfer_outcome_unconfirmed")
 		}

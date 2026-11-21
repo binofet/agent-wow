@@ -83,7 +83,6 @@ type Service struct {
 	posRevision                                uint64
 	movementSequence                           uint64
 	engage                                     engageIntent
-	crowdControl                               crowdControlIntent
 	crowdControlSight                          func(context.Context, string, uint32, position, position) (bool, error)
 	controlTemplates                           map[uint32]controlTemplate
 	targetProtection                           targetProtection
@@ -211,7 +210,6 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())
 	out.CrowdControlApproachSupported = true
-	out.CrowdControl = s.crowdControl.snapshot(s.now())
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.MovementOwner = s.movementOwnerStateLocked()
 	s.targetProtection.snapshot(out, s.now())
@@ -316,9 +314,6 @@ func (s *Service) AcquireInteraction(ctx context.Context, r *actionsv1.Interacti
 	}
 	if r.Token != "" {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease expired; acquire a new lease")
-	}
-	if s.crowdControl.active {
-		return nil, status.Error(codes.FailedPrecondition, "crowd control approach is active")
 	}
 	if s.fargodeep.active {
 		return nil, status.Error(codes.FailedPrecondition, "coordinated encounter is active")
@@ -599,7 +594,6 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.endExplicitCastLocked("outcome_unconfirmed_no_retry")
 	s.endMeleeOperationLocked()
 	s.meleeAcknowledgedVisit = 0
-	s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "session_closing", nil
 	if s.encounterSwing.target != 0 {
 		s.stopEncounterMeleeLocked(ctx)
 	} else {
@@ -821,15 +815,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	// an old map's coordinates.
 	var w *worldv1.SnapshotResponse
 	var snapshotErr error
-	if moving && s.crowdControl.executing {
-		w, snapshotErr = s.snapshot(ctx, s.crowdControl.target)
-		if snapshotErr != nil || !s.crowdControlMovementValidLocked(w) {
-			s.state.Reason = "crowd_control_observation_changed_before_movement"
-			return false
-		}
-	} else {
-		w, snapshotErr = s.snapshot(ctx)
-	}
+	w, snapshotErr = s.snapshot(ctx)
 	// An owned corpse approach rechecks party and corpse authority after the
 	// clock callback. STOP remains available after that authority is revoked.
 	if moving && s.lootApproachGuard != nil {
@@ -879,7 +865,7 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "follow_instance_source_changed"
 		return false
 	}
-	if moving && !s.targetMovementExecuting && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
+	if moving && !s.targetMovementExecuting && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}
@@ -1045,9 +1031,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.blockProtectedOffenseLocked(ctx, s.autoTarget)
 	}
 	s.expireCrowdControlLocked()
-	if s.crowdControl.active && !s.now().Before(s.crowdControl.until) {
-		s.endCrowdControlLocked(ctx, "expired")
-	}
 	if s.pendingCrowdControlLocked() != nil {
 		return
 	}
@@ -1072,9 +1055,6 @@ func (s *Service) Tick(ctx context.Context) {
 	if !s.closed && s.recoveryTickLocked(ctx) {
 		if s.fargodeep.active {
 			s.fargodeep.active, s.fargodeep.phase, s.fargodeep.route = false, "death_recovery_has_priority", nil
-		}
-		if s.crowdControl.active {
-			s.crowdControl.active, s.crowdControl.phase, s.crowdControl.path = false, "death_recovery", nil
 		}
 		s.lastStep = s.now()
 		return
@@ -1102,7 +1082,6 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if s.emergencyDefenseLocked(ctx) {
-		s.endCrowdControlLocked(ctx, "emergency_defense")
 		s.lastStep = s.now()
 		return
 	}
@@ -1201,9 +1180,6 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	// A prepared approach yields to standing support and actual defense. An
 	// already dispatched CC cast is settled above before any new action.
-	if s.crowdControlTickLocked(ctx) {
-		return
-	}
 	// A fresh exact Lua movement request owns its route. Standing support above
 	// may still act; native formation must not steer back toward the owner.
 	if s.targetMovementActiveLocked() {

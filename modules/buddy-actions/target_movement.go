@@ -19,9 +19,10 @@ import (
 // selects enemies, spells, party roles, or whether combat should continue.
 // Each fresh Lua decision advances the route once; Tick cannot author a move.
 type targetMovementIntent struct {
-	view  actionsv1.TargetMovementState
-	until time.Time
-	nav   followNavigation
+	view             actionsv1.TargetMovementState
+	until            time.Time
+	nav              followNavigation
+	constraintTarget position
 }
 
 func (s *Service) targetMovementSnapshotLocked() *actionsv1.TargetMovementState {
@@ -85,7 +86,7 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		movement.view.Ready = s.stopLocked(ctx)
 		return s.stateLocked(), nil
 	}
-	if s.bodyMoving || s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active || s.crowdControl.active {
+	if s.bodyMoving || s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active {
 		movement.view.Phase = "movement_occupied"
 		return s.stateLocked(), nil
 	}
@@ -121,6 +122,44 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 		return s.stateLocked(), nil
 	}
 	goal := targetMovementGoal(s.pos, target, float64(r.RangeYards), r.Behind, los)
+	// Solve the caller's geometric constraints using the existing physical
+	// route/LoS primitives. This chooses no target, spell or cast timing.
+	if r.Behind || r.RequireLos && !los {
+		path := movement.nav.path
+		valid := len(path) > 0 && movement.nav.selfRevision == s.positionRevision && movement.nav.mapID == s.posMap &&
+			distance(movement.constraintTarget, target) <= 1.5 &&
+			(!r.Behind || targetMovementBehind(path[len(path)-1], target))
+		if valid {
+			goal = movement.nav.target
+		} else {
+			plan := func(from, to position) []position {
+				path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, from, to)
+				if err != nil {
+					return nil
+				}
+				return path
+			}
+			if r.Behind {
+				path = sapFlankPath(s.pos, target, plan)
+			} else {
+				path = s.rangedPositionPathLocked(ctx, float64(r.RangeYards), target, plan)
+			}
+			if len(path) > 0 {
+				goal = path[len(path)-1]
+				movement.nav = followNavigation{path: path, target: goal, expected: s.pos, selfRevision: s.positionRevision, mapID: s.posMap,
+					arrival: goal, arrivalStop: .25, arrivalKnown: true}
+				movement.constraintTarget = target
+			} else if r.Behind {
+				// Never cut through the body when the requested rear route
+				// cannot be proved. A ranged LoS request can still advance
+				// along its ordinary verified route and re-observe LoS.
+				movement.nav.Reset()
+				movement.view.Phase = "positioning_route_unavailable"
+				s.stopLocked(ctx)
+				return s.stateLocked(), nil
+			}
+		}
+	}
 	// Use the same complete navmesh route and speed-limited movement transport
 	// as travel, with a separate cache so formation cannot corrupt this route.
 	previous := s.followNav

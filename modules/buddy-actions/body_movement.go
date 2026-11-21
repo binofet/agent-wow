@@ -41,7 +41,7 @@ func (s *Service) MoveBody(ctx context.Context, r *actionsv1.BodyMovementRequest
 	w, err := s.snapshot(ctx)
 	if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || r.VisitId != s.encounterVisit.revision || !s.admitsPolicyEncounterLocked(ctx, w) ||
 		safeSelfCombat(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) || s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed ||
-		s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active || s.crowdControl.active ||
+		s.state.CastPending || s.state.Traveling || s.state.InteractionOwner != "" || s.recovery.state.Active ||
 		!w.Self.MovementFlagsKnown || !movementflags.GroundCompatible(w.Self.MovementFlags, w.Self.ExtraMovementFlags) ||
 		r.Jump && w.Self.MovementFlags&0x20000000 != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "current controllable ground body and its Lua writer required")
