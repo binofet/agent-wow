@@ -7,6 +7,7 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  combat_events: /warcraftbuddy.world.v1.BuddyWorld/CombatEvents
   snapshot: /warcraftbuddy.world.v1.BuddyWorld/Snapshot
   observe_client_movement: /warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement
 packets:
@@ -21,6 +22,17 @@ packets:
   SMSG_ATTACKSTOP: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_ATTACKERSTATEUPDATE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELLNONMELEEDAMAGELOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_SPELLHEALLOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_PARTYKILLLOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_PERIODICAURALOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_SPELLDAMAGESHIELD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_SPELLINSTAKILLLOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_NOTINRANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_BADFACING: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_DEADTARGET: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_CANT_ATTACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_COMBAT_EVENT_FAILED: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_FAILURE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
@@ -61,4 +73,5 @@ packets:
   MSG_MOVE_START_DESCEND: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
 
 script_api:
+  combat_events: {effect: read}
   snapshot: {effect: read}
