@@ -176,6 +176,9 @@ func (r *Runtime) EvaluateContext(ctx context.Context, input map[string]any) (ma
 		return nil, ErrNoPolicy
 	}
 	output, err := evaluateWithLimits(ctx, r.active, input, byteLimit, inputNodes, outputNodes, r.evaluationBudget())
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err == nil {
 		r.good = r.active
 		r.status.LastGoodRevision = r.good.revision
@@ -193,6 +196,9 @@ func (r *Runtime) EvaluateContext(ctx context.Context, input map[string]any) (ma
 	}
 	r.status.Revision = r.active.revision
 	output, fallbackErr := evaluateWithLimits(ctx, r.active, input, byteLimit, inputNodes, outputNodes, r.evaluationBudget())
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if fallbackErr != nil {
 		r.failed(r.active.revision, fallbackErr)
 		r.active, r.good = nil, nil

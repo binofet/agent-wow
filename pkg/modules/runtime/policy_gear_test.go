@@ -2,11 +2,13 @@ package modrt
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -333,4 +335,51 @@ func TestGearReadUsesAcceptedSessionBudgetsForAFullFiveBagInventory(t *testing.T
 		}
 	}
 	assertFollowFallbackState(t, host, before)
+}
+
+type gearExecutionContext struct {
+	context.Context
+	checks    atomic.Int32
+	executing chan struct{}
+	once      sync.Once
+}
+
+func (c *gearExecutionContext) Done() <-chan struct{} {
+	if c.checks.Add(1) >= 100 {
+		c.once.Do(func() { close(c.executing) })
+	}
+	return c.Context.Done()
+}
+func TestGearReadCallerCancellationDoesNotQuarantineAcceptedSource(t *testing.T) {
+	m, _ := gearInputManager(t)
+	source := `return {on_event=function(e)return true end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end,decide=function(f)return {}end,
+ gear_evaluation=function(input)if input.spin then while true do end end return {ok=true}end}`
+	host, err := m.StartPolicyWithOptions(context.Background(), source, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &gearExecutionContext{Context: parent, executing: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { _, _, _, err := host.gearDecision(ctx, map[string]any{"spin": true}); done <- err }()
+	select {
+	case <-ctx.executing:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("pure export did not begin execution")
+	}
+	if err = <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal("caller cancellation lost", err)
+	}
+	current := host.gearEvaluation.Load()
+	revision := host.vm.Status().Revision
+	if current.runtime == nil || current.runtime.Status().Revision == "" || current.runtime.Status().Failures != 0 {
+		t.Fatal("caller cancellation poisoned current source cache", current.runtime)
+	}
+	available, got, result, err := host.gearDecision(context.Background(), map[string]any{})
+	if err != nil || !available || got != revision || result["ok"] != true {
+		t.Fatal("fresh read required source reload after caller cancellation", available, got, result, err)
+	}
 }
