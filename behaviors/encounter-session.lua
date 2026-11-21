@@ -11,6 +11,7 @@ local healing = encounter_healing
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
 local consumables = encounter_consumables
+local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
 local movement = encounter_movement
 local commands = encounter_commands
@@ -53,6 +54,7 @@ local function on_event(event)
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
     if consumables and not consumables.on_event(event) then return false end
+    if corpse_loot and not corpse_loot.on_event(event) then return false end
     if buffs and not buffs.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
@@ -89,6 +91,7 @@ local function export_state()
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
                             consumables=consumables and consumables.export_state(),
+                            corpseLoot=corpse_loot and corpse_loot.export_state(),
                             movement=movement and movement.export_state and movement.export_state()}}
 end
 
@@ -115,6 +118,7 @@ local function import_state(checkpoint)
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
+    if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
        not movement.import_state(checkpoint.data.movement)) then return false end
     state = saved
@@ -689,7 +693,7 @@ local function quiet_for_mana(view, session_id, encounter)
         threat.attackingSelf == false and threat.attackingParty == false
 end
 
-local function decide(frame)
+local function decide_policy(frame)
     local out = decide_encounter(frame)
     if out.encounterOwnership and movement and policy_observation and
        not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and not out.action then
@@ -731,6 +735,31 @@ local function decide(frame)
        action.observationSequence == expected and type(action.spellId) == "number" and
        action.spellId > 0 and action.spellId <= 4294967295 and action.spellId % 1 == 0 then
         out.action = action
+    end
+    return out
+end
+
+
+local function decide(frame)
+    local out=decide_policy(frame)
+    local current=policy_observation or observation
+    if corpse_loot and current then
+        local action=out.action
+        local urgent=out.focusGuid~=nil or task_support_action or action and
+            (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
+             action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
+             action.capability=="sap" or action.capability=="polymorph")
+        if healing and healing.needs_access and current.healing then
+            urgent=urgent or healing.needs_access(healing_input(current),current)
+        end
+        local quiet=out.action==nil and not out.focusGuid and #frame.pending==0 and
+            not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
+        local loot=corpse_loot.decide(frame,current,quiet,urgent)
+        out.corpseLoot=loot
+        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+            out.action=loot.action
+        end
+        if loot.action or loot.phase=="native_window_settlement" then out.followFormation=nil;out.portalCatchup=nil end
     end
     return out
 end

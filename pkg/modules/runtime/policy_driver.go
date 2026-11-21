@@ -65,6 +65,14 @@ func (m *Manager) StartObservedPolicyWithOptions(ctx context.Context, source, bi
 			feeds = append([]policyFeed{{phase: "inventory", method: "buddy-inventory.state"}}, feeds...)
 		}
 	}
+	if feeds[len(feeds)-1].method == encounterObservationMethod && !phases["corpse_loot"] {
+		if facts, err := catalog.Catalog.ForMethod("buddy-loot.observe_corpses"); err == nil && facts.Methods[0].Effect == moddisc.EffectRead {
+			if _, err = m.readPolicyObservation(ctx, catalog.SessionID, "buddy-loot.observe_corpses"); err != nil {
+				return err
+			}
+			feeds = append([]policyFeed{{phase: "corpse_loot", method: "buddy-loot.observe_corpses"}}, feeds...)
+		}
+	}
 	host, err := m.StartPolicyWithOptions(ctx, source, options)
 	if err != nil {
 		return err
