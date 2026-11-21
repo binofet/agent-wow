@@ -52,7 +52,11 @@ func (f *followFormation) Plan(now time.Time, selfGUID uint64, classID uint32, o
 	return f.evaluate(now, selfGUID, classID, owner, ownerMoving, &selfPos, selfMoving, ownerArrival)
 }
 
-func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos *position, selfMoving, ownerArrival bool) formationTarget {
+func (f *followFormation) NearOwner(now time.Time, selfGUID uint64, owner position, ownerMoving bool, selfPos position, selfMoving bool) formationTarget {
+	return f.evaluate(now, selfGUID, 0, owner, ownerMoving, &selfPos, selfMoving, false, "near_owner")
+}
+
+func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos *position, selfMoving, ownerArrival bool, mode ...string) formationTarget {
 	if selfGUID == 0 || !finite(owner) || selfPos != nil && !finite(*selfPos) {
 		f.Reset()
 		return formationTarget{}
@@ -69,6 +73,9 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 		"nowMs": float64(now.UnixMilli()), "selfGuid": strconv.FormatUint(selfGUID, 10), "classId": classID,
 		"owner":        map[string]any{"x": owner.x, "y": owner.y, "z": owner.z, "o": owner.o, "moving": ownerMoving},
 		"ownerArrival": ownerArrival,
+	}
+	if len(mode) != 0 {
+		input["mode"] = mode[0]
 	}
 	if f.memory != nil {
 		input["memory"] = f.memory
@@ -96,10 +103,11 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 	}
 	pos := position{result.Position.X, result.Position.Y, result.Position.Z, result.Position.O}
 	validPhase := result.Hold != nil && (result.Phase == "following_formation" && !*result.Hold ||
-		(result.Phase == "within_personal_follow_space" || result.Phase == "formation_reaction_delay") && *result.Hold)
+		(result.Phase == "within_personal_follow_space" || result.Phase == "formation_reaction_delay" ||
+			result.Phase == "within_follow_distance" || result.Phase == "follow_target_too_far_or_vertical") && *result.Hold)
 	if !finite(pos) || math.IsNaN(result.StartDistance) || math.IsInf(result.StartDistance, 0) ||
 		math.IsNaN(result.StopDistance) || math.IsInf(result.StopDistance, 0) || result.StopDistance < .1 ||
-		result.StopDistance > 4 || result.StartDistance <= result.StopDistance || result.StartDistance > 10 ||
+		result.StopDistance > 4 || result.StartDistance < result.StopDistance || result.StartDistance > 10 ||
 		result.Ready == nil || !validPhase || len(result.Memory) == 0 || result.Memory["guid"] != input["selfGuid"] {
 		f.Reset()
 		return formationTarget{}

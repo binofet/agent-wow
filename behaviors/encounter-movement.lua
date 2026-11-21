@@ -15,6 +15,7 @@ function M.follow_formation(frame, obs, sequence)
     local identity = obs.sessionId .. ":" .. obs.selfGuid .. ":" .. obs.visitId .. ":" .. tostring(nav.followRevision)
     if identity ~= formation_identity then formation_memory, formation_identity = nil, identity end
     local planned = encounter_formation.decide({
+        mode=nav.groundNavigationConfigured == false and "near_owner" or "formation",
         nowMs=frame.clock.monotonicMs, selfGuid=obs.selfGuid, classId=self.classKnown and self.classId or 0,
         owner={x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,o=owner.orientation or 0,moving=owner.moving == true},
         self={x=self.x or 0,y=self.y or 0,z=self.z or 0,moving=self.moving == true},
@@ -27,7 +28,7 @@ function M.follow_formation(frame, obs, sequence)
         ownerGuid=owner.guid,ownerPositionRevision=owner.positionRevision,followRevision=nav.followRevision,
         x=target.x,y=target.y,z=target.z,orientation=target.o,
         startDistance=planned.startDistance,stopDistance=planned.stopDistance,
-        ready=planned.ready == true,hold=planned.hold == true}
+        ready=planned.ready == true,hold=planned.hold == true,phase=planned.phase}
 end
 function M.export_state()
     return {memory=formation_memory,identity=formation_identity}

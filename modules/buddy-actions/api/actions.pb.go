@@ -5461,6 +5461,7 @@ type FollowFormationRequest struct {
 	Ready                 bool                   `protobuf:"varint,12,opt,name=ready,proto3" json:"ready,omitempty"`
 	Hold                  bool                   `protobuf:"varint,13,opt,name=hold,proto3" json:"hold,omitempty"`
 	FollowRevision        uint64                 `protobuf:"varint,14,opt,name=follow_revision,json=followRevision,proto3" json:"follow_revision,omitempty"`
+	Phase                 string                 `protobuf:"bytes,15,opt,name=phase,proto3" json:"phase,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -5593,6 +5594,13 @@ func (x *FollowFormationRequest) GetFollowRevision() uint64 {
 	return 0
 }
 
+func (x *FollowFormationRequest) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
 type NavigationObservation struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	BodyMovementSupported    bool                   `protobuf:"varint,1,opt,name=body_movement_supported,json=bodyMovementSupported,proto3" json:"body_movement_supported,omitempty"`
@@ -5611,10 +5619,11 @@ type NavigationObservation struct {
 	FollowFormationSupported bool                   `protobuf:"varint,14,opt,name=follow_formation_supported,json=followFormationSupported,proto3" json:"follow_formation_supported,omitempty"`
 	OwnerArrival             bool                   `protobuf:"varint,15,opt,name=owner_arrival,json=ownerArrival,proto3" json:"owner_arrival,omitempty"`
 	// The followed owner is observable even outside the current party.
-	FollowOwner    *EncounterPlayer `protobuf:"bytes,16,opt,name=follow_owner,json=followOwner,proto3" json:"follow_owner,omitempty"`
-	FollowRevision uint64           `protobuf:"varint,17,opt,name=follow_revision,json=followRevision,proto3" json:"follow_revision,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	FollowOwner                *EncounterPlayer `protobuf:"bytes,16,opt,name=follow_owner,json=followOwner,proto3" json:"follow_owner,omitempty"`
+	FollowRevision             uint64           `protobuf:"varint,17,opt,name=follow_revision,json=followRevision,proto3" json:"follow_revision,omitempty"`
+	GroundNavigationConfigured bool             `protobuf:"varint,18,opt,name=ground_navigation_configured,json=groundNavigationConfigured,proto3" json:"ground_navigation_configured,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *NavigationObservation) Reset() {
@@ -5764,6 +5773,13 @@ func (x *NavigationObservation) GetFollowRevision() uint64 {
 		return x.FollowRevision
 	}
 	return 0
+}
+
+func (x *NavigationObservation) GetGroundNavigationConfigured() bool {
+	if x != nil {
+		return x.GroundNavigationConfigured
+	}
+	return false
 }
 
 type EncounterParty struct {
@@ -8529,7 +8545,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x01x\x18\x06 \x01(\x02R\x01x\x12\f\n" +
 	"\x01y\x18\a \x01(\x02R\x01y\x12\f\n" +
 	"\x01z\x18\b \x01(\x02R\x01z\x12\x16\n" +
-	"\x06detail\x18\t \x01(\tR\x06detail\"\xb1\x03\n" +
+	"\x06detail\x18\t \x01(\tR\x06detail\"\xc7\x03\n" +
 	"\x16FollowFormationRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -8547,7 +8563,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\rstop_distance\x18\v \x01(\x01R\fstopDistance\x12\x14\n" +
 	"\x05ready\x18\f \x01(\bR\x05ready\x12\x12\n" +
 	"\x04hold\x18\r \x01(\bR\x04hold\x12'\n" +
-	"\x0ffollow_revision\x18\x0e \x01(\x04R\x0efollowRevision\"\xf7\x05\n" +
+	"\x0ffollow_revision\x18\x0e \x01(\x04R\x0efollowRevision\x12\x14\n" +
+	"\x05phase\x18\x0f \x01(\tR\x05phase\"\xb9\x06\n" +
 	"\x15NavigationObservation\x126\n" +
 	"\x17body_movement_supported\x18\x01 \x01(\bR\x15bodyMovementSupported\x12\x1c\n" +
 	"\tfollowing\x18\x02 \x01(\bR\tfollowing\x12\x1d\n" +
@@ -8568,7 +8585,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x1afollow_formation_supported\x18\x0e \x01(\bR\x18followFormationSupported\x12#\n" +
 	"\rowner_arrival\x18\x0f \x01(\bR\fownerArrival\x12L\n" +
 	"\ffollow_owner\x18\x10 \x01(\v2).warcraftbuddy.actions.v1.EncounterPlayerR\vfollowOwner\x12'\n" +
-	"\x0ffollow_revision\x18\x11 \x01(\x04R\x0efollowRevision\"\xad\x01\n" +
+	"\x0ffollow_revision\x18\x11 \x01(\x04R\x0efollowRevision\x12@\n" +
+	"\x1cground_navigation_configured\x18\x12 \x01(\bR\x1agroundNavigationConfigured\"\xad\x01\n" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
