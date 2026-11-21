@@ -100,6 +100,13 @@ func TestResurrectionOfferExactIdentityAndKnownNoWriteVersusUnknownCustody(t *te
 	if _, err := s.AcceptResurrection(ctx, r); err != nil || !s.resurrectionOffer.consumed || !s.resurrectionOffer.unknown || s.resurrectionOffer.written || len(f.packets) != 1 {
 		t.Fatal("unknown write lost custody or claimed success", err, s.resurrectionOffer, f.packets)
 	}
+	// Normal Acore resurrection effects do not issue a second offer while
+	// request data is pending. Repeated bytes supply no new offer nonce and
+	// must not reopen an uncertain response from the same caster/death.
+	receiveResurrectionOffer(t, s, 3)
+	if s.resurrectionOffer.revision != r.ExpectedOfferRevision || !s.resurrectionOffer.consumed || !s.resurrectionOffer.unknown {
+		t.Fatal("duplicate offer erased response custody", s.resurrectionOffer)
+	}
 	f.failSend = false
 	if _, err := s.AcceptResurrection(ctx, r); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 1 {
 		t.Fatal("unknown acceptance replayed", err, f.packets)
