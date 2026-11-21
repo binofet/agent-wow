@@ -1,9 +1,13 @@
 package modrt
 
 import (
+	"encoding/binary"
+	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"math"
+	"math/bits"
 	"strconv"
 )
 
@@ -32,4 +36,37 @@ func (p *SessionPolicy) resolveInteractionRelease(action map[string]any) (Policy
 		dispatch.spell = nil
 	}
 	return dispatch, err
+}
+
+// Release uses the existing native STOP in the body's current medium. Reuse
+// the ordinary packet checks, including exact GUID and finite coordinates;
+// swimming adds only its defined finite pitch field, never a movement goal.
+func (op *policySpell) matchesInteractionStop(code uint32, body []byte) bool {
+	if code != opcode.MSGMoveStop || len(body) < 1 {
+		return false
+	}
+	n := 1 + bits.OnesCount8(body[0])
+	if len(body) < n+30 {
+		return false
+	}
+	flags := binary.LittleEndian.Uint32(body[n:])
+	if flags&1 != 0 {
+		return false
+	}
+	if flags&0x200000 != 0 {
+		if len(body) != n+34 {
+			return false
+		}
+		pitch := float64(math.Float32frombits(binary.LittleEndian.Uint32(body[n+26:])))
+		if math.IsNaN(pitch) || math.IsInf(pitch, 0) {
+			return false
+		}
+		clean := append([]byte(nil), body[:n+26]...)
+		clean = append(clean, body[n+30:]...)
+		binary.LittleEndian.PutUint32(clean[n:], flags&^uint32(0x200000))
+		body = clean
+	}
+	ground := *op
+	ground.capability = ""
+	return ground.matchesMovementPacket(code, body)
 }

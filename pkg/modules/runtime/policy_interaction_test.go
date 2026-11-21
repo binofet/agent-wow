@@ -2,7 +2,9 @@ package modrt
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"testing"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -81,6 +83,39 @@ func TestPolicyInteractionReleasePermitsOnlyOwnStopPacket(t *testing.T) {
 	} {
 		if op.matchesActionPacket(test.code, test.body) {
 			t.Fatal("release could write an unrelated game action", test.code)
+		}
+	}
+}
+
+func TestPolicyInteractionReleaseAcceptsObservedSwimmingStopWithoutForwardMotion(t *testing.T) {
+	op := &policySpell{capability: "release_interaction", movement: &policyMovement{self: 9, stop: true}}
+	ground := policyMovementPacket(9)
+	wet := append([]byte(nil), ground[:28]...)
+	wet = binary.LittleEndian.AppendUint32(wet, math.Float32bits(.25))
+	wet = append(wet, ground[28:]...)
+	binary.LittleEndian.PutUint32(wet[2:], 0x200000)
+	if !op.matchesActionPacket(opcode.MSGMoveStop, wet) {
+		t.Fatal("normal own swimming STOP rejected")
+	}
+	for _, mode := range []string{"forward_ground", "forward_swim", "foreign_body", "nonfinite_pitch", "truncated", "flying"} {
+		b := append([]byte(nil), wet...)
+		switch mode {
+		case "forward_ground":
+			b = policyMovementPacket(9)
+			binary.LittleEndian.PutUint32(b[2:], 1)
+		case "forward_swim":
+			binary.LittleEndian.PutUint32(b[2:], 0x200001)
+		case "foreign_body":
+			b[1] = 8
+		case "nonfinite_pitch":
+			binary.LittleEndian.PutUint32(b[28:], math.Float32bits(float32(math.NaN())))
+		case "truncated":
+			b = b[:len(b)-1]
+		case "flying":
+			binary.LittleEndian.PutUint32(b[2:], 0x2000000)
+		}
+		if op.matchesActionPacket(opcode.MSGMoveStop, b) {
+			t.Fatal("unrelated/unsupported stop admitted", mode)
 		}
 	}
 }
