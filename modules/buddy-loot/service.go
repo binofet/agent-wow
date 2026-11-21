@@ -75,6 +75,7 @@ type Service struct {
 	windowRevision                             uint64
 	windowRequests                             map[string]*windowRequest
 	windowRequest                              *windowRequest
+	lastLootWriteError                         error
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -215,6 +216,7 @@ func (s *Service) invoke(ctx context.Context, module, method string, in, out pro
 	return result.Result.UnmarshalTo(out)
 }
 func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
+	s.lastLootWriteError = nil
 	if s.session == nil {
 		return false
 	}
@@ -225,10 +227,15 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 		ctx = modcb.ForwardPolicySpell(ctx)
 	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
+	s.lastLootWriteError = err
 	if err != nil {
 		if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot && modcb.PacketWasNotDispatched(err) {
 			s.corpseRequest.receipt.OpeningTransportAttempted = false
 			s.state.Reason = "opening_callback_rejected_before_transport"
+			return false
+		}
+		if s.exactCorpse && op == opcode.CMSGLootRelease {
+			s.state.Reason = "loot_release_outcome_unconfirmed"
 			return false
 		}
 		s.fault("transport_error_no_retry")
@@ -316,6 +323,7 @@ func (s *Service) finishReleased(ctx context.Context) {
 	s.finish(ctx)
 }
 func (s *Service) beginRelease(ctx context.Context) {
+	previousPhase := s.state.Phase
 	if s.questGather && s.opened && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
 		packet := []byte{s.gatherCastCount}
 		packet = binary.LittleEndian.AppendUint32(packet, s.boundHarvestRecipe().openSpell)
@@ -338,6 +346,14 @@ func (s *Service) beginRelease(ctx context.Context) {
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
 	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.pendingGUID())) {
+		if s.exactCorpse {
+			if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
+				s.state.Phase = previousPhase
+				return
+			}
+			s.beginOrdinaryTimeout(ctx, "release_transport_unconfirmed")
+			return
+		}
 		s.finish(ctx)
 	}
 }
@@ -1098,6 +1114,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				if p[8] == 1 && !s.cleanup.releaseObserved {
 					s.cleanup.releaseObserved = true
 					s.state.ReleasesObserved++
+					if s.exactCorpse && s.corpseRequest != nil {
+						s.corpseRequest.receipt.ReleaseObserved = true
+					}
 				} else if p[8] == 0 && !s.cleanup.releaseObserved {
 					s.cleanup.releaseRejected = true
 				}
@@ -1119,6 +1138,16 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				}
 				s.state.Phase = "release_observed"
 			} else {
+				if s.exactCorpse {
+					s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), timedOutPhase: s.state.Phase, safeToContinue: !s.hasUnsettledLootMutation(), releaseRequested: s.state.Phase == "waiting_release", releaseRejected: true}
+					if s.retired == nil {
+						s.retired = map[uint64]bool{}
+					}
+					s.retired[s.pendingGUID()] = true
+					s.state.Phase = "loot_cleanup_unconfirmed"
+					s.state.Reason = "server_release_rejected_no_retry"
+					break
+				}
 				s.fault("server_release_unconfirmed")
 				if !s.questGather && s.hasUnsettledLootMutation() {
 					s.quarantineReleasedMutation(false)

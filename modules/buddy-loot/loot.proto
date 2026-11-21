@@ -65,7 +65,7 @@ message OpenCorpseRequest {
   string request_id = 4; uint64 expected_position_revision = 5;
   uint64 expected_corpse_revision = 6; uint64 expected_inventory_revision = 7;
 }
-message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; }
+message CloseCorpseRequest { string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; bool retire_unconfirmed = 4; }
 message CorpseOperation {
   string session_id = 1; uint64 self_guid = 2; uint64 corpse_guid = 3; string request_id = 4;
   string phase = 5; string reason = 6; bool opening_transport_attempted = 7;

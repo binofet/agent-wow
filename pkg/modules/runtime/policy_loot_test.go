@@ -165,6 +165,12 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	if err != nil || o.Operation.WindowObserved {
 		t.Fatal(o, err)
 	}
+	callback.reject = true
+	_, r = step(true)
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || len(writes) != 1 {
+		t.Fatal("known no-write close consumed UI release", r, writes)
+	}
+	callback.reject = false
 	_, r = step(true)
 	if r == nil || len(writes) != 2 || writes[1] != opcode.CMSGLootRelease || callback.actions.InteractionOwner != "" {
 		t.Fatal("incoming defense did not yield loot custody immediately", r, writes, callback.actions)

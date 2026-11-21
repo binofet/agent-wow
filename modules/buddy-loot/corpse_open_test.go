@@ -277,7 +277,8 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				}
 				_ = s.invoke(context.Background(), "buddy-actions", "approach_target", r, &actionsv1.State{})
 			} else if ok && a["capability"] == "loot_close" {
-				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid})
+				retire, _ := a["retireUnconfirmed"].(bool)
+				_, _ = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: o.SessionId, SelfGuid: o.SelfGuid, CorpseGuid: s.state.PendingCorpseGuid, RetireUnconfirmed: retire})
 			} else if ok && a["capability"] == "loot_open" {
 				delete(a, "capability")
 				delete(a, "observationSequence")
@@ -286,8 +287,6 @@ func tickCorpseLua(t *testing.T, s *Service) {
 				if err = protojson.Unmarshal(raw, r); err != nil {
 					t.Fatal(err)
 				}
-				// The fixture authors a distinct exact intent for each observation.
-				r.RequestId = "test-" + strconv.FormatUint(uint64(len(s.corpseRequests)+1), 10)
 				_, _ = s.OpenCorpse(context.Background(), r)
 			} else if ok && (a["capability"] == "loot_money" || a["capability"] == "loot_slot") {
 				money := a["capability"] == "loot_money"

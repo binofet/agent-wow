@@ -643,12 +643,13 @@ func (x *OpenCorpseRequest) GetExpectedInventoryRevision() uint64 {
 }
 
 type CloseCorpseRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	CorpseGuid    uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid          uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	CorpseGuid        uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
+	RetireUnconfirmed bool                   `protobuf:"varint,4,opt,name=retire_unconfirmed,json=retireUnconfirmed,proto3" json:"retire_unconfirmed,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *CloseCorpseRequest) Reset() {
@@ -700,6 +701,13 @@ func (x *CloseCorpseRequest) GetCorpseGuid() uint64 {
 		return x.CorpseGuid
 	}
 	return 0
+}
+
+func (x *CloseCorpseRequest) GetRetireUnconfirmed() bool {
+	if x != nil {
+		return x.RetireUnconfirmed
+	}
+	return false
 }
 
 type CorpseOperation struct {
@@ -1687,13 +1695,14 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"request_id\x18\x04 \x01(\tR\trequestId\x12<\n" +
 	"\x1aexpected_position_revision\x18\x05 \x01(\x04R\x18expectedPositionRevision\x128\n" +
 	"\x18expected_corpse_revision\x18\x06 \x01(\x04R\x16expectedCorpseRevision\x12>\n" +
-	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"q\n" +
+	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"\xa0\x01\n" +
 	"\x12CloseCorpseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
 	"\vcorpse_guid\x18\x03 \x01(\x04R\n" +
-	"corpseGuid\"\xa7\x03\n" +
+	"corpseGuid\x12-\n" +
+	"\x12retire_unconfirmed\x18\x04 \x01(\bR\x11retireUnconfirmed\"\xa7\x03\n" +
 	"\x0fCorpseOperation\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +

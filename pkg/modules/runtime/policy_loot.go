@@ -31,6 +31,9 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 	}
 	params := map[string]any{"sessionId": sid, "selfGuid": self, "corpseGuid": action["corpseGuid"]}
 	method := "close_corpse"
+	if value, ok := action["retireUnconfirmed"]; ok {
+		params["retireUnconfirmed"] = value
+	}
 	if capability == "loot_money" || capability == "loot_slot" {
 		method = "take_money"
 		if capability == "loot_slot" {

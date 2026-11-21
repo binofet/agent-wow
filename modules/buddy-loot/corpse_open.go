@@ -3,6 +3,7 @@ package buddyloot
 import (
 	"context"
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"math"
 	"sort"
 	"time"
@@ -220,9 +221,28 @@ func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest)
 		s.finishReleased(ctx)
 		return s.corpseReceiptLocked(), nil
 	}
+	if s.state.Phase == "waiting_release" && r.RetireUnconfirmed {
+		s.beginOrdinaryTimeout(ctx, "caller_retired_unconfirmed_release")
+		return s.corpseReceiptLocked(), nil
+	}
 	if s.state.Phase != "waiting_release" && s.state.Phase != "release_observed" {
+		lease := &actionsv1.InteractionLease{}
+		if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease); err != nil || lease.Token != s.token || lease.State == nil || lease.State.InteractionOwner != "loot" {
+			s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), safeToContinue: !s.hasUnsettledLootMutation()}
+			s.state.Reason = "loot_release_exact_custody_lost"
+			s.pauseOrdinaryCleanup(ctx)
+			return s.corpseReceiptLocked(), nil
+		}
 		s.state.Reason = "caller_released_corpse_operation"
-		s.beginRelease(ctx)
+		s.lastLootWriteError = nil
+		if !s.corpseRequest.receipt.WindowObserved || s.hasUnsettledLootMutation() {
+			s.beginOrdinaryTimeout(ctx, "caller_abandoned_unconfirmed_corpse")
+		} else {
+			s.beginRelease(ctx)
+		}
+		if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
+			return s.corpseReceiptLocked(), s.lastLootWriteError
+		}
 	}
 	if s.token != "" {
 		// Keep the private UI token for matching the outstanding release ACK,

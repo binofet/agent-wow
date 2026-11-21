@@ -1552,7 +1552,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ê4
+¿4
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1613,13 +1613,14 @@ corpseGuid
 request_id (	R	requestId<
 expected_position_revision (RexpectedPositionRevision8
 expected_corpse_revision (RexpectedCorpseRevision>
-expected_inventory_revision (RexpectedInventoryRevision"q
+expected_inventory_revision (RexpectedInventoryRevision"†
 CloseCorpseRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 corpse_guid (R
-corpseGuid"ß
+corpseGuid-
+retire_unconfirmed (RretireUnconfirmed"ß
 CorpseOperation
 
 session_id (	R	sessionId

@@ -65,9 +65,11 @@ local function window_action(frame,o,capability,slot)
   openRequestId=w.openRequestId,windowRevision=w.revision,requestId="loot-"..tostring(state.sequence),
   observationSequence=frame.input.observationSequence}
  if slot then action.slot=slot.slot or 0;action.expectedItemId=slot.itemId;action.expectedCount=slot.count;action.expectedInventoryRevision=o.inventoryRevision end
+ state.mutationKey=action.requestId;state.mutationStarted=frame.clock and frame.clock.monotonicMs
  return action
 end
 local function close_action(frame,o,pending)
+ state.closeStarted=state.closeStarted or (frame.clock and frame.clock.monotonicMs)
  return {capability="loot_close",sessionId=o.sessionId,selfGuid=o.selfGuid,corpseGuid=pending,
   observationSequence=frame.input.observationSequence}
 end
@@ -86,11 +88,19 @@ local function process_window(frame,o,urgent)
  local phase=(o.state or {}).phase
  local now=frame.clock and frame.clock.monotonicMs
  local w=o.window or {}
- if state.windowKey~=w.openRequestId then state.windowKey=w.openRequestId;state.windowStarted=now;state.mutationKey=nil;state.mutationStarted=nil end
- if phase=="waiting_release" or phase=="release_observed" or phase=="loot_mutation_unconfirmed" or phase=="loot_cleanup_unconfirmed" then out.phase=phase;return out end
+ if state.windowKey~=w.openRequestId then state.windowKey=w.openRequestId;state.windowStarted=now;state.mutationKey=nil;state.mutationStarted=nil;state.closeStarted=nil end
+ if phase=="waiting_release" then
+  out.phase=phase
+  if now and state.closeStarted and now-state.closeStarted>=M.tuning.responseTimeoutMs then out.action=close_action(frame,o,out.corpseGuid);out.action.retireUnconfirmed=true end
+  return out
+ end
+ if phase=="release_observed" or phase=="loot_mutation_unconfirmed" or phase=="loot_cleanup_unconfirmed" then out.phase=phase;return out end
  local timed_out=now and state.windowStarted and now-state.windowStarted>=M.tuning.windowTimeoutMs
- if urgent or phase=="abort" or timed_out then out.phase="release_window";out.action=close_action(frame,o,out.corpseGuid);return out end
- if w.observed~=true then return out end
+ if urgent or phase=="abort" or timed_out or (o.actions or {}).interactionOwner~="loot" then out.phase="release_window";out.action=close_action(frame,o,out.corpseGuid);return out end
+ if w.observed~=true then
+  if now and state.windowStarted and now-state.windowStarted>=M.tuning.responseTimeoutMs then out.phase="release_unobserved_window";out.action=close_action(frame,o,out.corpseGuid) end
+  return out
+ end
  local mutation=w.mutation
  if mutation and mutation.requestId~=state.mutationKey then state.mutationKey=mutation.requestId;state.mutationStarted=now end
  if mutation and mutation.serverRejected then
@@ -167,6 +177,7 @@ function M.decide(frame,encounter,quiet,urgent)
    requestId="corpse-"..tostring(state.sequence),expectedPositionRevision=p.revision,
    expectedCorpseRevision=chosen.positionRevision,expectedInventoryRevision=o.inventoryRevision,
    observationSequence=frame.input.observationSequence}
+  state.windowKey=out.action.requestId;state.windowStarted=frame.clock and frame.clock.monotonicMs;state.mutationKey=nil;state.mutationStarted=nil;state.closeStarted=nil
  end
  return out
 end
