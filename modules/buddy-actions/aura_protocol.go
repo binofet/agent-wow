@@ -141,21 +141,6 @@ func (s *Service) applyBuffAurasLocked(guid uint64, updates []auraDelta, all boo
 	set.at = s.now()
 	for _, v := range updates {
 		a := v.aura
-		prior := set.slots[v.slot]
-		if prior.spell != 0 && prior.spell != a.spell {
-			family := buffMetadata(prior.spell).family
-			if family == 0 {
-				for _, f := range []uint32{168, 687} {
-					if strongerArmorAura(prior.spell, f) {
-						family = f
-					}
-				}
-			}
-			if b := s.buffBindings[buffKey{guid, family}]; b != nil && b.bouncedSpell != 0 {
-				b.blocked = false
-				b.bouncedSpell = 0
-			}
-		}
 		a.at = s.now()
 		a.revision = s.buffAuraRevision
 		set.slots[v.slot] = a

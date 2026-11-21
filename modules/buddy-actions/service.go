@@ -169,14 +169,10 @@ type Service struct {
 	fargodeepSeen                        map[uint64]bool
 	spellbookKnown                       bool
 	spellbookRevision                    uint64
-	waterBreathSpellRevision             uint64
-	waterBreathSpell                     buffSpell
-	nextWaterBreathCheck                 time.Time
-	buffUntil, nextBuff                  time.Time
+	buffUntil                            time.Time
 	buffAuras                            map[uint64]*buffAuraSet
 	ownDamageAuras                       map[damageAuraSlot]observedBuffAura
 	buffAuraRevision, buffSequence       uint64
-	buffBindings                         map[buffKey]*buffBinding
 	buffOp                               *buffAttempt
 }
 
@@ -1215,8 +1211,7 @@ func (s *Service) Tick(ctx context.Context) {
 	healer := s.hasLearnedHealingLocked()
 	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
 	support := healer || resurrector
-	waterBreath := s.dueWaterBreathLocked()
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
 		s.stopLocked(ctx)
 		if nativeTargetPolicy {
 			s.stopAutoAttackLocked(ctx)
@@ -1255,7 +1250,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1298,10 +1293,6 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if nativeTargetPolicy && s.engageTickLocked(ctx) {
-		s.lastStep = now
-		return
-	}
-	if s.waterBreathTickLocked(ctx, snapshot, waterBreath) || s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1485,6 +1476,9 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		defer func() {
 			op.reportPolicySpellEffect(ctx, s.supportOp == op && s.state.CastPending)
 		}()
+	}
+	if op := s.buffOp; op != nil && op.policySpellToken != "" {
+		defer op.reportPolicySpellEffect(ctx)
 	}
 	if op := s.meleeOp; op != nil && op.token != "" {
 		defer op.reportPolicyMeleeEffect(ctx)

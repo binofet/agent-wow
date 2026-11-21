@@ -42,8 +42,8 @@ func TestPassiveOwnerStillGetsActualSupportedBuffAndHealing(t *testing.T) {
 	s, f, advance := buffRig(t, 5, 1243)
 	f.world.Owner.MovementFlags = 0x70000000
 	f.world.Owner.PositionAgeMs = 300000 // Stationary passive modifiers are not motion.
-	for i := 0; i < 2; i++ {
-		s.Tick(context.Background())
+	for _, target := range []uint64{s.selfGUID, ownerGUID} {
+		castBuff(t, s, target, 1243)
 		if s.buffOp == nil || s.buffOp.view.Phase != "waiting_server" {
 			t.Fatal("known passive owner blocked buff", s.state.BuffReason)
 		}
