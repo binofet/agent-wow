@@ -288,6 +288,24 @@ local function decide(frame)
                 if stage=="revive" then ok=p.aliveKnown==true and p.alive==true
                 elseif stage=="health" then ok=p.aliveKnown==true and p.alive==true and finite(p.maxHp) and num(p.maxHp)>0 and num(p.hp)==num(p.maxHp)
                 else ok=p.manaUser==false or finite(p.maxMana) and num(p.maxMana)==0 or p.manaUser==true and finite(p.maxMana) and num(p.maxMana)>0 and num(p.mana)==num(p.maxMana) end
+                if m.waiting and stage~="revive" and not ok then
+                    local previous=m.waiting
+                    local maximum=stage=="health" and num(p.maxHp) or num(p.maxMana)
+                    local current=stage=="health" and num(p.hp) or num(p.mana)
+                    -- Buffs/gear can change the real maximum while a refill is
+                    -- observed. Once the old requested amount is actually
+                    -- present, retire that completed goal and refill the new
+                    -- maximum in this same phase. An ACK or max change alone
+                    -- never authorizes replay of an uncertain write.
+                    if previous.resourceKind==stage and same(previous.targetGuid,member.guid)
+                        and finite(previous.resourceMaximum) and finite(maximum) and maximum>0
+                        and maximum~=previous.resourceMaximum and finite(current)
+                        and current>=previous.resourceMaximum then
+                        m.resourceReconciled={id=previous.id,targetGuid=member.guid,kind=stage,
+                            requestedMaximum=previous.resourceMaximum,observedMaximum=maximum}
+                        m.waiting=nil
+                    end
+                end
                 if m.waiting then out=wait_effect(m,frame,ok,stage);if out then return out end end
                 if ok then m.memberIndex=m.memberIndex+1
                 elseif stage=="revive" then return command("revive_"..member.name,".revive "..member.name)
@@ -303,7 +321,9 @@ local function decide(frame)
                         local r=result(m,"selecting_"..member.name);r.action={id=id,kind="select_target",targetGuid=member.guid};return r
                     end
                     m.selectionWaiting=nil
-                    return command(stage.."_"..member.name,".modify "..(stage=="health" and "hp" or "mana").." "..tostring(math.floor(maximum)))
+                    local refill=command(stage.."_"..member.name,".modify "..(stage=="health" and "hp" or "mana").." "..tostring(math.floor(maximum)))
+                    m.waiting.resourceKind,m.waiting.targetGuid,m.waiting.resourceMaximum=stage,member.guid,maximum
+                    return refill
                 end
             end
         elseif stage=="verify" then
