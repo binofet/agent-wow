@@ -64,6 +64,7 @@ type Service struct {
 	hostEncounterKey                           string
 	hostEncounterVisit                         uint64
 	hostEncounterUntil                         time.Time
+	hostEncounterEpoch                         uint64
 	encounterVisit                             encounterVisit
 	automaticCorpseLoot                        bool
 	now                                        func() time.Time

@@ -62,7 +62,11 @@ local function recovery_probe(obs,sequence,key,phase,goal)
         recovery = {identity=identity,serverRevision=self.positionRevision,index=1,stalled=0}
     end
     if recovery.checkRoute then recovery.checkRoute=false; return end
-    if not rejected_route[phase] then recovery=nil; return end
+    if not rejected_route[phase] then
+        if phase == "following_formation" or phase == "within_follow_formation" or
+           phase == "within_personal_follow_space" or phase == "approaching" or phase == "in_position" then recovery=nil end
+        return
+    end
     if recovery.sequence ~= sequence then
         local before = recovery.last
         local threshold = M.recovery_tuning.progress_yards
@@ -95,7 +99,7 @@ end
 function M.idle_recovery(obs,sequence)
     local nav = obs.navigation or {}
     local self = (obs.players or {})[obs.selfGuid]
-    if nav.following ~= true or nav.goalKnown ~= true or not self or self.combatKnown ~= true or self.inCombat == true then return {} end
+    if nav.following ~= true or nav.goalKnown ~= true or not self then return {} end
     local action = recovery_probe(obs,sequence,"follow",nav.phase,{x=nav.goalX or 0,y=nav.goalY or 0,z=nav.goalZ or 0})
     return {action=action}
 end

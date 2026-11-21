@@ -14,6 +14,8 @@ func TestEncounterMovementRecoversOnlyAfterActualStallAndRechecksRouteBetweenPro
 	vm, ctx := movementPolicy(t), context.Background()
 	obs := movementObservation()
 	obs["navigation"] = map[string]any{"bodyMovementSupported": true}
+	self := obs["players"].(map[string]any)["5"].(map[string]any)
+	self["positionRevision"] = "1"
 	obs["targetMovement"] = map[string]any{"targetGuid": "99", "visitId": "1", "phase": "follow_navigation_unavailable"}
 	decide := func(sequence int) behavior.Decision {
 		t.Helper()
@@ -28,16 +30,17 @@ func TestEncounterMovementRecoversOnlyAfterActualStallAndRechecksRouteBetweenPro
 			t.Fatal("stale single rejection triggered probe", got)
 		}
 	}
-	for _, sequence := range []int{3, 5, 7} {
+	for _, sequence := range []int{3, 8, 13} {
 		decision := decide(sequence)
 		action := decision.Output["action"].(map[string]any)
-		if action["capability"] != "move_body" || action["visitId"] != "1" || action["sequenceId"] != strconv.Itoa(sequence) || action["jump"] != (sequence == 7) {
+		if action["capability"] != "move_body" || action["visitId"] != "1" || action["sequenceId"] != strconv.Itoa(sequence) || action["jump"] != (sequence == 13) {
 			t.Fatal("missing relative/alternative/hop recovery", decision.Output)
 		}
 		id, err := vm.ReserveAction(decision)
 		if err != nil {
 			t.Fatal(err)
 		}
+		self["x"] = float64(sequence) / 5
 		_, err = vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: "move", ActionID: id, Outcome: behavior.ActionSettledUnverified,
 			Payload: map[string]any{"capability": "move_body", "sequence_id": strconv.Itoa(sequence), "phase": "body_input_written", "effect_observed": false}}})
 		if err != nil {
@@ -46,12 +49,18 @@ func TestEncounterMovementRecoversOnlyAfterActualStallAndRechecksRouteBetweenPro
 		if got := decide(sequence + 1).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
 			t.Fatal("probe skipped normal route recheck", got)
 		}
+		if sequence < 13 {
+			for next := sequence + 2; next < sequence+5; next++ {
+				if got := decide(next).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+					t.Fatal("probe ignored fresh local progress", got)
+				}
+			}
+		}
 	}
 	// Actual progress and a new authoritative pose reset stale failure proof.
-	self := obs["players"].(map[string]any)["5"].(map[string]any)
 	self["positionRevision"] = "2"
 	self["x"] = float64(4)
-	if got := decide(9).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
+	if got := decide(19).Output["action"].(map[string]any)["capability"]; got != "approach_target" {
 		t.Fatal("stale failure survived correction", got)
 	}
 }

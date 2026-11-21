@@ -30,6 +30,7 @@ func (s *Service) UseHostEncounterWriter(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.hostEncounterKey = key
+	s.hostEncounterEpoch++
 	return nil
 }
 
@@ -61,6 +62,7 @@ func (s *Service) RenewPolicyEncounterLease(ctx context.Context, request *wrappe
 	}
 	visit := request.GetValue()
 	if visit == 0 {
+		s.hostEncounterEpoch++
 		s.hostEncounterVisit, s.hostEncounterUntil = 0, time.Time{}
 		s.stopEncounterMeleeLocked(ctx)
 		return &emptypb.Empty{}, nil
