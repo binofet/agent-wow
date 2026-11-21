@@ -51,14 +51,22 @@ func TestTrainerTravelAcceptsActualClassOrProfessionTeacherFlags(t *testing.T) {
 		t.Run(fmt.Sprintf("flags_%x", flags), func(t *testing.T) {
 			s, f, _, r := trainerTravelRig(t)
 			f.world.NearbyCreatures[0].NpcFlags = flags
-			got, err := s.TravelTrainer(context.Background(), r)
-			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || !got.NavAvailable || got.InteractionOwner != "training" || distance(s.pos, position{x: -9435, y: 70, z: 58}) > 3 {
-				t.Fatal(flags, got, err)
-			}
-			for _, packet := range f.packets {
-				if packet.Opcode != opcode.MSGMoveStartForward && packet.Opcode != opcode.MSGMoveHeartbeat && packet.Opcode != opcode.MSGMoveStop {
-					t.Fatal("travel emitted an interaction or purchase", packet)
+			// This matrix checks native NPC admission, independently of the
+			// arrival evaluator's availability over a long journey. Default Lua
+			// arrival and verified movement are exercised in the journey tests.
+			f.world.NearbyCreatures[0].X = f.world.Self.X + 2
+			decisions := 0
+			s.formation.remote = func(input map[string]any) (bool, string, map[string]any, error) {
+				decisions++
+				travel, known := input["travel"].(map[string]any)
+				if input["mode"] != "service_travel" || !known || travel["kind"] != "trainer" || travel["routeKnown"] != false {
+					return true, "", nil, errors.New("nearby trainer admission unexpectedly required a route")
 				}
+				return true, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", map[string]any{"arrived": true}, nil
+			}
+			got, err := s.TravelTrainer(context.Background(), r)
+			if err != nil || got.Reason != "trainer_travel_within_distance" || got.Moving || got.Traveling || got.MotionUnconfirmed || got.NavAvailable || got.InteractionOwner != "training" || decisions != 1 || distance(s.pos, playerPosition(f.world.Self)) != 0 || len(f.packets) != 0 {
+				t.Fatal(flags, got, err)
 			}
 		})
 	}
