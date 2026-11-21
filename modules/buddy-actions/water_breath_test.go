@@ -32,7 +32,7 @@ func TestExactWaterBreathingWorksSwimmingMovingAndWithoutBuffToggle(t *testing.T
 	}
 }
 func TestExactWaterBreathingDoesNotBypassUnsupportedMovement(t *testing.T) {
-	for _, flags := range []uint32{0x800, 0x1000000, 0x400000} {
+	for _, flags := range []uint32{0x800, 0x1000000, 0x8000000} {
 		s, f, _ := buffRig(t, 9, testUnendingBreath)
 		f.world.Self.MovementFlags = swimMovementFlag | flags
 		_, err := s.CastBuff(context.Background(), &actionsv1.CastBuffRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: testUnendingBreath})
