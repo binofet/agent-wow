@@ -36,3 +36,21 @@ func TestSharedLuaSessionApproachesAndResurrectsObservedNonpartyAlly(t *testing.
 		t.Fatal("already revived ally was selected again", out)
 	}
 }
+
+func TestLuaResurrectionRequiresCurrentHostOwnershipOrRequest(t *testing.T) {
+	p := newSupportPolicy(t, "resurrect")
+	obs := supportResObservation()
+	obs.HostOwned, obs.HostRequested = false, false
+	p.expectNoAction(p.observe(obs))
+	obs.HostRequested = true
+	out := p.decide(p.observe(obs)).Output
+	if action, _ := out["action"].(map[string]any); action["capability"] != "resurrect" {
+		t.Fatal("current requested host failed to select resurrection", out)
+	}
+	obs.HostRequested = false
+	obs.HostOwned = true
+	out = p.decide(p.observe(obs)).Output
+	if action, _ := out["action"].(map[string]any); action["capability"] != "resurrect" {
+		t.Fatal("current owned host failed to select resurrection", out)
+	}
+}

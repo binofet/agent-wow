@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestNativeTickNeverSelectsResurrectionPatient(t *testing.T) {
@@ -38,5 +41,23 @@ func TestNativeTickNeverSelectsResurrectionPatient(t *testing.T) {
 				t.Fatal("Lua/caller-selected cast could not execute", err, s.stateLocked())
 			}
 		})
+	}
+}
+
+func TestNativeResurrectionPassivityPreservesFollowingWithAnEligibleDeath(t *testing.T) {
+	s, f, _ := resRig(t)
+	dead := proto.Clone(f.world.Owner).(*worldv1.PlayerState)
+	dead.Guid = 7
+	f.world.NearbyPlayers = []*worldv1.PlayerState{dead}
+	f.world.Owner.Alive, f.world.Owner.Health = true, 100
+	toggle(t, s, true)
+	s.Tick(context.Background())
+	if !s.state.Following || !s.state.Moving || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("removing native resurrection interfered with normal following", s.stateLocked(), f.packets)
+	}
+	toggle(t, s, false)
+	_, err := s.ResurrectOnce(context.Background(), &actionsv1.ResurrectOnceRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: 7, SpellId: 2006})
+	if err != nil || lastCast(f) != 2006 || s.supportOp.owner != 7 {
+		t.Fatal("exact same-session allied nonparty resurrection was lost", err, s.stateLocked())
 	}
 }
