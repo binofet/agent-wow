@@ -9,10 +9,26 @@ import (
 
 	"github.com/agent-wow/agent-wow/behaviors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// Native route/admission fixtures need a healthy evaluator to exercise their
+// mechanical assertions. Keep the actual default source; the separate moving
+// watchdog regression uses the real production five-millisecond allowance.
+func healthyServiceTravelRuntime(t *testing.T) *behavior.Runtime {
+	t.Helper()
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	return runtime
+}
 
 type servicePolicyRig struct {
 	s       *Service

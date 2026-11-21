@@ -30,6 +30,7 @@ const (
 var (
 	ErrRevisionConflict = errors.New("behavior revision conflict")
 	ErrNoPolicy         = errors.New("no usable behavior policy")
+	ErrExecutionBudget  = errors.New("Lua execution budget exhausted")
 )
 
 // Status describes the active policy separately from the last failed candidate.
@@ -138,13 +139,8 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	defer L.Close()
 	fn, err := L.Load(strings.NewReader(source), "policy")
 	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), r.evaluationBudget())
-		defer cancel()
-		L.SetContext(ctx)
-		_, err = decisionFunction(L, fn)
-		if err == nil {
-			err = ctx.Err()
-		}
+		budget := newExecutionBudget(context.Background(), r.evaluationBudget())
+		err = budget.call(L, func() error { _, err := decisionFunction(L, fn); return err })
 	}
 	if err != nil {
 		r.failed(revision, err)
@@ -220,24 +216,71 @@ func (r *Runtime) failed(revision string, err error) {
 func evaluate(p *policy, input map[string]any) (map[string]any, error) {
 	return evaluateWithLimits(context.Background(), p, input, MaxJSONBytes, MaxInputNodes, MaxNodes, EvaluationLimit)
 }
+
+// One cumulative watchdog covers actual Lua execution. Bounded host value
+// conversion uses the parent context and cannot consume or reset this budget.
+type executionBudget struct {
+	parent    context.Context
+	limit     time.Duration
+	remaining time.Duration
+}
+
+func newExecutionBudget(parent context.Context, limit time.Duration) *executionBudget {
+	return &executionBudget{parent: parent, limit: limit, remaining: limit}
+}
+
+func (b *executionBudget) exhausted() error {
+	return fmt.Errorf("%w (%s configured): %w", ErrExecutionBudget, b.limit, context.DeadlineExceeded)
+}
+
+func (b *executionBudget) call(L *lua.LState, fn func() error) error {
+	if err := b.parent.Err(); err != nil {
+		return err
+	}
+	if b.remaining <= 0 {
+		return b.exhausted()
+	}
+	ctx, cancel := context.WithTimeout(b.parent, b.remaining)
+	defer cancel()
+	L.SetContext(ctx)
+	defer L.RemoveContext()
+	started := time.Now()
+	err := fn()
+	b.remaining -= time.Since(started)
+	if parentErr := b.parent.Err(); parentErr != nil {
+		return parentErr
+	}
+	if ctx.Err() != nil || b.remaining <= 0 {
+		if parentErr := b.parent.Err(); parentErr != nil {
+			return parentErr
+		}
+		b.remaining = 0
+		return b.exhausted()
+	}
+	return err
+}
+
 func evaluateWithLimits(parent context.Context, p *policy, input map[string]any, byteLimit, inputNodes, outputNodes int, executionLimit time.Duration) (map[string]any, error) {
 	L := newVM()
 	defer L.Close()
-	ctx, cancel := context.WithTimeout(parent, executionLimit)
-	defer cancel()
-	L.SetContext(ctx)
-	fn, err := decisionFunction(L, L.NewFunctionFromProto(p.proto))
+	watchdog := newExecutionBudget(parent, executionLimit)
+	var fn *lua.LFunction
+	err := watchdog.call(L, func() error {
+		var err error
+		fn, err = decisionFunction(L, L.NewFunctionFromProto(p.proto))
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	state, err := toLua(L, input, &budget{ctx: ctx, byteLimit: byteLimit, nodeLimit: inputNodes})
+	state, err := toLua(L, input, &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: inputNodes})
 	if err != nil {
 		return nil, err
 	}
-	if err = L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, state); err != nil {
+	if err = watchdog.call(L, func() error { return L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, state) }); err != nil {
 		return nil, err
 	}
-	value, err := fromLua(L.Get(-1), &budget{ctx: ctx, byteLimit: byteLimit, nodeLimit: outputNodes}, map[*lua.LTable]bool{}, 0)
+	value, err := fromLua(L.Get(-1), &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: outputNodes}, map[*lua.LTable]bool{}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +291,7 @@ func evaluateWithLimits(parent context.Context, p *policy, input map[string]any,
 	if err := boundedJSONSize(output, byteLimit); err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return nil, err
 	}
 	return output, nil

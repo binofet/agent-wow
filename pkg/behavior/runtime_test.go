@@ -275,7 +275,13 @@ func TestFailedFallbackLeavesNoPolicy(t *testing.T) {
 }
 
 func TestConcurrentEvaluateStatusAndReloadCAS(t *testing.T) {
-	r := New()
+	// This stresses serialization and CAS correctness under eight workers,
+	// rather than measuring the default 5 ms watchdog under race scheduling.
+	// The standalone default/performance and real runaway cases stay separate.
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := load(t, r, goodPolicy)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
