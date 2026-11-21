@@ -118,7 +118,19 @@ message InteractionRequest {
   // Only professions and exploration may request it. Defense intent stays on.
   bool harvest = 4;
 }
-message InteractionRelease { string owner = 1; string token = 2; }
+message InteractionRelease {
+  string owner = 1;
+  string token = 2;
+  // Optional for old callers; current policy supplies all three identity guards.
+  string session_id = 3;
+  uint64 self_guid = 4;
+  uint64 visit_id = 5;
+}
+// Exact current custody, without a decision about when it should yield.
+message InteractionObservation {
+  string owner = 1;
+  string token = 2;
+}
 message ApproachLootRequest {
   string token = 1;
   // Exactly one observed target: an eligible corpse or own Milly harvest crate.
@@ -586,6 +598,7 @@ message EncounterObservationResponse {
   NavigationObservation navigation = 25;
   TransportFailure last_transport_failure = 26;
   RecoveryState recovery = 27;
+  InteractionObservation interaction = 28;
 }
 message BodyMovementRequest {
   string session_id = 1;

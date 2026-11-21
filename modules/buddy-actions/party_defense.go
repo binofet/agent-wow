@@ -40,22 +40,3 @@ func partyDefenseCreature(w *worldv1.SnapshotResponse, guid uint64) *worldv1.Cre
 	}
 	return found
 }
-
-func partyDefenseEligible(w *worldv1.SnapshotResponse, c *worldv1.CreatureState, online map[uint64]bool) bool {
-	if w == nil || w.Self == nil || c == nil || !online[c.AttackVictimGuid] || c.AttackVictimGuid == w.Self.Guid {
-		return false
-	}
-	victim := observedHealingPlayer(w, c.AttackVictimGuid)
-	if !healablePlayer(victim, w.Self.MapId) || !victim.HealthKnown || victim.Health == 0 || !ongoingAttack(c, victim) {
-		return false
-	}
-	kind := c.Guid >> 48
-	if kind != 0xf130 && kind != 0xf150 {
-		return false
-	}
-	if !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 {
-		return false
-	}
-	_, known, _ := creaturePosition(c)
-	return known
-}

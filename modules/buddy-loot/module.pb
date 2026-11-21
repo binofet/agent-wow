@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-¯’
+¡”
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -627,8 +627,15 @@ targetGuid!
 owner (	Rowner
 token (	Rtoken
 lease_ms (RleaseMs
-harvest (Rharvest"@
+harvest (Rharvest"—
 InteractionRelease
+owner (	Rowner
+token (	Rtoken
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId"D
+InteractionObservation
 owner (	Rowner
 token (	Rtoken"v
 ApproachLootRequest
@@ -1141,7 +1148,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"Š
+host_owned (R	hostOwned"Þ
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1177,7 +1184,8 @@ meleeKnown7
 navigation (2/.warcraftbuddy.actions.v1.NavigationObservationR
 navigation`
 last_transport_failure (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailureC
-recovery (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoverye
+recovery (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryR
+interaction (20.warcraftbuddy.actions.v1.InteractionObservationRinteractione
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
