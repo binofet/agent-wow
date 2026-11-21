@@ -96,6 +96,12 @@ func TestFearBreakUsesOnlyEquippedVerifiedTrinket(t *testing.T) {
 	receipt = binary.LittleEndian.AppendUint64(receipt, s.selfGUID)
 	receipt = append(receipt, 0)
 	receipt = binary.LittleEndian.AppendUint32(receipt, 0)
+	foreign := append([]byte(nil), receipt...)
+	foreign[1]++
+	s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: foreign})
+	if !s.state.CastPending || s.supportOp.view.ServerCastGo {
+		t.Fatal("foreign item source fell through to generic cast settlement", s.stateLocked())
+	}
 	s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: receipt})
 	if s.state.CastPending || !s.supportOp.view.ServerCastGo {
 		t.Fatal("own implicit-self item cast did not settle")

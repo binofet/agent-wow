@@ -313,7 +313,9 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 				expected = op.breakItem
 			}
 			if source != expected {
-				return false, nil
+				// This frame matches our pending count/spell but not its exact source.
+				// Consume it here so the legacy generic parser cannot retire custody.
+				return true, nil
 			}
 		}
 		if op.view.Capability == selfCastCapability {
