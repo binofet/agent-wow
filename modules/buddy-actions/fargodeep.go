@@ -9,6 +9,7 @@ import (
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -484,6 +485,12 @@ func (s *Service) fargodeepMovementAllowedLocked(ctx context.Context) bool {
 }
 
 func (s *Service) fargodeepActionAllowedLocked(ctx context.Context, targetGUID uint64, spell uint32, movement bool) bool {
+	return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, movement, nil)
+}
+
+// A pure policy read is followed by the same complete native guard again.
+// The second pass only compares its bound facts, so evaluation cannot recurse.
+func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targetGUID uint64, spell uint32, movement bool, selected *starterSpellDecision) bool {
 	f := &s.fargodeep
 	refuse := func() bool {
 		f.active = false
@@ -552,20 +559,23 @@ func (s *Service) fargodeepActionAllowedLocked(ctx context.Context, targetGUID u
 		}
 		return s.state.KnownAutoAttack && s.weaponReady(self) && self.UnitFlags&(0x20000|0x200000) == 0 && self.BaseAttackTimeKnown && self.CombatReachKnown && c.CombatReachKnown && distance(s.pos, p) <= math.Max(5, float64(self.CombatReach+c.CombatReach)+4.0/3.0)-.5
 	}
-	rank := spellRankFor(spell)
-	rangeLimit := float64(28)
-	if self.ClassId == 8 {
-		rangeLimit = 33
-	}
-	cost, reserve := manaBudget(self, uint64(rank.manaPercent)), uint64(0)
-	if self.ClassId == 5 {
-		if !s.hasLearnedHealingLocked() {
-			return refuse()
-		}
-		reserve = manaBudget(self, uint64(s.selectedSpellLocked(lesserHeal).manaPercent))
-	}
-	if rank.id == 0 || self.UnitFlags&0x2000 != 0 || !self.PowerKnown || self.PowerType != 0 || cost == 0 || uint64(self.Power) < cost+reserve || distance(s.pos, p) > rangeLimit {
+	rank, learned := s.learnedContractsLocked()[spell]
+	cost := spellCost(rank, self)
+	if !learned || rank.Capability().Kind != spellcatalog.Damage || self.UnitFlags&0x2000 != 0 ||
+		!self.PowerKnown || int32(self.PowerType) != rank.Power || cost == 0 || uint64(self.Power) < cost ||
+		!s.encounterRankResourcesAvailable(rank, self) || distance(s.pos, p) < rank.MinHostile || distance(s.pos, p) > rank.MaxHostile ||
+		self.ClassId == 5 && !s.hasLearnedHealingLocked() {
 		return refuse()
 	}
-	return true
+	if selected != nil {
+		if selected.kind != "cast" || selected.spell.ID != spell || !s.starterSpellFactsMatchLocked(*selected, w, c, p) {
+			return refuse()
+		}
+		return true
+	}
+	decision := s.starterSpellDecisionLocked(ctx, w, c, p)
+	if !decision.valid || decision.kind != "cast" || decision.spell.ID != spell {
+		return refuse()
+	}
+	return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, false, &decision)
 }
