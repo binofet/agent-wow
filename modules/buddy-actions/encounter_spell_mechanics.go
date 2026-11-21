@@ -17,12 +17,14 @@ func encounterSpellMechanics(spell spellcatalog.Spell, self *worldv1.PlayerState
 		Cost: spellCost(spell, self), PowerType: spell.Power,
 		MinRange: spell.MinHostile, MaxRange: spell.MaxHostile, DirectDamage: directDamage(spell),
 		CooldownMs: spell.CooldownMs, CategoryCooldownMs: spell.CategoryCooldownMs, GlobalCooldownMs: spell.GcdMs,
-		SelfCastSupported: supportsSelfCast(spell),
+		SelfCastSupported: supportsSelfCast(spell), TargetRule: spell.Capability().Target,
+		FamilySet: spell.FamilySet, FamilyFlags: append([]uint32(nil), spell.FamilyFlags[:]...),
 	}
 	if spell.Capability().Target == "ally" || spell.Capability().Target == "self" {
 		view.MinRange, view.MaxRange = spell.MinFriendly, spell.MaxFriendly
 	}
 	for _, effect := range spell.Effects {
+		view.AuraEffects = append(view.AuraEffects, &actionsv1.EncounterAuraEffect{Kind: effect.Kind, A: effect.A, B: effect.B, Aura: effect.Aura, Misc: effect.Misc})
 		if effect.Kind == 6 && effect.Aura == 3 && effect.PeriodMs != 0 {
 			view.PeriodicDamage = append(view.PeriodicDamage, &actionsv1.EncounterPeriodicDamage{
 				DamagePerTick: float64(effect.Points), PeriodMs: effect.PeriodMs,

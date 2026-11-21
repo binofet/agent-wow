@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-έμ
+«ς
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -1288,7 +1288,7 @@ targetGuid"M
 EncounterEngagement
 victim_guid (R
 victimGuid
-age_ms (RageMs"ε	
+age_ms (RageMs"
 EncounterSpell
 known (Rknown
 ready (Rready
@@ -1327,7 +1327,19 @@ cooldownMs0
 weapon_bonus_damage (RweaponBonusDamage,
 damage_model_known (RdamageModelKnown'
 requires_facing (RrequiresFacing0
-friendly_dispel_mask  (RfriendlyDispelMask"^
+friendly_dispel_mask  (RfriendlyDispelMask
+target_rule! (	R
+targetRule
+
+family_set" (R	familySet!
+family_flags# (RfamilyFlagsP
+aura_effects$ (2-.warcraftbuddy.actions.v1.EncounterAuraEffectRauraEffects"m
+EncounterAuraEffect
+kind (Rkind
+a (Ra
+b (Rb
+aura (Raura
+misc (Rmisc"^
 EncounterPeriodicDamage&
 damage_per_tick (RdamagePerTick
 	period_ms (RperiodMs"ύ
@@ -1354,14 +1366,19 @@ rangeYards
 requireLos
 behind (Rbehind
 phase (	Rphase
-ready (Rready"¥
+ready (Rready"λ
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI
 
 interrupts (2).warcraftbuddy.actions.v1.InterruptOptionR
 interruptsH
-player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAuras"Φ
+player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAuras[
+aura_spells (2:.warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntryR
+auraSpellsg
+AuraSpellsEntry
+key (Rkey>
+value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8"Φ
 ResurrectionOption!
 patient_guid (RpatientGuid(
 cast_target_guid (RcastTargetGuid
@@ -1389,7 +1406,14 @@ session_id (	R	sessionId
 target_guid (R
 targetGuid
 spell_id (RspellId#
-cast_revision (RcastRevision"ς
+cast_revision (RcastRevision"‰
+CastBuffRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+target_guid (R
+targetGuid
+spell_id (RspellId"ς
 CastCleanseRequest
 
 session_id (	R	sessionId
@@ -1421,7 +1445,7 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2Ώ 
+targetGuid2—!
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
@@ -1466,7 +1490,8 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 EncounterObservation.google.protobuf.Empty6.warcraftbuddy.actions.v1.EncounterObservationResponseV
 CastHeal).warcraftbuddy.actions.v1.CastHealRequest.warcraftbuddy.actions.v1.State\
 CastOffense,.warcraftbuddy.actions.v1.CastOffenseRequest.warcraftbuddy.actions.v1.State\
-CastCleanse,.warcraftbuddy.actions.v1.CastCleanseRequest.warcraftbuddy.actions.v1.StateP
+CastCleanse,.warcraftbuddy.actions.v1.CastCleanseRequest.warcraftbuddy.actions.v1.StateV
+CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
 µM

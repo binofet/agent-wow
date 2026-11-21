@@ -297,6 +297,14 @@ func TestHealingOnlyProposesFromCurrentUnconsumedObservation(t *testing.T) {
 	requireHeal(t, decideHealing(t, session, fresh), "3", 2050)
 }
 
+func TestHealingLegacyStandingFalseCannotDisableTheSharedPolicy(t *testing.T) {
+	session := newHealingSession(t, healingPolicy(t))
+	view := healingObservation(true, 30, []any{patient("3", 50, 100, 10, true, true)},
+		[]any{healRank(2050, 1, 1, 35, 30, 1500, 0, 40, false)})
+	view["standing"] = false
+	requireHeal(t, decideHealing(t, session, enqueueHealing(t, session, view)), "3", 2050)
+}
+
 func TestHealingConsidersTheEntireRaid(t *testing.T) {
 	session := newHealingSession(t, healingPolicy(t))
 	patients := make([]any, 40)

@@ -140,7 +140,7 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		s.followUntil = s.now().Add(lease)
 		harvestLease(t, s, "professions")
 		f.world.NearbyCreatures = []*worldv1.CreatureState{attacker}
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if s.state.InteractionOwner != "" || s.state.InteractionHarvest || lastCast(f) != fireball || !s.state.CastPending {
 			t.Fatal("harvest suppressed existing defense", &s.state, f.packets)
 		}
@@ -151,7 +151,7 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		learn(s)
 		harvestLease(t, s, "professions")
 		f.world.Owner.Health = 40
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 {
 			t.Fatal("harvest suppressed actual healing", &s.state, f.packets)
 		}
@@ -165,7 +165,7 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		// while the bound client estimate has advanced20yd along its route.
 		s.pos.x, s.posEstimated = 20, true
 		f.world.Owner.Health = 40
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if s.state.InteractionOwner != "" || healingCastTarget(f) != 3 {
 			t.Fatal("raw own pose hid healing within client range", &s.state, f.packets)
 		}

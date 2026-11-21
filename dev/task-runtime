@@ -405,7 +405,7 @@ class SharedBoard:
 
 
 class Runner:
-    def __init__(self, store, bridge, rpc, guid, sid, goal, source, library, deadline=None, stopped=lambda: False, rpc_timeout=5, shared=None, source_bytes=MAX_SOURCE):
+    def __init__(self, store, bridge, rpc, guid, sid, goal, source, library, deadline=None, stopped=lambda: False, rpc_timeout=5, shared=None, source_bytes=MAX_SOURCE, reward_policy=None):
         require(type(source_bytes) is int and source_bytes>0,'positive_source_budget_required')
         self.source_bytes=source_bytes
         require(type(guid) is int and 0 < guid < 2**48 and isinstance(sid, str)
@@ -413,6 +413,9 @@ class Runner:
         self.store, self.bridge, self.rpc = store, bridge, rpc
         self.guid, self.sid, self.goal = guid, sid, checked_goal(goal)
         self.source, self.library, self.deadline, self.stopped = Path(source), Path(library), deadline, stopped
+        if reward_policy is None and self.source.resolve() == (ROOT / 'behaviors/expedition.lua').resolve():
+            reward_policy = ROOT / 'behaviors/quest-rewards.lua'
+        self.reward_policy = Path(reward_policy) if reward_policy is not None else None
         require(type(rpc_timeout) in (int, float) and math.isfinite(rpc_timeout) and .1 <= rpc_timeout <= 40,
                 'rpc_timeout_bounds_required')
         self.rpc_timeout = rpc_timeout
@@ -599,6 +602,9 @@ class Runner:
         error = ''
         try:
             code = 'local tasks=(function()\n' + read_file(self.library, self.source_bytes).decode() + '\nend)()\n' + read_file(self.source, self.source_bytes).decode()
+            if self.reward_policy is not None:
+                rewards = read_file(self.reward_policy, self.source_bytes).decode()
+                code = 'local quest_rewards=(function()\n' + rewards + '\nend)()\n' + code
             require(0 < len(code.encode()) <= self.source_bytes, 'combined_source_size_bound')
             revision = hashlib.sha256(code.encode()).hexdigest()
             # Input-dependent failure does not revoke a source that already
@@ -710,6 +716,7 @@ def main(argv=None):
     run.add_argument('--controller-state-bytes',type=int,default=MAX_CONTROLLER_STATE)
     run.add_argument('--policy-binary', type=Path, default=ROOT / 'data/bin/luapolicy')
     run.add_argument('--source-bytes',type=int,default=MAX_SOURCE)
+    run.add_argument('--reward-policy', type=Path, help='shared reward policy for a custom expedition composition')
     args = parser.parse_args(argv)
     if args.command == 'status':
         print(json.dumps(status(Store(args.state_dir,args.controller_state_bytes).load()), sort_keys=True)); return 0
@@ -725,7 +732,8 @@ def main(argv=None):
     with Store(args.state_dir,args.controller_state_bytes) as store:
         runner = Runner(store, Bridge(args.policy_binary, ROOT / 'modules',args.source_bytes), RPC(args.rpc_url), int(args.guid),
             args.session_id, decoded(read_file(args.goal, MAX_INPUT)), args.source, ROOT / 'behaviors/task-stack.lua',
-            deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds,source_bytes=args.source_bytes)
+            deadline, lambda: stopped[0] or stop_requested(store, runner.data), args.rpc_timeout_seconds,
+            source_bytes=args.source_bytes, reward_policy=args.reward_policy)
         runner.data['run'] = dict(instance=uuid.uuid4().hex, pid=os.getpid(), active=True,
                                   sourcePath=str(runner.source.absolute()),
                                   previousInstance=runner.data.get('run',{}).get('instance'))

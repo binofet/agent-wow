@@ -2,15 +2,19 @@ package buddyactions
 
 import (
 	"context"
-	"encoding/binary"
+	"encoding/json"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
-	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -20,11 +24,9 @@ func triagePlayer(f *fakeSession, guid uint64, health uint32) *worldv1.PlayerSta
 	p.Guid, p.Health, p.X = guid, health, 15
 	return p
 }
-
 func triageMember(f *fakeSession, guid uint64) {
 	f.party.Group.Members = append(f.party.Group.Members, &partyv1.Member{Guid: guid, Online: true})
 }
-
 func healingCastTarget(f *fakeSession) uint64 {
 	for i := len(f.packets) - 1; i >= 0; i-- {
 		p := f.packets[i]
@@ -36,266 +38,227 @@ func healingCastTarget(f *fakeSession) uint64 {
 	return 0
 }
 
-func TestHealingTriageSelfWorksWithoutOwnerOrPartyAndDoesNotInventHealth(t *testing.T) {
-	s, f, _ := rig(t)
-	f.world.Self.Health = 30
-	f.world.Self.PlayerFlags = 2 // AFK does not forfeit actual self-preservation.
-	f.world.Owner, f.party = nil, nil
-	learn(s)
-	s.Tick(context.Background())
-	if healingCastTarget(f) != 1 || state(t, s).LastCastTargetGuid != 1 || countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("missing independent self heal", state(t, s), f.packets)
+// Existing packet fixtures explicitly select intent. Refusals still yield the
+// observed State for packet/correlation assertions, not a replacement cast.
+func testExactHeal(s *Service, spell uint32, target uint64) (*actionsv1.State, error) {
+	if s.sessionID == "" {
+		s.sessionID = "actions-test-body"
 	}
-	makeGo := func(target uint64) []byte {
-		p := smiteEvent(true, 1, target)
-		_, _, _, off, _ := castEvent(p)
-		binary.LittleEndian.PutUint32(p[off-4:], lesserHeal)
-		return p
+	out, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: target, SpellId: spell})
+	if err != nil {
+		return s.Status(context.Background(), &emptypb.Empty{})
 	}
-	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: makeGo(ownerGUID)})
-	if !state(t, s).CastPending || state(t, s).ServerCastGo != 0 {
-		t.Fatal("Joel-target event consumed self cast")
-	}
-	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: makeGo(1)})
-	if state(t, s).CastPending || state(t, s).ServerCastGo != 1 || f.world.Self.Health != 30 {
-		t.Fatal("receipt changed observed health", state(t, s), f.world.Self)
-	}
+	return out, nil
 }
 
-func TestHealingTriageUrgentSelfThenLowestObservedRatioAndJoelTie(t *testing.T) {
-	for _, mode := range []string{"urgent", "party", "ratio", "tie", "owner_absent", "self_only"} {
+// Exercise the shipped editable selector, never a Go translation of triage.
+func healingVM(t *testing.T, s *Service, source string) *behavior.Session {
+	t.Helper()
+	if s.sessionID == "" {
+		s.sessionID = "actions-test-body"
+	}
+	if source == "" {
+		b, e := os.ReadFile("../../behaviors/healing.lua")
+		if e != nil {
+			t.Fatal(e)
+		}
+		source = string(b)
+	}
+	vm, e := behavior.NewSessionWithOptions(context.Background(), s.sessionID, source, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(vm.Close)
+	return vm
+}
+func luaHealingAction(t *testing.T, s *Service, vm *behavior.Session, explicit bool) map[string]any {
+	t.Helper()
+	if explicit {
+		if _, e := vm.Enqueue(behavior.Event{Kind: "healing_request"}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	view, e := s.HealingOptions(context.Background(), &emptypb.Empty{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	raw, e := protojson.Marshal(view)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var value map[string]any
+	if e = json.Unmarshal(raw, &value); e != nil {
+		t.Fatal(e)
+	}
+	seq, e := vm.Enqueue(behavior.Event{Kind: "healing_observation", Value: value})
+	if e != nil {
+		t.Fatal(e)
+	}
+	out, e := vm.Decide(context.Background(), map[string]any{"kind": "healing", "observationSequence": strconv.FormatUint(seq, 10)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	action, _ := out.Output["action"].(map[string]any)
+	return action
+}
+func runLuaHealing(t *testing.T, s *Service, explicit bool) map[string]any {
+	t.Helper()
+	action := luaHealingAction(t, s, healingVM(t, s, ""), explicit)
+	if action == nil {
+		return nil
+	}
+	target, e := strconv.ParseUint(action["targetGuid"].(string), 10, 64)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: target, SpellId: uint32(action["spellId"].(float64))}); e != nil {
+		t.Fatal(e)
+	}
+	return action
+}
+
+func TestLuaHealingOwnsSelfAllyUrgencyAndRank(t *testing.T) {
+	for _, mode := range []string{"solo", "independent", "ally", "urgent_self", "ratio", "tie", "manual99"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := rig(t)
-			mira := triagePlayer(f, 4, 15)
-			f.world.NearbyPlayers = []*worldv1.PlayerState{mira}
-			triageMember(f, 4)
+			learn(s)
 			f.world.Self.Health, f.world.Owner.Health = 60, 20
+			p := triagePlayer(f, 4, 15)
+			f.world.NearbyPlayers = []*worldv1.PlayerState{p}
+			triageMember(f, 4)
 			want := uint64(4)
 			switch mode {
-			case "urgent":
-				f.world.Self.Health, mira.Health = 49, 1
+			case "solo":
+				f.world.Owner, f.world.NearbyPlayers, f.party = nil, nil, nil
+				want = 1
+			case "independent":
+				s.independent = true
+				f.world.Self.Health = 30
+				want = 1
+			case "ally":
+				f.party = nil
+				p.RaceKnown, p.RaceId = true, 1
+				f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+				f.world.Owner.Health = 100
+			case "urgent_self":
+				f.world.Self.Health = 20
 				want = 1
 			case "ratio":
 				f.world.Owner.Health, f.world.Owner.MaxHealth = 25, 200
 				want = 3
 			case "tie":
-				f.world.Owner.Health, mira.Health = 50, 50
+				f.world.Owner.Health, p.Health = 50, 50
 				want = 3
-			case "owner_absent":
-				f.world.Owner = nil
-			case "self_only":
-				f.world.Owner, f.party = nil, nil
-				want = 1
-			}
-			learn(s)
-			s.Tick(context.Background())
-			if healingCastTarget(f) != want {
-				t.Fatal(mode, want, state(t, s), f.packets)
-			}
-		})
-	}
-}
-
-func TestStandingHealingStillProtectsInjuredPartyAfterHours(t *testing.T) {
-	ctx := context.Background()
-	for _, tc := range []struct {
-		name        string
-		playerFlags uint32
-		unitFlags   uint32
-	}{
-		{name: "ready"},
-		{name: "away", playerFlags: 2},
-		{name: "stunned", unitFlags: 0x40000},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, f, advance := rig(t)
-			f.world.Owner.Health = 100
-			teammate := triagePlayer(f, 4, 100)
-			teammate.PlayerFlags, teammate.UnitFlags = tc.playerFlags, tc.unitFlags
-			f.world.NearbyPlayers = []*worldv1.PlayerState{teammate}
-			triageMember(f, 4)
-			learn(s)
-			s.Tick(ctx)
-			if countPackets(f, opcode.CMSGCastSpell) != 0 {
-				t.Fatal("full health teammate was healed", f.packets)
-			}
-			advance(5 * time.Hour)
-			teammate.Health = 40
-			s.Tick(ctx)
-			if countPackets(f, opcode.CMSGCastSpell) != 1 || healingCastTarget(f) != 4 || lastCast(f) != lesserHeal {
-				t.Fatal("learned healing did not protect the injured teammate", state(t, s), f.packets)
-			}
-		})
-	}
-}
-
-func TestHealingTriageRequiresActualCurrentOnlinePartyAndPublicTarget(t *testing.T) {
-	for _, mode := range []string{"not_member", "offline", "party_unavailable", "unknown_group", "not_grouped", "missing_self", "foreign_self", "duplicate_member", "duplicate_observation", "unobserved", "dead", "health_unknown", "health_overflow", "different_map", "stale_moving", "far", "ghost", "npc_guid", "oversized"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, _ := rig(t)
-			f.world.Owner.Health = 100
-			p := triagePlayer(f, 4, 10)
-			f.world.NearbyPlayers = []*worldv1.PlayerState{p}
-			triageMember(f, 4)
-			switch mode {
-			case "not_member":
-				f.party.Group.Members = f.party.Group.Members[:2]
-			case "offline":
-				f.party.Group.Members[2].Online = false
-			case "party_unavailable":
-				f.party = nil
-			case "unknown_group":
-				f.party.Group.Known = false
-			case "not_grouped":
-				f.party.Group.InGroup = false
-			case "missing_self":
-				f.party.Group.Members = f.party.Group.Members[1:]
-			case "foreign_self":
-				f.party.Group.Members[2].Self = true
-			case "duplicate_member":
-				f.party.Group.Members = append(f.party.Group.Members, f.party.Group.Members[2])
-			case "duplicate_observation":
-				f.world.NearbyPlayers = append(f.world.NearbyPlayers, proto.Clone(p).(*worldv1.PlayerState))
-			case "unobserved":
-				f.world.NearbyPlayers = nil
-			case "dead":
-				p.Alive = false
-			case "health_unknown":
-				p.HealthKnown = false
-			case "health_overflow":
-				p.Health = p.MaxHealth + 1
-			case "different_map":
-				p.MapId = 1
-			case "stale_moving":
-				p.MovementFlags, p.PositionAgeMs = 1, 2001
-			case "far":
-				p.X = 36
-			case "ghost":
-				p.PlayerFlags = 0x10
-			case "npc_guid":
-				p.Guid = 0xf130000001000004
-			case "oversized":
-				for len(f.world.NearbyPlayers) <= 64 {
-					f.world.NearbyPlayers = append(f.world.NearbyPlayers, p)
-				}
-			}
-			learn(s)
-			s.Tick(context.Background())
-			if countPackets(f, opcode.CMSGCastSpell) != 0 {
-				t.Fatal(mode, state(t, s), f.packets)
-			}
-		})
-	}
-}
-
-func TestHealingTriagePartyLossAndUrgentSelfDuringStopAreRechecked(t *testing.T) {
-	for _, mode := range []string{"leave", "range", "mana_unknown", "self_urgent"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, _ := rig(t)
-			learn(s)
-			toggle(t, s, true)
-			f.world.Owner.Health = 100
-			s.Tick(context.Background())
-			f.world.Owner.Health = 50
-			f.onClock = func() {
-				switch mode {
-				case "leave":
-					f.party.Group.Members[1].Online = false
-				case "range":
-					f.world.Owner.X = 100
-				case "mana_unknown":
-					f.world.Self.BaseManaKnown, f.world.Self.BaseMana, f.world.Self.MaxPower = false, 0, 0
-				case "self_urgent":
-					f.world.Self.Health = 20
-				}
-			}
-			s.HealOnce(context.Background(), &emptypb.Empty{})
-			if mode == "self_urgent" {
-				if healingCastTarget(f) != 1 {
-					t.Fatal("urgent self did not replace ally selection", state(t, s))
-				}
-			} else if countPackets(f, opcode.CMSGCastSpell) != 0 {
-				t.Fatal("stale party/range authorized cast", mode, state(t, s))
-			}
-		})
-	}
-}
-
-func TestHealingTriageAutomaticThresholdManualInjuryAndActualRankCost(t *testing.T) {
-	for _, mode := range []string{"automatic85", "automatic84", "manual99", "rank_short", "rank_exact"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, _ := rig(t)
-			f.world.Owner.Health = 85
-			learn(s)
-			want := false
-			switch mode {
-			case "automatic84":
-				f.world.Owner.Health, want = 84, true
 			case "manual99":
-				f.world.Owner.Health, want = 99, true
-			case "rank_short", "rank_exact":
-				f.world.Self.Health, f.world.Self.BaseManaKnown, f.world.Self.BaseMana = 20, true, 100
-				f.world.Owner = nil
-				rankLearn(s, 2052)
-				f.world.Self.Power = 20
-				want = true
-				if mode == "rank_exact" {
-					f.world.Self.Power, want = 21, true
-				}
+				f.world.Self.Health, f.world.Owner.Health = 100, 99
+				f.world.NearbyPlayers = nil
+				want = 3
 			}
-			if mode == "manual99" {
-				s.HealOnce(context.Background(), &emptypb.Empty{})
-			} else {
-				s.Tick(context.Background())
-			}
-			if (countPackets(f, opcode.CMSGCastSpell) == 1) != want {
-				t.Fatal(mode, state(t, s), f.packets)
-			}
-			if mode == "rank_exact" && (lastCast(f) != 2052 || healingCastTarget(f) != 1) {
-				t.Fatal("actual rank/self binding lost", state(t, s))
-			}
-			if mode == "rank_short" && lastCast(f) != 2050 {
-				t.Fatal("did not select affordable learned lower rank")
+			action := runLuaHealing(t, s, mode == "manual99")
+			if action == nil || healingCastTarget(f) != want || state(t, s).HealAttempts != 1 {
+				t.Fatalf("Lua intent not executed: %+v %s", action, state(t, s))
 			}
 		})
 	}
 }
 
-func TestHealingTriageKeepsInteractionPendingAndCooldownGates(t *testing.T) {
-	s, f, advance := rig(t)
-	f.world.Self.Health, f.world.Owner = 20, nil
-	learn(s)
-	lease, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "training"})
-	if err != nil {
-		t.Fatal(err)
+func TestNativeTickNeverChoosesHealingPatientOrRank(t *testing.T) {
+	for _, independent := range []bool{false, true} {
+		s, f, advance := rig(t)
+		learn(s)
+		s.independent = independent
+		f.world.Self.Health = 10
+		for _, elapsed := range []time.Duration{0, 5 * time.Hour} {
+			advance(elapsed)
+			s.Tick(context.Background())
+		}
+		if countPackets(f, opcode.CMSGCastSpell) != 0 || s.state.HealAttempts != 0 {
+			t.Fatal("native Tick chose healing intent", s.stateLocked())
+		}
+		if _, err := s.HealOnce(context.Background(), &emptypb.Empty{}); err == nil {
+			t.Fatal("unbound module invented a Lua host")
+		}
 	}
-	s.Tick(context.Background())
-	s.HealOnce(context.Background(), &emptypb.Empty{})
-	if countPackets(f, opcode.CMSGCastSpell) != 0 {
-		t.Fatal("active interaction bypassed")
+}
+
+func TestLuaHealingRetunesLearnedRanksInSameSession(t *testing.T) {
+	s, f, _ := rig(t)
+	learnSpells(s, 2050, 2052)
+	f.world.Self.BaseManaKnown, f.world.Self.BaseMana = true, 100
+	f.world.Self.Power = 100
+	f.world.Owner.Health = 60
+	source, e := os.ReadFile("../../behaviors/healing.lua")
+	if e != nil {
+		t.Fatal(e)
 	}
-	s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "training", Token: lease.Token})
-	s.Tick(context.Background())
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("pending heal repeated")
+	vm := healingVM(t, s, string(source))
+	before := luaHealingAction(t, s, vm, false)
+	if before["spellId"] != float64(2050) {
+		t.Fatal("expected efficient lower rank", before)
 	}
-	advance(6 * time.Second)
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGCastSpell) != 1 {
-		t.Fatal("timeout changed intent or skipped backoff", state(t, s))
+	// Keep a larger deficit for a meaningful larger-rank choice.
+	f.world.Owner.MaxHealth, f.world.Owner.Health = 400, 220
+	tuned := strings.Replace(string(source), `rank_mode="effective_per_resource"`, `rank_mode="largest"`, 1)
+	sid := vm.Status().SessionID
+	if _, e = vm.Reload(context.Background(), tuned, vm.Status().Revision); e != nil {
+		t.Fatal(e)
 	}
-	advance(5 * time.Second)
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGCastSpell) != 2 || state(t, s).ServerCastGo != 0 {
-		t.Fatal("fresh injured player did not permit healing after backoff", state(t, s))
+	after := luaHealingAction(t, s, vm, false)
+	if after["spellId"] != float64(2052) || vm.Status().SessionID != sid {
+		t.Fatal("current same-body Lua did not choose tuned rank", after)
 	}
-	s, f, _ = rig(t)
-	f.world.Self.Health, f.world.Owner, f.failSend = 20, nil, true
-	learn(s)
+	f.world.Self.Power = 0
+	if a := luaHealingAction(t, s, vm, false); a != nil {
+		t.Fatal("script created mana", a)
+	}
+}
+
+func TestExactHealRechecksWithoutRetargetingAndAllowsLivingRecovery(t *testing.T) {
+	for _, mode := range []string{"range", "offline", "self_injured", "recovery"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, _ := rig(t)
+			learn(s)
+			s.sessionID = "actions-test-body"
+			f.world.Owner.Health = 50
+			if mode == "recovery" {
+				s.recovery.state.Active = true
+			} else {
+				toggle(t, s, true)
+				f.world.Owner.Health = 100
+				s.Tick(context.Background())
+				f.world.Owner.Health = 50
+				f.onClock = func() {
+					switch mode {
+					case "range":
+						f.world.Owner.X = 100
+					case "offline":
+						f.party.Group.Members[1].Online = false
+					case "self_injured":
+						f.world.Self.Health = 1
+					}
+				}
+			}
+			_, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: 1, TargetGuid: 3, SpellId: 2050})
+			if mode == "range" || mode == "offline" {
+				if err == nil || countPackets(f, opcode.CMSGCastSpell) != 0 {
+					t.Fatal("stale intent was cast", err, s.stateLocked())
+				}
+			} else if err != nil || healingCastTarget(f) != 3 {
+				t.Fatal("exact intent was substituted or living recovery blocked", err, s.stateLocked())
+			}
+		})
+	}
+}
+
+// Existing interaction/movement packet fixtures now run the actual shared Lua
+// healer around native mechanical maintenance. No patient/rank choice is
+// recreated here, and the production Tick itself stays policy-free.
+func tickLuaHealing(t *testing.T, s *Service) {
+	t.Helper()
+	before := s.state.HealAttempts
+	runLuaHealing(t, s, false)
 	s.Tick(context.Background())
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGCastSpell) != 1 || state(t, s).ServerCastGo != 0 {
-		t.Fatal("ambiguous write replayed or confirmed", state(t, s))
+	if s.state.HealAttempts == before && !s.state.CastPending {
+		runLuaHealing(t, s, false)
 	}
 }

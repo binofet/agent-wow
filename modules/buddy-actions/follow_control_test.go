@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -102,7 +103,7 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	learn(s)
 	toggle(t, s, true)
 	for i := 0; i < 6; i++ {
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if !s.state.CastPending || s.state.Moving {
@@ -116,14 +117,14 @@ func TestFormationFollowKeepsHealingAndLateTickStopPriority(t *testing.T) {
 	s, _, advance = formationRig(t, 4, 8)
 	toggle(t, s, true)
 	for i := 0; i < 5; i++ {
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if !s.state.Moving {
 		t.Fatal("formation never started")
 	}
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if s.state.Moving || !s.state.Following || s.state.Reason != "follow_tick_late" || math.IsNaN(float64(s.pos.x)) {
 		t.Fatal("late formation failed to stop", s.stateLocked())
 	}
@@ -269,5 +270,43 @@ func TestMultiFloorFollowStillRequiresCompleteNavigationAndLegacyStaysFlat(t *te
 				t.Fatal("missing route accepted", s.stateLocked(), plans)
 			}
 		})
+	}
+}
+
+// A failed pure evaluation has no new state to commit. The last observed
+// heading must survive so recovery cannot turn an idle owner's facing into
+// a new destination.
+func TestFormationFollowKeepsSettledSlotAfterRuntimeFailure(t *testing.T) {
+	s, f, advance := formationRig(t, 5, 4)
+	toggle(t, s, true)
+	for range 40 {
+		s.Tick(context.Background())
+		advance(200 * time.Millisecond)
+	}
+	if s.state.Moving || s.formation.memory == nil {
+		t.Fatal("formation did not settle before the injected fault", s.stateLocked())
+	}
+	before, count := s.pos, len(f.packets)
+	heading := s.formation.memory["heading"]
+	// An unavailable VM deterministically exercises the same failed
+	// Evaluate path as a quarantined or timed-out stateless evaluator.
+	s.formation.runtime = behavior.New()
+	f.world.Owner.Orientation = math.Pi
+	s.Tick(context.Background())
+	if s.state.Moving || s.state.Reason != "formation_position_invalid" || len(f.packets) != count ||
+		s.formation.memory == nil || s.formation.memory["heading"] != heading {
+		t.Fatal("failed evaluation moved or discarded committed state", s.stateLocked(), s.formation.memory)
+	}
+	for range 20 {
+		advance(200 * time.Millisecond)
+		f.world.Owner.Orientation += .4
+		s.Tick(context.Background())
+	}
+	f.world.Owner.X += .2
+	advance(200 * time.Millisecond)
+	s.Tick(context.Background())
+	if s.state.Moving || s.pos != before || len(f.packets) != count ||
+		s.formation.memory["heading"] != heading {
+		t.Fatal("runtime recovery changed the settled slot", s.stateLocked(), before, s.pos)
 	}
 }

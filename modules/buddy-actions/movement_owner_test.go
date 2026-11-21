@@ -93,7 +93,7 @@ func TestMovementOwnerLeavesLearnedHealingAndPartyDefenseAvailable(t *testing.T)
 		learn(s)
 		toggle(t, s, true)
 		acquireMovementForTest(t, s, 3000)
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if !s.state.CastPending || s.state.LastCastTargetGuid != 3 || !s.state.Following || !s.stateLocked().MovementOwner.Active {
 			t.Fatal("movement custody disabled healing", s.stateLocked(), f.packets)
 		}
@@ -102,7 +102,7 @@ func TestMovementOwnerLeavesLearnedHealingAndPartyDefenseAvailable(t *testing.T)
 		s, f, c, _ := partyDefenseRig(t, 8)
 		s.sessionID = f.party.SessionId
 		acquireMovementForTest(t, s, 3000)
-		s.Tick(context.Background())
+		tickLuaHealing(t, s)
 		if s.state.AssistAttempts != 1 || s.state.LastCastTargetGuid != c.Guid || lastCast(f) == 0 || !s.stateLocked().MovementOwner.Active {
 			t.Fatal("movement custody disabled actual party defense", s.stateLocked(), f.packets)
 		}

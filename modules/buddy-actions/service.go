@@ -169,14 +169,10 @@ type Service struct {
 	fargodeepSeen                        map[uint64]bool
 	spellbookKnown                       bool
 	spellbookRevision                    uint64
-	waterBreathSpellRevision             uint64
-	waterBreathSpell                     buffSpell
-	nextWaterBreathCheck                 time.Time
-	buffUntil, nextBuff                  time.Time
+	buffUntil                            time.Time
 	buffAuras                            map[uint64]*buffAuraSet
 	ownDamageAuras                       map[damageAuraSlot]observedBuffAura
 	buffAuraRevision, buffSequence       uint64
-	buffBindings                         map[buffKey]*buffBinding
 	buffOp                               *buffAttempt
 }
 
@@ -585,27 +581,13 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	return s.stateLocked(), nil
 }
 
+// HealOnce is preserved as a public compatibility input routed by the core
+// to the current attached Lua policy. This module never chooses its patient.
 func (s *Service) HealOnce(ctx context.Context, _ *emptypb.Empty) (*actionsv1.State, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
 	}
-	if s.independent {
-		return nil, status.Error(codes.FailedPrecondition, "owner healing is unavailable in independent mode")
-	}
-	s.expireInteractionLocked()
-	if s.state.InteractionOwner != "" {
-		s.state.Reason = "interaction_active_heal_once_blocked"
-		return s.stateLocked(), nil
-	}
-	snapshot, err := s.snapshot(ctx)
-	if err != nil {
-		s.state.Reason = "observations_unavailable"
-		return s.stateLocked(), nil
-	}
-	s.healLocked(ctx, snapshot)
-	return s.stateLocked(), nil
+	return nil, status.Error(codes.FailedPrecondition, "HealOnce requires the session Lua policy input route; exact callers use CastHeal")
 }
 
 func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.State, error) {
@@ -1215,8 +1197,7 @@ func (s *Service) Tick(ctx context.Context) {
 	healer := s.hasLearnedHealingLocked()
 	resurrector := s.hasLearnedSupportSpellLocked(spellcatalog.Resurrect)
 	support := healer || resurrector
-	waterBreath := s.dueWaterBreathLocked()
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
 		s.stopLocked(ctx)
 		if nativeTargetPolicy {
 			s.stopAutoAttackLocked(ctx)
@@ -1255,7 +1236,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "assist_lease_expired"
 	}
 
-	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && waterBreath.id == 0 {
+	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active {
 		return
 	}
 	snapshot, err := s.snapshot(ctx)
@@ -1275,10 +1256,7 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if healer && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
-		s.lastStep = now
-		return
-	}
+
 	if nativeTargetPolicy && s.fargodeepTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
@@ -1298,10 +1276,6 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if nativeTargetPolicy && s.engageTickLocked(ctx) {
-		s.lastStep = now
-		return
-	}
-	if s.waterBreathTickLocked(ctx, snapshot, waterBreath) || s.buffTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
@@ -1375,7 +1349,12 @@ func (s *Service) Tick(ctx context.Context) {
 		if snapshot.Self.ClassKnown {
 			classID = snapshot.Self.ClassId
 		}
-		s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0)
+		if !s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0).Valid {
+			s.stopLocked(ctx)
+			s.lastStep = now
+			s.state.Reason = "formation_position_invalid"
+			return
+		}
 	}
 	if nativeTargetPolicy && s.state.Assisting && s.assistLocked(ctx, snapshot) {
 		s.lastStep = now
@@ -1409,10 +1388,6 @@ func (s *Service) Tick(ctx context.Context) {
 
 }
 
-func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResponse) bool {
-	return s.triageHealLocked(ctx, snapshot, false)
-}
-
 func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1423,6 +1398,9 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		defer func() {
 			op.reportPolicySpellEffect(ctx, s.supportOp == op && s.state.CastPending)
 		}()
+	}
+	if op := s.buffOp; op != nil && op.policySpellToken != "" {
+		defer op.reportPolicySpellEffect(ctx)
 	}
 	if op := s.meleeOp; op != nil && op.token != "" {
 		defer op.reportPolicyMeleeEffect(ctx)

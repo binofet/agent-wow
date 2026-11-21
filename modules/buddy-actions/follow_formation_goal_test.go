@@ -183,7 +183,7 @@ func TestFollowFormationGoalYieldsToMovementWaitAndStandingHealing(t *testing.T)
 	if _, err := s.SetFollowFormation(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if !s.state.Moving {
 		t.Fatal("fixture did not begin following", s.stateLocked())
 	}
@@ -193,14 +193,14 @@ func TestFollowFormationGoalYieldsToMovementWaitAndStandingHealing(t *testing.T)
 	if _, err := s.SetFollowFormation(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if len(f.packets) != before || s.state.Moving || !s.state.Following || s.followRevision != revision || s.state.Reason != "finite_movement_owner_active" || s.movementOwner.token != lease.Token {
 		t.Fatal("formation goal escaped task custody or replaced follow intent", s.stateLocked(), f.packets)
 	}
 	learn(s)
 	f.world.Owner.Health = 25
 	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if countPackets(f, opcode.CMSGCastSpell) != 1 || s.state.LastCastTargetGuid != f.world.Owner.Guid || !s.state.CastPending || s.state.Moving || !s.state.Following || s.followRevision != revision || s.movementOwner.token != lease.Token {
 		t.Fatal("finite formation or movement hold suppressed standing healing", s.stateLocked(), f.packets)
 	}

@@ -67,11 +67,6 @@ PARTY_QUEST_IDENTITY = {"version": 1, "ownerGuid": 3, "mode": "owner_addon_quest
                         "characters": QUEST_SYNC_IDENTITY["characters"]}
 PARTY_MAINTENANCE_IDENTITY = {"version": 1, "ownerGuid": 3, "mode": "training_stipend_and_class_training",
                               "characters": QUEST_SYNC_IDENTITY["characters"]}
-# Verified official AzerothCore item_template categories. Select only an ID
-# actually offered by the server; this does not equip or teach any item.
-QUEST_REWARD_PREFERENCES = {18: {5: 5580, 8: 1159, 4: 2224},
-                            21: {5: 11192, 8: 11192, 4: 2186},
-                            33: {5: 80, 8: 80, 4: 6070}}
 PICK_LOCK_ORDER = re.compile(
     r"(?:(?:can|could|would|will) you |please )?(?:"
     r"(?:pick(?: the lock on)?|lockpick|unlock|open) (?:this |that |the )?(?:locked )?chest"
@@ -631,7 +626,9 @@ def mission_deferred_blockers(data):
 def mission_runtime_context(guid, session_id, rpc_url):
     """Read current-body task metadata only; never resume or authorize a task."""
     result = dict(runtimeCLI=str(ROOT/'dev/task-runtime'), sharedScripts={
-        'taskStack':str(ROOT/'behaviors/task-stack.lua'), 'expedition':str(ROOT/'behaviors/expedition.lua')})
+        'taskStack':str(ROOT/'behaviors/task-stack.lua'), 'expedition':str(ROOT/'behaviors/expedition.lua'),
+        'questRewards':str(ROOT/'behaviors/quest-rewards.lua'),
+        'partyQuests':str(ROOT/'behaviors/party-quests.lua')})
     for kind in ('expedition', 'fishing'):
         actor = ROOT/'data/tasks'/kind/str(guid)
         folder = actor/'runtime'
@@ -2638,9 +2635,9 @@ class BuddyControls:
         if len(choices) > 1 and not item_entry and self.actions.get("classKnown") is True:
             actual_class = integer(self.actions.get("classId", "0"))
             if actual_class == CLASS_IDS[self.character_class]:
-                preferred = QUEST_REWARD_PREFERENCES.get(quest_id, {}).get(actual_class)
-                if sum(integer(item["itemId"]) == preferred for item in choices) == 1:
-                    item_entry = preferred
+                preferred = quest_rewards.preferred_reward(choices, quest_id, actual_class)
+                if preferred is not None:
+                    item_entry = integer(preferred["itemId"])
         if len(choices) > 1 and not item_entry:
             selected, message = self.automatic_reward_choice(offer)
             if selected is None:

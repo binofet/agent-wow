@@ -4,7 +4,9 @@
 import copy
 import importlib.util
 from pathlib import Path
+import os
 import unittest
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location("quest_rewards", Path(__file__).with_name("quest-rewards.py"))
@@ -193,6 +195,83 @@ class RewardTests(unittest.TestCase):
         reason = self.select([offer(1), offer(2, 1)], rows)["reason"]
         self.assertNotIn("\n", reason)
         self.assertNotIn("\x1b", reason)
+
+    def test_vendor_totals_above_lua_integer_precision_keep_one_copper_order(self):
+        n = (1 << 32) - 2
+        choices = [offer(10, 1, n + 1), offer(20, 0, n)]
+        rows = [item(10, sellPrice=n - 1), item(20, sellPrice=n)]
+        result = self.select(choices, rows)
+        self.assertIs(result["choice"], choices[1])
+        self.assertIn(str(n * n) + " copper", result["reason"])
+
+    def test_useful_tie_uses_vendor_total_then_item_id(self):
+        choices = [offer(30, 0), offer(20, 5, 2), offer(10, 3)]
+        rows = [item(row["itemId"], itemClass=4, subclass=1, inventoryType=16,
+                     sellPrice=3 if row["itemId"] == 20 else 6) for row in choices]
+        self.assertIs(self.select(choices, rows)["choice"], choices[2])
+        rows[1]["sellPrice"] = 4
+        self.assertIs(self.select(choices, rows)["choice"], choices[1])
+
+    def test_negative_useful_stats_and_multiple_damage_rows_keep_existing_rules(self):
+        choices = [offer(1), offer(2, 1)]
+        rows = [item(1, itemClass=4, subclass=1, inventoryType=16, stats=[dict(type=5, value=-10)], sellPrice=1),
+                item(2, itemClass=2, subclass=15, inventoryType=13, delayMs=2000,
+                     damages=[dict(minimum=1, maximum=3), dict(minimum=2, maximum=4)], sellPrice=2)]
+        self.assertIn("sell value", self.select(choices, rows)["reason"])
+        self.assertIn("useful equipment", self.select(choices, rows, 4, weapon_subclasses=[15])["reason"])
+
+    def test_unavailable_lua_evaluator_keeps_reward_unselected(self):
+        with patch.dict(os.environ, {"BUDDY_LUAPOLICY_BINARY": "/missing/quest-policy-evaluator"}):
+            result = self.select([offer(1)], [item(1, sellPrice=500)])
+        self.assertEqual(result["status"], "pending")
+        self.assertIsNone(result["choice"])
+
+    def test_verified_quest_preferences_are_lua_decisions_over_actual_offer(self):
+        choices = [offer(2224, 5), offer(1159, 3), offer(5580)]
+        for class_id, position in ((4, 0), (8, 1), (5, 2)):
+            self.assertIs(rewards.preferred_reward(choices, 18, class_id), choices[position])
+        self.assertIsNone(rewards.preferred_reward(choices[:1], 18, 8))
+        self.assertIsNone(rewards.preferred_reward(choices, 9999, 8))
+
+    def test_stat_subtotal_keeps_equal_scores_and_existing_item_id_tie(self):
+        a = [dict(type=1, value=240244787), dict(type=6, value=609537802),
+             dict(type=1, value=-2059739166), dict(type=1, value=-171365469)]
+        b = [a[0], a[3], a[1], a[2]]
+        choices = [offer(10), offer(20, 1)]
+        rows = [item(10, itemClass=4, subclass=1, inventoryType=16, armor=5, stats=a),
+                item(20, itemClass=4, subclass=1, inventoryType=16, armor=5, stats=b)]
+        self.assertIs(self.select(choices, rows)["choice"], choices[0])
+
+    def test_shared_policy_rejects_malformed_direct_item_arrays_and_choice_index(self):
+        facts = dict(mode="useful", choices=[offer(1)], classId=8, weaponSubclasses=[],
+                     items=[item(1, itemClass=4, subclass=1, inventoryType=16)])
+        for field, value in (("stats", False), ("stats", {"not": "an array"}),
+                             ("damages", False), ("damages", {"not": "an array"})):
+            with self.subTest(field=field, value=value):
+                bad = copy.deepcopy(facts)
+                bad["items"][0][field] = value
+                self.assertEqual(rewards._evaluate(bad)["status"], "invalid")
+        facts["choices"][0]["index"] = False
+        self.assertEqual(rewards._evaluate(facts)["status"], "invalid")
+
+    def test_large_finite_weapon_damage_survives_factual_bridge_projection(self):
+        choices = [offer(10), offer(20, 1)]
+        for amount in (1e20, 1e308):
+            with self.subTest(amount=amount):
+                rows = [item(10, itemClass=2, subclass=15, inventoryType=13, delayMs=2000,
+                             damages=[dict(minimum=amount, maximum=amount)]),
+                        item(20, sellPrice=100)]
+                result = self.select(choices, rows, 4, weapon_subclasses=[15])
+                self.assertIs(result["choice"], choices[0])
+                self.assertIn("useful equipment", result["reason"])
+
+    def test_integer_stat_prefix_preserves_existing_fractional_tie_behavior(self):
+        a = [dict(type=0, value=78850693), dict(type=42, value=1740525995),
+             dict(type=7, value=-1992681754)]
+        choices = [offer(10), offer(20, 1)]
+        rows = [item(10, itemClass=4, subclass=1, inventoryType=16, stats=a),
+                item(20, itemClass=4, subclass=1, inventoryType=16, stats=[a[2], a[0], a[1]])]
+        self.assertIs(self.select(choices, rows)["choice"], choices[1])
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ func TestHealingRejectionSelectsFreshPartyTargetAfterNormalGlobalCooldown(t *tes
 			triageMember(f, 4)
 			f.world.Owner.Health = 20
 			learn(s)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			if countPackets(f, opcode.CMSGCastSpell) != 1 || healingCastTarget(f) != 3 || !s.state.CastPending {
 				t.Fatal("initial actual heal missing", state(t, s))
 			}
@@ -53,12 +53,12 @@ func TestHealingRejectionSelectsFreshPartyTargetAfterNormalGlobalCooldown(t *tes
 			f.world.Owner = nil
 			mira.Health = 10
 			advance(gcd - time.Millisecond)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			if countPackets(f, opcode.CMSGCastSpell) != 1 {
 				t.Fatal("cooldown bypass", state(t, s))
 			}
 			advance(time.Millisecond)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			if countPackets(f, opcode.CMSGCastSpell) != 2 || healingCastTarget(f) != 4 || !s.state.CastPending || s.castCount != oldCount+1 || f.world.Self.Health != 100 || mira.Health != 10 {
 				t.Fatal("fresh triage did not use current party/target", state(t, s), f.packets)
 			}
@@ -71,7 +71,7 @@ func TestHealingRejectionRequiresActualPendingCastCorrelation(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := rig(t)
 			learn(s)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			count, spell := s.castCount, s.pendingSpell
 			next := s.nextHeal
 			p := healingRejectionPacket(opcode.SMSGSpellFailure, 1, count, spell)
@@ -102,7 +102,7 @@ func TestHealingRejectionPreservesCastBackoffAndMovementUncertainty(t *testing.T
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := rig(t)
 			learn(s)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			before := countPackets(f, opcode.CMSGCastSpell)
 			switch mode {
 			case "timeout":
@@ -110,10 +110,10 @@ func TestHealingRejectionPreservesCastBackoffAndMovementUncertainty(t *testing.T
 			case "motion":
 				s.state.MotionUnconfirmed = true
 			}
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			f.failSend = false
 			advance(6 * time.Second)
-			s.Tick(context.Background())
+			tickLuaHealing(t, s)
 			want := before
 			if mode == "timeout" {
 				want++

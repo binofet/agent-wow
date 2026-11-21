@@ -6559,9 +6559,13 @@ type EncounterSpell struct {
 	WeaponDamageMultiplier float64 `protobuf:"fixed64,28,opt,name=weapon_damage_multiplier,json=weaponDamageMultiplier,proto3" json:"weapon_damage_multiplier,omitempty"`
 	WeaponBonusDamage      float64 `protobuf:"fixed64,29,opt,name=weapon_bonus_damage,json=weaponBonusDamage,proto3" json:"weapon_bonus_damage,omitempty"`
 	// Base weapon/combo estimate only; excludes AP, armor and combat modifiers.
-	DamageModelKnown   bool   `protobuf:"varint,30,opt,name=damage_model_known,json=damageModelKnown,proto3" json:"damage_model_known,omitempty"`
-	RequiresFacing     bool   `protobuf:"varint,31,opt,name=requires_facing,json=requiresFacing,proto3" json:"requires_facing,omitempty"`
-	FriendlyDispelMask uint32 `protobuf:"varint,32,opt,name=friendly_dispel_mask,json=friendlyDispelMask,proto3" json:"friendly_dispel_mask,omitempty"`
+	DamageModelKnown   bool                   `protobuf:"varint,30,opt,name=damage_model_known,json=damageModelKnown,proto3" json:"damage_model_known,omitempty"`
+	RequiresFacing     bool                   `protobuf:"varint,31,opt,name=requires_facing,json=requiresFacing,proto3" json:"requires_facing,omitempty"`
+	FriendlyDispelMask uint32                 `protobuf:"varint,32,opt,name=friendly_dispel_mask,json=friendlyDispelMask,proto3" json:"friendly_dispel_mask,omitempty"`
+	TargetRule         string                 `protobuf:"bytes,33,opt,name=target_rule,json=targetRule,proto3" json:"target_rule,omitempty"`
+	FamilySet          uint32                 `protobuf:"varint,34,opt,name=family_set,json=familySet,proto3" json:"family_set,omitempty"`
+	FamilyFlags        []uint32               `protobuf:"varint,35,rep,packed,name=family_flags,json=familyFlags,proto3" json:"family_flags,omitempty"`
+	AuraEffects        []*EncounterAuraEffect `protobuf:"bytes,36,rep,name=aura_effects,json=auraEffects,proto3" json:"aura_effects,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -6820,6 +6824,111 @@ func (x *EncounterSpell) GetFriendlyDispelMask() uint32 {
 	return 0
 }
 
+func (x *EncounterSpell) GetTargetRule() string {
+	if x != nil {
+		return x.TargetRule
+	}
+	return ""
+}
+
+func (x *EncounterSpell) GetFamilySet() uint32 {
+	if x != nil {
+		return x.FamilySet
+	}
+	return 0
+}
+
+func (x *EncounterSpell) GetFamilyFlags() []uint32 {
+	if x != nil {
+		return x.FamilyFlags
+	}
+	return nil
+}
+
+func (x *EncounterSpell) GetAuraEffects() []*EncounterAuraEffect {
+	if x != nil {
+		return x.AuraEffects
+	}
+	return nil
+}
+
+// Raw catalog effect facts, without class-specific preference or ranking.
+type EncounterAuraEffect struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          uint32                 `protobuf:"varint,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	A             uint32                 `protobuf:"varint,2,opt,name=a,proto3" json:"a,omitempty"`
+	B             uint32                 `protobuf:"varint,3,opt,name=b,proto3" json:"b,omitempty"`
+	Aura          uint32                 `protobuf:"varint,4,opt,name=aura,proto3" json:"aura,omitempty"`
+	Misc          int32                  `protobuf:"varint,5,opt,name=misc,proto3" json:"misc,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EncounterAuraEffect) Reset() {
+	*x = EncounterAuraEffect{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EncounterAuraEffect) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EncounterAuraEffect) ProtoMessage() {}
+
+func (x *EncounterAuraEffect) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EncounterAuraEffect.ProtoReflect.Descriptor instead.
+func (*EncounterAuraEffect) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *EncounterAuraEffect) GetKind() uint32 {
+	if x != nil {
+		return x.Kind
+	}
+	return 0
+}
+
+func (x *EncounterAuraEffect) GetA() uint32 {
+	if x != nil {
+		return x.A
+	}
+	return 0
+}
+
+func (x *EncounterAuraEffect) GetB() uint32 {
+	if x != nil {
+		return x.B
+	}
+	return 0
+}
+
+func (x *EncounterAuraEffect) GetAura() uint32 {
+	if x != nil {
+		return x.Aura
+	}
+	return 0
+}
+
+func (x *EncounterAuraEffect) GetMisc() int32 {
+	if x != nil {
+		return x.Misc
+	}
+	return 0
+}
+
 type EncounterPeriodicDamage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DamagePerTick float64                `protobuf:"fixed64,1,opt,name=damage_per_tick,json=damagePerTick,proto3" json:"damage_per_tick,omitempty"`
@@ -6830,7 +6939,7 @@ type EncounterPeriodicDamage struct {
 
 func (x *EncounterPeriodicDamage) Reset() {
 	*x = EncounterPeriodicDamage{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[61]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6842,7 +6951,7 @@ func (x *EncounterPeriodicDamage) String() string {
 func (*EncounterPeriodicDamage) ProtoMessage() {}
 
 func (x *EncounterPeriodicDamage) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[61]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6855,7 +6964,7 @@ func (x *EncounterPeriodicDamage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncounterPeriodicDamage.ProtoReflect.Descriptor instead.
 func (*EncounterPeriodicDamage) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{61}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *EncounterPeriodicDamage) GetDamagePerTick() float64 {
@@ -6889,7 +6998,7 @@ type ApproachTargetRequest struct {
 
 func (x *ApproachTargetRequest) Reset() {
 	*x = ApproachTargetRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[62]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6901,7 +7010,7 @@ func (x *ApproachTargetRequest) String() string {
 func (*ApproachTargetRequest) ProtoMessage() {}
 
 func (x *ApproachTargetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[62]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6914,7 +7023,7 @@ func (x *ApproachTargetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproachTargetRequest.ProtoReflect.Descriptor instead.
 func (*ApproachTargetRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{62}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *ApproachTargetRequest) GetSessionId() string {
@@ -6988,7 +7097,7 @@ type TargetMovementState struct {
 
 func (x *TargetMovementState) Reset() {
 	*x = TargetMovementState{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[63]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7000,7 +7109,7 @@ func (x *TargetMovementState) String() string {
 func (*TargetMovementState) ProtoMessage() {}
 
 func (x *TargetMovementState) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[63]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7013,7 +7122,7 @@ func (x *TargetMovementState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetMovementState.ProtoReflect.Descriptor instead.
 func (*TargetMovementState) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{63}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *TargetMovementState) GetTargetGuid() uint64 {
@@ -7066,18 +7175,19 @@ func (x *TargetMovementState) GetReady() bool {
 }
 
 type EncounterSupport struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	CasterInCombat bool                   `protobuf:"varint,1,opt,name=caster_in_combat,json=casterInCombat,proto3" json:"caster_in_combat,omitempty"`
-	Resurrections  []*ResurrectionOption  `protobuf:"bytes,2,rep,name=resurrections,proto3" json:"resurrections,omitempty"`
-	Interrupts     []*InterruptOption     `protobuf:"bytes,3,rep,name=interrupts,proto3" json:"interrupts,omitempty"`
-	PlayerAuras    []*PlayerAuras         `protobuf:"bytes,4,rep,name=player_auras,json=playerAuras,proto3" json:"player_auras,omitempty"`
+	state          protoimpl.MessageState     `protogen:"open.v1"`
+	CasterInCombat bool                       `protobuf:"varint,1,opt,name=caster_in_combat,json=casterInCombat,proto3" json:"caster_in_combat,omitempty"`
+	Resurrections  []*ResurrectionOption      `protobuf:"bytes,2,rep,name=resurrections,proto3" json:"resurrections,omitempty"`
+	Interrupts     []*InterruptOption         `protobuf:"bytes,3,rep,name=interrupts,proto3" json:"interrupts,omitempty"`
+	PlayerAuras    []*PlayerAuras             `protobuf:"bytes,4,rep,name=player_auras,json=playerAuras,proto3" json:"player_auras,omitempty"`
+	AuraSpells     map[uint32]*EncounterSpell `protobuf:"bytes,5,rep,name=aura_spells,json=auraSpells,proto3" json:"aura_spells,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EncounterSupport) Reset() {
 	*x = EncounterSupport{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[64]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7089,7 +7199,7 @@ func (x *EncounterSupport) String() string {
 func (*EncounterSupport) ProtoMessage() {}
 
 func (x *EncounterSupport) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[64]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7102,7 +7212,7 @@ func (x *EncounterSupport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncounterSupport.ProtoReflect.Descriptor instead.
 func (*EncounterSupport) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{64}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *EncounterSupport) GetCasterInCombat() bool {
@@ -7133,6 +7243,13 @@ func (x *EncounterSupport) GetPlayerAuras() []*PlayerAuras {
 	return nil
 }
 
+func (x *EncounterSupport) GetAuraSpells() map[uint32]*EncounterSpell {
+	if x != nil {
+		return x.AuraSpells
+	}
+	return nil
+}
+
 type ResurrectionOption struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	PatientGuid    uint64                 `protobuf:"varint,1,opt,name=patient_guid,json=patientGuid,proto3" json:"patient_guid,omitempty"`
@@ -7147,7 +7264,7 @@ type ResurrectionOption struct {
 
 func (x *ResurrectionOption) Reset() {
 	*x = ResurrectionOption{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[65]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7159,7 +7276,7 @@ func (x *ResurrectionOption) String() string {
 func (*ResurrectionOption) ProtoMessage() {}
 
 func (x *ResurrectionOption) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[65]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7172,7 +7289,7 @@ func (x *ResurrectionOption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResurrectionOption.ProtoReflect.Descriptor instead.
 func (*ResurrectionOption) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{65}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *ResurrectionOption) GetPatientGuid() uint64 {
@@ -7234,7 +7351,7 @@ type InterruptOption struct {
 
 func (x *InterruptOption) Reset() {
 	*x = InterruptOption{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[66]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7246,7 +7363,7 @@ func (x *InterruptOption) String() string {
 func (*InterruptOption) ProtoMessage() {}
 
 func (x *InterruptOption) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[66]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7259,7 +7376,7 @@ func (x *InterruptOption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptOption.ProtoReflect.Descriptor instead.
 func (*InterruptOption) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{66}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *InterruptOption) GetTargetGuid() uint64 {
@@ -7338,7 +7455,7 @@ type InterruptCastRequest struct {
 
 func (x *InterruptCastRequest) Reset() {
 	*x = InterruptCastRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[67]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7350,7 +7467,7 @@ func (x *InterruptCastRequest) String() string {
 func (*InterruptCastRequest) ProtoMessage() {}
 
 func (x *InterruptCastRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[67]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7363,7 +7480,7 @@ func (x *InterruptCastRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptCastRequest.ProtoReflect.Descriptor instead.
 func (*InterruptCastRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{67}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *InterruptCastRequest) GetSessionId() string {
@@ -7401,6 +7518,74 @@ func (x *InterruptCastRequest) GetCastRevision() uint64 {
 	return 0
 }
 
+type CastBuffRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	TargetGuid    uint64                 `protobuf:"varint,3,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	SpellId       uint32                 `protobuf:"varint,4,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CastBuffRequest) Reset() {
+	*x = CastBuffRequest{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CastBuffRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CastBuffRequest) ProtoMessage() {}
+
+func (x *CastBuffRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CastBuffRequest.ProtoReflect.Descriptor instead.
+func (*CastBuffRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *CastBuffRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CastBuffRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *CastBuffRequest) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *CastBuffRequest) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
 type CastCleanseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -7416,7 +7601,7 @@ type CastCleanseRequest struct {
 
 func (x *CastCleanseRequest) Reset() {
 	*x = CastCleanseRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[68]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7428,7 +7613,7 @@ func (x *CastCleanseRequest) String() string {
 func (*CastCleanseRequest) ProtoMessage() {}
 
 func (x *CastCleanseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[68]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7441,7 +7626,7 @@ func (x *CastCleanseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CastCleanseRequest.ProtoReflect.Descriptor instead.
 func (*CastCleanseRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{68}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *CastCleanseRequest) GetSessionId() string {
@@ -7504,7 +7689,7 @@ type EncounterControlCapability struct {
 
 func (x *EncounterControlCapability) Reset() {
 	*x = EncounterControlCapability{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[69]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7516,7 +7701,7 @@ func (x *EncounterControlCapability) String() string {
 func (*EncounterControlCapability) ProtoMessage() {}
 
 func (x *EncounterControlCapability) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[69]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7529,7 +7714,7 @@ func (x *EncounterControlCapability) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncounterControlCapability.ProtoReflect.Descriptor instead.
 func (*EncounterControlCapability) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{69}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *EncounterControlCapability) GetGuid() uint64 {
@@ -7565,7 +7750,7 @@ type ResurrectOnceRequest struct {
 
 func (x *ResurrectOnceRequest) Reset() {
 	*x = ResurrectOnceRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[70]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7577,7 +7762,7 @@ func (x *ResurrectOnceRequest) String() string {
 func (*ResurrectOnceRequest) ProtoMessage() {}
 
 func (x *ResurrectOnceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[70]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7590,7 +7775,7 @@ func (x *ResurrectOnceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResurrectOnceRequest.ProtoReflect.Descriptor instead.
 func (*ResurrectOnceRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{70}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ResurrectOnceRequest) GetSessionId() string {
@@ -7632,7 +7817,7 @@ type AcceptResurrectionRequest struct {
 
 func (x *AcceptResurrectionRequest) Reset() {
 	*x = AcceptResurrectionRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[71]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7644,7 +7829,7 @@ func (x *AcceptResurrectionRequest) String() string {
 func (*AcceptResurrectionRequest) ProtoMessage() {}
 
 func (x *AcceptResurrectionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[71]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7657,7 +7842,7 @@ func (x *AcceptResurrectionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptResurrectionRequest.ProtoReflect.Descriptor instead.
 func (*AcceptResurrectionRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{71}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *AcceptResurrectionRequest) GetSessionId() string {
@@ -7691,7 +7876,7 @@ type PickLockRequest struct {
 
 func (x *PickLockRequest) Reset() {
 	*x = PickLockRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[72]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7703,7 +7888,7 @@ func (x *PickLockRequest) String() string {
 func (*PickLockRequest) ProtoMessage() {}
 
 func (x *PickLockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[72]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7716,7 +7901,7 @@ func (x *PickLockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PickLockRequest.ProtoReflect.Descriptor instead.
 func (*PickLockRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{72}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *PickLockRequest) GetSessionId() string {
@@ -8500,7 +8685,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13EncounterEngagement\x12\x1f\n" +
 	"\vvictim_guid\x18\x01 \x01(\x04R\n" +
 	"victimGuid\x12\x15\n" +
-	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\xe5\t\n" +
+	"\x06age_ms\x18\x02 \x01(\x04R\x05ageMs\"\x9a\v\n" +
 	"\x0eEncounterSpell\x12\x14\n" +
 	"\x05known\x18\x01 \x01(\bR\x05known\x12\x14\n" +
 	"\x05ready\x18\x02 \x01(\bR\x05ready\x12\x1e\n" +
@@ -8539,7 +8724,19 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13weapon_bonus_damage\x18\x1d \x01(\x01R\x11weaponBonusDamage\x12,\n" +
 	"\x12damage_model_known\x18\x1e \x01(\bR\x10damageModelKnown\x12'\n" +
 	"\x0frequires_facing\x18\x1f \x01(\bR\x0erequiresFacing\x120\n" +
-	"\x14friendly_dispel_mask\x18  \x01(\rR\x12friendlyDispelMask\"^\n" +
+	"\x14friendly_dispel_mask\x18  \x01(\rR\x12friendlyDispelMask\x12\x1f\n" +
+	"\vtarget_rule\x18! \x01(\tR\n" +
+	"targetRule\x12\x1d\n" +
+	"\n" +
+	"family_set\x18\" \x01(\rR\tfamilySet\x12!\n" +
+	"\ffamily_flags\x18# \x03(\rR\vfamilyFlags\x12P\n" +
+	"\faura_effects\x18$ \x03(\v2-.warcraftbuddy.actions.v1.EncounterAuraEffectR\vauraEffects\"m\n" +
+	"\x13EncounterAuraEffect\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\rR\x04kind\x12\f\n" +
+	"\x01a\x18\x02 \x01(\rR\x01a\x12\f\n" +
+	"\x01b\x18\x03 \x01(\rR\x01b\x12\x12\n" +
+	"\x04aura\x18\x04 \x01(\rR\x04aura\x12\x12\n" +
+	"\x04misc\x18\x05 \x01(\x05R\x04misc\"^\n" +
 	"\x17EncounterPeriodicDamage\x12&\n" +
 	"\x0fdamage_per_tick\x18\x01 \x01(\x01R\rdamagePerTick\x12\x1b\n" +
 	"\tperiod_ms\x18\x02 \x01(\rR\bperiodMs\"\xfd\x01\n" +
@@ -8566,14 +8763,19 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"requireLos\x12\x16\n" +
 	"\x06behind\x18\x05 \x01(\bR\x06behind\x12\x14\n" +
 	"\x05phase\x18\x06 \x01(\tR\x05phase\x12\x14\n" +
-	"\x05ready\x18\a \x01(\bR\x05ready\"\xa5\x02\n" +
+	"\x05ready\x18\a \x01(\bR\x05ready\"\xeb\x03\n" +
 	"\x10EncounterSupport\x12(\n" +
 	"\x10caster_in_combat\x18\x01 \x01(\bR\x0ecasterInCombat\x12R\n" +
 	"\rresurrections\x18\x02 \x03(\v2,.warcraftbuddy.actions.v1.ResurrectionOptionR\rresurrections\x12I\n" +
 	"\n" +
 	"interrupts\x18\x03 \x03(\v2).warcraftbuddy.actions.v1.InterruptOptionR\n" +
 	"interrupts\x12H\n" +
-	"\fplayer_auras\x18\x04 \x03(\v2%.warcraftbuddy.actions.v1.PlayerAurasR\vplayerAuras\"\xd6\x01\n" +
+	"\fplayer_auras\x18\x04 \x03(\v2%.warcraftbuddy.actions.v1.PlayerAurasR\vplayerAuras\x12[\n" +
+	"\vaura_spells\x18\x05 \x03(\v2:.warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntryR\n" +
+	"auraSpells\x1ag\n" +
+	"\x0fAuraSpellsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12>\n" +
+	"\x05value\x18\x02 \x01(\v2(.warcraftbuddy.actions.v1.EncounterSpellR\x05value:\x028\x01\"\xd6\x01\n" +
 	"\x12ResurrectionOption\x12!\n" +
 	"\fpatient_guid\x18\x01 \x01(\x04R\vpatientGuid\x12(\n" +
 	"\x10cast_target_guid\x18\x02 \x01(\x04R\x0ecastTargetGuid\x12\x19\n" +
@@ -8601,7 +8803,14 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vtarget_guid\x18\x03 \x01(\x04R\n" +
 	"targetGuid\x12\x19\n" +
 	"\bspell_id\x18\x04 \x01(\rR\aspellId\x12#\n" +
-	"\rcast_revision\x18\x05 \x01(\x04R\fcastRevision\"\xf2\x01\n" +
+	"\rcast_revision\x18\x05 \x01(\x04R\fcastRevision\"\x89\x01\n" +
+	"\x0fCastBuffRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vtarget_guid\x18\x03 \x01(\x04R\n" +
+	"targetGuid\x12\x19\n" +
+	"\bspell_id\x18\x04 \x01(\rR\aspellId\"\xf2\x01\n" +
 	"\x12CastCleanseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -8633,7 +8842,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vtarget_guid\x18\x02 \x01(\x04R\n" +
-	"targetGuid2\xbf \n" +
+	"targetGuid2\x97!\n" +
 	"\fBuddyActions\x12m\n" +
 	"\fSelectTarget\x12-.warcraftbuddy.actions.v1.SelectTargetRequest\x1a..warcraftbuddy.actions.v1.SelectTargetResponse\x12b\n" +
 	"\x0eApproachTarget\x12/.warcraftbuddy.actions.v1.ApproachTargetRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12Z\n" +
@@ -8678,7 +8887,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x14EncounterObservation\x12\x16.google.protobuf.Empty\x1a6.warcraftbuddy.actions.v1.EncounterObservationResponse\x12V\n" +
 	"\bCastHeal\x12).warcraftbuddy.actions.v1.CastHealRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12\\\n" +
 	"\vCastOffense\x12,.warcraftbuddy.actions.v1.CastOffenseRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12\\\n" +
-	"\vCastCleanse\x12,.warcraftbuddy.actions.v1.CastCleanseRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12P\n" +
+	"\vCastCleanse\x12,.warcraftbuddy.actions.v1.CastCleanseRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12V\n" +
+	"\bCastBuff\x12).warcraftbuddy.actions.v1.CastBuffRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12P\n" +
 	"\x05Melee\x12&.warcraftbuddy.actions.v1.MeleeRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12d\n" +
 	"\x13SelfManaObservation\x12\x16.google.protobuf.Empty\x1a5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1b\x06proto3"
 
@@ -8694,7 +8904,7 @@ func file_modules_buddy_actions_actions_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_actions_actions_proto_rawDescData
 }
 
-var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 77)
+var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
 var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*ToggleRequest)(nil),                // 0: warcraftbuddy.actions.v1.ToggleRequest
 	(*MovementOwnerRequest)(nil),         // 1: warcraftbuddy.actions.v1.MovementOwnerRequest
@@ -8757,27 +8967,30 @@ var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*EncounterAttackObservation)(nil),   // 58: warcraftbuddy.actions.v1.EncounterAttackObservation
 	(*EncounterEngagement)(nil),          // 59: warcraftbuddy.actions.v1.EncounterEngagement
 	(*EncounterSpell)(nil),               // 60: warcraftbuddy.actions.v1.EncounterSpell
-	(*EncounterPeriodicDamage)(nil),      // 61: warcraftbuddy.actions.v1.EncounterPeriodicDamage
-	(*ApproachTargetRequest)(nil),        // 62: warcraftbuddy.actions.v1.ApproachTargetRequest
-	(*TargetMovementState)(nil),          // 63: warcraftbuddy.actions.v1.TargetMovementState
-	(*EncounterSupport)(nil),             // 64: warcraftbuddy.actions.v1.EncounterSupport
-	(*ResurrectionOption)(nil),           // 65: warcraftbuddy.actions.v1.ResurrectionOption
-	(*InterruptOption)(nil),              // 66: warcraftbuddy.actions.v1.InterruptOption
-	(*InterruptCastRequest)(nil),         // 67: warcraftbuddy.actions.v1.InterruptCastRequest
-	(*CastCleanseRequest)(nil),           // 68: warcraftbuddy.actions.v1.CastCleanseRequest
-	(*EncounterControlCapability)(nil),   // 69: warcraftbuddy.actions.v1.EncounterControlCapability
-	(*ResurrectOnceRequest)(nil),         // 70: warcraftbuddy.actions.v1.ResurrectOnceRequest
-	(*AcceptResurrectionRequest)(nil),    // 71: warcraftbuddy.actions.v1.AcceptResurrectionRequest
-	(*PickLockRequest)(nil),              // 72: warcraftbuddy.actions.v1.PickLockRequest
-	nil,                                  // 73: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
-	nil,                                  // 74: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
-	nil,                                  // 75: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
-	nil,                                  // 76: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
-	(*api.Group)(nil),                    // 77: warcraftbuddy.party.v1.Group
-	(*api.RaidTargetState)(nil),          // 78: warcraftbuddy.party.v1.RaidTargetState
-	(*api1.CreatureTrajectory)(nil),      // 79: warcraftbuddy.world.v1.CreatureTrajectory
-	(*emptypb.Empty)(nil),                // 80: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),               // 81: agentwow.module.v1.WorldPacket
+	(*EncounterAuraEffect)(nil),          // 61: warcraftbuddy.actions.v1.EncounterAuraEffect
+	(*EncounterPeriodicDamage)(nil),      // 62: warcraftbuddy.actions.v1.EncounterPeriodicDamage
+	(*ApproachTargetRequest)(nil),        // 63: warcraftbuddy.actions.v1.ApproachTargetRequest
+	(*TargetMovementState)(nil),          // 64: warcraftbuddy.actions.v1.TargetMovementState
+	(*EncounterSupport)(nil),             // 65: warcraftbuddy.actions.v1.EncounterSupport
+	(*ResurrectionOption)(nil),           // 66: warcraftbuddy.actions.v1.ResurrectionOption
+	(*InterruptOption)(nil),              // 67: warcraftbuddy.actions.v1.InterruptOption
+	(*InterruptCastRequest)(nil),         // 68: warcraftbuddy.actions.v1.InterruptCastRequest
+	(*CastBuffRequest)(nil),              // 69: warcraftbuddy.actions.v1.CastBuffRequest
+	(*CastCleanseRequest)(nil),           // 70: warcraftbuddy.actions.v1.CastCleanseRequest
+	(*EncounterControlCapability)(nil),   // 71: warcraftbuddy.actions.v1.EncounterControlCapability
+	(*ResurrectOnceRequest)(nil),         // 72: warcraftbuddy.actions.v1.ResurrectOnceRequest
+	(*AcceptResurrectionRequest)(nil),    // 73: warcraftbuddy.actions.v1.AcceptResurrectionRequest
+	(*PickLockRequest)(nil),              // 74: warcraftbuddy.actions.v1.PickLockRequest
+	nil,                                  // 75: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
+	nil,                                  // 76: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
+	nil,                                  // 77: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
+	nil,                                  // 78: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
+	nil,                                  // 79: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
+	(*api.Group)(nil),                    // 80: warcraftbuddy.party.v1.Group
+	(*api.RaidTargetState)(nil),          // 81: warcraftbuddy.party.v1.RaidTargetState
+	(*api1.CreatureTrajectory)(nil),      // 82: warcraftbuddy.world.v1.CreatureTrajectory
+	(*emptypb.Empty)(nil),                // 83: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),               // 84: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	30,  // 0: warcraftbuddy.actions.v1.MovementOwnerLease.state:type_name -> warcraftbuddy.actions.v1.State
@@ -8799,7 +9012,7 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	31,  // 16: warcraftbuddy.actions.v1.State.protected_targets:type_name -> warcraftbuddy.actions.v1.ProtectedTarget
 	32,  // 17: warcraftbuddy.actions.v1.State.crowd_control:type_name -> warcraftbuddy.actions.v1.CrowdControlState
 	40,  // 18: warcraftbuddy.actions.v1.State.last_melee_operation:type_name -> warcraftbuddy.actions.v1.MeleeOperation
-	63,  // 19: warcraftbuddy.actions.v1.State.target_movement:type_name -> warcraftbuddy.actions.v1.TargetMovementState
+	64,  // 19: warcraftbuddy.actions.v1.State.target_movement:type_name -> warcraftbuddy.actions.v1.TargetMovementState
 	52,  // 20: warcraftbuddy.actions.v1.State.body_movement:type_name -> warcraftbuddy.actions.v1.BodyMovementState
 	3,   // 21: warcraftbuddy.actions.v1.State.movement_owner:type_name -> warcraftbuddy.actions.v1.MovementOwnerState
 	43,  // 22: warcraftbuddy.actions.v1.HealingOptionsResponse.caster:type_name -> warcraftbuddy.actions.v1.HealingCaster
@@ -8810,126 +9023,131 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	47,  // 27: warcraftbuddy.actions.v1.SelfManaObservationResponse.threat:type_name -> warcraftbuddy.actions.v1.SelfManaThreat
 	48,  // 28: warcraftbuddy.actions.v1.SelfManaObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.SelfManaSpell
 	55,  // 29: warcraftbuddy.actions.v1.EncounterObservationResponse.party:type_name -> warcraftbuddy.actions.v1.EncounterParty
-	73,  // 30: warcraftbuddy.actions.v1.EncounterObservationResponse.players:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
-	74,  // 31: warcraftbuddy.actions.v1.EncounterObservationResponse.targets:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
-	75,  // 32: warcraftbuddy.actions.v1.EncounterObservationResponse.engagement:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
+	75,  // 30: warcraftbuddy.actions.v1.EncounterObservationResponse.players:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
+	76,  // 31: warcraftbuddy.actions.v1.EncounterObservationResponse.targets:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
+	77,  // 32: warcraftbuddy.actions.v1.EncounterObservationResponse.engagement:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
 	31,  // 33: warcraftbuddy.actions.v1.EncounterObservationResponse.protected_auras:type_name -> warcraftbuddy.actions.v1.ProtectedTarget
-	76,  // 34: warcraftbuddy.actions.v1.EncounterObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
-	69,  // 35: warcraftbuddy.actions.v1.EncounterObservationResponse.control_capabilities:type_name -> warcraftbuddy.actions.v1.EncounterControlCapability
+	78,  // 34: warcraftbuddy.actions.v1.EncounterObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
+	71,  // 35: warcraftbuddy.actions.v1.EncounterObservationResponse.control_capabilities:type_name -> warcraftbuddy.actions.v1.EncounterControlCapability
 	44,  // 36: warcraftbuddy.actions.v1.EncounterObservationResponse.healing:type_name -> warcraftbuddy.actions.v1.HealingOptionsResponse
-	63,  // 37: warcraftbuddy.actions.v1.EncounterObservationResponse.target_movement:type_name -> warcraftbuddy.actions.v1.TargetMovementState
-	64,  // 38: warcraftbuddy.actions.v1.EncounterObservationResponse.support:type_name -> warcraftbuddy.actions.v1.EncounterSupport
+	64,  // 37: warcraftbuddy.actions.v1.EncounterObservationResponse.target_movement:type_name -> warcraftbuddy.actions.v1.TargetMovementState
+	65,  // 38: warcraftbuddy.actions.v1.EncounterObservationResponse.support:type_name -> warcraftbuddy.actions.v1.EncounterSupport
 	54,  // 39: warcraftbuddy.actions.v1.EncounterObservationResponse.navigation:type_name -> warcraftbuddy.actions.v1.NavigationObservation
 	52,  // 40: warcraftbuddy.actions.v1.NavigationObservation.body_movement:type_name -> warcraftbuddy.actions.v1.BodyMovementState
 	3,   // 41: warcraftbuddy.actions.v1.NavigationObservation.movement_owner:type_name -> warcraftbuddy.actions.v1.MovementOwnerState
 	56,  // 42: warcraftbuddy.actions.v1.NavigationObservation.follow_owner:type_name -> warcraftbuddy.actions.v1.EncounterPlayer
-	77,  // 43: warcraftbuddy.actions.v1.EncounterParty.group:type_name -> warcraftbuddy.party.v1.Group
-	78,  // 44: warcraftbuddy.actions.v1.EncounterParty.raid_targets:type_name -> warcraftbuddy.party.v1.RaidTargetState
-	79,  // 45: warcraftbuddy.actions.v1.EncounterCreature.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
+	80,  // 43: warcraftbuddy.actions.v1.EncounterParty.group:type_name -> warcraftbuddy.party.v1.Group
+	81,  // 44: warcraftbuddy.actions.v1.EncounterParty.raid_targets:type_name -> warcraftbuddy.party.v1.RaidTargetState
+	82,  // 45: warcraftbuddy.actions.v1.EncounterCreature.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
 	58,  // 46: warcraftbuddy.actions.v1.EncounterCreature.attack_observation:type_name -> warcraftbuddy.actions.v1.EncounterAttackObservation
-	61,  // 47: warcraftbuddy.actions.v1.EncounterSpell.periodic_damage:type_name -> warcraftbuddy.actions.v1.EncounterPeriodicDamage
-	65,  // 48: warcraftbuddy.actions.v1.EncounterSupport.resurrections:type_name -> warcraftbuddy.actions.v1.ResurrectionOption
-	66,  // 49: warcraftbuddy.actions.v1.EncounterSupport.interrupts:type_name -> warcraftbuddy.actions.v1.InterruptOption
-	27,  // 50: warcraftbuddy.actions.v1.EncounterSupport.player_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
-	56,  // 51: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterPlayer
-	57,  // 52: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterCreature
-	59,  // 53: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterEngagement
-	60,  // 54: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
-	5,   // 55: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:input_type -> warcraftbuddy.actions.v1.SelectTargetRequest
-	62,  // 56: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:input_type -> warcraftbuddy.actions.v1.ApproachTargetRequest
-	51,  // 57: warcraftbuddy.actions.v1.BuddyActions.MoveBody:input_type -> warcraftbuddy.actions.v1.BodyMovementRequest
-	67,  // 58: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:input_type -> warcraftbuddy.actions.v1.InterruptCastRequest
-	53,  // 59: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:input_type -> warcraftbuddy.actions.v1.FollowFormationRequest
-	0,   // 60: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	0,   // 61: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	7,   // 62: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
-	80,  // 63: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
-	80,  // 64: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
-	0,   // 65: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	80,  // 66: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
-	9,   // 67: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
-	80,  // 68: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
-	1,   // 69: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRequest
-	2,   // 70: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRelease
-	14,  // 71: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
-	15,  // 72: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
-	16,  // 73: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
-	17,  // 74: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	17,  // 75: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	17,  // 76: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	17,  // 77: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	18,  // 78: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
-	19,  // 79: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
-	21,  // 80: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	0,   // 81: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	11,  // 82: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
-	0,   // 83: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	81,  // 84: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	80,  // 85: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	70,  // 86: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
-	71,  // 87: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
-	72,  // 88: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
-	35,  // 89: warcraftbuddy.actions.v1.BuddyActions.CreateItem:input_type -> warcraftbuddy.actions.v1.CreateItemRequest
-	33,  // 90: warcraftbuddy.actions.v1.BuddyActions.Polymorph:input_type -> warcraftbuddy.actions.v1.PolymorphRequest
-	34,  // 91: warcraftbuddy.actions.v1.BuddyActions.Sap:input_type -> warcraftbuddy.actions.v1.SapRequest
-	36,  // 92: warcraftbuddy.actions.v1.BuddyActions.CastSelf:input_type -> warcraftbuddy.actions.v1.CastSelfRequest
-	80,  // 93: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:input_type -> google.protobuf.Empty
-	80,  // 94: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:input_type -> google.protobuf.Empty
-	37,  // 95: warcraftbuddy.actions.v1.BuddyActions.CastHeal:input_type -> warcraftbuddy.actions.v1.CastHealRequest
-	38,  // 96: warcraftbuddy.actions.v1.BuddyActions.CastOffense:input_type -> warcraftbuddy.actions.v1.CastOffenseRequest
-	68,  // 97: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:input_type -> warcraftbuddy.actions.v1.CastCleanseRequest
-	39,  // 98: warcraftbuddy.actions.v1.BuddyActions.Melee:input_type -> warcraftbuddy.actions.v1.MeleeRequest
-	80,  // 99: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:input_type -> google.protobuf.Empty
-	6,   // 100: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:output_type -> warcraftbuddy.actions.v1.SelectTargetResponse
-	30,  // 101: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 102: warcraftbuddy.actions.v1.BuddyActions.MoveBody:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 103: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:output_type -> warcraftbuddy.actions.v1.State
-	80,  // 104: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:output_type -> google.protobuf.Empty
-	30,  // 105: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 106: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 107: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 108: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 109: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 110: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
-	29,  // 111: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
-	10,  // 112: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	10,  // 113: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	4,   // 114: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:output_type -> warcraftbuddy.actions.v1.MovementOwnerLease
-	30,  // 115: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:output_type -> warcraftbuddy.actions.v1.State
-	22,  // 116: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	30,  // 117: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 118: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 119: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 120: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 121: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 122: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 123: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
-	20,  // 124: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
-	30,  // 125: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 126: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 127: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 128: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
-	80,  // 129: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	80,  // 130: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	30,  // 131: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 132: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 133: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 134: warcraftbuddy.actions.v1.BuddyActions.CreateItem:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 135: warcraftbuddy.actions.v1.BuddyActions.Polymorph:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 136: warcraftbuddy.actions.v1.BuddyActions.Sap:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 137: warcraftbuddy.actions.v1.BuddyActions.CastSelf:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 138: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:output_type -> warcraftbuddy.actions.v1.HealingOptionsResponse
-	50,  // 139: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:output_type -> warcraftbuddy.actions.v1.EncounterObservationResponse
-	30,  // 140: warcraftbuddy.actions.v1.BuddyActions.CastHeal:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 141: warcraftbuddy.actions.v1.BuddyActions.CastOffense:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 142: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:output_type -> warcraftbuddy.actions.v1.State
-	30,  // 143: warcraftbuddy.actions.v1.BuddyActions.Melee:output_type -> warcraftbuddy.actions.v1.State
-	49,  // 144: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:output_type -> warcraftbuddy.actions.v1.SelfManaObservationResponse
-	100, // [100:145] is the sub-list for method output_type
-	55,  // [55:100] is the sub-list for method input_type
-	55,  // [55:55] is the sub-list for extension type_name
-	55,  // [55:55] is the sub-list for extension extendee
-	0,   // [0:55] is the sub-list for field type_name
+	62,  // 47: warcraftbuddy.actions.v1.EncounterSpell.periodic_damage:type_name -> warcraftbuddy.actions.v1.EncounterPeriodicDamage
+	61,  // 48: warcraftbuddy.actions.v1.EncounterSpell.aura_effects:type_name -> warcraftbuddy.actions.v1.EncounterAuraEffect
+	66,  // 49: warcraftbuddy.actions.v1.EncounterSupport.resurrections:type_name -> warcraftbuddy.actions.v1.ResurrectionOption
+	67,  // 50: warcraftbuddy.actions.v1.EncounterSupport.interrupts:type_name -> warcraftbuddy.actions.v1.InterruptOption
+	27,  // 51: warcraftbuddy.actions.v1.EncounterSupport.player_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
+	79,  // 52: warcraftbuddy.actions.v1.EncounterSupport.aura_spells:type_name -> warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
+	56,  // 53: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterPlayer
+	57,  // 54: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterCreature
+	59,  // 55: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterEngagement
+	60,  // 56: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
+	60,  // 57: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
+	5,   // 58: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:input_type -> warcraftbuddy.actions.v1.SelectTargetRequest
+	63,  // 59: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:input_type -> warcraftbuddy.actions.v1.ApproachTargetRequest
+	51,  // 60: warcraftbuddy.actions.v1.BuddyActions.MoveBody:input_type -> warcraftbuddy.actions.v1.BodyMovementRequest
+	68,  // 61: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:input_type -> warcraftbuddy.actions.v1.InterruptCastRequest
+	53,  // 62: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:input_type -> warcraftbuddy.actions.v1.FollowFormationRequest
+	0,   // 63: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	0,   // 64: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	7,   // 65: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
+	83,  // 66: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
+	83,  // 67: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
+	0,   // 68: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	83,  // 69: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
+	9,   // 70: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
+	83,  // 71: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
+	1,   // 72: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRequest
+	2,   // 73: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRelease
+	14,  // 74: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
+	15,  // 75: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
+	16,  // 76: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
+	17,  // 77: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	17,  // 78: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	17,  // 79: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	17,  // 80: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	18,  // 81: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
+	19,  // 82: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
+	21,  // 83: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	0,   // 84: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	11,  // 85: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
+	0,   // 86: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	84,  // 87: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	83,  // 88: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	72,  // 89: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
+	73,  // 90: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
+	74,  // 91: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
+	35,  // 92: warcraftbuddy.actions.v1.BuddyActions.CreateItem:input_type -> warcraftbuddy.actions.v1.CreateItemRequest
+	33,  // 93: warcraftbuddy.actions.v1.BuddyActions.Polymorph:input_type -> warcraftbuddy.actions.v1.PolymorphRequest
+	34,  // 94: warcraftbuddy.actions.v1.BuddyActions.Sap:input_type -> warcraftbuddy.actions.v1.SapRequest
+	36,  // 95: warcraftbuddy.actions.v1.BuddyActions.CastSelf:input_type -> warcraftbuddy.actions.v1.CastSelfRequest
+	83,  // 96: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:input_type -> google.protobuf.Empty
+	83,  // 97: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:input_type -> google.protobuf.Empty
+	37,  // 98: warcraftbuddy.actions.v1.BuddyActions.CastHeal:input_type -> warcraftbuddy.actions.v1.CastHealRequest
+	38,  // 99: warcraftbuddy.actions.v1.BuddyActions.CastOffense:input_type -> warcraftbuddy.actions.v1.CastOffenseRequest
+	70,  // 100: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:input_type -> warcraftbuddy.actions.v1.CastCleanseRequest
+	69,  // 101: warcraftbuddy.actions.v1.BuddyActions.CastBuff:input_type -> warcraftbuddy.actions.v1.CastBuffRequest
+	39,  // 102: warcraftbuddy.actions.v1.BuddyActions.Melee:input_type -> warcraftbuddy.actions.v1.MeleeRequest
+	83,  // 103: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:input_type -> google.protobuf.Empty
+	6,   // 104: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:output_type -> warcraftbuddy.actions.v1.SelectTargetResponse
+	30,  // 105: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 106: warcraftbuddy.actions.v1.BuddyActions.MoveBody:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 107: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:output_type -> warcraftbuddy.actions.v1.State
+	83,  // 108: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:output_type -> google.protobuf.Empty
+	30,  // 109: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 110: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 111: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 112: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 113: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 114: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
+	29,  // 115: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
+	10,  // 116: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	10,  // 117: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	4,   // 118: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:output_type -> warcraftbuddy.actions.v1.MovementOwnerLease
+	30,  // 119: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:output_type -> warcraftbuddy.actions.v1.State
+	22,  // 120: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	30,  // 121: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 122: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 123: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 124: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 125: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 126: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 127: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
+	20,  // 128: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
+	30,  // 129: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 130: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 131: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 132: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
+	83,  // 133: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	83,  // 134: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	30,  // 135: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 136: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 137: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 138: warcraftbuddy.actions.v1.BuddyActions.CreateItem:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 139: warcraftbuddy.actions.v1.BuddyActions.Polymorph:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 140: warcraftbuddy.actions.v1.BuddyActions.Sap:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 141: warcraftbuddy.actions.v1.BuddyActions.CastSelf:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 142: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:output_type -> warcraftbuddy.actions.v1.HealingOptionsResponse
+	50,  // 143: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:output_type -> warcraftbuddy.actions.v1.EncounterObservationResponse
+	30,  // 144: warcraftbuddy.actions.v1.BuddyActions.CastHeal:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 145: warcraftbuddy.actions.v1.BuddyActions.CastOffense:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 146: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 147: warcraftbuddy.actions.v1.BuddyActions.CastBuff:output_type -> warcraftbuddy.actions.v1.State
+	30,  // 148: warcraftbuddy.actions.v1.BuddyActions.Melee:output_type -> warcraftbuddy.actions.v1.State
+	49,  // 149: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:output_type -> warcraftbuddy.actions.v1.SelfManaObservationResponse
+	104, // [104:150] is the sub-list for method output_type
+	58,  // [58:104] is the sub-list for method input_type
+	58,  // [58:58] is the sub-list for extension type_name
+	58,  // [58:58] is the sub-list for extension extendee
+	0,   // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_actions_actions_proto_init() }
@@ -8953,7 +9171,7 @@ func file_modules_buddy_actions_actions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_actions_actions_proto_rawDesc), len(file_modules_buddy_actions_actions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   77,
+			NumMessages:   80,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

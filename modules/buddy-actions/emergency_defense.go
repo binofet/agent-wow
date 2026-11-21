@@ -111,9 +111,7 @@ func (s *Service) emergencyDefenseLocked(ctx context.Context) bool {
 			return true
 		}
 	}
-	if s.hasLearnedHealingLocked() && (s.urgentSelfHealLocked(ctx, w) || s.triageHealLocked(ctx, w, true)) {
-		return true
-	}
+
 	if s.hostEncounterActiveLocked() {
 		return preempted
 	}

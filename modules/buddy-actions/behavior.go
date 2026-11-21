@@ -133,24 +133,3 @@ func (s *Service) behaviorDecisionLocked(input contract.Input) contract.Decision
 	}
 	return decision
 }
-
-func (s *Service) behaviorHealTargetLocked(self *worldv1.PlayerState, players []*worldv1.PlayerState, best *worldv1.PlayerState) *worldv1.PlayerState {
-	if best == nil || (s.behavior == nil && (s.dungeonTrace == nil || !s.dungeonTrace.Active())) {
-		return best
-	}
-	input := contract.Input{Kind: "heal_target", Self: combatant(self), DefaultTargetGuid: strconv.FormatUint(best.Guid, 10)}
-	for _, p := range players {
-		input.Targets = append(input.Targets, combatant(p))
-	}
-	decision := s.behaviorDecisionLocked(input)
-	if decision.TargetGuid == "" {
-		return best
-	}
-	for _, p := range players {
-		if decision.TargetGuid == strconv.FormatUint(p.Guid, 10) {
-			return p
-		}
-	}
-	s.behaviorRejection = "unobserved_or_ineligible_heal_target_using_native_decision"
-	return best
-}
