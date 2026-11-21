@@ -18,6 +18,7 @@ import (
 func cleanseRig(t *testing.T, classID uint32, spells ...uint32) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.sessionID = f.party.SessionId
 	f.world.Self.ClassId = classID
 	f.world.Self.Level, f.world.Self.LevelKnown = 24, true
 	f.world.Self.Power, f.world.Self.MaxPower = 200, 200
