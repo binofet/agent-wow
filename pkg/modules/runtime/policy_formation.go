@@ -68,10 +68,5 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 		X: value.X, Y: value.Y, Z: value.Z, Orientation: value.Orientation,
 		FollowRevision: followRevision, StartDistance: value.StartDistance, StopDistance: value.StopDistance, Ready: value.Ready, Hold: value.Hold,
 	})
-	if status.Code(err) == codes.FailedPrecondition {
-		// An owner may move after this observation. A later observation may
-		// replace the finite goal; its rejection cannot block a support cast.
-		return nil
-	}
 	return err
 }
