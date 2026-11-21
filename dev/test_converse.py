@@ -2209,7 +2209,7 @@ class DeveloperBrainTests(unittest.TestCase):
             fake.chmod(0o700)
             with patch.object(converse,'ROOT',repo):brain=converse.CodexBrain(fake,state_dir,developer_workspace=repo)
             state=self.state(repo);state['largeOutput']=True
-            self.assertEqual(brain.generate([{'speaker':'Joel','text':'Fix this controller.'}],state)['action'],'NONE')
+            self.assertEqual(brain.generate([{'speaker':'Joel','text':'Wait here for me to pull the next target to you.'}],state)['action'],'NONE')
             self.assertTrue((repo/'controller.go').is_file());self.assertTrue((repo/'policy.lua').is_file())
             for source in ('initiative','missing','party_agent'):
                 denied=self.state(repo,source);denied['current_request']['verifiedPeer']=False
@@ -2226,6 +2226,8 @@ class DeveloperBrainTests(unittest.TestCase):
             rows=[json.loads(line) for line in audit.read_text().splitlines()]
             self.assertEqual([r['developer'] for r in rows],[True,False,False,False,False,True,True,True,False])
             self.assertIn('public owned-client APIs',rows[0]['prompt']);self.assertIn('aw-current',rows[0]['prompt'])
+            self.assertIn('Wait here for me to pull the next target to you.',rows[0]['prompt'])
+            self.assertIn('Joel does not need to separately request development or approve',rows[0]['prompt'])
             self.assertIn('/private/tmp/warcraft-buddy-tools/go/bin/go',rows[0]['prompt'])
             self.assertIn('you have no tools',rows[1]['prompt'])
             self.assertEqual(len(rows),9) # Each explicit generation ran once, without a queued coding generation.

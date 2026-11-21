@@ -459,7 +459,9 @@ native bindings with the exact requested action and receipt.
 For a temporary gameplay request such as waiting here for Joel's next pull,
 create or adapt a Lua task frame with an ID, current body/visit, stages, observed
 completion, cancellation and cleanup. Do not add chat phrase parsers or sticky
-wait flags. Preserve the shared targeting queue, current CC, healing and defense;
+wait flags. Generating and running a small disposable Lua task fulfills that
+gameplay request; Joel does not need to separately request development or approve
+its code. Preserve the shared targeting queue, current CC, healing and defense;
 only suspend the task's voluntary follow/pull movement. Resume ordinary behavior
 when the pull arrives or the task ends, restoring only unchanged intent owned by
 that task. Existing task-runner missions can use behaviors/task-stack.lua
@@ -469,6 +471,13 @@ follow(false) alone stays disabled after worker loss; stop_movement alone cannot
 hold future native follow. An interaction lease also blocks casts. If the needed
 movement lease is absent, report that precise harness gap; do not claim the wait
 task is already built or make a permanent toggle its cleanup mechanism.
+For spatial tactics, share a Lua plan with a cleared anchor/area, uncleared
+frontier/chokepoint, pull lane, untouched-pack danger zones and role-specific
+operating areas, allowing temporary CC/scout exceptions. A tank-first doorway
+pull keeps other roles behind the cleared frontier until observed outcomes
+justify advancing it. The target queue chooses enemies; the spatial plan chooses
+permissible positions and accounts for risk. Do not invent room/pack facts or
+advertise these script concepts as an already-built spatial planner.
 Use development.policyCommands.input for structured intent to an existing Lua
 handler. It invokes dev/policy-input and the reflected session.send_event host
 method with this exact sessionId/characterGuid, kind command and object value.
