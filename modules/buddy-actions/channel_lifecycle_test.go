@@ -275,3 +275,52 @@ func TestChannelLifecycleIdentityFailureAndExhaustionNeverWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelLifecycleValidVisitBoundaryRetiresOldCastWithoutInventingEnd(t *testing.T) {
+	for _, channel := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ground_cast", true: "ground_channel"}[channel], func(t *testing.T) {
+			s, f, _ := genericCastRig(t)
+			id := uint32(2120)
+			if channel {
+				id = 10
+			}
+			s.applySpellbookLocked(map[uint32]bool{id: true})
+			r := genericRequest(s, id)
+			r.Targets = &actionsv1.SpellCastTargets{Mask: 64, Destination: &actionsv1.SpellCastLocation{X: 1, Y: 2, Z: 3}}
+			if _, err := s.CastSpell(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+			if channel {
+				emitChannel(t, s, true, s.selfGUID, id, 8000)
+			}
+			stale := cancelOperation(s, channel)
+			for _, bad := range []*modv1.WorldPacket{{Opcode: opcode.SMSGTransferPending, Payload: make([]byte, 3)}, {Opcode: opcode.SMSGNewWorld, Payload: make([]byte, 19)}} {
+				s.OnPacket(context.Background(), bad)
+				if !s.state.CastPending || s.supportOp.view.Phase == "world_transfer_outcome_unconfirmed" {
+					t.Fatal("malformed boundary retired actual cast", s.stateLocked())
+				}
+			}
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGTransferPending, Payload: make([]byte, 4)})
+			if s.state.CastPending || s.supportOp.view.Phase != "world_transfer_outcome_unconfirmed" || s.supportOp.view.ServerCastGo || s.supportOp.view.EffectObserved || s.supportOp.view.ChannelEnded {
+				t.Fatal("valid transfer fabricated cast/end/effect", s.stateLocked())
+			}
+			emitChannel(t, s, true, s.selfGUID, id, 8000)
+			if s.state.CastPending {
+				t.Fatal("old visit channel packet regained custody")
+			}
+			entry := binary.LittleEndian.AppendUint32(nil, f.world.Self.MapId)
+			for range 4 {
+				entry = binary.LittleEndian.AppendUint32(entry, 0)
+			}
+			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGNewWorld, Payload: entry})
+			f.world.VisitRevision = s.encounterVisit.revision
+			r.VisitId = f.world.VisitRevision
+			if _, err := s.CastSpell(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.CancelSpell(context.Background(), stale); err == nil || len(f.packets) != 2 || !s.state.CastPending {
+				t.Fatal("prior visit cancel touched new cast", err, f.packets, s.stateLocked())
+			}
+		})
+	}
+}

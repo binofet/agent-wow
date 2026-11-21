@@ -59,6 +59,15 @@ func (s *Service) pendingSelfChannelLocked() *supportAttempt {
 	return nil
 }
 
+// An actual world transfer retires this visit's cast custody without making
+// a claim about a spell effect or an observed channel end in the old world.
+func (s *Service) finishSpellLifecycleLocked(phase string) {
+	if op := s.pendingSpellLifecycleLocked(); op != nil && (op.genericSpell || op.view.Capability == selfCastCapability) {
+		op.view.Phase = phase
+		s.pendingSpell, s.pendingTarget, s.state.CastPending = 0, 0, false
+	}
+}
+
 func (s *Service) finishSelfChannelLocked(phase string) {
 	if op := s.pendingSelfChannelLocked(); op != nil {
 		op.view.Phase = phase
