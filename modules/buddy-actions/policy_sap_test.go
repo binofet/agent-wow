@@ -44,7 +44,6 @@ func TestPolicySapRefusesWithoutPreparatoryWrites(t *testing.T) {
 		{"other learned kind", codes.FailedPrecondition, func(_ *Service, _ *fakeSession, r *actionsv1.SapRequest) { r.SpellId = 118 }},
 		{"rank unknown", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.setKnownSpell(6770, false) }},
 		{"moving", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.Moving = true }},
-		{"other crowd control active", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.crowdControl.active = true }},
 		{"movement unsettled", codes.FailedPrecondition, func(s *Service, _ *fakeSession, _ *actionsv1.SapRequest) { s.state.MotionUnconfirmed = true }},
 		{"channel unknown", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) { f.world.Self.ChannelSpellKnown = false }},
 		{"channel active", codes.FailedPrecondition, func(_ *Service, f *fakeSession, _ *actionsv1.SapRequest) { f.world.Self.ChannelSpellId = 7302 }},
@@ -79,7 +78,7 @@ func TestPolicySapRefusesWithoutPreparatoryWrites(t *testing.T) {
 		s, f, req := policySapFixture(t)
 		req.Approach = true
 		_, err := s.Sap(policySapContext("malformed"), req)
-		if status.Code(err) != codes.InvalidArgument || len(f.packets) != 0 || s.crowdControl.active {
+		if status.Code(err) != codes.InvalidArgument || len(f.packets) != 0 {
 			t.Fatalf("malformed attribution: error=%v packets=%v", err, f.packets)
 		}
 	})

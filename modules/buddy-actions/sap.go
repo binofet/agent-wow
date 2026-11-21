@@ -33,9 +33,6 @@ func (s *Service) sapReadinessLocked(ctx context.Context, w *worldv1.SnapshotRes
 	if target.Entry == 0 || uint32(target.Guid>>24&0xffffff) != target.Entry {
 		return false, "sap_target_identity_changed", status.Error(codes.FailedPrecondition, "out-of-combat rogue and exact out-of-combat creature required")
 	}
-	if !s.stealthedLocked() && len(s.candidatesLocked(spellcatalog.Stealth)) == 0 {
-		return false, "sap_stealth_unavailable", status.Error(codes.FailedPrecondition, "observed or available learned Stealth required")
-	}
 	if spell.ItemClass >= 0 && !s.weaponReady(self) {
 		if !allowQueries {
 			return false, "sap_weapon_not_confirmed", status.Error(codes.FailedPrecondition, "policy Sap requires a verified equipped weapon")

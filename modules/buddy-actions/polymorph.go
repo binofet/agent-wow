@@ -79,7 +79,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 	observed := position{c.X, c.Y, c.Z, c.Orientation}
 	observedKnown := c.PositionKnown && finite(observed)
 	if kind == spellcatalog.Sap {
-		if policySap && (!s.stealthedLocked() || !self.ChannelSpellKnown || self.ChannelObjectGuid != 0) {
+		if !s.stealthedLocked() || self.ChannelObjectGuid != 0 || policySap && !self.ChannelSpellKnown {
 			return nil, status.Error(codes.FailedPrecondition, "policy Sap requires observed Stealth and no active channel")
 		}
 		pos, known, _ := creaturePosition(c)
@@ -101,9 +101,6 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 				return nil, status.Error(codes.FailedPrecondition, reason)
 			}
 			return s.stateLocked(), nil
-		}
-		if !s.stealthedLocked() {
-			return nil,status.Error(codes.FailedPrecondition,"exact Sap requires observed Stealth; Lua chooses its preparation")
 		}
 		inRange := func(p position) bool {
 			d := distance(s.pos, p)

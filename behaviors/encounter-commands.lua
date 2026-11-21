@@ -32,14 +32,17 @@ local function request_id(value)
     return value.technique .. ":" .. (value.targetGuid or value.mark or "auto")
 end
 
-local function cancel(value)
+local function cancel(value, stop_movement)
     local requests = {}
     for _, row in ipairs(state.requests) do
         local matches = (not value.id or value.id == row.id) and
             (not value.technique or value.technique == row.technique) and
             (not value.mark or value.mark == row.mark) and
             (not value.targetGuid or value.targetGuid == row.targetGuid or value.targetGuid == row.boundGuid)
-        if not matches then requests[#requests+1] = row end
+        if not matches then requests[#requests+1] = row
+        elseif stop_movement and row.boundGuid and row.visitId then
+            state.stopping={targetGuid=row.boundGuid,visitId=row.visitId}
+        end
     end
     state.requests = requests
 end
@@ -48,6 +51,8 @@ local function on_event(event)
     if event.receipt and terminal[event.receipt.outcome] then state.settledAt = state.sequence end
     if event.receipt then
         local payload, outcome = event.receipt.payload or {}, event.receipt.outcome
+        if state.stopping and payload.capability=="stop_movement" and payload.target_guid==state.stopping.targetGuid and
+           (outcome=="failed" or outcome=="not_dispatched") then state.stopping.sent=nil end
         if outcome == "failed" or outcome == "not_dispatched" then
             for _, row in ipairs(state.requests) do
                 if payload.capability == "cast_self" and payload.spell_id == row.stealthPending then row.stealthPending = nil end
@@ -72,7 +77,7 @@ local function on_event(event)
     elseif value.task == "control" then
         if value.cancel == true or value.enabled == false then
             if value.auto == true then state.autoPolymorph = false end
-            cancel(value); return true
+            cancel(value,true); return true
         end
         if value.technique ~= "polymorph" and value.technique ~= "sap" then return true end
         local target = selector(value)
@@ -82,12 +87,21 @@ local function on_event(event)
                      behind=value.behind == nil and value.technique == "sap" or value.behind == true,
                      maintain=value.maintain ~= false}
         row.id = type(value.id) == "string" and #value.id > 0 and #value.id <= 80 and value.id or request_id(row)
+        -- Retried legacy prepare/commit calls are the same goal. Preserve
+        -- pending Stealth/CC custody across duplicates and policy reload.
+        for _,prior in ipairs(state.requests) do
+            if prior.id==row.id and prior.technique==row.technique and prior.targetGuid==row.targetGuid and
+               prior.mark==row.mark and prior.auto==row.auto and prior.spellId==row.spellId and prior.behind==row.behind then
+                prior.maintain=row.maintain
+                return true
+            end
+        end
         cancel({id="automatic:polymorph"})
         cancel({id=row.id})
         if #state.requests < 8 then state.requests[#state.requests+1] = row end
     elseif value.task == "cancel_control" then
         if not value.targetGuid and not value.mark then state.autoPolymorph = false end
-        cancel(value)
+        cancel(value,true)
     elseif value.task == "focus" then
         if value.cancel == true then state.focus = nil else state.focus = selector(value) or state.focus end
     elseif value.task == "kill_order" then
@@ -254,6 +268,21 @@ end
 
 local function control_action(obs, frame, focusGuid, planned_control, allow_action)
     refresh(obs)
+    local stop=state.stopping
+    if stop then
+        local self=(obs.players or {})[obs.selfGuid]
+        local moved=obs.targetMovement or {}
+        if obs.visitId~=stop.visitId or (obs.navigation or {}).motionUnconfirmed~=true and
+           (self and self.movementKnown==true and self.moving~=true or
+            moved.targetGuid==stop.targetGuid and moved.visitId==stop.visitId and moved.phase=="stopped" and moved.ready==true) then state.stopping=nil
+        elseif obs.sessionId==frame.session_id and #frame.pending==0 and
+               state.settledAt~=frame.input.observationSequence and not stop.sent then
+            stop.sent=true
+            local request=action(obs,frame,"stop_movement",stop.targetGuid)
+            request.rangeYards=0
+            return request,{pending=true,phase="stopping_cancelled_control",targetGuid=stop.targetGuid}
+        else return nil,{pending=true,phase="waiting_for_control_stop",targetGuid=stop.targetGuid} end
+    end
     if planned_control then cancel({id="automatic:polymorph"}) end
     if not planned_control and #state.requests == 0 and state.autoPolymorph ~= false and highest_spell(obs,"polymorph") then
         local automatic = {id="automatic:polymorph",technique="polymorph",auto=true,maintain=true,behind=false}
@@ -373,6 +402,8 @@ local function import_state(saved)
         if type(saved.data.killOrder) ~= "table" or #saved.data.killOrder > 32 then return false end
         for _, target in ipairs(saved.data.killOrder) do if not guid(target) and not icons[target] then return false end end
     end
+    if saved.data.stopping~=nil and (type(saved.data.stopping)~="table" or
+       not guid(saved.data.stopping.targetGuid) or not guid(saved.data.stopping.visitId)) then return false end
     state = saved.data
     return true
 end

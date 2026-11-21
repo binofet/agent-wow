@@ -1,15 +1,13 @@
 package buddyactions
 
 import (
- "context"
- "math"
- "github.com/agent-wow/agent-wow/pkg/buddynav"
- "github.com/agent-wow/agent-wow/pkg/spellcatalog"
+	"context"
+	"github.com/agent-wow/agent-wow/pkg/buddynav"
+	"math"
 )
 
 // Physical route/LoS helpers implement caller-supplied positioning constraints.
 // Intent, Stealth, rank, retries and cast sequencing belong to the Lua policy.
-const crowdControlReach=60
 
 func (s *Service) crowdControlLineOfSightLocked(ctx context.Context, from, to position) bool {
 	ray := s.crowdControlSight
@@ -29,15 +27,15 @@ func (s *Service) crowdControlLineOfSightLocked(ctx context.Context, from, to po
 	return err == nil && directRemainingRoute(from, to, path, 0)
 }
 
-func (s *Service) rangedCastPathLocked(ctx context.Context, spell spellcatalog.Spell, target position, plan func(position, position) []position, usable func(position) bool) []position {
+func (s *Service) rangedPositionPathLocked(ctx context.Context, maximum float64, target position, plan func(position, position) []position) []position {
 	// Leave room for target movement and navmesh endpoint projection. Try the
 	// caster's side of the target first, then angles around a possible obstacle.
-	minRange, maxRange := max(4, spell.MinHostile), spell.MaxHostile-.5
+	minRange, maxRange := math.Min(4, maximum/2), maximum-.5
 	radius := min(maxRange-1, max(minRange+1, distance(s.pos, target)))
 	heading := math.Atan2(float64(s.pos.y-target.y), float64(s.pos.x-target.x))
 	canCast := func(p position) bool {
 		d := distance(p, target)
-		return ctx.Err() == nil && d >= minRange && d <= maxRange && usable(p) && s.crowdControlLineOfSightLocked(ctx, p, target)
+		return ctx.Err() == nil && d >= minRange && d <= maxRange && s.crowdControlLineOfSightLocked(ctx, p, target)
 	}
 	for _, offset := range []float64{0, -math.Pi / 4, math.Pi / 4} {
 		for _, scale := range []float64{1, .75, .5} {
@@ -47,7 +45,7 @@ func (s *Service) rangedCastPathLocked(ctx context.Context, spell spellcatalog.S
 			r := max(minRange+1, radius*scale)
 			goal := position{x: target.x + float32(r*math.Cos(heading+offset)), y: target.y + float32(r*math.Sin(heading+offset)), z: target.z}
 			path := plan(s.pos, goal)
-			if len(path) > 0 && routeRemaining(s.pos, path, 0) <= crowdControlReach && canCast(path[len(path)-1]) {
+			if len(path) > 0 && canCast(path[len(path)-1]) {
 				return path
 			}
 		}
@@ -112,4 +110,3 @@ func sapRearPathValid(from, target position, path []position) bool {
 	}
 	return true
 }
-
