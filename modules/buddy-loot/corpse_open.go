@@ -42,6 +42,7 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		return nil, status.Error(codes.FailedPrecondition, "current body observations required")
 	}
 	out := &lootv1.CorpseObservation{SessionId: s.state.SessionId, SelfGuid: s.selfGUID, Self: w.Self, Actions: a,
+		Owner:   w.Owner,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
 	if s.corpseRequest != nil {

@@ -840,6 +840,7 @@ type CorpseObservation struct {
 	State             *State                 `protobuf:"bytes,10,opt,name=state,proto3" json:"state,omitempty"`
 	Operation         *CorpseOperation       `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`
 	RetiredSources    []uint64               `protobuf:"varint,12,rep,packed,name=retired_sources,json=retiredSources,proto3" json:"retired_sources,omitempty"`
+	Owner             *api.PlayerState       `protobuf:"bytes,13,opt,name=owner,proto3" json:"owner,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -958,6 +959,13 @@ func (x *CorpseObservation) GetRetiredSources() []uint64 {
 	return nil
 }
 
+func (x *CorpseObservation) GetOwner() *api.PlayerState {
+	if x != nil {
+		return x.Owner
+	}
+	return nil
+}
+
 var File_modules_buddy_loot_loot_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_loot_loot_proto_rawDesc = "" +
@@ -1044,7 +1052,7 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x0fwindow_observed\x18\t \x01(\bR\x0ewindowObserved\x12)\n" +
 	"\x10release_observed\x18\n" +
 	" \x01(\bR\x0freleaseObserved\x12\x1a\n" +
-	"\bterminal\x18\v \x01(\bR\bterminal\"\xff\x04\n" +
+	"\bterminal\x18\v \x01(\bR\bterminal\"\xba\x05\n" +
 	"\x11CorpseObservation\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1059,7 +1067,8 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x05state\x18\n" +
 	" \x01(\v2\x1c.warcraftbuddy.loot.v1.StateR\x05state\x12D\n" +
 	"\toperation\x18\v \x01(\v2&.warcraftbuddy.loot.v1.CorpseOperationR\toperation\x12'\n" +
-	"\x0fretired_sources\x18\f \x03(\x04R\x0eretiredSources*\x97\x01\n" +
+	"\x0fretired_sources\x18\f \x03(\x04R\x0eretiredSources\x129\n" +
+	"\x05owner\x18\r \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x05owner*\x97\x01\n" +
 	"\fGatherStatus\x12\x0f\n" +
 	"\vGATHER_NONE\x10\x00\x12\x14\n" +
 	"\x10GATHER_REQUESTED\x10\x01\x12\x16\n" +
@@ -1117,25 +1126,26 @@ var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
 	11, // 6: warcraftbuddy.loot.v1.CorpseObservation.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
 	4,  // 7: warcraftbuddy.loot.v1.CorpseObservation.state:type_name -> warcraftbuddy.loot.v1.State
 	7,  // 8: warcraftbuddy.loot.v1.CorpseObservation.operation:type_name -> warcraftbuddy.loot.v1.CorpseOperation
-	1,  // 9: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
-	12, // 10: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
-	12, // 11: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
-	5,  // 12: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
-	6,  // 13: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
-	13, // 14: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	12, // 15: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
-	4,  // 16: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
-	4,  // 17: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
-	8,  // 18: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
-	7,  // 19: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	7,  // 20: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	12, // 21: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
-	12, // 22: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
-	16, // [16:23] is the sub-list for method output_type
-	9,  // [9:16] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	9,  // 9: warcraftbuddy.loot.v1.CorpseObservation.owner:type_name -> warcraftbuddy.world.v1.PlayerState
+	1,  // 10: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
+	12, // 11: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
+	12, // 12: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
+	5,  // 13: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
+	6,  // 14: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
+	13, // 15: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	12, // 16: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
+	4,  // 17: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
+	4,  // 18: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
+	8,  // 19: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
+	7,  // 20: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	7,  // 21: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	12, // 22: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
+	12, // 23: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
+	17, // [17:24] is the sub-list for method output_type
+	10, // [10:17] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_loot_loot_proto_init() }

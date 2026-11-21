@@ -1542,7 +1542,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ˆ!
+Ã!
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1625,7 +1625,7 @@ request_id (	R	requestId
 window_observed	 (RwindowObserved)
 release_observed
  (RreleaseObserved
-terminal (Rterminal"ÿ
+terminal (Rterminal"º
 CorpseObservation
 
 session_id (	R	sessionId
@@ -1640,7 +1640,8 @@ session_id (	R	sessionId
 state
  (2.warcraftbuddy.loot.v1.StateRstateD
 	operation (2&.warcraftbuddy.loot.v1.CorpseOperationR	operation'
-retired_sources (RretiredSources*—
+retired_sources (RretiredSources9
+owner (2#.warcraftbuddy.world.v1.PlayerStateRowner*—
 GatherStatus
 GATHER_NONE 
 GATHER_REQUESTED

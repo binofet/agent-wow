@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -23,7 +22,6 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 		{"unknown counts do not create a reserve", false, false, true, opcode.CMSGAutostoreLootItem, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
 			_, f, _ := rig(t)
 			world := f.world
 			world.SelfQuestLogKnown = true
@@ -44,6 +42,7 @@ func TestAutomaticLootReservesLastSlotForLiveQuestObjectives(t *testing.T) {
 				items = append(items, lootItem{slot: 1, id: targorrHead, count: 1})
 			}
 			s := NewAutomaticService(f, 1, "session")
+			f.actions.SessionId = "session"
 			now := time.Unix(1000, 0)
 			s.now = func() time.Time { return now }
 			tickCorpseLua(t, s)

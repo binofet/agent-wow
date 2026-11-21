@@ -59,6 +59,11 @@ function M.decide(frame,encounter,quiet,urgent)
  if not o or o.sessionId~=frame.session_id or o.selfGuid~=encounter.selfGuid or
   (frame.input.observationSequences or {}).corpse_loot~=tostring(state.sequence) then return out end
  local a,p,s=o.actions or {},(o.actions or {}).position,o.self or {}
+ local owner=o.owner
+ if owner and owner.present and owner.aliveKnown and owner.alive and owner.unitFlagsKnown and
+  math.floor((owner.unitFlags or 0)/524288)%2==1 then quiet=false end
+ for _,player in pairs(encounter.players or {}) do if player.present and player.aliveKnown and player.alive and player.inCombat==true then quiet=false end end
+ for _,target in pairs(encounter.targets or {}) do if target.present and target.aliveKnown and target.alive and target.engaged==true then quiet=false end end
  local op=o.operation
  local pending=(o.state or {}).pendingCorpseGuid
  if id(pending) then

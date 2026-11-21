@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"

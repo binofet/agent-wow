@@ -189,14 +189,14 @@ func TestNearbyCorpseApproachStopsBeforeOpeningAndFailureReleases(t *testing.T) 
 	f.world.LootableCorpses[0].X = 12
 	enable(t, s)
 	tickCorpseLua(t, s)
-	if current(t, s).Phase != "approaching" || len(f.packets) != 0 {
+	if f.leaseOwner != "" || !f.actions.Moving || current(t, s).PendingCorpseGuid != 0 || len(f.packets) != 0 {
 		t.Fatal("opened distant corpse")
 	}
-	for i := 0; i < 8 && current(t, s).Phase == "approaching"; i++ {
+	for i := 0; i < 8 && len(f.packets) == 0; i++ {
 		advance(200 * time.Millisecond)
 		tickCorpseLua(t, s)
 	}
-	if current(t, s).Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 7 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+	if current(t, s).Phase != "waiting_open" || f.actions.Moving || f.approachCalls != 6 || len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
 		t.Fatalf("approach %+v calls%d packets%v", current(t, s), f.approachCalls, f.packets)
 	}
 	s, f, advance = rig(t)
@@ -206,7 +206,7 @@ func TestNearbyCorpseApproachStopsBeforeOpeningAndFailureReleases(t *testing.T) 
 	f.failApproach = true
 	advance(200 * time.Millisecond)
 	tickCorpseLua(t, s)
-	if len(f.packets) != 0 || f.releases != 1 || current(t, s).PendingCorpseGuid != 0 {
+	if len(f.packets) != 0 || f.releases != 0 || f.leaseOwner != "" || current(t, s).PendingCorpseGuid != 0 {
 		t.Fatal("failed approach retained interaction or wrote loot")
 	}
 }
@@ -272,7 +272,7 @@ func enable(t *testing.T, s *Service) {
 	}
 }
 
-func TestOwnerContextPausesLootAndEnableLastsFourHours(t *testing.T) {
+func TestSharedCorpsePolicyDoesNotDependOnLivingPresentOrNonAFKOwner(t *testing.T) {
 	for _, mode := range []string{"missing", "afk", "dead"} {
 		s, f, _ := rig(t)
 		enable(t, s)
@@ -288,7 +288,7 @@ func TestOwnerContextPausesLootAndEnableLastsFourHours(t *testing.T) {
 			f.world.Owner.Alive = false
 		}
 		tickCorpseLua(t, s)
-		if len(f.packets) != 0 || !current(t, s).Enabled {
+		if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot || !current(t, s).Enabled {
 			t.Fatalf("context %s: %+v", mode, current(t, s))
 		}
 	}
@@ -328,11 +328,11 @@ func openItem(t *testing.T, s *Service) {
 	tickCorpseLua(t, s)
 }
 
-func TestLootRequiresEnableAndNearbyActualCorpse(t *testing.T) {
+func TestSharedCorpsePolicyAlwaysTriesOnlyNearbyActualCorpses(t *testing.T) {
 	s, f, _ := rig(t)
 	tickCorpseLua(t, s)
-	if len(f.packets) != 0 {
-		t.Fatal("disabled loot sent packet")
+	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
+		t.Fatal("ordinary Lua loot incorrectly required an enable command")
 	}
 	for _, change := range []func(*fakeSession){func(f *fakeSession) { f.world.LootableCorpses[0].X = 5 }, func(f *fakeSession) { f.world.LootableCorpses[0].Health = 1 }, func(f *fakeSession) { f.world.LootableCorpses[0].DynamicFlags = 0 }, func(f *fakeSession) { f.world.LootableCorpses[0].Guid = 3 }, func(f *fakeSession) { f.world.LootableCorpses[0].MapId = 1 }, func(f *fakeSession) { f.actions.Position.Known = false }, func(f *fakeSession) { f.world.Owner.UnitFlags |= 0x80000 }} {
 		s, f, _ := rig(t)
@@ -518,8 +518,8 @@ func TestConcurrentStateAndPackets(t *testing.T) {
 
 func TestAutomaticLootPicksPersonalQuestItemWithoutOwner(t *testing.T) {
 	_, f, _ := rig(t)
-	ctx := context.Background()
 	f.world.Owner = nil
+	f.actions.SessionId = "session"
 	s := NewAutomaticService(f, 1, "session")
 	now := time.Unix(1000, 0).Add(5 * time.Hour)
 	s.now = func() time.Time { return now }
@@ -543,7 +543,8 @@ func TestAutomaticLootPicksPersonalQuestItemWithoutOwner(t *testing.T) {
 func TestAutomaticLootRecoversFromCombatAndMaintenance(t *testing.T) {
 	_, f, _ := rig(t)
 	ctx := context.Background()
-	f.world.Owner.UnitFlags |= 0x80000 // Joel's combat does not prevent loot.
+	f.world.Owner.UnitFlags |= 0x80000 // Shared Lua defers to a currently fighting ally.
+	f.actions.SessionId = "session"
 	s := NewAutomaticService(f, 1, "session")
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
@@ -562,6 +563,7 @@ func TestAutomaticLootRecoversFromCombatAndMaintenance(t *testing.T) {
 	}
 	now = now.Add(time.Second)
 	f.world.Self.UnitFlags &^= 0x80000
+	f.world.Owner.UnitFlags &^= 0x80000
 	tickCorpseLua(t, s)
 	if len(f.packets) != 1 || f.packets[0].Opcode != opcode.CMSGLoot {
 		t.Fatal("loot did not resume after combat without a command")
