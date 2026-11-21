@@ -217,7 +217,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 			return false
 		}
 		r.state.AliveObserved = true
-		r.state.Phase = "resting_after_actual_alive_receipt"
+		r.state.Phase = "alive_observed"
 		s.refreshPositionLocked(w)
 		s.stopLocked(ctx)
 		if s.state.MotionUnconfirmed {
@@ -225,26 +225,12 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 			r.state.Reason = "alive_but_stop_unconfirmed"
 			return true
 		}
-		if s.state.CastPending && !s.now().Before(s.castUntil) {
-			s.endRecoveryLocked(ctx, "alive_cast_unconfirmed", "rest_cast_timeout_no_retry")
-			return false
-		}
-		if p.UnitFlagsKnown && p.UnitFlags&0x80000 != 0 {
-			// Existing self preservation takes over immediately after resurrection.
-			s.endRecoveryLocked(ctx, "alive_in_combat", "actual_alive_receipt_defense_priority")
-			return false
-		}
-		manaReady := p.PowerKnown && (p.PowerType != 0 || p.MaxPower > 0 && uint64(p.Power)*100 >= uint64(p.MaxPower)*75)
-		if uint64(p.Health)*100 >= uint64(p.MaxHealth)*90 && manaReady && !s.state.CastPending {
-			r.state.Rested = true
-			s.endRecoveryLocked(ctx, "complete", "actual_alive_and_recovered_health_observed")
-			return false
-		}
-		if !s.now().Before(r.deadline) {
-			s.endRecoveryLocked(ctx, "alive_rest_timeout", "alive_observed_rest_not_complete")
-			return false
-		}
-		return true
+		// Actual life completes this physical corpse operation. Shared Lua
+		// healing/consumables own recuperation, thresholds and interruption;
+		// this lane must not retain an alive character's tick while it waits
+		// for a second native health/mana policy. Other action ledgers remain.
+		s.endRecoveryLocked(ctx, "alive_observed", "actual_alive_receipt_shared_Lua_resource_policy")
+		return false
 	}
 	if r.state.Active && r.state.AliveObserved {
 		// A new actual death during recuperation is a new epoch, not a retry
