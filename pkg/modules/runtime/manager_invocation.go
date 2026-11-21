@@ -167,6 +167,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
+	if legacyBuffEnsureRequest(name, md.Path(), inst, req) {
+		return m.queueLegacyBuffEnsure(ctx, inst, result)
+	}
 	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/HealOnce" {
 		return m.queueLegacyHeal(ctx, inst, result)
 	}
