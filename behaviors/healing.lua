@@ -138,6 +138,7 @@ return {
     -- A transport or effect receipt cannot make a consumed snapshot fresh.
     local view = observation
     observation, sequence = nil, nil
+    if #frame.pending ~= 0 then return {} end
     local target, rank = choose_cast(view, request_pending)
     if view.caster and view.caster.ready == true then request_pending = false end
     if not target then return {} end
