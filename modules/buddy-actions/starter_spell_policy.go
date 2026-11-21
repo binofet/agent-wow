@@ -27,6 +27,9 @@ type starterSpellPolicy struct {
 	failedAuthored         *behavior.Runtime
 	authoredError          string
 	authoredFailedRevision string
+	// Retain one unresolved native receipt across task resets and Lua edits.
+	// New named strikes cannot overwrite it; ordinary healing remains available.
+	uncertainStrike *supportAttempt
 }
 
 // A missing optional export in an attached policy is not an older default.
@@ -69,7 +72,8 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 	p.revision = before.Revision
 	output, err := runtime.EvaluateContext(ctx, input)
 	after := runtime.Status()
-	if err != nil || after.Revision != before.Revision || after.Failures != before.Failures {
+	quarantined := after.Revision != before.Revision || after.Failures != before.Failures
+	if err != nil || quarantined {
 		p.lastError = after.LastError
 		if err != nil {
 			p.lastError = err.Error()
@@ -79,7 +83,7 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 		}
 		// Runtime may restore a last-good source. A named-task decision must
 		// remain refused until the body owner explicitly accepts another edit.
-		if authored != nil {
+		if authored != nil && quarantined {
 			p.failedAuthored, p.authoredError = authored, p.lastError
 			p.authoredFailedRevision = before.Revision
 		}
@@ -104,10 +108,11 @@ func (s *Service) UseHostStarterSpellPolicy() {
 }
 
 type starterSpellDecision struct {
-	kind  string
-	spell spellcatalog.Spell
-	valid bool
-	facts map[string]any
+	kind      string
+	spell     spellcatalog.Spell
+	valid     bool
+	facts     map[string]any
+	selection string
 }
 
 func starterJSON(value proto.Message) (map[string]any, bool) {
@@ -126,6 +131,10 @@ func starterJSON(value proto.Message) (map[string]any, bool) {
 // Ordinary offense readiness deliberately excludes these legacy task owners.
 // No candidate is ranked, scored or given a healing reserve in this adapter.
 func (s *Service) starterSpellFactsLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) (map[string]any, map[uint32]spellcatalog.Spell, bool) {
+	return s.starterSelectionFactsLocked(w, target, targetPosition, "")
+}
+
+func (s *Service) starterSelectionFactsLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position, selection string) (map[string]any, map[uint32]spellcatalog.Spell, bool) {
 	self := w.GetSelf()
 	if self == nil || self.Guid != s.selfGUID || s.selfGUID == 0 || s.sessionID == "" || target == nil || target.Guid == 0 || !self.Present || !self.MapKnown ||
 		!self.PositionKnown || !s.posKnown || !finite(s.pos) || !finite(targetPosition) ||
@@ -164,7 +173,8 @@ func (s *Service) starterSpellFactsLocked(w *worldv1.SnapshotResponse, target *w
 	ranks := map[uint32]spellcatalog.Spell{}
 	for id, rank := range s.learnedContractsLocked() {
 		kind := rank.Capability().Kind
-		if (kind != spellcatalog.Damage && kind != spellcatalog.Heal) || !casterRequirementsObserved(rank, self) {
+		if (selection == "" && kind != spellcatalog.Damage && kind != spellcatalog.Heal ||
+			selection == starterWeaponSelection && !instantWeaponStrike(rank)) || !casterRequirementsObserved(rank, self) {
 			continue
 		}
 		view := encounterSpellMechanics(rank, self)
@@ -176,6 +186,14 @@ func (s *Service) starterSpellFactsLocked(w *worldv1.SnapshotResponse, target *w
 		}
 		view.Available = true
 		view.Ready = s.encounterRankResourcesAvailable(rank, self)
+		if kind == spellcatalog.Damage && s.starterSpells.uncertainStrike != nil {
+			view.Ready = false
+		}
+		if selection == starterWeaponSelection {
+			s.reflectWeaponStrike(view, rank, self)
+			view.Ready = s.starterSpells.uncertainStrike == nil && s.offenseRankReadyLocked(self, rank)
+			view.Available = view.Ready
+		}
 		encoded, valid := starterJSON(view)
 		if !valid {
 			return nil, nil, false
@@ -189,12 +207,37 @@ func (s *Service) starterSpellFactsLocked(w *worldv1.SnapshotResponse, target *w
 		"spellbookRevision":        strconv.FormatUint(s.spellbookRevision, 10),
 		"players":                  map[string]any{guid: selfJSON}, "spells": spells,
 		"lastCast": map[string]any{"targetGuid": strconv.FormatUint(s.state.LastCastTargetGuid, 10), "failure": s.state.LastCastFailure}}
-	return map[string]any{"sessionId": s.sessionID, "selfGuid": guid, "observation": observed,
-		"target": targetJSON, "autoAttackKnown": s.state.KnownAutoAttack}, ranks, true
+	input := map[string]any{"sessionId": s.sessionID, "selfGuid": guid, "observation": observed,
+		"target": targetJSON, "autoAttackKnown": s.state.KnownAutoAttack}
+	if selection != "" {
+		input["selection"] = selection
+		weapon, valid := starterJSON(self.GetMainhand())
+		if !valid {
+			return nil, nil, false
+		}
+		observed["mainhand"] = weapon
+		observed["stealthed"] = s.stealthedLocked()
+	}
+	if op := s.starterSpells.uncertainStrike; op != nil {
+		receipt, valid := starterJSON(&op.view)
+		if !valid {
+			return nil, nil, false
+		}
+		observed["strikeOperation"] = receipt
+	}
+	return input, ranks, true
 }
 
 func (s *Service) starterSpellDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) starterSpellDecision {
-	input, ranks, known := s.starterSpellFactsLocked(w, target, targetPosition)
+	return s.starterSelectionDecisionLocked(ctx, w, target, targetPosition, "")
+}
+
+func (s *Service) starterWeaponDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) starterSpellDecision {
+	return s.starterSelectionDecisionLocked(ctx, w, target, targetPosition, starterWeaponSelection)
+}
+
+func (s *Service) starterSelectionDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position, selection string) starterSpellDecision {
+	input, ranks, known := s.starterSelectionFactsLocked(w, target, targetPosition, selection)
 	if !known {
 		return starterSpellDecision{}
 	}
@@ -215,7 +258,13 @@ func (s *Service) starterSpellDecisionLocked(ctx context.Context, w *worldv1.Sna
 		return starterSpellDecision{}
 	}
 	rank := ranks[selected.SpellID]
-	if selected.Kind == "cast" && (rank.ID == 0 || !s.encounterRankResourcesAvailable(rank, w.Self) ||
+	if selected.Kind == "cast" && selection == starterWeaponSelection &&
+		(!s.offenseRankReadyLocked(w.Self, rank) || !s.strikeTargetReady(target.Guid, rank) ||
+			!offenseLineInRange(s.pos, targetPosition, rank) || rank.Behind && !behindEnemy(s.pos, targetPosition)) {
+		s.starterSpells.lastError = "starter strike is not mechanically available"
+		return starterSpellDecision{}
+	}
+	if selected.Kind == "cast" && (rank.ID == 0 || s.starterSpells.uncertainStrike != nil || selection == "" && !s.encounterRankResourcesAvailable(rank, w.Self) ||
 		distance(s.pos, targetPosition) < rank.MinHostile || distance(s.pos, targetPosition) > rank.MaxHostile) {
 		s.starterSpells.lastError = "starter spell is not mechanically available"
 		return starterSpellDecision{}
@@ -232,16 +281,16 @@ func (s *Service) starterSpellDecisionLocked(ctx context.Context, w *worldv1.Sna
 	if !valid {
 		return starterSpellDecision{}
 	}
-	now, _, valid := s.starterSpellFactsLocked(fresh, current, point)
+	now, _, valid := s.starterSelectionFactsLocked(fresh, current, point, selection)
 	if !valid || !reflect.DeepEqual(input, now) {
 		s.starterSpells.lastError = "starter spell observations changed after policy read"
 		return starterSpellDecision{}
 	}
-	return starterSpellDecision{kind: selected.Kind, spell: rank, valid: true, facts: input}
+	return starterSpellDecision{kind: selected.Kind, spell: rank, valid: true, facts: input, selection: selection}
 }
 
 func (s *Service) starterSpellFactsMatchLocked(decision starterSpellDecision, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, point position) bool {
-	current, _, valid := s.starterSpellFactsLocked(w, target, point)
+	current, _, valid := s.starterSelectionFactsLocked(w, target, point, decision.selection)
 	return valid && decision.valid && reflect.DeepEqual(decision.facts, current)
 }
 

@@ -1,3 +1,27 @@
--- Optional WarcraftBuddyGearLoadouts configuration.
+-- Existing caller-supplied loadouts take precedence over Joel's current defaults.
 -- characterGUID identifies the intended player. tank and dps map equipment
 -- slot numbers to item IDs; 0 means empty. names may supply fallback labels.
+
+WarcraftBuddyLevel40Loadouts = {
+    tank = {[1]=10763,[2]=13088,[3]=7918,[5]=10775,[6]=8140,[7]=7921,[8]=14549,
+        [9]=19581,[10]=13071,[11]=19515,[12]=29158,[15]=16336,[16]=868,[17]=7726,[18]=19564},
+    dps = {[1]=10763,[2]=44213,[3]=7718,[5]=10775,[6]=20125,[7]=10330,[8]=13068,
+        [9]=19581,[10]=7938,[11]=19515,[12]=29158,[15]=16336,[16]=9413,[17]=0,[18]=9400},
+    enchants = {
+        tank = {[16]=2673,[17]=1071,[5]=2659,[9]=2649,[10]=684,[8]=2649,[15]=368,[7]=1843,[18]=663},
+        dps = {[16]=2667,[5]=2661,[9]=2647,[10]=684,[8]=2657,[15]=368,[7]=1843,[18]=663},
+    },
+    scrolls = {
+        tank = {[16]=38925,[17]=38945,[5]=38911,[9]=38902,[10]=38933,[8]=38909,[15]=38940,[7]=15564,[18]=10546},
+        dps = {[16]=38919,[5]=38913,[9]=38897,[10]=38933,[8]=37603,[15]=38940,[7]=15564,[18]=10546},
+    },
+}
+
+if WarcraftBuddyGearLoadouts == nil then
+    WarcraftBuddyGearLoadouts = {
+        characterGUID = "0x0000000000000003",
+        tank = WarcraftBuddyLevel40Loadouts.tank,
+        dps = WarcraftBuddyLevel40Loadouts.dps,
+        enchants = WarcraftBuddyLevel40Loadouts.enchants,
+    }
+end

@@ -16,18 +16,20 @@ import (
 func practiceRig(t *testing.T, class uint32) (*Service, *fakeSession, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
+	s.sessionID = f.party.SessionId
+	useStarterSemanticPolicy(t, s)
 	f.world.Self.X, f.world.Self.Y, f.world.Self.Z = -8933, -136, 81
 	f.world.Self.LevelKnown, f.world.Self.Level, f.world.Self.ClassId = true, 1, class
 	f.world.Self.Health, f.world.Self.MaxHealth = 100, 100
 	f.world.Self.BaseManaKnown, f.world.Self.BaseMana = true, 100
 	f.world.Owner = nil
-	f.world.NearbyCreatures = []*worldv1.CreatureState{{Guid: enemyGUID, Entry: 299, Present: true, MapKnown: true, PositionKnown: true, X: -8930, Y: -136, Z: 81, HealthKnown: true, Health: 55, MaxHealth: 55, AliveKnown: true, Alive: true, LevelKnown: true, Level: 1, CombatReachKnown: true, CombatReach: 1.5}}
+	f.world.NearbyCreatures = []*worldv1.CreatureState{{Guid: enemyGUID, Entry: 299, Present: true, MapKnown: true, PositionKnown: true, X: -8930, Y: -136, Z: 81, HealthKnown: true, Health: 55, MaxHealth: 55, AliveKnown: true, Alive: true, UnitFlagsKnown: true, LevelKnown: true, Level: 1, CombatReachKnown: true, CombatReach: 1.5}}
 	if class == 4 {
 		f.world.Self.PowerType, f.world.Self.Power, f.world.Self.MaxPower = 3, 100, 100
 		f.world.Self.BaseAttackTimeKnown, f.world.Self.BaseAttackTimeMs = true, 1600
 		f.world.Self.CombatReachKnown, f.world.Self.CombatReach = true, 1.5
 		f.world.Self.Mainhand = &worldv1.EquippedWeapon{SlotKnown: true, ItemGuid: 0x4000000000000042, MetadataKnown: true, Entry: 2092, DurabilityKnown: true, Durability: 16, MaxDurability: 16}
-		s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 15, inventory: 13, valid: true}
+		s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 15, inventory: 13, valid: true, damageKnown: true, damageMin: 20, damageMax: 30}
 		learnSpells(s, autoAttack, sinisterStrike)
 	} else {
 		learnSpells(s, fireball)
@@ -176,9 +178,14 @@ func TestPracticeRequiresVerifiedRouteBeforeEvenNearbyMagePull(t *testing.T) {
 }
 
 func finishPracticeCast(s *Service) {
-	p := smiteEvent(true, s.castCount, enemyGUID)
-	binary.LittleEndian.PutUint32(p[5:], s.pendingSpell)
+	spell, target := s.pendingSpell, s.pendingTarget
+	p := smiteEvent(true, s.castCount, target)
+	binary.LittleEndian.PutUint32(p[5:], spell)
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: p})
+	if op := s.pendingExplicitCastLocked(); op != nil && op.view.Capability == offenseCapability && op.view.ServerCastGo {
+		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellnonmeleedamagelog,
+			Payload: exactOffenseDamageLog(s.selfGUID, target, spell, 10)})
+	}
 }
 
 func TestPracticeWaitsForOutOfCombatRegenerationBeforeNextPull(t *testing.T) {

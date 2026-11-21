@@ -54,7 +54,7 @@ func TestInventorySettledCompletedTradeDoesNotBlockFutureUpkeep(t *testing.T) {
 			case "count":
 				f.trade.CompletedTrades = 0
 			case "partner":
-				f.trade.PartnerGuid = 4
+				f.trade.PartnerGuid = 0
 			case "phase":
 				f.trade.Phase = "ACCEPT_SENT"
 			case "junk-awaiting":

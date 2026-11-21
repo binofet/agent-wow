@@ -131,19 +131,31 @@ func fargodeepCharacter(w *worldv1.SnapshotResponse, self uint64) bool {
 	return (self == 1 || self == 4 || self == 5) && safeSelfCombat(w, self) == "" && p.MapId == 0 && p.LevelKnown && p.Level >= 4 && p.Level <= 10 && p.ClassKnown && map[uint64]uint32{1: 5, 4: 8, 5: 4}[self] == p.ClassId && p.MaxHealth > 0 && p.Health <= p.MaxHealth && p.SpeedsKnown && math.Abs(float64(p.RunSpeed)-7) <= .01
 }
 
+func (s *Service) readFargodeepPartyLocked(ctx context.Context) *partyv1.StateResponse {
+	call, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	req, _ := anypb.New(&emptypb.Empty{})
+	result, err := s.session.InvokeModule(call, &modv1.InvokeModuleRequest{Module: "buddy-party", Method: "state", Request: req})
+	p := &partyv1.StateResponse{}
+	if err != nil || result == nil || result.Result == nil || result.Result.UnmarshalTo(p) != nil {
+		return nil
+	}
+	return p
+}
+
 func (s *Service) fargodeepPartyLocked(ctx context.Context, w *worldv1.SnapshotResponse, session string, ready bool, target position) (map[uint64]bool, string) {
+	return s.fargodeepObservedPartyLocked(w, s.readFargodeepPartyLocked(ctx), session, ready, target)
+}
+
+func (s *Service) fargodeepObservedPartyLocked(w *worldv1.SnapshotResponse, p *partyv1.StateResponse, session string, ready bool, target position) (map[uint64]bool, string) {
 	if !fargodeepCharacter(w, s.selfGUID) || len(w.NearbyPlayers) > 64 {
 		return nil, "own_state_unknown_or_unsafe"
 	}
 	if w.Owner != nil && w.Owner.Present {
 		return nil, "owner_returned"
 	}
-	call, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	defer cancel()
-	req, _ := anypb.New(&emptypb.Empty{})
-	result, err := s.session.InvokeModule(call, &modv1.InvokeModuleRequest{Module: "buddy-party", Method: "state", Request: req})
-	p := &partyv1.StateResponse{}
-	if err != nil || result == nil || result.Result == nil || result.Result.UnmarshalTo(p) != nil || p.SessionId != session || p.Group == nil || !p.Group.Known || !p.Group.InGroup || len(p.Group.Members) < 3 || len(p.Group.Members) > 40 {
+
+	if p == nil || p.SessionId != session || p.Group == nil || !p.Group.Known || !p.Group.InGroup || len(p.Group.Members) < 3 || len(p.Group.Members) > 40 {
 		return nil, "current_party_unknown_or_changed"
 	}
 	seen, online := map[uint64]bool{}, map[uint64]bool{}
@@ -498,9 +510,15 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 		s.state.Reason = "fargodeep_prewrite_observations_changed"
 		return false
 	}
-	if ctx.Err() != nil || !f.active || !s.now().Before(f.until) || targetGUID != f.target || !s.state.Assisting || !s.now().Before(s.assistUntil) || s.state.InteractionOwner != "" || s.state.MotionUnconfirmed {
+	until := f.until
+	current := func() bool {
+		return ctx.Err() == nil && f.active && f.until == until && s.now().Before(until) && targetGUID == f.target &&
+			s.state.Assisting && s.now().Before(s.assistUntil) && s.state.InteractionOwner == "" && !s.state.MotionUnconfirmed
+	}
+	if !current() {
 		return refuse()
 	}
+	party := s.readFargodeepPartyLocked(ctx)
 	before, revision, mapID := s.pos, s.positionRevision, s.posMap
 	w, err := s.snapshot(ctx, f.target)
 	if err != nil || !fargodeepCharacter(w, s.selfGUID) || !s.refreshPositionLocked(w) || s.positionRevision != revision || s.posMap != mapID || distance(before, s.pos) > .05 {
@@ -512,7 +530,7 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 	if !active || !f.pulled && f.engager == s.selfGUID && !incomplete || !eligibleFargodeepKobold(c, w.Self.Level) || !known || !fargodeepArea(p) || !fargodeepArea(s.pos) || s.failedAssistTarget == f.target {
 		return refuse()
 	}
-	members, reason := s.fargodeepPartyLocked(ctx, w, f.session, false, p)
+	members, reason := s.fargodeepObservedPartyLocked(w, party, f.session, false, p)
 	if reason != "" || c.DynamicFlags&4 != 0 && c.DynamicFlags&8 == 0 {
 		return refuse()
 	}
@@ -530,7 +548,7 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 		if (movement || w.Self.ClassId == 4) && (f.route == nil || f.routeRevision != s.positionRevision || distance(f.routeExpected, s.pos) > .05 || distance(f.routeTarget, p) > .25 || !movement && !directRemainingRoute(s.pos, p, f.route, f.routeIndex)) {
 			return refuse()
 		}
-		if _, reason = s.fargodeepPartyLocked(ctx, w, f.session, true, p); reason != "" {
+		if _, reason = s.fargodeepObservedPartyLocked(w, party, f.session, true, p); reason != "" {
 			return refuse()
 		}
 		if len(w.NearbyCreatures) > 32 {
@@ -544,6 +562,9 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 			}
 		}
 	}
+	if !current() {
+		return refuse()
+	}
 	if movement {
 		// Only the designated body may walk its already verified current route.
 		// This replaces the normal owner-presence gate, not the map/pose guard.
@@ -554,10 +575,25 @@ func (s *Service) fargodeepObservedActionAllowedLocked(ctx context.Context, targ
 	}
 	self := w.Self
 	if self.ClassId == 4 {
-		if spell != 0 && (!spellFamily(spell, sinisterStrike) || !self.PowerKnown || self.PowerType != 3 || self.Power < s.state.SinisterStrikeEnergyCost) {
-			return false
+		if !s.state.KnownAutoAttack || !s.weaponReady(self) || self.UnitFlags&(0x20000|0x200000) != 0 || !self.BaseAttackTimeKnown ||
+			!self.CombatReachKnown || !c.CombatReachKnown || distance(s.pos, p) > math.Max(5, float64(self.CombatReach+c.CombatReach)+4.0/3.0)-.5 {
+			return refuse()
 		}
-		return s.state.KnownAutoAttack && s.weaponReady(self) && self.UnitFlags&(0x20000|0x200000) == 0 && self.BaseAttackTimeKnown && self.CombatReachKnown && c.CombatReachKnown && distance(s.pos, p) <= math.Max(5, float64(self.CombatReach+c.CombatReach)+4.0/3.0)-.5
+		if spell == 0 {
+			return true
+		}
+		rank := s.learnedContractsLocked()[spell]
+		if !s.starterWeaponMechanicsLocked(w, c, p, rank) {
+			return refuse()
+		}
+		if selected != nil {
+			return selected.kind == "cast" && selected.spell.ID == spell && s.starterSpellFactsMatchLocked(*selected, w, c, p)
+		}
+		decision := s.starterWeaponDecisionLocked(ctx, w, c, p)
+		if !decision.valid || decision.kind != "cast" || decision.spell.ID != spell {
+			return refuse()
+		}
+		return s.fargodeepObservedActionAllowedLocked(ctx, targetGUID, spell, false, &decision)
 	}
 	rank, learned := s.learnedContractsLocked()[spell]
 	cost := spellCost(rank, self)

@@ -26,6 +26,9 @@ const (
 	BuddyLoot_ObserveCorpses_FullMethodName = "/warcraftbuddy.loot.v1.BuddyLoot/ObserveCorpses"
 	BuddyLoot_OpenCorpse_FullMethodName     = "/warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse"
 	BuddyLoot_CloseCorpse_FullMethodName    = "/warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse"
+	BuddyLoot_TakeMoney_FullMethodName      = "/warcraftbuddy.loot.v1.BuddyLoot/TakeMoney"
+	BuddyLoot_TakeSlot_FullMethodName       = "/warcraftbuddy.loot.v1.BuddyLoot/TakeSlot"
+	BuddyLoot_ResumeSource_FullMethodName   = "/warcraftbuddy.loot.v1.BuddyLoot/ResumeSource"
 	BuddyLoot_OnPacket_FullMethodName       = "/warcraftbuddy.loot.v1.BuddyLoot/OnPacket"
 	BuddyLoot_BeforeLogout_FullMethodName   = "/warcraftbuddy.loot.v1.BuddyLoot/BeforeLogout"
 )
@@ -39,6 +42,9 @@ type BuddyLootClient interface {
 	ObserveCorpses(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*CorpseObservation, error)
 	OpenCorpse(ctx context.Context, in *OpenCorpseRequest, opts ...grpc.CallOption) (*CorpseOperation, error)
 	CloseCorpse(ctx context.Context, in *CloseCorpseRequest, opts ...grpc.CallOption) (*CorpseOperation, error)
+	TakeMoney(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error)
+	TakeSlot(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error)
+	ResumeSource(ctx context.Context, in *ResumeSourceRequest, opts ...grpc.CallOption) (*ResumeSourceReceipt, error)
 	OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	BeforeLogout(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
@@ -101,6 +107,36 @@ func (c *buddyLootClient) CloseCorpse(ctx context.Context, in *CloseCorpseReques
 	return out, nil
 }
 
+func (c *buddyLootClient) TakeMoney(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LootMutation)
+	err := c.cc.Invoke(ctx, BuddyLoot_TakeMoney_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyLootClient) TakeSlot(ctx context.Context, in *TakeLootRequest, opts ...grpc.CallOption) (*LootMutation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LootMutation)
+	err := c.cc.Invoke(ctx, BuddyLoot_TakeSlot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyLootClient) ResumeSource(ctx context.Context, in *ResumeSourceRequest, opts ...grpc.CallOption) (*ResumeSourceReceipt, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeSourceReceipt)
+	err := c.cc.Invoke(ctx, BuddyLoot_ResumeSource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *buddyLootClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -130,6 +166,9 @@ type BuddyLootServer interface {
 	ObserveCorpses(context.Context, *emptypb.Empty) (*CorpseObservation, error)
 	OpenCorpse(context.Context, *OpenCorpseRequest) (*CorpseOperation, error)
 	CloseCorpse(context.Context, *CloseCorpseRequest) (*CorpseOperation, error)
+	TakeMoney(context.Context, *TakeLootRequest) (*LootMutation, error)
+	TakeSlot(context.Context, *TakeLootRequest) (*LootMutation, error)
+	ResumeSource(context.Context, *ResumeSourceRequest) (*ResumeSourceReceipt, error)
 	OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error)
 	BeforeLogout(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedBuddyLootServer()
@@ -156,6 +195,15 @@ func (UnimplementedBuddyLootServer) OpenCorpse(context.Context, *OpenCorpseReque
 }
 func (UnimplementedBuddyLootServer) CloseCorpse(context.Context, *CloseCorpseRequest) (*CorpseOperation, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseCorpse not implemented")
+}
+func (UnimplementedBuddyLootServer) TakeMoney(context.Context, *TakeLootRequest) (*LootMutation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TakeMoney not implemented")
+}
+func (UnimplementedBuddyLootServer) TakeSlot(context.Context, *TakeLootRequest) (*LootMutation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TakeSlot not implemented")
+}
+func (UnimplementedBuddyLootServer) ResumeSource(context.Context, *ResumeSourceRequest) (*ResumeSourceReceipt, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResumeSource not implemented")
 }
 func (UnimplementedBuddyLootServer) OnPacket(context.Context, *v1.WorldPacket) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OnPacket not implemented")
@@ -274,6 +322,60 @@ func _BuddyLoot_CloseCorpse_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BuddyLoot_TakeMoney_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TakeLootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyLootServer).TakeMoney(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyLoot_TakeMoney_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyLootServer).TakeMoney(ctx, req.(*TakeLootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyLoot_TakeSlot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TakeLootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyLootServer).TakeSlot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyLoot_TakeSlot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyLootServer).TakeSlot(ctx, req.(*TakeLootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyLoot_ResumeSource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeSourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyLootServer).ResumeSource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyLoot_ResumeSource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyLootServer).ResumeSource(ctx, req.(*ResumeSourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BuddyLoot_OnPacket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(v1.WorldPacket)
 	if err := dec(in); err != nil {
@@ -336,6 +438,18 @@ var BuddyLoot_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CloseCorpse",
 			Handler:    _BuddyLoot_CloseCorpse_Handler,
+		},
+		{
+			MethodName: "TakeMoney",
+			Handler:    _BuddyLoot_TakeMoney_Handler,
+		},
+		{
+			MethodName: "TakeSlot",
+			Handler:    _BuddyLoot_TakeSlot_Handler,
+		},
+		{
+			MethodName: "ResumeSource",
+			Handler:    _BuddyLoot_ResumeSource_Handler,
 		},
 		{
 			MethodName: "OnPacket",

@@ -52,6 +52,11 @@ func (s *Service) portalSightingPolicyLocked(w *worldv1.SnapshotResponse, now ti
 }
 
 func (s *Service) portalPolicyLocked(w *worldv1.SnapshotResponse, now time.Time) portalFollowPolicy {
+	intent := s.legacyPortalIntentLocked(now) || s.currentPortalGoalLocked(s.portalGoal, w)
+	return s.portalPolicyWithIntentLocked(w, now, intent)
+}
+
+func (s *Service) portalPolicyWithIntentLocked(w *worldv1.SnapshotResponse, now time.Time, intent bool) portalFollowPolicy {
 	f := s.followPortal
 	input := s.portalPositionPolicyInputLocked(w, now, "portal_follow", f.ground)
 	if input == nil || f.portal.trigger == 0 {
@@ -64,7 +69,7 @@ func (s *Service) portalPolicyLocked(w *worldv1.SnapshotResponse, now time.Time)
 		"followRevision": strconv.FormatUint(f.followRevision, 10), "currentFollowRevision": strconv.FormatUint(s.followRevision, 10),
 		"ownerGuid": strconv.FormatUint(w.GetOwner().Guid, 10), "sourceMapId": f.portal.source,
 		"destinationMapId": f.portal.destination, "currentMapId": w.GetSelf().MapId, "triggerId": f.portal.trigger,
-		"following": s.state.Following, "ownerAbsent": !w.GetOwner().Present, "catchingUp": f.catchingUp,
+		"following": intent, "ownerAbsent": !w.GetOwner().Present, "catchingUp": f.catchingUp,
 		"sightingAgeKnown": seenKnown, "sightingAgeMs": seenAge,
 		"disappearanceAgeKnown": lostKnown, "disappearanceAgeMs": lostAge,
 	}

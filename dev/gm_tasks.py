@@ -258,7 +258,9 @@ class Host:
         selection=dict(known=world['self'].get('targetKnown') is True,targetGuid=str(world['self'].get('targetGuid','0')),sessionId=gm['sessionId'],source='server_world_target')
         if self.data.get('selection',{}).get('sessionId')==gm['sessionId']:
             selection=dict(self.data['selection'],observedTargetKnown=selection['known'],observedTargetGuid=selection['targetGuid'])
-        route_target=self.goal.get('walkTarget') or self.goal.get('destination') or destination
+        # Walking observations are requested only by an explicit walking task.
+        # A GM teleport has no physical corridor or whole-journey distance cap.
+        route_target=self.goal.get('walkTarget')
         route=self.route(self.rpc,gm,route_target)
         for member in members:
             rpc=self.member_rpcs.get(member['guid'])

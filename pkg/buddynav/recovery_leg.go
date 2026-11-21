@@ -42,7 +42,19 @@ func PlanLegContext(ctx context.Context, dataDir string, mapID uint32, start, de
 	return planLegContext(ctx, dataDir, mapID, start, destination, false)
 }
 
-func planLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point, reclaimDetour bool) (points []Point, err error) {
+// PlanRecoveryLegRangeContext applies the caller's requested arrival radius to
+// the same measured floor/collision search; it never chooses a gameplay range.
+func PlanRecoveryLegRangeContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point, arrival float64) ([]Point, error) {
+	if math.IsNaN(arrival) || math.IsInf(arrival, 0) || arrival <= 0 || arrival > RecoveryMaxTargetDistance {
+		return nil, errors.New("finite physical arrival radius required")
+	}
+	return planLegRangeContext(ctx, dataDir, mapID, start, destination, true, arrival)
+}
+
+func planLegContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point, reclaimDetour bool) ([]Point, error) {
+	return planLegRangeContext(ctx, dataDir, mapID, start, destination, reclaimDetour, reclaimDetourMaxDistance)
+}
+func planLegRangeContext(ctx context.Context, dataDir string, mapID uint32, start, destination Point, reclaimDetour bool, arrival float64) (points []Point, err error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	defer func() {
@@ -91,7 +103,7 @@ func planLegContext(ctx context.Context, dataDir string, mapID uint32, start, de
 	points, err = recoveryLeg(ctx, p, w, start, destination, physical)
 	var ledge *physicalDiscontinuity
 	if reclaimDetour && errors.As(err, &ledge) {
-		if path := planReclaimDetour(ctx, w, start, destination, physical); path != nil {
+		if path := planRangeDetour(ctx, w, start, destination, arrival, physical); path != nil {
 			return path, nil
 		}
 		if ctx.Err() != nil {
@@ -104,6 +116,13 @@ func planLegContext(ctx context.Context, dataDir string, mapID uint32, start, de
 // The candidate height is a search seed. The normal planner must bind the
 // endpoint to a real surface and prove the entire path before it can be used.
 func planReclaimDetour(ctx context.Context, w mapWindow, start, corpse Point, physical func(Point) ([]Point, error)) []Point {
+	return planRangeDetour(ctx, w, start, corpse, reclaimDetourMaxDistance, physical)
+}
+func planRangeDetour(ctx context.Context, w mapWindow, start, corpse Point, arrival float64, physical func(Point) ([]Point, error)) []Point {
+	radius := arrival - EndpointTolerance
+	if radius <= 0 {
+		radius = arrival / 2
+	}
 	heading := math.Atan2(float64(start.Y-corpse.Y), float64(start.X-corpse.X))
 	for _, turn := range [...]float64{0, -math.Pi / 3, math.Pi / 3} {
 		if ctx.Err() != nil {
@@ -111,8 +130,8 @@ func planReclaimDetour(ctx context.Context, w mapWindow, start, corpse Point, ph
 		}
 		angle := heading + turn
 		goal := Point{
-			X: corpse.X + float32(reclaimDetourRadius*math.Cos(angle)),
-			Y: corpse.Y + float32(reclaimDetourRadius*math.Sin(angle)),
+			X: corpse.X + float32(radius*math.Cos(angle)),
+			Y: corpse.Y + float32(radius*math.Sin(angle)),
 			Z: corpse.Z,
 		}
 		if !w.contains(goal) {
@@ -123,7 +142,7 @@ func planReclaimDetour(ctx context.Context, w mapWindow, start, corpse Point, ph
 			return nil
 		}
 		if err == nil && validRecoveryLeg(path, w, start, goal, corpse) &&
-			distance(path[len(path)-1], corpse) <= reclaimDetourMaxDistance {
+			distance(path[len(path)-1], corpse) <= arrival {
 			return path
 		}
 	}

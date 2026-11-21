@@ -19,6 +19,7 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 	t.Helper()
 	class := map[uint64]uint32{1: 5, 4: 8, 5: 4}[guid]
 	s, f, _, advance := selfDefenseRig(t, class)
+	useStarterSemanticPolicy(t, s)
 	s.selfGUID = guid
 	f.world.Self.Guid = guid
 	f.world.Self.UnitFlags = 0
@@ -29,6 +30,9 @@ func fargodeepRig(t *testing.T, guid uint64) (*Service, *fakeSession, *worldv1.C
 	f.world.Self.MaxPower = 128
 	if class == 4 {
 		f.world.Self.PowerType = 3
+		proof := s.weapons[2092]
+		proof.damageKnown, proof.damageMin, proof.damageMax = true, 20, 30
+		s.weapons[2092] = proof
 	}
 	f.world.SelfQuestLogKnown = true
 	f.world.SelfQuestLogRevision = 3
@@ -547,7 +551,7 @@ func TestFargodeepRogueRechecksActualEnergyAfterFacing(t *testing.T) {
 				}
 			}
 			s.Tick(context.Background())
-			if got := state(t, s); countPackets(f, opcode.CMSGAttackswing) != 1 || countPackets(f, opcode.CMSGCastSpell) != 0 || got.AssistAttempts != 0 {
+			if got := state(t, s); countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 || got.AssistAttempts != 0 {
 				t.Fatal(got, f.packets)
 			}
 		})
@@ -638,7 +642,7 @@ func TestFargodeepOrdinaryPatrolCanPullWithVerifiedCurrentEndpoint(t *testing.T)
 					wantPlans = 1
 				}
 				if plans != wantPlans || got.AssistAttempts == 0 && countPackets(f, opcode.CMSGAttackswing) == 0 || !got.Fargodeep.Active {
-					t.Fatal(got, plans, f.packets)
+					t.Fatalf("state=%v plans=%d packets=%v starterRevision=%s starterError=%q", got, plans, f.packets, s.starterSpells.revision, s.starterSpells.lastError)
 				}
 			})
 		}
