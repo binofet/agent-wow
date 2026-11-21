@@ -115,7 +115,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.supportSnapshotLocked(w)
 	s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
-	out.Navigation = &actionsv1.NavigationObservation{FollowRevision: s.followRevision, FollowFormationSupported: s.navDataDir != "", OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
+	out.Navigation = &actionsv1.NavigationObservation{FollowRevision: s.followRevision, GroundNavigationConfigured: s.navDataDir != "", FollowFormationSupported: true, OwnerArrival: s.followNav.ownerArrival, FollowOwner: encounterFollowOwner(w.GetOwner()), BodyMovementSupported: true, Following: s.state.Following,
 		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
