@@ -84,7 +84,7 @@ func TestCastSpellLearnsNewGroundImplicitAndUncataloguedSpellsInRunningActor(t *
 		if _, err = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: genericGo(s, id, r.Targets)}); err != nil {
 			t.Fatal(err)
 		}
-		if id == 10 { // Blizzard keeps channel custody after GO, then observed end resolves.
+		if id == 10 || id == 4000000000 { // Known and newly observed channels keeps channel custody after GO, then observed end resolves.
 			_, _ = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.MSGChannelStart, Payload: selfCastChannelPacket(s.selfGUID, id, 8000)})
 			_, _ = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.MSGChannelUpdate, Payload: selfCastChannelPacket(s.selfGUID, 0)})
 		}

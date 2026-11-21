@@ -81,7 +81,7 @@ func TestPolicyGenericSpellLearnsAndCastsGroundImplicitAndUnknownInSameBody(t *t
 		if len(cb.writes[i].Payload) != wantLen || binary.LittleEndian.Uint32(cb.writes[i].Payload[1:]) != id {
 			t.Fatal(cb.writes[i])
 		}
-		runtimeGenericGo(native, cb.writes[i].Payload[0], id, id == 10)
+		runtimeGenericGo(native, cb.writes[i].Payload[0], id, id == 10 || id == 4000000000)
 		// Existing observation/trailer stream delivers the real terminal execution
 		// receipt and clears the ledger without inventing damage/channel effects.
 		_, _ = native.EncounterObservation(context.Background(), &emptypb.Empty{})

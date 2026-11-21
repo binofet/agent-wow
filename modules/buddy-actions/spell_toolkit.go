@@ -38,7 +38,7 @@ func completeSpellbook(p []byte) (map[uint32]bool, error) {
 	for i := 0; i < count; i++ {
 		at := 3 + i*6
 		id := binary.LittleEndian.Uint32(p[at:])
-		if id == 0 || id > 0x7fffffff || binary.LittleEndian.Uint16(p[at+4:]) != 0 {
+		if id == 0 || binary.LittleEndian.Uint16(p[at+4:]) != 0 {
 			return nil, bad
 		}
 		out[id] = true
