@@ -113,6 +113,7 @@ local function combat_queue(input)
         if not row or added[target] then return end
         added[target] = true
         result.queue[#result.queue+1] = {targetGuid=target, engaged=row.engaged, protected=row.protected,
+                                      encounterScope=row.engaged and "active_encounter" or "future_pull",
                                       reason=row.reason, burstIntent=row.burstIntent}
         if not result.focusGuid and row.engaged and not row.protected then
             result.focusGuid, result.burstIntent = target, row.burstIntent
@@ -135,30 +136,37 @@ local function combat_queue(input)
         end
         for _, row in ipairs(urgent) do append(row.targetGuid) end
     end
-    local explicit = false
-    for _, target in ipairs(input.explicitOrder or {}) do
-        if candidates[target] then explicit = true end
-        append(target)
-    end
-    if not explicit then append(input.ownerFocus) end
-    local current = candidates[input.currentFocus]
-    if not result.focusGuid and current and current.engaged and not current.protected then
-        for _, next_target in ipairs(rows) do
-            if next_target.engaged and not next_target.protected then
-                local saved = next_target.rate * current.seconds - current.rate * next_target.seconds
-                -- Switching time is supplied by the caller. When only HP is
-                -- known, both kill estimates are relative, so omit its cost.
-                local switch = input.switchSeconds
-                local estimated_time = positive_number(input.partyDPS) or
-                    positive_number(input.targets[current.targetGuid].killSeconds) and
-                    positive_number(input.targets[next_target.targetGuid].killSeconds)
-                if next_target ~= current and estimated_time and positive_number(switch)
-                   and saved <= switch * aggregate then append(current.targetGuid) end
-                break
+    -- Keep one always-present queue, but finish the witnessed encounter
+    -- before planning the next pull. A nearby/marked candidate is not engaged.
+    for _, active in ipairs({true,false}) do
+        local explicit = false
+        for _, target in ipairs(input.explicitOrder or {}) do
+            local row = candidates[target]
+            if row and row.engaged == active then
+                if not row.protected then explicit = true end
+                append(target)
             end
         end
+        local owner = candidates[input.ownerFocus]
+        if not explicit and owner and owner.engaged == active then append(input.ownerFocus) end
+        local current = candidates[input.currentFocus]
+        if active and not result.focusGuid and current and current.engaged and not current.protected then
+            for _, next_target in ipairs(rows) do
+                if next_target.engaged and not next_target.protected then
+                    local saved = next_target.rate * current.seconds - current.rate * next_target.seconds
+                    -- Only observed estimates justify a switching-time penalty.
+                    local switch = input.switchSeconds
+                    local estimated_time = positive_number(input.partyDPS) or
+                        positive_number(input.targets[current.targetGuid].killSeconds) and
+                        positive_number(input.targets[next_target.targetGuid].killSeconds)
+                    if next_target ~= current and estimated_time and positive_number(switch)
+                       and saved <= switch * aggregate then append(current.targetGuid) end
+                    break
+                end
+            end
+        end
+        for _, row in ipairs(rows) do if row.engaged == active then append(row.targetGuid) end end
     end
-    for _, row in ipairs(rows) do append(row.targetGuid) end
     return result
 end
 
