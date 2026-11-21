@@ -186,8 +186,9 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			phase = "finishing_current_fight_to_goal"
 		}
 		s.state.PracticePhase = phase
+		session, guid, until, targetGUID := s.sessionID, s.selfGUID, s.practiceUntil, s.practiceTarget
 		defer func() {
-			if s.state.Practicing {
+			if s.state.Practicing && s.sessionID == session && s.selfGUID == guid && s.practiceUntil == until && s.practiceTarget == targetGUID {
 				s.state.PracticePhase = phase
 			}
 		}()
@@ -301,51 +302,12 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		}
 		return
 	}
-	standRange := float64(3.5)
-	if self.ClassId != 4 {
-		standRange = 25
-	}
-	needsApproach := distance(s.pos, targetPosition) > standRange
-	if s.practicePullStarted && !needsApproach {
-		s.practiceRoute = nil
-	}
-	if !s.practicePullStarted || needsApproach {
-		if s.practiceRoute == nil || distance(s.practiceRouteTarget, targetPosition) > 2 {
-			s.stopLocked(ctx)
-			if s.practiceReplans >= 3 {
-				s.stopPracticeLocked(ctx, "target_moved_beyond_route_budget")
-				return
-			}
-			path, err := s.navigationPath(ctx, s.navDataDir, s.pos, targetPosition)
-			if err != nil {
-				s.state.NavAvailable, s.state.NavReason = false, navigationDiagnostic(err, s.navDataDir)
-				s.stopPracticeLocked(ctx, "navigation_unavailable")
-				return
-			}
-			s.state.NavAvailable, s.state.NavReason = true, "client_navmesh_route_verified"
-			s.practiceRoute, s.practiceRouteIndex, s.practiceRouteTarget = path, 0, targetPosition
-			s.practiceReplans++
-		}
-	}
-	if needsApproach || s.practiceRoute != nil && (routeRemaining(s.pos, s.practiceRoute, s.practiceRouteIndex) > standRange || !directRemainingRoute(s.pos, targetPosition, s.practiceRoute, s.practiceRouteIndex)) {
-		if !s.stopAutoAttackLocked(ctx) {
-			return
-		}
-		if s.practiceRouteIndex >= len(s.practiceRoute) {
-			s.stopPracticeLocked(ctx, "navigation_ended_outside_range")
-			return
-		}
-		if !s.navigationStepLocked(ctx, s.practiceRoute, &s.practiceRouteIndex) {
-			s.stopPracticeLocked(ctx, "navigation_step_failed")
-			return
-		}
-		s.state.PracticePhase = "approaching_observed_wolf_on_navmesh"
+	var arrived bool
+	w, target, targetPosition, arrived = s.practiceApproachLocked(ctx, w, target, targetPosition)
+	if !arrived {
 		return
 	}
-	if !s.stopLocked(ctx) {
-		s.stopPracticeLocked(ctx, "movement_stop_unconfirmed")
-		return
-	}
+	self = w.Self
 	if !s.practicePullStarted {
 		// Recheck the pull prerequisites after approach/plan time; a previously
 		// healthy ready observation does not authorize a later weakened pull.

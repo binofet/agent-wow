@@ -821,4 +821,4 @@ return {decide=decide, on_event=on_event, export_state=export_state, import_stat
             if type(input)~="table" then return encounter_disposal.decide(input) end
             return encounter_disposal.classify(input.mode,input.item,input.context,encounter_gear)
         end,
-        starter_spell=starter_spells and function(input) return starter_spells.decide(input,intent.damage) end}
+        starter_spell=starter_spells and function(input) return starter_spells.decide(input,intent.damage,encounter_movement) end}

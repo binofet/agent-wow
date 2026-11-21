@@ -29,8 +29,15 @@ func lookupPracticeRig(t *testing.T) (*Service, *fakeSession, func(time.Duration
 	f.world.NearbyCreatures = lookupDiscovery(target)
 	f.lookupCreatures = map[uint64]*worldv1.CreatureState{target.Guid: target}
 	s.Tick(context.Background())
-	if !s.state.Moving || s.practiceTarget != target.Guid || countPackets(f, opcode.CMSGCastSpell) != 0 || len(f.lookups) != 0 {
+	if !s.state.Moving || s.practiceTarget != target.Guid || countPackets(f, opcode.CMSGCastSpell) != 0 {
 		t.Fatal("initial selection did not use bounded discovery", s.stateLocked(), f.packets, f.lookups)
+	}
+	// After bounded discovery selects the wolf, policy and movement callbacks
+	// revalidate that exact target; they must never discover a different GUID.
+	for _, guid := range f.lookups {
+		if guid != target.Guid {
+			t.Fatal("initial selected-target validation queried an undiscovered target", guid)
+		}
 	}
 	f.world.NearbyCreatures = lookupDiscovery(nil)
 	return s, f, advance, target
