@@ -172,6 +172,7 @@ type Service struct {
 	buffAuraRevision, buffSequence       uint64
 	buffOp                               *buffAttempt
 	transportSequence                    uint64
+	lastTransportError                   error
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -792,7 +793,9 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 		sendCtx = modcb.ForwardPolicySpell(ctx)
 	}
 	s.transportSequence++
+	s.lastTransportError = nil
 	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: op, Payload: payload}); err != nil {
+		s.lastTransportError = err
 		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: !modcb.PacketWasNotDispatched(err)}
 		s.state.Reason = "transport_error_outcome_unconfirmed"
 		// Only the exact operation's caller can fence its uncertain physical

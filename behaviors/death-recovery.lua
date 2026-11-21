@@ -62,6 +62,7 @@ function M.decide(frame,obs,sequence)
         return {phase='release_spirit',action=action('release_spirit')}
     end
     state.ghostAt=state.ghostAt or now
+    if r.ghostMovementSupported==true and r.motionPending==true and r.active~=true and (obs.navigation or {}).motionUnconfirmed~=true then return stop('graveyard_stationary_baseline_stop') end
     if r.corpseQueryKnown~=true then
         if r.corpseQueryPending==true or state.query_corpse then return {phase='waiting_for_actual_corpse_response'} end
         state.query_corpse=true

@@ -141,6 +141,10 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 	r.lifeKnown, r.lastObservedAlive = true, p.Alive
 	if p.Alive && r.state.DeathEpoch != 0 {
 		r.state.AliveObserved = true
+		if r.token == "" {
+			r.state.Phase = "alive_observed"
+			r.state.Reason = "actual_alive_receipt_shared_Lua_resource_policy"
+		}
 	}
 	if !p.Alive && p.PlayerFlags&ghostFlag != 0 {
 		r.state.GhostObserved = true
@@ -149,6 +153,12 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 		}
 	}
 	r.state.GhostMovementSupported = ghostSelf(w, s.selfGUID) && r.graveyardPoseObserved && !s.clientControlLost && !s.clientControlRestoring
+	// Fresh authoritative graveyard correction settles old unknown motion; it
+	// does not send or resume movement. Lua still requests any required STOP.
+	if r.state.GhostMovementSupported && s.state.MotionUnconfirmed && (p.PositionRevision != s.positionRevision || p.MapId != s.posMap) && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
+		s.refreshPositionLocked(w)
+	}
+	r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
 	r.state.OwnCorpse = nil
 	if c := w.OwnCorpse; c != nil {
 		r.state.OwnCorpse = &actionsv1.RecoveryCorpse{Guid: c.Guid, OwnerGuid: c.OwnerGuid, Present: c.Present, FlagsKnown: c.FlagsKnown, Flags: c.Flags,

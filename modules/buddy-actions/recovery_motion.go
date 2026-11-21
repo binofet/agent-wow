@@ -17,7 +17,7 @@ import (
 // ApproachCorpse executes one verified physical route step toward this death's
 // exact server-queried corpse location. Lua chooses range, continuation, retry,
 // stopping and whether to reclaim; this method never runs a recovery loop.
-func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproachRequest) (*actionsv1.State, error) {
+func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproachRequest) (out *actionsv1.State, resultErr error) {
 	if q == nil || q.SessionId == "" || q.SelfGuid == 0 || q.DeathEpoch == 0 || q.ExpectedPositionRevision == 0 ||
 		!q.Stop && (q.CorpseQueryRevision == 0 || math.IsNaN(float64(q.RangeYards)) || math.IsInf(float64(q.RangeYards), 0) || q.RangeYards <= 0) {
 		return nil, status.Error(codes.InvalidArgument, "current body/death/pose and exact query/range required")
@@ -27,6 +27,12 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before := s.transportSequence
+	defer func() {
+		if resultErr == nil && s.transportSequence > before && modcb.PacketWasNotDispatched(s.lastTransportError) {
+			resultErr = s.lastTransportError
+		}
+	}()
 	if s.closed || q.SessionId != s.sessionID || q.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "corpse approach body/session changed")
 	}
@@ -91,7 +97,7 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		}
 		fresh, e := s.snapshot(ctx)
 		if e != nil || !ghostSelf(fresh, s.selfGUID) || fresh.Self.MapId != w.Self.MapId || fresh.Self.PositionRevision != revision || r.state.DeathEpoch != q.DeathEpoch || r.state.CorpseQueryRevision != q.CorpseQueryRevision || s.clientControlLost || s.clientControlRestoring {
-			r.path = nil
+			s.finishRecoveryMotionLocked(call, "route_refused", "ghost/query changed during route planning")
 			return s.stateLocked(), status.Error(codes.FailedPrecondition, "ghost/query changed during route planning")
 		}
 		r.path, r.index, r.mapID, r.revision, r.expected = path, 0, w.Self.MapId, revision, from
@@ -107,6 +113,9 @@ func (s *Service) ApproachCorpse(ctx context.Context, q *actionsv1.CorpseApproac
 		r.index = index
 		r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
 		r.state.Reason = "route_step_not_completed"
+		if !s.state.Moving && !s.state.MotionUnconfirmed {
+			s.finishRecoveryMotionLocked(call, "route_refused", "route_step_not_completed")
+		}
 		return s.stateLocked(), nil
 	}
 	r.expected = s.pos

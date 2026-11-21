@@ -29,8 +29,7 @@ func TestPostRecoveryActualLifeRetiresOnlyPhysicalCustody(t *testing.T) {
 }
 
 func TestPostRecoveryUnknownStopWaitsForActualFreshPose(t *testing.T) {
-	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	s, f := postRecoveryMotionRig(t)
 	f.world.Self.Alive, f.world.Self.Health = true, 10
 	f.world.Self.Power = 0
 	s.state.Moving = true
@@ -55,8 +54,7 @@ func TestPostRecoveryUnknownStopWaitsForActualFreshPose(t *testing.T) {
 }
 
 func TestPostRecoveryPredispatchStopRefusalRetainsCustodyForFreshRetry(t *testing.T) {
-	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	s, f := postRecoveryMotionRig(t)
 	f.world.Self.Alive, f.world.Self.Health = true, 10
 	s.state.Moving, f.failClock = true, true
 	s.Tick(context.Background())
@@ -74,8 +72,7 @@ func TestPostRecoveryPredispatchStopRefusalRetainsCustodyForFreshRetry(t *testin
 }
 
 func TestPostRecoveryControlReturnReconcilesBeforeOwnedStop(t *testing.T) {
-	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	s, f := postRecoveryMotionRig(t)
 	f.world.Self.Alive, f.world.Self.Health = true, 10
 	s.clientControlLost = true
 	s.Tick(context.Background())
@@ -91,4 +88,21 @@ func TestPostRecoveryControlReturnReconcilesBeforeOwnedStop(t *testing.T) {
 	if s.clientControlRestoring || s.recovery.state.Active || s.state.InteractionOwner != "" || s.state.MotionUnconfirmed {
 		t.Fatal("recovery prevented normal fresh control reconciliation", s.stateLocked())
 	}
+}
+
+// These checks own real physical ghost movement, not an obsolete native
+// release-controller lease. The shared Lua policy starts the exact route.
+func postRecoveryMotionRig(t *testing.T) (*Service, *fakeSession) {
+	t.Helper()
+	s, f, _ := recoveryRig(t)
+	tickDeathLua(t, s)
+	ghostAt(f, 0)
+	tickDeathLua(t, s)
+	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
+	tickDeathLua(t, s)
+	if !s.recoveryOwnsLocked() || !s.state.Moving {
+		t.Fatal("no actual recovery motion", s.stateLocked())
+	}
+	f.packets = nil
+	return s, f
 }
