@@ -2940,6 +2940,381 @@ func (x *SnapshotResponse) GetVisitRevision() uint64 {
 	return 0
 }
 
+// Passive server combat packet evidence for exactly one authenticated session.
+// Sequences are session-local and retained without a packet-count eviction cap.
+type CombatEventsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AfterSequence uint64                 `protobuf:"varint,2,opt,name=after_sequence,json=afterSequence,proto3" json:"after_sequence,omitempty"`
+	// Page size only; zero uses 128. This never limits journal retention.
+	Limit         uint32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CombatEventsRequest) Reset() {
+	*x = CombatEventsRequest{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CombatEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CombatEventsRequest) ProtoMessage() {}
+
+func (x *CombatEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CombatEventsRequest.ProtoReflect.Descriptor instead.
+func (*CombatEventsRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CombatEventsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CombatEventsRequest) GetAfterSequence() uint64 {
+	if x != nil {
+		return x.AfterSequence
+	}
+	return 0
+}
+
+func (x *CombatEventsRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type CombatEvent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Sequence         uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ReceivedAtUnixMs uint64                 `protobuf:"varint,2,opt,name=received_at_unix_ms,json=receivedAtUnixMs,proto3" json:"received_at_unix_ms,omitempty"`
+	Opcode           uint32                 `protobuf:"varint,3,opt,name=opcode,proto3" json:"opcode,omitempty"`
+	// melee_damage, spell_damage, heal, cast_start, cast_go, cast_failure,
+	// death, or unknown. cast_go means launched, never a confirmed effect.
+	Kind        string `protobuf:"bytes,4,opt,name=kind,proto3" json:"kind,omitempty"`
+	SourceGuid  uint64 `protobuf:"varint,5,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
+	TargetGuid  uint64 `protobuf:"varint,6,opt,name=target_guid,json=targetGuid,proto3" json:"target_guid,omitempty"`
+	SpellId     uint32 `protobuf:"varint,7,opt,name=spell_id,json=spellId,proto3" json:"spell_id,omitempty"`
+	AmountKnown bool   `protobuf:"varint,8,opt,name=amount_known,json=amountKnown,proto3" json:"amount_known,omitempty"`
+	Amount      uint32 `protobuf:"varint,9,opt,name=amount,proto3" json:"amount,omitempty"`
+	ResultKnown bool   `protobuf:"varint,10,opt,name=result_known,json=resultKnown,proto3" json:"result_known,omitempty"`
+	Result      uint32 `protobuf:"varint,11,opt,name=result,proto3" json:"result,omitempty"`
+	// Exact received game packet body, including unsupported/malformed bodies.
+	RawPayload    []byte `protobuf:"bytes,12,opt,name=raw_payload,json=rawPayload,proto3" json:"raw_payload,omitempty"`
+	Malformed     bool   `protobuf:"varint,13,opt,name=malformed,proto3" json:"malformed,omitempty"`
+	Detail        string `protobuf:"bytes,14,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CombatEvent) Reset() {
+	*x = CombatEvent{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CombatEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CombatEvent) ProtoMessage() {}
+
+func (x *CombatEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CombatEvent.ProtoReflect.Descriptor instead.
+func (*CombatEvent) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CombatEvent) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetReceivedAtUnixMs() uint64 {
+	if x != nil {
+		return x.ReceivedAtUnixMs
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetOpcode() uint32 {
+	if x != nil {
+		return x.Opcode
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CombatEvent) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetTargetGuid() uint64 {
+	if x != nil {
+		return x.TargetGuid
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetSpellId() uint32 {
+	if x != nil {
+		return x.SpellId
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetAmountKnown() bool {
+	if x != nil {
+		return x.AmountKnown
+	}
+	return false
+}
+
+func (x *CombatEvent) GetAmount() uint32 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetResultKnown() bool {
+	if x != nil {
+		return x.ResultKnown
+	}
+	return false
+}
+
+func (x *CombatEvent) GetResult() uint32 {
+	if x != nil {
+		return x.Result
+	}
+	return 0
+}
+
+func (x *CombatEvent) GetRawPayload() []byte {
+	if x != nil {
+		return x.RawPayload
+	}
+	return nil
+}
+
+func (x *CombatEvent) GetMalformed() bool {
+	if x != nil {
+		return x.Malformed
+	}
+	return false
+}
+
+func (x *CombatEvent) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+type CombatEventGap struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	FromSequence    uint64                 `protobuf:"varint,1,opt,name=from_sequence,json=fromSequence,proto3" json:"from_sequence,omitempty"`
+	ThroughSequence uint64                 `protobuf:"varint,2,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
+	// cursor_ahead, or durability_unavailable (events remain readable in RAM).
+	Reason        string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CombatEventGap) Reset() {
+	*x = CombatEventGap{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CombatEventGap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CombatEventGap) ProtoMessage() {}
+
+func (x *CombatEventGap) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CombatEventGap.ProtoReflect.Descriptor instead.
+func (*CombatEventGap) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *CombatEventGap) GetFromSequence() uint64 {
+	if x != nil {
+		return x.FromSequence
+	}
+	return 0
+}
+
+func (x *CombatEventGap) GetThroughSequence() uint64 {
+	if x != nil {
+		return x.ThroughSequence
+	}
+	return 0
+}
+
+func (x *CombatEventGap) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type CombatEventsResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid       uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	FirstSequence  uint64                 `protobuf:"varint,3,opt,name=first_sequence,json=firstSequence,proto3" json:"first_sequence,omitempty"`
+	LatestSequence uint64                 `protobuf:"varint,4,opt,name=latest_sequence,json=latestSequence,proto3" json:"latest_sequence,omitempty"`
+	NextSequence   uint64                 `protobuf:"varint,5,opt,name=next_sequence,json=nextSequence,proto3" json:"next_sequence,omitempty"`
+	HasMore        bool                   `protobuf:"varint,6,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	Events         []*CombatEvent         `protobuf:"bytes,7,rep,name=events,proto3" json:"events,omitempty"`
+	Gaps           []*CombatEventGap      `protobuf:"bytes,8,rep,name=gaps,proto3" json:"gaps,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CombatEventsResponse) Reset() {
+	*x = CombatEventsResponse{}
+	mi := &file_modules_buddy_world_world_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CombatEventsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CombatEventsResponse) ProtoMessage() {}
+
+func (x *CombatEventsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_world_world_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CombatEventsResponse.ProtoReflect.Descriptor instead.
+func (*CombatEventsResponse) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_world_world_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CombatEventsResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CombatEventsResponse) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *CombatEventsResponse) GetFirstSequence() uint64 {
+	if x != nil {
+		return x.FirstSequence
+	}
+	return 0
+}
+
+func (x *CombatEventsResponse) GetLatestSequence() uint64 {
+	if x != nil {
+		return x.LatestSequence
+	}
+	return 0
+}
+
+func (x *CombatEventsResponse) GetNextSequence() uint64 {
+	if x != nil {
+		return x.NextSequence
+	}
+	return 0
+}
+
+func (x *CombatEventsResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
+func (x *CombatEventsResponse) GetEvents() []*CombatEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *CombatEventsResponse) GetGaps() []*CombatEventGap {
+	if x != nil {
+		return x.Gaps
+	}
+	return nil
+}
+
 var File_modules_buddy_world_world_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_world_world_proto_rawDesc = "" +
@@ -3300,9 +3675,48 @@ const file_modules_buddy_world_world_proto_rawDesc = "" +
 	"own_corpse\x18, \x01(\v2#.warcraftbuddy.world.v1.CorpseStateR\townCorpse\x12R\n" +
 	"\x10discovery_anchor\x18- \x01(\v2'.warcraftbuddy.world.v1.DiscoveryAnchorR\x0fdiscoveryAnchor\x12J\n" +
 	"\x0eplayer_corpses\x18. \x03(\v2#.warcraftbuddy.world.v1.CorpseStateR\rplayerCorpses\x12%\n" +
-	"\x0evisit_revision\x18/ \x01(\x04R\rvisitRevision2\x90\x02\n" +
+	"\x0evisit_revision\x18/ \x01(\x04R\rvisitRevision\"q\n" +
+	"\x13CombatEventsRequest\x12\x1d\n" +
 	"\n" +
-	"BuddyWorld\x12]\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
+	"\x0eafter_sequence\x18\x02 \x01(\x04R\rafterSequence\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"\xae\x03\n" +
+	"\vCombatEvent\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12-\n" +
+	"\x13received_at_unix_ms\x18\x02 \x01(\x04R\x10receivedAtUnixMs\x12\x16\n" +
+	"\x06opcode\x18\x03 \x01(\rR\x06opcode\x12\x12\n" +
+	"\x04kind\x18\x04 \x01(\tR\x04kind\x12\x1f\n" +
+	"\vsource_guid\x18\x05 \x01(\x04R\n" +
+	"sourceGuid\x12\x1f\n" +
+	"\vtarget_guid\x18\x06 \x01(\x04R\n" +
+	"targetGuid\x12\x19\n" +
+	"\bspell_id\x18\a \x01(\rR\aspellId\x12!\n" +
+	"\famount_known\x18\b \x01(\bR\vamountKnown\x12\x16\n" +
+	"\x06amount\x18\t \x01(\rR\x06amount\x12!\n" +
+	"\fresult_known\x18\n" +
+	" \x01(\bR\vresultKnown\x12\x16\n" +
+	"\x06result\x18\v \x01(\rR\x06result\x12\x1f\n" +
+	"\vraw_payload\x18\f \x01(\fR\n" +
+	"rawPayload\x12\x1c\n" +
+	"\tmalformed\x18\r \x01(\bR\tmalformed\x12\x16\n" +
+	"\x06detail\x18\x0e \x01(\tR\x06detail\"x\n" +
+	"\x0eCombatEventGap\x12#\n" +
+	"\rfrom_sequence\x18\x01 \x01(\x04R\ffromSequence\x12)\n" +
+	"\x10through_sequence\x18\x02 \x01(\x04R\x0fthroughSequence\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xdb\x02\n" +
+	"\x14CombatEventsResponse\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12%\n" +
+	"\x0efirst_sequence\x18\x03 \x01(\x04R\rfirstSequence\x12'\n" +
+	"\x0flatest_sequence\x18\x04 \x01(\x04R\x0elatestSequence\x12#\n" +
+	"\rnext_sequence\x18\x05 \x01(\x04R\fnextSequence\x12\x19\n" +
+	"\bhas_more\x18\x06 \x01(\bR\ahasMore\x12;\n" +
+	"\x06events\x18\a \x03(\v2#.warcraftbuddy.world.v1.CombatEventR\x06events\x12:\n" +
+	"\x04gaps\x18\b \x03(\v2&.warcraftbuddy.world.v1.CombatEventGapR\x04gaps2\xfb\x02\n" +
+	"\n" +
+	"BuddyWorld\x12i\n" +
+	"\fCombatEvents\x12+.warcraftbuddy.world.v1.CombatEventsRequest\x1a,.warcraftbuddy.world.v1.CombatEventsResponse\x12]\n" +
 	"\bSnapshot\x12'.warcraftbuddy.world.v1.SnapshotRequest\x1a(.warcraftbuddy.world.v1.SnapshotResponse\x12^\n" +
 	"\x15ObserveClientMovement\x12-.warcraftbuddy.world.v1.ClientMovementRequest\x1a\x16.google.protobuf.Empty\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1b\x06proto3"
@@ -3319,7 +3733,7 @@ func file_modules_buddy_world_world_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_world_world_proto_rawDescData
 }
 
-var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_modules_buddy_world_world_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*PlayerState)(nil),           // 0: warcraftbuddy.world.v1.PlayerState
 	(*EquipmentSlotState)(nil),    // 1: warcraftbuddy.world.v1.EquipmentSlotState
@@ -3337,8 +3751,12 @@ var file_modules_buddy_world_world_proto_goTypes = []any{
 	(*InventoryBag)(nil),          // 13: warcraftbuddy.world.v1.InventoryBag
 	(*SkillState)(nil),            // 14: warcraftbuddy.world.v1.SkillState
 	(*SnapshotResponse)(nil),      // 15: warcraftbuddy.world.v1.SnapshotResponse
-	(*v1.WorldPacket)(nil),        // 16: agentwow.module.v1.WorldPacket
-	(*emptypb.Empty)(nil),         // 17: google.protobuf.Empty
+	(*CombatEventsRequest)(nil),   // 16: warcraftbuddy.world.v1.CombatEventsRequest
+	(*CombatEvent)(nil),           // 17: warcraftbuddy.world.v1.CombatEvent
+	(*CombatEventGap)(nil),        // 18: warcraftbuddy.world.v1.CombatEventGap
+	(*CombatEventsResponse)(nil),  // 19: warcraftbuddy.world.v1.CombatEventsResponse
+	(*v1.WorldPacket)(nil),        // 20: agentwow.module.v1.WorldPacket
+	(*emptypb.Empty)(nil),         // 21: google.protobuf.Empty
 }
 var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	3,  // 0: warcraftbuddy.world.v1.PlayerState.mainhand:type_name -> warcraftbuddy.world.v1.EquippedWeapon
@@ -3371,17 +3789,21 @@ var file_modules_buddy_world_world_proto_depIdxs = []int32{
 	2,  // 27: warcraftbuddy.world.v1.SnapshotResponse.own_corpse:type_name -> warcraftbuddy.world.v1.CorpseState
 	6,  // 28: warcraftbuddy.world.v1.SnapshotResponse.discovery_anchor:type_name -> warcraftbuddy.world.v1.DiscoveryAnchor
 	2,  // 29: warcraftbuddy.world.v1.SnapshotResponse.player_corpses:type_name -> warcraftbuddy.world.v1.CorpseState
-	4,  // 30: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
-	5,  // 31: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
-	16, // 32: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	15, // 33: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
-	17, // 34: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
-	17, // 35: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
-	33, // [33:36] is the sub-list for method output_type
-	30, // [30:33] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	17, // 30: warcraftbuddy.world.v1.CombatEventsResponse.events:type_name -> warcraftbuddy.world.v1.CombatEvent
+	18, // 31: warcraftbuddy.world.v1.CombatEventsResponse.gaps:type_name -> warcraftbuddy.world.v1.CombatEventGap
+	16, // 32: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:input_type -> warcraftbuddy.world.v1.CombatEventsRequest
+	4,  // 33: warcraftbuddy.world.v1.BuddyWorld.Snapshot:input_type -> warcraftbuddy.world.v1.SnapshotRequest
+	5,  // 34: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:input_type -> warcraftbuddy.world.v1.ClientMovementRequest
+	20, // 35: warcraftbuddy.world.v1.BuddyWorld.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	19, // 36: warcraftbuddy.world.v1.BuddyWorld.CombatEvents:output_type -> warcraftbuddy.world.v1.CombatEventsResponse
+	15, // 37: warcraftbuddy.world.v1.BuddyWorld.Snapshot:output_type -> warcraftbuddy.world.v1.SnapshotResponse
+	21, // 38: warcraftbuddy.world.v1.BuddyWorld.ObserveClientMovement:output_type -> google.protobuf.Empty
+	21, // 39: warcraftbuddy.world.v1.BuddyWorld.OnPacket:output_type -> google.protobuf.Empty
+	36, // [36:40] is the sub-list for method output_type
+	32, // [32:36] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_world_world_proto_init() }
@@ -3395,7 +3817,7 @@ func file_modules_buddy_world_world_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_world_world_proto_rawDesc), len(file_modules_buddy_world_world_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

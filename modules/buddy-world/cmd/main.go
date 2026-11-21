@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
@@ -48,6 +49,20 @@ func run() error {
 	if identity.Independent() {
 		service = buddyworld.NewIndependentService(identity.SelfGUID)
 	}
+	// Retain raw combat evidence in a persistent named volume. Failure to
+	// persist is exposed by the public stream; it must not disconnect a player.
+	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
+	if sessionID == "" || filepath.Base(sessionID) != sessionID || sessionID == "." || sessionID == ".." {
+		return errors.New("AGENT_WOW_SESSION_ID must be a single nonempty path component")
+	}
+	journal, journalErr := openCombatJournal("/var/lib/buddy-combat-events", sessionID)
+	if journalErr == nil {
+		defer journal.Close()
+		service.ConfigureCombatJournal(sessionID, journal)
+	} else {
+		service.ConfigureCombatJournal(sessionID, nil)
+		fmt.Fprintln(os.Stderr, "combat journal persistence unavailable:", journalErr)
+	}
 	worldv1.RegisterBuddyWorldServer(server, service)
 	readiness := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, readiness)
@@ -58,4 +73,10 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+// A module recreation must not append a new sequence starting at one to an old
+// session file. Keep that evidence intact and report a persistence gap instead.
+func openCombatJournal(directory, sessionID string) (*os.File, error) {
+	return os.OpenFile(filepath.Join(directory, sessionID+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 }

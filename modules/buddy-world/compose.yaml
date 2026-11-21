@@ -7,6 +7,8 @@ services:
     read_only: true
     environment:
       BUDDY_INDEPENDENT: ${BUDDY_INDEPENDENT:-false}
+    volumes:
+      - combat-events:/var/lib/buddy-combat-events
     cap_drop:
       - ALL
     security_opt:
@@ -16,3 +18,8 @@ services:
       options:
         max-size: "1m"
         max-file: "2"
+
+# Shared append-only session files survive ordinary character/module restarts.
+volumes:
+  combat-events:
+    name: agent-wow-combat-events

@@ -69,6 +69,7 @@ type Service struct {
 	ignored, malformed, observed uint64
 	lastOpcode                   uint32
 	lastError                    string
+	combat                       combatJournal
 }
 
 func NewService(selfGUID uint64) *Service {
@@ -180,6 +181,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		return &emptypb.Empty{}, nil
 	}
 	s.lastOpcode = packet.Opcode
+	s.observeCombatPacketLocked(packet.Opcode, packet.Payload, s.now())
 	next := s.state.clone()
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, s.now())
 	if err != nil {
