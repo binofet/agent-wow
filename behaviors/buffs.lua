@@ -81,6 +81,9 @@ local function prefer(a,b)
     return guid_less(a.target,b.target)
 end
 function M.on_event(event)
+    -- A legacy enable call asks the current policy to check useful buffs. It
+    -- cannot create an off state or bypass ordinary healing/combat priority.
+    if event.kind=='buff_request' then state.ensureRequested=true end
     if event.kind=='encounter_observation' and type(event.value)=='table' then
         if state.session and state.session~=event.value.sessionId then state={blocked={}} end
         state.session=event.value.sessionId
@@ -106,6 +109,8 @@ function M.choose(obs,frame)
     for _,npc in pairs(obs.targets or {}) do if alive(npc) and npc.engaged==true then return end end
     local now=frame.clock and frame.clock.monotonicMs
     if type(now)~='number' then return end
+    -- This is a transient check request, not evidence of a cast or aura.
+    state.ensureRequested=nil
     local group=members(obs)
     local ranks={}
     for text,s in pairs(obs.spells or {}) do
