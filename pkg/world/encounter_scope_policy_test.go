@@ -59,7 +59,7 @@ func TestEncounterSuppressesFuturePullUntilCurrentEncounterIncludingControlEnds(
 	addFallbackTarget(o, fallbackNPC, fallbackLeader, 500)
 	addFallbackTarget(o, fallbackNPC+1, 0, 1)
 	o.ObservedOwnerFocus = fallbackNPC
-	out := p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC, 133)
+	out := p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC, 133).Output
 	if out["nextPullGuid"] != nil || out["queue"].([]any)[0].(map[string]any)["targetGuid"] != fallbackGUID(fallbackNPC) {
 		t.Fatal("future pack leaked into active pull recommendation", out)
 	}
@@ -89,7 +89,7 @@ func TestEncounterNewPatrolActuallyAttackingPartyJoinsCurrentQueue(t *testing.T)
 	// The same NPC becomes an active add only when an actual party attack is
 	// observed. Low health can then legitimately override ordinary guidance.
 	addFallbackTarget(o, fallbackNPC+1, fallbackSelf, 100)
-	out := p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC+1, 133)
+	out := p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC+1, 133).Output
 	if out["burstIntent"] == nil || out["nextPullGuid"] != nil {
 		t.Fatal("actual add did not share current combat policy", out)
 	}
