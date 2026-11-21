@@ -183,6 +183,12 @@ func (s *Service) encounterPlayers(w *worldv1.SnapshotResponse, online map[uint6
 			players[member] = p
 		}
 	}
+	for _, patient := range w.NearbyPlayers {
+		if patient.GetPresent() && patient.GetMapKnown() && patient.MapId == w.Self.MapId &&
+			observedHealingPlayer(w, patient.Guid) == patient && s.healingAllyLocked(w, patient, online) {
+			players[patient.Guid] = patient
+		}
+	}
 	for guid, p := range players {
 		view := &actionsv1.EncounterPlayer{
 			Guid: guid, Present: p.Present, MapKnown: p.MapKnown, MapId: proto.Uint32(p.MapId),

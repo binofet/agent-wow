@@ -162,17 +162,17 @@ func TestNearOwnerFollowPreservesWaitCustodyAndStandingHealing(t *testing.T) {
 	s, f, advance := rig(t)
 	s.sessionID = f.party.SessionId
 	toggle(t, s, true)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	lease := acquireMovementForTest(t, s, 1000)
 	before := len(f.packets)
 	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if len(f.packets) != before || s.state.Moving || !s.state.Following || s.movementOwner.token != lease.Token {
 		t.Fatal("shared near-owner policy displaced finite wait custody", s.stateLocked(), f.packets)
 	}
 	learn(s)
 	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if !s.state.CastPending || s.state.LastCastTargetGuid != ownerGUID || !s.state.Following || s.state.Moving || s.movementOwner.token != lease.Token || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("near-owner hold suppressed standing healing or resumed voluntary movement", s.stateLocked(), f.packets)
 	}

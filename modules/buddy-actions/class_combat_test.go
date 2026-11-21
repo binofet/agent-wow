@@ -11,7 +11,6 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func learnSpells(s *Service, spells ...uint32) {
@@ -128,7 +127,7 @@ func TestActuallyLearnedHealDoesNotRequirePriestClassWhitelist(t *testing.T) {
 	f.world.Self.ClassId = 8
 	learnSpells(s, fireball, lesserHeal)
 	f.world.Owner.Health = 40
-	r, err := s.HealOnce(context.Background(), &emptypb.Empty{})
+	r, err := testExactHeal(s, 2050, ownerGUID)
 	if err != nil || r.HealAttempts != 1 || lastCast(f) != lesserHeal {
 		t.Fatal(r, err)
 	}

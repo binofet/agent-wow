@@ -99,7 +99,7 @@ func TestSmiteRequiresCombatProofHealthyOwnerManaAndAttackableTarget(t *testing.
 func TestHealingTakesPriorityAndSmiteSharesCooldown(t *testing.T) {
 	s, f, advance := assistRig(t)
 	f.world.Owner.Health = 50
-	s.Tick(context.Background())
+	runLuaHealing(t, s, false)
 	if state(t, s).HealAttempts != 1 || state(t, s).AssistAttempts != 0 {
 		t.Fatal(state(t, s))
 	}
@@ -132,7 +132,7 @@ func TestSmiteFailurePausesSameTargetAndHealingStillRuns(t *testing.T) {
 		t.Fatal(st)
 	}
 	f.world.Owner.Health = 40
-	s.Tick(context.Background())
+	runLuaHealing(t, s, false)
 	if lastCast(f) != lesserHeal || healingCastTarget(f) != ownerGUID {
 		t.Fatal("offense failure stopped automatic healing", state(t, s), f.packets)
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"testing"
 	"time"
 )
@@ -164,12 +163,12 @@ func TestHighestKnownHealUsesActualCostAndExactPendingRank(t *testing.T) {
 	f.world.Self.BaseManaKnown = true
 	f.world.Self.BaseMana = 100
 	f.world.Self.Power = 15
-	out, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
-	if lastCast(f) != 0 || out.Reason != "mana_unknown_or_insufficient" {
+	out, _ := testExactHeal(s, 2052, ownerGUID)
+	if lastCast(f) != 0 || out.CastPending {
 		t.Fatal("rank1 cost used for rank2", out)
 	}
 	f.world.Self.Power = 21
-	out, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	out, _ = testExactHeal(s, 2052, ownerGUID)
 	if lastCast(f) != 2052 || out.LastCastSpellId != 2052 || !out.CastPending {
 		t.Fatal(out)
 	}

@@ -21,7 +21,10 @@ loader.exec_module(sync)
 converse, Error, integer = sync.converse, sync.Error, sync.integer
 IDENTITY = converse.PARTY_QUEST_IDENTITY
 ROSTER = sync.ROSTER
-REWARD_GIVERS = {783: 197, 7: 197, 15: 197, 18: 823, 21: 197, 54: 240, 3903: 9296, 5261: 196, 33: 196}
+policy_loader = importlib.machinery.SourceFileLoader("party_quest_policy", str(Path(__file__).with_name("party-quest-policy.py")))
+policy_spec = importlib.util.spec_from_loader(policy_loader.name, policy_loader)
+quest_policy = importlib.util.module_from_spec(policy_spec)
+policy_loader.exec_module(quest_policy)
 
 
 class PartyRPC(sync.SyncRPC):
@@ -187,32 +190,85 @@ class PartyQuestSync:
             return False
         return True
 
-    def givers(self, context):
+    def policy(self, context):
+        if "_questPolicy" in context:
+            return context["_questPolicy"]
         nearby = context["quests"].get("nearby", [])
         if not isinstance(nearby, list) or len(nearby) > 64:
             raise Error("Automatic questgiver observations are invalid")
-        owner, own = context["world"]["owner"], context["actions"]["position"]
-        candidates = []
+        def position(value, known="positionKnown"):
+            if not finite_position(value, known):
+                return {"known": False}
+            return dict(known=True, mapId=integer(value.get("mapId", 0)),
+                        **{key: value[key] for key in ("x", "y", "z")})
+        creatures = []
         for row in nearby:
             c = row.get("creature", {}) if isinstance(row, dict) else {}
-            if (not finite_position(c) or any(c.get(key) is not True for key in ("present", "aliveKnown", "alive"))
-                    or integer(c.get("mapId", 0)) != integer(own.get("mapId", 0))
-                    or integer(c.get("npcFlags", 0)) & 2 == 0 or integer(c.get("unitFlags", 0)) & 0x80000
-                    or integer(c.get("movementFlags", 0)) & 0x080000ff):
-                continue
+            if not isinstance(c, dict):
+                c = {}
             guid, entry = integer(c.get("guid", 0)), integer(c.get("entry", 0))
-            if guid >> 48 != 0xf130 or not guid & 0xffffff or (guid >> 24 & 0xffffff) != entry:
-                continue
-            own_distance, owner_distance = distance(own, c), distance(owner, c)
-            if own_distance <= 24 and owner_distance <= 12:
-                candidates.append({"guid": guid, "entry": entry, "distance": own_distance, "ownerDistance": owner_distance})
-        return sorted(candidates, key=lambda c: (c["ownerDistance"], c["distance"], c["guid"]))
+            creatures.append(dict(guid=str(guid), entry=entry, position=position(c),
+                creatureIdentityMatches=guid >> 48 == 0xf130 and bool(guid & 0xffffff) and (guid >> 24 & 0xffffff) == entry,
+                **{key: c.get(key) is True for key in ("present", "aliveKnown", "alive")},
+                **{key: integer(c.get(key, 0)) for key in ("npcFlags", "unitFlags", "movementFlags")}))
+        def offer(value):
+            if not isinstance(value, dict):
+                value = {}
+            rows = value.get("quests", [])
+            return dict(npcGuid=str(integer(value.get("npcGuid", 0))),
+                revision=str(integer(value.get("revision", 0))), expiresInMs=str(integer(value.get("expiresInMs", 0))),
+                questId=integer(value.get("questId", 0)), source=value.get("source", ""),
+                canComplete=value.get("canComplete") is True, rewardRequested=value.get("rewardRequested") is True,
+                quests=[dict(questId=integer(q.get("questId", 0)), **{key: q.get(key) is True
+                    for key in ("available", "repeatable", "acceptRequested")}) if isinstance(q, dict) else {}
+                    for q in rows] if isinstance(rows, list) and len(rows) <= 32 else None)
+        state, feed, session = context["quests"], context["feed"], context["session"]
+        signature = [session, str(integer(state.get("questLogRevision", 0)))]
+        facts = dict(sessionId=session, now=self.now(), ownQuestIds=sorted(context["active"]),
+            ownerActiveQuestIds=sorted(context["ownerActive"]), ownerDoneQuestIds=sorted(context["ownerDone"]),
+            questLog=[dict(questId=integer(q.get("questId", 0)), complete=q.get("complete") is True,
+                           failed=q.get("failed") is True) for q in state.get("questLog", [])],
+            nearby=creatures, ownerPosition=position(context["world"]["owner"]),
+            selfPosition=position(context["actions"]["position"], "known"),
+            offer=offer(state.get("offer", {})), turnInOffer=offer(state.get("turnInOffer", {})),
+            accepted=feed["accepted"], rewarded=feed["rewarded"], reservations=self.data["reservations"],
+            queries=self.data["queries"], rewardSignature=signature,
+            acceptSignature=signature + [feed["addonSession"], ",".join(str(q) for q in sorted(context["ownerActive"]))])
+        result = quest_policy.evaluate(facts)
+        if not isinstance(result, dict) or result.get("status") != "ready":
+            raise Error("Shared Lua quest policy is unavailable or rejected its observations")
+        for key in ("givers", "allowedAcceptQuestIds", "allowedRewardQuestIds"):
+            if result.get(key) == {}:
+                result[key] = []
+        # Bind identifiers to this observation, never accept an invented NPC or
+        # quest from a broken candidate. Lua owns eligibility and ordering.
+        observed = {row["guid"]: row["entry"] for row in creatures}
+        givers = result.get("givers")
+        if result.get("sessionId") != session or not isinstance(givers, list) or len(givers) > 64:
+            raise Error("Lua quest policy returned invalid giver identities")
+        for g in givers:
+            if (not isinstance(g, dict) or not isinstance(g.get("guid"), str) or g["guid"] not in observed
+                    or type(g.get("entry")) is not int or g["entry"] != observed[g["guid"]]
+                    or any(type(g.get(k)) not in (int, float) or not math.isfinite(g[k]) or not 0 <= g[k] <= 200000
+                           for k in ("distance", "ownerDistance"))):
+                raise Error("Lua quest policy returned an unobserved giver")
+        if len({g["guid"] for g in givers}) != len(givers):
+            raise Error("Lua quest policy returned duplicate giver identities")
+        known_quests = context["active"] | context["ownerActive"] | context["ownerDone"]
+        for key in ("allowedAcceptQuestIds", "allowedRewardQuestIds"):
+            rows = result.get(key)
+            if (not isinstance(rows, list) or len(rows) > 25 or any(type(q) is not int or q not in known_quests for q in rows)
+                    or len(set(rows)) != len(rows)):
+                raise Error("Lua quest policy returned unobserved quest eligibility")
+        result["_givers"] = [dict(g, guid=integer(g["guid"])) for g in givers]
+        context["_questPolicy"] = result
+        return result
+
+    def givers(self, context):
+        return self.policy(context)["_givers"]
 
     def allowed(self, context, qid, purpose):
-        if purpose == "accept":
-            return qid in context["ownerActive"] and qid not in context["active"] and len(context["active"]) < 25
-        return (qid in context["ownerDone"] and any(integer(q.get("questId", 0)) == qid and q.get("complete") is True
-                and q.get("failed") is not True for q in context["quests"].get("questLog", [])))
+        return qid in self.policy(context)["allowedAcceptQuestIds" if purpose == "accept" else "allowedRewardQuestIds"]
 
     def bound_offer_valid(self, context, giver, method, qid, offer_binding):
         if method not in ("buddy-quests.accept", "buddy-quests.claim_reward"):
@@ -343,9 +399,50 @@ class PartyQuestSync:
                            rewardSelectionReason=decision["reason"])
         return selected
 
-    def query_ready(self, key, signature, delay=30):
-        return not any(row["npc"] == key and row["signature"] == signature and self.now() - row["at"] < delay
-                       for row in self.data["queries"])
+    def apply_choice(self, context, choice, depth=0):
+        if not isinstance(choice, dict) or depth > 1:
+            raise Error("Lua quest policy returned an invalid action")
+        kind = choice.get("kind")
+        if kind == "wait":
+            phases = ("following_joels_quest_changes", "waiting_for_joel_at_recorded_reward_giver",
+                      "waiting_for_joel_at_followup_giver_or_server_offer", "waiting_for_own_quest_objectives")
+            if choice.get("phase") not in phases:
+                raise Error("Lua quest policy returned an invalid wait state")
+            self.status["phase"] = choice["phase"]
+            return
+        if kind not in ("offer", "turn_in", "accept", "claim_reward", "reward_candidate"):
+            raise Error("Lua quest policy returned an unknown action")
+        giver = next((g for g in self.givers(context) if str(g["guid"]) == choice.get("npcGuid")), None)
+        qid = choice.get("questId", 0)
+        if giver is None or type(qid) is not int or not 0 <= qid <= 2**32 - 1 or kind != "offer" and qid == 0:
+            raise Error("Lua quest policy returned an unobserved action identity")
+        if kind == "reward_candidate":
+            offer = context["quests"].get("turnInOffer", {})
+            if (depth or not self.reward_offer(offer, qid, giver["guid"])
+                    or choice.get("offerRevision") != str(integer(offer.get("revision", 0)))):
+                raise Error("Lua quest policy returned a stale reward candidate")
+            if self.choice(offer, context["world"]["self"], lookup=True, session=context["session"]) is not False:
+                self.apply_choice(context, choice.get("ready"), depth + 1)
+            return
+        session, state = context["session"], context["quests"]
+        signature = [session, str(integer(state.get("questLogRevision", 0)))]
+        if kind in ("accept", "claim_reward"):
+            offer = state.get("offer" if kind == "accept" else "turnInOffer", {})
+            revision = str(integer(offer.get("revision", 0)))
+            if choice.get("offerRevision") != revision or integer(offer.get("npcGuid", 0)) != giver["guid"]:
+                raise Error("Lua quest policy returned an unbound menu action")
+            self.request(context, giver, "buddy-quests." + kind, qid,
+                         ("accept:" if kind == "accept" else "claim:") + str(qid), sync.binding(session, giver["guid"], integer(revision)))
+        elif kind == "turn_in":
+            if qid not in context["active"]:
+                raise Error("Lua quest policy returned an unobserved quest log action")
+            key = "reward:" + str(qid) + ":" + str(giver["guid"])
+            self.request(context, giver, "buddy-quests.turn_in", qid,
+                         query={"npc": key, "signature": signature, "at": self.now()})
+        else:
+            signature += [context["feed"]["addonSession"], ",".join(str(q) for q in sorted(context["ownerActive"]))]
+            self.request(context, giver, "buddy-quests.offer",
+                         query={"npc": str(giver["guid"]), "signature": signature, "at": self.now()})
 
     def tick(self):
         self.status["observationsCurrent"] = False
@@ -390,67 +487,12 @@ class PartyQuestSync:
         if self.now() < self.data["nextMutationAt"]:
             self.status["phase"] = "waiting_for_mutation_cooldown"
             return
-        candidates = self.givers(context)
-        self.status["phase"] = "following_joels_quest_changes"
-        state, session, feed = context["quests"], context["session"], context["feed"]
-        for qid in sorted(own & context["ownerDone"]):
-            if not self.allowed(context, qid, "reward"):
-                continue
-            event = next((event for event in feed["rewarded"] if event["questId"] == qid), None)
-            expected = integer(event["npcGuid"]) if event else 0
-            current_offer = state.get("turnInOffer", {})
-            eligible = [npc for npc in candidates if npc["guid"] == expected] if expected else [npc for npc in candidates if npc["entry"] == REWARD_GIVERS.get(qid)]
-            if not eligible and not expected:
-                eligible = [npc for npc in candidates if integer(current_offer.get("npcGuid", 0)) == npc["guid"] and integer(current_offer.get("questId", 0)) == qid]
-            if not eligible:
-                self.status["phase"] = "waiting_for_joel_at_recorded_reward_giver"
-                continue
-            giver = eligible[0]
-            if self.reward_offer(current_offer, qid, giver["guid"]):
-                choice = self.choice(current_offer, context["world"]["self"], lookup=True, session=session)
-                if choice is False:
-                    return
-                bound = sync.binding(session, giver["guid"], integer(current_offer["revision"]))
-                if self.data["reservations"].get("claim:"+str(qid)) != bound:
-                    self.request(context, giver, "buddy-quests.claim_reward", qid, "claim:"+str(qid), bound)
-                    return
-            signature = [session, str(integer(state.get("questLogRevision", 0)))]
-            key = "reward:"+str(qid)+":"+str(giver["guid"])
-            if self.query_ready(key, signature, 60):
-                self.request(context, giver, "buddy-quests.turn_in", qid, query={"npc":key,"signature":signature,"at":self.now()})
-                return
-        missing = owner_active-own
-        if missing and len(own) < 25:
-            offer = state.get("offer", {})
-            giver = next((npc for npc in candidates if integer(offer.get("npcGuid", 0)) == npc["guid"]), None)
-            if giver and integer(offer.get("expiresInMs", 0)) > 0 and integer(offer.get("revision", 0)) > 0:
-                offered = offer.get("quests", [])
-                if not isinstance(offered, list) or len(offered) > 32:
-                    raise Error("Automatic quest offer is invalid")
-                bound = sync.binding(session, giver["guid"], integer(offer["revision"]))
-                used = any(key.startswith("accept:") and value == bound for key,value in self.data["reservations"].items())
-                if not used:
-                    for quest in offered:
-                        if (isinstance(quest, dict) and integer(quest.get("questId", 0)) in missing
-                                and quest.get("available") is True and quest.get("repeatable") is not True
-                                and quest.get("acceptRequested") is not True):
-                            qid = integer(quest["questId"])
-                            self.request(context,giver,"buddy-quests.accept",qid,"accept:"+str(qid),bound)
-                            return
-            signature = [session,str(integer(state.get("questLogRevision",0))),feed["addonSession"],",".join(str(q) for q in sorted(owner_active))]
-            event_guids = {integer(event["npcGuid"]) for event in feed["accepted"] if event["questId"] in missing}
-            for giver in sorted(candidates,key=lambda npc:(npc["guid"] not in event_guids,npc["ownerDistance"])):
-                key = str(giver["guid"])
-                if self.query_ready(key,signature):
-                    self.request(context,giver,"buddy-quests.offer",query={"npc":key,"signature":signature,"at":self.now()})
-                    return
-            self.status["phase"] = "waiting_for_joel_at_followup_giver_or_server_offer"
-        elif own & context["ownerDone"]:
-            self.status.setdefault("phase","waiting_for_own_quest_objectives")
-            if self.status["phase"] != "waiting_for_joel_at_recorded_reward_giver":
-                self.status["phase"] = "waiting_for_own_quest_objectives"
-        else:
-            self.status["phase"] = "following_joels_quest_changes"
+        try:
+            self.apply_choice(context, self.policy(context).get("choice"))
+        except converse.Stopped:
+            raise
+        except Error:
+            self.status["phase"] = "waiting_for_shared_lua_quest_policy"
 
 
 def main(argv=None):

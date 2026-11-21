@@ -19,6 +19,7 @@ local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
+local healing_input
 local policy_observation
 local task_view
 local task_support_action
@@ -57,9 +58,9 @@ local function on_event(event)
         state.sequence = event.sequence
         if obs.worldObservationRevision then
             state.observation = nil
-            if healing and host_can_decide(obs) and obs.healing and obs.healing.hostOwned == true and
+            if healing and host_can_decide(obs) and obs.healing and
                obs.healing.sessionId == obs.sessionId then
-                if not healing.on_event({kind="healing_observation", sequence=event.sequence, value=obs.healing}) then
+                if not healing.on_event({kind="healing_observation", sequence=event.sequence, value=healing_input(obs)}) then
                     return false
                 end
                 state.healingSequence = event.sequence
@@ -219,6 +220,30 @@ local function witnessed_attack(obs, target, npc, members)
     local flags = npc.unitFlags or 0
     return raw.targetKnown == true and raw.targetGuid == victim and npc.unitFlagsKnown == true and
            type(flags) == "number" and flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 1
+end
+
+-- Reuse the same Lua witness rules for healing urgency. The harness reports
+-- raw attack relations and mechanics; it does not rank patients by freshness.
+healing_input = function(obs)
+    local view = {}
+    for key,value in pairs(obs.healing or {}) do view[key]=value end
+    view.patients = {}
+    local eligible = {}
+    for _,patient in ipairs((obs.healing or {}).patients or {}) do eligible[patient.guid]=true end
+    for _,patient in ipairs((obs.healing or {}).patients or {}) do
+        local copy = {}
+        for key,value in pairs(patient) do copy[key]=value end
+        copy.underAttack=false
+        for target,npc in pairs(obs.targets or {}) do
+            if witnessed_attack(obs,target,npc,eligible) then
+                local raw=npc.attackObservation
+                local victim=type(raw)=="table" and raw.victimGuid or ((obs.engagement or {})[target] or {}).victimGuid
+                if victim==patient.guid then copy.underAttack=true end
+            end
+        end
+        view.patients[#view.patients+1]=copy
+    end
+    return view
 end
 
 local function current_attack_hint(npc, witnessed)
@@ -474,7 +499,6 @@ local function decide_encounter(frame)
        #frame.pending ~= 0 or not alive(self) or not same_map(self, obs.mapId) then
         return out
     end
-    if not fallback and not members[obs.selfGuid] then return out end
     local function position_for(target, spell, options)
         if not movement or not obs.worldObservationRevision then return end
         local rank = spell and (obs.spells or {})[tostring(spell)]
@@ -492,8 +516,8 @@ local function decide_encounter(frame)
     end
     local support
     local heal_sequence = obs.healingSequence
-    if obs.worldObservationRevision and obs.healing and obs.healing.hostOwned == true then heal_sequence = state.sequence end
-    if members[obs.selfGuid] and healing and
+    if obs.worldObservationRevision and obs.healing then heal_sequence = state.sequence end
+    if healing and
        state.healingSequence and heal_sequence == state.healingSequence then
         local result = healing.decide({session_id=frame.session_id, cursor=frame.cursor, pending=frame.pending,
             input={kind="healing", observationSequence=state.healingSequence}})
@@ -501,7 +525,7 @@ local function decide_encounter(frame)
     end
     local active_melee = guid(obs.activeMeleeTargetGuid)
     if support and support.capability == "heal" and support.sessionId == obs.sessionId and
-       support.selfGuid == obs.selfGuid and guid(support.targetGuid) and members[support.targetGuid] and
+       support.selfGuid == obs.selfGuid and guid(support.targetGuid) and members[support.targetGuid] ~= false and
        alive(players[support.targetGuid]) and same_map(players[support.targetGuid], obs.mapId) and
        usable_spell(obs, support.spellId, "heal") then
         task_support_action=true

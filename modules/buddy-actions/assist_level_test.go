@@ -54,14 +54,14 @@ func TestAssistLevelLimitPreservesHealingPriorityAndIntent(t *testing.T) {
 	f.world.Self.LevelKnown, f.world.Self.Level = true, 5
 	f.world.OwnerTarget.LevelKnown, f.world.OwnerTarget.Level = true, 11
 	f.world.Owner.Health = 50
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if got := state(t, s); got.HealAttempts != 1 || got.AssistAttempts != 0 || lastCast(f) != lesserHeal {
 		t.Fatal(got, f.packets)
 	}
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: serverSpellPacket(true, 1)})
 	f.world.Owner.Health = 100
 	advance(4 * time.Second)
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if got := state(t, s); !got.Assisting || got.AssistAttempts != 0 || got.AssistReason != "assist_target_level_exceeds_self_plus_three" || countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal(got, f.packets)
 	}

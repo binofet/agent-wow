@@ -134,7 +134,7 @@ func TestFargodeepHealsPartyBeforeOffenseAndPreservesHealReserve(t *testing.T) {
 			p.UnitFlags = 0x80000
 		}
 	}
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if got := state(t, s); got.HealAttempts != 1 || got.LastCastSpellId != lesserHeal || got.LastCastTargetGuid != 5 || got.AssistAttempts != 0 {
 		t.Fatal(got)
 	}
@@ -142,7 +142,7 @@ func TestFargodeepHealsPartyBeforeOffenseAndPreservesHealReserve(t *testing.T) {
 	armFargodeep(t, s, r)
 	target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, 5, 100
 	f.world.Self.Power = 20
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if got := state(t, s); got.AssistAttempts != 0 || got.Reason != "no_affordable_learned_damage_spell_in_range" {
 		t.Fatal(got)
 	}

@@ -268,12 +268,12 @@ func TestHealKnownSpellHealthManaRangeAndStaleGates(t *testing.T) {
 		func(s *Service, f *fakeSession) { s.setKnownSpell(2050, false) },
 		func(s *Service, f *fakeSession) { f.world.Owner.Health = 100 }, func(s *Service, f *fakeSession) { f.world.Owner.HealthKnown = false },
 		func(s *Service, f *fakeSession) { f.world.Self.Power = 20 }, func(s *Service, f *fakeSession) { f.world.Self.PowerType = 1 },
-		func(s *Service, f *fakeSession) { f.world.Owner.X = 36 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },
+		func(s *Service, f *fakeSession) { f.world.Owner.X = 41 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },
 	} {
 		s, f, _ := rig(t)
 		learn(s)
 		change(s, f)
-		result, err := s.HealOnce(context.Background(), &emptypb.Empty{})
+		result, err := testExactHeal(s, 2050, ownerGUID)
 		if err != nil || result.CastPending || len(f.packets) > 0 {
 			t.Fatalf("unsafe heal %+v err=%v", result, err)
 		}
@@ -288,7 +288,7 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 	s.Tick(context.Background())
 	f.world.Owner.Health = 50
 	advance(200 * time.Millisecond)
-	result, err := s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, err := testExactHeal(s, 2050, ownerGUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 	if len(f.packets) != 3 || f.packets[1].Opcode != opcode.MSGMoveStop || f.packets[2].Opcode != opcode.CMSGCastSpell {
 		t.Fatalf("order %+v", f.packets)
 	}
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	if len(f.packets) != 3 {
 		t.Fatal("cast retried while pending")
 	}
@@ -306,7 +306,7 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 	if got := state(t, s); got.CastPending || got.LastCastFailure != 49 || got.ServerCastGo != 0 {
 		t.Fatalf("failure %+v", got)
 	}
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	if len(f.packets) != 3 {
 		t.Fatal("server failure retried immediately")
 	}
@@ -315,7 +315,7 @@ func TestHealStopsMovementThenWaitsForServerAndThrottles(t *testing.T) {
 func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 	s, f, advance := rig(t)
 	learn(s)
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	advance(6 * time.Second)
 	s.Tick(context.Background())
 	if got := state(t, s); got.CastPending || got.ServerCastGo != 0 {
@@ -327,7 +327,7 @@ func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 	s, f, _ = rig(t)
 	learn(s)
 	f.failSend = true
-	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ := testExactHeal(s, 2050, ownerGUID)
 	if result.CastPending || result.TransportWrites != 0 || result.HealAttempts != 1 {
 		t.Fatalf("transport failure %+v", result)
 	}
@@ -345,12 +345,12 @@ func TestHealAbortsOnUndispatchedStopThenRecoversWithoutReset(t *testing.T) {
 	s.Tick(context.Background())
 	f.world.Owner.Health = 50
 	f.failClock = true
-	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ := testExactHeal(s, 2050, ownerGUID)
 	if result.CastPending || result.HealAttempts != 0 || len(f.packets) != 1 || result.MotionUnconfirmed || !result.Moving || !result.Following {
 		t.Fatalf("clock refusal dispatched a heal or lost known motion %+v", result)
 	}
 	f.failClock = false
-	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ = testExactHeal(s, 2050, ownerGUID)
 	if !result.CastPending || result.MotionUnconfirmed || result.Moving || !result.Following || len(f.packets) != 3 || f.packets[1].Opcode != opcode.MSGMoveStop || f.packets[2].Opcode != opcode.CMSGCastSpell {
 		t.Fatalf("heal did not recover after an undispatched stop %+v packets=%v", result, f.packets)
 	}
@@ -364,7 +364,7 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 	s.Tick(context.Background())
 	f.world.Owner.Health = 50
 	f.failSend = true
-	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ := testExactHeal(s, 2050, ownerGUID)
 	if result.CastPending || len(f.packets) != 2 || result.Reason != "movement_stop_unconfirmed_heal_aborted" {
 		t.Fatalf("heal despite stop failure %+v", result)
 	}
@@ -372,7 +372,7 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 		t.Fatalf("unconfirmed stop not latched %+v", result)
 	}
 	f.failSend = false
-	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ = testExactHeal(s, 2050, ownerGUID)
 	if result.CastPending || len(f.packets) != 2 || !result.MotionUnconfirmed {
 		t.Fatalf("second heal bypassed unconfirmed stop %+v", result)
 	}
@@ -384,7 +384,7 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 	if state(t, s).MotionUnconfirmed || len(f.packets) != 3 || f.packets[2].Opcode != opcode.MSGMoveStop {
 		t.Fatal("explicit stop failed to recover")
 	}
-	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	result, _ = testExactHeal(s, 2050, ownerGUID)
 	if !result.CastPending || len(f.packets) != 4 {
 		t.Fatalf("heal did not recover after explicit stop %+v", result)
 	}
@@ -393,7 +393,7 @@ func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
 func TestMalformedAndForeignCastPacketsCannotClaimSuccess(t *testing.T) {
 	s, _, _ := rig(t)
 	learn(s)
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	for _, op := range []uint32{opcode.SMSGCastFailed, opcode.SMSGSpellStart, opcode.SMSGSpellGo, opcode.SMSGSpellFailure} {
 		_, _ = s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: op, Payload: []byte{0xff}})
 	}
@@ -464,7 +464,7 @@ func serverSpellPacket(goEvent bool, count byte) []byte {
 func TestServerSpellEventsRequireCompleteExpectedTargetBody(t *testing.T) {
 	s, _, _ := rig(t)
 	learn(s)
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	for _, op := range []uint32{opcode.SMSGSpellStart, opcode.SMSGSpellGo} {
 		wire := serverSpellPacket(op == opcode.SMSGSpellGo, 1)
 		for length := 0; length < len(wire); length++ {
@@ -555,11 +555,17 @@ func TestFreshAuthoritativeStoppedPositionClearsUnconfirmedMotion(t *testing.T) 
 	toggle(t, s, true)
 	s.Tick(context.Background())
 	f.failClock = true
-	_, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	_, _ = testExactHeal(s, 2050, ownerGUID)
 	f.failClock = false
 	f.world.Self.PositionRevision++
 	f.world.Self.MovementFlags = 0
-	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	// Exact admission exposes the fresh correction instead of silently
+	// resubmitting the previous decision. The next caller observation may retry.
+	_, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: 2050})
+	if status.Code(err) != codes.FailedPrecondition || state(t, s).MotionUnconfirmed {
+		t.Fatal("fresh correction was not an explicit undispatched refusal", err)
+	}
+	result, _ := testExactHeal(s, 2050, ownerGUID)
 	if result.MotionUnconfirmed || !result.CastPending {
 		t.Fatalf("authoritative stopped position failed to recover %+v", result)
 	}

@@ -83,40 +83,6 @@ func spellCost(r spellcatalog.Spell, p *worldv1.PlayerState) uint64 {
 	}
 	return uint64(r.Cost) + uint64(r.CostPerLevel)*uint64(p.Level) + manaBudget(p, uint64(r.CostPercent))
 }
-func (s *Service) bestHealLocked(p, target *worldv1.PlayerState) spellcatalog.Spell {
-	var best spellcatalog.Spell
-	var choices []contract.Spell
-	eligible := map[uint32]spellcatalog.Spell{}
-	score := float64(-1)
-	for _, r := range s.candidatesLocked(spellcatalog.Heal) {
-		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p) {
-			continue
-		}
-		if s.now().Before(s.spellReady[r.ID]) {
-			continue
-		}
-		if target.Guid != s.selfGUID && (r.Capability().Target == "self" || distance(s.pos, playerPosition(target)) > r.MaxFriendly || distance(s.pos, playerPosition(target)) < r.MinFriendly) {
-			continue
-		}
-		amount := directHealing(r)
-		if amount > score || amount == score && (best.ID == 0 || r.Rank > best.Rank) {
-			best, score = r, amount
-		}
-		eligible[r.ID] = r
-		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: amount, CastMs: r.CastMs, Score: amount})
-	}
-	if len(choices) > 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
-		decision := s.behaviorDecisionLocked(contract.Input{Kind: "heal_spell", Self: combatant(p), Target: combatant(target), Spells: choices})
-		if decision.SpellId != 0 {
-			if r, ok := eligible[decision.SpellId]; ok {
-				return r
-			}
-			s.behaviorRejection = "unknown_or_ineligible_heal_spell_using_native_decision"
-		}
-	}
-	return best
-}
-
 func directHealing(spell spellcatalog.Spell) float64 {
 	var total float64
 	for _, effect := range spell.Effects {

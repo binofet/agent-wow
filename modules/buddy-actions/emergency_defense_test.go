@@ -174,7 +174,7 @@ func TestEmergencyDefenseHealsAfterPriorAuthorizationWouldHaveExpired(t *testing
 	s.state.Assisting = false
 	advance(5 * time.Hour)
 	f.world.Self.Health = 10
-	s.Tick(context.Background())
+	runLuaHealing(t, s, false)
 	if lastCast(f) != lesserHeal || s.state.HealAttempts != 1 || healingCastTarget(f) != 1 {
 		t.Fatal("emergency defense displaced an urgent heal", s.stateLocked(), f.packets)
 	}
