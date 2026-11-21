@@ -29,6 +29,7 @@ type SessionPolicy struct {
 	encounterLeaseHeld bool // guarded by advance
 	followFallback     atomic.Pointer[policyFollowFallback]
 	gearEvaluation     atomic.Pointer[policyFollowFallback]
+	disposalEvaluation atomic.Pointer[policyFollowFallback]
 	starterSpell       atomic.Pointer[policyFollowFallback]
 	lastDispatch       atomic.Pointer[policyDispatchRecord]
 }
@@ -55,6 +56,7 @@ func (m *Manager) StartPolicyWithOptions(ctx context.Context, source string, opt
 	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx, source: source, builtin: source}
 	host.publishFollowFallback(source, vm.Status().Revision)
 	host.publishGearEvaluation(source, vm.Status().Revision)
+	host.publishDisposalEvaluation(source, vm.Status().Revision)
 	host.publishStarterSpell(source, vm.Status().Revision)
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
@@ -218,6 +220,7 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 		p.source = source
 		p.publishFollowFallback(source, revision)
 		p.publishGearEvaluation(source, revision)
+		p.publishDisposalEvaluation(source, revision)
 		p.publishStarterSpell(source, revision)
 	}
 	return revision, err
