@@ -1,5 +1,7 @@
 """Exact normal gear swaps, simulated RPC and private journals only."""
 import copy
+import io
+import json
 import importlib.machinery
 import importlib.util
 from pathlib import Path
@@ -408,5 +410,39 @@ class GearTests(unittest.TestCase):
                     else:del review['artifacts']['lifecycle']
                     with self.assertRaises(m.Error):j.validate()
             j.data['attempts'][0]=valid
+
+
+
+class GearFullInventoryRPCTests(unittest.TestCase):
+    def test_full_server_inventory_facts_are_not_cut_at_the_old_chat_cap(self):
+        state=initial();state['items']=[];state['inventoryBags']=[]
+        templates={}
+        for bag,capacity in enumerate((16,36,36,36,36)):
+            container=dict(bag=bag,slotKnown=True,contentsKnown=True,slotCount=capacity,slots=[])
+            if bag:container.update(containerGuid=str(NEW+1000+bag),metadataKnown=True,entry=5000+bag)
+            for slot in range(capacity):
+                index=len(state['items']);entry=1000+index
+                item=dict(bag=bag,slot=slot,itemGuid=str(NEW+index),entry=entry,stackCount=1,metadataKnown=True,enhancementsKnown=True,
+                    durabilityKnown=True,durability=20,maxDurability=20)
+                container['slots'].append(item)
+                templates[str(entry)]=dict(itemId=entry,available=True,name='observed '+('n'*240),itemClass=4,subclass=2,inventoryType=7,quality=2,
+                    armor=40,stats=[dict(type=k,value=2) for k in (3,4,5,6,7,12,13,14,15,16)],damages=[dict(minimum=0,maximum=0,school=0)]*2,
+                    delayMs=0,resistances=[0]*6,armorComparisonKnown=True,flags=0,flags2=0,hasSpell=False,scalingDistribution=0,scalingValue=0,requiredLevel=20)
+                state['items'].append(dict(item=m.town.ref(item),name=templates[str(entry)]['name'],metadataKnown=True,gearEquipEligible=True,conservativeUpgrade=True,
+                    gearEquipmentSlot=6,expectedEquippedItemGuid=str(OLD),gearBlockedReason='',gearFacts=dict(enhancementsKnown=True,hasEnhancements=False,
+                    durabilityKnown=True,durability=20,maxDurability=20,destinations=[dict(equipmentSlot=6,expectedEquippedItemGuid=str(OLD),eligible=True)])))
+            state['inventoryBags'].append(container)
+        state['gearContext']=dict(classKnown=True,classId=4,templates=templates,policyRevision='accepted-source')
+        group=load('gear_full_state_party_town','party-town')
+        for factory,method,result in ((m.c.RPC,'buddy-inventory.state',state),(m.RPC,'buddy-inventory.state',state),
+                (m.town.RPC,'buddy-inventory.state',state),(group.RPC,'buddy-inventory.state',state),
+                (m.c.RPC,'buddy-inventory.discover',dict(state=state)),(m.town.RPC,'buddy-inventory.discover',dict(state=state)),
+                (group.RPC,'buddy-inventory.discover',dict(state=state))):
+            with self.subTest(client=factory.__module__,method=method):
+                rpc=factory('http://127.0.0.1:8088/rpc')
+                raw=json.dumps(dict(jsonrpc='2.0',id=1,result=result)).encode()
+                self.assertGreater(len(raw),262144)
+                with patch.object(rpc.opener,'open',return_value=io.BytesIO(raw)):
+                    self.assertEqual(rpc.call(method,{}),result)
 
 if __name__=='__main__':unittest.main()

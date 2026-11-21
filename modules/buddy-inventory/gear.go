@@ -159,71 +159,48 @@ func gearUsability(w *worldv1.SnapshotResponse, m itemMetadata, proficiency uint
 	return ""
 }
 
-func (s *Service) gearEligibilityLocked(i *worldv1.BackpackSlot) (uint32, uint64, bool, string) {
-	m := s.metadata[i.Entry]
-	slot, supported := armorSlot(m)
-	weapon, ring := m.ordinaryMainhandWeapon(), m.ordinaryRing()
-	if ring {
-		slot, supported = firstFingerSlot, true
-	}
-	if weapon {
-		slot, supported = 15, true
-	}
-	if !i.MetadataKnown || !m.known {
-		return 0, 0, false, "complete_owned_item_metadata_pending"
-	}
-	if !supported || i.StackCount != 1 {
-		return 0, 0, false, "only_ordinary_single_slot_armor_supported"
-	}
-	var reason string
-	if weapon || ring {
-		reason = gearUsability(s.view.w, m, m.weaponProficiency())
-	} else {
-		reason = armorUsability(s.view.w, m)
-	}
-	if reason != "" {
-		return slot, 0, false, reason
-	}
-	if m.maxDurability != 0 && (!i.DurabilityKnown || i.MaxDurability != m.maxDurability || i.Durability == 0 || i.Durability > i.MaxDurability) {
-		return slot, 0, false, "known_unbroken_owned_armor_required"
-	}
+// gearFactsLocked reports every supported physical destination independently.
+// Lua owns which eligible destination to prefer and whether it is an upgrade.
+func (s *Service) gearFactsLocked(i *worldv1.BackpackSlot) *inventoryv1.GearItemFacts {
+	out := &inventoryv1.GearItemFacts{EnhancementsKnown: i.EnhancementsKnown, HasEnhancements: i.HasEnhancements,
+		DurabilityKnown: i.DurabilityKnown, Durability: i.Durability, MaxDurability: i.MaxDurability}
 	equipment, known := equipmentView(s.view)
 	if !known {
-		return slot, 0, false, "complete_own_equipment_baseline_required"
+		return out
 	}
-	slots := equipmentSlots(s.view.w, m, equipment, s.metadata)
-	if len(slots) == 0 {
-		return slot, 0, false, "ring_duplicate_or_equipment_unknown"
+	m := s.metadata[i.Entry]
+	for _, slot := range gearDestinationSlots(s.view.w, m, equipment, s.metadata) {
+		row := &inventoryv1.GearDestination{EquipmentSlot: slot, ExpectedEquippedItemGuid: equipment[slot].ItemGuid}
+		row.BlockedReason = s.exactGearDestinationLocked(i, slot, equipment)
+		row.Eligible = row.BlockedReason == ""
+		out.Destinations = append(out.Destinations, row)
 	}
-	var firstBlocked string
-	var eligible *worldv1.EquipmentSlotState
-	for _, dest := range slots {
-		current := equipment[dest]
-		currentTemplate := s.metadata[current.Entry]
-		blocked := gearSlotBlockReason(m, i, equipment, dest, currentTemplate)
-		if blocked != "" {
-			if firstBlocked == "" {
-				firstBlocked = blocked
-			}
-			continue
-		}
-		var upgrade bool
-		if weapon {
-			upgrade = weaponUpgradeForSlot(s.view.w.GetSelf().GetClassId(), dest, m, i, currentTemplate, current)
-		} else {
-			upgrade = conservativeArmorUpgrade(m, i, currentTemplate, current)
-		}
-		if upgrade {
-			return dest, current.ItemGuid, true, ""
-		}
-		if eligible == nil {
-			eligible = current
-		}
+	return out
+}
+
+func (s *Service) exactGearDestinationLocked(i *worldv1.BackpackSlot, slot uint32, equipment [19]*worldv1.EquipmentSlotState) string {
+	m := s.metadata[i.Entry]
+	if !i.MetadataKnown || !m.known {
+		return "complete_owned_item_metadata_pending"
 	}
-	if eligible != nil {
-		return eligible.Slot, eligible.ItemGuid, false, ""
+	if i.StackCount != 1 || !s.ordinaryBagLocked(i.Bag) {
+		return "exact_single_owned_item_in_supported_bag_required"
 	}
-	return slots[0], equipment[slots[0]].ItemGuid, false, firstBlocked
+	allowed := false
+	for _, candidate := range gearDestinationSlots(s.view.w, m, equipment, s.metadata) {
+		allowed = allowed || candidate == slot
+	}
+	if !allowed {
+		return "item_does_not_fit_requested_equipment_slot"
+	}
+	proficiency := m.weaponProficiency()
+	if m.class == 4 && m.subclass >= 1 && m.subclass <= 4 {
+		proficiency = [5]uint32{0, 415, 414, 413, 293}[m.subclass]
+	}
+	if reason := gearUsability(s.view.w, m, proficiency); reason != "" {
+		return reason
+	}
+	return gearSlotBlockReason(m, i, equipment, slot, s.metadata[equipment[slot].Entry])
 }
 
 func gearSlotBlockReason(m itemMetadata, i *worldv1.BackpackSlot, equipment [19]*worldv1.EquipmentSlotState, slot uint32, currentTemplate itemMetadata) string {
@@ -237,71 +214,7 @@ func gearSlotBlockReason(m itemMetadata, i *worldv1.BackpackSlot, equipment [19]
 	if current.ItemGuid != 0 && !currentTemplate.known {
 		return "displaced_item_template_pending"
 	}
-	if !i.EnhancementsKnown || current.ItemGuid != 0 && !current.EnhancementsKnown {
-		return "enhancement_context_pending"
-	}
 	return ""
-}
-
-func conservativeArmorUpgrade(candidate itemMetadata, carried *worldv1.BackpackSlot, current itemMetadata, equipped *worldv1.EquipmentSlotState) bool {
-	// Dynamic enhancements must also be excluded; a template-only comparison
-	// must never downgrade enchanted or randomly enhanced equipment.
-	if !carried.EnhancementsKnown || carried.HasEnhancements {
-		return false
-	}
-	if candidate.statCount > uint32(len(candidate.stats)) {
-		return false
-	}
-	for n := uint32(0); n < candidate.statCount; n++ {
-		if !knownUpgradeStat(candidate.stats[n].kind) || candidate.stats[n].value < 0 {
-			return false
-		}
-	}
-	if equipped.ItemGuid == 0 {
-		return true
-	}
-	if !equipped.EnhancementsKnown || equipped.HasEnhancements || !comparableArmorBaseline(current) && !current.ordinaryRing() {
-		return false
-	}
-	a, aok := armorSlot(candidate)
-	b, bok := armorSlot(current)
-	sameSlot := aok && bok && a == b || candidate.ordinaryRing() && current.ordinaryRing()
-	if !sameSlot || candidate.armor < current.armor {
-		return false
-	}
-	better := candidate.armor > current.armor
-	for i := range candidate.resistances {
-		if candidate.resistances[i] < current.resistances[i] {
-			return false
-		}
-		better = better || candidate.resistances[i] > current.resistances[i]
-	}
-	var next, old [49]int32
-	for _, pair := range []struct {
-		m   itemMetadata
-		out *[49]int32
-	}{{candidate, &next}, {current, &old}} {
-		for n := uint32(0); n < pair.m.statCount; n++ {
-			stat := pair.m.stats[n]
-			if !knownUpgradeStat(stat.kind) || stat.value < 0 {
-				return false
-			}
-			pair.out[stat.kind] = stat.value
-		}
-	}
-	for i := range next {
-		if next[i] < old[i] {
-			return false
-		}
-		better = better || next[i] > old[i]
-	}
-	return better
-}
-
-// ItemTemplate.h ItemModType omits2,8..11,40;41/42 are deprecated.
-// Unknown or deprecated modifiers are not evidence of an automatic upgrade.
-func knownUpgradeStat(kind uint32) bool {
-	return kind <= 1 || kind >= 3 && kind <= 7 || kind >= 12 && kind <= 39 || kind >= 43 && kind <= 48
 }
 
 // ItemPackets::AutoEquipItemSlot carries a raw item GUID followed by one slot.

@@ -861,11 +861,22 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "target_movement_visit_changed"
 		return false
 	}
-	if moving && s.followPortal.movementInProgress && !s.portalMovementAllowedLocked(w) {
-		s.state.Reason = "follow_instance_source_changed"
-		return false
+	if moving && s.followPortal.movementInProgress {
+		if !s.portalMovementAllowedLocked(w) {
+			s.state.Reason = "follow_instance_source_changed"
+			return false
+		}
+		// Policy is read through the host. Recheck physical authority after
+		// that callback without making another policy call before the write.
+		latest, err := s.snapshot(ctx)
+		if err != nil || !s.portalMovementCurrentLocked(latest) ||
+			latest.GetSelf().GetPositionRevision() != w.GetSelf().GetPositionRevision() || latest.GetSelf().GetMapId() != w.GetSelf().GetMapId() {
+			s.state.Reason = "follow_instance_source_changed"
+			return false
+		}
+		w = latest
 	}
-	if moving && !s.targetMovementExecuting && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
+	if moving && !s.targetMovementExecuting && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.followPortal.movementInProgress {
 		s.state.Reason = "movement_owner_map_changed"
 		return false
 	}

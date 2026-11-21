@@ -72,11 +72,11 @@ class RPC(c.RPC):
             method=method, params=params), allow_nan=False).encode(), headers={"Content-Type": "application/json"})
         try:
             with self.opener.open(request, timeout=35 if method.endswith("travel_vendor") else 5) as response:
-                raw = response.read(262145)
+                raw = response.read() if method == "buddy-inventory.discover" else response.read(262145)
             value = json.loads(raw)
         except (OSError, ValueError):
             raise Error("Town request is unconfirmed") from None
-        if (len(raw) > 262144 or not isinstance(value, dict) or value.get("jsonrpc") != "2.0"
+        if (method != "buddy-inventory.discover" and len(raw) > 262144 or not isinstance(value, dict) or value.get("jsonrpc") != "2.0"
                 or type(value.get("id")) is not int or value["id"] != request_id or "error" in value
                 or not isinstance(value.get("result"), dict)):
             raise Error("Town response is unconfirmed")

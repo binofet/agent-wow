@@ -22,6 +22,7 @@ message ItemEligibility {
   bool conservative_upgrade = 12;
   string gear_blocked_reason = 13;
   ConsumableMetadata consumable = 14;
+  GearItemFacts gear_facts = 15;
 }
 message Operation {
   string request_id = 1;
@@ -81,7 +82,39 @@ message State {
   optional uint32 mana_drink_count = 25;
   ConsumableUse last_consumable_use = 40;
   ConsumableContext consumable_context = 41;
+  GearContext gear_context = 42;
 }
+
+// Static template facts and exact legal destinations; no upgrade preference.
+message GearStat { uint32 type = 1; sint32 value = 2; }
+message GearDamage { float minimum = 1; float maximum = 2; uint32 school = 3; }
+message GearTemplate {
+  uint32 item_id = 1; bool available = 2; string name = 3;
+  uint32 item_class = 4; uint32 subclass = 5; uint32 inventory_type = 6;
+  uint32 quality = 7; uint32 armor = 8; repeated GearStat stats = 9;
+  repeated GearDamage damages = 10; uint32 delay_ms = 11;
+  repeated uint32 resistances = 12; bool armor_comparison_known = 13;
+  uint32 flags = 14; uint32 flags2 = 15; bool has_spell = 16;
+  uint32 scaling_distribution = 17; uint32 scaling_value = 18;
+  uint32 required_level = 19;
+}
+message GearDestination {
+  uint32 equipment_slot = 1; uint64 expected_equipped_item_guid = 2;
+  bool eligible = 3; string blocked_reason = 4;
+}
+message GearItemFacts {
+  bool enhancements_known = 1; bool has_enhancements = 2;
+  bool durability_known = 3; uint32 durability = 4; uint32 max_durability = 5;
+  repeated GearDestination destinations = 6;
+}
+message GearContext {
+  bool class_known = 1; uint32 class_id = 2;
+  bool race_known = 3; uint32 race_id = 4; bool level_known = 5; uint32 level = 6;
+  map<string,GearTemplate> templates = 7;
+  string policy_revision = 8;
+  string policy_error = 9;
+}
+
 // Deployed State22 contract. New roll controls use their separate Roll* types.
 message GroupRollReceipt {
   uint64 roll_guid = 1; uint32 item_entry = 2; uint32 loot_slot = 3;
