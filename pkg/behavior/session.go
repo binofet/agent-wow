@@ -82,6 +82,8 @@ type Session struct {
 	nextAction uint64
 	serial     uint64
 	admissible uint64
+	clockStart time.Time
+	clockNow   func() time.Time
 }
 
 // NewSession loads a Lua bundle with decide, on_event, export_state and
@@ -118,9 +120,10 @@ func NewSessionWithOptions(ctx context.Context, sessionID, source string, option
 		vm.close()
 		return nil, fmt.Errorf("initial policy export: %w", err)
 	}
+	clockStart, clockNow := newSessionClock()
 	return &Session{
 		id: sessionID, options: options, step: make(chan struct{}, 1), vm: vm, state: state, rev: sourceRevision(source), epoch: 1,
-		pending: make(map[uint64]pendingAction),
+		pending: make(map[uint64]pendingAction), clockStart: clockStart, clockNow: clockNow,
 	}, nil
 }
 
@@ -224,6 +227,11 @@ func (s *Session) Decide(ctx context.Context, input map[string]any) (Decision, e
 	if err := ctx.Err(); err != nil {
 		return Decision{}, err
 	}
+	clock, err := s.Clock()
+	if err != nil {
+		return Decision{}, err
+	}
+	frame["clock"] = clock.frame()
 	output, err := s.vm.decide(ctx, frame)
 	if err != nil {
 		return Decision{}, s.fail(err)

@@ -12,6 +12,7 @@ type HostMethod struct {
 	Effect      string         `json:"effect"`
 	Description string         `json:"description"`
 	Input       map[string]any `json:"input"`
+	Output      map[string]any `json:"output,omitempty"`
 }
 
 func inputSchema(t reflect.Type) map[string]any {
@@ -49,10 +50,11 @@ func hostMethods() []HostMethod {
 		CharacterGUID string `json:"characterGuid"`
 	}{})
 	return []HostMethod{
-		{"session.describe", "read", "Discover this live body, module contracts and host controls.", inputSchema(reflect.TypeOf(struct{}{}))},
-		{"session.attach", "read", "Inspect the attached policy revision, pending actions and fault state.", inputSchema(identity)},
-		{"session.policy_source", "read", "Read all Lua source for this body's attached policy.", inputSchema(identity)},
-		{"session.reload_policy", "mutation", "Replace Lua in this same session using expectedRevision and source, or useBuiltin. State transfers without logout.", inputSchema(reflect.TypeOf(policyEditRequest{}))},
-		{"session.send_event", "mutation", "Deliver an ordered input event to the attached Lua policy. A queued acknowledgment is not completion of the requested task.", inputSchema(reflect.TypeOf(policyEventRequest{}))},
+		{Name: "session.describe", Effect: "read", Description: "Discover this live body, module contracts and host controls.", Input: inputSchema(reflect.TypeOf(struct{}{}))},
+		{Name: "session.attach", Effect: "read", Description: "Inspect the attached policy revision, pending actions and fault state.", Input: inputSchema(identity)},
+		{Name: "session.policy_source", Effect: "read", Description: "Read all Lua source for this body's attached policy.", Input: inputSchema(identity)},
+		{Name: "session.reload_policy", Effect: "mutation", Description: "Replace Lua in this same session using expectedRevision and source, or useBuiltin. State transfers without logout.", Input: inputSchema(reflect.TypeOf(policyEditRequest{}))},
+		{Name: "session.send_event", Effect: "mutation", Description: "Deliver an ordered input event to the attached Lua policy. A queued acknowledgment is not completion of the requested task.", Input: inputSchema(reflect.TypeOf(policyEventRequest{}))},
+		{Name: "session.clock", Effect: "read", Description: "Read the attached session's monotonic elapsed milliseconds and Unix wall milliseconds. Lua frame.clock uses the same clock, preserved across reloads; compare deadlines only within this session.", Input: inputSchema(reflect.TypeOf(policyClockRequest{})), Output: inputSchema(reflect.TypeOf(policyClockResponse{}))},
 	}
 }
