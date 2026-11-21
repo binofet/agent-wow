@@ -27,6 +27,7 @@ rpc:
   cast_heal: /warcraftbuddy.actions.v1.BuddyActions/CastHeal
   cast_offense: /warcraftbuddy.actions.v1.BuddyActions/CastOffense
   cast_cleanse: /warcraftbuddy.actions.v1.BuddyActions/CastCleanse
+  cast_buff: /warcraftbuddy.actions.v1.BuddyActions/CastBuff
   melee: /warcraftbuddy.actions.v1.BuddyActions/Melee
   polymorph: /warcraftbuddy.actions.v1.BuddyActions/Polymorph
   sap: /warcraftbuddy.actions.v1.BuddyActions/Sap
@@ -119,6 +120,7 @@ script_api:
   polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Queue a healing request in the current attached Lua policy; returned State acknowledges input rather than a cast. Exact callers use cast_heal}
+  cast_buff: {effect: mutation, description: 'Cast one exact learned friendly aura spell on the selected observed player; Lua owns rank, usefulness and refresh decisions'}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}

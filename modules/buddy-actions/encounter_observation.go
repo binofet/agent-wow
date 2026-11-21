@@ -77,6 +77,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	s.expireExplicitCastLocked()
 	s.expireMeleeOperationLocked()
 	s.supportSnapshotLocked(nil)
+	s.buffTimeoutLocked()
 	defer s.reportPolledPolicyEffectsLocked(ctx)
 
 	identity := &actionsv1.EncounterObservationResponse{
@@ -298,6 +299,10 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 		view := encounterSpellMechanics(spell, self)
 		view.SelfAuraKnown, view.SelfAuraActive = s.encounterSelfAura(spell.Family)
 		switch spell.Capability().Kind {
+		case spellcatalog.Buff:
+			view.Capability = "buff"
+			view.Available = s.buffRankAvailableLocked(self, spell)
+			view.Ready = view.Available && s.buffCasterAvailableLocked(w, spell)
 		case spellcatalog.Heal:
 			view.Available = s.healRankAvailableLocked(self, spell)
 			view.Ready = heals[id]
@@ -358,6 +363,11 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 // No game packets are sent here. Tokens and native phase parsers correlate the
 // same terminal receipts consumed by the packet callback path exactly once.
 func (s *Service) reportPolledPolicyEffectsLocked(ctx context.Context) {
+	if op := s.buffOp; op != nil && op.policySpellToken != "" {
+		token := op.policySpellToken
+		op.reportPolicySpellEffect(ctx)
+		op.policySpellToken = token
+	}
 	if op := s.supportOp; op != nil && op.policySpellToken != "" {
 		// Keep the native token until a packet callback/new operation retires
 		// it. A canceled observation read may lose its trailers; repeating a

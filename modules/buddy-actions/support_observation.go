@@ -15,6 +15,20 @@ import (
 func (s *Service) encounterSupportLocked(ctx context.Context, w *worldv1.SnapshotResponse, online map[uint64]bool) *actionsv1.EncounterSupport {
 	out := &actionsv1.EncounterSupport{CasterInCombat: w.Self.UnitFlags&0x80000 != 0,
 		PlayerAuras: s.observedPlayerAurasLocked(w)}
+	catalog := s.spellData
+	if catalog == nil {
+		catalog = spellcatalog.Default()
+	}
+	out.AuraSpells = make(map[uint32]*actionsv1.EncounterSpell)
+	for _, player := range out.PlayerAuras {
+		for _, aura := range player.Auras {
+			if spell, ok := catalog.Lookup(aura.SpellId); ok {
+				metadata := encounterSpellMechanics(spell, w.Self)
+				metadata.Known = s.knownSpells[spell.ID]
+				out.AuraSpells[aura.SpellId] = metadata
+			}
+		}
+	}
 	s.supportSnapshotLocked(w)
 	if !s.spellbookKnown || safeSelfCombat(w, s.selfGUID) != "" {
 		return out
