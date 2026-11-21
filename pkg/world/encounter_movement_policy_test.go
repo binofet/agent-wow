@@ -255,3 +255,71 @@ func TestEncounterMovementAcceptsProtobufJSONTrajectoryAge(t *testing.T) {
 		})
 	}
 }
+
+func TestEncounterMovementAlternatingApproachKeepsActualStallEvidence(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		name := "target_approach"
+		if idle {
+			name = "idle_formation"
+		}
+		t.Run(name, func(t *testing.T) {
+			vm, ctx := movementPolicy(t), context.Background()
+			obs := movementObservation()
+			self := obs["players"].(map[string]any)["5"].(map[string]any)
+			self["positionRevision"], self["moving"] = "1", false
+			nav := map[string]any{"bodyMovementSupported": true, "following": true, "goalKnown": true, "goalX": float64(20)}
+			view := map[string]any{"targetGuid": "99", "visitId": "1"}
+			obs["navigation"], obs["targetMovement"] = nav, view
+			probes, recheck := 0, false
+			for sequence := 1; sequence <= 18 && (probes < 3 || recheck); sequence++ {
+				phase := "follow_navigation_unavailable"
+				if sequence%2 == 0 {
+					phase = "approaching"
+					if idle {
+						phase = "following_formation"
+					}
+				}
+				view["phase"], nav["phase"] = phase, phase
+				decision, err := vm.Decide(ctx, map[string]any{"idle": idle, "obs": obs, "target": "99", "sequence": strconv.Itoa(sequence), "options": map[string]any{"rangeYards": 4.5}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				action, _ := decision.Output["action"].(map[string]any)
+				if recheck {
+					if action["capability"] == "move_body" || !idle && action["capability"] != "approach_target" {
+						t.Fatal("correlated probe receipt skipped the ordinary route recheck", sequence, decision.Output)
+					}
+					recheck = false
+				}
+				if action["capability"] != "move_body" {
+					continue
+				}
+				if sequence < 5 || action["sequenceId"] != strconv.Itoa(sequence) || action["visitId"] != "1" {
+					t.Fatal("probe was not bound to three fresh stationary rejections", sequence, action)
+				}
+				wantBearing := float64(0)
+				if probes == 1 {
+					wantBearing = 1.5707963268
+				}
+				if action["bearingRadians"] != wantBearing || action["jump"] != (probes == 2) {
+					t.Fatal("stationary alternating statuses reset the forward/left/hop progression", probes, action)
+				}
+				id, err := vm.ReserveAction(decision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+					SessionID: "move", ActionID: id, Outcome: behavior.ActionSettledUnverified,
+					Payload: map[string]any{"capability": "move_body", "sequence_id": strconv.Itoa(sequence), "phase": "body_input_written", "effect_observed": false},
+				}}); err != nil {
+					t.Fatal(err)
+				}
+				probes++
+				recheck = true
+			}
+			if probes != 3 || recheck || self["positionRevision"] != "1" || self["x"] != float64(0) {
+				t.Fatal("alternating non-progress statuses never reached step/side/hop recovery", probes, self)
+			}
+		})
+	}
+}
