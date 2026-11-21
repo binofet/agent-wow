@@ -8,6 +8,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
@@ -32,7 +33,7 @@ func consumableBodySafe(w *worldv1.SnapshotResponse) bool {
 	const unsafe = uint32(1 | 4 | 0x40000 | 0x80000 | 0x100000 | 0x400000 | 0x800000 | 0x1000000 | 0x2000000 | 0x8000000)
 	return p != nil && p.AliveKnown && p.Alive && p.HealthKnown && p.Health != 0 && p.UnitFlagsKnown && p.UnitFlags&unsafe == 0 &&
 		p.MapKnown && p.PositionKnown && finite(p.X) && finite(p.Y) && finite(p.Z) && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 &&
-		movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) && p.ChannelSpellId == 0
+		movementflags.GroundCompatible(p.MovementFlags, p.ExtraMovementFlags) && channelstate.Idle(p)
 }
 
 func consumableActionSafe(a *actionsv1.State, sid string, self uint64) bool {

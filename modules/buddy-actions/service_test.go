@@ -115,6 +115,8 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	}
 	f := &fakeSession{world: &worldv1.SnapshotResponse{Self: player(1, 0), Owner: player(3, 10)}}
 	f.world.Self.Health = 100
+	// A complete own-player CREATE establishes omitted channel words as zero.
+	f.world.Self.ChannelSpellKnown, f.world.Self.ChannelObjectKnown = true, true
 	f.party = &partyv1.StateResponse{SessionId: "actions-test-body", Group: &partyv1.Group{Known: true, InGroup: true, Members: []*partyv1.Member{
 		{Guid: 1, Self: true, Online: true, Name: "Arlen"}, {Guid: 3, Online: true, Name: "Joel"},
 	}}}

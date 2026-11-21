@@ -870,7 +870,8 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		// that callback without making another policy call before the write.
 		latest, err := s.snapshot(ctx)
 		if err != nil || !s.portalMovementCurrentLocked(latest) ||
-			latest.GetSelf().GetPositionRevision() != w.GetSelf().GetPositionRevision() || latest.GetSelf().GetMapId() != w.GetSelf().GetMapId() {
+			latest.GetSelf().GetPositionRevision() != w.GetSelf().GetPositionRevision() || latest.GetSelf().GetMapId() != w.GetSelf().GetMapId() ||
+			playerPosition(latest.GetSelf()) != playerPosition(w.GetSelf()) {
 			s.state.Reason = "follow_instance_source_changed"
 			return false
 		}

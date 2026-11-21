@@ -95,26 +95,32 @@ func fullBackpack(w *worldv1.SnapshotResponse) bool {
 func (s *Service) junkReason(reason string) { s.mu.Lock(); s.state.JunkReason = reason; s.mu.Unlock() }
 
 func (s *Service) junkSafe(ctx context.Context, w *worldv1.SnapshotResponse) error {
-	if w == nil || w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || w.Self.UnitFlags&0x80000 != 0 {
-		return status.Error(codes.FailedPrecondition, "junk disposal requires observed alive noncombat character")
+	if err := s.junkWorldSafe(w); err != nil {
+		return err
 	}
 	a := &actionsv1.State{}
 	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a); err != nil {
 		return err
 	}
-	if a.Moving || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Traveling || (a.InteractionOwner != "" && a.InteractionOwner != "trade") {
+	if !junkActionsSafe(a) {
 		return status.Error(codes.FailedPrecondition, "inventory interaction, casting or movement is busy")
 	}
 	return nil
 }
 
 func (s *Service) DestroyJunk(ctx context.Context, r *tradev1.JunkRequest) (*tradev1.State, error) {
-	if r == nil || r.BackpackSlot >= 16 || r.ExpectedItemGuid == 0 {
-		return nil, status.Error(codes.InvalidArgument, "exact backpack slot and item GUID required")
+	if r == nil || r.ExpectedItemGuid == 0 {
+		return nil, status.Error(codes.InvalidArgument, "exact carried slot and item GUID required")
+	}
+	legacy := r.BackpackSlot < 16 && r.SourceBag == 0 && r.SourceSlot == 0 && r.InventoryRevision == 0
+	carried := r.SourceBag >= 1 && r.SourceBag <= 4 && r.SourceSlot < 36 && r.InventoryRevision != 0 &&
+		r.BackpackRevision == 0 && r.BackpackSlot == 0
+	if !legacy && !carried {
+		return nil, status.Error(codes.InvalidArgument, "one exact inventory source is required")
 	}
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	call, cancel := context.WithTimeout(ctx, 3*time.Second)
+	call, cancel := context.WithTimeout(ctx, junkWriteTimeout)
 	defer cancel()
 	if err := s.destroyJunk(call, r); err != nil {
 		return nil, err
@@ -125,6 +131,8 @@ func (s *Service) DestroyJunk(ctx context.Context, r *tradev1.JunkRequest) (*tra
 // opMu serializes all outgoing inventory/trade mutations. The actions lease
 // excludes loot, mail, quest and training mutations while this write settles.
 func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, junkWriteTimeout)
+	defer cancel()
 	s.mu.Lock()
 	err := s.boundLocked(r.SessionId, r.Revision)
 	busy := active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil
@@ -139,8 +147,9 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	if err != nil {
 		return err
 	}
-	if !fullBackpack(w) || w.BackpackRevision != r.BackpackRevision {
-		return status.Error(codes.FailedPrecondition, "full backpack or exact inventory revision required")
+	initial := junkSource(w, r)
+	if initial == nil {
+		return status.Error(codes.FailedPrecondition, "full capacity and exact inventory source required")
 	}
 	// Do not interrupt an existing interaction; acquire may stop ordinary follow.
 	if err := s.junkSafe(ctx, w); err != nil {
@@ -159,38 +168,53 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	if err != nil {
 		return err
 	}
-	if !fullBackpack(w) || w.BackpackRevision != r.BackpackRevision {
-		return status.Error(codes.FailedPrecondition, "backpack changed before disposal")
+	selected := junkSource(w, r)
+	if selected == nil || r.InventoryRevision != 0 &&
+		(selected.Entry != initial.Entry || selected.StackCount != initial.StackCount) {
+		return status.Error(codes.FailedPrecondition, "inventory source changed before disposal")
 	}
-	if err := s.junkSafe(ctx, w); err != nil {
+	w, selected, guard, err := s.junkFinalWorld(ctx, r, w)
+	if err != nil {
 		return err
 	}
-	var selected *worldv1.BackpackSlot
-	for _, item := range w.Backpack {
-		if item.Slot == r.BackpackSlot && item.ItemGuid == r.ExpectedItemGuid {
-			selected = item
-		}
-	}
-	if selected == nil {
-		return status.Error(codes.FailedPrecondition, "selected item changed")
-	}
 	s.mu.Lock()
+	if err := s.boundLocked(r.SessionId, r.Revision); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	meta, known := s.metadata[selected.Entry]
 	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil || !known ||
 		(!meta.disposable() && !s.grayArmorJunk(w, selected)) {
 		s.mu.Unlock()
 		return status.Error(codes.FailedPrecondition, "only fully queried gray junk with no remaining use is disposable")
 	}
+	until := s.now().Add(5 * time.Second)
+	if err := s.junkDispatchReady(ctx, guard); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	// Reserve before SendPacket: an ambiguous error must never resend a destroy.
-	s.junkPending = &tradev1.JunkDisposal{BackpackSlot: selected.Slot, ItemGuid: selected.ItemGuid, Entry: selected.Entry, Count: selected.StackCount, Name: s.names[selected.Entry], Status: "AWAITING_SERVER_SLOT_UPDATE", BackpackRevision: w.BackpackRevision}
+	s.junkPending = &tradev1.JunkDisposal{ItemGuid: selected.ItemGuid, Entry: selected.Entry,
+		Count: selected.StackCount, Name: s.names[selected.Entry], Status: "AWAITING_SERVER_SLOT_UPDATE"}
+	bag, slot := byte(255), byte(23+selected.Slot)
+	if r.InventoryRevision != 0 {
+		s.junkPending.SourceBag, s.junkPending.SourceSlot = selected.Bag, selected.Slot
+		s.junkPending.InventoryRevision = w.InventoryRevision
+		s.carriedJunkProof = &carriedJunkProof{revision: w.InventoryRevision, presentRevision: w.InventoryRevision,
+			equipmentRevision: w.SelfEquipmentRevision}
+		bag, slot = byte(18+selected.Bag), byte(selected.Slot)
+	} else {
+		s.carriedJunkProof = nil
+		s.junkPending.BackpackSlot, s.junkPending.BackpackRevision = selected.Slot, w.BackpackRevision
+	}
 	s.state.LastJunkDisposal = proto.Clone(s.junkPending).(*tradev1.JunkDisposal)
 	s.state.JunkReason = "waiting_for_server_inventory_update"
 	s.state.Revision++
-	s.junkUntil = s.now().Add(5 * time.Second)
+	s.junkUntil = until
 	s.mu.Unlock()
 	reserved = true
 	// ItemPackets::DestroyItem: bag, inventory slot, count(0=whole stack), 3 unused bytes.
-	if err := s.send(ctx, opcode.CMSGDestroyitem, []byte{255, byte(23 + selected.Slot), 0, 0, 0, 0}); err != nil {
+	if err := s.send(ctx, opcode.CMSGDestroyitem, []byte{bag, slot, 0, 0, 0, 0}); err != nil {
 		s.mu.Lock()
 		s.state.LastJunkDisposal.Status = "TRANSPORT_UNCONFIRMED_NO_RETRY"
 		s.state.JunkReason = "transport_unconfirmed_no_retry"
@@ -230,13 +254,21 @@ func (s *Service) junkTick(ctx context.Context) {
 				slotSeen = true
 			}
 		}
-		if knownBackpackReferences(w) && slotSeen && removed && w.BackpackRevision > pending.BackpackRevision {
+		confirmed := knownBackpackReferences(w) && slotSeen && removed && w.BackpackRevision > pending.BackpackRevision
+		if pending.InventoryRevision != 0 {
+			s.mu.Lock()
+			confirmed = s.carriedJunkProof.removalConfirmed(w, pending)
+			s.mu.Unlock()
+			confirmed = confirmed && w.Self.GetPresent() && w.Self.GetGuid() == s.selfGUID
+		}
+		if confirmed {
 			s.mu.Lock()
 			s.state.LastJunkDisposal.Status = "SERVER_SLOT_REMOVAL_CONFIRMED"
 			s.state.JunkStacksDestroyed++
 			s.state.JunkReason = "server_confirmed_junk_stack_removed"
 			s.state.Revision++
 			s.junkPending = nil
+			s.carriedJunkProof = nil
 			s.mu.Unlock()
 			s.release(ctx)
 			return

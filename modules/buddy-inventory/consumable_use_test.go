@@ -39,7 +39,7 @@ func exactConsumableFixture(t *testing.T, spell uint32) (*Service, *consumableTe
 	s, f := fixtureInventory()
 	f.a.SessionId, f.a.SelfGuid = "body", 6
 	f.a.Following, f.a.Assisting = true, true
-	f.w.Self.ChannelSpellKnown = false // Initial zero fields may be omitted by the server.
+	// Full own CREATE omits zero words but establishes their known-zero baseline.
 	f.w.Self.LevelKnown, f.w.Self.Level = true, 30
 	f.w.Self.PowerKnown, f.w.Self.Power, f.w.Self.MaxPower = true, 5, 150
 	item := f.w.InventoryBags[0].Slots[0]
@@ -84,7 +84,7 @@ func TestExactConsumableUsesChosenOwnedItemAndRequiresConsumptionPlusFreshAura(t
 }
 
 func TestExactConsumableRejectsStaleForeignOrUnsafeRequestsWithoutChoosingAnotherItem(t *testing.T) {
-	for _, mode := range []string{"foreign_session", "foreign_body", "wrong_item", "wrong_spell", "stale_revision", "slot_changed", "combat", "moving", "channel", "unknown_motion", "on_equip"} {
+	for _, mode := range []string{"foreign_session", "foreign_body", "wrong_item", "wrong_spell", "stale_revision", "slot_changed", "combat", "moving", "channel", "channel_object", "channel_spell_unknown", "channel_object_unknown", "unknown_motion", "on_equip"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, r := exactConsumableFixture(t, 430)
 			switch mode {
@@ -106,6 +106,12 @@ func TestExactConsumableRejectsStaleForeignOrUnsafeRequestsWithoutChoosingAnothe
 				f.w.Self.MovementFlags = 1
 			case "channel":
 				f.w.Self.ChannelSpellId = 12051
+			case "channel_object":
+				f.w.Self.ChannelObjectGuid = 99
+			case "channel_spell_unknown":
+				f.w.Self.ChannelSpellKnown = false
+			case "channel_object_unknown":
+				f.w.Self.ChannelObjectKnown = false
 			case "unknown_motion":
 				f.a.MotionUnconfirmed = true
 			case "on_equip":

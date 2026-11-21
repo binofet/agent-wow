@@ -7,6 +7,7 @@ local roles = {[5]={3.8,-3.1}, [8]={5.1,.2}, [4]={2.4,3.5}, [9]={1,-5.2}}
 local near_stop, near_limit = 3,30
 local portal_ahead, portal_side = {8,12,16}, {-6,6}
 local portal_wait_ms, portal_seen_ms, portal_catchup_ms = 500,20000,75000
+local portal_approach_yards = 45
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -54,9 +55,21 @@ function M.decide(input)
         return {}
     end
 
+    if input.mode=="portal_sighting" then
+        if not input.self or not number(portal_approach_yards) or portal_approach_yards<=0 then return {} end
+        local dx,dy,dz=input.self.x-owner.x,input.self.y-owner.y,input.self.z-owner.z
+        return {catchingUp=dx*dx+dy*dy+dz*dz>portal_approach_yards*portal_approach_yards}
+    end
+
     if input.mode=="portal_follow" then
         local p=input.portal
-        local eligible=type(p)=="table" and p.following==true and p.ownerAbsent==true and
+        local in_range=false
+        if input.self and number(portal_approach_yards) and portal_approach_yards>0 then
+            local dx,dy,dz=input.self.x-owner.x,input.self.y-owner.y,input.self.z-owner.z
+            in_range=type(p)=="table" and (p.catchingUp==true or
+                dx*dx+dy*dy+dz*dz<=portal_approach_yards*portal_approach_yards)
+        end
+        local eligible=in_range and type(p)=="table" and p.following==true and p.ownerAbsent==true and
             type(p.catchingUp)=="boolean" and revision(p.sourceVisitId) and
             p.sourceVisitId==p.currentVisitId and revision(p.followRevision) and
             p.followRevision==p.currentFollowRevision and p.sightingAgeKnown==true and
@@ -68,11 +81,11 @@ function M.decide(input)
     end
 
     if input.mode=="portal_catch_up" then
-        if not input.self then return {} end
+        if not input.self or not number(portal_approach_yards) or portal_approach_yards<=0 then return {} end
         local candidates={{x=owner.x,y=owner.y,z=owner.z}}
         local dx,dy=owner.x-input.self.x,owner.y-input.self.y
         local gap=math.sqrt(dx*dx+dy*dy)
-        if gap>45 then
+        if gap>portal_approach_yards then
             dx,dy=dx/gap,dy/gap
             for _,ahead in ipairs(portal_ahead) do
                 for _,side in ipairs(portal_side) do
