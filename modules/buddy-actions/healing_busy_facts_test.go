@@ -16,7 +16,9 @@ func TestBusyHealingCustodyRetainsFactualPatientsAndRanksWithoutCastReadiness(t 
 	s.sessionID = f.party.SessionId
 	s.applySpellbookLocked(map[uint32]bool{2050: true})
 	f.world.Owner.Health = 20
-	s.state.InteractionOwner = "loot"
+	if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot", LeaseMs: 15000}); err != nil {
+		t.Fatal(err)
+	}
 	view, err := s.HealingOptions(context.Background(), &emptypb.Empty{})
 	if err != nil || view.Caster.Ready || view.Reason != "healing_caster_busy" || len(view.Patients) != 1 || len(view.Spells) != 1 || view.Patients[0].Guid != ownerGUID {
 		t.Fatal("custody erased raw triage facts or invented readiness", view, err)
