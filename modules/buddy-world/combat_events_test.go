@@ -111,7 +111,7 @@ func TestCombatEventsMalformedAndUnsupportedRetainRawWithoutEffects(t *testing.T
 		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellnonmeleedamagelog, Payload: damage[:n]})
 	}
 	unsupported := []byte{1, 2, 3}
-	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGPeriodicauralog, Payload: unsupported})
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGCombatEventFailed, Payload: unsupported})
 	unsupported[0] = 99
 	// Real object health observations must not become inferred damage/death logs.
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGUpdateObject, Payload: deltaFixture(1, map[int]uint32{unitHealth: 0})})
@@ -217,5 +217,41 @@ func TestCombatEventsConcurrentReadAndReceive(t *testing.T) {
 	r, _ := s.CombatEvents(context.Background(), &worldv1.CombatEventsRequest{SessionId: "aw-race", Limit: 2000})
 	if len(r.Events) != 1000 {
 		t.Fatal(len(r.Events))
+	}
+}
+
+func TestCombatEventsPeriodicDamageHealingAndUnsupportedPower(t *testing.T) {
+	for _, test := range []struct {
+		aura   uint32
+		kind   string
+		amount uint32
+		words  []uint32
+	}{
+		{3, "spell_damage", 23, []uint32{23, 0, 32, 4, 2}},
+		{89, "spell_damage", 23, []uint32{23, 0, 32, 4, 2}},
+		{8, "heal", 18, []uint32{23, 5, 4}},
+		{20, "heal", 18, []uint32{23, 5, 4}},
+	} {
+		data := append(packedFixture(3), packedFixture(1)...)
+		for _, word := range append([]uint32{139, 1, test.aura}, test.words...) {
+			data = binary.LittleEndian.AppendUint32(data, word)
+		}
+		data = append(data, 0)
+		event := decodeCombatEvent(opcode.SMSGPeriodicauralog, data, 1)
+		if event.Malformed || event.Kind != test.kind || !event.AmountKnown || event.Amount != test.amount || event.SourceGuid != 1 || event.TargetGuid != 3 {
+			t.Fatal(event)
+		}
+		for n := 0; n < len(data); n++ {
+			if e := decodeCombatEvent(opcode.SMSGPeriodicauralog, data[:n], 1); !e.Malformed || e.AmountKnown {
+				t.Fatal("accepted truncated periodic effect", n, e)
+			}
+		}
+	}
+	power := append(packedFixture(3), packedFixture(1)...)
+	for _, word := range []uint32{139, 1, 24, 0, 45} {
+		power = binary.LittleEndian.AppendUint32(power, word)
+	}
+	if e := decodeCombatEvent(opcode.SMSGPeriodicauralog, power, 1); e.Malformed || e.Kind != "unknown" || e.AmountKnown {
+		t.Fatal(e)
 	}
 }

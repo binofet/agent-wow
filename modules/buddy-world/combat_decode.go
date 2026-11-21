@@ -53,6 +53,22 @@ func decodeCombatEvent(op uint32, payload []byte, self uint64) *worldv1.CombatEv
 	case opcode.SMSGSpellheallog:
 		event.TargetGuid, event.SourceGuid, event.SpellId, event.Amount, err = combatHeal(payload)
 		event.Kind, event.AmountKnown = "heal", true
+	case opcode.SMSGPeriodicauralog:
+		event, err = combatPeriodic(payload)
+	case opcode.SMSGSpelldamageshield:
+		// Unit::SendAttackStateUpdate's shield proc log uses unpacked GUIDs.
+		if len(payload) != 32 {
+			err = errLayout
+			break
+		}
+		event.SourceGuid, event.TargetGuid = binary.LittleEndian.Uint64(payload), binary.LittleEndian.Uint64(payload[8:])
+		event.SpellId, event.Amount = binary.LittleEndian.Uint32(payload[16:]), binary.LittleEndian.Uint32(payload[20:])
+		school := binary.LittleEndian.Uint32(payload[28:])
+		if event.SourceGuid == 0 || event.TargetGuid == 0 || event.SpellId == 0 || school == 0 || school & ^uint32(0x7f) != 0 {
+			err = errLayout
+			break
+		}
+		event.Kind, event.AmountKnown, event.Detail = "spell_damage", true, "damage_shield"
 	case opcode.SMSGPartykilllog:
 		if len(payload) != 16 {
 			err = errLayout
@@ -114,8 +130,9 @@ func decodeCombatEvent(op uint32, payload []byte, self uint64) *worldv1.CombatEv
 			event.Kind, event.Detail = "cast_go", "server_launch_only; explicit_target_prefix; not_effect_confirmation"
 		}
 	case opcode.SMSGAttackstart, opcode.SMSGAttackstop,
-		opcode.SMSGPeriodicauralog, opcode.SMSGSpelldamageshield,
-		opcode.SMSGSpellinstakilllog, opcode.SMSGCombatEventFailed:
+		opcode.SMSGSpellinstakilllog, opcode.SMSGCombatEventFailed,
+		opcode.SMSGAttackswingNotinrange, opcode.SMSGAttackswingBadfacing,
+		opcode.SMSGAttackswingDeadtarget, opcode.SMSGAttackswingCantAttack:
 		event.Detail = "unsupported_combat_packet"
 	default:
 		return nil
@@ -150,4 +167,46 @@ func combatHeal(data []byte) (target, caster uint64, spell, effective uint32, er
 		return 0, 0, 0, 0, bad
 	}
 	return target, caster, spell, heal - overheal, nil
+}
+
+// Unit::SendPeriodicAuraLog: exact one-effect DoT/HoT reports. Power ticks and
+// future layouts remain raw unknown evidence. Source:
+// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Unit/Unit.cpp
+func combatPeriodic(data []byte) (*worldv1.CombatEvent, error) {
+	c := cursor{b: data}
+	event := &worldv1.CombatEvent{Kind: "unknown", TargetGuid: combatReadGUID(&c)}
+	event.SourceGuid = combatReadGUID(&c)
+	event.SpellId = c.u32()
+	count, aura := c.u32(), c.u32()
+	if c.err != nil || event.SourceGuid == 0 || event.TargetGuid == 0 || event.SpellId == 0 {
+		return event, errLayout
+	}
+	if count != 1 {
+		event.Detail = "unsupported_periodic_effect_count"
+		return event, nil
+	}
+	switch aura {
+	case 3, 89: // PERIODIC_DAMAGE, PERIODIC_DAMAGE_PERCENT
+		event.Amount = c.u32()
+		c.u32() // overkill
+		school := c.u32()
+		c.u32()
+		c.u32() // absorb, resist already excluded from server amount
+		crit := c.u8()
+		if c.done() != nil || crit > 1 || school == 0 || school & ^uint32(0x7f) != 0 {
+			return event, errLayout
+		}
+		event.Kind, event.AmountKnown, event.Detail = "spell_damage", true, "periodic_damage"
+	case 8, 20: // PERIODIC_HEAL, OBS_MOD_HEALTH
+		total, overheal := c.u32(), c.u32()
+		c.u32() // absorption
+		crit := c.u8()
+		if c.done() != nil || crit > 1 || overheal > total {
+			return event, errLayout
+		}
+		event.Kind, event.AmountKnown, event.Amount, event.Detail = "heal", true, total-overheal, "periodic_heal"
+	default:
+		event.Detail = "unsupported_periodic_aura"
+	}
+	return event, nil
 }

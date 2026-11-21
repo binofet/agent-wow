@@ -28,6 +28,10 @@ packets:
   SMSG_PERIODICAURALOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELLDAMAGESHIELD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELLINSTAKILLLOG: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_NOTINRANGE: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_BADFACING: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_DEADTARGET: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
+  SMSG_ATTACKSWING_CANT_ATTACK: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_COMBAT_EVENT_FAILED: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_START: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_SPELL_GO: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
