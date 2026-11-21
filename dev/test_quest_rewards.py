@@ -265,6 +265,23 @@ class RewardTests(unittest.TestCase):
                 self.assertIs(result["choice"], choices[0])
                 self.assertIn("useful equipment", result["reason"])
 
+    def test_sparse_item_metadata_preserves_actual_choice_and_numeric_ties(self):
+        choices=[offer(2147483647),offer(99000,1)]
+        rows=[item(2147483647,itemClass=4,subclass=1,inventoryType=16,stats=[dict(type=5,value=5)]),
+              item(99000,itemClass=4,subclass=1,inventoryType=16,stats=[dict(type=5,value=3)])]
+        self.assertIs(self.select(choices,rows)["choice"],choices[0])
+        rows[1]["stats"][0]["value"]=5
+        self.assertIs(self.select(choices,rows)["choice"],choices[1])
+        keyed={str(row["itemId"]):row for row in rows}
+        self.assertIs(self.select(choices,keyed)["choice"],choices[1])
+
+    def test_sparse_reward_ids_still_reject_duplicate_choice_and_metadata(self):
+        for item_id in (99000,2147483647):
+            with self.subTest(item_id=item_id):
+                row=item(item_id)
+                self.assertEqual(self.select([offer(item_id),offer(item_id,1)],[row])["status"],"invalid")
+                self.assertEqual(self.select([offer(item_id)],[row,copy.deepcopy(row)])["status"],"invalid")
+
     def test_integer_stat_prefix_preserves_existing_fractional_tie_behavior(self):
         a = [dict(type=0, value=78850693), dict(type=42, value=1740525995),
              dict(type=7, value=-1992681754)]

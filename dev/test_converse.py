@@ -1851,7 +1851,7 @@ class BoundaryTests(unittest.TestCase):
         for method in ('buddy-actions.cast', 'buddy-professions.attempt', 'session.logout'):
             with self.assertRaises(converse.ConversationError): rpc.call(method, {})
 
-    def test_spell_context_is_bound_unknown_preserving_and_buff_control_is_fixed(self):
+    def test_spell_context_is_bound_and_buff_request_has_no_python_readiness_veto(self):
         raw = {'sessionId': 'aw-body', 'selfGuid': '4', 'spellbookKnown': True,
                'spellbookRevision': '2', 'spells': [
                    {'spellId': 7300, 'metadataKnown': True, 'name': 'Frost Armor', 'rank': 2, 'automaticBuffSupported': True},
@@ -1869,10 +1869,30 @@ class BoundaryTests(unittest.TestCase):
                 self.calls.append((method,params));return {'buffing':params['enabled']}
         rpc=BuffRPC();controls=converse.BuddyControls(rpc,character_class='mage',character_guid=4)
         controls.actions_available=True
-        self.assertIn('supported learned buff', controls.execute('ENABLE_BUFFS'))
-        self.assertEqual(rpc.calls,[])
+        self.assertIn('maintain', controls.execute('ENABLE_BUFFS'))
+        self.assertEqual(rpc.calls,[('buddy-actions.buffs',{'enabled':True})])
+        rpc.calls.clear()
         controls.spell_toolkit=context
         controls.execute('ENABLE_BUFFS');controls.execute('DISABLE_BUFFS')
+        self.assertEqual(rpc.calls,[('buddy-actions.buffs',{'enabled':True}),('buddy-actions.buffs',{'enabled':False})])
+
+    def test_current_lua_buff_ack_is_delivery_only_and_legacy_disable_keeps_support(self):
+        class BuffRPC:
+            def __init__(self): self.calls=[]
+            def call(self,method,params):
+                if method!='buddy-actions.buffs': raise converse.ConversationError('unavailable')
+                self.calls.append((method,params))
+                if params['enabled']:
+                    return {'reason':'lua_buff_request_queued:8'}
+                return {'buffReason':'lua_policy_owns_buff_choices'}
+        rpc=BuffRPC();controls=converse.BuddyControls(rpc,character_class='mage',character_guid=4)
+        controls.actions_available=True
+        self.assertTrue(controls.context()['abilities']['buffing'])
+        acknowledgment=controls.execute('ENABLE_BUFFS')
+        self.assertIn('queued a check',acknowledgment)
+        self.assertIn('observed effect',acknowledgment)
+        self.assertNotIn('couldn\'t enable',acknowledgment)
+        self.assertIn('keep maintaining useful buffs',controls.execute('DISABLE_BUFFS'))
         self.assertEqual(rpc.calls,[('buddy-actions.buffs',{'enabled':True}),('buddy-actions.buffs',{'enabled':False})])
 
     def test_targeted_resurrection_requires_installed_metadata_and_exact_observed_target(self):

@@ -123,7 +123,7 @@ script_api:
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
   heal_once: {effect: mutation, description: Queue a healing request in the current attached Lua policy; returned State acknowledges input rather than a cast. Exact callers use cast_heal}
   cast_buff: {effect: mutation, description: 'Cast one exact learned friendly aura spell on the selected observed player; Lua owns rank, usefulness and refresh decisions'}
-  buffs: {effect: mutation}
+  buffs: {effect: mutation, description: 'Compatibility input: enable queues a useful-buff check in current Lua; disable clears legacy status while shared Lua maintenance stays active'}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}
   release_interaction: {effect: mutation}

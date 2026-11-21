@@ -19,12 +19,21 @@ end
 local function ids(rows,max)
     if not array(rows,max) then return end
     local out={}
-    for _,q in ipairs(rows) do if not uint(q,4294967295) or q==0 or out[q] then return end; out[q]=true end
+    for _,q in ipairs(rows) do
+        if not uint(q,4294967295) or q==0 then return end
+        local key=tostring(q)
+        if out[key] then return end
+        out[key]=true
+    end
     return out
 end
+-- Numeric sparse keys expand gopher-lua's array storage. Keep bounded ID sets
+-- in the hash part while preserving number-only membership at raw-row edges.
+local function member(set,q) return type(q)=="number" and set[tostring(q)] end
 local function sorted_ids(set)
     local rows={}
-    for q in pairs(set) do
+    for key in pairs(set) do
+        local q=tonumber(key)
         local i=#rows+1
         while i>1 and q<rows[i-1] do rows[i]=rows[i-1]; i=i-1 end
         rows[i]=q
@@ -125,7 +134,7 @@ local function starter_pickup(input)
                     if not uint(q,9007199254740991) and not decimal(q) then return invalid end
                     if type(q)=="string" then q=#q<=10 and tonumber(q) or nil end
                     if q and row.available==true and row.acceptRequested~=true and row.repeatable~=true and
-                       not active[q] and allowed[q] then desired[q]=true end
+                       not member(active,q) and member(allowed,q) then desired[tostring(q)]=true end
                 end
                 local ordered=sorted_ids(desired)
                 local q=ordered[1]
@@ -313,7 +322,9 @@ function M.decide(input)
     for q in pairs(active) do if not own[q] and #input.ownQuestIds<25 then eligible_accept[q]=true end end
     for _,row in ipairs(input.questLog) do
         if type(row)~="table" or not uint(row.questId,4294967295) then return invalid end
-        if own[row.questId] and done[row.questId] and row.complete==true and row.failed~=true then eligible_reward[row.questId]=true end
+        if member(own,row.questId) and member(done,row.questId) and row.complete==true and row.failed~=true then
+            eligible_reward[tostring(row.questId)]=true
+        end
     end
     local givers={}
     if pose(input.ownerPosition) and pose(input.selfPosition) and input.ownerPosition.mapId==input.selfPosition.mapId then
@@ -351,7 +362,7 @@ function M.decide(input)
     local completed={}
     for q in pairs(own) do if done[q] then completed[q]=true end end
     for _,q in ipairs(sorted_ids(completed)) do
-        if eligible_reward[q] then
+        if member(eligible_reward,q) then
             local expected
             for _,event in ipairs(input.rewarded) do if event.questId==q then expected=event.npcGuid; break end end
             local giver
@@ -392,14 +403,16 @@ function M.decide(input)
             end
             if not used then
                 for _,q in ipairs(offer.quests) do
-                    if type(q)=="table" and eligible_accept[q.questId] and q.available==true and q.repeatable~=true and q.acceptRequested~=true then
+                    if type(q)=="table" and member(eligible_accept,q.questId) and q.available==true and q.repeatable~=true and q.acceptRequested~=true then
                         return finish({kind="accept",npcGuid=giver.guid,questId=q.questId,offerRevision=offer.revision})
                     end
                 end
             end
         end
         local event_guids={}
-        for _,event in ipairs(input.accepted) do if active[event.questId] and not own[event.questId] then event_guids[event.npcGuid]=true end end
+        for _,event in ipairs(input.accepted) do
+            if member(active,event.questId) and not member(own,event.questId) then event_guids[event.npcGuid]=true end
+        end
         local ordered={}
         for _,g in ipairs(givers) do
             local i=#ordered+1
