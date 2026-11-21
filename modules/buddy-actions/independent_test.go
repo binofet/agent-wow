@@ -2,15 +2,14 @@ package buddyactions
 
 import (
 	"context"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"testing"
+	"time"
 )
 
 func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T) {
@@ -22,10 +21,6 @@ func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T)
 	for name, call := range map[string]func() error{
 		"follow": func() error {
 			_, err := s.Follow(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
-			return err
-		},
-		"assist": func() error {
-			_, err := s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
 			return err
 		},
 		"heal_once": func() error { _, err := s.HealOnce(context.Background(), &emptypb.Empty{}); return err },

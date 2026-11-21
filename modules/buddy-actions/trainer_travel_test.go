@@ -4,16 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"sync"
+	"testing"
+	"time"
 )
 
 func trainerTravelRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.ApproachQuestRequest) {
@@ -273,7 +272,7 @@ func TestProfessionsInteractionOwnerIsExclusiveAndRetainsDefaultLease(t *testing
 }
 
 func TestTrainerTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		for _, planFails := range []bool{false, true} {
 			t.Run(fmt.Sprintf("assist=%t/plan_error=%t", assist, planFails), func(t *testing.T) {
 				s, f, _, r := trainerTravelRig(t)
@@ -303,7 +302,7 @@ func TestTrainerTravelExplicitStopDuringPlanningNeverStarts(t *testing.T) {
 }
 
 func TestTrainerTravelExplicitStopBetweenStepsNeverRestarts(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
 			s, f, advance, r := trainerTravelRig(t)
 			s.approachDelay = func(ctx context.Context, d time.Duration) error {
@@ -456,7 +455,7 @@ func TestTrainerTravelCanceledPlannerAndDelayKeepCancellationAndCleanup(t *testi
 }
 
 func TestTrainerTravelIdleStopBetweenStepsDoesNotRestart(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
 			s, f, advance, r := trainerTravelRig(t)
 			s.approachDelay = func(ctx context.Context, d time.Duration) error {

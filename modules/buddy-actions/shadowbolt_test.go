@@ -5,11 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"testing"
-	"time"
-
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"testing"
+	"time"
 )
 
 func TestShadowBoltNormalCastPacketGolden(t *testing.T) {
@@ -24,7 +23,9 @@ func TestWarlockShadowBoltUsesVerifiedRankManaAndActualClass(t *testing.T) {
 	f.world.Self.ClassId, f.world.Self.BaseManaKnown, f.world.Self.BaseMana, f.world.Self.Power = 9, true, 100, 10
 	f.world.Owner.Health = 1 // Warlock does not reserve or promise priest healing.
 	learnSpells(s, shadowBolt)
-	s.Tick(context.Background())
+	if _, err := castSelectedForTest(s, shadowBolt, enemyGUID); err != nil {
+		t.Fatal(err)
+	}
 	got := state(t, s)
 	if lastCast(f) != 686 || !got.KnownShadowBolt || got.ClassName != "warlock" || got.CombatStyle != "warlock_shadow_bolt" || got.CombatSpellId != 686 || got.HealAttempts != 0 || got.ShadowBoltDamageEvents != 0 {
 		t.Fatal(got, f.packets)
@@ -60,8 +61,8 @@ func TestShadowBoltRejectsUnknownHigherRankWrongClassManaAndRange(t *testing.T) 
 			case "silenced":
 				f.world.Self.UnitFlags |= 0x2000
 			}
-			s.Tick(context.Background())
-			if lastCast(f) != 0 {
+			_, err := castSelectedForTest(s, shadowBolt, enemyGUID)
+			if err == nil || lastCast(f) != 0 {
 				t.Fatal(mode, state(t, s), f.packets)
 			}
 		})

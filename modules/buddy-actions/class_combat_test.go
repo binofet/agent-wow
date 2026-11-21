@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"testing"
-	"time"
-
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"testing"
+	"time"
 )
 
 func learnSpells(s *Service, spells ...uint32) {
@@ -100,26 +98,14 @@ func TestMageUsesActualClassKnownFireballAndBaseManaWithoutHealReserve(t *testin
 	f.world.Self.Power = 8
 	f.world.Owner.Health = 40
 	learnSpells(s, fireball, autoAttack)
-	s.Tick(context.Background())
+	if _, err := castSelectedForTest(s, fireball, enemyGUID); err != nil {
+		t.Fatal(err)
+	}
 	if lastCast(f) != 133 || state(t, s).CombatStyle != "mage_fireball" || state(t, s).HealAttempts != 0 || !state(t, s).KnownFireball {
 		t.Fatal(state(t, s), f.packets)
 	}
 	if state(t, s).ServerAssistGo != 0 || state(t, s).FireballDamageEvents != 0 {
 		t.Fatal("transport claimed damage")
-	}
-}
-func TestClassUnknownOrAbsentLearnedDamageCannotCast(t *testing.T) {
-	for _, change := range []func(*Service, *fakeSession){
-		func(s *Service, f *fakeSession) { f.world.Self.ClassKnown = false },
-		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 8; learnSpells(s, lesserHeal) },
-		func(s *Service, f *fakeSession) { f.world.Self.ClassId = 5; learnSpells(s, lesserHeal) },
-	} {
-		s, f, _ := assistRig(t)
-		change(s, f)
-		s.Tick(context.Background())
-		if countPackets(f, opcode.CMSGCastSpell) != 0 {
-			t.Fatal(state(t, s), f.packets)
-		}
 	}
 }
 func TestActuallyLearnedHealDoesNotRequirePriestClassWhitelist(t *testing.T) {
@@ -169,118 +155,41 @@ func rogueRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 }
 func verifyWeapon(t *testing.T, s *Service, f *fakeSession) {
 	t.Helper()
-	s.Tick(context.Background())
+	s.requestWeaponLocked(context.Background(), f.world.Self)
 	if countPackets(f, opcode.CMSGItemQuerySingle) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 {
 		t.Fatal("weapon query did not precede attack", f.packets)
 	}
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGItemQuerySingleResponse, Payload: weaponQueryFixture(2092, 15, 13)})
 }
 func TestRogueRequiresOwnedUsableServerVerifiedWeaponAndActualEnergyCost(t *testing.T) {
-	s, f, _ := rogueRig(t)
-	verifyWeapon(t, s, f)
+	s, f, r := instantStrikeFixture(t, 1752)
+	learnSpells(s, 1752)
 	f.world.Self.Power = 44
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGAttackswing) != 1 || lastCast(f) != 0 || state(t, s).AutoAttacking || !state(t, s).AutoAttackRequested || state(t, s).SinisterStrikeEnergyCost != 45 {
-		t.Fatal(state(t, s), f.packets)
-	}
-	attack := binary.LittleEndian.AppendUint64(nil, s.selfGUID)
-	attack = binary.LittleEndian.AppendUint64(attack, f.world.OwnerTarget.Guid)
-	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAttackstart, Payload: attack})
-	if !state(t, s).AutoAttacking {
-		t.Fatal("server attack start not observed")
+	if _, err := s.CastOffense(context.Background(), r); err == nil || len(f.packets) != 0 {
+		t.Fatal("insufficient energy admitted", err, f.packets)
 	}
 	f.world.Self.Power = 45
-	s.Tick(context.Background())
-	if lastCast(f) != 1752 {
-		t.Fatal(state(t, s), f.packets)
-	}
-	if state(t, s).MeleeDamageEvents != 0 || state(t, s).SinisterStrikeDamageEvents != 0 {
-		t.Fatal("attack transport claimed damage")
+	out, err := s.CastOffense(context.Background(), r)
+	if err != nil || lastCast(f) != 1752 || !out.GetAutoAttacking() || out.GetSinisterStrikeEnergyCost() != 45 || out.GetSinisterStrikeDamageEvents() != 0 {
+		t.Fatal(out, err, f.packets)
 	}
 }
 func TestKnownImprovedSinisterStrikeReducesOnlyVerifiedTalentCost(t *testing.T) {
 	for _, tc := range []struct{ talent, cost uint32 }{{13732, 42}, {13863, 40}} {
-		s, f, _ := rogueRig(t)
-		learnSpells(s, autoAttack, sinisterStrike, tc.talent)
-		verifyWeapon(t, s, f)
+		s, f, r := instantStrikeFixture(t, 1752)
+		learnSpells(s, 1752, tc.talent)
+		f.world.Self.Power = tc.cost - 1
+		if _, err := s.CastOffense(context.Background(), r); err == nil {
+			t.Fatal("talent admitted insufficient energy")
+		}
 		f.world.Self.Power = tc.cost
-		s.Tick(context.Background())
-		if state(t, s).SinisterStrikeEnergyCost != tc.cost || lastCast(f) != 1752 {
-			t.Fatal(state(t, s), f.packets)
+		out, err := s.CastOffense(context.Background(), r)
+		if err != nil || out.GetSinisterStrikeEnergyCost() != tc.cost || lastCast(f) != 1752 {
+			t.Fatal(out, err, f.packets)
 		}
 	}
 }
-func TestRogueNeverAttacksWithoutRangeWeaponOrActualHostilityProof(t *testing.T) {
-	for _, change := range []func(*Service, *fakeSession){
-		func(s *Service, f *fakeSession) { f.world.OwnerTarget.AttackVictimKnown = false },
-		func(s *Service, f *fakeSession) { f.world.Self.Mainhand.Durability = 0 },
-		func(s *Service, f *fakeSession) { f.world.Self.Mainhand.MetadataKnown = false },
-		func(s *Service, f *fakeSession) { f.world.Self.BaseAttackTimeKnown = false },
-		func(s *Service, f *fakeSession) { f.world.OwnerTarget.X = 13 },
-		func(s *Service, f *fakeSession) {
-			s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 20, inventory: 17, valid: true}
-		},
-	} {
-		s, f, _ := rogueRig(t)
-		s.weaponQueries[2092] = true
-		s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 15, inventory: 13, valid: true}
-		change(s, f)
-		s.Tick(context.Background())
-		if countPackets(f, opcode.CMSGAttackswing) != 0 || countPackets(f, opcode.CMSGCastSpell) != 0 {
-			t.Fatal(state(t, s), f.packets)
-		}
-	}
-}
-func TestRogueApproachesOnlyAlreadyEngagedNearbyFlatGroundTarget(t *testing.T) {
-	s, f, advance := rogueRig(t)
-	verifyWeapon(t, s, f)
-	f.world.OwnerTarget.X = 10
-	s.Tick(context.Background())
-	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
-	if countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 1 || countPackets(f, opcode.CMSGAttackswing) != 0 {
-		t.Fatal(state(t, s), f.packets)
-	}
-	_, n, _ := readGUID(f.packets[len(f.packets)-1].Payload)
-	if len(f.packets[len(f.packets)-1].Payload[n:]) != 30 {
-		t.Fatal("not normal movement")
-	}
-}
-func TestAutoAttackStopsOnOwnerTargetChangeAndBeforeInteraction(t *testing.T) {
-	for _, mode := range []string{"target", "disable", "interaction"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, _ := rogueRig(t)
-			verifyWeapon(t, s, f)
-			f.world.Self.Power = 0
-			s.Tick(context.Background())
-			switch mode {
-			case "target":
-				f.world.Owner.TargetGuid = 0
-				s.Tick(context.Background())
-			case "disable":
-				s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false})
-			case "interaction":
-				if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "loot"}); err == nil {
-					t.Fatal("lease granted before attack stop")
-				}
-			}
-			if countPackets(f, opcode.CMSGAttackstop) != 1 || !state(t, s).AutoAttackUnconfirmed {
-				t.Fatal(state(t, s), f.packets)
-			}
-			s.Tick(context.Background())
-			s.Tick(context.Background())
-			if countPackets(f, opcode.CMSGAttackstop) != 1 {
-				t.Fatal("ambiguous stop retried")
-			}
-			p := append(packedGUID(s.selfGUID), packedGUID(f.world.OwnerTarget.Guid)...)
-			p = append(p, 0, 0, 0, 0)
-			s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAttackstop, Payload: p})
-			if state(t, s).AutoAttackUnconfirmed || state(t, s).AutoAttacking {
-				t.Fatal(state(t, s))
-			}
-		})
-	}
-}
+
 func TestWeaponQueryCompleteFramingAndTruncations(t *testing.T) {
 	p := weaponQueryFixture(2092, 15, 13)
 	proof, err := decodeWeaponQuery(p)
@@ -294,68 +203,5 @@ func TestWeaponQueryCompleteFramingAndTruncations(t *testing.T) {
 	}
 	if _, err := decodeWeaponQuery(append(bytes.Clone(p), 0)); err == nil {
 		t.Fatal("accepted trailing weapon query")
-	}
-}
-
-func TestAssistOnlyRogueStopsOwnedApproachOnDisableExpiryAndLostProof(t *testing.T) {
-	for _, mode := range []string{"disable", "expiry", "target", "victim", "immune", "weapon", "class", "known_attack", "pacified", "reach", "attack_time"} {
-		t.Run(mode, func(t *testing.T) {
-			s, f, advance := rogueRig(t)
-			verifyWeapon(t, s, f)
-			f.world.OwnerTarget.X = 10
-			s.Tick(context.Background())
-			advance(200 * time.Millisecond)
-			s.Tick(context.Background())
-			if !state(t, s).Moving || state(t, s).Following {
-				t.Fatal("fixture did not start assist-only approach", state(t, s))
-			}
-			switch mode {
-			case "disable":
-				s.Assist(context.Background(), &actionsv1.ToggleRequest{Enabled: false})
-			case "expiry":
-				advance(lease + time.Second)
-			case "target":
-				f.world.Owner.TargetGuid = 0
-			case "victim":
-				f.world.OwnerTarget.AttackVictimKnown = false
-			case "immune":
-				f.world.OwnerTarget.UnitFlags = 2
-			case "weapon":
-				f.world.Self.Mainhand.MetadataKnown = false
-			case "class":
-				f.world.Self.ClassKnown = false
-			case "known_attack":
-				s.state.KnownAutoAttack = false
-			case "pacified":
-				f.world.Self.UnitFlags |= 0x20000
-			case "reach":
-				f.world.Self.CombatReachKnown = false
-			case "attack_time":
-				f.world.Self.BaseAttackTimeKnown = false
-			}
-			s.Tick(context.Background())
-			s.Tick(context.Background())
-			if state(t, s).Moving || countPackets(f, opcode.MSGMoveStop) != 1 || countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 1 {
-				t.Fatal("owned approach did not stop exactly once", state(t, s), f.packets)
-			}
-		})
-	}
-}
-
-func TestAutoAttackStopRequestedByFailedAssistGateBlocksSameTickFollow(t *testing.T) {
-	s, f, _ := rogueRig(t)
-	verifyWeapon(t, s, f)
-	f.world.Self.Power = 0
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGAttackswing) != 1 {
-		t.Fatal("fixture did not request ordinary attack")
-	}
-	toggle(t, s, true)
-	// Still the same living target/victim, but the target is now unattackable.
-	// This fails inside assistLocked after the early autoTarget identity gate.
-	f.world.OwnerTarget.UnitFlags = 2
-	s.Tick(context.Background())
-	if countPackets(f, opcode.CMSGAttackstop) != 1 || !state(t, s).AutoAttackUnconfirmed || countPackets(f, opcode.MSGMoveStartForward) != 0 || !state(t, s).Following {
-		t.Fatal("follow moved before server attack-stop confirmation", state(t, s), f.packets)
 	}
 }

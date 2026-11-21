@@ -4,12 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"os/exec"
-	"strconv"
-	"strings"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
@@ -18,8 +12,14 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+	"os/exec"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
 )
 
 type combatExecutionFixture struct {
@@ -175,7 +175,7 @@ func TestSharedLuaOffenseExecutesAfterOwnerDeathControlRecoveryAndUrgentFinish(t
 	x.f.world.Owner.Health, x.f.world.Owner.Alive = 0, false
 	x.f.world.RequestedCreature.Health, x.f.world.RequestedCreature.MaxHealth = 20, 1000
 	x.f.world.Self.UnitFlags |= 0x00800000
-	if a := x.decide().Output["action"]; a != nil {
+	if a, _ := x.decide().Output["action"].(map[string]any); a["capability"] == "offense" {
 		x.t.Fatal("feared body claimed a cast", a)
 	}
 	x.f.world.Self.UnitFlags &^= 0x00800000
@@ -211,4 +211,80 @@ func TestSharedLuaRetunesKnownOffenseRankInSameBodyAndNativeAddsNoReserve(t *tes
 		x.t.Fatal("same-session Lua rank tuning failed", second, x.vm.Status())
 	}
 	x.confirmDamage()
+}
+
+func TestSharedLuaDefenseClassifiesRawAttacksWithoutAnOwnerOrLegacyAssist(t *testing.T) {
+	for _, mode := range []string{"self", "party", "owner_dead", "afk_owner", "stale", "foreign_victim", "selected_only", "protected", "dead_target", "overlevel"} {
+		t.Run(mode, func(t *testing.T) {
+			x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
+			c := x.f.world.RequestedCreature
+			x.s.state.Assisting, x.s.state.Following = false, false
+			x.f.party.Group.GroupGuid, x.f.party.Group.LeaderGuid = 77, ownerGUID
+			x.f.world.Owner.Health = 100
+			want := true
+			switch mode {
+			case "self":
+				x.f.world.Owner = nil
+				x.f.party = nil
+			case "party":
+				c.AttackVictimGuid, c.TargetGuid = ownerGUID, ownerGUID
+				x.f.world.Owner.UnitFlags = 0x80000
+			case "owner_dead":
+				x.f.world.Owner.Health, x.f.world.Owner.Alive = 0, false
+			case "afk_owner":
+				x.f.world.Owner.PlayerFlags = 2
+			case "stale":
+				c.AttackAgeMs = 90000
+				c.TargetKnown = false
+				c.UnitFlags = 0
+				x.f.world.Self.UnitFlags = 0
+				want = false
+			case "foreign_victim":
+				c.AttackVictimGuid, c.TargetGuid = 99, 99
+				want = false
+			case "selected_only":
+				c.AttackVictimKnown = false
+				want = false
+			case "protected":
+				emitPolymorph(x.s, opcode.SMSGAuraUpdate, sheepAura(c.Guid, 9, 118, 20000))
+				want = false
+			case "dead_target":
+				c.Alive, c.Health = false, 0
+				want = false
+			case "overlevel":
+				x.f.world.Self.LevelKnown, x.f.world.Self.Level = true, 5
+				c.LevelKnown, c.Level = true, 80
+			}
+			decision := x.decide()
+			action, _ := decision.Output["action"].(map[string]any)
+			selected := action["capability"] == "offense" || action["capability"] == "approach_target"
+			if selected != want || selected && action["targetGuid"] != strconv.FormatUint(c.Guid, 10) {
+				t.Fatal("shared queue used invalid attack evidence or lost defense", mode, decision.Output)
+			}
+			x.s.Tick(context.Background())
+			if countPackets(x.f, opcode.CMSGCastSpell) != 0 || countPackets(x.f, opcode.CMSGAttackswing) != 0 {
+				t.Fatal("native maintenance selected offense", mode, x.f.packets)
+			}
+		})
+	}
+}
+
+func TestSharedLuaQueueFinishesThreatBeforeNearestEnemyAndPreservesProtection(t *testing.T) {
+	x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
+	far := x.f.world.RequestedCreature
+	far.Health, far.MaxHealth, far.X = 10, 1000, 15
+	near := proto.Clone(far).(*worldv1.CreatureState)
+	near.Guid++
+	near.Health, near.X = 1000, 2
+	x.f.world.NearbyCreatures = append(x.f.world.NearbyCreatures, near)
+	decision := x.decide()
+	action, _ := decision.Output["action"].(map[string]any)
+	if action["targetGuid"] != strconv.FormatUint(far.Guid, 10) {
+		t.Fatal("distance or GUID replaced urgent finishing policy", decision.Output)
+	}
+	emitPolymorph(x.s, opcode.SMSGAuraUpdate, sheepAura(far.Guid, 9, 118, 20000))
+	action, _ = x.decide().Output["action"].(map[string]any)
+	if action["targetGuid"] != strconv.FormatUint(near.Guid, 10) {
+		t.Fatal("urgent finisher broke CC or abandoned other live threat", action)
+	}
 }

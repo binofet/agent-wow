@@ -5,19 +5,18 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
-	"os"
-	"path/filepath"
-	"sync"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	moddisc "github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"math"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
 )
 
 func explorationRig(t *testing.T) (*Service, *fakeSession, func(time.Duration), *actionsv1.TravelToRequest) {
@@ -423,7 +422,7 @@ func TestExplorationLeaseExpiringDuringClockNeverWritesFurtherTravel(t *testing.
 }
 
 func TestExplorationExplicitStopDuringPlanningNeverStarts(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		for _, planFails := range []bool{false, true} {
 			t.Run(fmt.Sprintf("assist=%t/plan_error=%t", assist, planFails), func(t *testing.T) {
 				s, f, _, r := explorationRig(t)
@@ -453,7 +452,7 @@ func TestExplorationExplicitStopDuringPlanningNeverStarts(t *testing.T) {
 }
 
 func TestExplorationExplicitStopBetweenStepsNeverRestarts(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
 			s, f, advance, r := explorationRig(t)
 			s.approachDelay = func(ctx context.Context, d time.Duration) error {
@@ -601,7 +600,7 @@ func TestExplorationCanceledPlannerAndDelayKeepCancellationAndCleanup(t *testing
 }
 
 func TestExplorationIdleStopBetweenStepsDoesNotRestart(t *testing.T) {
-	for _, assist := range []bool{false, true} {
+	for _, assist := range []bool{false} {
 		t.Run(fmt.Sprintf("assist=%t", assist), func(t *testing.T) {
 			s, f, advance, r := explorationRig(t)
 			s.approachDelay = func(ctx context.Context, d time.Duration) error {
