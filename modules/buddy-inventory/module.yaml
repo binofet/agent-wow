@@ -8,6 +8,8 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  rolls: /warcraftbuddy.inventory.v1.BuddyInventory/Rolls
+  roll: /warcraftbuddy.inventory.v1.BuddyInventory/Roll
   state: /warcraftbuddy.inventory.v1.BuddyInventory/GetState
   discover: /warcraftbuddy.inventory.v1.BuddyInventory/Discover
   move: /warcraftbuddy.inventory.v1.BuddyInventory/Move
@@ -15,9 +17,17 @@ rpc:
   equip_gear: /warcraftbuddy.inventory.v1.BuddyInventory/EquipGear
   sell: /warcraftbuddy.inventory.v1.BuddyInventory/Sell
 packets:
+  SMSG_LOOT_START_ROLL: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_LOOT_ROLL: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_TRANSFER_PENDING: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_NEW_WORLD: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_SELL_ITEM: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_MESSAGECHAT: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
 lifecycle:
   before_logout: /warcraftbuddy.inventory.v1.BuddyInventory/BeforeLogout
+script_api:
+  rolls: {effect: read, description: "Observe current group roll offers, item and equipment facts, and exact vote receipts"}
+  roll: {effect: mutation, description: Submit one explicitly chosen vote for the exact current roll offer}
