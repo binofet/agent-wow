@@ -148,3 +148,58 @@ func TestPolicyGenericCancelWireForms(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyGenericCancelIsTerminalWhileOriginalChannelRemainsPending(t *testing.T) {
+	m, native, cb := friendlyEncounterManager(t)
+	runtimeControlBook(t, native, 10)
+	source := `local obs;local issued=false
+ return {on_event=function(e)if e.kind=='encounter_observation' then obs=e.value end return true end,
+ decide=function(f)local a
+ if f.input.cancel then a={capability='cancel_spell',sessionId=f.session_id,selfGuid='22',visitId=obs.visitId,spellId=10,channel=true,expectedOperationRevision=f.input.operation}
+ elseif not issued then issued=true;a={capability='cast_spell',sessionId=f.session_id,selfGuid='22',visitId=obs.visitId,spellId=10,targets={mask=64,destination={x=1,y=2,z=3}}}end
+ return {encounterOwnership={visitId=obs.visitId,observationSequence=f.input.observationSequence},action=a}end,
+ export_state=function()return {version=1,data={obs=obs,issued=issued}}end,import_state=function(c)obs=c.data.obs;issued=c.data.issued;return true end}`
+	p, err := m.StartPolicy(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	r, _ := controlBreakStep(t, m, p)
+	if r == nil || r.Outcome != behavior.ActionTransportAccepted {
+		t.Fatal(r)
+	}
+	start := spellFixturePackedGUID(friendlyEncounterSelf)
+	start = binary.LittleEndian.AppendUint32(start, 10)
+	start = binary.LittleEndian.AppendUint32(start, 8000)
+	_, _ = native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.MSGChannelStart, Payload: start})
+	state, _ := native.Status(context.Background(), &emptypb.Empty{})
+	operation := fmt.Sprint(state.LastSpellOperation.OperationRevision)
+	send := m.session.SendPacket
+	m.session.SendPacket = func(ctx context.Context, code uint32, b []byte) error {
+		if code == opcode.CMSGCancelChannelling {
+			send(ctx, code, b)
+			return errors.New("cancel transport ambiguous")
+		}
+		return send(ctx, code, b)
+	}
+	for i := 0; i < 2; i++ {
+		ctx, seq := observeFriendlyEncounter(t, m, p)
+		out, receipt, e := p.Step(ctx, map[string]any{"observationSequence": seq, "cancel": true, "operation": operation}, nil)
+		if e != nil || receipt == nil || receipt.Outcome != behavior.ActionSettledUnverified {
+			t.Fatal("cancel stranded a second pending reservation", out, receipt, e)
+		}
+		if len(cb.writes) != 2 {
+			t.Fatal("cancel replayed", cb.writes)
+		}
+	}
+	_, _ = controlBreakStep(t, m, p)
+	if p.vm.Status().Pending != 1 {
+		t.Fatal("cancel retired original channel or stranded another action", p.vm.Status())
+	}
+	end := append(spellFixturePackedGUID(friendlyEncounterSelf), 0, 0, 0, 0)
+	_, _ = native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.MSGChannelUpdate, Payload: end})
+	_, _ = controlBreakStep(t, m, p)
+	if p.vm.Status().Pending != 0 {
+		t.Fatal("actual channel end did not retire original reservation", p.vm.Status())
+	}
+}

@@ -301,6 +301,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		// server movement effect, and has no future spell-effect receipt.
 		return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
 	}
+	if op.cancelRequest != nil && err == nil && state.GetLastSpellOperation().GetOperationRevision() == op.cancelRequest.ExpectedOperationRevision && state.GetLastSpellOperation().GetCancelAttempted() && !op.attempted {
+		return behavior.ActionSettledUnverified, op.payload("cancel_already_attempted_no_replay", false, false, false)
+	}
 	if op.cancelRequest != nil && op.attempted {
 		// Cancellation transport never completes the original cast/channel.
 		// Its own finite action has no separate future effect reservation.

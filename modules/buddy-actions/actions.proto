@@ -7,7 +7,7 @@ import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
 // Normal build-12340 cast targets. The mask composes wire fields, not spell
-// effects; object target masks share one object GUID. TRADE_ITEM uses slot0..6
+// effects; object target masks share one object GUID. TRADE_ITEM uses the non-traded slot6
 // in item_guid, never an invented private item GUID.
 message SpellCastTargets {
   uint32 mask = 1;
