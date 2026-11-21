@@ -33,6 +33,7 @@ type supportAttempt struct {
 	breakAuraSlot      uint32
 	breakAura          observedBuffAura
 	breakItem          uint64
+	cooldown           *cooldownReservation
 }
 type resurrectionOffer struct {
 	caster, revision, epoch uint64
@@ -385,7 +386,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		if op.view.Capability == string(spellcatalog.Resurrect) {
 			delete(s.resurrectionBindings, op.owner)
 		}
-		if op.view.Capability == fearBreakCapability {
+		if op.view.Capability == fearBreakCapability && s.rejectControlBreakCooldownLocked(op) {
 			delete(s.controlBreakBindings, op.breakAuraSlot)
 		}
 	}
