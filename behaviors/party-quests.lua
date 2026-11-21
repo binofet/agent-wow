@@ -215,15 +215,15 @@ local function starter_route(input)
         if type(g)~="table" or not decimal(g.guid) or not uint(g.entry,4294967295) then return invalid end
         if entries[g.guid]~=nil and entries[g.guid]~=g.entry then return invalid end
         entries[g.guid]=g.entry
-        givers[g.entry]=givers[g.entry] or {}
-        givers[g.entry][g.guid]=true
+        givers[tostring(g.entry)]=givers[tostring(g.entry)] or {}
+        givers[tostring(g.entry)][g.guid]=true
     end
-    local missing7,missing18,missing3903=not active[7],not active[18],not active[3903]
-    local reward=active[783] and 783 or active[5261] and 5261 or active[33] and input.wolfComplete and 33 or 0
+    local missing7,missing18,missing3903=not active["7"],not active["18"],not active["3903"]
+    local reward=active["783"] and 783 or active["5261"] and 5261 or active["33"] and input.wolfComplete and 33 or 0
     local needed
     if reward~=0 then needed=reward==783 and 197 or 196
-    elseif missing7 then needed=confirmed[783] and 197 or 823
-    elseif missing3903 and not confirmed[33] and not probes.wolf and (confirmed[5261] or probes.eagan) then needed=196
+    elseif missing7 then needed=confirmed["783"] and 197 or 823
+    elseif missing3903 and not confirmed["33"] and not probes.wolf and (confirmed["5261"] or probes.eagan) then needed=196
     else needed=823 end
 
     -- Return false for an unused/non-live menu, nil for a consulted invalid
@@ -233,7 +233,7 @@ local function starter_route(input)
         if not input.offerObjectKnown then return false end
         local o=input.offer
         if type(o)~="table" or not decimal(o.npcGuid) then return nil end
-        if not (givers[entry] and givers[entry][o.npcGuid]) then return false end
+        if not (givers[tostring(entry)] and givers[tostring(entry)][o.npcGuid]) then return false end
         if not decimal(o.expiresInMs) then return nil end
         if o.expiresInMs=="0" then return false end
         if o.questsMissing==true then return allow_missing and {} or false end
@@ -252,7 +252,7 @@ local function starter_route(input)
     end
     local intro=probes.intro
     local events={}
-    if missing7 and not active[783] then
+    if missing7 and not active["783"] then
         local rows=menu(823,true)
         if rows==nil then return invalid end
         if rows then
@@ -262,7 +262,7 @@ local function starter_route(input)
         end
         if intro then needed=197 end
     end
-    if active[7] and missing3903 and not confirmed[5261] and not confirmed[33] and not active[5261] and not active[33] then
+    if active["7"] and missing3903 and not confirmed["5261"] and not confirmed["33"] and not active["5261"] and not active["33"] then
         local rows=menu(823,false)
         if rows==nil then return invalid end
         if rows then
@@ -271,7 +271,7 @@ local function starter_route(input)
             if not offered then events[#events+1]="eagan"; needed=196 end
         end
     end
-    if reward==0 and missing3903 and not active[5261] and not active[33] then
+    if reward==0 and missing3903 and not active["5261"] and not active["33"] then
         local rows=menu(196,false)
         if rows==nil then return invalid end
         if rows then
@@ -281,15 +281,15 @@ local function starter_route(input)
         end
     end
     local allowed={}
-    if needed==197 and missing7 then allowed[7]=true
+    if needed==197 and missing7 then allowed["7"]=true
     elseif needed==823 then
-        if missing7 then allowed[783]=true end
+        if missing7 then allowed["783"]=true end
         if input.levelKnown and input.level>=2 then
-            if missing18 then allowed[18]=true end
-            if missing3903 then allowed[3903]=true end
+            if missing18 then allowed["18"]=true end
+            if missing3903 then allowed["3903"]=true end
         end
-        if missing3903 and not confirmed[5261] and not confirmed[33] then allowed[5261]=true end
-    elseif needed==196 and missing3903 and not confirmed[33] then allowed[33]=true end
+        if missing3903 and not confirmed["5261"] and not confirmed["33"] then allowed["5261"]=true end
+    elseif needed==196 and missing3903 and not confirmed["33"] then allowed["33"]=true end
     return {status="ready",choice={neededEntry=needed,rewardQuestId=reward,
         allowedQuestIds=sorted_ids(allowed),probeEvents=events}}
 end

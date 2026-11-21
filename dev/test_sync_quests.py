@@ -1149,7 +1149,7 @@ class SyncTests(unittest.TestCase):
         source=sync.pickup_policy.SOURCE.read_text()
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/"party-quests.lua"
-            changed=source.replace("elseif missing7 then needed=confirmed[783] and 197 or 823",
+            changed=source.replace('elseif missing7 then needed=confirmed["783"] and 197 or 823',
                                    "elseif missing7 then needed=197")
             self.assertNotEqual(changed,source)
             path.write_text(changed)

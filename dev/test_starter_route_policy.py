@@ -178,6 +178,42 @@ class StarterRoutePolicyTests(unittest.TestCase):
         self.route(facts(activeQuestIds=[7, 18], confirmedQuestIds=[5261], levelKnown=False, level=False,
                          offer=menu(196)), 823, events=["wolf"])
 
+    def test_sparse_active_and_confirmed_extras_preserve_fixed_prerequisite_routes_and_override(self):
+        extras = [99000, 4294967295]
+        self.route(facts(activeQuestIds=[7] + extras, confirmedQuestIds=[5261] + extras),
+                   196, allowed=[33])
+        self.route(facts(activeQuestIds=[7] + extras, confirmedQuestIds=[33] + extras),
+                   823, allowed=[18, 3903])
+        self.route(facts(activeQuestIds=extras, confirmedQuestIds=[783] + extras), 197, allowed=[7])
+        self.route(facts(activeQuestIds=[7, 33] + extras, wolfComplete=True),
+                   196, reward=33, allowed=[33])
+        value = facts(activeQuestIds=[5261] + extras, confirmedQuestIds=extras, offer=menu())
+        self.route(value, 197, reward=5261, allowed=[7], events=["intro"])
+        value["offer"] = menu(rows=[dict(questId="783", available=True)])
+        self.route(value, 196, reward=5261, allowed=[33])
+
+    def test_sparse_candidate_entries_are_irrelevant_to_actual_starter_giver_membership(self):
+        irrelevant = [giver(99000), giver(4294967295)]
+        value = facts(candidates=[giver(823), giver(197), giver(196)] + irrelevant)
+        for npc in irrelevant:
+            with self.subTest(entry=npc["entry"]):
+                value["offer"] = dict(npcGuid=npc["guid"], expiresInMs=False,
+                                      questsKnown=True, questsMissing=False, quests=False)
+                self.route(value, 823, allowed=[18, 783, 3903, 5261])
+        value["offer"] = menu()
+        self.route(value, 197, allowed=[7], events=["intro"])
+        value["candidates"] = irrelevant + [copy.deepcopy(irrelevant[0])]
+        self.route(value, 823, allowed=[18, 783, 3903, 5261])
+
+    def test_sparse_route_ids_keep_numeric_uint32_validation_and_duplicate_refusal(self):
+        for field in ("activeQuestIds", "confirmedQuestIds"):
+            for rows in ([99000, 99000], [4294967295, 4294967295], [4294967296], [0], ["99000"]):
+                with self.subTest(field=field, rows=rows):
+                    self.invalid(facts(**{field: rows}))
+        for entry in (-1, 4294967296, "99000"):
+            with self.subTest(entry=entry):
+                self.invalid(facts(candidates=[dict(guid=giver()["guid"], entry=entry)]))
+
     def test_core_invalid_facts_and_conflicting_candidate_identity_are_rejected(self):
         for fields in (dict(sessionId=""), dict(activeQuestIds=False), dict(activeQuestIds=[7, 7]),
                        dict(confirmedQuestIds=[1, 2, 3, 4]), dict(levelKnown=True, level=0),
