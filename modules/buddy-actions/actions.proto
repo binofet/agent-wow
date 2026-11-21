@@ -118,7 +118,19 @@ message InteractionRequest {
   // Only professions and exploration may request it. Defense intent stays on.
   bool harvest = 4;
 }
-message InteractionRelease { string owner = 1; string token = 2; }
+message InteractionRelease {
+  string owner = 1;
+  string token = 2;
+  // Optional for old callers; current policy supplies all three identity guards.
+  string session_id = 3;
+  uint64 self_guid = 4;
+  uint64 visit_id = 5;
+}
+// Exact current custody, without a decision about when it should yield.
+message InteractionObservation {
+  string owner = 1;
+  string token = 2;
+}
 message ApproachLootRequest {
   string token = 1;
   // Exactly one observed target: an eligible corpse or own Milly harvest crate.
@@ -586,6 +598,7 @@ message EncounterObservationResponse {
   NavigationObservation navigation = 25;
   TransportFailure last_transport_failure = 26;
   RecoveryState recovery = 27;
+  InteractionObservation interaction = 28;
 }
 message BodyMovementRequest {
   string session_id = 1;
@@ -851,6 +864,34 @@ message EncounterSupport {
   repeated InterruptOption interrupts = 3;
   repeated PlayerAuras player_auras = 4;
   map<uint32, EncounterSpell> aura_spells = 5;
+  ControlRecoveryObservation control_recovery = 6;
+}
+// Enumerated mechanical choices, not a selected fear-break policy.
+message ControlRecoveryObservation {
+  bool fleeing_known = 1;
+  bool fleeing = 2;
+  repeated ObservedAura fear_auras = 3;
+  repeated ControlBreakOption options = 4;
+  repeated uint64 attempted_aura_revisions = 5;
+}
+message ControlBreakOption {
+  uint32 spell_id = 1;
+  uint64 item_guid = 2;
+  uint32 item_slot = 3;
+  bool ready = 4;
+  uint32 cooldown_ms = 5;
+  uint32 category_cooldown_ms = 6;
+  uint32 rank = 7;
+}
+message BreakControlRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint32 spell_id = 3;
+  uint64 item_guid = 4;
+  uint32 item_slot = 5;
+  uint32 aura_slot = 6;
+  uint64 aura_revision = 7;
+  uint32 aura_spell_id = 8;
 }
 message ResurrectionOption {
   uint64 patient_guid = 1;
@@ -919,11 +960,58 @@ message PolicyDecisionFailure {
   string error = 4;
 }
 
+// Exactly one flightmaster query. Neither mode activates a flight or spends
+// money. A discover query can learn a node OR return a menu, never both by
+// assumption; a newly learned node needs a later explicit menu query.
+message FlightpathQueryRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  string token = 4; // current owned exploration interaction
+  uint64 npc_guid = 5;
+  string mode = 6; // status or discover
+  uint64 expected_revision = 7;
+}
+message FlightpathOperation {
+  uint64 revision = 1;
+  string session_id = 2;
+  uint64 self_guid = 3;
+  uint64 visit_id = 4;
+  uint64 npc_guid = 5;
+  string mode = 6;
+  bool pending = 7;
+  bool transport_written = 8;
+  bool transport_unknown = 9;
+  bool status_known = 10;
+  bool node_known = 11;
+  // This packet has no identity. Alone it proves no NPC or node learned.
+  bool learning_notice_observed = 12;
+  // Requires this discovery's unknown baseline, notice and matching NPC status.
+  bool learned = 13;
+  bool menu_known = 14;
+  uint32 source_node = 15;
+  // Server mask facts only: no route edges, costs or arrival are implied.
+  repeated uint32 known_nodes = 16;
+  string phase = 17;
+  string error = 18;
+}
+message FlightpathObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 revision = 4;
+  bool visit_bound = 5;
+  FlightpathOperation operation = 6;
+}
+
 service BuddyActions {
+  rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
+  rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);
   rpc InterruptCast(InterruptCastRequest) returns (State);
+  rpc BreakControl(BreakControlRequest) returns (State);
   rpc SetFollowFormation(FollowFormationRequest) returns (google.protobuf.Empty);
   rpc SetPortalCatchup(PortalCatchupRequest) returns (google.protobuf.Empty);
   rpc Follow(ToggleRequest) returns (State);

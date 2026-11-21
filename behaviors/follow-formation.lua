@@ -9,6 +9,8 @@ local portal_ahead, portal_side = {8,12,16}, {-6,6}
 local portal_wait_ms, portal_seen_ms, portal_catchup_ms = 500,20000,75000
 local portal_approach_yards = 45
 local service_arrival_yards = 3
+local vendor_search_yards, vendor_interaction_yards = 35,4.5
+local vendor_prefer_nearest = true
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -42,6 +44,40 @@ local function revision(value) return value=="0" or identity(value)~=nil end
 local function at_target(self, target, radius)
     local dx,dy=self.x-target.x,self.y-target.y
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
+end
+
+-- Both town planning and the finite sale worker consult this export from the
+-- character's current accepted policy. Callers supply mechanically validated
+-- observed NPCs; this policy owns the search radius and destination order.
+function M.service_destination(input)
+    if type(input)~="table" or input.kind~="vendor" or
+       (input.scope~="nearby" and input.scope~="interactable") or
+       type(input.candidates)~="table" or #input.candidates>96 then return {} end
+    local radius=input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards
+    if not number(radius) or radius<=0 then return {} end
+    local ranked,seen={},{}
+    for _,candidate in ipairs(input.candidates) do
+        if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
+           not number(candidate.distance) or candidate.distance<0 then return {} end
+        seen[candidate.guid]=true
+        if candidate.distance<=radius then
+            local index=#ranked+1
+            for i,other in ipairs(ranked) do
+                local before=candidate.distance~=other.distance and
+                    ((vendor_prefer_nearest and candidate.distance<other.distance) or
+                     (not vendor_prefer_nearest and candidate.distance>other.distance))
+                if candidate.distance==other.distance then
+                    before=#candidate.guid<#other.guid or #candidate.guid==#other.guid and candidate.guid<other.guid
+                end
+                if before then index=i;break end
+            end
+            for i=#ranked,index,-1 do ranked[i+1]=ranked[i] end
+            ranked[index]=candidate
+        end
+    end
+    local vendors={}
+    for i,candidate in ipairs(ranked) do vendors[i]=candidate.guid end
+    return {vendors=vendors}
 end
 
 function M.decide(input)

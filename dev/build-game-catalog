@@ -79,6 +79,19 @@ def lock_actions(path, spell_path):
     return actions
 
 
+def fear_break_items(path):
+    # Exact item-template overrides for the supported equipped PvP break.
+    out = {}
+    for row in sql_rows(path):
+        if row['class'] != 4 or row['inventorytype'] != 12: continue
+        for i in range(1, 6):
+            if row[f'spellid_{i}'] == 42292 and row[f'spelltrigger_{i}'] in (0, 5):
+                out[row['entry']] = dict(cooldownMs=row[f'spellcooldown_{i}'],
+                    category=row[f'spellcategory_{i}'], categoryCooldownMs=row[f'spellcategorycooldown_{i}'])
+                break
+    return out
+
+
 def build(source, lock, spell_path):
     provenance = json.loads((source/'manifest.json').read_text())
     for name, record in provenance['files'].items():
@@ -153,6 +166,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     for name, value in [('catalog.json', full), ('containers.json', containers)]:
         (args.output/name).write_text(json.dumps(value, ensure_ascii=False, separators=(',', ':'))+'\n')
+    (args.output/'fear-break-items.json').write_text(json.dumps(dict(
+        schemaVersion=1, build=full['build'], sourceCommit=full['sourceCommit'],
+        source=full['sources']['item_template'], items=fear_break_items(args.source/'item_template.sql')),
+        ensure_ascii=False, indent=2)+'\n')
     # Literal data only. Namespaces remain numeric ID maps in the addon.
     (args.output/'Catalog.lua').write_text('WarcraftBuddyCatalog='+lua(full)+'\n'+'''
 function WarcraftBuddyCatalog.Lookup(kind, id)

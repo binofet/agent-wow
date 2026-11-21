@@ -45,6 +45,8 @@ type policySpell struct {
 	auraSlot       uint32
 	auraSpell      uint32
 	auraRevision   uint64
+	controlItem    uint64
+	controlSlot    uint32
 	melee          *policyMelee
 	movement       *policyMovement
 	recovery       *policyRecovery
@@ -61,6 +63,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "release_interaction" {
+		return p.resolveInteractionRelease(action)
+	}
 	if capability == "loot_resume_source" {
 		return p.resolveLootCapacityResume(action)
 	}
@@ -110,6 +115,11 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		method = "interrupt_cast"
 	case "cleanse":
 		method = "cast_cleanse"
+	case "fear_break":
+		method = "break_control"
+		if target != self {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "control break target must be current body")
+		}
 	case "cast_self":
 		if target != self {
 			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "self cast target must be the current body")
@@ -121,7 +131,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		"session_id": protoreflect.ValueOfString(sessionID),
 		"spell_id":   protoreflect.ValueOfUint32(uint32(spell)),
 	}
-	if capability != "cast_self" {
+	if capability != "cast_self" && capability != "fear_break" {
 		values["target_guid"] = protoreflect.ValueOfUint64(targetGUID)
 	}
 	if capability != "polymorph" && capability != "sap" {
@@ -148,7 +158,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		}
 		values["cast_revision"] = protoreflect.ValueOfUint64(value)
 	}
-	if capability == "cleanse" {
+	if capability == "cleanse" || capability == "fear_break" {
 		slot, slotOK := action["auraSlot"].(float64)
 		aura, auraOK := action["auraSpellId"].(float64)
 		text, _ := action["auraRevision"].(string)
@@ -162,6 +172,19 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 		values["aura_slot"] = protoreflect.ValueOfUint32(op.auraSlot)
 		values["aura_spell_id"] = protoreflect.ValueOfUint32(op.auraSpell)
 		values["aura_revision"] = protoreflect.ValueOfUint64(revision)
+	}
+	if capability == "fear_break" {
+		if raw, ok := action["itemGuid"]; ok {
+			text, isString := raw.(string)
+			value, err := strconv.ParseUint(text, 10, 64)
+			slot, slotOK := action["itemSlot"].(float64)
+			if !isString || err != nil || value>>48 != 0x4000 || text != strconv.FormatUint(value, 10) || !slotOK || slot != 12 && slot != 13 {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact equipped control-break item and slot required")
+			}
+			op.controlItem, op.controlSlot = value, uint32(slot)
+			values["item_guid"] = protoreflect.ValueOfUint64(value)
+			values["item_slot"] = protoreflect.ValueOfUint32(uint32(slot))
+		}
 	}
 	return p.preparePolicyDispatch(method, values, op)
 }
@@ -225,7 +248,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
-	if op.capability == "resurrect" || op.capability == "interrupt" || op.capability == "cleanse" || op.capability == "buff" {
+	if op.capability == "resurrect" || op.capability == "interrupt" || op.capability == "cleanse" || op.capability == "buff" || op.capability == "fear_break" {
 		bridge = modcb.PolicySupportSpellService
 	}
 	switch {
@@ -265,6 +288,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		state.BodyMovement.SequenceId == op.movement.sequence && state.BodyMovement.VisitId == op.encounterVisit {
 		op.movement.phase = state.BodyMovement.Phase
 		op.movement.detail = state.BodyMovement.Detail
+	}
+	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
+		// The exact lease is released. A STOP write/returned metadata is not a
+		// server movement effect, and has no future spell-effect receipt.
+		return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
 	}
 	switch {
 	case op.written:
@@ -317,6 +345,19 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.capability == "fear_break" && op.controlItem != 0 {
+		if code != opcode.CMSGUseItem || len(payload) != 24 || payload[0] != 255 || uint32(payload[1]) != op.controlSlot ||
+			binary.LittleEndian.Uint32(payload[3:]) != op.spell || binary.LittleEndian.Uint64(payload[7:]) != op.controlItem {
+			return false
+		}
+		for _, b := range payload[15:] {
+			if b != 0 {
+				return false
+			}
+		}
+		return true
+	}
+
 	if op.recovery != nil {
 		return op.matchesRecoveryPacket(code, payload)
 	}
@@ -394,9 +435,13 @@ func (op *policySpell) payload(phase string, written, castGo, observed bool) map
 		"target_guid": strconv.FormatUint(op.target, 10), "phase": phase,
 		"transport_written": written, "server_cast_go": castGo, "effect_observed": observed,
 	}
-	if op.capability == "cleanse" {
+	if op.capability == "cleanse" || op.capability == "fear_break" {
 		out["aura_slot"], out["aura_spell_id"] = op.auraSlot, op.auraSpell
 		out["aura_revision"] = strconv.FormatUint(op.auraRevision, 10)
+	}
+	if op.capability == "fear_break" && op.controlItem != 0 {
+		out["item_guid"] = strconv.FormatUint(op.controlItem, 10)
+		out["item_slot"] = op.controlSlot
 	}
 	return out
 }
@@ -497,7 +542,7 @@ func spellEffectOutcome(effect *actionsv1.SpellOperation) behavior.ActionOutcome
 			return behavior.ActionSettledUnverified
 		}
 	case "outcome_unconfirmed_no_retry", "server_cast_go_effect_unverified",
-		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed", "observed_alive_without_cast_confirmation":
+		"target_lost_outcome_unconfirmed", "map_changed_outcome_unconfirmed", "world_transfer_outcome_unconfirmed", "observed_alive_without_cast_confirmation", "observed_control_clear_effect_unverified":
 		// Actions only publishes these phases after retiring native cast custody.
 		return behavior.ActionSettledUnverified
 	case "transport_unconfirmed_no_retry":

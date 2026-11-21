@@ -165,7 +165,7 @@ func TestNativeTickAndEmergencyNeverChooseCleanse(t *testing.T) {
 	enemy.UnitFlags = 0x80000
 	f.world.NearbyCreatures = []*worldv1.CreatureState{enemy}
 	f.world.Self.UnitFlags |= 0x80000
-	s.emergencyDefenseLocked(context.Background())
+	s.Tick(context.Background())
 	if countPackets(f, opcode.CMSGCastSpell) != 0 || s.supportOp != nil {
 		t.Fatal("Go retained autonomous cleanse spell/patient selection", s.stateLocked(), f.packets)
 	}

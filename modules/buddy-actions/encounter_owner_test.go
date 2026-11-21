@@ -206,8 +206,11 @@ func TestHostEncounterWriterDisablesNativeOffense(t *testing.T) {
 		s.state.Moving, s.state.Traveling = true, true
 		s.Tick(ctx)
 		assertNoAutonomousOffense(t, s, f)
-		if s.state.InteractionOwner != "" || s.state.Traveling || countPackets(f, opcode.MSGMoveStop) != 1 {
-			t.Fatal("attack failed to fence noncombat custody", s.stateLocked(), f.packets)
+		if s.state.InteractionOwner != "exploration" || !s.state.Traveling || countPackets(f, opcode.MSGMoveStop) != 0 {
+			t.Fatal("native attacker detection seized caller custody", s.stateLocked(), f.packets)
+		}
+		if _, err := s.ReleaseInteraction(ctx, &actionsv1.InteractionRelease{Owner: "exploration", Token: lease.Token, SessionId: s.sessionID, SelfGuid: s.selfGUID, VisitId: 1}); err != nil || countPackets(f, opcode.MSGMoveStop) != 1 || s.state.Traveling {
+			t.Fatal("selected exact handoff failed", err, s.stateLocked(), f.packets)
 		}
 		if _, err := s.AcquireInteraction(ctx, &actionsv1.InteractionRequest{Owner: "exploration", Token: lease.Token}); err == nil {
 			t.Fatal("retired movement token was renewed")

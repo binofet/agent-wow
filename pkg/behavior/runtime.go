@@ -54,13 +54,14 @@ type policy struct {
 // Each call creates a fresh VM: Lua globals, closures and input mutations cannot
 // survive an evaluation or affect the caller's input.
 type Runtime struct {
-	mu             sync.Mutex
-	active         *policy
-	good           *policy
-	status         Status
-	sourceBytes    int
-	valueBytes     int
-	executionLimit time.Duration
+	mu                  sync.Mutex
+	active              *policy
+	good                *policy
+	status              Status
+	sourceBytes         int
+	valueBytes          int
+	executionLimit      time.Duration
+	initializationLimit time.Duration
 }
 
 func New() *Runtime { return &Runtime{} }
@@ -96,6 +97,30 @@ func NewWithOptions(options SessionOptions) (*Runtime, error) {
 		return nil, errors.New("behavior budgets must not be negative")
 	}
 	return &Runtime{sourceBytes: source, valueBytes: options.ValueBytes, executionLimit: options.ExecutionLimit}, nil
+}
+
+// NewWithInitializationLimit permits an explicit budget for standalone source
+// validation in Reload. Zero retains the configured execution budget. Every
+// Evaluate still runs both fresh chunk initialization and decide under its
+// original single cumulative execution budget. Persistent Session callbacks and
+// reload semantics are unaffected.
+func NewWithInitializationLimit(options SessionOptions, initializationLimit time.Duration) (*Runtime, error) {
+	if initializationLimit < 0 {
+		return nil, errors.New("behavior initialization budget must not be negative")
+	}
+	runtime, err := NewWithOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	runtime.initializationLimit = initializationLimit
+	return runtime, nil
+}
+
+func (r *Runtime) initializationBudget() time.Duration {
+	if r.initializationLimit > 0 {
+		return r.initializationLimit
+	}
+	return r.evaluationBudget()
 }
 func (r *Runtime) valueBudget() (int, int, int) {
 	if r.valueBytes > 0 {
@@ -139,7 +164,7 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	defer L.Close()
 	fn, err := L.Load(strings.NewReader(source), "policy")
 	if err == nil {
-		budget := newExecutionBudget(context.Background(), r.evaluationBudget())
+		budget := newExecutionBudget(context.Background(), r.initializationBudget())
 		err = budget.call(L, func() error { _, err := decisionFunction(L, fn); return err })
 	}
 	if err != nil {

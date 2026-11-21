@@ -3531,6 +3531,145 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertFalse(record['streamComplete'])
 
 
+class PartyInvitationControlsTests(unittest.TestCase):
+    class RPC:
+        def __init__(self):
+            self.session, self.sequence, self.name = 'invite-body', '1', 'Joel'
+            self.decision = 'PENDING'
+            self.calls, self.writes = [], []
+            self.ambiguous = False
+
+        def call(self, method, params, timeout=None):
+            self.calls.append((method, copy.deepcopy(params)))
+            if method == 'buddy-party.state':
+                invite = dict(sequence=self.sequence, inviterName=self.name)
+                if self.decision != 'OMITTED':
+                    invite['decision'] = self.decision
+                return dict(sessionId=self.session, pendingInvite=invite)
+            if method == 'buddy-party.accept':
+                # The native method owns this exact current-invitation check.
+                if params != dict(sessionId=self.session, inviteSequence=self.sequence, inviterName=self.name):
+                    raise converse.ConversationError('native invitation changed')
+                self.writes.append(copy.deepcopy(params))
+                if self.ambiguous:
+                    raise converse.ConversationError('native acceptance write unconfirmed')
+                return dict(transportWritten=True)
+            return {}
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.source = Path(self.directory.name) / 'party-invitation.lua'
+        self.stock = converse.PARTY_INVITATION_SOURCE.read_text()
+        self.source.write_text(self.stock)
+        patcher = patch.object(converse, 'PARTY_INVITATION_SOURCE', self.source)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.rpc = self.RPC()
+        self.controls = converse.BuddyControls(self.rpc)
+
+    def test_current_file_edit_changes_same_body_choice_without_reserving_waits(self):
+        paused = self.stock.replace('accept_owner_invites=true', 'accept_owner_invites=false', 1)
+        self.assertNotEqual(paused, self.stock)
+        self.source.write_text(paused)
+        self.controls.refresh()
+        self.assertEqual(self.rpc.writes, [])
+        self.assertEqual(self.controls.attempted_invites, set())
+        self.assertIsNone(self.controls.invitation_policy_fault)
+        self.source.write_text(self.stock)
+        self.controls.refresh()
+        self.assertEqual(self.rpc.writes, [dict(sessionId='invite-body', inviteSequence='1', inviterName='Joel')])
+        self.assertEqual(self.controls.party_session, 'invite-body')
+        self.assertNotIn('server_confirmed_party_join', self.controls.events)
+        self.controls.refresh()
+        self.assertEqual(len(self.rpc.writes), 1)
+
+    def test_ambiguous_accept_remains_reserved_across_policy_edits(self):
+        self.rpc.ambiguous = True
+        self.controls.refresh()
+        self.assertEqual(self.controls.attempted_invites, {('invite-body', 1)})
+        self.source.write_text(self.stock.replace('accept_owner_invites=true', 'accept_owner_invites=false', 1))
+        self.controls.refresh()
+        self.source.write_text(self.stock)
+        self.controls.refresh()
+        self.assertEqual(len(self.rpc.writes), 1)
+        self.assertEqual(sum(method == 'buddy-party.accept' for method, _ in self.rpc.calls), 1)
+
+    def test_missing_faulted_or_unavailable_evaluator_has_no_python_fallback(self):
+        for state in ('missing_source', 'broken_source', 'missing_binary'):
+            with self.subTest(state=state):
+                self.source.write_text(self.stock)
+                if state == 'missing_source':
+                    self.source.unlink()
+                elif state == 'broken_source':
+                    self.source.write_text('return {decide=function(input) error("invite policy failed") end}')
+                variables = {'BUDDY_LUAPOLICY_BINARY': '/missing/invitation-evaluator'} if state == 'missing_binary' else {}
+                with patch.dict(os.environ, variables):
+                    self.controls.refresh()
+                self.assertEqual(self.rpc.writes, [])
+                self.assertEqual(self.controls.attempted_invites, set())
+                self.assertTrue(self.controls.invitation_policy_fault)
+                self.assertTrue(self.controls.party_available)  # Observed party facts remain available.
+
+    def test_malformed_or_foreign_proposals_cannot_choose_another_native_request(self):
+        valid = dict(kind='accept', sessionId='invite-body', inviteSequence='1', inviterName='Joel')
+        for bad in (None, [], dict(valid, kind='decline'), dict(valid, sessionId='replaced'),
+                    dict(valid, inviteSequence='2'), dict(valid, inviteSequence=1),
+                    dict(valid, inviterName='SomeoneElse'), dict(valid, action='logout')):
+            with self.subTest(proposal=bad), patch.object(converse, 'evaluate_party_invitation', return_value=bad):
+                self.controls.refresh()
+                self.assertEqual(self.rpc.writes, [])
+                self.assertEqual(self.controls.attempted_invites, set())
+
+    def test_explicit_unknown_decision_types_stay_distinct_from_observed_pending_zero(self):
+        for value in (None, False, True, 0.0, [], {}, 'UNKNOWN', 'ACCEPT_REQUESTED', 1):
+            with self.subTest(decision=value):
+                self.rpc.decision = value
+                self.controls.refresh()
+                self.assertEqual(self.rpc.writes, [])
+                self.assertEqual(self.controls.attempted_invites, set())
+        for index, value in enumerate(('OMITTED', 'PENDING', 0), start=1):
+            self.rpc.sequence, self.rpc.decision = str(index), value
+            self.controls.refresh()
+        self.assertEqual(len(self.rpc.writes), 3)
+
+    def test_full_uint64_invitation_sequence_remains_exact_through_real_lua(self):
+        self.rpc.sequence = '18446744073709551615'
+        self.controls.refresh()
+        self.assertEqual(self.rpc.writes, [dict(sessionId='invite-body', inviteSequence=self.rpc.sequence, inviterName='Joel')])
+        self.controls.refresh()
+        self.assertEqual(len(self.rpc.writes), 1)
+
+    def test_policy_read_cannot_release_attempt_limit_or_reserved_unknowns(self):
+        self.controls.party_session = self.rpc.session
+        self.controls.attempted_invites = {(self.rpc.session, index) for index in range(2, 258)}
+        with patch.object(converse, 'evaluate_party_invitation', side_effect=AssertionError('attempt limit bypassed')):
+            self.controls.refresh()
+        self.assertEqual(self.rpc.writes, [])
+        self.assertEqual(len(self.controls.attempted_invites), 256)
+
+    def test_source_change_during_actual_evaluation_discards_old_choice(self):
+        runtime = converse.task_runtime_module()
+        binary = os.environ.get('BUDDY_LUAPOLICY_BINARY',
+                 os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', converse.ROOT / 'data/bin/luapolicy'))
+        actual = runtime.Bridge(binary, converse.ROOT / 'modules')
+        path, stock = self.source, self.stock
+
+        class ChangingBridge:
+            def evaluate(self, source, frame):
+                result = actual.evaluate(source, frame)
+                path.write_text(stock.replace('accept_owner_invites=true', 'accept_owner_invites=false', 1))
+                return result
+
+        host = types.SimpleNamespace(Error=runtime.Error, Bridge=lambda *args: ChangingBridge())
+        with patch.object(converse, 'task_runtime_module', return_value=host):
+            self.controls.refresh()
+        self.assertEqual(self.rpc.writes, [])
+        self.assertEqual(self.controls.attempted_invites, set())
+        self.assertIn('changed during evaluation', self.controls.invitation_policy_fault)
+
+
+from test_party_invitation_policy import PartyInvitationPolicyTests
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
 from test_gm_task_inspection import GMTaskInspectionTests

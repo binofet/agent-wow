@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-¯’
+¡¦
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -627,8 +627,15 @@ targetGuid!
 owner (	Rowner
 token (	Rtoken
 lease_ms (RleaseMs
-harvest (Rharvest"@
+harvest (Rharvest"—
 InteractionRelease
+owner (	Rowner
+token (	Rtoken
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId"D
+InteractionObservation
 owner (	Rowner
 token (	Rtoken"v
 ApproachLootRequest
@@ -1141,7 +1148,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"Š
+host_owned (R	hostOwned"Þ
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1177,7 +1184,8 @@ meleeKnown7
 navigation (2/.warcraftbuddy.actions.v1.NavigationObservationR
 navigation`
 last_transport_failure (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailureC
-recovery (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoverye
+recovery (2'.warcraftbuddy.actions.v1.RecoveryStateRrecoveryR
+interaction (20.warcraftbuddy.actions.v1.InteractionObservationRinteractione
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1472,7 +1480,7 @@ rangeYards
 requireLos
 behind (Rbehind
 phase (	Rphase
-ready (Rready"ë
+ready (Rready"Ì
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI
@@ -1481,10 +1489,37 @@ interrupts (2).warcraftbuddy.actions.v1.InterruptOptionR
 interruptsH
 player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAuras[
 aura_spells (2:.warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntryR
-auraSpellsg
+auraSpells_
+control_recovery (24.warcraftbuddy.actions.v1.ControlRecoveryObservationRcontrolRecoveryg
 AuraSpellsEntry
 key (Rkey>
-value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8"Ö
+value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8"¤
+ControlRecoveryObservation#
+fleeing_known (RfleeingKnown
+fleeing (RfleeingE
+
+fear_auras (2&.warcraftbuddy.actions.v1.ObservedAuraR	fearAurasF
+options (2,.warcraftbuddy.actions.v1.ControlBreakOptionRoptions8
+attempted_aura_revisions (RattemptedAuraRevisions"æ
+ControlBreakOption
+spell_id (RspellId
+	item_guid (RitemGuid
+	item_slot (RitemSlot
+ready (Rready
+cooldown_ms (R
+cooldownMs0
+category_cooldown_ms (RcategoryCooldownMs
+rank (Rrank"Œ
+BreakControlRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId
+	item_guid (RitemGuid
+	item_slot (RitemSlot
+	aura_slot (RauraSlot#
+aura_revision (RauraRevision"
+aura_spell_id (RauraSpellId"Ö
 ResurrectionOption!
 patient_guid (RpatientGuid(
 cast_target_guid (RcastTargetGuid
@@ -1559,12 +1594,58 @@ targetGuid"€
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror2÷$
-BuddyActionsm
+error (	Rerror"á
+FlightpathQueryRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+token (	Rtoken
+npc_guid (RnpcGuid
+mode (	Rmode+
+expected_revision (RexpectedRevision"Î
+FlightpathOperation
+revision (Rrevision
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+npc_guid (RnpcGuid
+mode (	Rmode
+pending (Rpending+
+transport_written (RtransportWritten+
+transport_unknown	 (RtransportUnknown!
+status_known
+ (RstatusKnown
+
+node_known (R	nodeKnown8
+learning_notice_observed (RlearningNoticeObserved
+learned (Rlearned
+
+menu_known (R	menuKnown
+source_node (R
+sourceNode
+known_nodes (R
+knownNodes
+phase (	Rphase
+error (	Rerror"€
+FlightpathObservationResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+revision (Rrevision
+visit_bound (R
+visitBoundK
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2¿'
+BuddyActionsh
+FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
+QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`
 InterruptCast..warcraftbuddy.actions.v1.InterruptCastRequest.warcraftbuddy.actions.v1.State^
+BreakControl-.warcraftbuddy.actions.v1.BreakControlRequest.warcraftbuddy.actions.v1.State^
 SetFollowFormation0.warcraftbuddy.actions.v1.FollowFormationRequest.google.protobuf.EmptyZ
 SetPortalCatchup..warcraftbuddy.actions.v1.PortalCatchupRequest.google.protobuf.EmptyR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
