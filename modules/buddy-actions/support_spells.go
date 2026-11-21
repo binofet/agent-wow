@@ -94,7 +94,6 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 		if p := observedHealingPlayer(w, owner); p != nil && p.Present && p.AliveKnown && p.Alive && p.HealthKnown && p.Health > 0 && p.PlayerFlags&0x10 == 0 {
 			delete(s.resurrectionBindings, owner)
 			if s.supportOp != nil && s.supportOp.owner == owner && s.supportOp.view.Capability == string(spellcatalog.Resurrect) {
-				s.supportOp.view.EffectObserved = true
 				// Actual observed life resolves this death even if the original
 				// cast write had an unknown transport outcome. Do not clear a
 				// newer cast which happens to share the patient.
@@ -103,7 +102,13 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 					s.pendingSpell, s.pendingTarget = 0, 0
 				}
 				if s.supportOp.view.ServerCastGo {
+					s.supportOp.view.EffectObserved = true
 					s.supportOp.view.Phase = "confirmed_alive"
+				} else {
+					// Another player or the server may have revived this patient.
+					// Retire custody without attributing an unconfirmed own cast.
+					s.supportOp.view.EffectObserved = false
+					s.supportOp.view.Phase = "observed_alive_without_cast_confirmation"
 				}
 			}
 		}
@@ -197,7 +202,7 @@ func (op *supportAttempt) reportPolicySpellEffect(ctx context.Context, castPendi
 		}
 	case "server_rejected_no_replay", "server_cast_go_no_target_hit",
 		"outcome_unconfirmed_no_retry", "channel_ended_effect_unverified", "world_transfer_outcome_unconfirmed",
-		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed":
+		"map_changed_outcome_unconfirmed", "target_lost_outcome_unconfirmed", "observed_alive_without_cast_confirmation":
 	default:
 		return
 	}

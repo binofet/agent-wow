@@ -81,8 +81,11 @@ func TestResurrectionDeathCustodyRequiresDefiniteRejectionOrObservedLife(t *test
 			// new decision, not a replay or a permanent blacklist by player GUID.
 			f.world.Owner.Alive, f.world.Owner.Health = true, 100
 			state(t, s)
-			if s.resurrectionBindings[3] {
-				t.Fatal("observed resurrection did not release death custody")
+			if s.resurrectionBindings[3] || s.state.CastPending {
+				t.Fatal("observed resurrection did not release death/cast custody")
+			}
+			if phase != "offered" && (s.supportOp.view.Phase != "observed_alive_without_cast_confirmation" || s.supportOp.view.EffectObserved) {
+				t.Fatal("observed life without own GO must settle without claiming own success", s.supportOp)
 			}
 			f.world.Owner.Alive, f.world.Owner.Health = false, 0
 			f.failSend = false
