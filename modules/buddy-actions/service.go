@@ -644,6 +644,7 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 		s.swimTrail.observe(out, s.selfGUID)
 	}
 	s.lastWorld = out
+	s.observeRecoveryLifeLocked(out)
 	s.updateClassLocked()
 	return out, nil
 }

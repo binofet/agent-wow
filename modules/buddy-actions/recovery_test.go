@@ -18,6 +18,9 @@ const ownCorpseGUID = uint64(0xf101000000000001)
 
 func recoveryRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	s, f, advance := rig(t)
+	s.sessionID = f.party.SessionId
+	f.world.VisitRevision = 1
+	s.encounterVisit = encounterVisit{revision: 1, mapID: 0, bound: true}
 	p := f.world.Self
 	p.Alive = false
 	p.Health = 0
@@ -59,20 +62,20 @@ func TestRecoveryProductionPlannerWiredAndMultipleVerifiedLegsReachActualCorpse(
 		}
 		return s.planMapPath(ctx, root, mapID, from, goal)
 	}
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	ghostAt(f, 0)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: corpseX}))
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
 	for i := 0; i < 700 && countOpcode(f, opcode.CMSGReclaimCorpse) == 0; i++ {
-		s.Tick(context.Background())
+		tickDeathLua(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if legs < 5 || int(s.recovery.state.VerifiedLegs) != legs || countOpcode(f, opcode.CMSGRepopRequest) != 1 || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || s.pos.x < corpseX-35 || s.recovery.state.AliveObserved {
 		t.Fatal("multi-leg route/reclaim proof failed", legs, s.pos, s.stateLocked())
 	}
 	// Transport acceptance remains a pending reclaim, not resurrection.
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.recovery.state.Rested || countOpcode(f, opcode.CMSGReclaimCorpse) != 1 {
 		t.Fatal("transport became resurrection or retried", s.stateLocked())
 	}
@@ -120,20 +123,20 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	s, f, advance := recoveryRig(t)
 	s.state.Following, s.state.Assisting = true, true
 	s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
-	s.Tick(context.Background())
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.CMSGRepopRequest) != 1 || !s.recovery.state.ReleaseWritten || s.state.InteractionOwner != "recovery" {
 		t.Fatal(s.stateLocked())
 	}
 	ghostAt(f, 0)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.MSGCorpseQuery) != 1 {
 		t.Fatal(f.packets)
 	}
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 30000))
 	for range 35 {
-		s.Tick(context.Background())
+		tickDeathLua(t, s)
 		advance(200 * time.Millisecond)
 	}
 	if s.pos.x < 25 || s.pos.x > 27 || !s.recovery.state.GhostObserved {
@@ -143,7 +146,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 		t.Fatal("claimed before actual delay")
 	}
 	advance(30 * time.Second)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || s.recovery.state.AliveObserved {
 		t.Fatal(s.stateLocked())
 	}
@@ -162,7 +165,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	if reclaim == nil || len(reclaim.Payload) != 8 || binary.LittleEndian.Uint64(reclaim.Payload) != ownCorpseGUID {
 		t.Fatal(reclaim)
 	}
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 {
 		t.Fatal("repeated reclaim")
 	}
@@ -178,7 +181,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	p.PositionRevision++
 	f.world.OwnCorpse = nil
 	f.mu.Unlock()
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if !s.recovery.state.AliveObserved || s.recovery.state.Active || s.recovery.state.Rested ||
 		s.recovery.state.Phase != "alive_observed" || s.state.InteractionOwner != "" || !s.state.Following || !s.state.Assisting {
 		t.Fatal(s.stateLocked())
@@ -186,7 +189,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	f.mu.Lock()
 	f.world.Self.Health = 100
 	f.mu.Unlock()
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.recovery.state.Active || s.recovery.state.Rested || s.recovery.state.Phase != "alive_observed" ||
 		countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || !s.state.Following || !s.state.Assisting {
 		t.Fatal(s.stateLocked())
@@ -197,9 +200,9 @@ func TestRecoveryActualOwnCorpseAndSameMapTimerGates(t *testing.T) {
 	for _, mode := range []string{"missing", "foreign", "bones", "wrong_guid", "different_map", "different_position", "unknown_flags", "query_other_map"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := recoveryRig(t)
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			ghostAt(f, 50)
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			mapID := uint32(0)
 			if mode == "query_other_map" {
 				mapID = 1
@@ -226,7 +229,7 @@ func TestRecoveryActualOwnCorpseAndSameMapTimerGates(t *testing.T) {
 				c.FlagsKnown = false
 			}
 			f.mu.Unlock()
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			if countOpcode(f, opcode.CMSGReclaimCorpse) != 0 {
 				t.Fatal("invalid owncorpse reclaimed", mode)
 			}
@@ -237,25 +240,25 @@ func TestRecoveryActualOwnCorpseAndSameMapTimerGates(t *testing.T) {
 func TestRecoveryAmbiguousWritesCannotBeRepeatedOrResetByEnable(t *testing.T) {
 	s, f, advance := recoveryRig(t)
 	f.failSend = true
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	for range 5 {
 		s.Recovery(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
-		s.Tick(context.Background())
+		tickDeathLua(t, s)
 	}
 	if countOpcode(f, opcode.CMSGRepopRequest) != 1 {
 		t.Fatal("repeated ambiguous release")
 	}
 	f.failSend = false
 	ghostAt(f, 50)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
 	f.failSend = true
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	advance(11 * time.Second)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	s.Recovery(context.Background(), &actionsv1.ToggleRequest{Enabled: true})
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || s.recovery.state.Phase != "outcome_unconfirmed" {
 		t.Fatal(s.stateLocked())
 	}
@@ -266,19 +269,19 @@ func TestRecoveryNeverStealsOtherLeaseAndCancelStopsOwnedMovement(t *testing.T) 
 	s.state.InteractionOwner = "professions"
 	s.interactionToken = "unrelated"
 	s.interactionUntil = s.now().Add(time.Hour)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if len(f.packets) != 0 || s.state.InteractionOwner != "professions" {
 		t.Fatal("stole active item lease")
 	}
 	s.state.InteractionOwner = ""
 	s.interactionToken = ""
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	ghostAt(f, 0)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	advance(200 * time.Millisecond)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if !s.state.Moving {
 		t.Fatal("fixture didn't start ghost movement")
 	}
@@ -291,12 +294,12 @@ func TestRecoveryNeverStealsOtherLeaseAndCancelStopsOwnedMovement(t *testing.T) 
 
 func TestRecoveryFinalClockCorrectionStopsInsteadOfStaleGhostWrite(t *testing.T) {
 	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	ghostAt(f, 0)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
 	f.onClock = func() { f.world.Self.X = 200; f.world.Self.PositionRevision++ }
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.MSGMoveStartForward) != 0 || s.recovery.state.Active {
 		t.Fatal("stale correction wrote movement", s.stateLocked())
 	}
@@ -304,11 +307,11 @@ func TestRecoveryFinalClockCorrectionStopsInsteadOfStaleGhostWrite(t *testing.T)
 
 func TestRecoveryBoundedUnavailableRouteAndFreshAgeIndependentCorpse(t *testing.T) {
 	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	ghostAt(f, 0)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 500}))
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.recovery.state.Active || s.recovery.state.Reason != "corpse_navigation_unavailable" || countOpcode(f, opcode.MSGMoveStartForward) != 0 {
 		t.Fatal(s.stateLocked())
 	}
@@ -360,14 +363,14 @@ func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) 
 	s, f, advance := recoveryRig(t)
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
 	advance(time.Second)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if !s.recovery.state.ReclaimDelayKnown || s.recovery.snapshot(s.now()).ReclaimDelayRemainingMs != 0 {
 		t.Fatal("known zero timer replaced with guessed delay", s.stateLocked())
 	}
 	ghostAt(f, 50)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	f.world.Self.Alive = true
 	f.world.Self.Health = 50
 	f.world.Self.Power = 0
@@ -376,7 +379,7 @@ func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) 
 	f.world.Self.RunSpeed = 7
 	for range 25 {
 		advance(time.Second)
-		s.Tick(context.Background())
+		tickDeathLua(t, s)
 		state(t, s)
 	}
 	if s.state.InteractionOwner != "" || s.recovery.state.Active || !s.recovery.state.AliveObserved || s.recovery.state.Rested {
@@ -386,7 +389,7 @@ func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) 
 	s.interactionToken = "replacement"
 	s.interactionUntil = s.now().Add(time.Hour)
 	before := len(f.packets)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.state.InteractionOwner != "professions" || s.recovery.state.Active || len(f.packets) != before {
 		t.Fatal("stole replacement custody", s.stateLocked())
 	}
@@ -394,22 +397,22 @@ func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) 
 
 func TestRecoveryNewActualDeathDuringRestGetsNewSingleRequests(t *testing.T) {
 	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	ghostAt(f, 50)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	f.world.Self.Alive = true
 	f.world.Self.Health = 50
 	f.world.Self.PlayerFlags = 0
 	f.world.Self.MovementFlags = 0
 	f.world.Self.RunSpeed = 7
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	f.world.Self.Alive = false
 	f.world.Self.Health = 0
-	s.Tick(context.Background())
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
+	tickDeathLua(t, s)
 	if s.recovery.state.DeathEpoch != 2 || countOpcode(f, opcode.CMSGRepopRequest) != 2 || countOpcode(f, opcode.CMSGReclaimCorpse) != 1 {
 		t.Fatal(s.stateLocked(), f.packets)
 	}
@@ -417,14 +420,14 @@ func TestRecoveryNewActualDeathDuringRestGetsNewSingleRequests(t *testing.T) {
 
 func TestRecoverySnapshotLossNeverStopsReplacementLease(t *testing.T) {
 	s, f, _ := recoveryRig(t)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	s.state.InteractionOwner = "professions"
 	s.interactionToken = "replacement"
 	s.interactionUntil = s.now().Add(time.Hour)
 	s.state.Moving = true
 	f.failSnapshot = true
 	before := len(f.packets)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if len(f.packets) != before || !s.state.Moving || s.state.InteractionOwner != "professions" || s.recovery.state.Active {
 		t.Fatal("recovery stopped replacement on snapshot failure", s.stateLocked())
 	}
@@ -434,12 +437,12 @@ func TestRecoveryMayReleaseActualDeathButNeedsFreshPoseToResolveOldMotion(t *tes
 	s, f, _ := recoveryRig(t)
 	s.state.MotionUnconfirmed = true
 	s.state.Moving = true
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if countOpcode(f, opcode.CMSGRepopRequest) != 1 || countOpcode(f, opcode.MSGMoveStartForward) != 0 {
 		t.Fatal("actual dead release blocked by unrelated old motion uncertainty", s.stateLocked())
 	}
 	ghostAt(f, 50)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.state.MotionUnconfirmed || s.state.Moving || countOpcode(f, opcode.MSGCorpseQuery) != 1 || countOpcode(f, opcode.MSGMoveStop) != 1 {
 		t.Fatal("actual graveyard pose did not establish stopped ghost baseline", s.stateLocked())
 	}
@@ -449,19 +452,19 @@ func TestRecoveryGhostFlagBeforeGraveyardPoseWaitsWithoutWrites(t *testing.T) {
 	s, f, _ := recoveryRig(t)
 	s.state.MotionUnconfirmed = true
 	s.state.Moving = true
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	f.world.Self.Alive = false
 	f.world.Self.Health = 1
 	f.world.Self.PlayerFlags = ghostFlag
 	f.world.Self.MovementFlags = ghostWaterWalking
 	f.world.Self.RunSpeed = 8.75
 	before := len(f.packets)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if len(f.packets) != before || !s.recovery.state.Active || s.recovery.state.Phase != "waiting_for_actual_graveyard_position_baseline" {
 		t.Fatal("intermediate ghost prematurely stopped/retired", s.stateLocked())
 	}
 	ghostAt(f, 50)
-	s.Tick(context.Background())
+	tickDeathLua(t, s)
 	if s.state.MotionUnconfirmed || countOpcode(f, opcode.MSGCorpseQuery) != 1 || !s.recovery.state.Active {
 		t.Fatal(s.stateLocked())
 	}
@@ -471,9 +474,9 @@ func TestRecoveryFinalClockStateMustStillBeActualSupportedGhost(t *testing.T) {
 	for _, mode := range []string{"alive", "unsupported"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := recoveryRig(t)
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			ghostAt(f, 0)
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			recoveryObserve(t, s, opcode.MSGCorpseQuery, corpseQueryFixture(0, 0, position{x: 60}))
 			f.onClock = func() {
 				if mode == "alive" {
@@ -484,7 +487,7 @@ func TestRecoveryFinalClockStateMustStillBeActualSupportedGhost(t *testing.T) {
 					f.world.Self.MovementFlags |= 0x2000000
 				}
 			}
-			s.Tick(context.Background())
+			tickDeathLua(t, s)
 			if countOpcode(f, opcode.MSGMoveStartForward) != 0 || countOpcode(f, opcode.MSGMoveHeartbeat) != 0 || s.recovery.state.Active {
 				t.Fatal("post-clock state change wrote ghost travel", s.stateLocked())
 			}

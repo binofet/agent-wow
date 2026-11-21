@@ -47,6 +47,7 @@ type policySpell struct {
 	auraRevision   uint64
 	melee          *policyMelee
 	movement       *policyMovement
+	recovery       *policyRecovery
 	consumable     *policyConsumable
 	token          string
 	origin         modsession.WriteOrigin
@@ -59,6 +60,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "release_spirit" || capability == "query_corpse" {
+		return p.resolveDeathAction(action, capability)
+	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
 	}
@@ -180,6 +184,9 @@ func (p *SessionPolicy) preparePolicyDispatch(method string, values map[protoref
 		Module: actionsModule,
 		spell:  op,
 		Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
+			if op.recovery != nil {
+				return p.manager.invokePolicyRecovery(ctx, inst, md, req, op)
+			}
 			if op.movement != nil {
 				return p.manager.invokePolicyMovement(ctx, inst, md, req, op)
 			}
@@ -300,6 +307,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.recovery != nil {
+		return op.matchesRecoveryPacket(code, payload)
+	}
 	if op.consumable != nil {
 		return op.matchesConsumablePacket(code, payload)
 	}
@@ -347,6 +357,9 @@ func (op *policySpell) matchesPacket(body []byte) bool {
 }
 
 func (op *policySpell) payload(phase string, written, castGo, observed bool) map[string]any {
+	if op.recovery != nil {
+		return op.recoveryPayload(phase, written)
+	}
 	if op.movement != nil {
 		return op.movementPayload(phase, written)
 	}

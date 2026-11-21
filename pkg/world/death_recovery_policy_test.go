@@ -1,0 +1,93 @@
+package world
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"google.golang.org/protobuf/proto"
+)
+
+func TestDeathRecoveryComposedPolicyTuningReloadAndPendingCustody(t *testing.T) {
+	module, err := os.ReadFile(filepath.Join("..", "..", "behaviors", "death-recovery.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := func(delay string) string {
+		return "local encounter_death_recovery=(function()\n" + string(module) + "\nend)()\nencounter_death_recovery.tuning.release_delay_ms=" + delay + "\n" + readEncounterBundle(t)
+	}
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source("0"), behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	p := &fallbackPolicyTest{t: t, host: host}
+	obs := positionedHealObservation()
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.Alive = proto.Bool(false)
+	self.Health = 0
+	obs.Recovery = &actionsv1.RecoveryState{Enabled: true, DeathEpoch: 1}
+	step := func() behavior.Decision {
+		t.Helper()
+		d, err := host.Decide(context.Background(), map[string]any{"observationSequence": p.observe(obs)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	release := step()
+	action, _ := release.Output["action"].(map[string]any)
+	if action["capability"] != "release_spirit" || action["deathEpoch"] != "1" {
+		t.Fatal(release.Output)
+	}
+	id, err := host.ReserveAction(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A real global pending operation is not erased by death recovery or reload.
+	if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionUnknown, Payload: map[string]any{"capability": "release_spirit", "self_guid": fallbackGUID(fallbackSelf), "death_epoch": "1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = host.Reload(context.Background(), source("60000"), host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	obs.Recovery.GhostObserved = true
+	if d := step(); d.Output["action"] != nil || host.Status().Pending != 1 {
+		t.Fatal("unknown custody erased", d.Output, host.Status())
+	}
+	if _, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionSettledUnverified, Payload: map[string]any{"capability": "release_spirit", "self_guid": fallbackGUID(fallbackSelf), "death_epoch": "1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	query := step()
+	action, _ = query.Output["action"].(map[string]any)
+	if action["capability"] != "query_corpse" {
+		t.Fatal(query.Output)
+	}
+	// A proposal checkpoint already reserves the query, even if transport is
+	// uncertain and a new policy revision changes timing while it is outstanding.
+	if _, err = host.Reload(context.Background(), source("0"), host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	if d := step(); d.Output["action"] != nil {
+		t.Fatal("query replayed on reload", d.Output)
+	}
+	obs.Recovery.CorpseQueryKnown = true
+	if d := step(); d.Output["action"] != nil {
+		t.Fatal("corpse receipt became living action", d.Output)
+	}
+	// Positive life allows ordinary shared healing immediately; no new native
+	// post-reclaim resource gate or a local release timer can veto that support.
+	self.Alive = proto.Bool(true)
+	self.Health = 20
+	obs.Healing.Caster.Ready = true
+	obs.Healing.Patients[0].Guid = fallbackSelf
+	obs.Healing.Patients[0].Health = 20
+	obs.Healing.Patients[0].Distance = proto.Float64(0)
+	if d := step(); d.Output["action"].(map[string]any)["capability"] != "heal" {
+		t.Fatal(d.Output)
+	}
+}

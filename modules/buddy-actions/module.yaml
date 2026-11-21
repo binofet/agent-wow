@@ -53,6 +53,8 @@ rpc:
   practice: /warcraftbuddy.actions.v1.BuddyActions/Practice
   fargodeep_encounter: /warcraftbuddy.actions.v1.BuddyActions/FargodeepEncounter
   recovery: /warcraftbuddy.actions.v1.BuddyActions/Recovery
+  release_spirit: /warcraftbuddy.actions.v1.BuddyActions/ReleaseSpirit
+  query_corpse: /warcraftbuddy.actions.v1.BuddyActions/QueryCorpse
 packets:
   SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -137,3 +139,5 @@ script_api:
   practice: {effect: mutation}
   fargodeep_encounter: {effect: mutation}
   recovery: {effect: mutation}
+  release_spirit: {effect: mutation}
+  query_corpse: {effect: mutation}

@@ -101,6 +101,7 @@ func friendlyEncounterManager(t *testing.T) (*Manager, *buddyactions.Service, *f
 	actionsv1.RegisterBuddyActionsServer(server, native)
 	modcb.RegisterEncounterLeaseServer(server, native)
 	h := health.NewServer()
+	h.SetServingStatus(modcb.PolicySpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	h.SetServingStatus(modcb.PolicySupportSpellService, grpc_health_v1.HealthCheckResponse_SERVING)
 	grpc_health_v1.RegisterHealthServer(server, h)
 	listener := bufconn.Listen(1024 * 1024)
