@@ -53,6 +53,8 @@ class RPC:
             return dict(revision=self.revision)
         if method == 'buddy-actions.follow':
             self.status['following'] = params['enabled']
+            self.status.update(moving=False,motionUnconfirmed=False,
+                               reason='follow_enabled_waiting_for_safe_observations' if params['enabled'] else 'follow_disabled')
             return copy.deepcopy(self.status)
         raise AssertionError('unexpected RPC: ' + method)
 
@@ -140,6 +142,69 @@ class GMTaskObservationTests(unittest.TestCase):
         errors = self.host.restore_holds()
         self.assertTrue(errors)
         self.assertEqual(self.member.source, 'independent owner edit')
+
+    def test_own_gm_hold_stops_motion_after_cas_without_joining_roster(self):
+        source=self.gm.source
+        self.gm.status['moving']=True
+        members=copy.deepcopy(self.goal['members'])
+        self.host.install_holds()
+        self.assertEqual(set(self.host.data['holds']),{'87','1'})
+        self.assertNotEqual(self.gm.source,source)
+        self.assertFalse(self.gm.status['following'])
+        self.assertFalse(self.gm.status['moving'])
+        methods=[m for m,_ in self.gm.calls]
+        self.assertLess(methods.index('session.reload_policy'),methods.index('buddy-actions.follow'))
+        self.assertEqual(self.host.data['holds']['87']['movementStop']['outcome'],'written')
+        self.host.install_holds()
+        self.assertEqual(len([m for m,_ in self.gm.calls if m=='buddy-actions.follow']),1)
+        observed=self.host.observe()
+        self.assertEqual(self.goal['members'],members)
+        self.assertEqual([m['guid'] for m in observed['members']],['1','3'])
+        self.assertEqual([m['guid'] for m in self.host.data['originalGroup']['members']],['1','3'])
+        self.assertEqual(self.host.restore_holds(),[])
+        self.assertEqual(self.gm.source,source)
+        self.assertFalse(self.gm.status['following'])
+        self.assertTrue(self.host.data['holds']['87']['restored'])
+
+    def test_unknown_gm_stop_is_reserved_once_and_does_not_dispatch_task(self):
+        original=self.gm.call
+        def lost_stop(method,params):
+            result=original(method,params)
+            if method=='buddy-actions.follow':
+                self.assertEqual(self.host.store.value['holds']['87']['movementStop']['outcome'],'reserved')
+                raise TimeoutError('stop response lost')
+            return result
+        self.gm.call=lost_stop
+        self.host.step=lambda: self.fail('task must not dispatch before own-body stop')
+        with self.assertRaisesRegex(TimeoutError,'response lost'):self.host.run()
+        with self.assertRaisesRegex(ValueError,'stop outcome is unconfirmed'):self.host.run()
+        self.assertEqual(len([m for m,_ in self.gm.calls if m=='buddy-actions.follow']),1)
+        self.assertEqual(self.host.data['reservations'],{})
+        self.assertEqual(self.host.data['holds']['87']['movementStop']['outcome'],'unconfirmed')
+        self.assertEqual(self.host.restore_holds(),[])
+
+    def test_gm_independent_policy_edit_is_not_overwritten_on_restore(self):
+        self.host.install_holds()
+        self.gm.source,self.gm.revision='new GM owner source','owner-revision'
+        self.assertTrue(self.host.restore_holds())
+        self.assertEqual(self.gm.source,'new GM owner source')
+        self.assertFalse(self.host.data['holds']['87'].get('restored',False))
+
+    def test_lost_gm_hold_ack_reconciles_source_before_one_stop(self):
+        original=self.gm.call
+        lost=[True]
+        def lost_reload(method,params):
+            result=original(method,params)
+            if method=='session.reload_policy' and lost[0]:
+                lost[0]=False
+                raise TimeoutError('reload response lost')
+            return result
+        self.gm.call=lost_reload
+        with self.assertRaisesRegex(TimeoutError,'reload response lost'):self.host.install_holds()
+        self.assertFalse(any(m=='buddy-actions.follow' for m,_ in self.gm.calls))
+        self.host.install_holds()
+        self.assertEqual(len([m for m,_ in self.gm.calls if m=='session.reload_policy']),1)
+        self.assertEqual(len([m for m,_ in self.gm.calls if m=='buddy-actions.follow']),1)
 
 
 if __name__ == '__main__':
