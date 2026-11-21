@@ -48,8 +48,8 @@ func Encode(count byte, r *actionsv1.CastSpellRequest) ([]byte, error) {
 	if mask&ObjectMask != 0 && t.GetObjectGuid() == 0 || mask&0x10 != 0 && t.GetItemGuid() == 0 {
 		return nil, errors.New("explicit target mask requires exact nonzero GUID")
 	}
-	if mask&0x1000 != 0 && (mask&0x10 != 0 || t.GetItemGuid() > 6) {
-		return nil, errors.New("trade target must be an explicit slot0..6, not an item GUID")
+	if mask&0x1000 != 0 && (mask&0x10 != 0 || t.GetItemGuid() != 6) {
+		return nil, errors.New("trade target must be the non-traded slot6, not an item GUID")
 	}
 	if mask&0x1000 == 0 && (t.GetTradeRevision() != 0 || t.GetTradePartnerGuid() != 0) {
 		return nil, errors.New("trade binding requires trade-item target")
@@ -107,8 +107,8 @@ func Encode(count byte, r *actionsv1.CastSpellRequest) ([]byte, error) {
 			out = append(out, tr.Movement...)
 		}
 	}
-	if len(out) > math.MaxUint16 {
-		return nil, errors.New("cast exceeds normal world packet length")
+	if len(out)+4 >= 10240 {
+		return nil, errors.New("cast exceeds normal world sender frame budget")
 	}
 	return out, nil
 }

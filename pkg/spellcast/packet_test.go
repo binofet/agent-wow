@@ -109,3 +109,24 @@ func TestCastSpellComposableTargetsAndOwnMovement(t *testing.T) {
 		}
 	}
 }
+
+func TestCastSpellNormalSenderSizeAndTradeNonTradedSlot(t *testing.T) {
+	r := &actionsv1.CastSpellRequest{SpellId: 133, Targets: &actionsv1.SpellCastTargets{Mask: 0x2000, StringTarget: strings.Repeat("x", 10224)}}
+	if p, err := Encode(1, r); err != nil || len(p) != 10235 {
+		t.Fatal(len(p), err)
+	}
+	r.Targets.StringTarget += "x"
+	if _, err := Encode(1, r); err == nil {
+		t.Fatal("normal sender oversized frame admitted")
+	}
+	for _, slot := range []uint64{0, 1, 5, 7, 0x4000000000000099} {
+		r.Targets = &actionsv1.SpellCastTargets{Mask: 0x1000, ItemGuid: slot}
+		if _, err := Encode(1, r); err == nil {
+			t.Fatal("foreign trade slot admitted", slot)
+		}
+	}
+	r.Targets = &actionsv1.SpellCastTargets{Mask: 0x1010, ItemGuid: 6}
+	if _, err := Encode(1, r); err == nil {
+		t.Fatal("ambiguous item/trade union admitted")
+	}
+}

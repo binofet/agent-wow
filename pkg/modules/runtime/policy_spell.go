@@ -351,6 +351,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 
 	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, op.origin), code, payload)
 	spells.mu.Lock()
+	if (op.genericRequest != nil || op.cancelRequest != nil) && modcb.PacketWasNotDispatched(err) {
+		op.attempted = false
+	}
 	op.written = op.written || err == nil
 	spells.mu.Unlock()
 	return err

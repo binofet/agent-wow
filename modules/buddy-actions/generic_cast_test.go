@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,5 +165,18 @@ func TestCastSpellArcaneExplosionWhileBodyMovingUsesNormalTransport(t *testing.T
 	}
 	if !s.bodyMoving || !st.Moving {
 		t.Fatal("cast altered normal movement intent", st)
+	}
+}
+
+func TestCastSpellLocalOversizeFailsBeforeNativeReservation(t *testing.T) {
+	s, f, _ := genericCastRig(t)
+	r := genericRequest(s, 133)
+	r.Targets = &actionsv1.SpellCastTargets{Mask: 0x2000, StringTarget: strings.Repeat("x", 10225)}
+	if _, err := s.CastSpell(context.Background(), r); status.Code(err) != codes.InvalidArgument || len(f.packets) != 0 || s.state.CastPending || s.supportOp != nil {
+		t.Fatal("oversize became unknown physical write", err, s.stateLocked(), f.packets)
+	}
+	r.Targets.StringTarget = r.Targets.StringTarget[:10224]
+	if _, err := s.CastSpell(context.Background(), r); err != nil || len(f.packets) != 1 || len(f.packets[0].Payload) != 10235 {
+		t.Fatal(err, f.packets)
 	}
 }
