@@ -193,6 +193,21 @@ message RecoveryState {
   bool ghost_movement_supported = 25;
   uint64 corpse_query_revision = 26;
   bool motion_pending = 27;
+  ResurrectionOffer resurrection_offer = 28;
+}
+// A genuine SMSG_RESURRECT_REQUEST, not a chosen recovery action. Age is a
+// local elapsed observation; an optional server timer is reclaim delay, not
+// an invented offer expiry. Acceptance is not evidence that life returned.
+message ResurrectionOffer {
+  uint64 caster_guid = 1;
+  uint64 revision = 2;
+  uint64 death_epoch = 3;
+  uint64 age_ms = 4;
+  bool response_attempted = 5;
+  bool response_written = 6;
+  bool outcome_unknown = 7;
+  bool resurrection_sickness = 8;
+  optional uint32 reclaim_delay_ms = 9;
 }
 message RecoveryCorpse {
   uint64 guid = 1;
@@ -884,7 +899,15 @@ message EncounterControlCapability {
   bool ready = 3;
 }
 message ResurrectOnceRequest { string session_id = 1; uint64 self_guid = 2; uint64 target_guid = 3; uint32 spell_id = 4; }
-message AcceptResurrectionRequest { string session_id = 1; uint64 self_guid = 2; uint64 caster_guid = 3; }
+message AcceptResurrectionRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 caster_guid = 3;
+  // New policy callers bind the exact observed death and offer. Existing
+  // direct callers remain compatible with the original three-field request.
+  uint64 death_epoch = 4;
+  uint64 expected_offer_revision = 5;
+}
 message PickLockRequest { string session_id = 1; uint64 target_guid = 2; }
 
 // Last failed shared pure-policy read. Success does not erase this diagnostic.

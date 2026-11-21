@@ -106,7 +106,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	out := &actionsv1.EncounterObservationResponse{
 		SessionId: s.sessionID, SelfGuid: s.selfGUID, HostOwned: proto.Bool(s.hostEncounterActiveLocked()), HostRequested: identity.HostRequested,
 		VisitId: w.VisitRevision, MapId: proto.Uint32(w.Self.MapId), WorldObservationRevision: w.ObservedPackets,
-		Recovery:       s.recovery.snapshot(s.now()),
+		Recovery:       s.recoveryStateLocked(),
 		SpellbookKnown: s.spellbookKnown, SpellbookRevision: s.spellbookRevision,
 		Players:    make(map[string]*actionsv1.EncounterPlayer),
 		Targets:    make(map[string]*actionsv1.EncounterCreature),

@@ -31,9 +31,12 @@ type supportAttempt struct {
 	policySpellToken   string
 }
 type resurrectionOffer struct {
-	caster   uint64
-	consumed bool
-	until    time.Time
+	caster, revision, epoch uint64
+	consumed, written       bool
+	unknown                 bool
+	observedAt              time.Time
+	sickness                bool
+	reclaimDelay            *uint32
 }
 
 func (s *Service) spellKindLocked(id uint32) spellcatalog.Kind {
@@ -252,7 +255,18 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			return true, bad
 		}
 		if s.resurrectionOffer == nil || s.resurrectionOffer.caster != caster {
-			s.resurrectionOffer = &resurrectionOffer{caster: caster, until: s.now().Add(60 * time.Second)}
+			s.resurrectionOfferSequence++
+			epoch := s.recovery.state.DeathEpoch
+			if !s.recovery.lifeKnown || s.recovery.lastObservedAlive {
+				epoch++
+			}
+			offer := &resurrectionOffer{caster: caster, revision: s.resurrectionOfferSequence, epoch: epoch,
+				observedAt: s.now(), sickness: p[sickness] == 1}
+			if len(p)-sickness == 5 {
+				delay := binary.LittleEndian.Uint32(p[sickness+1:])
+				offer.reclaimDelay = &delay
+			}
+			s.resurrectionOffer = offer
 		}
 		return true, nil
 	}
@@ -362,36 +376,24 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 	return true, nil
 }
 
-// Accept a real current-party resurrection offer once, before corpse running.
-func (s *Service) acceptResurrectionLocked(ctx context.Context) bool {
-	offer := s.resurrectionOffer
-	if offer == nil {
-		return false
-	}
-	w, err := s.snapshot(ctx)
-	if err != nil || w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.AliveKnown {
-		return false
-	}
-	if w.Self.Alive && w.Self.HealthKnown && w.Self.Health > 0 && w.Self.PlayerFlags&0x10 == 0 {
-		s.resurrectionOffer = nil
-		return false
-	}
-	if !s.pendingResurrectionOfferLocked(offer, offer.caster) || !s.healingPartyLocked(ctx)[offer.caster] {
-		return false
-	}
-	s.acceptResurrectionOfferLocked(ctx, offer)
-	return true
-}
-
 func (s *Service) pendingResurrectionOfferLocked(offer *resurrectionOffer, caster uint64) bool {
-	return offer != nil && offer.caster == caster && !offer.consumed && s.now().Before(offer.until)
+	return offer != nil && offer.caster == caster && !offer.consumed
 }
 
-func (s *Service) acceptResurrectionOfferLocked(ctx context.Context, offer *resurrectionOffer) {
+func (s *Service) acceptResurrectionOfferLocked(ctx context.Context, offer *resurrectionOffer) error {
 	offer.consumed = true
 	payload := binary.LittleEndian.AppendUint64(nil, offer.caster)
 	payload = append(payload, 1)
-	if s.sendLocked(ctx, opcode.CMSGResurrectResponse, payload) {
-		s.state.Reason = "resurrection_accepted_waiting_for_alive_observation"
+	err := s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), opcode.CMSGResurrectResponse, payload)
+	if modcb.PacketWasNotDispatched(err) {
+		offer.consumed = false
+		return err
 	}
+	offer.written, offer.unknown = err == nil, err != nil
+	if err == nil {
+		s.state.Reason = "resurrection_accepted_waiting_for_alive_observation"
+	} else {
+		s.state.Reason = "resurrection_acceptance_transport_unconfirmed_no_retry"
+	}
+	return nil
 }

@@ -61,6 +61,24 @@ func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 	return s
 }
 
+func (s *Service) recoveryStateLocked() *actionsv1.RecoveryState {
+	now := s.now()
+	out := s.recovery.snapshot(now)
+	if offer := s.resurrectionOffer; offer != nil {
+		age := now.Sub(offer.observedAt).Milliseconds()
+		if age < 0 {
+			age = 0
+		}
+		out.ResurrectionOffer = &actionsv1.ResurrectionOffer{CasterGuid: offer.caster, Revision: offer.revision,
+			DeathEpoch: offer.epoch, AgeMs: uint64(age), ResponseAttempted: offer.consumed, ResponseWritten: offer.written,
+			OutcomeUnknown: offer.unknown, ResurrectionSickness: offer.sickness}
+		if offer.reclaimDelay != nil {
+			out.ResurrectionOffer.ReclaimDelayMs = proto.Uint32(*offer.reclaimDelay)
+		}
+	}
+	return out
+}
+
 func (s *Service) Recovery(ctx context.Context, request *actionsv1.ToggleRequest) (*actionsv1.State, error) {
 	if request == nil {
 		return nil, status.Error(codes.InvalidArgument, "recovery toggle required")
@@ -137,10 +155,16 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 		r.path = nil
 		r.releasePositionRevision, r.releaseMap = 0, 0
 		r.graveyardPoseObserved = false
+		if offer := s.resurrectionOffer; offer != nil && offer.epoch != r.state.DeathEpoch {
+			s.resurrectionOffer = nil
+		}
 	}
 	r.lifeKnown, r.lastObservedAlive = true, p.Alive
 	if p.Alive && r.state.DeathEpoch != 0 {
 		r.state.AliveObserved = true
+		if p.Health > 0 && p.PlayerFlags&ghostFlag == 0 {
+			s.resurrectionOffer = nil
+		}
 		if r.token == "" {
 			r.state.Phase = "alive_observed"
 			r.state.Reason = "actual_alive_receipt_shared_Lua_resource_policy"

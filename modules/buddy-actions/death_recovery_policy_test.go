@@ -80,6 +80,9 @@ func tickDeathLua(t *testing.T, s *Service) {
 			_, callErr = s.ReleaseSpirit(context.Background(), request)
 		case "query_corpse":
 			_, callErr = s.QueryCorpse(context.Background(), request)
+		case "accept_resurrection":
+			_, callErr = s.AcceptResurrection(context.Background(), &actionsv1.AcceptResurrectionRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID,
+				CasterGuid: parse("casterGuid"), DeathEpoch: epoch, ExpectedOfferRevision: parse("expectedOfferRevision")})
 		case "approach_corpse", "stop_corpse":
 			radius, _ := action["rangeYards"].(float64)
 			_, callErr = s.ApproachCorpse(context.Background(), &actionsv1.CorpseApproachRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: epoch,
@@ -97,7 +100,7 @@ func tickDeathLua(t *testing.T, s *Service) {
 		if callErr != nil && outcome != behavior.ActionNotDispatched {
 			t.Fatal(callErr)
 		}
-		_, err = vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: s.sessionID, ActionID: id, Outcome: outcome, Payload: map[string]any{"capability": action["capability"], "self_guid": action["selfGuid"], "death_epoch": action["deathEpoch"]}}})
+		_, err = vm.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: s.sessionID, ActionID: id, Outcome: outcome, Payload: map[string]any{"capability": action["capability"], "self_guid": action["selfGuid"], "death_epoch": action["deathEpoch"], "offer_revision": action["expectedOfferRevision"]}}})
 		if err != nil {
 			t.Fatal(err)
 		}

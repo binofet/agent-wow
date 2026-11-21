@@ -123,6 +123,7 @@ type Service struct {
 	hostResurrectionOwned, hostInterruptOwned  bool
 	resurrectionBindings                       map[uint64]bool
 	resurrectionOffer                          *resurrectionOffer
+	resurrectionOfferSequence                  uint64
 	behavior                                   *behavior.Runtime
 	behaviorRejection                          string
 
@@ -214,7 +215,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	if s.formation.lastFailure != nil {
 		out.LastFollowPolicyFailure = proto.Clone(s.formation.lastFailure).(*actionsv1.PolicyDecisionFailure)
 	}
-	out.Recovery = s.recovery.snapshot(s.now())
+	out.Recovery = s.recoveryStateLocked()
 	out.Recovery.MotionPending = s.state.Moving || s.state.MotionUnconfirmed
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())
@@ -1080,9 +1081,6 @@ func (s *Service) Tick(ctx context.Context) {
 			w, _ = s.snapshot(ctx)
 		}
 		s.observeItemCreationLocked(w)
-	}
-	if !s.closed && s.acceptResurrectionLocked(ctx) {
-		return
 	}
 	if op := s.supportOp; op != nil && (op.view.Phase == "waiting_server" || op.view.Phase == "waiting_cleanse_effect") && !s.now().Before(op.until) {
 		op.view.Phase = "outcome_unconfirmed_no_retry"
