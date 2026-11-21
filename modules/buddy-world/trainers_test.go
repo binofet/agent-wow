@@ -81,6 +81,7 @@ func TestTrainerProjectionFlagRemovalMalformedRollbackAndWorldLifecycle(t *testi
 	for _, mode := range []string{"flags", "destroy", "out_of_range", "transfer", "new_world"} {
 		t.Run(mode, func(t *testing.T) {
 			s := NewService(1)
+			s.now = func() time.Time { return time.Unix(1000, 0) }
 			packet(t, s, opcode.SMSGLoginVerifyWorld, login())
 			guid := uint64(0xf130000000000000) | uint64(2329)<<24 | 1
 			packet(t, s, opcode.SMSGUpdateObject, trainerCreate(guid, 2329, 0x51, 1))

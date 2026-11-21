@@ -68,6 +68,7 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		}}
 		if name == actionsModule {
 			l.Environment[modcb.FollowPolicyCallbackEnv] = "true"
+			l.Environment[modcb.StarterSpellPolicyCallbackEnv] = "true"
 			var key [32]byte
 			if _, err := rand.Read(key[:]); err != nil {
 				return err

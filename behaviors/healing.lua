@@ -126,7 +126,49 @@ local function choose_cast(view, explicit, allow_busy)
   return target, choose_rank(target, caster.guid, spells)
 end
 
+-- A future heal reserve is a resource policy, independent of today's patient,
+-- cooldown, range or affordability. Keep uint64 costs exact until clamping
+-- above every possible uint32 caster mana value.
+local function decimal_cost(value)
+  if #value == 0 or #value > 20 or #value > 1 and byte_at(value, 1) == 48 or
+      #value == 20 and value > "18446744073709551615" then return false end
+  for i = 1, #value do
+    local digit = byte_at(value, i)
+    if digit < 48 or digit > 57 then return false end
+  end
+  return true
+end
+
+local function reserve_cost(value)
+  local ceiling = 4294967296
+  if type(value) == "string" then
+    if not decimal_cost(value) then return end
+    if #value > 10 or #value == 10 and value >= "4294967296" then return ceiling end
+    return tonumber(value)
+  end
+  if type(value) == "number" and value == value and value >= 0 and
+      value <= 9007199254740991 and value % 1 == 0 then return math.min(value, ceiling) end
+end
+
+local function resource_reserve(obs)
+  if type(obs) ~= "table" or type(obs.spells) ~= "table" then return end
+  local reserve = 0
+  for _, spell in pairs(obs.spells) do
+    if type(spell) == "table" and spell.known == true and spell.capability == "heal" then
+      if type(spell.powerType) ~= "number" or spell.powerType-spell.powerType ~= 0 or spell.powerType % 1 ~= 0 then return end
+      if spell.powerType == 0 then
+        if spell.metadataKnown ~= true then return end
+        local cost = reserve_cost(spell.cost)
+        if cost == nil then return end
+        reserve = math.max(reserve, cost)
+      end
+    end
+  end
+  return reserve
+end
+
 return {
+  resource_reserve = resource_reserve,
   -- Planning a custody handoff is not a claim that a cast is currently ready.
   -- Reuse triage rather than duplicating its thresholds in maintenance policy.
   needs_access = function(view, obs)

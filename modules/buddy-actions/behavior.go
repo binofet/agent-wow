@@ -58,6 +58,7 @@ func (s *Service) ReloadBehavior(_ context.Context, r *actionsv1.BehaviorReloadR
 		}
 		s.behavior = nil
 		s.behaviorRejection = ""
+		s.starterSpells.acceptedAuthoredSource()
 		return s.behaviorStatusLocked(), nil
 	}
 	if s.behavior == nil {
@@ -70,6 +71,7 @@ func (s *Service) ReloadBehavior(_ context.Context, r *actionsv1.BehaviorReloadR
 		return nil, status.Error(codes.InvalidArgument, "Policy rejected; inspect behavior status")
 	}
 	s.behaviorRejection = ""
+	s.starterSpells.acceptedAuthoredSource()
 	return s.behaviorStatusLocked(), nil
 }
 

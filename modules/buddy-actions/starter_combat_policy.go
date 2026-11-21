@@ -1,13 +1,11 @@
 package buddyactions
 
-// Pending named-starter migration owned separately: only Practice and the
-// explicit Fargodeep mission call these legacy policy helpers. Ordinary combat
-// never calls them; its sole selector is the attached shared Lua policy.
+// Named-task transport and exact native admission. Fargodeep spell selection
+// reads the shared Lua selectors; ordinary encounter combat has its own writer.
 import (
 	"context"
 	"encoding/binary"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
-	contract "github.com/agent-wow/agent-wow/pkg/behaviorcontract"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"math"
@@ -43,20 +41,20 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 	if !known {
 		return fail("assist_target_outside_conservative_range")
 	}
-	finishHealth := uint32(0)
-	if target.HealthKnown && target.MaxHealth > 0 && uint64(target.Health)*100 <= uint64(target.MaxHealth)*25 {
-		finishHealth = target.Health
+	decision := s.starterSpellDecisionLocked(ctx, w, target, targetPosition)
+	if !decision.valid {
+		return fail(s.starterSpells.failure())
 	}
-	r := s.starterBestDamageLocked(self, targetPosition, finishHealth, target.Guid)
-	if self.ClassId != 4 && r.ID == 0 && !s.state.KnownAutoAttack {
+	if decision.kind == "wait" {
 		return fail("no_affordable_learned_damage_spell_in_range")
 	}
-	if self.ClassId == 4 || r.ID == 0 {
+	if decision.kind == "melee" {
 		if self.CombatReachKnown && target.CombatReachKnown && distance(s.pos, targetPosition) > math.Max(5, float64(self.CombatReach+target.CombatReach)+4.0/3.0)-0.5 {
 			return fail("self_defense_melee_target_outside_range")
 		}
 		return s.starterRogueAssistLocked(ctx, w, target, targetPosition)
 	}
+	r := decision.spell
 	if !s.stopAutoAttackLocked(ctx) {
 		s.state.Reason = "auto_attack_stop_waiting_for_server"
 		return false
@@ -68,12 +66,12 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 		s.state.Reason = "assist_throttled_or_pending"
 		return false
 	}
-	if distance(s.pos, targetPosition) > r.MaxHostile-2 {
+	if distance(s.pos, targetPosition) < r.MinHostile || distance(s.pos, targetPosition) > r.MaxHostile {
 		return fail("assist_target_outside_conservative_range")
 	}
-	cost, reserve := spellCost(r, self), s.starterHealingReserveLocked(self)
-	if !self.PowerKnown || self.PowerType != 0 || cost == 0 || uint64(self.Power) < cost+reserve {
-		return fail("assist_mana_reserved_for_healing")
+	cost := spellCost(r, self)
+	if !self.PowerKnown || int32(self.PowerType) != r.Power || cost == 0 || uint64(self.Power) < cost {
+		return fail("assist_exact_spell_resources_unavailable")
 	}
 	if !s.stopLocked(ctx) {
 		s.state.Reason = "movement_stop_unconfirmed_assist_aborted"
@@ -134,71 +132,6 @@ func (s *Service) castStarterOffenseLocked(ctx context.Context, spell uint32, ta
 		s.state.Reason = "sinister_strike_transport_written_waiting_for_server"
 	}
 	return true
-}
-
-func (s *Service) starterHealingReserveLocked(p *worldv1.PlayerState) uint64 {
-	reserve := uint64(0)
-	for _, r := range s.candidatesLocked(spellcatalog.Heal) {
-		if r.Power == 0 {
-			cost := spellCost(r, p)
-			if cost > reserve {
-				reserve = cost
-			}
-		}
-	}
-	return reserve
-}
-
-func (s *Service) starterBestDamageLocked(p *worldv1.PlayerState, target position, finishHealth uint32, targetGUID uint64) spellcatalog.Spell {
-	var best spellcatalog.Spell
-	var choices []contract.Spell
-	eligible := map[uint32]spellcatalog.Spell{}
-	score := float64(-1)
-	targetRange := distance(s.pos, target)
-	interruptedHere := targetGUID != 0 && s.state.LastCastTargetGuid == targetGUID &&
-		(s.state.LastCastFailure == spellFailedInterrupted || s.state.LastCastFailure == spellFailedInterruptedCombat)
-	for _, r := range s.candidatesLocked(spellcatalog.Damage) {
-		if r.Power != 0 || !p.PowerKnown || p.PowerType != 0 || uint64(p.Power) < spellCost(r, p)+s.starterHealingReserveLocked(p) ||
-			s.now().Before(s.spellReady[r.ID]) || targetRange > r.MaxHostile-2 || targetRange < r.MinHostile {
-			continue
-		}
-		damage := directDamage(r)
-		periodic := periodicDamage(r)
-		if periodic > 0 && targetGUID != 0 && s.hasOwnDamageAuraLocked(targetGUID, r.Family) {
-			continue
-		}
-		if periodic > 0 && (targetGUID == 0 || finishHealth != 0) && damage == 0 {
-			continue // A late or position-only cast needs immediate damage.
-		}
-		amount := damage
-		if finishHealth == 0 && targetGUID != 0 {
-			amount += periodic
-		}
-		value := amount / math.Max(1.5, float64(r.CastMs)/1000)
-		if interruptedHere && r.CastMs != 0 {
-			value *= 0.5 // A long cast just failed on this target.
-		}
-		// Prefer the fastest affordable spell expected to finish this enemy.
-		// Otherwise keep the usual damage-per-second policy.
-		kills := finishHealth > 0 && damage >= float64(finishHealth)
-		bestKills := finishHealth > 0 && directDamage(best) >= float64(finishHealth)
-		if kills && !bestKills || kills && bestKills && (r.CastMs < best.CastMs || r.CastMs == best.CastMs && value > score) ||
-			!kills && !bestKills && value > score {
-			best, score = r, value
-		}
-		eligible[r.ID] = r
-		choices = append(choices, contract.Spell{SpellId: r.ID, Cost: uint32(spellCost(r, p)), Amount: amount, CastMs: r.CastMs, Score: value})
-	}
-	if len(choices) > 0 && finishHealth == 0 && (s.behavior != nil || s.dungeonTrace != nil && s.dungeonTrace.Active()) {
-		decision := s.behaviorDecisionLocked(contract.Input{Kind: "damage_spell", Self: combatant(p), Spells: choices})
-		if decision.SpellId != 0 {
-			if r, ok := eligible[decision.SpellId]; ok {
-				return r
-			}
-			s.behaviorRejection = "unknown_or_ineligible_damage_spell_using_native_decision"
-		}
-	}
-	return best
 }
 
 func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState, targetPosition position) bool {

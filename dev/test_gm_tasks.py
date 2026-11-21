@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import tempfile
@@ -133,5 +134,49 @@ class TestGMTaskHost(unittest.TestCase):
   self.assertIn('start',tools);self.assertIn('status',tools);self.assertIn('cancel',tools);self.assertIn('behaviors/gm-recovery.lua',tools['policy']);self.assertIn('broad rank-2',tools['instructions'])
   self.assertIn('execute',tools);self.assertIn('select',tools)
   self.assertIn('--select-guid',tools['execute']);self.assertIn('--session-id',tools['execute'])
+
+class TestGMTaskCapacity(unittest.TestCase):
+ def test_hold_reload_uses_explicit_rpc_budget_before_any_real_write(self):
+  params=dict(sessionId='aw-capacity',characterGuid='1',expectedRevision='old',source='x'*185000)
+  old=gm.runtime.RPC('http://127.0.0.1:8090/rpc')
+  with patch.object(old.opener,'open') as transport:
+   with self.assertRaisesRegex(gm.runtime.Error,'json_size_bound'):old.call('session.reload_policy',params)
+  transport.assert_not_called()
+  rpc=gm.task_rpc('http://127.0.0.1:8090/rpc')
+  reply=io.BytesIO(json.dumps(dict(jsonrpc='2.0',id=1,result=dict(revision='next'))).encode())
+  with patch.object(rpc.opener,'open',return_value=reply) as transport:
+   self.assertEqual(rpc.call('session.reload_policy',params),dict(revision='next'))
+  sent=json.loads(transport.call_args.args[0].data)
+  self.assertEqual(sent['params'],params);self.assertGreater(len(transport.call_args.args[0].data),32768)
+  self.assertEqual(transport.call_count,1)
+ def test_large_source_response_and_overflow_are_bounded_without_retry(self):
+  rpc=gm.task_rpc('http://127.0.0.1:8090/rpc');source='x'*(1100*1024)
+  reply=io.BytesIO(json.dumps(dict(jsonrpc='2.0',id=1,result=dict(source=source))).encode())
+  with patch.object(rpc.opener,'open',return_value=reply):self.assertEqual(rpc.call('session.policy_source',{})['source'],source)
+  bounded=gm.runtime.RPC('http://127.0.0.1:8090/rpc',response_bytes=64)
+  with patch.object(bounded.opener,'open',return_value=io.BytesIO(b'x'*65)) as transport:
+   with self.assertRaisesRegex(gm.runtime.Error,'rpc_response_size_bound'):bounded.call('buddy-world.snapshot',{})
+  self.assertEqual(transport.call_count,1)
+ def test_four_saved_policies_retain_private_reservations_with_explicit_state_budget(self):
+  with tempfile.TemporaryDirectory() as folder:
+   path=Path(folder).resolve()/'state';store=gm.task_store(path)
+   self.assertEqual(store.max_bytes,gm.STATE_BYTES)
+   saved=dict(version=1,holds={str(g):dict(source='x'*185000,revision='original')for g in range(1,5)},
+    reservations={'task:1':dict(outcome='unconfirmed',sessionId='aw-original')},memory=dict(stage='waiting'))
+   with store:store.save(saved)
+   loaded=gm.task_store(path).load()
+   self.assertEqual(loaded['holds'],saved['holds']);self.assertEqual(loaded['reservations'],saved['reservations'])
+   bridge=gm.task_bridge('/unused','/unused')
+   self.assertEqual((bridge.source_bytes,bridge.value_bytes,bridge.execution_ms),(gm.SOURCE_BYTES,gm.VALUE_BYTES,gm.EXECUTION_MS))
+ @unittest.skipUnless(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY'),'compiled typed bridge not requested')
+ def test_rich_world_frame_passes_actual_configured_evaluator(self):
+  frame=dict(goal=dict(id='capacity'),memory=dict(stage='waiting',requestId='keep-existing'),last=None,pending=[],now=1,
+   observations=dict(members=[dict(guid=str(g))for g in range(1,5)],threats=[dict(guid=str(0xf130000001000001+i),
+    present=True,aliveKnown=True,alive=True,healthKnown=True,health=100,maxHealth=100,mapKnown=True,mapId=189,
+    positionKnown=True,x=1,y=2,z=3,factionTemplate=67,engaged=False)for i in range(256)]))
+  self.assertGreater(len(gm.runtime.packed(frame,gm.VALUE_BYTES)),32768)
+  bridge=gm.task_bridge(os.environ['BUDDY_LUAPOLICY_TEST_BINARY'],gm.ROOT/'modules')
+  result=bridge.evaluate('return {decide=function(f)return {memory=f.memory,count=#f.observations.threats}end}',frame)
+  self.assertEqual(result,dict(memory=frame['memory'],count=256))
 
 if __name__=='__main__':unittest.main()

@@ -50,6 +50,7 @@ func hostMethods() []HostMethod {
 		sourceOutput["properties"].(map[string]any)[name] = property
 	}
 	sourceOutput["properties"].(map[string]any)["followFallback"] = inputSchema(reflect.TypeOf(policyFollowFallbackMetadata{}))
+	sourceOutput["properties"].(map[string]any)["starterSpell"] = inputSchema(reflect.TypeOf(policyFollowFallbackMetadata{}))
 	identity := reflect.TypeOf(struct {
 		SessionID     string `json:"sessionId"`
 		CharacterGUID string `json:"characterGuid"`
@@ -57,7 +58,7 @@ func hostMethods() []HostMethod {
 	return []HostMethod{
 		{Name: "session.describe", Effect: "read", Description: "Discover this live body, module contracts and host controls.", Input: inputSchema(reflect.TypeOf(struct{}{}))},
 		{Name: "session.attach", Effect: "read", Description: "Inspect the attached policy revision, pending actions and fault state.", Input: inputSchema(identity)},
-		{Name: "session.policy_source", Effect: "read", Description: "Read all Lua source and the configured sourceLimitBytes for this body's attached policy. followFallback identifies its pure follow_formation export used after finite host goals expire; it uses this same accepted source revision. The same byte budget applies to every reload.", Input: inputSchema(identity), Output: sourceOutput},
+		{Name: "session.policy_source", Effect: "read", Description: "Read all Lua source and the configured sourceLimitBytes for this body's attached policy. followFallback identifies its pure follow_formation export used after finite host goals expire; starterSpell identifies its pure starter_spell export for named starter spell selection. Both use this same accepted source revision. The same byte budget applies to every reload.", Input: inputSchema(identity), Output: sourceOutput},
 		{Name: "session.policy_state", Effect: "read", Description: "Read one atomic committed Lua checkpoint, latest decision with its own revision/cursor/clock, current policy status and pending IDs. lastDispatch is an independent transport-return snapshot with its own body/revision/generation/cursor; it does not prove a later game effect. This read does not execute Lua or drain events; latestDecision is null until the current revision decides. Returned data is observational, not a command or writable state.", Input: inputSchema(reflect.TypeOf(policyStateRequest{})), Output: inputSchema(reflect.TypeOf(policyStateResponse{}))},
 		{Name: "session.reload_policy", Effect: "mutation", Description: "Replace Lua in this same session using expectedRevision and source, or useBuiltin. State transfers without logout.", Input: inputSchema(reflect.TypeOf(policyEditRequest{}))},
 		{Name: "session.send_event", Effect: "mutation", Description: "Deliver an ordered input event to the attached Lua policy. A queued acknowledgment is not completion of the requested task.", Input: inputSchema(reflect.TypeOf(policyEventRequest{}))},

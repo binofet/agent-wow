@@ -1,12 +1,16 @@
 package buddyactions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/agent-wow/agent-wow/behaviors"
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
 
@@ -30,24 +34,56 @@ type followFormation struct {
 	runtime        *behavior.Runtime
 	remote         func(map[string]any) (bool, string, map[string]any, error)
 	sourceRevision string
+	lastFailure    *actionsv1.PolicyDecisionFailure
 }
 
 func (f *followFormation) Reset() { f.memory = nil }
 
+func boundedPolicyDiagnostic(value string, limit int) string {
+	var out strings.Builder
+	for _, r := range value {
+		if out.Len() >= limit {
+			break
+		}
+		if r < 32 || r > 126 {
+			r = ' '
+		}
+		out.WriteByte(byte(r))
+	}
+	return out.String()
+}
+
+func (f *followFormation) recordFailure(mode, stage, revision, cause string) {
+	if mode == "" {
+		mode = "formation"
+	}
+	f.lastFailure = &actionsv1.PolicyDecisionFailure{
+		Mode: boundedPolicyDiagnostic(mode, 64), Stage: boundedPolicyDiagnostic(stage, 32),
+		SourceRevision: boundedPolicyDiagnostic(revision, 64), Error: boundedPolicyDiagnostic(cause, 240),
+	}
+}
+
 func (f *followFormation) decide(input map[string]any) map[string]any {
+	mode, _ := input["mode"].(string)
 	if f.remote != nil {
 		available, revision, output, err := f.remote(input)
 		if err != nil {
+			f.recordFailure(mode, "callback", revision, err.Error())
 			return nil // Never replace a failed active edit with an older default.
 		}
 		if available {
 			f.sourceRevision = revision
+			if output == nil {
+				f.recordFailure(mode, "decision", revision, "active policy returned no decision")
+			}
 			return output
 		}
 	}
 	if f.runtime == nil {
 		runtime := behavior.New()
 		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+			digest := sha256.Sum256([]byte(behaviors.FollowFormationSource))
+			f.recordFailure(mode, "reload", hex.EncodeToString(digest[:]), err.Error())
 			return nil
 		}
 		f.runtime = runtime
@@ -55,6 +91,7 @@ func (f *followFormation) decide(input map[string]any) map[string]any {
 	f.sourceRevision = f.runtime.Status().Revision
 	output, err := f.runtime.Evaluate(input)
 	if err != nil {
+		f.recordFailure(mode, "evaluate", f.sourceRevision, err.Error())
 		// Preserve the detached committed memory if a pure evaluation fails.
 		f.runtime = nil
 		return nil
@@ -120,7 +157,11 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 		Memory                      map[string]any
 	}
 	raw, err := json.Marshal(output)
-	if err != nil || json.Unmarshal(raw, &result) != nil {
+	if err == nil {
+		err = json.Unmarshal(raw, &result)
+	}
+	if err != nil {
+		f.recordFailure(mode, "decision", f.sourceRevision, err.Error())
 		f.Reset()
 		return formationTarget{}
 	}
@@ -132,6 +173,7 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 		math.IsNaN(result.StopDistance) || math.IsInf(result.StopDistance, 0) || result.StopDistance < .1 ||
 		result.StopDistance > 4 || result.StartDistance < result.StopDistance || result.StartDistance > 10 ||
 		result.Ready == nil || !validPhase || len(result.Memory) == 0 || result.Memory["guid"] != input["selfGuid"] {
+		f.recordFailure(mode, "decision", f.sourceRevision, "formation decision fields rejected")
 		f.Reset()
 		return formationTarget{}
 	}

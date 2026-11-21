@@ -150,6 +150,7 @@ type Service struct {
 	practiceQuestGoal                    bool
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
+	starterSpells                        starterSpellPolicy
 	followGoal                           followFormationGoal
 	followRevision                       uint64
 	followNav                            followNavigation
@@ -207,6 +208,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	s.buffTimeoutLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	out.SessionId, out.SelfGuid = s.sessionID, s.selfGUID
+	if s.formation.lastFailure != nil {
+		out.LastFollowPolicyFailure = proto.Clone(s.formation.lastFailure).(*actionsv1.PolicyDecisionFailure)
+	}
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Recovery.MotionPending = s.state.Moving || s.state.MotionUnconfirmed
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
