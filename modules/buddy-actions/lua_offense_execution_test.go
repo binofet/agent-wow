@@ -288,3 +288,36 @@ func TestSharedLuaQueueFinishesThreatBeforeNearestEnemyAndPreservesProtection(t 
 		t.Fatal("urgent finisher broke CC or abandoned other live threat", action)
 	}
 }
+
+func TestSharedLuaQueueResumesAfterActualClientControlReturnWithoutAssistCommand(t *testing.T) {
+	x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
+	first := x.decide()
+	if first.Output["queue"] == nil {
+		t.Fatal("initial threat was not remembered", first.Output)
+	}
+	sendClientControl(x.s, x.s.selfGUID, 0)
+	x.f.world.Self.UnitFlags |= unitFlagsForcedMovement
+	if _, err := x.s.CastOffense(x.ctx, &actionsv1.CastOffenseRequest{SessionId: x.s.sessionID, SelfGuid: x.s.selfGUID, TargetGuid: enemyGUID, SpellId: 585}); err == nil || len(x.f.packets) != 0 {
+		t.Fatal("server-owned body wrote a cast", err, x.f.packets)
+	}
+	if action, _ := x.decide().Output["action"].(map[string]any); action["capability"] == "offense" {
+		t.Fatal("control loss advertised ready offense", action)
+	}
+	sendClientControl(x.s, 99, 1)
+	x.s.Tick(context.Background())
+	if !x.s.clientControlLost || len(x.f.packets) != 0 {
+		t.Fatal("foreign control packet released this body", x.s.stateLocked())
+	}
+	x.f.world.Self.UnitFlags &^= unitFlagsForcedMovement
+	x.f.world.Self.PositionRevision++
+	sendClientControl(x.s, x.s.selfGUID, 1)
+	x.s.Tick(context.Background())
+	if x.s.clientControlLost || x.s.clientControlRestoring {
+		t.Fatal("actual safe pose did not settle control recovery", x.s.stateLocked())
+	}
+	x.cast()
+	if x.s.state.Assisting || countPackets(x.f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("queue required an assist toggle after control return", x.s.stateLocked())
+	}
+	x.confirmDamage()
+}
