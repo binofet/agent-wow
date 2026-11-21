@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Polymorph either prepares a route for one selected creature or makes one
-// normal cast from a stationary caster.
+// Polymorph executes one exact caller-selected spell. Legacy intents and
+// positioning enter the attached Lua policy through the host RPC adapter.
 func (s *Service) Polymorph(ctx context.Context, r *actionsv1.PolymorphRequest) (*actionsv1.State, error) {
 	return s.castCrowdControl(ctx, r.GetSessionId(), r.GetSpellId(), r.GetTargetGuid(), spellcatalog.Polymorph, 8, r.GetApproach(), r.GetCancel())
 }
@@ -21,7 +21,7 @@ func (s *Service) Sap(ctx context.Context, r *actionsv1.SapRequest) (*actionsv1.
 }
 
 func (s *Service) castCrowdControl(ctx context.Context, session string, rank uint32, target uint64, kind spellcatalog.Kind, class uint32, approach, cancel bool) (*actionsv1.State, error) {
-	if session == "" || rank == 0 || target>>48 != 0xf130 || target&0xffffff == 0 || approach && cancel {
+	if session == "" || rank == 0 || target>>48 != 0xf130 || target&0xffffff == 0 || approach || cancel {
 		return nil, status.Error(codes.InvalidArgument, "current session, exact spell rank and NPC GUID required")
 	}
 	token, supplied := modcb.IncomingPolicySpell(ctx)
@@ -42,16 +42,13 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 		return nil, status.Error(codes.FailedPrecondition, "current Lua encounter owns crowd control")
 	}
 	leasedPolicy := supplied && s.hostEncounterKey != ""
-	if leasedPolicy && (!s.hasPolicyEncounterAccessLocked(ctx) || approach || cancel || s.crowdControl.active) {
+	if leasedPolicy && (!s.hasPolicyEncounterAccessLocked(ctx) || approach || cancel) {
 		return nil, status.Error(codes.FailedPrecondition, "active policy encounter lease and immediate crowd control required")
-	}
-	if !policySap && !leasedPolicy && (cancel || approach || s.crowdControl.active || s.crowdControl.matches(rank, target, kind)) {
-		return s.requestCrowdControlApproachLocked(ctx, rank, target, kind, class, approach, cancel)
 	}
 	if !s.crowdControlIdleLocked() {
 		return nil, status.Error(codes.FailedPrecondition, "current session and idle casting custody required")
 	}
-	if policySap && (s.crowdControl.active || s.questApproaching ||
+	if policySap && (s.questApproaching ||
 		s.clientControlLost || s.clientControlRestoring) {
 		return nil, status.Error(codes.FailedPrecondition, "policy Sap requires idle casting custody")
 	}
@@ -106,10 +103,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 			return s.stateLocked(), nil
 		}
 		if !s.stealthedLocked() {
-			if err := s.prepareSapStealthLocked(ctx, c.Guid); err != nil {
-				return nil, err
-			}
-			return s.stateLocked(), nil
+			return nil,status.Error(codes.FailedPrecondition,"exact Sap requires observed Stealth; Lua chooses its preparation")
 		}
 		inRange := func(p position) bool {
 			d := distance(s.pos, p)
@@ -137,7 +131,7 @@ func (s *Service) crowdControlIdleLocked() bool {
 	return !s.closed && !s.state.CastPending && !s.state.Moving && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttacking && !s.state.AutoAttackRequested && !s.state.AutoAttackUnconfirmed && s.autoTarget == 0 && !s.autoStopping &&
 		s.state.InteractionOwner == "" && !s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.state.Traveling && !s.recovery.state.Active &&
-		!s.state.Assisting && !s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)
+		!s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)
 }
 
 func (s *Service) pendingCrowdControlLocked() *supportAttempt {

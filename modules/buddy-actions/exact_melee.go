@@ -110,7 +110,7 @@ func (s *Service) exactMeleeStartAvailableLocked(target uint64) bool {
 	return s.spellbookKnown && s.state.KnownAutoAttack && !s.clientControlLost && !s.clientControlRestoring &&
 		!s.state.CastPending && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttackRequested && !s.state.AutoAttacking && s.autoTarget == 0 && s.state.InteractionOwner == "" &&
-		!s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.crowdControl.active && !s.recovery.state.Active &&
+		!s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.recovery.state.Active &&
 		!s.targetProtection.blocks(target, s.now())
 }
 

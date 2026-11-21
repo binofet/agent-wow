@@ -71,23 +71,6 @@ func (s *Service) sapReadinessLocked(ctx context.Context, w *worldv1.SnapshotRes
 	}
 }
 
-// Enter ordinary self Stealth without advancing or attacking the selected
-// creature. The next explicit Sap still needs current target and stance proof.
-func (s *Service) prepareSapStealthLocked(ctx context.Context, target uint64) error {
-	for _, r := range s.candidatesLocked(spellcatalog.Stealth) {
-		if s.now().Before(s.spellReady[r.ID]) {
-			continue
-		}
-		s.castSupportLocked(ctx, r, s.selfGUID, target)
-		s.state.Reason = "sap_waiting_for_stealth"
-		if !s.supportOp.view.TransportWritten {
-			s.state.Reason = "sap_stealth_transport_unconfirmed"
-		}
-		return nil
-	}
-	return status.Error(codes.FailedPrecondition, "learned Stealth is not currently available")
-}
-
 func (s *Service) queryControlTemplateLocked(ctx context.Context, target *worldv1.CreatureState, now time.Time) {
 	if current, ok := s.controlTemplates[target.Entry]; ok && now.Sub(current.requestedAt) < 2*time.Second {
 		return

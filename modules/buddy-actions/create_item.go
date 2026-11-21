@@ -35,7 +35,7 @@ func (s *Service) CreateItem(ctx context.Context, r *actionsv1.CreateItemRequest
 		s.state.CastPending || s.state.Moving || s.state.Traveling || s.state.MotionUnconfirmed ||
 		s.state.AutoAttacking || s.state.AutoAttackRequested || s.state.AutoAttackUnconfirmed ||
 		s.autoTarget != 0 || s.autoStopping || s.state.InteractionOwner != "" || s.state.Practicing ||
-		s.engage.active || s.fargodeep.active || s.crowdControl.active || s.recovery.state.Active ||
+		s.engage.active || s.fargodeep.active || s.recovery.state.Active ||
 		s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist) {
 		return nil, status.Error(codes.FailedPrecondition, "current session and idle item-creation custody required")
 	}

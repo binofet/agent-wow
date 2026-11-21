@@ -54,7 +54,7 @@ func (s *Service) EngageNPC(ctx context.Context, r *actionsv1.EngageNPCRequest) 
 	if s.targetProtection.blocks(r.TargetGuid, s.now()) {
 		return nil, status.Error(codes.FailedPrecondition, "target has observed break-on-damage control")
 	}
-	if r.TargetGuid == 0 || s.crowdControl.active || s.state.InteractionOwner != "" || s.state.Practicing || s.fargodeep.active || s.state.Traveling || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
+	if r.TargetGuid == 0 || s.state.InteractionOwner != "" || s.state.Practicing || s.fargodeep.active || s.state.Traveling || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed {
 		return nil, status.Error(codes.FailedPrecondition, "engage requires one target and confirmed movement custody")
 	}
 	w, err := s.snapshot(ctx, r.TargetGuid)

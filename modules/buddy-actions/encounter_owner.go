@@ -75,9 +75,6 @@ func (s *Service) RenewPolicyEncounterLease(ctx context.Context, request *wrappe
 			s.stopEncounterMeleeLocked(ctx)
 			return nil, status.Error(codes.FailedPrecondition, "previous encounter swing awaits server stop")
 		}
-		if s.crowdControl.active {
-			return nil, status.Error(codes.FailedPrecondition, "native crowd control approach still owns movement")
-		}
 		w, err := s.readWorldSnapshot(ctx)
 		if err != nil || !s.matchesCurrentEncounterVisitLocked(w) {
 			return nil, status.Error(codes.FailedPrecondition, "current encounter visit must match World observations")

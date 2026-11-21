@@ -110,17 +110,7 @@ func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotRes
 	if target == nil {
 		return false
 	}
-	approaching := s.crowdControl.active && s.state.Moving
-	s.endCrowdControlLocked(ctx, "party_defense")
-	if approaching && !s.state.MotionUnconfirmed {
-		w = s.lastWorld // STOP may have sampled a new authoritative position.
-		updated := partyDefenseCreature(w, target.Guid)
-		if safeSelfCombat(w, s.selfGUID) != "" || !partyDefenseEligible(w, updated, online) ||
-			updated.AttackVictimGuid != target.AttackVictimGuid || s.targetProtection.blocks(updated.Guid, s.now()) {
-			return true
-		}
-		target = updated
-	}
+
 	if s.state.MotionUnconfirmed || !s.refreshPositionLocked(w) {
 		return true
 	}

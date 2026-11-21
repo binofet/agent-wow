@@ -217,7 +217,7 @@ func (s *Service) FargodeepEncounter(ctx context.Context, r *actionsv1.Fargodeep
 	if s.fargodeepSeen[r.TargetGuid] || len(s.fargodeepSeen) >= 128 {
 		return nil, status.Error(codes.FailedPrecondition, "target already reserved or encounter limit reached")
 	}
-	if !s.state.Assisting || !s.now().Before(s.assistUntil) || s.crowdControl.active || s.state.InteractionOwner != "" || s.state.Traveling || s.state.Practicing || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 {
+	if !s.state.Assisting || !s.now().Before(s.assistUntil) || s.state.InteractionOwner != "" || s.state.Traveling || s.state.Practicing || s.questApproaching || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed || s.autoTarget != 0 {
 		return nil, status.Error(codes.FailedPrecondition, "encounter requires enabled assistance and confirmed idle ownership")
 	}
 	w, err := s.snapshot(ctx, r.TargetGuid)
