@@ -77,6 +77,12 @@ func TestRawEncounterRetainsRunnerAfterVictimDeathAndRetiresOnlyObservedReset(t 
 	npc.AttackObservation = &actionsv1.EncounterAttackObservation{}
 	npc.Health = 100
 	p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC, 133)
+	// A fresh observed change to a foreign victim does not erase our existing
+	// encounter, even though it could not have admitted that NPC initially.
+	npc.Health, npc.UnitFlagsKnown, npc.UnitFlags = npc.MaxHealth, true, 0
+	npc.AttackObservation = &actionsv1.EncounterAttackObservation{VictimKnown: true, VictimGuid: 99, AgeMs: 900}
+	p.expectOffense(p.observe(o), "engaged_defense", fallbackNPC, 133)
+	npc.AttackObservation = &actionsv1.EncounterAttackObservation{}
 	// Full health under CC is not an evade or permission to move to a new pack.
 	npc.UnitFlagsKnown, npc.UnitFlags, npc.Health, npc.Protected = true, 0, npc.MaxHealth, true
 	out := p.expectNoAction(p.observe(o))

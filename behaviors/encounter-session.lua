@@ -212,6 +212,17 @@ local function witnessed_attack(obs, target, npc, members)
            type(flags) == "number" and flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 1
 end
 
+local function current_attack_hint(npc, witnessed)
+    if witnessed then return true end
+    local raw = npc.attackObservation
+    if type(raw) ~= "table" then return npc.engaged == true end
+    local age = tonumber(raw.ageMs or "0")
+    -- Changing to a new victim does not retire an existing encounter. This
+    -- evidence preserves history; it cannot admit a new foreign-party pull.
+    return raw.victimKnown == true and guid(raw.victimGuid) and age and age >= 0 and
+           age - age == 0 and age <= engagement_tuning.recent_attack_ms
+end
+
 local function observe_targets(obs, members)
     local targets, auras, protected = {}, {}, {}
     local classified = {}
@@ -233,7 +244,7 @@ local function observe_targets(obs, members)
             local flags = npc.unitFlags or 0 -- Known protobuf flags omit an explicit zero.
             local reset = alive(npc) and npc.unitFlagsKnown == true and type(flags) == "number" and
                 flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 0 and
-                not witnessed and npc.healthKnown == true and type(npc.health) == "number" and
+                not current_attack_hint(npc, witnessed) and npc.healthKnown == true and type(npc.health) == "number" and
                 npc.health > 0 and npc.health == npc.maxHealth and not reserved
             -- Death or a positively observed full evade reset ends historical
             -- engagement. Losing/changing the victim alone never ends it.
