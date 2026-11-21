@@ -60,6 +60,9 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 	if err := p.refreshFollowFormation(ctx, decision, current); err != nil {
 		return err
 	}
+	if err := p.refreshPortalCatchup(ctx, decision, current); err != nil {
+		return err
+	}
 	if hostile {
 		dispatch.spell.encounterVisit = current.visit
 	}

@@ -3,7 +3,6 @@ package buddyactions
 import (
 	"context"
 	"encoding/binary"
-	"math"
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -43,13 +42,28 @@ type dungeonPortalFollow struct {
 	catchUpTarget         position
 	catchUpTargetKnown    bool
 	nextCatchUpPlan       time.Time
+	sourceVisit           uint64
+	followRevision        uint64
+	ownerPoseRevision     uint64
+	witness               uint64
+	catchUpHost           bool
+	movementWitness       uint64
+	movementVisit         uint64
+	movementFollow        uint64
+	movementHost          bool
 }
 
 func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now time.Time) {
 	owner := w.GetOwner()
 	if !s.state.Following || owner == nil || owner.Guid != ownerGUID {
 		s.followPortal = dungeonPortalFollow{}
+		s.portalGoal = portalCatchupGoal{}
 		return
+	}
+	if s.followPortal.portal.trigger != 0 && (s.followPortal.followRevision != s.followRevision ||
+		s.followPortal.sourceVisit != w.VisitRevision && !s.followPortal.notified) {
+		s.followPortal = dungeonPortalFollow{}
+		s.portalGoal = portalCatchupGoal{}
 	}
 	if !owner.Present {
 		return
@@ -70,11 +84,20 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	ground := playerPosition(owner)
 	for _, portal := range dungeonEntrances {
 		if owner.MapId == portal.source && distance(ground, portal.center) < portal.radius {
+			witness := f.witness
+			if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
+				f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
+				f.ground != ground || !f.lostAt.IsZero() || f.notified {
+				s.portalWitnessRevision++
+				witness = s.portalWitnessRevision
+				s.portalGoal = portalCatchupGoal{}
+			}
 			s.followPortal = dungeonPortalFollow{
-				portal:     portal,
-				ground:     ground,
-				seenAt:     now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
-				catchingUp: distance(playerPosition(w.Self), ground) > portalApproachDistance,
+				portal:      portal,
+				ground:      ground,
+				seenAt:      now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+				catchingUp:  distance(playerPosition(w.Self), ground) > portalApproachDistance,
+				sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
 			}
 			return
 		}
@@ -89,6 +112,8 @@ func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.
 		maxAge, maxDistance = portalCatchUpWindow, buddynav.MaxRouteLength
 	}
 	return s.state.Following && now.Before(s.followUntil) && !s.independent &&
+		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
+		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
 		f.portal.trigger != 0 && !now.Before(f.seenAt) && now.Sub(f.seenAt) <= maxAge &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
@@ -97,40 +122,33 @@ func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.
 }
 
 func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool {
-	return s.followPortal.movementInProgress && s.portalSourceReadyLocked(w, s.now())
+	f := s.followPortal
+	return f.movementInProgress && s.portalSourceReadyLocked(w, s.now()) &&
+		f.witness == f.movementWitness && f.sourceVisit == f.movementVisit && s.followRevision == f.movementFollow &&
+		f.movementHost == s.hostEncounterActiveLocked() && (!f.movementHost ||
+		!f.catchingUp || s.now().Before(s.portalGoal.until) && s.portalGoal.witness == f.witness)
 }
 
 // A single query can find a partial corridor between two floors that become
 // connected after taking a turn. Use an intermediate point only when the
 // physical planner verifies both the approach to it and the route to the portal.
-func (s *Service) portalCatchUpTarget(ctx context.Context, ground position) (position, bool) {
+func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, candidates []position) (position, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
-	if path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, ground); err == nil && len(path) != 0 {
-		return ground, true
-	}
-	dx, dy := float64(ground.x-s.pos.x), float64(ground.y-s.pos.y)
-	directionLength := math.Hypot(dx, dy)
-	if directionLength <= portalApproachDistance {
-		return position{}, false
-	}
-	dx, dy = dx/directionLength, dy/directionLength
-	for _, ahead := range []float64{8, 12, 16} {
-		for _, side := range []float64{-6, 6} {
-			if ctx.Err() != nil {
-				return position{}, false
-			}
-			bend := s.pos
-			bend.x += float32(ahead*dx - side*dy)
-			bend.y += float32(ahead*dy + side*dx)
-			approach, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, bend)
-			if err != nil || len(approach) == 0 {
-				continue
-			}
-			bend = approach[len(approach)-1]
-			if path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, bend, ground); err == nil && len(path) != 0 {
-				return bend, true
-			}
+	for _, candidate := range candidates {
+		if ctx.Err() != nil || !validPortalCandidate(candidate, s.pos, ground) {
+			return position{}, false
+		}
+		approach, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, s.pos, candidate)
+		if err != nil || len(approach) == 0 {
+			continue
+		}
+		if distance(candidate, ground) < .001 {
+			return ground, ctx.Err() == nil
+		}
+		bend := approach[len(approach)-1]
+		if path, err := s.mapNavigationPath(ctx, s.navDataDir, s.posMap, bend, ground); err == nil && len(path) != 0 && ctx.Err() == nil {
+			return bend, true
 		}
 	}
 	return position{}, false
@@ -146,6 +164,7 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 	}
 	if f.notified && w.GetSelf().GetMapKnown() && w.GetSelf().GetMapId() == f.portal.destination {
 		s.followPortal = dungeonPortalFollow{}
+		s.portalGoal = portalCatchupGoal{}
 		s.followNav.Reset()
 		s.lastStep = now
 		s.state.Reason = "follow_instance_transfer_observed"
@@ -201,15 +220,51 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.followNav.Reset()
 		f.approaching = true
 	}
+	if f.catchingUp {
+		host := s.hostEncounterActiveLocked()
+		if f.catchUpHost != host {
+			f.catchUpTargetKnown = false
+			f.catchUpHost = host
+			s.followNav.Reset()
+		}
+		if host && (!now.Before(s.portalGoal.until) || s.portalGoal.witness != f.witness) {
+			f.catchUpTargetKnown = false
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_instance_waiting_for_policy"
+			return true
+		}
+	}
 	if f.catchingUp && !f.catchUpTargetKnown {
 		if now.Before(f.nextCatchUpPlan) {
 			return true
 		}
+		candidates := s.portalCandidatesLocked(w, now)
+		if len(candidates) == 0 {
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_instance_waiting_for_policy"
+			return true
+		}
 		f.nextCatchUpPlan = now.Add(750 * time.Millisecond)
-		target, ok := s.portalCatchUpTarget(ctx, f.ground)
+		start := s.portalStartLocked(w)
+		witness, follow, visit, host := f.witness, f.followRevision, f.sourceVisit, s.hostEncounterActiveLocked()
+		if start == nil {
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_instance_source_changed"
+			return true
+		}
+		target, ok := s.portalCatchUpTarget(ctx, f.ground, candidates)
 		if !ok {
 			s.stopLocked(ctx)
 			s.state.Reason = "follow_instance_catch_up_route_unavailable"
+			return true
+		}
+		fresh, err := s.snapshot(ctx)
+		if err != nil || !s.portalSourceReadyLocked(fresh, s.now()) ||
+			f.witness != witness || f.followRevision != follow || f.sourceVisit != visit ||
+			!samePortalStart(start, s.portalStartLocked(fresh)) || host &&
+			(!s.hostEncounterActiveLocked() || !s.now().Before(s.portalGoal.until) || s.portalGoal.witness != witness) {
+			s.stopLocked(ctx)
+			s.state.Reason = "follow_instance_source_changed"
 			return true
 		}
 		f.catchUpTarget, f.catchUpTargetKnown = target, true
@@ -223,6 +278,8 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		target = f.catchUpTarget
 	}
 	f.movementInProgress = true
+	f.movementWitness, f.movementVisit, f.movementFollow = f.witness, f.sourceVisit, s.followRevision
+	f.movementHost = s.hostEncounterActiveLocked()
 	s.followFormationStepLocked(ctx, target, .1)
 	f.movementInProgress = false
 	return true
