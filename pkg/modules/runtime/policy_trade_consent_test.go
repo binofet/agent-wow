@@ -17,6 +17,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+const tradeConsentFixtureHooks = `on_event=function(event)return true end,
+decide=function(frame)return {}end,
+export_state=function()return {version=1,data={}}end,
+import_state=function(checkpoint)return true end,`
+
 func tradeConsentHostInput(sid, self string) map[string]any {
 	return map[string]any{"sessionId": sid, "selfGuid": self, "trade": map[string]any{
 		"sessionId": sid, "revision": "18446744073709551615", "phase": "OPEN", "partnerGuid": "3",
@@ -164,7 +169,7 @@ func TestPolicyTradeConsentCallbackRequiresCurrentPrivateBody(t *testing.T) {
 	const sid = "trade-consent-body"
 	m := catalogManager(t, 4, sid)
 	t.Cleanup(m.cancel)
-	source := `return {trade_consent=function(input)return {kind="accept",reason="fixture"}end,decide=function(frame)return {}end}`
+	source := `return {` + tradeConsentFixtureHooks + `trade_consent=function(input)return {kind="accept",reason="fixture"}end}`
 	host, err := m.StartPolicy(ctx, source)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +216,7 @@ func TestPolicyTradeConsentAbsenceAndPublicationGapNeverUseOldSource(t *testing.
 	if out := tradeConsentHostRead(t, m, input); out["available"] != false || out["revision"] != "" || len(out["decision"].(map[string]any)) != 0 {
 		t.Fatal("unattached policy invented consent", out)
 	}
-	host, err := m.StartPolicy(ctx, `return {decide=function(frame)return {}end}`)
+	host, err := m.StartPolicy(ctx, `return {`+tradeConsentFixtureHooks+`}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +224,7 @@ func TestPolicyTradeConsentAbsenceAndPublicationGapNeverUseOldSource(t *testing.
 	if out := tradeConsentHostRead(t, m, input); out["available"] != false || out["revision"] != host.vm.Status().Revision || len(out["decision"].(map[string]any)) != 0 {
 		t.Fatal("absent optional export invented consent", out)
 	}
-	changed := `return {trade_consent=function(input)return {kind="wait",reason="new_source"}end,decide=function(frame)return {}end}`
+	changed := `return {` + tradeConsentFixtureHooks + `trade_consent=function(input)return {kind="wait",reason="new_source"}end}`
 	revision, err := host.vm.Reload(ctx, changed, host.vm.Status().Revision)
 	if err != nil {
 		t.Fatal(err)
