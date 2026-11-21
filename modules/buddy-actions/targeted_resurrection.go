@@ -29,8 +29,8 @@ func observedPlayerTeam(p *worldv1.PlayerState) uint8 {
 	return 0
 }
 
-// ResurrectOnce uses a learned spell on one observed friendly death. Unlike
-// automatic support, the explicitly chosen player can be outside the party.
+// ResurrectOnce executes the caller-selected learned spell on one observed
+// friendly death. The exact player can be outside the party; Lua owns selection.
 func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceRequest) (*actionsv1.State, error) {
 	if r == nil || r.SessionId == "" || r.SelfGuid == 0 || r.TargetGuid == 0 || r.TargetGuid>>48 != 0 || r.TargetGuid == r.SelfGuid {
 		return nil, status.Error(codes.InvalidArgument, "current session, caster and a distinct player GUID required")

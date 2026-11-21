@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
@@ -13,7 +14,10 @@ import (
 
 func resRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	s, f, advance := rig(t)
-	s.setKnownSpell(2006, true)
+	learnSpells(s, 2006)
+	s.sessionID = f.party.SessionId
+	f.world.Self.RaceKnown, f.world.Self.RaceId = true, 1
+	f.world.Owner.RaceKnown, f.world.Owner.RaceId = true, 1
 	f.world.Owner.Alive = false
 	f.world.Owner.Health = 0
 	f.world.Owner.UnitFlags &^= 0x80000
@@ -23,9 +27,14 @@ func resRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 	f.world.Self.BaseMana = 100
 	return s, f, advance
 }
+func requestResurrection(s *Service) (*actionsv1.State, error) {
+	return s.ResurrectOnce(context.Background(), &actionsv1.ResurrectOnceRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: 3, SpellId: 2006})
+}
 func TestResurrectionUsesLearnedEffectCurrentDeadPartyAndNoReceiptAsLife(t *testing.T) {
 	s, f, advance := resRig(t)
-	s.Tick(context.Background())
+	if _, err := requestResurrection(s); err != nil {
+		t.Fatal(err)
+	}
 	if lastCast(f) != 2006 || s.supportOp == nil || s.supportOp.owner != 3 || s.supportOp.view.EffectObserved {
 		t.Fatal("missing genuine resurrection", &s.state, s.supportOp)
 	}
@@ -43,20 +52,18 @@ func TestResurrectionUsesLearnedEffectCurrentDeadPartyAndNoReceiptAsLife(t *test
 	}
 	f.world.Owner.Alive = true
 	f.world.Owner.Health = 100
-	s.Tick(context.Background())
+	state(t, s) // Refresh observed life; no autonomous target selection.
 	if !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_alive" {
 		t.Fatal(s.supportOp)
 	}
 }
-func TestResurrectionRefusesCombatNonmembersUnlearnedAndOutOfRange(t *testing.T) {
-	for _, mode := range []string{"combat", "stranger", "unlearned", "range", "mana"} {
+func TestExplicitResurrectionRefusesCombatUnlearnedAndOutOfRange(t *testing.T) {
+	for _, mode := range []string{"combat", "unlearned", "range", "mana"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := resRig(t)
 			switch mode {
 			case "combat":
 				f.world.Self.UnitFlags |= 0x80000
-			case "stranger":
-				f.party = nil
 			case "unlearned":
 				s.setKnownSpell(2006, false)
 			case "range":
@@ -64,7 +71,9 @@ func TestResurrectionRefusesCombatNonmembersUnlearnedAndOutOfRange(t *testing.T)
 			case "mana":
 				f.world.Self.Power = 1
 			}
-			s.Tick(context.Background())
+			if _, err := requestResurrection(s); err == nil {
+				t.Fatal("invalid exact resurrection was accepted")
+			}
 			if countPackets(f, opcode.CMSGCastSpell) != 0 {
 				t.Fatal("unsafe res", &s.state)
 			}
@@ -74,7 +83,7 @@ func TestResurrectionRefusesCombatNonmembersUnlearnedAndOutOfRange(t *testing.T)
 
 func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testing.T) {
 	s, f, advance := resRig(t)
-	s.Tick(context.Background())
+	_, _ = requestResurrection(s)
 	first := s.castCount
 	p := []byte{first}
 	p = binary.LittleEndian.AppendUint32(p, 2006)
@@ -84,18 +93,18 @@ func TestDefiniteResurrectionRejectionAllowsFreshSelectionAfterCooldown(t *testi
 		t.Fatal("definite rejection quarantined the death")
 	}
 	advance(9 * time.Second)
-	s.Tick(context.Background())
+	_, _ = requestResurrection(s)
 	if countPackets(f, opcode.CMSGCastSpell) != 1 {
 		t.Fatal("rejection cooldown ignored")
 	}
 	advance(2 * time.Second)
-	s.Tick(context.Background())
+	_, _ = requestResurrection(s)
 	if countPackets(f, opcode.CMSGCastSpell) != 2 || s.castCount == first {
 		t.Fatal("fresh eligible resurrection could not start")
 	}
 	s, f, _ = resRig(t)
 	f.failSend = true
-	s.Tick(context.Background())
+	_, _ = requestResurrection(s)
 	if !s.resurrectionBindings[3] || s.supportOp.view.Phase != "transport_unconfirmed_no_retry" {
 		t.Fatal("ambiguous transport was rearmed")
 	}
