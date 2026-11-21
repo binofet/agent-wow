@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Ó‚
+Ä„
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -799,7 +799,7 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuidF
-targeted_resurrection_supported (RtargetedResurrectionSupported"‚$
+targeted_resurrection_supported (RtargetedResurrectionSupported"ð$
 State
 	following (R	following
 moving (Rmoving*
@@ -901,7 +901,8 @@ engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcV
 target_movementu (2-.warcraftbuddy.actions.v1.TargetMovementStateRtargetMovementP
 body_movementv (2+.warcraftbuddy.actions.v1.BodyMovementStateRbodyMovementS
 movement_ownerw (2,.warcraftbuddy.actions.v1.MovementOwnerStateRmovementOwner`
-last_transport_failurex (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailureJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"…
+last_transport_failurex (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailurel
+last_follow_policy_failurey (2/.warcraftbuddy.actions.v1.PolicyDecisionFailureRlastFollowPolicyFailureJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"…
 TransportFailure
 sequence (Rsequence
 opcode (Ropcode
@@ -1500,7 +1501,12 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2±#
+targetGuid"€
+PolicyDecisionFailure
+mode (	Rmode
+stage (	Rstage'
+source_revision (	RsourceRevision
+error (	Rerror2±#
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ

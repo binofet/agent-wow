@@ -18,7 +18,7 @@ func (s *Service) ownsVendorTravel(r *actionsv1.ApproachQuestRequest) bool {
 
 // Only an actual observed vendor supplies a destination. There are no vendor
 // landmarks or caller coordinates, and no direct-movement fallback on NAV failure.
-func (s *Service) vendorTravelContextLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest) (*questTravelTarget, string) {
+func (s *Service) vendorTravelContextLocked(ctx context.Context, r *actionsv1.ApproachQuestRequest) (*serviceTravelTarget, string) {
 	if !s.ownsVendorTravel(r) || s.interactionUntil.Sub(s.now()) < time.Second {
 		return nil, "vendor_travel_lease_changed_or_expiring"
 	}
@@ -46,7 +46,7 @@ func (s *Service) vendorTravelContextLocked(ctx context.Context, r *actionsv1.Ap
 	}
 	entry := uint32(r.NpcGuid >> 24 & 0xffffff)
 	views := [][]*worldv1.CreatureState{{w.RequestedCreature}, w.NearbyCreatures, w.QuestGivers, w.LootableCorpses, {w.OwnerTarget}}
-	var target *questTravelTarget
+	var target *serviceTravelTarget
 	for _, view := range views {
 		for _, c := range view {
 			if c == nil || c.Guid != r.NpcGuid {
@@ -59,7 +59,7 @@ func (s *Service) vendorTravelContextLocked(ctx context.Context, r *actionsv1.Ap
 			if target != nil && (target.position != p || target.revision != c.PositionRevision) {
 				return nil, "vendor_travel_observed_vendor_views_disagree"
 			}
-			target = &questTravelTarget{position: p, revision: c.PositionRevision}
+			target = observedServiceTravelTarget(w, p, c.PositionRevision)
 		}
 	}
 	if target == nil {
@@ -113,7 +113,7 @@ func (s *Service) TravelVendor(ctx context.Context, r *actionsv1.ApproachQuestRe
 		}
 		return nil, nil
 	}
-	var target *questTravelTarget
+	var target *serviceTravelTarget
 	reason := ""
 	if s.state.Reason != phase || s.state.Moving != moving {
 		reason = "vendor_travel_interrupted_by_controller_change"
@@ -129,7 +129,28 @@ func (s *Service) TravelVendor(ctx context.Context, r *actionsv1.ApproachQuestRe
 		return nil, nil
 	}
 	from, to, revision, baseRevision, root, mapID := s.pos, target.position, target.revision, s.positionRevision, s.navDataDir, s.posMap
-	if distance(from, to) <= 3 {
+	arrived, why := false, ""
+	if s.state.Reason != phase || s.state.Moving != moving {
+		why = "vendor_travel_interrupted_by_controller_change"
+	} else {
+		arrived, why = s.serviceTravelArrivalLocked(call, "vendor", r, target, nil, 0)
+	}
+	if !s.ownsVendorTravel(r) {
+		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
+		return nil, nil
+	}
+	if why != "" {
+		s.state.Reason = why
+		s.mu.Unlock()
+		if call.Err() != nil {
+			return nil, status.FromContextError(call.Err()).Err()
+		}
+		return nil, nil
+	}
+	if arrived {
 		s.state.Reason = "vendor_travel_within_distance"
 		s.mu.Unlock()
 		return nil, nil
@@ -174,7 +195,7 @@ func (s *Service) TravelVendor(ctx context.Context, r *actionsv1.ApproachQuestRe
 			}
 			return nil, nil
 		}
-		var current *questTravelTarget
+		var current *serviceTravelTarget
 		why := ""
 		if s.state.Reason != phase || s.state.Moving != moving {
 			why = "vendor_travel_interrupted_by_controller_change"
@@ -190,8 +211,22 @@ func (s *Service) TravelVendor(ctx context.Context, r *actionsv1.ApproachQuestRe
 		if why == "" && (current.revision != revision || current.position != to) {
 			why = "vendor_travel_vendor_position_changed"
 		}
-		if why == "" && distance(s.pos, to) <= 3 && routeRemaining(s.pos, path, index) <= 3 {
-			why = "vendor_travel_within_distance"
+		if why == "" && (s.state.Reason != phase || s.state.Moving != moving) {
+			why = "vendor_travel_interrupted_by_controller_change"
+		}
+		if why == "" {
+			arrived, decisionReason := s.serviceTravelArrivalLocked(call, "vendor", r, current, path, index)
+			if !s.ownsVendorTravel(r) {
+				s.mu.Unlock()
+				if call.Err() != nil {
+					return nil, status.FromContextError(call.Err()).Err()
+				}
+				return nil, nil
+			}
+			why = decisionReason
+			if why == "" && arrived {
+				why = "vendor_travel_within_distance"
+			}
 		}
 		if why == "" && index >= len(path) {
 			why = "vendor_travel_route_ended_outside_range"
@@ -216,9 +251,33 @@ func (s *Service) TravelVendor(ctx context.Context, r *actionsv1.ApproachQuestRe
 			return nil, nil
 		}
 		expected = s.pos
-		if distance(s.pos, to) <= 3 && routeRemaining(s.pos, path, index) <= 3 {
-			s.state.Reason = "vendor_travel_within_distance"
+		stepPhase, stepMoving := s.state.Reason, s.state.Moving
+		current, why = s.vendorTravelContextLocked(call, r)
+		if why == "" && (s.state.Reason != stepPhase || s.state.Moving != stepMoving) {
+			why = "vendor_travel_interrupted_by_controller_change"
+		}
+		if why == "" && (s.posMap != mapID || s.positionRevision != baseRevision || s.pos != expected || current.position != to || current.revision != revision) {
+			why = "vendor_travel_policy_observation_changed"
+		}
+		if why == "" {
+			arrived, why = s.serviceTravelArrivalLocked(call, "vendor", r, current, path, index)
+		}
+		if !s.ownsVendorTravel(r) {
 			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
+			return nil, nil
+		}
+		if why != "" || arrived {
+			s.state.Reason = why
+			if why == "" {
+				s.state.Reason = "vendor_travel_within_distance"
+			}
+			s.mu.Unlock()
+			if call.Err() != nil {
+				return nil, status.FromContextError(call.Err()).Err()
+			}
 			return nil, nil
 		}
 		s.state.Reason = "vendor_travel_following_client_navmesh_estimate"

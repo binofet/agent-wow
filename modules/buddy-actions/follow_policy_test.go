@@ -129,8 +129,19 @@ func TestFollowPolicyStandaloneAndExplicitUnavailableKeepDefaults(t *testing.T) 
 		t.Run(map[bool]string{false: "standalone", true: "host has no export"}[optIn], func(t *testing.T) {
 			s, f, advance := rig(t)
 			s.sessionID = f.party.SessionId
-			host := newFollowPolicySession(t, s, f)
-			host.available = false
+			// This tests fallback availability and the default Lua behavior in a
+			// healthy evaluator, separately from the production-watchdog test.
+			runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := runtime.Reload(behaviors.FollowFormationSource, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.formation.runtime = runtime
+			host := &followPolicySession{fakeSession: f, t: t, sid: s.sessionID, self: s.selfGUID, available: false}
+			s.session = host
 			if optIn {
 				s.UseHostFollowPolicy()
 			}
@@ -141,7 +152,7 @@ func TestFollowPolicyStandaloneAndExplicitUnavailableKeepDefaults(t *testing.T) 
 			if countPackets(f, opcode.MSGMoveStartForward) != 1 || countPackets(f, opcode.MSGMoveHeartbeat) != 1 || math.Abs(float64(s.pos.x)-1.4) > .001 || !s.state.Following {
 				t.Fatal("legacy no-host follow behavior changed", s.pos, s.stateLocked(), f.packets)
 			}
-			if optIn && len(host.inputs) != 2 || !optIn && len(host.inputs) != 0 || s.formation.sourceRevision != host.runtime.Status().Revision {
+			if optIn && len(host.inputs) != 2 || !optIn && len(host.inputs) != 0 || s.formation.sourceRevision != revision {
 				t.Fatal("default availability did not control the private read", optIn, host.inputs, s.formation.sourceRevision)
 			}
 		})

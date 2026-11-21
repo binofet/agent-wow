@@ -207,6 +207,9 @@ func (s *Service) stateLocked() *actionsv1.State {
 	s.buffTimeoutLocked()
 	out := proto.Clone(&s.state).(*actionsv1.State)
 	out.SessionId, out.SelfGuid = s.sessionID, s.selfGUID
+	if s.formation.lastFailure != nil {
+		out.LastFollowPolicyFailure = proto.Clone(s.formation.lastFailure).(*actionsv1.PolicyDecisionFailure)
+	}
 	out.Recovery = s.recovery.snapshot(s.now())
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())

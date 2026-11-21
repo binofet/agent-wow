@@ -8,6 +8,7 @@ local near_stop, near_limit = 3,30
 local portal_ahead, portal_side = {8,12,16}, {-6,6}
 local portal_wait_ms, portal_seen_ms, portal_catchup_ms = 500,20000,75000
 local portal_approach_yards = 45
+local service_arrival_yards = 3
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -53,6 +54,17 @@ function M.decide(input)
        input.ownerArrival~=nil and type(input.ownerArrival)~="boolean" then
         if input.mode=="portal_follow" then return {eligible=false,ready=false} end
         return {}
+    end
+
+    if input.mode=="service_travel" then
+        local t=input.travel
+        if not input.self or type(t)~="table" or (t.kind~="vendor" and t.kind~="trainer") or
+           type(t.routeKnown)~="boolean" or not number(service_arrival_yards) or service_arrival_yards<=0 or
+           t.remainingRoute~=nil and (not number(t.remainingRoute) or t.remainingRoute<0) or
+           t.routeKnown and not number(t.remainingRoute) then return {} end
+        local dx,dy,dz=input.self.x-owner.x,input.self.y-owner.y,input.self.z-owner.z
+        return {arrived=dx*dx+dy*dy+dz*dz<=service_arrival_yards*service_arrival_yards and
+            (not t.routeKnown or t.remainingRoute<=service_arrival_yards)}
     end
 
     if input.mode=="portal_sighting" then
