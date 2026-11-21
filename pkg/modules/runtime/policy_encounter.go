@@ -63,7 +63,10 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 	if err := p.refreshPortalCatchup(ctx, decision, current); err != nil {
 		return err
 	}
-	if hostile {
+	if dispatch.spell != nil {
+		// Friendly exact spells use the same admitted encounter writer as
+		// hostile spells. Publish access only after the observed claim and
+		// native lease/key checks above have succeeded.
 		dispatch.spell.encounterVisit = current.visit
 	}
 	return nil

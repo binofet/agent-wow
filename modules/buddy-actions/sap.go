@@ -33,9 +33,6 @@ func (s *Service) sapReadinessLocked(ctx context.Context, w *worldv1.SnapshotRes
 	if target.Entry == 0 || uint32(target.Guid>>24&0xffffff) != target.Entry {
 		return false, "sap_target_identity_changed", status.Error(codes.FailedPrecondition, "out-of-combat rogue and exact out-of-combat creature required")
 	}
-	if !s.stealthedLocked() && len(s.candidatesLocked(spellcatalog.Stealth)) == 0 {
-		return false, "sap_stealth_unavailable", status.Error(codes.FailedPrecondition, "observed or available learned Stealth required")
-	}
 	if spell.ItemClass >= 0 && !s.weaponReady(self) {
 		if !allowQueries {
 			return false, "sap_weapon_not_confirmed", status.Error(codes.FailedPrecondition, "policy Sap requires a verified equipped weapon")
@@ -69,23 +66,6 @@ func (s *Service) sapReadinessLocked(ctx context.Context, w *worldv1.SnapshotRes
 	default:
 		return false, "sap_target_type_ineligible", status.Error(codes.FailedPrecondition, "observed creature type is not eligible for Sap")
 	}
-}
-
-// Enter ordinary self Stealth without advancing or attacking the selected
-// creature. The next explicit Sap still needs current target and stance proof.
-func (s *Service) prepareSapStealthLocked(ctx context.Context, target uint64) error {
-	for _, r := range s.candidatesLocked(spellcatalog.Stealth) {
-		if s.now().Before(s.spellReady[r.ID]) {
-			continue
-		}
-		s.castSupportLocked(ctx, r, s.selfGUID, target)
-		s.state.Reason = "sap_waiting_for_stealth"
-		if !s.supportOp.view.TransportWritten {
-			s.state.Reason = "sap_stealth_transport_unconfirmed"
-		}
-		return nil
-	}
-	return status.Error(codes.FailedPrecondition, "learned Stealth is not currently available")
 }
 
 func (s *Service) queryControlTemplateLocked(ctx context.Context, target *worldv1.CreatureState, now time.Time) {
