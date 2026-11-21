@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-¯’
+š
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -1472,7 +1472,7 @@ rangeYards
 requireLos
 behind (Rbehind
 phase (	Rphase
-ready (Rready"ë
+ready (Rready"Ì
 EncounterSupport(
 caster_in_combat (RcasterInCombatR
 resurrections (2,.warcraftbuddy.actions.v1.ResurrectionOptionRresurrectionsI
@@ -1481,10 +1481,37 @@ interrupts (2).warcraftbuddy.actions.v1.InterruptOptionR
 interruptsH
 player_auras (2%.warcraftbuddy.actions.v1.PlayerAurasRplayerAuras[
 aura_spells (2:.warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntryR
-auraSpellsg
+auraSpells_
+control_recovery (24.warcraftbuddy.actions.v1.ControlRecoveryObservationRcontrolRecoveryg
 AuraSpellsEntry
 key (Rkey>
-value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8"Ö
+value (2(.warcraftbuddy.actions.v1.EncounterSpellRvalue:8"¤
+ControlRecoveryObservation#
+fleeing_known (RfleeingKnown
+fleeing (RfleeingE
+
+fear_auras (2&.warcraftbuddy.actions.v1.ObservedAuraR	fearAurasF
+options (2,.warcraftbuddy.actions.v1.ControlBreakOptionRoptions8
+attempted_aura_revisions (RattemptedAuraRevisions"æ
+ControlBreakOption
+spell_id (RspellId
+	item_guid (RitemGuid
+	item_slot (RitemSlot
+ready (Rready
+cooldown_ms (R
+cooldownMs0
+category_cooldown_ms (RcategoryCooldownMs
+rank (Rrank"Œ
+BreakControlRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId
+	item_guid (RitemGuid
+	item_slot (RitemSlot
+	aura_slot (RauraSlot#
+aura_revision (RauraRevision"
+aura_spell_id (RauraSpellId"Ö
 ResurrectionOption!
 patient_guid (RpatientGuid(
 cast_target_guid (RcastTargetGuid
@@ -1559,12 +1586,13 @@ targetGuid"€
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror2÷$
+error (	Rerror2×%
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`
 InterruptCast..warcraftbuddy.actions.v1.InterruptCastRequest.warcraftbuddy.actions.v1.State^
+BreakControl-.warcraftbuddy.actions.v1.BreakControlRequest.warcraftbuddy.actions.v1.State^
 SetFollowFormation0.warcraftbuddy.actions.v1.FollowFormationRequest.google.protobuf.EmptyZ
 SetPortalCatchup..warcraftbuddy.actions.v1.PortalCatchupRequest.google.protobuf.EmptyR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR

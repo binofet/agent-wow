@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -19,7 +20,20 @@ func applyTestFear(s *Service, spell uint32) {
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: p})
 }
 
-func TestObservedFearUsesLearnedBreakWithoutMovement(t *testing.T) {
+func exactFearRequest(s *Service, spell uint32) *actionsv1.BreakControlRequest {
+	a := s.buffAuras[s.selfGUID].slots[5]
+	return &actionsv1.BreakControlRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, SpellId: spell, AuraSlot: 5, AuraRevision: a.revision, AuraSpellId: a.spell}
+}
+func exactFearBreak(s *Service, w *worldv1.SnapshotResponse, spell uint32) bool {
+	r := exactFearRequest(s, spell)
+	if spell == pvpBreakSpell && len(w.SelfEquipment) > 0 {
+		r.ItemGuid = w.SelfEquipment[0].ItemGuid
+		r.ItemSlot = w.SelfEquipment[0].Slot
+	}
+	_, err := s.BreakControl(context.Background(), r)
+	return err == nil
+}
+func TestObservedFearUsesExactLearnedBreakWithoutMovement(t *testing.T) {
 	for _, test := range []struct {
 		spell uint32
 		legal bool
@@ -31,7 +45,7 @@ func TestObservedFearUsesLearnedBreakWithoutMovement(t *testing.T) {
 		f.world.Self.UnitFlags |= fleeingUnitFlag
 		s.state.MotionUnconfirmed = true
 		applyTestFear(s, 7399)
-		if used := s.breakControlLocked(context.Background(), f.world); used != test.legal {
+		if used := exactFearBreak(s, f.world, test.spell); used != test.legal {
 			t.Fatalf("spell %d used=%v, want %v", test.spell, used, test.legal)
 		}
 		count := 0
@@ -41,7 +55,7 @@ func TestObservedFearUsesLearnedBreakWithoutMovement(t *testing.T) {
 				t.Fatalf("spell %d wasn't sent", test.spell)
 			}
 		}
-		if len(f.packets) != count || s.breakControlLocked(context.Background(), f.world) {
+		if len(f.packets) != count || exactFearBreak(s, f.world, test.spell) {
 			t.Fatalf("spell %d repeated or emitted unrelated packets", test.spell)
 		}
 	}
@@ -56,16 +70,16 @@ func TestFearBreakUsesOnlyEquippedVerifiedTrinket(t *testing.T) {
 	}}
 	ctx := context.Background()
 	applyTestFear(s, 7399)
-	if s.breakControlLocked(ctx, f.world) {
+	if exactFearBreak(s, f.world, pvpBreakSpell) {
 		t.Fatal("cast before feared unit flag")
 	}
 	f.world.Self.UnitFlags |= fleeingUnitFlag
 	f.world.SelfEquipment[0].Slot = 6
-	if s.breakControlLocked(ctx, f.world) {
+	if exactFearBreak(s, f.world, pvpBreakSpell) {
 		t.Fatal("used an item outside a trinket slot")
 	}
 	f.world.SelfEquipment[0].Slot = 13
-	if !s.breakControlLocked(ctx, f.world) || len(f.packets) != 1 {
+	if !exactFearBreak(s, f.world, pvpBreakSpell) || len(f.packets) != 1 {
 		t.Fatal("valid trinket was not used")
 	}
 	p := f.packets[0]
@@ -88,11 +102,11 @@ func TestFearBreakUsesOnlyEquippedVerifiedTrinket(t *testing.T) {
 	}
 	applyTestFear(s, 0)
 	advance(time.Minute)
-	if s.hasObservedFearLocked() {
+	if s.isObservedFearLocked(s.buffAuras[s.selfGUID].slots[5]) {
 		t.Fatal("removed fear still seen")
 	}
 	applyTestFear(s, 7399)
-	if s.breakControlLocked(ctx, f.world) || len(f.packets) != 1 {
+	if exactFearBreak(s, f.world, pvpBreakSpell) || len(f.packets) != 1 {
 		t.Fatal("retried during shared cooldown")
 	}
 }
@@ -101,12 +115,12 @@ func TestFearBreakRequiresTheActiveFearAura(t *testing.T) {
 	s, f, advance := buffRig(t, 1, humanBreakSpell)
 	f.world.Self.UnitFlags |= fleeingUnitFlag
 	applyTestFear(s, 676)
-	if s.breakControlLocked(context.Background(), f.world) {
+	if exactFearBreak(s, f.world, humanBreakSpell) {
 		t.Fatal("unrelated negative aura selected a fear break")
 	}
 	applyTestFear(s, 7399)
 	advance(8 * time.Second)
-	if s.breakControlLocked(context.Background(), f.world) {
+	if exactFearBreak(s, f.world, humanBreakSpell) {
 		t.Fatal("stale aura spent the fear break")
 	}
 }
