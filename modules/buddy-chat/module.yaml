@@ -16,6 +16,7 @@ rpc:
   publish_team_status: /warcraftbuddy.chat.v1.BuddyChat/PublishTeamStatus
 packets:
   SMSG_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket
+  SMSG_GM_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket
 
 script_api:
   owner_feed: {effect: read}
