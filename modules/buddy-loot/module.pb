@@ -600,8 +600,46 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ê³
-#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
+–Ð
+#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
+SpellCastTargets
+mask (Rmask
+object_guid (R
+objectGuid
+	item_guid (RitemGuidC
+source (2+.warcraftbuddy.actions.v1.SpellCastLocationRsourceM
+destination (2+.warcraftbuddy.actions.v1.SpellCastLocationRdestination#
+string_target (	RstringTarget%
+trade_revision (RtradeRevision,
+trade_partner_guid (RtradePartnerGuid"d
+SpellCastLocation%
+transport_guid (RtransportGuid
+x (Rx
+y (Ry
+z (Rz"Ž
+SpellCastTrajectory
+	elevation (R	elevation
+speed (Rspeed'
+movement_opcode (RmovementOpcode
+movement (Rmovement"™
+CastSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+spell_id (RspellIdD
+targets (2*.warcraftbuddy.actions.v1.SpellCastTargetsRtargetsM
+
+trajectory (2-.warcraftbuddy.actions.v1.SpellCastTrajectoryR
+trajectory"à
+CancelSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId>
+expected_operation_revision (RexpectedOperationRevision
+visit_id (RvisitId
+channel (Rchannel")
 ToggleRequest
 enabled (Renabled"™
 MovementOwnerRequest
@@ -838,7 +876,7 @@ corpseGuid8
 session_id (	R	sessionId
 	self_guid (RselfGuid
 death_epoch (R
-deathEpoch"ª
+deathEpoch"÷
 
 KnownSpell
 spell_id (RspellId%
@@ -869,7 +907,78 @@ power_type (R	powerType.
 requires_behind (RrequiresBehind,
 created_item_entry (RcreatedItemEntry.
 self_cast_supported (RselfCastSupported
-	channeled (R	channeled"¹
+	channeled (R	channeled4
+generic_cast_supported (RgenericCastSupported3
+classification_reason (	RclassificationReasonF
+	mechanics (2(.warcraftbuddy.actions.v1.SpellMechanicsR	mechanics
+passive (Rpassive"à
+
+SpellMechanics
+
+attributes (R
+attributes
+stances (Rstances
+stances_not (R
+stancesNot
+target_mask (R
+targetMask
+spell_focus (R
+spellFocus
+facing (Rfacing
+
+conditions (R
+conditions
+
+family_set (R	familySet!
+family_flags	 (RfamilyFlags$
+cost_per_level
+ (RcostPerLevel(
+power_per_second (RpowerPerSecond
+cast_min_ms (R	castMinMs$
+cast_per_level (RcastPerLevel!
+timing_known (RtimingKnown
+range_known (R
+rangeKnown*
+min_hostile_yards (RminHostileYards,
+min_friendly_yards (RminFriendlyYards*
+max_hostile_yards (RmaxHostileYards,
+max_friendly_yards (RmaxFriendlyYards
+cooldown_ms (R
+cooldownMs
+category (Rcategory0
+category_cooldown_ms (RcategoryCooldownMs
+gcd_ms (RgcdMs%
+duration_index (RdurationIndex6
+required_inventory_mask (RrequiredInventoryMask
+	rune_cost (RruneCostB
+reagents (2&.warcraftbuddy.actions.v1.SpellReagentRreagents
+totems (Rtotems?
+effects (2%.warcraftbuddy.actions.v1.SpellEffectReffects2
+requires_combo_points (RrequiresComboPoints-
+interrupts_casting (RinterruptsCasting'
+restores_health  (RrestoresHealth8
+provides_water_breathing! (RprovidesWaterBreathing#
+learned_level" (RlearnedLevel
+dispel_type# (R
+dispelType"=
+SpellReagent
+item_id (RitemId
+count (Rcount"²
+SpellEffect
+kind (Rkind*
+target_selector_a (RtargetSelectorA*
+target_selector_b (RtargetSelectorB
+aura (Raura,
+triggered_spell_id (RtriggeredSpellId
+	period_ms (RperiodMs#
+chain_targets (RchainTargets!
+radius_index (RradiusIndex&
+created_item_id	 (RcreatedItemId
+points
+ (Rpoints
+dice (Rdice
+misc (Rmisc(
+points_per_level (RpointsPerLevel"ž
 SpellOperation
 spell_id (RspellId
 target_guid (R
@@ -890,7 +999,12 @@ capability
 inventory_confirmed (RinventoryConfirmed'
 channel_started (RchannelStarted#
 channel_ended (RchannelEnded0
-channel_remaining_ms (RchannelRemainingMs"ã
+channel_remaining_ms (RchannelRemainingMs-
+operation_revision (RoperationRevision
+visit_id (RvisitId)
+cancel_attempted (RcancelAttempted8
+cancel_transport_written (RcancelTransportWritten4
+cancel_outcome_unknown (RcancelOutcomeUnknown"ã
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -1767,8 +1881,10 @@ node_found (R	nodeFoundE
 outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
 info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
 live_fare_known (RliveFareKnown(
-live_route_known (RliveRouteKnown2Ä(
-BuddyActions‚
+live_route_known (RliveRouteKnown2ü)
+BuddyActionsX
+	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
+CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.State‚
 FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
 QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem

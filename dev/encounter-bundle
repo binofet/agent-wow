@@ -16,6 +16,7 @@ def main():
         ("encounter_tactics", behaviors / "encounter-tactics.lua"),
         ("encounter_gear", behaviors / "gear.lua"),
         ("encounter_disposal", behaviors / "item-disposal.lua"),
+        ("encounter_trade_consent", behaviors / "trade-consent.lua"),
         ("encounter_corpse_loot", behaviors / "corpse-loot.lua"),
         ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),
@@ -29,6 +30,7 @@ def main():
         ("encounter_death_recovery", behaviors / "death-recovery.lua"),
         ("encounter_movement", behaviors / "encounter-movement.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
+        ("encounter_spell_invocation", behaviors / "spell-invocation.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),
     ]
     if args.intent:

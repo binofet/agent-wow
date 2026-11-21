@@ -21,6 +21,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyActions_CastSpell_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
+	BuddyActions_CancelSpell_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
 	BuddyActions_FlightpathReference_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
 	BuddyActions_FlightpathObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
 	BuddyActions_QueryFlightpath_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
@@ -82,6 +84,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error)
+	CancelSpell(ctx context.Context, in *CancelSpellRequest, opts ...grpc.CallOption) (*State, error)
 	FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	QueryFlightpath(ctx context.Context, in *FlightpathQueryRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
@@ -147,6 +151,26 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CastSpell_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) CancelSpell(ctx context.Context, in *CancelSpellRequest, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_CancelSpell_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error) {
@@ -703,6 +727,8 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	CastSpell(context.Context, *CastSpellRequest) (*State, error)
+	CancelSpell(context.Context, *CancelSpellRequest) (*State, error)
 	FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error)
 	QueryFlightpath(context.Context, *FlightpathQueryRequest) (*FlightpathObservationResponse, error)
@@ -770,6 +796,12 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) CastSpell(context.Context, *CastSpellRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CastSpell not implemented")
+}
+func (UnimplementedBuddyActionsServer) CancelSpell(context.Context, *CancelSpellRequest) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelSpell not implemented")
+}
 func (UnimplementedBuddyActionsServer) FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FlightpathReference not implemented")
 }
@@ -954,6 +986,42 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_CastSpell_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastSpellRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CastSpell(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CastSpell_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CastSpell(ctx, req.(*CastSpellRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_CancelSpell_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelSpellRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).CancelSpell(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_CancelSpell_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).CancelSpell(ctx, req.(*CancelSpellRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_FlightpathReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1953,6 +2021,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CastSpell",
+			Handler:    _BuddyActions_CastSpell_Handler,
+		},
+		{
+			MethodName: "CancelSpell",
+			Handler:    _BuddyActions_CancelSpell_Handler,
+		},
 		{
 			MethodName: "FlightpathReference",
 			Handler:    _BuddyActions_FlightpathReference_Handler,

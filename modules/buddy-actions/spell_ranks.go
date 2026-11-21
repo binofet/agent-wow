@@ -46,7 +46,7 @@ func highestKnownSpell(known map[uint32]bool, family uint32) spellRank {
 // https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Entities/Player/Player.cpp
 func spellKnowledgePacket(op uint32, p []byte) (remove, add uint32, err error) {
 	bad := errors.New("malformed normal spell knowledge packet")
-	valid := func(id uint32) bool { return id != 0 && id <= 0x7fffffff }
+	valid := func(id uint32) bool { return id != 0 }
 	switch op {
 	case opcode.SMSGLearnedSpell:
 		if len(p) != 6 || binary.LittleEndian.Uint16(p[4:]) != 0 {

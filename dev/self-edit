@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Edit an embodied companion's live Lua policy directly; no coding queue."""
 import argparse
+import copy
 import fcntl
 import hashlib
 import importlib.machinery
@@ -72,6 +73,57 @@ def owned(rpc, guid, sid):
             or c.integer(body.get('selfGuid', 0)) != guid):
         raise c.ConversationError('Requested character/body changed; refresh observations')
     return behavior
+
+
+def inspect_spell(guid, sid, rpc, spell_id=0):
+    """Read one learned spell and the installed cast inputs; never cast here."""
+    if (type(guid) is not int or not 0<guid<2**48 or not isinstance(sid,str)
+            or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid)
+            or type(spell_id) is not int or not 0<=spell_id<2**32):
+        raise c.ConversationError('Exact body and uint32 spell ID required')
+    def body():
+        state=rpc.call('buddy-actions.status',{})
+        if state.get('sessionId')!=sid or c.integer(state.get('selfGuid',0))!=guid:
+            raise c.ConversationError('Requested character/body changed; refresh observations')
+    body()
+    toolkit=rpc.call('buddy-actions.spell_toolkit',{})
+    if (toolkit.get('sessionId')!=sid or c.integer(toolkit.get('selfGuid',0))!=guid
+            or toolkit.get('spellbookKnown') is not True):
+        raise c.ConversationError('Actual same-body learned spellbook required')
+    rows=toolkit.get('spells',[])
+    if not isinstance(rows,list) or len(rows)>4096:
+        raise c.ConversationError('Bounded learned spellbook required')
+    known={}
+    for row in rows:
+        value=c.integer(row.get('spellId',0)) if isinstance(row,dict) else 0
+        if not 0<value<2**32 or value in known:
+            raise c.ConversationError('Unique actual learned spell IDs required')
+        known[value]=row
+    catalog=rpc.call('session.describe',{})
+    if catalog.get('sessionId')!=sid or str(catalog.get('characterGuid'))!=str(guid):
+        raise c.ConversationError('Cast capability catalog belongs to another body')
+    methods=[copy.deepcopy(row) for row in catalog.get('methods',[]) if isinstance(row,dict)
+        and row.get('name') in ('buddy-actions.cast_spell','buddy-actions.cast_self','buddy-actions.cancel_spell')]
+    inputs={}
+    def schema(name):
+        if name in inputs:return
+        value=catalog.get('messages',{}).get(name)
+        if not isinstance(value,dict):return
+        inputs[name]=copy.deepcopy(value)
+        for field in value.get('fields',[]):
+            if isinstance(field,dict) and field.get('kind')=='message':schema(field.get('type'))
+    for method in methods:schema(method.get('inputType'))
+    body()
+    result=dict(sessionId=sid,characterGuid=str(guid),spellbookRevision=toolkit.get('spellbookRevision','0'),
+        catalogRevision=catalog.get('revision'),castMethods=methods,castInputs=inputs,
+        effectClassificationIsNotCastAvailability=True)
+    if spell_id:
+        result.update(spellId=spell_id,learned=spell_id in known,spell=copy.deepcopy(known.get(spell_id)))
+    else:
+        result['spells']=[{key:copy.deepcopy(row[key]) for key in
+            ('spellId','metadataKnown','name','genericCastSupported','selfCastSupported','channeled','passive','classificationReason')
+            if key in row and (key!='name' or row.get('metadataKnown') is True)} for row in rows]
+    return result
 
 
 def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
@@ -170,17 +222,21 @@ def edit(command, guid, sid, rpc, source=None, expected=None, data=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('show', 'apply', 'builtin'))
+    parser.add_argument('command', choices=('show', 'apply', 'builtin', 'spell'))
     parser.add_argument('--guid', type=int, required=True)
     parser.add_argument('--session-id', required=True)
     parser.add_argument('--rpc-url', required=True)
     parser.add_argument('--expected-revision')
     parser.add_argument('--source', type=Path)
+    parser.add_argument('--spell-id',type=int,default=0,help='Exact learned ID; 0 lists the observed spellbook')
     args = parser.parse_args()
     if args.command == 'apply' and args.source is None:
         parser.error('apply requires --source')
-    if args.command != 'show' and args.expected_revision is None:
+    if args.command in ('apply','builtin') and args.expected_revision is None:
         parser.error('apply/builtin requires --expected-revision (empty string for native policy)')
+    if args.command=='spell':
+        print(json.dumps(inspect_spell(args.guid,args.session_id,c.RPC(args.rpc_url),args.spell_id),ensure_ascii=False))
+        return
     source = read_source(args.source) if args.command == 'apply' else None
     print(json.dumps(edit(args.command, args.guid, args.session_id, c.RPC(args.rpc_url),
                           source, args.expected_revision), ensure_ascii=False))

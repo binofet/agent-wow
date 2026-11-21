@@ -18,6 +18,7 @@ local buffs = encounter_buffs
 local death_recovery = encounter_death_recovery
 local movement = encounter_movement
 local commands = encounter_commands
+local spell_invocation = encounter_spell_invocation
 local transient_tasks = encounter_tasks
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
@@ -53,6 +54,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if spell_invocation and not spell_invocation.on_event(event) then return false end
     if control_recovery and not control_recovery.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
@@ -97,6 +99,7 @@ local function export_state()
     return {version=1, data={controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
+                            spellInvocation=spell_invocation and spell_invocation.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
                             consumables=consumables and consumables.export_state(),
                             corpseLoot=corpse_loot and corpse_loot.export_state(),
@@ -125,6 +128,7 @@ local function import_state(checkpoint)
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
+    if checkpoint.data.spellInvocation and (not spell_invocation or not spell_invocation.import_state(checkpoint.data.spellInvocation)) then return false end
     if checkpoint.data.controlRecovery and (not control_recovery or not control_recovery.import_state(checkpoint.data.controlRecovery)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
@@ -203,6 +207,7 @@ local function owns_current_observation(obs, frame, self)
        not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
        not same_map(self, obs.mapId) then return false end
     if obs.meleeKnown == true then return true end
+    if spell_invocation and spell_invocation.pending() then return true end
     if control_recovery and #(((obs.support or {}).controlRecovery or {}).options or {})>0 then return true end
     for _, spell in pairs(obs.spells or {}) do
         if spell.capability == "offense" and spell.known == true then return true end
@@ -593,6 +598,11 @@ local function decide_encounter(frame)
         function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
+    if spell_invocation then
+        local requested,status=spell_invocation.propose(frame,obs,state.sequence)
+        out.spellInvocation=status
+        if requested then out.action=requested;return out end
+    end
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
@@ -780,13 +790,14 @@ local function interaction_access(frame, obs, out)
 end
 
 local function decide(frame)
+    if spell_invocation then spell_invocation.capture(frame) end
     local out=decide_policy(frame)
     local current=policy_observation or observation
     if corpse_loot and current then
         local action=out.action
         local self=(current.players or {})[current.selfGuid]
         local urgent=self and self.aliveKnown==true and self.alive==false or out.focusGuid~=nil or task_support_action or action and
-            (action.capability=="fear_break" or action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
+            (action.capability=="cast_spell" or action.capability=="fear_break" or action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
              action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
              action.capability=="sap" or action.capability=="polymorph")
         if healing and healing.needs_access and current.healing then
@@ -809,6 +820,15 @@ local function decide(frame)
         if recovery.action then out.action=recovery.action end
     end
     interaction_access(frame, current, out)
+    -- A caller-selected cancellation must remain reachable while the original
+    -- cast/channel action is pending. It never retires that original ledger.
+    if spell_invocation and current and host_can_decide(current) and current.sessionId==frame.session_id and
+       frame.input.observationSequence==state.sequence and current_visit(current) then
+        local cancel,status=spell_invocation.cancel_action(frame,current,state.sequence)
+        out.spellCancellation=status
+        if cancel then out.action=cancel;out.followFormation=nil;out.portalCatchup=nil end
+    end
+    if spell_invocation then spell_invocation.commit(out.action) end
     return out
 end
 
@@ -817,6 +837,7 @@ return {decide=decide, on_event=on_event, export_state=export_state, import_stat
         follow_formation=encounter_formation and encounter_formation.decide,
         service_destination=encounter_formation and encounter_formation.service_destination,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
+        trade_consent=encounter_trade_consent and encounter_trade_consent.decide,
         disposal_evaluation=encounter_disposal and function(input)
             if type(input)~="table" then return encounter_disposal.decide(input) end
             return encounter_disposal.classify(input.mode,input.item,input.context,encounter_gear)
