@@ -39,6 +39,7 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 		Orientation           float32
 		StartDistance         float64 `json:"startDistance"`
 		StopDistance          float64 `json:"stopDistance"`
+		Phase                 string
 		Ready, Hold           bool
 	}
 	if err := json.Unmarshal(body, &value); err != nil {
@@ -66,7 +67,7 @@ func (p *SessionPolicy) refreshFollowFormation(ctx context.Context, decision map
 	_, err = actionsv1.NewBuddyActionsClient(inst.conn).SetFollowFormation(call, &actionsv1.FollowFormationRequest{
 		SessionId: value.SessionID, SelfGuid: self, VisitId: visit, OwnerGuid: owner, OwnerPositionRevision: revision,
 		X: value.X, Y: value.Y, Z: value.Z, Orientation: value.Orientation,
-		FollowRevision: followRevision, StartDistance: value.StartDistance, StopDistance: value.StopDistance, Ready: value.Ready, Hold: value.Hold,
+		Phase: value.Phase, FollowRevision: followRevision, StartDistance: value.StartDistance, StopDistance: value.StopDistance, Ready: value.Ready, Hold: value.Hold,
 	})
 	return err
 }

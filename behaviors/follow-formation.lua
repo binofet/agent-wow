@@ -4,6 +4,7 @@
 local M = {}
 local tau, half_turn = 6.283185307179586, 3.141592653589793
 local roles = {[5]={3.8,-3.1}, [8]={5.1,.2}, [4]={2.4,3.5}, [9]={1,-5.2}}
+local near_stop, near_limit = 3,30
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -45,6 +46,16 @@ function M.decide(input)
        not pose(owner,true) or type(owner.moving)~="boolean" or
        input.self~=nil and (not pose(input.self,false) or type(input.self.moving)~="boolean") or
        input.ownerArrival~=nil and type(input.ownerArrival)~="boolean" then return {} end
+
+    if input.mode=="near_owner" then
+        if not input.self then return {} end
+        local dx,dy,dz=input.self.x-owner.x,input.self.y-owner.y,input.self.z-owner.z
+        local d=math.sqrt(dx*dx+dy*dy+dz*dz)
+        local phase=d>near_limit or math.abs(dz)>1.5
+        phase=phase and "follow_target_too_far_or_vertical" or d<=near_stop and "within_follow_distance" or "following_formation"
+        return {position={x=owner.x,y=owner.y,z=owner.z,o=owner.o},startDistance=near_stop,stopDistance=near_stop,
+            ready=true,hold=phase~="following_formation",phase=phase,memory={guid=input.selfGuid,classId=class,lastAtMs=now}}
+    end
 
     local role=roles[class] or fallback[remainder+1]
     local rear=role[1]+(hash%241-120)/1000
