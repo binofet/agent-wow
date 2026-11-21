@@ -121,21 +121,19 @@ local function matching_equipment(inventory,world)
     return rows
 end
 
-local function quest_protection(world,journal,entry)
+local function quest_protection(world,journal,entry,active_rows)
     if world.selfQuestLogKnown~=true or not decimal(world.selfQuestLogRevision) or
-        world.selfQuestLogRevision~=journal.questLogRevision or not array(world.selfQuestLog,25) or
-        #world.selfQuestLog~=25 or not array(journal.entries or {},25) then return end
+        world.selfQuestLogRevision~=journal.questLogRevision or not array(active_rows,25) or
+        not array(journal.entries or {},25) then return end
     -- uint32 quest IDs must not expand the VM's dense numeric table storage.
     local slots,active,covered={},{},{}
-    for _,row in ipairs(world.selfQuestLog) do
+    for _,row in ipairs(active_rows) do
         if type(row)~="table" or not uint(zero(row.slot)) or zero(row.slot)>24 or slots[zero(row.slot)] or
-            not uint(zero(row.questId)) then return end
+            not uint(row.questId) or row.questId==0 then return end
         slots[zero(row.slot)]=true
-        if zero(row.questId)~=0 then
-            local id=tostring(row.questId)
-            if active[id] then return end
-            active[id]=zero(row.slot)
-        end
+        local id=tostring(row.questId)
+        if active[id] then return end
+        active[id]=zero(row.slot)
     end
     local protected=false
     for _,row in ipairs(journal.entries or {}) do
@@ -173,6 +171,8 @@ end
 -- then retains carriedSource, one equipment frame and facts.inventoryLayoutKnown
 -- / equipmentFramesMatch. These attest shape/identity consistency, not fullness
 -- or disposal eligibility. Lua owns protection, retention and worn-slot choice.
+-- A checked full 25-slot quest frame becomes activeQuestRows plus the positive
+-- questLogFrameKnown fact. Lua still matches every active row to its Journal.
 -- The fourth argument is the actual shared gear module, composed by the caller.
 local function gray_armor(item,context,gear)
     decimal_syntax={}
@@ -220,9 +220,6 @@ local function gray_armor(item,context,gear)
     if facts.hasEnhancements==true then return result("keep","enhanced_armor_retained") end
     local equipment=matching_equipment(inventory,world)
     if not equipment then return result("unknown","matching_full_equipment_context_required") end
-    local protected=quest_protection(world,journal,item.itemId)
-    if protected==nil then return result("unknown","complete_quest_item_protection_required") end
-    if protected then return result("keep","active_quest_item_retained") end
     local worn=equipment[equipment_slots[item.inventoryType]]
     if not worn or guid(worn.itemGuid)=="0" or worn.itemGuid==source.itemGuid then return result("keep","worn_armor_replacement_required") end
     if not guid(worn.itemGuid) or worn.metadataKnown~=true or not uint(worn.entry) or worn.entry==0 or worn.stackCount~=1 then
@@ -232,6 +229,10 @@ local function gray_armor(item,context,gear)
         return result("unknown","usable_worn_armor_facts_required")
     end
     if worn.hasEnhancements==true then return result("unknown","enhanced_worn_armor_comparison_unknown") end
+    if context.facts.questLogFrameKnown~=true then return result("unknown","complete_quest_item_protection_required") end
+    local protected=quest_protection(world,journal,item.itemId,context.activeQuestRows)
+    if protected==nil then return result("unknown","complete_quest_item_protection_required") end
+    if protected then return result("keep","active_quest_item_retained") end
     local templates=object(inventory.gearContext) and inventory.gearContext.templates
     local replacement=object(templates) and templates[tostring(worn.entry)]
     if not object(replacement) or replacement.available~=true or replacement.itemId~=worn.entry or replacement.itemClass~=4 or

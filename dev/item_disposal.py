@@ -216,6 +216,23 @@ def _template(row):
     return out
 
 
+def _active_quests(rows):
+    rows = _array(rows, 25)
+    if len(rows) != 25:
+        raise ValueError("complete raw quest log required")
+    slots, quests, active = set(), set(), []
+    for row in rows:
+        fields = _typed(row, uints=("slot", "questId"))
+        slot, quest = fields.get("slot", 0), fields.get("questId", 0)
+        if slot > 24 or slot in slots or quest and quest in quests:
+            raise ValueError("unique raw quest log slots and active IDs required")
+        slots.add(slot)
+        if quest:
+            quests.add(quest)
+            active.append({"slot": slot, "questId": quest})
+    return active
+
+
 def project_context(context):
     """Retain typed facts referenced by this source, without choosing its use."""
     try:
@@ -251,8 +268,9 @@ def project_context(context):
         if inventory.get("equipmentKnown") is not True or raw.get("selfEquipmentKnown") is not True:
             raise ValueError("known raw equipment frames required")
         _equipment_match(inventory["equipment"], world_equipment, carried_guids)
-        raw["selfQuestLog"] = [_typed(row, uints=("slot", "questId"))
-            for row in _array(world.get("selfQuestLog"), 25)]
+        if raw.get("selfQuestLogKnown") is not True:
+            raise ValueError("known raw quest log required")
+        active_quests = _active_quests(world.get("selfQuestLog"))
         if type(journal.get("sessionId")) is not str or not 1 <= len(journal["sessionId"]) <= 128:
             raise ValueError("journal session required")
         log = {"sessionId": journal["sessionId"], **_typed(journal, counters=("questLogRevision",))}
@@ -275,7 +293,8 @@ def project_context(context):
                     "requiredCount": _uint(target.get("requiredCount", 0))})
             log["entries"].append(projected)
         return {"inventory": inventory, "world": raw, "journal": log, "source": source,
-                "carriedSource": carried_source, "facts": {"inventoryLayoutKnown": True, "equipmentFramesMatch": True}}
+                "carriedSource": carried_source, "activeQuestRows": active_quests,
+                "facts": {"inventoryLayoutKnown": True, "equipmentFramesMatch": True, "questLogFrameKnown": True}}
     except ValueError:
         return None
 

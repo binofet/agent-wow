@@ -191,27 +191,29 @@ func disposalArmorRuntime(t *testing.T) *Runtime {
 }
 
 func TestItemDisposalArmorFullContextAndEqualWornArmor(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for _, armor := range []int{20, 25} {
+		t.Run(strconv.Itoa(armor), func(t *testing.T) {
+			frame := disposalArmorFrame(t)
+			disposalArmorWorn(frame)["armor"] = float64(armor)
+			before := disposalArmorClone(t, frame)
+			disposalArmorResult(t, disposalArmorRuntime(t), frame, "eligible")
+			if !reflect.DeepEqual(frame, before) {
+				t.Fatal("policy mutated factual context")
+			}
+		})
+	}
+	t.Run("reordered_frames", func(t *testing.T) {
 		frame := disposalArmorFrame(t)
-		disposalArmorWorn(frame)["armor"] = float64(armor)
-		before := disposalArmorClone(t, frame)
-		disposalArmorResult(t, r, frame, "eligible")
-		if !reflect.DeepEqual(frame, before) {
-			t.Fatal("policy mutated factual context")
+		for _, rows := range [][]any{disposalArmorEquipment(frame, false), disposalArmorEquipment(frame, true), disposalArmorWorld(frame)["selfQuestLog"].([]any)} {
+			for a, b := 0, len(rows)-1; a < b; a, b = a+1, b-1 {
+				rows[a], rows[b] = rows[b], rows[a]
+			}
 		}
-	}
-	frame := disposalArmorFrame(t)
-	for _, rows := range [][]any{disposalArmorEquipment(frame, false), disposalArmorEquipment(frame, true), disposalArmorWorld(frame)["selfQuestLog"].([]any)} {
-		for a, b := 0, len(rows)-1; a < b; a, b = a+1, b-1 {
-			rows[a], rows[b] = rows[b], rows[a]
-		}
-	}
-	disposalArmorResult(t, r, frame, "eligible")
+		disposalArmorResult(t, disposalArmorRuntime(t), frame, "eligible")
+	})
 }
 
 func TestItemDisposalArmorSharedComparisonRetainsInferiorOrSpecialReplacement(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for name, change := range map[string]func(map[string]any){
 		"lower_armor": func(v map[string]any) { disposalArmorWorn(v)["armor"] = 19 },
 		"missing_worn_template": func(v map[string]any) {
@@ -236,13 +238,12 @@ func TestItemDisposalArmorSharedComparisonRetainsInferiorOrSpecialReplacement(t 
 			if name == "lower_armor" {
 				want = "keep"
 			}
-			disposalArmorResult(t, r, v, want)
+			disposalArmorResult(t, disposalArmorRuntime(t), v, want)
 		})
 	}
 }
 
 func TestItemDisposalArmorEnhancementAndDurabilityProofIsRequired(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for name, change := range map[string]func(map[string]any){
 		"source_enhanced": func(v map[string]any) {
 			disposalArmorSelected(v)["gearFacts"].(map[string]any)["hasEnhancements"] = true
@@ -276,15 +277,20 @@ func TestItemDisposalArmorEnhancementAndDurabilityProofIsRequired(t *testing.T) 
 			}
 		},
 	} {
-		t.Run(name, func(t *testing.T) { v := disposalArmorFrame(t); change(v); disposalArmorResult(t, r, v, "retained") })
+		t.Run(name, func(t *testing.T) {
+			v := disposalArmorFrame(t)
+			change(v)
+			disposalArmorResult(t, disposalArmorRuntime(t), v, "retained")
+		})
 	}
 }
 
 func TestItemDisposalArmorTypedQuestItemAndSourceItemProtection(t *testing.T) {
-	r := disposalArmorRuntime(t)
-	unrelated := disposalArmorFrame(t)
-	disposalArmorJournal(unrelated)["entries"].([]any)[0].(map[string]any)["targets"] = []any{map[string]any{"kind": "ITEM", "targetId": 2004, "requiredCount": 1}}
-	disposalArmorResult(t, r, unrelated, "eligible")
+	t.Run("unrelated_item", func(t *testing.T) {
+		unrelated := disposalArmorFrame(t)
+		disposalArmorJournal(unrelated)["entries"].([]any)[0].(map[string]any)["targets"] = []any{map[string]any{"kind": "ITEM", "targetId": 2004, "requiredCount": 1}}
+		disposalArmorResult(t, disposalArmorRuntime(t), unrelated, "eligible")
+	})
 	for _, kind := range []string{"ITEM", "SOURCE_ITEM"} {
 		counts := []int{1}
 		if kind == "SOURCE_ITEM" {
@@ -295,7 +301,7 @@ func TestItemDisposalArmorTypedQuestItemAndSourceItemProtection(t *testing.T) {
 				v := disposalArmorFrame(t)
 				entry := disposalArmorJournal(v)["entries"].([]any)[0].(map[string]any)
 				entry["targets"] = []any{map[string]any{"kind": kind, "targetId": 907000, "requiredCount": count}}
-				disposalArmorResult(t, r, v, "keep")
+				disposalArmorResult(t, disposalArmorRuntime(t), v, "keep")
 			})
 		}
 	}
@@ -322,25 +328,34 @@ func TestItemDisposalArmorTypedQuestItemAndSourceItemProtection(t *testing.T) {
 			disposalArmorJournal(v)["entries"].([]any)[0].(map[string]any)["targets"] = []any{map[string]any{"kind": "ITEM", "targetId": false, "requiredCount": 1}}
 		},
 	} {
-		t.Run(name, func(t *testing.T) { v := disposalArmorFrame(t); change(v); disposalArmorResult(t, r, v, "retained") })
+		t.Run(name, func(t *testing.T) {
+			v := disposalArmorFrame(t)
+			change(v)
+			disposalArmorResult(t, disposalArmorRuntime(t), v, "retained")
+		})
 	}
 }
 
 func TestItemDisposalArmorQuestIdentifiersDoNotAllocateUnboundedSparseArrays(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for _, quest := range []uint32{1, 99000, 4294967295} {
-		frame := disposalArmorFrame(t)
-		disposalArmorWorld(frame)["selfQuestLog"].([]any)[7].(map[string]any)["questId"] = quest
-		entry := disposalArmorJournal(frame)["entries"].([]any)[0].(map[string]any)
-		entry["questId"] = quest
-		disposalArmorResult(t, r, frame, "eligible")
-		entry["targets"] = []any{map[string]any{"kind": "ITEM", "targetId": 907000, "requiredCount": 1}}
-		disposalArmorResult(t, r, frame, "keep")
+		for _, protected := range []bool{false, true} {
+			t.Run(strconv.FormatUint(uint64(quest), 10)+"/protected_"+strconv.FormatBool(protected), func(t *testing.T) {
+				frame := disposalArmorFrame(t)
+				disposalArmorWorld(frame)["selfQuestLog"].([]any)[7].(map[string]any)["questId"] = quest
+				entry := disposalArmorJournal(frame)["entries"].([]any)[0].(map[string]any)
+				entry["questId"] = quest
+				want := "eligible"
+				if protected {
+					entry["targets"] = []any{map[string]any{"kind": "ITEM", "targetId": 907000, "requiredCount": 1}}
+					want = "keep"
+				}
+				disposalArmorResult(t, disposalArmorRuntime(t), frame, want)
+			})
+		}
 	}
 }
 
 func TestItemDisposalArmorFullEquipmentAndRevisionIdentity(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for name, change := range map[string]func(map[string]any){
 		"missing_context":          func(v map[string]any) { delete(v, "context") },
 		"foreign_body":             func(v map[string]any) { disposalArmorWorld(v)["self"].(map[string]any)["guid"] = "5" },
@@ -360,12 +375,15 @@ func TestItemDisposalArmorFullEquipmentAndRevisionIdentity(t *testing.T) {
 			}
 		},
 	} {
-		t.Run(name, func(t *testing.T) { v := disposalArmorFrame(t); change(v); disposalArmorResult(t, r, v, "retained") })
+		t.Run(name, func(t *testing.T) {
+			v := disposalArmorFrame(t)
+			change(v)
+			disposalArmorResult(t, disposalArmorRuntime(t), v, "retained")
+		})
 	}
 }
 
 func TestItemDisposalArmorExactCarriedSourceAndCompleteLayout(t *testing.T) {
-	r := disposalArmorRuntime(t)
 	for name, change := range map[string]func(map[string]any){
 		"wrong_source_guid": func(v map[string]any) {
 			disposalArmorContext(v)["source"].(map[string]any)["itemGuid"] = "4611686018427387910"
@@ -385,22 +403,29 @@ func TestItemDisposalArmorExactCarriedSourceAndCompleteLayout(t *testing.T) {
 			disposalArmorInventory(v)["inventoryBags"].([]any)[0].(map[string]any)["contentsKnown"] = false
 		},
 	} {
-		t.Run(name, func(t *testing.T) { v := disposalArmorFrame(t); change(v); disposalArmorResult(t, r, v, "retained") })
+		t.Run(name, func(t *testing.T) {
+			v := disposalArmorFrame(t)
+			change(v)
+			disposalArmorResult(t, disposalArmorRuntime(t), v, "retained")
+		})
 	}
 }
 
 func TestItemDisposalArmorContextDoesNotChangeOtherModes(t *testing.T) {
-	r := disposalArmorRuntime(t)
-	v := disposalArmorFrame(t)
-	v["context"] = false
-	v["mode"] = "vendor_sale"
-	disposalArmorResult(t, r, v, "eligible")
-	v["mode"] = "misc_destroy"
-	disposalArmorResult(t, r, v, "keep")
 	for _, mode := range []string{"vendor_sale", "misc_destroy"} {
-		v["mode"] = mode
-		v["item"] = disposalTemplate(t, false)
-		disposalArmorResult(t, r, v, "eligible")
+		for _, armor := range []bool{false, true} {
+			t.Run(mode+"/armor_"+strconv.FormatBool(armor), func(t *testing.T) {
+				v := disposalArmorFrame(t)
+				v["context"], v["mode"] = false, mode
+				want := "eligible"
+				if !armor {
+					v["item"] = disposalTemplate(t, false)
+				} else if mode == "misc_destroy" {
+					want = "keep"
+				}
+				disposalArmorResult(t, disposalArmorRuntime(t), v, want)
+			})
+		}
 	}
 }
 
@@ -488,6 +513,54 @@ func disposalArmorHostProjection(t *testing.T, frame map[string]any) (string, ma
 	if strings.TrimSpace(projected.Source) != strings.TrimSpace(disposalArmorComposition(t, nil)) {
 		t.Fatal("test and host do not compose the same real shared scorer and classifier")
 	}
+	context := disposalArmorContext(projected.Frame)
+	if context["facts"].(map[string]any)["questLogFrameKnown"] != true {
+		t.Fatal("projected quest-log coverage is not positively known")
+	}
+	if _, exists := disposalArmorWorld(projected.Frame)["selfQuestLog"]; exists {
+		t.Fatal("compact context unexpectedly retained the raw quest-log vector")
+	}
+	// Every nonzero ID from the complete actual producer frame must survive
+	// projection, with its exact slot. Large uint32 IDs remain part of the test.
+	identity := func(row map[string]any) string {
+		values := []any{row["slot"], row["questId"]}
+		for index, value := range values {
+			if value == nil {
+				values[index] = 0
+			}
+		}
+		body, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	expected := map[string]bool{}
+	for _, value := range disposalArmorWorld(frame)["selfQuestLog"].([]any) {
+		row := value.(map[string]any)
+		quest := row["questId"]
+		if quest == nil {
+			continue
+		}
+		encoded, err := json.Marshal(quest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != "0" {
+			expected[identity(row)] = true
+		}
+	}
+	observed := map[string]bool{}
+	for _, value := range context["activeQuestRows"].([]any) {
+		key := identity(value.(map[string]any))
+		if observed[key] {
+			t.Fatal("projection duplicated an active quest row")
+		}
+		observed[key] = true
+	}
+	if !reflect.DeepEqual(observed, expected) {
+		t.Fatalf("projection lost or changed an observed active quest: got %v, want %v", observed, expected)
+	}
 	measured := &budget{nodeLimit: MaxInputNodes}
 	if _, err := toLua(nil, projected.Frame, measured); err != nil {
 		t.Fatal(err)
@@ -506,22 +579,50 @@ func TestItemDisposalArmorActualHostProjectionFitsRealRuntime(t *testing.T) {
 
 func TestItemDisposalArmorRequiresPositiveMechanicalCoverageFacts(t *testing.T) {
 	source, frame := disposalArmorHostProjection(t, disposalArmorFrame(t))
-	r := New()
-	load(t, r, source)
-	disposalArmorResult(t, r, frame, "eligible")
-	withoutScorer := disposalRuntime(t)
-	disposalArmorResult(t, withoutScorer, frame, "unknown")
-	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch"} {
-		for _, value := range []any{nil, false, 1} {
-			changed := disposalArmorClone(t, frame)
-			facts := disposalArmorContext(changed)["facts"].(map[string]any)
-			if value == nil {
-				delete(facts, field)
-			} else {
-				facts[field] = value
-			}
-			disposalArmorResult(t, r, changed, "unknown")
+	fresh := func(t *testing.T) *Runtime {
+		r := New()
+		load(t, r, source)
+		return r
+	}
+	t.Run("complete_facts", func(t *testing.T) { disposalArmorResult(t, fresh(t), frame, "eligible") })
+	t.Run("missing_scorer", func(t *testing.T) { disposalArmorResult(t, disposalRuntime(t), frame, "unknown") })
+	for _, field := range []string{"inventoryLayoutKnown", "equipmentFramesMatch", "questLogFrameKnown"} {
+		for _, condition := range []struct {
+			name  string
+			value any
+		}{{"missing", nil}, {"false", false}, {"wrong_type", 1}} {
+			t.Run(field+"/"+condition.name, func(t *testing.T) {
+				changed := disposalArmorClone(t, frame)
+				facts := disposalArmorContext(changed)["facts"].(map[string]any)
+				if condition.value == nil {
+					delete(facts, field)
+				} else {
+					facts[field] = condition.value
+				}
+				disposalArmorResult(t, fresh(t), changed, "unknown")
+			})
 		}
+	}
+	for name, change := range map[string]func(map[string]any){
+		"active_rows_missing": func(v map[string]any) { delete(disposalArmorContext(v), "activeQuestRows") },
+		"active_rows_duplicate": func(v map[string]any) {
+			context := disposalArmorContext(v)
+			rows := context["activeQuestRows"].([]any)
+			context["activeQuestRows"] = append(rows, rows[0])
+		},
+		"active_rows_extra": func(v map[string]any) {
+			context := disposalArmorContext(v)
+			context["activeQuestRows"] = append(context["activeQuestRows"].([]any), map[string]any{"slot": 8, "questId": 99001})
+		},
+		"active_rows_wrong_slot": func(v map[string]any) {
+			disposalArmorContext(v)["activeQuestRows"].([]any)[0].(map[string]any)["slot"] = 8
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := disposalArmorClone(t, frame)
+			change(changed)
+			disposalArmorResult(t, fresh(t), changed, "unknown")
+		})
 	}
 }
 
