@@ -28,7 +28,7 @@ func TestToolkitSeparatesGenericCastFromAutomaticClassification(t *testing.T) {
 }
 
 func TestReflectedSpellRequirementsAndEffectsAreIndependentFacts(t *testing.T) {
-	spell := spellcatalog.Spell{ID: 987654, Stances: 4, StancesNot: 8, TargetMask: 0x40,
+	spell := spellcatalog.Spell{ID: 987654, Level: 40, DispelType: spellcatalog.DispelCurse, Stances: 4, StancesNot: 8, TargetMask: 0x40,
 		Focus: 17, Facing: 2, CostPerLevel: 3, PerSecond: 4, CastMinMs: 5, CastPerLevel: -6,
 		TimingKnown: true, RangeKnown: true, MinHostile: 2, MaxHostile: 30, MinFriendly: 1,
 		MaxFriendly: 40, CooldownMs: 7, Category: 8, CategoryCooldownMs: 9, GcdMs: 10,
@@ -41,7 +41,8 @@ func TestReflectedSpellRequirementsAndEffectsAreIndependentFacts(t *testing.T) {
 		got.FamilyFlags[1] != 17 || got.Reagents[0].ItemId != 14 || got.Reagents[0].Count != 2 ||
 		got.Totems[0] != 15 || got.RequiredInventoryMask != 12 || got.RuneCost != 13 ||
 		got.Effects[0].TargetSelectorA != 15 || got.Effects[0].TargetSelectorB != 22 ||
-		got.Effects[0].Points != -1 || got.Effects[0].PointsPerLevel != 1.5 || got.MaxHostileYards != 30 {
+		got.Effects[0].Points != -1 || got.Effects[0].PointsPerLevel != 1.5 || got.MaxHostileYards != 30 ||
+		got.LearnedLevel != 40 || got.DispelType != uint32(spellcatalog.DispelCurse) {
 		t.Fatal("raw requirements/effects were classified away", got)
 	}
 	got.Attributes[1], got.Totems[0] = 0, 0

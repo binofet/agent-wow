@@ -316,6 +316,8 @@ message SpellMechanics {
   bool interrupts_casting = 31;
   bool restores_health = 32;
   bool provides_water_breathing = 33;
+  uint32 learned_level = 34;
+  uint32 dispel_type = 35;
 }
 message SpellReagent { uint32 item_id = 1; uint32 count = 2; }
 message SpellEffect {

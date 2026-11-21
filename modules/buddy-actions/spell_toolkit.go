@@ -202,6 +202,7 @@ func reflectedSpellMechanics(r spellcatalog.Spell) *actionsv1.SpellMechanics {
 		RuneCost: r.RuneCost, Totems: append([]uint32(nil), r.Totems...),
 		RequiresComboPoints: r.RequiresComboPoints(), InterruptsCasting: r.InterruptsCasting(),
 		RestoresHealth: r.IsHealing(), ProvidesWaterBreathing: r.ProvidesWaterBreathing(),
+		LearnedLevel: r.Level, DispelType: uint32(r.DispelType),
 	}
 	for _, reagent := range r.Reagents {
 		out.Reagents = append(out.Reagents, &actionsv1.SpellReagent{ItemId: reagent.ID, Count: reagent.Count})

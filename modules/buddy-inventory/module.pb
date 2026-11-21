@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ÿµ
+Å¶
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -797,7 +797,7 @@ power_type (R	powerType.
 generic_cast_supported (RgenericCastSupported3
 classification_reason (	RclassificationReasonF
 	mechanics (2(.warcraftbuddy.actions.v1.SpellMechanicsR	mechanics
-passive (Rpassive"š
+passive (Rpassive"à
 
 SpellMechanics
 
@@ -843,7 +843,10 @@ cooldownMs
 requires_combo_points (RrequiresComboPoints-
 interrupts_casting (RinterruptsCasting'
 restores_health  (RrestoresHealth8
-provides_water_breathing! (RprovidesWaterBreathing"=
+provides_water_breathing! (RprovidesWaterBreathing#
+learned_level" (RlearnedLevel
+dispel_type# (R
+dispelType"=
 SpellReagent
 item_id (RitemId
 count (Rcount"²

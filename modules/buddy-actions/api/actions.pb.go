@@ -2754,6 +2754,8 @@ type SpellMechanics struct {
 	InterruptsCasting      bool                   `protobuf:"varint,31,opt,name=interrupts_casting,json=interruptsCasting,proto3" json:"interrupts_casting,omitempty"`
 	RestoresHealth         bool                   `protobuf:"varint,32,opt,name=restores_health,json=restoresHealth,proto3" json:"restores_health,omitempty"`
 	ProvidesWaterBreathing bool                   `protobuf:"varint,33,opt,name=provides_water_breathing,json=providesWaterBreathing,proto3" json:"provides_water_breathing,omitempty"`
+	LearnedLevel           uint32                 `protobuf:"varint,34,opt,name=learned_level,json=learnedLevel,proto3" json:"learned_level,omitempty"`
+	DispelType             uint32                 `protobuf:"varint,35,opt,name=dispel_type,json=dispelType,proto3" json:"dispel_type,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -3017,6 +3019,20 @@ func (x *SpellMechanics) GetProvidesWaterBreathing() bool {
 		return x.ProvidesWaterBreathing
 	}
 	return false
+}
+
+func (x *SpellMechanics) GetLearnedLevel() uint32 {
+	if x != nil {
+		return x.LearnedLevel
+	}
+	return 0
+}
+
+func (x *SpellMechanics) GetDispelType() uint32 {
+	if x != nil {
+		return x.DispelType
+	}
+	return 0
 }
 
 type SpellReagent struct {
@@ -10456,7 +10472,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x16generic_cast_supported\x18\x17 \x01(\bR\x14genericCastSupported\x123\n" +
 	"\x15classification_reason\x18\x18 \x01(\tR\x14classificationReason\x12F\n" +
 	"\tmechanics\x18\x19 \x01(\v2(.warcraftbuddy.actions.v1.SpellMechanicsR\tmechanics\x12\x18\n" +
-	"\apassive\x18\x1a \x01(\bR\apassive\"\x9a\n" +
+	"\apassive\x18\x1a \x01(\bR\apassive\"\xe0\n" +
 	"\n" +
 	"\x0eSpellMechanics\x12\x1e\n" +
 	"\n" +
@@ -10502,7 +10518,10 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x15requires_combo_points\x18\x1e \x01(\bR\x13requiresComboPoints\x12-\n" +
 	"\x12interrupts_casting\x18\x1f \x01(\bR\x11interruptsCasting\x12'\n" +
 	"\x0frestores_health\x18  \x01(\bR\x0erestoresHealth\x128\n" +
-	"\x18provides_water_breathing\x18! \x01(\bR\x16providesWaterBreathing\"=\n" +
+	"\x18provides_water_breathing\x18! \x01(\bR\x16providesWaterBreathing\x12#\n" +
+	"\rlearned_level\x18\" \x01(\rR\flearnedLevel\x12\x1f\n" +
+	"\vdispel_type\x18# \x01(\rR\n" +
+	"dispelType\"=\n" +
 	"\fSpellReagent\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\rR\x05count\"\xb2\x03\n" +
