@@ -106,6 +106,57 @@ class StarterObjectivePolicyTests(unittest.TestCase):
         self.choice(facts("fallback", activeQuestIds=[18, 3903], level=1),
                     "wait", "waiting_for_level_2")
 
+    def test_sparse_dynamic_desired_ids_keep_exact_and_missing_membership(self):
+        value = facts("classify", desiredQuestIds=[99000, 4294967295],
+                      activeQuestIds=[4294967295, 99000])
+        self.choice(value, "wait", "matched_requested_active_quest_ids")
+        value["activeQuestIds"] = [99000]
+        self.choice(value, "hold_follow")
+        value["stage"] = "fallback"
+        self.choice(value, "wait", "waiting_for_level_observation")
+        value.update(level=1, desiredQuestIds=[18, 4294967295], activeQuestIds=[4294967295])
+        self.choice(value, "practice", "waiting_for_level_2")
+        value["activeQuestIds"].append(18)
+        self.choice(value, "wait", "requested_ids_present_extra_quests_unchanged")
+
+    def test_extra_sparse_active_ids_do_not_match_exact_goal_or_request_abandonment(self):
+        value = facts("classify", activeQuestIds=[7, 18, 3903, 99000, 4294967295])
+        self.assertEqual(self.choice(value, "hold_follow"), {"kind": "hold_follow"})
+        value["stage"] = "post_hold"
+        self.assertEqual(self.choice(value, "continue_quests"), {"kind": "continue_quests"})
+        value.update(stage="fallback", level=1)
+        self.assertEqual(self.choice(value, "wait", "requested_ids_present_extra_quests_unchanged"),
+                         {"kind": "wait", "phase": "requested_ids_present_extra_quests_unchanged"})
+
+    def test_confirmed_wolves_among_sparse_ids_preserves_only_the_existing_early_xp_rule(self):
+        value = facts(level=1, activeQuestIds=[7, 99000, 4294967295],
+                      confirmedQuestIds=[4294967295, 33, 99000])
+        self.assertIs(self.choice(value, "practice")["lootRequired"], False)
+        value["selfGuid"] = "87"
+        self.choice(value, "continue_quests")
+        value.update(selfGuid="4", confirmedQuestIds=[99000, 4294967295])
+        self.choice(value, "continue_quests")
+
+    def test_actual_wolf_and_existing_practice_phase_survive_sparse_active_ids(self):
+        value = facts(activeQuestIds=[4294967295, 33, 99000])
+        self.assertIs(self.choice(value, "practice")["lootRequired"], True)
+        value["wolfComplete"] = True
+        self.choice(value, "continue_quests")
+        value["actions"].update(practicing=True, practiceLeaseRemainingMs="60001")
+        self.choice(value, "wait", "finishing_current_practice_engagement_before_quests")
+        value["stage"] = "practice"
+        self.choice(value, "wait", "practicing_for_wolf_quest")
+        value["activeQuestIds"].remove(33)
+        self.choice(value, "wait", "practicing_to_level_2")
+
+    def test_sparse_objective_sets_still_reject_duplicates_and_uint32_overflow(self):
+        for field in ("activeQuestIds", "desiredQuestIds", "confirmedQuestIds"):
+            for rows in ([99000, 99000], [4294967295, 4294967295], [4294967296]):
+                with self.subTest(field=field, rows=rows):
+                    result = self.bridge.evaluate(self.source, facts(**{field: rows}))
+                    self.assertEqual(result.get("status"), "invalid", result)
+                    self.assertNotIn("choice", result)
+
     def test_exact_goal_precedes_owner_and_alive_checks_unless_exact_owned_practice(self):
         value = facts("classify", activeQuestIds=[7, 18, 3903])
         value["self"]["alive"] = False

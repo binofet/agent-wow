@@ -82,9 +82,11 @@ local function templates(rows, maximum)
   if not array(rows, maximum) then return nil end
   local out = {}
   for _, row in ipairs(rows) do
-    if type(row) ~= "table" or not uint(row.itemId, UINT32) or row.itemId == 0 or out[row.itemId] or
+    if type(row) ~= "table" or not uint(row.itemId, UINT32) or row.itemId == 0 or
         row.available ~= true or row.pending ~= nil and row.pending ~= false then return nil end
-    out[row.itemId] = row
+    local key = tostring(row.itemId)
+    if out[key] then return nil end
+    out[key] = row
   end
   return out
 end
@@ -95,8 +97,9 @@ local function plan(input)
     return {comparisons = {}, reason = "party_item_metadata_pending"}
   end
   for _, source in ipairs(input.sources) do
-    local item = type(source) == "table" and metadata[source.entry]
-    if not ref(source) or not item then return {comparisons = {}, reason = "party_item_metadata_pending"} end
+    if not ref(source) then return {comparisons = {}, reason = "party_item_metadata_pending"} end
+    local item = metadata[tostring(source.entry)]
+    if not item then return {comparisons = {}, reason = "party_item_metadata_pending"} end
     local quality = item.quality or 0
     if item.itemClass == 4 and uint(quality, UINT32) and quality >= 2 and quality <= 4 then
       result[#result + 1] = {source = source, slot = SLOTS[item.inventoryType or 0] or false}
@@ -216,7 +219,9 @@ local function compare(input)
         if type(equipped) ~= "table" or equipped.slot ~= slot then
           return "party_upgrade_or_unknown_comparison_retained"
         end
-        local proven, reason = dominated(item, equipped, type(equipped) == "table" and current[equipped.entry])
+        local current_item
+        if uint(equipped.entry, UINT32) and equipped.entry > 0 then current_item = current[tostring(equipped.entry)] end
+        local proven, reason = dominated(item, equipped, current_item)
         if not proven then return reason or "party_upgrade_or_unknown_comparison_retained" end
       end
     end

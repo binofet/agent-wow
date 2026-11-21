@@ -14,8 +14,10 @@ local function ids(v,max)
     if not array(v,max) then return end
     local set={}
     for _,q in ipairs(v) do
-        if type(q)~="number" or q<=0 or q>4294967295 or q%1~=0 or set[q] then return end
-        set[q]=true
+        if type(q)~="number" or q<=0 or q>4294967295 or q%1~=0 then return end
+        local key=tostring(q)
+        if set[key] then return end
+        set[key]=true
     end
     return set
 end
@@ -35,7 +37,7 @@ local function practice(input,active)
         local lease=a.practiceLeaseRemainingMs
         if not decimal(lease) then return invalid() end
         if #lease>5 or #lease==5 and lease>"60000" then
-            return ready(wait(active[33] and "practicing_for_wolf_quest" or "practicing_to_level_2"))
+            return ready(wait(active["33"] and "practicing_for_wolf_quest" or "practicing_to_level_2"))
         end
     end
     if not number(input.now) or not number(input.nextMutationAt) then return invalid() end
@@ -50,10 +52,10 @@ function M.decide(input)
     for q in pairs(desired) do if not active[q] then missing[q]=true; exact=false end end
     for q in pairs(active) do if not desired[q] then exact=false end end
     local complete,failed=input.wolfComplete==true,input.wolfFailed==true
-    local wolves=active[33] and not complete and not failed
+    local wolves=active["33"] and not complete and not failed
     local known,level=input.levelKnown==true,input.level
     if known and (type(level)~="number" or level<1 or level>80 or level%1~=0) then return invalid() end
-    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing[18] and (active[3903] or confirmed[33])
+    local xp=known and level==1 and (input.selfGuid=="4" or input.selfGuid=="5") and missing["18"] and (active["3903"] or confirmed["33"])
     local needed=wolves and known and level>=1 and level<=5 or xp
     local routine,a=input.routine,input.actions
     if routine==nil then routine={} end
@@ -116,7 +118,7 @@ function M.decide(input)
     elseif input.stage=="fallback" then
         if next(missing)==nil then return ready(wait("requested_ids_present_extra_quests_unchanged")) end
         local phase=known and level<2 and "waiting_for_level_2" or "waiting_for_level_observation"
-        if input.autonomous and known and level==1 and (missing[18] or missing[3903]) then
+        if input.autonomous and known and level==1 and (missing["18"] or missing["3903"]) then
             return ready({kind="practice",phase=phase})
         end
         return ready(wait(phase))

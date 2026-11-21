@@ -71,9 +71,9 @@ local function rows(items)
     for key,item in pairs(items) do
         count=count+1
         if count>128 or type(item)~="table" or not integer(item.itemId,2147483647) or item.itemId==0
-           or out[item.itemId] or type(key)=="string" and key~=tostring(item.itemId)
+           or out[tostring(item.itemId)] or type(key)=="string" and key~=tostring(item.itemId)
            or type(key)=="number" and not integer(key,128) then return end
-        out[item.itemId]=item
+        out[tostring(item.itemId)]=item
     end
     return out
 end
@@ -293,15 +293,15 @@ local function decide(input)
         if type(choice)~="table" then return result("invalid","reward_choices_invalid") end
         local index,id,count=zero(choice.index),choice.itemId,choice.count
         if not integer(index,5) or not integer(id,2147483647) or id==0 or not integer(count,uint32) or count==0
-           or indices[index] or ids[id] then return result("invalid","reward_choices_invalid") end
-        indices[index],ids[id]=true,true
+           or indices[index] or ids[tostring(id)] then return result("invalid","reward_choices_invalid") end
+        indices[index],ids[tostring(id)]=true,true
     end
     local metadata=rows(input.items)
     if not metadata then return result("invalid","reward_metadata_invalid") end
     local vendor_only=input.mode=="vendor_value"
     if not vendor_only and input.mode~="useful" then return result("invalid","reward_mode_invalid") end
     for _,choice in ipairs(choices) do
-        local item=metadata[choice.itemId]
+        local item=metadata[tostring(choice.itemId)]
         if not item or item.available~=true or item.pending~=nil and item.pending~=false then
             return result("pending","reward_choice_metadata_unknown")
         end
@@ -324,7 +324,7 @@ local function decide(input)
     end
     local best
     for position,choice in ipairs(choices) do
-        local item=metadata[choice.itemId]
+        local item=metadata[tostring(choice.itemId)]
         local score=not vendor_only and useful_score(item,input,proficiencies) or nil
         if score==nil or score<=0 then score=0 end
         local high,low=vendor_value(item.sellPrice or 0,choice.count)
