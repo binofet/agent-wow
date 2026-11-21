@@ -119,6 +119,11 @@ def preferred_reward(choices, quest_id, class_id):
     return None
 
 
+def starter_handoff(facts):
+    """Transport the starter handoff's observations to the same Lua policy."""
+    return _evaluate(dict(facts, mode="starter_handoff"))
+
+
 def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_subclasses=()):
     """Return {status, choice, reason}; choice is an unchanged actual offer row.
 

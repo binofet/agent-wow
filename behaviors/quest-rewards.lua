@@ -162,22 +162,131 @@ end
 local function better_vendor(high,low,best)
     return high>best.high or high==best.high and low>best.low
 end
+local function preferred_choice(choices,quest_id,class_id)
+    local preferred=(preferences[quest_id] or {})[class_id]
+    local selected
+    for position,choice in ipairs(choices) do
+        if choice.itemId==preferred then
+            if selected then return result("invalid","reward_choices_invalid") end
+            selected={status="selected",position=position,itemId=choice.itemId,choiceIndex=zero(choice.index),reason="quest_preference"}
+        end
+    end
+    return selected or result("pending","reward_preference_unavailable")
+end
+local function decimal(value)
+    if type(value)~="string" or #value==0 or #value>20 or #value>1 and byte_at(value,1)==48 or
+       #value==20 and value>"18446744073709551615" then return false end
+    for i=1,#value do local c=byte_at(value,i); if c<48 or c>57 then return false end end
+    return true
+end
+local function wire_uint(value)
+    return integer(value,9007199254740991) or decimal(value)
+end
+local function matches_uint(value,expected) return value==expected or value==tostring(expected) end
+local function starter_handoff(input)
+    local function ready(choice) return {status="ready",choice=choice} end
+    local function invalid() return result("invalid","starter_reward_facts_invalid") end
+    local entries={[783]=197,[5261]=196,[33]=196}
+    if not integer(input.questId,uint32) or not array(input.ownQuestIds,25) then return invalid() end
+    local active=false
+    for _,q in ipairs(input.ownQuestIds) do
+        if not integer(q,uint32) then return invalid() end
+        if q==input.questId then active=true end
+    end
+    local entry=entries[input.questId]
+    if not active or not entry then return ready({kind="ignore"}) end
+    if type(input.sessionId)~="string" or #input.sessionId==0 or #input.sessionId>128 or
+       type(input.now)~="number" or input.now-input.now~=0 or type(input.autonomous)~="boolean" or
+       not array(input.candidates,64) then return invalid() end
+    if input.claimReservation~=nil and input.claimReservation~=false then
+        if not array(input.claimReservation,3) or #input.claimReservation~=3 then return invalid() end
+        for _,part in ipairs(input.claimReservation) do
+            if type(part)~="string" or #part>128 then return invalid() end
+        end
+    end
+    local giver
+    for _,c in ipairs(input.candidates) do
+        if type(c)~="table" or not integer(c.priority,uint32) or type(c.distance)~="number" or
+           not (c.distance>=0 and c.distance<=9007199254740991) or not decimal(c.guid) or
+           not integer(c.entry,uint32) then return invalid() end
+        if c.entry==entry and (not giver or c.priority<giver.priority or c.priority==giver.priority and
+           (c.distance<giver.distance or c.distance==giver.distance and
+           (#c.guid<#giver.guid or #c.guid==#giver.guid and c.guid<giver.guid))) then giver=c end
+    end
+    if not giver then
+        if input.autonomous then return ready({kind="travel",entry=entry}) end
+        return ready({kind="wait",phase="waiting_for_observed_prerequisite_reward_giver"})
+    end
+    local offer=input.turnInOffer
+    local offered=false
+    if type(offer)=="table" then
+        if not wire_uint(zero(offer.questId)) then return invalid() end
+        if matches_uint(zero(offer.questId),input.questId) then
+            if not decimal(offer.npcGuid) then return invalid() end
+            if offer.npcGuid==giver.guid and offer.source=="reward_offer" and offer.canComplete==true then
+                if not decimal(offer.expiresInMs) then return invalid() end
+                offered=offer.expiresInMs~="0" and offer.rewardRequested~=true
+            end
+        end
+    end
+    if offered then
+        local choices=offer.choices
+        if not array(choices,6) then return result("invalid","reward_choices_invalid") end
+        local indices={}
+        for _,c in ipairs(choices) do
+            if type(c)~="table" or not integer(c.itemId,uint32) or c.itemId==0 or not integer(c.count,uint32) or
+               c.count==0 or not integer(zero(c.index),5) or indices[zero(c.index)] then
+                return result("invalid","reward_choices_invalid")
+            end
+            indices[zero(c.index)]=true
+        end
+        local position=#choices==0 and 0 or 1
+        if #choices>1 then
+            local class=0
+            if input.classKnown==true then
+                if not wire_uint(input.classId) then return invalid() end
+                class=type(input.classId)=="string" and tonumber(input.classId) or input.classId
+            end
+            local preferred=preferred_choice(choices,input.questId,class)
+            if preferred.status~="selected" then
+                return ready({kind="wait",phase="waiting_for_verified_prerequisite_reward_choice"})
+            end
+            position=preferred.position
+        end
+        if not decimal(offer.revision) or offer.revision=="0" then return result("invalid","reward_offer_revision_unknown") end
+        local bound=input.claimReservation
+        local used=type(bound)=="table" and #bound==3 and bound[1]==input.sessionId and bound[2]==giver.guid and bound[3]==offer.revision
+        if not used then
+            local choice=choices[position]
+            return ready({kind="claim_reward",questId=input.questId,npcGuid=giver.guid,offerRevision=offer.revision,
+                choicePosition=position,choiceIndex=choice and zero(choice.index) or 0,itemId=choice and choice.itemId or 0})
+        end
+    end
+    local last=input.lastMutation
+    if last==nil then last={} end
+    if type(last)~="table" then return invalid() end
+    if last.method=="buddy-quests.turn_in" then
+        if not wire_uint(zero(last.questId)) then return invalid() end
+        if matches_uint(zero(last.questId),input.questId) then
+            local at=zero(last.at)
+            if type(at)~="number" or at-at~=0 then return invalid() end
+            if input.now-at<60 then return ready({kind="wait",phase="waiting_for_prerequisite_turn_in_response"}) end
+        end
+    end
+    if not decimal(input.questLogRevision) then return invalid() end
+    return ready({kind="turn_in",questId=input.questId,npcGuid=giver.guid})
+end
 local function decide(input)
+    if input.mode=="starter_handoff" then return starter_handoff(input) end
     local choices=input.choices
     if not array(choices,6) or #choices<1 then return result("invalid","reward_choices_invalid") end
     if input.mode=="offer_preference" then
-        local preferred=(preferences[input.questId] or {})[input.classId]
-        local selected
         for position,choice in ipairs(choices) do
             if type(choice)~="table" or not integer(choice.itemId,2147483647) or choice.itemId==0 then
                 return result("invalid","reward_choices_invalid")
             end
-            if choice.itemId==preferred then
-                if selected then return result("invalid","reward_choices_invalid") end
-                selected={status="selected",position=position,itemId=choice.itemId,choiceIndex=zero(choice.index),reason="quest_preference"}
-            end
         end
-        return selected or result("pending","reward_preference_unavailable")
+        return preferred_choice(choices,input.questId,input.classId)
     end
     local indices,ids={},{}
     for _,choice in ipairs(choices) do

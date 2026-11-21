@@ -237,6 +237,101 @@ class SyncTests(unittest.TestCase):
                 self.assertEqual(claims[0]["expectedItemId"], 123 if choices else 0)
             self.assertTrue(all(p.get("questId") == 783 for m, p in self.mutate_calls(rpc) if m in ("buddy-quests.turn_in", "buddy-quests.claim_reward")))
 
+    def test_unavailable_reward_evaluator_never_uses_a_python_handoff(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-reward-evaluator"}):
+            profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_prerequisite_reward_policy")
+        self.assertFalse(self.mutate_calls(rpc))
+        self.assertEqual(profile.data["reservations"],{})
+        self.assertEqual(profile.data["nextMutationAt"],0)
+        self.assertNotIn("lastMutation",profile.data)
+
+    def test_lua_reward_output_cannot_invent_npc_menu_or_manual_travel(self):
+        for action in ({"kind":"turn_in","npcGuid":"123","questId":783},
+                       {"kind":"claim_reward","npcGuid":str(MCBRIDE),"questId":783,
+                        "offerRevision":"99","choicePosition":0,"choiceIndex":0,"itemId":0},
+                       {"kind":"travel","entry":196}):
+            profile,rpc,_,_=self.rig()
+            rpc.active={783}
+            with patch.object(sync.converse.quest_rewards,"starter_handoff",return_value={"status":"ready","choice":action}):
+                with self.assertRaises(sync.Error):profile.tick()
+            self.assertFalse(self.mutate_calls(rpc))
+            self.assertEqual(profile.data["reservations"],{})
+            self.assertEqual(profile.data["nextMutationAt"],0)
+
+    def test_wolf_shared_preference_retains_unrelated_full_uint32_item(self):
+        profile,rpc,clock,_=self.rig()
+        rpc.active,rpc.level={7,18,33},2
+        rpc.rewards=[{"index":5,"itemId":2**32-1,"count":2**32-1},
+                     {"index":4,"itemId":80,"count":1}]
+        profile.tick()
+        clock[0]+=10
+        profile.tick()
+        claim=next(p for m,p in rpc.calls if m=="buddy-quests.claim_reward")
+        self.assertEqual(claim["expectedItemId"],80)
+        self.assertEqual(claim["choiceIndex"],4)
+
+    def test_unrelated_reward_offer_does_not_validate_its_unused_revision(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        state=rpc.state()
+        state["turnInOffer"]={"questId":33,"revision":False,"npcGuid":False,"expiresInMs":False}
+        self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+        self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.turn_in")
+
+    def test_single_reward_does_not_validate_unused_class_log_revision_or_last_mutation(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        rpc.reward={"questId":783,"npcGuid":str(MCBRIDE),"revision":"5","expiresInMs":"60000",
+                    "source":"reward_offer","canComplete":True,"choices":[{"itemId":80,"count":1}]}
+        profile.self_player={"classKnown":True,"classId":False}
+        profile.data["lastMutation"]=False
+        state=rpc.state();state["questLogRevision"]=False
+        self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+        claim=self.mutate_calls(rpc)[-1]
+        self.assertEqual(claim[0],"buddy-quests.claim_reward")
+        self.assertEqual(claim[1]["expectedItemId"],80)
+
+    def test_unused_oversized_mutation_timers_do_not_cross_the_bridge_number_bound(self):
+        for timer in (2**64-1,1e300,2**2048):
+            for ready_claim in (False,True):
+                profile,rpc,_,_=self.rig()
+                rpc.active={783}
+                profile.data["lastMutation"]={"method":"buddy-quests.turn_in","questId":33,"at":timer}
+                if ready_claim:
+                    rpc.reward={"questId":783,"npcGuid":str(MCBRIDE),"revision":"5","expiresInMs":"60000",
+                                "source":"reward_offer","canComplete":True,"choices":[{"itemId":80,"count":1}]}
+                state=rpc.state()
+                self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+                self.assertEqual(self.mutate_calls(rpc)[-1][0],
+                                 "buddy-quests.claim_reward" if ready_claim else "buddy-quests.turn_in")
+
+    def test_consulted_oversized_mutation_timer_rejects_before_reserving(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        profile.data["lastMutation"]={"method":"buddy-quests.turn_in","questId":783,"at":2**64-1}
+        state=rpc.state()
+        with self.assertRaises(sync.Error):
+            profile.reward(state,rpc.session,profile.candidates(state),{783})
+        self.assertFalse(self.mutate_calls(rpc))
+        self.assertEqual(profile.data["reservations"],{})
+        self.assertEqual(profile.data["nextMutationAt"],0)
+
+    def test_unused_oversized_enum_text_does_not_cross_the_bridge_frame_bound(self):
+        for field in ("source","method"):
+            profile,rpc,_,_=self.rig()
+            rpc.active={783}
+            state=rpc.state()
+            if field=="source":
+                state["turnInOffer"]={"questId":783,"npcGuid":str(MCBRIDE),"source":"x"*35000,
+                                      "canComplete":True,"expiresInMs":False}
+            else:
+                profile.data["lastMutation"]={"method":"x"*35000,"questId":783,"at":False}
+            self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+            self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.turn_in")
+
     def test_claim_timeout_never_replays_same_offer_and_needs_both_reward_proofs(self):
         profile, rpc, clock, _ = self.rig()
         rpc.active, rpc.apply_claim = {783}, False
@@ -591,6 +686,8 @@ class SyncTests(unittest.TestCase):
     def test_malformed_prerequisite_reward_choice_never_emits_claim(self):
         for choices in ([{"index":6,"itemId":80,"count":1}],
                         [{"index":0,"itemId":80,"count":0}],
+                        [{"index":0,"itemId":2**64-1,"count":1}],
+                        [{"index":0,"itemId":80,"count":2**64-1}],
                         [{"index":0,"itemId":80,"count":1},{"index":0,"itemId":6070,"count":1}]):
             profile,rpc,clock,_=self.rig()
             rpc.active,rpc.rewards={7,18,33},choices
