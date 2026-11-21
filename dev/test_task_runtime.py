@@ -101,7 +101,7 @@ class BridgeDiagnosticsTests(unittest.TestCase):
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
-        folder = tempfile.TemporaryDirectory(dir='/private/tmp'); self.addCleanup(folder.cleanup)
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
         self.source, self.library = self.root / 'source.lua', self.root / 'library.lua'
         self.source.write_text('return {decide=function(s) return {} end} --GOOD')
