@@ -29,7 +29,7 @@ func starterLuaInput(rows map[string]any) map[string]any {
 
 func starterLuaRuntime(t *testing.T, source string) *behavior.Runtime {
 	t.Helper()
-	runtime := behavior.New()
+	runtime := newStarterSemanticRuntime(t)
 	if _, err := runtime.Reload(source, ""); err != nil {
 		t.Fatal(err)
 	}
