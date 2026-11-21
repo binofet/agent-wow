@@ -184,6 +184,7 @@ message EatBuffFoodReceipt {
 }
 service BuddyInventory {
   rpc GetState(google.protobuf.Empty) returns (State);
+  rpc RawGearFacts(google.protobuf.Empty) returns (State);
   rpc Discover(DiscoverRequest) returns (Discovery);
   rpc Move(MoveRequest) returns (State);
   rpc Equip(EquipRequest) returns (State);
