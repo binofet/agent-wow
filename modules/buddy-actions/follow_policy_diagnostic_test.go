@@ -208,25 +208,31 @@ func TestFollowPolicyFailurePublishedStateContractMatchesGeneratedAPI(t *testing
 			t.Fatal("diagnostic field lost its published string contract", name, got)
 		}
 	}
-	body, err := os.ReadFile("module.pb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	set := &descriptorpb.FileDescriptorSet{}
-	if err := proto.Unmarshal(body, set); err != nil {
-		t.Fatal(err)
-	}
-	files, err := protodesc.NewFiles(set)
-	if err != nil {
-		t.Fatal(err)
-	}
-	published, err := files.FindDescriptorByName(generated.FullName())
-	if err != nil {
-		t.Fatal(err)
-	}
-	publishedField := published.(protoreflect.MessageDescriptor).Fields().ByNumber(121)
-	if publishedField == nil || !proto.Equal(protodesc.ToFieldDescriptorProto(field), protodesc.ToFieldDescriptorProto(publishedField)) ||
-		!proto.Equal(protodesc.ToDescriptorProto(diagnostic), protodesc.ToDescriptorProto(publishedField.Message())) {
-		t.Fatal("module.pb and generated binary API disagree on the follow failure diagnostic")
+	// CorpseObservation embeds Actions.State, so its imported descriptor is
+	// part of the exposed status contract as well as buddy-actions.status.
+	for _, path := range []string{"module.pb", "../buddy-loot/module.pb"} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		set := &descriptorpb.FileDescriptorSet{}
+		if err := proto.Unmarshal(body, set); err != nil {
+			t.Fatal(err)
+		}
+		files, err := protodesc.NewFiles(set)
+		if err != nil {
+			t.Fatal(err)
+		}
+		published, err := files.FindDescriptorByName(generated.FullName())
+		if err != nil {
+			t.Fatal(err)
+		}
+		publishedState := published.(protoreflect.MessageDescriptor)
+		publishedField := publishedState.Fields().ByNumber(121)
+		if publishedField == nil || !proto.Equal(protodesc.ToDescriptorProto(generated), protodesc.ToDescriptorProto(publishedState)) ||
+			!proto.Equal(protodesc.ToFieldDescriptorProto(field), protodesc.ToFieldDescriptorProto(publishedField)) ||
+			!proto.Equal(protodesc.ToDescriptorProto(diagnostic), protodesc.ToDescriptorProto(publishedField.Message())) {
+			t.Fatal(path, "and generated binary API disagree on the follow failure diagnostic")
+		}
 	}
 }
