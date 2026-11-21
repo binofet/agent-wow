@@ -60,6 +60,18 @@ local function same_slot(a,b)
  end
  return kind(a)==kind(b)
 end
+-- Public addon slots have an observed entry but deliberately no private GUID.
+-- A missing GUID is not an empty slot; only a known slot can prove emptiness.
+function M.occupancy(equipped)
+ if type(equipped)~="table" or equipped.slotKnown==false then return "unknown" end
+ local guid=equipped.itemGuid
+ if guid~=nil and tostring(guid)~="0" then return "occupied" end
+ if equipped.slotKnown~=true then return "unknown" end
+ local entry=number(equipped.entry or 0)
+ if not entry or entry<0 or entry%1~=0 then return "unknown" end
+ if entry>0 then return guid==nil and "occupied" or "unknown" end
+ return "empty"
+end
 -- Returns upgrade, score gain, reason. No ownership or equip effect is implied.
 function M.compare(candidate,carried,current,equipped,options)
  options=options or M.tuning;carried,equipped=carried or {},equipped or {}
@@ -74,11 +86,14 @@ function M.compare(candidate,carried,current,equipped,options)
  end
  local next=stats(candidate)
  if not next then return false,0,"candidate_stats_unknown" end
- if tostring(equipped.itemGuid or "0")=="0" then
+ local occupancy=M.occupancy(equipped)
+ if occupancy=="unknown" then return false,0,"equipment_slot_observation_pending" end
+ if occupancy=="empty" then
   for _,value in pairs(next) do if value<0 and not options.statWeights then return false,0,"comparison_not_an_upgrade" end end
   return true,1,"empty_equipment_slot"
  end
  if not item_known(current) then return false,0,"displaced_item_template_pending" end
+ if equipped.entry~=nil and equipped.entry~=current.itemId then return false,0,"displaced_item_template_mismatch" end
  reason=enhanced_block(equipped,options)
  if reason then return false,0,reason end
  if not options.allow_special_templates and (current.hasSpell==true or current.armorComparisonKnown~=true or
@@ -158,7 +173,7 @@ function M.evaluate(frame)
     if worn and tostring(worn.itemGuid or "0")==tostring(dest.expectedEquippedItemGuid or "0") then
      local current=templates[tostring(worn.entry or 0)]
      local upgrade,gain,reason=M.compare(candidate,facts,current,worn,options)
-     local empty=tostring(worn.itemGuid or "0")=="0"
+     local empty=M.occupancy(worn)=="empty"
      if not best or upgrade and not best.upgrade or upgrade==best.upgrade and
        (empty and not best.empty or empty==best.empty and (gain>best.gain or gain==best.gain and slot<best.slot)) then
       best={slot=slot,old=dest.expectedEquippedItemGuid or "0",upgrade=upgrade,gain=gain,reason=reason,empty=empty}
