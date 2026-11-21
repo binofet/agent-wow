@@ -15,11 +15,12 @@ type DecisionSnapshot struct {
 // SessionState describes one committed boundary without running Lua or draining
 // events. Checkpoint and Output are detached copies, never writable VM state.
 type SessionState struct {
-	Status         SessionStatus
-	Checkpoint     map[string]any
-	LatestDecision *DecisionSnapshot
-	Clock          ClockReading
-	Pending        []ActionReceipt
+	SourceLimitBytes int
+	Status           SessionStatus
+	Checkpoint       map[string]any
+	LatestDecision   *DecisionSnapshot
+	Clock            ClockReading
+	Pending          []ActionReceipt
 }
 
 func (s *Session) State(ctx context.Context) (SessionState, error) {
@@ -32,7 +33,7 @@ func (s *Session) State(ctx context.Context) (SessionState, error) {
 		return SessionState{}, ErrSessionClosed
 	}
 	now := s.clockNow()
-	out := SessionState{Status: s.statusLocked(), Pending: s.outstandingLocked(),
+	out := SessionState{SourceLimitBytes: s.options.SourceBytes, Status: s.statusLocked(), Pending: s.outstandingLocked(),
 		Clock: ClockReading{MonotonicMs: max(0, now.Sub(s.clockStart).Milliseconds()), UnixMs: now.UnixMilli()}}
 	checkpoint, latest := s.state, s.latest
 	s.mu.Unlock()
@@ -49,6 +50,9 @@ func (s *Session) State(ctx context.Context) (SessionState, error) {
 	}
 	return out, nil
 }
+
+// SourceLimitBytes is immutable for the lifetime of this session and every reload.
+func (s *Session) SourceLimitBytes() int { return s.options.SourceBytes }
 
 // Session VM values have already passed the configured JSON value budget and
 // contain only detached objects, arrays and immutable JSON scalar values.

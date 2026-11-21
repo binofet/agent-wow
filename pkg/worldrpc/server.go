@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"mime"
 	"net"
 	"net/http"
 	"strconv"
+
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 )
 
 // Listen deliberately accepts numeric loopback addresses (or localhost mapped
@@ -56,6 +59,22 @@ type response struct {
 // browser-origin requests are rejected and CORS is disabled.
 // The caller owns HTTP serving, timeouts, and shutdown.
 func Handler(session Session) http.Handler {
+	handler, _ := HandlerWithSourceLimit(session, 0)
+	return handler
+}
+
+// HandlerWithSourceLimit admits the same configured source bytes as the Lua
+// session, including worst-case JSON escaping and the existing metadata budget.
+// Ordinary game requests keep their independent protocol envelope validation.
+func HandlerWithSourceLimit(session Session, sourceBytes int) (http.Handler, error) {
+	limit, err := behavior.SourceLimit(sourceBytes)
+	if err != nil {
+		return nil, err
+	}
+	if int64(limit) > (math.MaxInt64-(64<<10))/6 {
+		return nil, errors.New("policy source budget cannot be represented in a JSON request envelope")
+	}
+	requestBytes := int64(limit)*6 + (64 << 10)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rpc" {
 			http.NotFound(w, r)
@@ -85,8 +104,7 @@ func Handler(session Session) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// A 128 KiB Lua source can occupy up to six JSON bytes per source byte.
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, requestBytes))
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
@@ -120,7 +138,7 @@ func Handler(session Session) http.Handler {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(response{Version: "2.0", ID: req.ID, Result: result, Error: fault})
-	})
+	}), nil
 }
 
 func validID(id json.RawMessage) bool {

@@ -109,7 +109,7 @@ func TestPlayFlushesLogoutResponse(t *testing.T) {
 	out := readyWriter{make(chan []byte, 1)}
 	logger := slog.New(slog.NewTextHandler(out, nil))
 	exited := make(chan error, 1)
-	go func() { exited <- servePlay(context.Background(), listener, s, logger) }()
+	go func() { exited <- servePlay(context.Background(), listener, s, logger, 0) }()
 	url := readyURL(t, out.messages)
 	if body := postRPC(t, url, "session.getState"); !bytes.Contains(body, []byte(`"code":-32601`)) {
 		t.Fatal(string(body))
@@ -148,7 +148,7 @@ func TestPlayCancellationGracefullyLogsOut(t *testing.T) {
 	out := readyWriter{make(chan []byte, 1)}
 	logger := slog.New(slog.NewTextHandler(out, nil))
 	exited := make(chan error, 1)
-	go func() { exited <- servePlay(ctx, listener, s, logger) }()
+	go func() { exited <- servePlay(ctx, listener, s, logger, 0) }()
 	url := readyURL(t, out.messages)
 	cancel()
 	<-called
@@ -306,7 +306,7 @@ func TestPlayCommandListenerConfig(t *testing.T) {
 }
 
 func TestPlayArgumentValidation(t *testing.T) {
-	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}, {"play", "Mira", "--policy-execution-limit", "-1ms"}} {
+	for _, args := range [][]string{{"play"}, {"play", " "}, {"play", "Mira", "--timeout", "0"}, {"play", "Mira", "--policy-execution-limit", "-1ms"}, {"play", "Mira", "--policy-source-bytes", "-1"}} {
 		command := characterCommands{}.command()
 		command.SetArgs(args)
 		command.SetErr(io.Discard)
@@ -341,7 +341,7 @@ func TestPlayDoesNotAnnounceEndedSession(t *testing.T) {
 	s.Close()
 	var out bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&out, nil))
-	if err := servePlay(context.Background(), listener, s, logger); err == nil {
+	if err := servePlay(context.Background(), listener, s, logger, 0); err == nil {
 		t.Fatal("announced a closed session")
 	}
 	if out.Len() != 0 {

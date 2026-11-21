@@ -27,6 +27,7 @@ type Policy struct {
 	Context        []string      `mapstructure:"context"`
 	ExecutionLimit time.Duration `mapstructure:"execution_limit"`
 	ValueBytes     int           `mapstructure:"value_bytes"`
+	SourceBytes    int           `mapstructure:"source_bytes"`
 }
 
 // Config contains the settings shared by client packages.

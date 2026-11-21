@@ -42,6 +42,23 @@ func TestSourceReadCapInheritsCompositionLimitWithoutWideningJSON(t *testing.T) 
 	}
 }
 
+func TestSourceBudgetFlagAllowsCompositionAndRejectsConfiguredOverflow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "composed.lua")
+	code := `return {decide=function(s)return {ok=true} end}` + "\n--" + strings.Repeat("x", 256*1024)
+	if err := os.WriteFile(path, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--source", path, "--source-bytes", "524288"}, strings.NewReader(`{}`), &bytes.Buffer{}); err != nil {
+		t.Fatal("large configured source rejected", err)
+	}
+	if err := run([]string{"--source", path, "--source-bytes", "131072"}, strings.NewReader(`{}`), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "configured limit 131072") {
+		t.Fatal("configured overflow was not explicit", err)
+	}
+	if err := run([]string{"--source", path, "--source-bytes", "-1"}, strings.NewReader(`{}`), &bytes.Buffer{}); err == nil {
+		t.Fatal("negative source budget accepted")
+	}
+}
+
 func TestDescriptorAdmissionRejectsUnknownFieldsAndWrongTypes(t *testing.T) {
 	for _, tc := range []struct {
 		method, input string

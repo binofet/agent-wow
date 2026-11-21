@@ -56,7 +56,7 @@ func startCharacterPlay(ctx context.Context, realm auth.Realm, authSession *auth
 func (deps characterCommands) playCommand(timeout *time.Duration) *cobra.Command {
 	var moduleTimeout, policyExecutionLimit time.Duration
 	var policyFile, policyObservation string
-	var policyValueBytes int
+	var policyValueBytes, policySourceBytes int
 	var policyContext []string
 	command := &cobra.Command{
 		Use: "play <name|guid>", Short: "Enter the world and serve a local gameplay RPC API",
@@ -92,6 +92,12 @@ local RPC API for gameplay actions.`,
 			}
 			if cmd.Flags().Changed("policy-value-bytes") {
 				policy.ValueBytes = policyValueBytes
+			}
+			if cmd.Flags().Changed("policy-source-bytes") {
+				policy.SourceBytes = policySourceBytes
+			}
+			if policy.SourceBytes < 0 {
+				return errors.New("--policy-source-bytes must not be negative")
 			}
 			if policy.ValueBytes < 0 {
 				return errors.New("--policy-value-bytes must not be negative")
@@ -146,15 +152,16 @@ local RPC API for gameplay actions.`,
 			cancelPlay() // Startup cancellation cannot affect the transferred connection.
 			defer func() { result = errors.Join(result, session.Close()) }()
 			if policy.File != "" {
-				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit, ValueBytes: policy.ValueBytes}, policy.Context...); err != nil {
+				if err := runtime.StartObservedPolicyWithOptions(ctx, source, policy.Observation, behavior.SessionOptions{ExecutionLimit: policy.ExecutionLimit, ValueBytes: policy.ValueBytes, SourceBytes: policy.SourceBytes}, policy.Context...); err != nil {
 					return err
 				}
 			}
-			return servePlay(ctx, listener, session, logger)
+			return servePlay(ctx, listener, session, logger, policy.SourceBytes)
 		},
 	}
 	command.Flags().DurationVar(&moduleTimeout, "module-timeout", 2*time.Minute, "Timeout for starting all enabled modules")
 	command.Flags().IntVar(&policyValueBytes, "policy-value-bytes", 0, "JSON bytes per persistent observation or checkpoint (0 uses 8 MiB)")
+	command.Flags().IntVar(&policySourceBytes, "policy-source-bytes", 0, "Lua source bytes for initial load and every same-session reload (0 uses 8 MiB)")
 	command.Flags().DurationVar(&policyExecutionLimit, "policy-execution-limit", 0, "Timeout per persistent Lua callback (0 uses the default execution budget)")
 	command.Flags().StringVar(&policyFile, "policy-file", "", "Lua source for this character session")
 	command.Flags().StringVar(&policyObservation, "policy-observation", "", "Reflected read feed as phase=module.alias")
@@ -167,7 +174,7 @@ func worldRPCAddress() string {
 	return net.JoinHostPort(server.Host, strconv.Itoa(server.Port))
 }
 
-func servePlay(ctx context.Context, listener net.Listener, session playSession, logger *slog.Logger) error {
+func servePlay(ctx context.Context, listener net.Listener, session playSession, logger *slog.Logger, sourceBytes int) error {
 	select {
 	case <-session.Done():
 		if err := session.Err(); err != nil {
@@ -176,7 +183,11 @@ func servePlay(ctx context.Context, listener net.Listener, session playSession, 
 		return errors.New("gameplay session ended before RPC startup")
 	default:
 	}
-	server := &http.Server{Handler: worldrpc.Handler(session), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8 << 10, ErrorLog: slog.NewLogLogger(logger.With("component", "rpc").Handler(), slog.LevelError)}
+	handler, err := worldrpc.HandlerWithSourceLimit(session, sourceBytes)
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8 << 10, ErrorLog: slog.NewLogLogger(logger.With("component", "rpc").Handler(), slog.LevelError)}
 	serving := make(chan error, 1)
 	stopped := make(chan struct{})
 	go func() { defer close(stopped); serving <- server.Serve(listener) }()

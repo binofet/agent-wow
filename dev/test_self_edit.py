@@ -31,6 +31,24 @@ class RPC:
 
 
 class SelfEditTests(unittest.TestCase):
+    def test_composed_source_uses_reflected_host_budget_and_exact_readback(self):
+        class SessionRPC(RPC):
+            def __init__(self):
+                super().__init__();self.source='return {}';self.revision=edit.digest(self.source)
+            def call(self,method,params):
+                self.calls.append((method,params))
+                if method=='session.reload_policy':self.source=params['source'];self.revision=edit.digest(self.source)
+                return dict(characterGuid=self.guid,sessionId=self.sid,revision=self.revision,source=self.source,sourceLimitBytes=512*1024)
+        with tempfile.TemporaryDirectory() as folder:
+            rpc=SessionRPC();source='return {}\n--'+'x'*(256*1024)
+            candidate=Path(folder)/'source.lua';candidate.write_text(source)
+            self.assertEqual(edit.read_source(candidate),source)
+            result=edit.edit('apply',4,'body-a',rpc,source,rpc.revision,folder)
+            self.assertEqual(result['revision'],edit.digest(source));self.assertEqual(rpc.source,source)
+            with self.assertRaisesRegex(edit.c.ConversationError,'configured host source budget'):
+                edit.edit('apply',4,'body-a',rpc,source+'x'*(300*1024),rpc.revision,folder)
+            self.assertEqual(sum(m=='session.reload_policy' for m,p in rpc.calls),1)
+
     def test_direct_apply_readback_and_persistent_source(self):
         with tempfile.TemporaryDirectory() as folder:
             rpc = RPC()

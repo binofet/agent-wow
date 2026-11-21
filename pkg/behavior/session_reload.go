@@ -39,7 +39,7 @@ func (s *Session) reload(ctx context.Context, source, expectedRevision string, a
 		s.mu.Unlock()
 	}()
 
-	candidate, err := newSessionVMWithValues(ctx, source, s.options.ExecutionLimit, s.options.ValueBytes)
+	candidate, err := newSessionVMWithValues(ctx, source, s.options.ExecutionLimit, s.options.ValueBytes, s.options.SourceBytes)
 	if err != nil {
 		return s.Status().Revision, err
 	}

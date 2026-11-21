@@ -26,6 +26,7 @@ const (
 type SessionOptions struct {
 	ExecutionLimit time.Duration
 	ValueBytes     int // observation, checkpoint and decision JSON budget; zero uses the default
+	SourceBytes    int // Lua source bytes; zero uses DefaultSourceBytes
 }
 
 var (
@@ -97,6 +98,11 @@ func NewSession(ctx context.Context, sessionID, source string) (*Session, error)
 // NewSessionWithOptions starts a session with the supplied callback budget.
 // Reloads retain these options for every replacement VM.
 func NewSessionWithOptions(ctx context.Context, sessionID, source string, options SessionOptions) (*Session, error) {
+	sourceBytes, err := SourceLimit(options.SourceBytes)
+	if err != nil {
+		return nil, err
+	}
+	options.SourceBytes = sourceBytes
 	if options.ValueBytes < 0 {
 		return nil, errors.New("session value byte limit must not be negative")
 	}
@@ -112,7 +118,7 @@ func NewSessionWithOptions(ctx context.Context, sessionID, source string, option
 	if sessionID == "" || len(sessionID) > 128 || !utf8.ValidString(sessionID) {
 		return nil, errors.New("behavior session needs a bounded session id")
 	}
-	vm, err := newSessionVMWithValues(ctx, source, options.ExecutionLimit, options.ValueBytes)
+	vm, err := newSessionVMWithValues(ctx, source, options.ExecutionLimit, options.ValueBytes, options.SourceBytes)
 	if err != nil {
 		return nil, err
 	}
