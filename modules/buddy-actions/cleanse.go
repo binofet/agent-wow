@@ -49,15 +49,21 @@ func (s *Service) observeCleanseLocked(data []byte) error {
 		return bad
 	}
 	matched := false
+	observed := map[uint32]bool{}
 	for off := 0; off < len(rows); off += 5 {
 		entry := binary.LittleEndian.Uint32(rows[off:])
 		if entry == 0 || entry >= 1<<31 || rows[off+4] > 1 {
 			return bad
 		}
-		matched = matched || entry == op.cleanseAura
+		if op.cleanseEligible[entry] {
+			matched, observed[entry] = true, true
+		}
 	}
 	if matched {
 		op.cleanseLogObserved = true
+		for spell := range observed {
+			op.cleanseLogs[spell] = true
+		}
 		s.confirmCleanseLocked()
 	}
 	return nil
@@ -72,13 +78,15 @@ func (s *Service) confirmCleanseLocked() {
 	if set == nil {
 		return // Missing observations never prove removal.
 	}
-	current := set.slots[op.cleanseSlot]
-	changed := current.revision > op.cleanseRevision || set.complete && set.fullRevision > op.cleanseRevision
-	if !changed || current.spell == op.cleanseAura {
-		return
-	}
-	op.view.EffectObserved = true
-	if op.view.ServerCastGo {
-		op.view.Phase = "confirmed_effect"
+	for slot, before := range op.cleanseBaseline {
+		current := set.slots[slot]
+		changed := current.revision > before.revision || set.complete && set.fullRevision > before.revision
+		if op.cleanseLogs[before.spell] && changed && (current.spell != before.spell || current.caster != before.caster) {
+			op.view.EffectObserved = true
+			if op.view.ServerCastGo {
+				op.view.Phase = "confirmed_effect"
+			}
+			return
+		}
 	}
 }

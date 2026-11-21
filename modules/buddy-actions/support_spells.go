@@ -24,8 +24,9 @@ type supportAttempt struct {
 	selfChannel        bool
 	effectLogEligible  bool
 	cleanseAura        uint32
-	cleanseSlot        uint8
-	cleanseRevision    uint64
+	cleanseBaseline    map[uint8]observedBuffAura
+	cleanseEligible    map[uint32]bool
+	cleanseLogs        map[uint32]bool
 	cleanseLogObserved bool
 	policySpellToken   string
 }

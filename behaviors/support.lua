@@ -129,9 +129,9 @@ local function on_event(event)
     local target,slot=p.target_guid,tostring(p.aura_slot)
     state.blocked[target]=state.blocked[target] or {}
     local prior=state.blocked[target][slot]
-    if r.outcome=="failed" or r.outcome=="not_dispatched" then
+    if r.outcome=="confirmed" or r.outcome=="failed" or r.outcome=="not_dispatched" then
       if prior and prior.revision==p.aura_revision then state.blocked[target][slot]=nil end
-    elseif r.outcome=="transport_accepted" or r.outcome=="unknown" or r.outcome=="confirmed" or r.outcome=="settled_unverified" then
+    elseif r.outcome=="transport_accepted" or r.outcome=="unknown" or r.outcome=="settled_unverified" then
       state.blocked[target][slot]={revision=p.aura_revision}
     end
   end

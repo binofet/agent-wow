@@ -175,3 +175,36 @@ func TestEncounterLuaCleansingYieldsToHealingAndApproachesOnlyWhenNeeded(t *test
 		t.Fatal("Lua did not choose approach for out-of-range cleanse", out)
 	}
 }
+
+func TestLuaCleanseReconsidersRemainingAuraAfterConfirmedOtherRemoval(t *testing.T) {
+	host, err := behavior.NewSession(context.Background(), "cleanse-lua", cleansePolicySource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	obs := cleansePolicyObservation()
+	first, err := host.Decide(context.Background(), obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := host.ReserveAction(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: "cleanse-lua", ActionID: id, Outcome: behavior.ActionConfirmed,
+		Payload: map[string]any{"capability": "cleanse", "target_guid": "3", "aura_slot": float64(1), "aura_revision": "2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The verified cast removed the other compatible aura. The driving aura
+	// remains positively observed at its original revision and is still useful.
+	set := obs["support"].(map[string]any)["playerAuras"].([]any)[0].(map[string]any)
+	set["auras"] = set["auras"].([]any)[1:]
+	if _, err := host.Enqueue(behavior.Event{Kind: "encounter_observation", Value: obs}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := host.Decide(context.Background(), obs)
+	if err != nil || out.Output["action"].(map[string]any)["auraRevision"] != "2" {
+		t.Fatal("successful compatible dispel left remaining aura permanently blocked", out.Output, err)
+	}
+}

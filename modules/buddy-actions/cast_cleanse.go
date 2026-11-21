@@ -40,7 +40,8 @@ func (s *Service) cleanseTargetObservedLocked(w *worldv1.SnapshotResponse, targe
 // CastCleanse executes one caller-selected learned dispel on an exact observed
 // harmful aura. It never chooses a patient, aura, spell rank or support priority.
 // The server chooses which eligible aura a dispel actually removes; the effect
-// receipt requires its log and the requested slot's observed removal.
+// receipt requires its log and an actual compatible aura's observed removal;
+// the requested slot is an eligibility guard, not a server-side aura selector.
 func (s *Service) CastCleanse(ctx context.Context, r *actionsv1.CastCleanseRequest) (*actionsv1.State, error) {
 	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetTargetGuid() == 0 || r.GetSpellId() == 0 ||
 		r.GetAuraSlot() >= 255 || r.GetAuraRevision() == 0 || r.GetAuraSpellId() == 0 {
@@ -80,8 +81,16 @@ func (s *Service) CastCleanse(ctx context.Context, r *actionsv1.CastCleanseReque
 	if err := ctx.Err(); err != nil {
 		return nil, status.FromContextError(err).Err()
 	}
+	baseline := map[uint8]observedBuffAura{}
+	eligible := map[uint32]bool{}
+	for slot, observed := range set.slots {
+		if s.observedDispelMask(observed)&spell.FriendlyDispelMask() != 0 {
+			baseline[uint8(slot)], eligible[observed.spell] = observed, true
+		}
+	}
 	s.castTargetedSupportLocked(ctx, spell, r.TargetGuid, r.TargetGuid, string(spellcatalog.Cleanse))
 	s.supportOp.cleanseAura = aura.spell
-	s.supportOp.cleanseSlot, s.supportOp.cleanseRevision = uint8(r.AuraSlot), aura.revision
+	s.supportOp.cleanseBaseline, s.supportOp.cleanseEligible = baseline, eligible
+	s.supportOp.cleanseLogs = map[uint32]bool{}
 	return s.stateLocked(), nil
 }

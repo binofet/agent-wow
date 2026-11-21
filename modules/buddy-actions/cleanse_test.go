@@ -169,3 +169,30 @@ func TestNativeTickAndEmergencyNeverChooseCleanse(t *testing.T) {
 		t.Fatal("Go retained autonomous cleanse spell/patient selection", s.stateLocked(), f.packets)
 	}
 }
+
+func TestExactCleanseConfirmsActualCompatibleRemovalWhenServerChoosesAnotherAura(t *testing.T) {
+	s, f, _ := cleanseRig(t, 5, 527)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: cleanseAuraPacket(ownerGUID, 172, true)})
+	other := buffAura(ownerGUID, 0xf130000001000001, 2, 589, 15000)
+	other[len(packedGUID(ownerGUID))+5] ^= 0x90
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: other})
+	request := exactCleanseRequest(s, ownerGUID, 527)
+	if _, err := s.CastCleanse(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.supportOp.cleanseBaseline) != 2 {
+		t.Fatal("fixture did not expose two compatible aura applications")
+	}
+	goPacket := smiteEvent(true, s.castCount, ownerGUID)
+	_, _, _, offset, _ := castEvent(goPacket)
+	binary.LittleEndian.PutUint32(goPacket[offset-4:], 527)
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: goPacket})
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpelldispellog, Payload: dispelLog(ownerGUID, s.selfGUID, 527, 589)})
+	if s.supportOp.view.EffectObserved {
+		t.Fatal("log alone claimed actual removal")
+	}
+	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGAuraUpdate, Payload: buffAura(ownerGUID, 0, 2, 0, 0)})
+	if !s.supportOp.view.EffectObserved || s.supportOp.view.Phase != "confirmed_effect" || s.buffAuras[ownerGUID].slots[1].spell != 172 || countPackets(f, opcode.CMSGCastSpell) != 1 {
+		t.Fatal("server-selected compatible effect was lost or requested aura removal was invented", s.supportOp.view.String())
+	}
+}
