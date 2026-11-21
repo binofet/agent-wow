@@ -2,9 +2,11 @@
 import copy
 import importlib.machinery
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 def load(name, filename):
@@ -115,13 +117,18 @@ class Client:
 
 
 class DisenchantTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        binary = os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY')
+        if not binary or not Path(binary).is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError('build cmd/luapolicy and set BUDDY_LUAPOLICY_TEST_BINARY to its executable')
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name).resolve()/'de.json'
         self.fixture, self.clock = Fixture(), Clock()
-    def worker(self, journal, **kwargs):
+    def worker(self, journal, scanner=None, **kwargs):
         self.fixture.journal = journal
-        return m.Worker(self.fixture.client(journal.url), journal, m.Scanner(self.fixture.client), guard=lambda: None,
+        return m.Worker(self.fixture.client(journal.url), journal, scanner or m.Scanner(self.fixture.client), guard=lambda: None,
             now=self.clock.now, sleep=self.clock.sleep, **kwargs)
     def attempts(self): return [p for _, method, p in self.fixture.calls if method == 'buddy-professions.attempt']
     def scan(self): return m.Scanner(self.fixture.client).scan(self.fixture.inventories[4])
@@ -291,6 +298,129 @@ class DisenchantTests(unittest.TestCase):
             self.assertEqual(result['phase'], 'blocked'); self.assertFalse(self.attempts())
             self.assertEqual(journal.data['attempts'][0]['phase'], 'not_dispatched')
             self.assertNotIn('receipt', journal.data['attempts'][0])
+
+    def test_lua_equal_armor_and_stats_dominate_but_future_level_and_proficiency_keep(self):
+        for mode, reason in (
+            ('equal', ''),
+            ('future', 'future_party_equipment_retained'),
+            ('unknown_skill', 'future_or_unknown_party_proficiency_retained'),
+        ):
+            with self.subTest(mode=mode):
+                self.fixture = Fixture()
+                self.fixture.metadata[5001].update(itemLevel=5, armor=10, stats=[dict(type=5, value=1)])
+                if mode == 'future':
+                    self.fixture.metadata[5000]['requiredLevel'] = 11
+                elif mode == 'unknown_skill':
+                    self.fixture.worlds[1]['selfSkillsKnown'] = False
+                source, actual, _ = self.scan()
+                self.assertEqual(actual, reason)
+                self.assertEqual(source is not None, mode == 'equal')
+                self.assertFalse(self.attempts())
+
+    def test_lua_candidate_rotation_reaches_ninth_item_and_selected_recheck_does_not_rotate(self):
+        bag = self.fixture.inventories[4]['inventoryBags'][0]['slots']
+        for slot in range(9):
+            bag[slot] = dict(self.fixture.source, slot=slot, itemGuid=str(SOURCE+slot), entry=6000+slot)
+            self.fixture.metadata[6000+slot] = template(6000+slot, itemClass=2 if slot < 8 else 4)
+        scanner = m.Scanner(self.fixture.client)
+        first, _, _ = scanner.scan(self.fixture.inventories[4])
+        self.assertIsNone(first)
+        self.assertEqual(scanner.offset, 8)
+        second, reason, proof = scanner.scan(self.fixture.inventories[4])
+        self.assertFalse(reason)
+        self.assertEqual(second['itemGuid'], str(SOURCE+8))
+        self.assertEqual(scanner.offset, 16)
+        selected, repeated_reason, repeated_proof = scanner.scan(self.fixture.inventories[4], selected=second)
+        self.assertEqual(m.town.ref(selected), m.town.ref(second))
+        self.assertEqual(repeated_reason, '')
+        self.assertEqual(repeated_proof, proof)
+        self.assertEqual(scanner.offset, 16)
+        self.assertFalse(self.attempts())
+
+    def test_full_carried_inventory_fits_real_lua_evaluator_budget(self):
+        sources = []
+        for bag in range(5):
+            for slot in range(16 if bag == 0 else 36):
+                sources.append(dict(bag=bag, slot=slot, itemGuid=str(SOURCE+len(sources)),
+                    entry=5000, stackCount=1))
+        self.assertEqual(len(sources), 160)
+        scanner = m.Scanner(self.fixture.client)
+        value = dict(phase='candidates', sources=list(reversed(sources)), offset=156)
+        self.assertLess(len(m.runtime.packed(value, m.runtime.MAX_INPUT)), 32768)
+        result = scanner.bridge.evaluate((m.ROOT/'behaviors/disenchant.lua').read_text(), value)
+        self.assertEqual(result['sources'], sources[156:]+sources[:4])
+        self.assertEqual(result['offset'], 164)
+        self.assertEqual(result['reason'], '')
+        self.assertFalse(self.attempts())
+
+    def test_lua_failure_and_invalid_output_retain_source_without_reservation(self):
+        original = (m.ROOT/'behaviors/disenchant.lua').read_text()
+        wrapper = 'local base=(function()\n'+original+'\nend)()\n'
+        policies = {
+            'syntax': 'return { decide = function(',
+            'timeout': 'return {decide=function(frame) while true do end end}',
+            'bad_result': 'return {decide=function(frame) return {sources="unsafe",offset=8,reason=""} end}',
+            'bad_reason': wrapper+'return {decide=function(frame) '
+                'if frame.phase=="compare" then return {reason=false} end return base.decide(frame) end}',
+            'foreign_source': wrapper+'return {decide=function(frame) local result=base.decide(frame); '
+                'if frame.phase=="select" and result.source then result.source.itemGuid="'+str(SOURCE+1)+'" end '
+                'return result end}',
+        }
+        for name, source in policies.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                policy = Path(folder)/'disenchant.lua'
+                policy.write_text(source)
+                self.fixture = Fixture()
+                scanner = m.Scanner(self.fixture.client, policy=policy)
+                with m.Journal(Path(folder).resolve()/'journal.json') as journal:
+                    result = self.worker(journal, scanner=scanner).run()
+                    self.assertEqual(result['phase'], 'blocked')
+                    self.assertFalse(journal.data['attempts'])
+                self.assertFalse(self.attempts())
+                self.assertEqual(self.fixture.inventories[4]['inventoryBags'][0]['slots'][2]['itemGuid'], str(SOURCE))
+
+    def test_missing_lua_binary_retains_source_and_never_uses_a_python_decision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, BUDDY_LUAPOLICY_TEST_BINARY=str(Path(folder)/'absent')):
+                scanner = m.Scanner(self.fixture.client)
+                with m.Journal(Path(folder).resolve()/'journal.json') as journal:
+                    result = self.worker(journal, scanner=scanner).run()
+                    self.assertEqual(result['phase'], 'blocked')
+                    self.assertFalse(journal.data['attempts'])
+            self.assertFalse(self.attempts())
+
+    def test_edited_lua_source_changes_decision_for_same_validated_facts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            policy = Path(folder)/'disenchant.lua'
+            original = (m.ROOT/'behaviors/disenchant.lua').read_text()
+            policy.write_text(original)
+            scanner = m.Scanner(self.fixture.client, policy=policy)
+            self.assertIsNotNone(scanner.scan(self.fixture.inventories[4])[0])
+            policy.write_text('local original=(function()\n'+original+'\nend)()\n'
+                'return {decide=function(frame)\n'
+                '  if frame.phase=="compare" then return {reason="edited_lua_keeps_item"} end\n'
+                '  return original.decide(frame)\n'
+                'end}')
+            source, reason, _ = scanner.scan(self.fixture.inventories[4])
+            self.assertIsNone(source)
+            self.assertEqual(reason, 'edited_lua_keeps_item')
+            self.assertFalse(self.attempts())
+
+    def test_policy_edit_between_shared_comparisons_aborts_before_reservation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            policy = Path(folder)/'disenchant.lua'
+            original = (m.ROOT/'behaviors/disenchant.lua').read_text()
+            policy.write_text(original)
+            def edit_before_second_comparison(guid, method, params):
+                if method == 'buddy-professions.inspect_disenchant':
+                    policy.write_text(original+'\n-- next reviewed revision\n')
+            self.fixture.before_call = edit_before_second_comparison
+            scanner = m.Scanner(self.fixture.client, policy=policy)
+            with m.Journal(Path(folder).resolve()/'journal.json') as journal:
+                result = self.worker(journal, scanner=scanner).run()
+                self.assertEqual(result['phase'], 'blocked')
+                self.assertFalse(journal.data['attempts'])
+            self.assertFalse(self.attempts())
 
 
 if __name__ == '__main__': unittest.main()
