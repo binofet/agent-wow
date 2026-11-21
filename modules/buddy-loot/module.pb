@@ -1595,7 +1595,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
- :
+„;
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1646,12 +1646,14 @@ lastGather
 
 session_id (	R	sessionId)
 inventory_paused (RinventoryPausedK
-capacity_pause (2$.warcraftbuddy.loot.v1.CapacityPauseRcapacityPause"|
+capacity_pause (2$.warcraftbuddy.loot.v1.CapacityPauseRcapacityPause"
 CapacityPause
 source_guid (R
 sourceGuid
 	gather_id (RgatherId-
-inventory_revision (RinventoryRevision"Ï
+inventory_revision (RinventoryRevision
+pause_token (	R
+pauseToken"ð
 ResumeSourceRequest
 
 session_id (	R	sessionId
@@ -1659,7 +1661,9 @@ session_id (	R	sessionId
 source_guid (R
 sourceGuid
 	gather_id (RgatherId>
-expected_inventory_revision (RexpectedInventoryRevision"Ø
+expected_inventory_revision (RexpectedInventoryRevision
+pause_token (	R
+pauseToken"ù
 ResumeSourceReceipt
 
 session_id (	R	sessionId
@@ -1668,7 +1672,9 @@ session_id (	R	sessionId
 sourceGuid
 	gather_id (RgatherId-
 inventory_revision (RinventoryRevision
-cleared (Rcleared"Ç
+cleared (Rcleared
+pause_token (	R
+pauseToken"Ç
 OpenCorpseRequest
 
 session_id (	R	sessionId

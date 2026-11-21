@@ -119,7 +119,7 @@ func TestContainerCapacityLuaWaitsForFreshFactsAndYieldsToSupport(t *testing.T) 
 }
 
 func TestExactContainerCapacityResumeRetainsSourceCustodyAndRevisionFences(t *testing.T) {
-	for _, mode := range []string{"session", "body", "source", "gather", "inventory", "unknown_inventory", "cleanup", "pending", "uncertain_source", "release_unobserved", "cancelled"} {
+	for _, mode := range []string{"session", "body", "source", "gather", "token", "inventory", "unknown_inventory", "cleanup", "pending", "uncertain_source", "release_unobserved", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, _ := capacityPausedGather(t)
 			f.world.InventoryRevision++
@@ -134,6 +134,8 @@ func TestExactContainerCapacityResumeRetainsSourceCustodyAndRevisionFences(t *te
 				r.SourceGuid++
 			case "gather":
 				r.GatherId++
+			case "token":
+				r.PauseToken += "foreign"
 			case "inventory":
 				r.ExpectedInventoryRevision++
 			case "unknown_inventory":
@@ -161,5 +163,20 @@ func TestExactContainerCapacityResumeRetainsSourceCustodyAndRevisionFences(t *te
 				t.Fatal("invalid reset cleared source custody", mode, err, current(t, s), f.packets)
 			}
 		})
+	}
+}
+
+func TestContainerCapacityOldModuleGenerationCannotClearRecreatedPause(t *testing.T) {
+	old, oldWorld, _ := capacityPausedGather(t)
+	oldWorld.world.InventoryRevision++
+	request := resumeCapacityRequest(t, old)
+	recreated, freshWorld, _ := capacityPausedGather(t)
+	freshWorld.world.InventoryRevision++
+	if request.SessionId != recreated.state.SessionId || request.GatherId != recreated.state.LastGather.Id || request.ExpectedInventoryRevision != freshWorld.world.InventoryRevision {
+		t.Fatal("fixture did not reproduce same-SID counter reuse")
+	}
+	_, err := recreated.ResumeSource(context.Background(), request)
+	if status.Code(err) != codes.FailedPrecondition || !current(t, recreated).InventoryPaused {
+		t.Fatal("old module generation cleared a new source pause", err, current(t, recreated))
 	}
 }

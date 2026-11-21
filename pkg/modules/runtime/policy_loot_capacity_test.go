@@ -36,7 +36,7 @@ type capacityResumeNative struct {
 func (s *capacityResumeNative) ResumeSource(ctx context.Context, r *lootv1.ResumeSourceRequest) (*lootv1.ResumeSourceReceipt, error) {
 	result, err := s.Service.ResumeSource(ctx, r)
 	if err == nil && s.loseResponse {
-		return nil, status.Error(codes.Unavailable, "metadata response unavailable")
+		return nil, status.Error(codes.DeadlineExceeded, "metadata reply timed out")
 	}
 	return result, err
 }

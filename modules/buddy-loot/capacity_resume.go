@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	"strconv"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
@@ -12,11 +13,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+func (s *Service) capacityPauseToken() string {
+	if s.state.LastGather == nil {
+		return ""
+	}
+	return s.capacityEpoch + ":" + strconv.FormatUint(s.state.LastGather.Id, 10)
+}
+
 // ResumeSource changes only a source-bound local refusal record. Lua chooses
 // the inventory conditions and timing; the retained opener independently checks
 // its current source/quest/position before any later game write.
 func (s *Service) ResumeSource(ctx context.Context, r *lootv1.ResumeSourceRequest) (*lootv1.ResumeSourceReceipt, error) {
-	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetSourceGuid() == 0 || r.GetGatherId() == 0 || r.GetExpectedInventoryRevision() == 0 {
+	if r.GetSessionId() == "" || r.GetSelfGuid() == 0 || r.GetSourceGuid() == 0 || r.GetGatherId() == 0 || r.GetExpectedInventoryRevision() == 0 || r.GetPauseToken() == "" {
 		return nil, status.Error(codes.InvalidArgument, "exact session body source gather and inventory revision required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -31,7 +39,7 @@ func (s *Service) ResumeSource(ctx context.Context, r *lootv1.ResumeSourceReques
 		return proto.Clone(s.capacityResumeReceipt).(*lootv1.ResumeSourceReceipt), nil
 	}
 	gather := s.state.LastGather
-	if !s.state.InventoryPaused || !s.pausedGather || s.pausedSource != r.SourceGuid || gather == nil || gather.Id != r.GatherId || gather.ObjectGuid != r.SourceGuid ||
+	if !s.state.InventoryPaused || !s.pausedGather || s.pausedSource != r.SourceGuid || gather == nil || gather.Id != r.GatherId || gather.ObjectGuid != r.SourceGuid || r.PauseToken != s.capacityPauseToken() ||
 		s.token != "" || s.state.PendingCorpseGuid != 0 || s.state.PendingGameObjectGuid != 0 || s.cleanup.source != 0 || s.hasUnsettledLootMutation() || s.retired[r.SourceGuid] ||
 		gather.OpeningTransportWritten && !gather.ReleaseObserved {
 		return nil, status.Error(codes.FailedPrecondition, "matching settled capacity pause without unresolved source custody required")
@@ -57,6 +65,6 @@ func (s *Service) ResumeSource(ctx context.Context, r *lootv1.ResumeSourceReques
 	s.state.Reason = "caller_resumed_exact_container_capacity_pause"
 	s.capacityResumeRequest = proto.Clone(r).(*lootv1.ResumeSourceRequest)
 	s.capacityResumeReceipt = &lootv1.ResumeSourceReceipt{SessionId: r.SessionId, SelfGuid: r.SelfGuid, SourceGuid: r.SourceGuid,
-		GatherId: r.GatherId, InventoryRevision: r.ExpectedInventoryRevision, Cleared: true}
+		GatherId: r.GatherId, InventoryRevision: r.ExpectedInventoryRevision, Cleared: true, PauseToken: r.PauseToken}
 	return proto.Clone(s.capacityResumeReceipt).(*lootv1.ResumeSourceReceipt), nil
 }

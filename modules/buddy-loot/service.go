@@ -4,6 +4,7 @@ package buddyloot
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -78,10 +79,11 @@ type Service struct {
 	lastLootWriteError                         error
 	capacityResumeRequest                      *lootv1.ResumeSourceRequest
 	capacityResumeReceipt                      *lootv1.ResumeSourceReceipt
+	capacityEpoch                              string
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
-	s := &Service{session: session, catalog: gamecatalog.Default(), selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}}
+	s := &Service{session: session, catalog: gamecatalog.Default(), selfGUID: self, now: time.Now, state: lootv1.State{Phase: "disabled", Reason: "disabled"}, seen: map[uint64]bool{}, capacityEpoch: rand.Text()}
 	if len(sessionID) > 0 {
 		s.state.SessionId = sessionID[0]
 	}
@@ -130,7 +132,7 @@ func (s *Service) automaticCorpseContext(w *worldv1.SnapshotResponse, a *actions
 func (s *Service) snapshotLocked() *lootv1.State {
 	r := proto.Clone(&s.state).(*lootv1.State)
 	if s.state.InventoryPaused && s.pausedGather && s.pausedSource != 0 && s.state.LastGather != nil && s.state.LastGather.ObjectGuid == s.pausedSource {
-		r.CapacityPause = &lootv1.CapacityPause{SourceGuid: s.pausedSource, GatherId: s.state.LastGather.Id, InventoryRevision: s.rejectedInventoryRevision}
+		r.CapacityPause = &lootv1.CapacityPause{SourceGuid: s.pausedSource, GatherId: s.state.LastGather.Id, InventoryRevision: s.rejectedInventoryRevision, PauseToken: s.capacityPauseToken()}
 	}
 	if s.state.Enabled && s.now().Before(s.until) {
 		r.EnabledRemainingMs = uint64(s.until.Sub(s.now()).Milliseconds())

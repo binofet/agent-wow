@@ -163,11 +163,11 @@ function M.decide(frame,encounter,quiet,urgent)
    return #a>#b or #a==#b and a>b
   end
   out.phase="waiting_for_new_container_capacity"
-  if (o.state or {}).enabled==true and id(pause.sourceGuid) and id(pause.gatherId) and
+  if (o.state or {}).enabled==true and id(pause.sourceGuid) and id(pause.gatherId) and id(pause.pauseToken) and
    (o.generalFreeSlots or 0)>=M.tuning.resumeMinFreeSlots and newer(o.inventoryRevision,pause.inventoryRevision) then
    out.phase="resume_container_capacity"
    out.action={capability="loot_resume_source",sessionId=o.sessionId,selfGuid=o.selfGuid,sourceGuid=pause.sourceGuid,
-    gatherId=pause.gatherId,expectedInventoryRevision=o.inventoryRevision,observationSequence=frame.input.observationSequence}
+    gatherId=pause.gatherId,pauseToken=pause.pauseToken,expectedInventoryRevision=o.inventoryRevision,observationSequence=frame.input.observationSequence}
   end
   return out
  end

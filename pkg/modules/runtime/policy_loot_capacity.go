@@ -18,7 +18,7 @@ func (p *SessionPolicy) resolveLootCapacityResume(action map[string]any) (Policy
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current owned session body required")
 	}
 	params := map[string]any{}
-	for _, key := range []string{"sessionId", "selfGuid", "sourceGuid", "gatherId", "expectedInventoryRevision"} {
+	for _, key := range []string{"sessionId", "selfGuid", "sourceGuid", "gatherId", "expectedInventoryRevision", "pauseToken"} {
 		params[key] = action[key]
 	}
 	raw, err := json.Marshal(params)
@@ -26,7 +26,7 @@ func (p *SessionPolicy) resolveLootCapacityResume(action map[string]any) (Policy
 		return PolicyDispatch{}, err
 	}
 	request := &lootv1.ResumeSourceRequest{}
-	if err = protojson.Unmarshal(raw, request); err != nil || request.SourceGuid == 0 || request.GatherId == 0 || request.ExpectedInventoryRevision == 0 {
+	if err = protojson.Unmarshal(raw, request); err != nil || request.SourceGuid == 0 || request.GatherId == 0 || request.ExpectedInventoryRevision == 0 || request.PauseToken == "" {
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact source gather and inventory revision required")
 	}
 	if _, _, err = p.manager.lookup("buddy-loot", "resume_source", true); err != nil {
@@ -49,7 +49,7 @@ func (p *SessionPolicy) resolveLootCapacityResume(action map[string]any) (Policy
 		var receipt map[string]any
 		typed := &lootv1.ResumeSourceReceipt{}
 		if json.Unmarshal(response, &receipt) != nil || protojson.Unmarshal(response, typed) != nil || !typed.Cleared || typed.SessionId != request.SessionId ||
-			typed.SelfGuid != request.SelfGuid || typed.SourceGuid != request.SourceGuid || typed.GatherId != request.GatherId || typed.InventoryRevision != request.ExpectedInventoryRevision {
+			typed.SelfGuid != request.SelfGuid || typed.SourceGuid != request.SourceGuid || typed.GatherId != request.GatherId || typed.InventoryRevision != request.ExpectedInventoryRevision || typed.PauseToken != request.PauseToken {
 			payload["reconciliationRequired"] = true
 			return behavior.ActionSettledUnverified, payload
 		}

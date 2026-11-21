@@ -62,14 +62,14 @@ message State {
 }
 // Recorded capacity refusal for one retained container operation. This is
 // evidence, not a native decision about when another attempt should start.
-message CapacityPause { uint64 source_guid = 1; uint64 gather_id = 2; uint64 inventory_revision = 3; }
+message CapacityPause { uint64 source_guid = 1; uint64 gather_id = 2; uint64 inventory_revision = 3; string pause_token = 4; }
 message ResumeSourceRequest {
   string session_id = 1; uint64 self_guid = 2; uint64 source_guid = 3;
-  uint64 gather_id = 4; uint64 expected_inventory_revision = 5;
+  uint64 gather_id = 4; uint64 expected_inventory_revision = 5; string pause_token = 6;
 }
 message ResumeSourceReceipt {
   string session_id = 1; uint64 self_guid = 2; uint64 source_guid = 3;
-  uint64 gather_id = 4; uint64 inventory_revision = 5; bool cleared = 6;
+  uint64 gather_id = 4; uint64 inventory_revision = 5; bool cleared = 6; string pause_token = 7;
 }
 // Exact source identity, not a request for the native module to choose a corpse.
 message OpenCorpseRequest {

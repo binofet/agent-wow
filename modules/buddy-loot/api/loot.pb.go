@@ -564,6 +564,7 @@ type CapacityPause struct {
 	SourceGuid        uint64                 `protobuf:"varint,1,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	GatherId          uint64                 `protobuf:"varint,2,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
 	InventoryRevision uint64                 `protobuf:"varint,3,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	PauseToken        string                 `protobuf:"bytes,4,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -619,6 +620,13 @@ func (x *CapacityPause) GetInventoryRevision() uint64 {
 	return 0
 }
 
+func (x *CapacityPause) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
+}
+
 type ResumeSourceRequest struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -626,6 +634,7 @@ type ResumeSourceRequest struct {
 	SourceGuid                uint64                 `protobuf:"varint,3,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
 	GatherId                  uint64                 `protobuf:"varint,4,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
 	ExpectedInventoryRevision uint64                 `protobuf:"varint,5,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	PauseToken                string                 `protobuf:"bytes,6,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -695,6 +704,13 @@ func (x *ResumeSourceRequest) GetExpectedInventoryRevision() uint64 {
 	return 0
 }
 
+func (x *ResumeSourceRequest) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
+}
+
 type ResumeSourceReceipt struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -703,6 +719,7 @@ type ResumeSourceReceipt struct {
 	GatherId          uint64                 `protobuf:"varint,4,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
 	InventoryRevision uint64                 `protobuf:"varint,5,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
 	Cleared           bool                   `protobuf:"varint,6,opt,name=cleared,proto3" json:"cleared,omitempty"`
+	PauseToken        string                 `protobuf:"bytes,7,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -777,6 +794,13 @@ func (x *ResumeSourceReceipt) GetCleared() bool {
 		return x.Cleared
 	}
 	return false
+}
+
+func (x *ResumeSourceReceipt) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
 }
 
 // Exact source identity, not a request for the native module to choose a corpse.
@@ -1915,12 +1939,14 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x13 \x01(\tR\tsessionId\x12)\n" +
 	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused\x12K\n" +
-	"\x0ecapacity_pause\x18\x15 \x01(\v2$.warcraftbuddy.loot.v1.CapacityPauseR\rcapacityPause\"|\n" +
+	"\x0ecapacity_pause\x18\x15 \x01(\v2$.warcraftbuddy.loot.v1.CapacityPauseR\rcapacityPause\"\x9d\x01\n" +
 	"\rCapacityPause\x12\x1f\n" +
 	"\vsource_guid\x18\x01 \x01(\x04R\n" +
 	"sourceGuid\x12\x1b\n" +
 	"\tgather_id\x18\x02 \x01(\x04R\bgatherId\x12-\n" +
-	"\x12inventory_revision\x18\x03 \x01(\x04R\x11inventoryRevision\"\xcf\x01\n" +
+	"\x12inventory_revision\x18\x03 \x01(\x04R\x11inventoryRevision\x12\x1f\n" +
+	"\vpause_token\x18\x04 \x01(\tR\n" +
+	"pauseToken\"\xf0\x01\n" +
 	"\x13ResumeSourceRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1928,7 +1954,9 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\vsource_guid\x18\x03 \x01(\x04R\n" +
 	"sourceGuid\x12\x1b\n" +
 	"\tgather_id\x18\x04 \x01(\x04R\bgatherId\x12>\n" +
-	"\x1bexpected_inventory_revision\x18\x05 \x01(\x04R\x19expectedInventoryRevision\"\xd8\x01\n" +
+	"\x1bexpected_inventory_revision\x18\x05 \x01(\x04R\x19expectedInventoryRevision\x12\x1f\n" +
+	"\vpause_token\x18\x06 \x01(\tR\n" +
+	"pauseToken\"\xf9\x01\n" +
 	"\x13ResumeSourceReceipt\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1937,7 +1965,9 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"sourceGuid\x12\x1b\n" +
 	"\tgather_id\x18\x04 \x01(\x04R\bgatherId\x12-\n" +
 	"\x12inventory_revision\x18\x05 \x01(\x04R\x11inventoryRevision\x12\x18\n" +
-	"\acleared\x18\x06 \x01(\bR\acleared\"\xc7\x02\n" +
+	"\acleared\x18\x06 \x01(\bR\acleared\x12\x1f\n" +
+	"\vpause_token\x18\a \x01(\tR\n" +
+	"pauseToken\"\xc7\x02\n" +
 	"\x11OpenCorpseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
