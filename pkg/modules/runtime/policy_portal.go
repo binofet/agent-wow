@@ -27,12 +27,19 @@ func (p *SessionPolicy) refreshPortalCatchup(ctx context.Context, decision map[s
 	if !ok {
 		return status.Error(codes.InvalidArgument, "portal goal requires the observed start position")
 	}
-	for _, value := range []any{goal["selfGuid"], goal["visitId"], goal["ownerGuid"], goal["followRevision"], goal["witnessRevision"], start["revision"]} {
+	for _, value := range []any{goal["selfGuid"], goal["visitId"], goal["ownerGuid"], goal["witnessRevision"], start["revision"]} {
 		text, ok := value.(string)
 		id, err := strconv.ParseUint(text, 10, 64)
 		if !ok || err != nil || id == 0 || strconv.FormatUint(id, 10) != text {
 			return status.Error(codes.InvalidArgument, "canonical portal identities and observed revisions required")
 		}
+	}
+	// Follow is a counter. Zero names the body's untouched native intent,
+	// while the body, visit, witness and observed start remain nonzero.
+	counter, ok := goal["followRevision"].(string)
+	revision, err := strconv.ParseUint(counter, 10, 64)
+	if !ok || err != nil || strconv.FormatUint(revision, 10) != counter {
+		return status.Error(codes.InvalidArgument, "canonical portal follow counter required")
 	}
 	// observationSequence belongs to the host admission check. Every other
 	// field is decoded by the production protobuf schema without float IDs.

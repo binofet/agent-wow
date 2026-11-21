@@ -157,6 +157,7 @@ type Service struct {
 	followNav                            followNavigation
 	followPortal                         dungeonPortalFollow
 	portalGoal                           portalCatchupGoal
+	portalGoalRevision                   uint64
 	portalWitnessRevision                uint64
 	swimFollow                           swimFollowRoute
 	swimTrail                            swimTrail
