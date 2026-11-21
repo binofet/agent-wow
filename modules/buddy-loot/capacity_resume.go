@@ -32,7 +32,7 @@ func (s *Service) ResumeSource(ctx context.Context, r *lootv1.ResumeSourceReques
 	}
 	gather := s.state.LastGather
 	if !s.state.InventoryPaused || !s.pausedGather || s.pausedSource != r.SourceGuid || gather == nil || gather.Id != r.GatherId || gather.ObjectGuid != r.SourceGuid ||
-		s.token != "" || s.pendingGUID() != 0 || s.cleanup.source != 0 || s.hasUnsettledLootMutation() || s.retired[r.SourceGuid] ||
+		s.token != "" || s.state.PendingCorpseGuid != 0 || s.state.PendingGameObjectGuid != 0 || s.cleanup.source != 0 || s.hasUnsettledLootMutation() || s.retired[r.SourceGuid] ||
 		gather.OpeningTransportWritten && !gather.ReleaseObserved {
 		return nil, status.Error(codes.FailedPrecondition, "matching settled capacity pause without unresolved source custody required")
 	}

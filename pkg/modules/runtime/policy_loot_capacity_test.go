@@ -141,12 +141,30 @@ func TestPolicyContainerCapacityResumeUsesNativeRouteWithoutPhysicalPending(t *t
 			if unknown {
 				want = behavior.ActionSettledUnverified
 			}
-			if err != nil || receipt == nil || receipt.Outcome != want || host.vm.Status().Pending != 0 || writes != 3 {
+			if err != nil || receipt == nil || receipt.Outcome != want || writes != 3 {
 				t.Fatal("metadata reply suppressed physical support or sent packet", receipt, err, host.vm.Status(), writes)
 			}
 			after, _ := native.GetState(context.Background(), &emptypb.Empty{})
 			if after.InventoryPaused || after.CapacityPause != nil || after.LastGather.ItemPushObserved || after.LastGather.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED {
 				t.Fatal("resume lost rejection evidence or invented pickup", after)
+			}
+			// Terminal receipts are consumed on the next policy turn. Exercise
+			// that actual frame rather than assuming synchronous ledger removal.
+			observed, err = m.InvokeJSON(context.Background(), "buddy-loot.observe_corpses", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(observed, &value); err != nil {
+				t.Fatal(err)
+			}
+			seq, err = host.Enqueue(behavior.Event{Kind: "corpse_loot_observation", Value: value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			n = strconv.FormatUint(seq, 10)
+			out, again, err := host.Step(context.Background(), map[string]any{"observationSequence": n, "observationSequences": map[string]any{"corpse_loot": n}}, nil)
+			if err != nil || again != nil || out["action"] != nil || host.vm.Status().Pending != 0 || writes != 3 {
+				t.Fatal("metadata uncertainty persisted in the physical action ledger or replayed", out, again, err, host.vm.Status(), writes)
 			}
 		})
 	}
