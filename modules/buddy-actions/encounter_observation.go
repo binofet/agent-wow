@@ -108,6 +108,9 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		Engagement: make(map[string]*actionsv1.EncounterEngagement),
 		Spells:     make(map[string]*actionsv1.EncounterSpell),
 	}
+	if s.state.LastTransportFailure != nil {
+		out.LastTransportFailure = proto.Clone(s.state.LastTransportFailure).(*actionsv1.TransportFailure)
+	}
 	state := s.readPartyStateLocked(ctx)
 	var online map[uint64]bool
 	if state.GetSessionId() == s.sessionID {
