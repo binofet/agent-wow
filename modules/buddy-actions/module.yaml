@@ -12,6 +12,7 @@ rpc:
   approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
   interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
+  set_follow_formation: /warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
   assist: /warcraftbuddy.actions.v1.BuddyActions/Assist
   engage_npc: /warcraftbuddy.actions.v1.BuddyActions/EngageNPC
@@ -98,6 +99,7 @@ script_api:
   status: {effect: read}
   behavior: {effect: read}
   spell_toolkit: {effect: read}
+  set_follow_formation: {effect: mutation, description: Refresh a finite exact Lua follow destination without moving or changing standing intent}
   follow: {effect: mutation}
   assist: {effect: mutation}
   engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}

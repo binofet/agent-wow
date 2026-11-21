@@ -542,6 +542,24 @@ message BodyMovementState {
   float z = 8;
   string detail = 9;
 }
+// A finite Lua-selected personal destination. Geometry and movement custody
+// remain native; refreshing this goal does not itself write a movement packet.
+message FollowFormationRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 owner_guid = 4;
+  uint64 owner_position_revision = 5;
+  float x = 6;
+  float y = 7;
+  float z = 8;
+  float orientation = 9;
+  double start_distance = 10;
+  double stop_distance = 11;
+  bool ready = 12;
+  bool hold = 13;
+  uint64 follow_revision = 14;
+}
 message NavigationObservation {
   bool body_movement_supported = 1;
   bool following = 2;
@@ -556,6 +574,11 @@ message NavigationObservation {
   float goal_z = 11;
   BodyMovementState body_movement = 12;
   MovementOwnerState movement_owner = 13;
+  bool follow_formation_supported = 14;
+  bool owner_arrival = 15;
+  // The followed owner is observable even outside the current party.
+  EncounterPlayer follow_owner = 16;
+  uint64 follow_revision = 17;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -749,6 +772,7 @@ service BuddyActions {
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);
   rpc InterruptCast(InterruptCastRequest) returns (State);
+  rpc SetFollowFormation(FollowFormationRequest) returns (google.protobuf.Empty);
   rpc Follow(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);

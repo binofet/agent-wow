@@ -4,6 +4,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY api ./api
 COPY pkg ./pkg
+COPY behaviors ./behaviors
 COPY modules/buddy-world/api ./modules/buddy-world/api
 COPY modules/buddy-party/api ./modules/buddy-party/api
 COPY modules/buddy-actions ./modules/buddy-actions

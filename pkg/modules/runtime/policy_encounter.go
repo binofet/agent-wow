@@ -57,6 +57,9 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 		return err
 	}
 	p.encounterLeaseHeld = true
+	if err := p.refreshFollowFormation(ctx, decision, current); err != nil {
+		return err
+	}
 	if hostile {
 		dispatch.spell.encounterVisit = current.visit
 	}
