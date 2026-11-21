@@ -368,7 +368,9 @@ local function decide_encounter(frame)
             tuning=intent.targetTuning})
     end
     out.queue, out.burstIntent, state.burstIntent = queue.queue, queue.burstIntent, queue.burstIntent
-    out.nextPullGuid = queue.queue[1] and queue.queue[1].targetGuid
+    -- The global queue still retains future candidates during a fight. They
+    -- are not the next pull until the present encounter (including CC) ends.
+    out.nextPullGuid = not in_combat and queue.queue[1] and queue.queue[1].targetGuid or nil
     for _, row in ipairs(queue.queue) do
         if row.protected then out.protected[#out.protected+1] = row.targetGuid end
     end
