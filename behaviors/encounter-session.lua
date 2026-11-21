@@ -175,7 +175,13 @@ local function owns_current_observation(obs, frame, self)
 end
 
 local function observe_targets(obs, members)
-    local targets, auras = {}, {}
+    local targets, auras, protected = {}, {}, {}
+    -- Read CC reservations before evaluating reset evidence. Full health is
+    -- normal under Polymorph and must not erase an active encounter target.
+    for _, aura in ipairs(obs.protectedAuras or {}) do protected[aura.targetGuid] = true end
+    for target, aura in pairs(obs.controlObserved or {}) do
+        if aura.active == true then protected[target] = true end
+    end
     state.engaged = state.engaged or {}
     local players = obs.players or {}
     local in_combat = false
@@ -186,9 +192,17 @@ local function observe_targets(obs, members)
             local witnessed = npc.engaged == true and victim and (victim == obs.selfGuid or members[victim]) and
                               same_map(players[victim], obs.mapId)
             if witnessed then state.engaged[target] = true end
-            if npc.aliveKnown == true and npc.alive == false then state.engaged[target] = nil end
+            local reserved = npc.protected == true or state.controls[target] == true or protected[target] == true
+            local flags = npc.unitFlags or 0 -- Known protobuf flags omit an explicit zero.
+            local reset = alive(npc) and npc.unitFlagsKnown == true and type(flags) == "number" and
+                flags >= 0 and flags <= 4294967295 and math.floor(flags / 524288) % 2 == 0 and
+                npc.engaged ~= true and npc.healthKnown == true and type(npc.health) == "number" and
+                npc.health > 0 and npc.health == npc.maxHealth and not reserved
+            -- Death or a positively observed full evade reset ends historical
+            -- engagement. Losing/changing the victim alone never ends it.
+            if npc.aliveKnown == true and npc.alive == false or reset then state.engaged[target] = nil end
             local engaged = state.engaged[target] == true
-            targets[target] = copy_target(npc, engaged, npc.protected == true or state.controls[target] == true)
+            targets[target] = copy_target(npc, engaged, reserved)
             if engaged and alive(npc) then in_combat = true end
         end
     end
