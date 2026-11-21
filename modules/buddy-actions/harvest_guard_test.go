@@ -151,7 +151,9 @@ func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 		if !x.s.state.CastPending {
 			t.Fatal("Lua defense did not execute after harvest yielded", x.s.stateLocked())
 		}
-		harvestIntents(t, x.s)
+		if !x.s.state.Following || x.s.state.Assisting {
+			t.Fatal("harvest or defense rewrote unrelated legacy intent", x.s.stateLocked())
+		}
 	})
 	t.Run("heal", func(t *testing.T) {
 		s, f, _ := harvestRig(t)
