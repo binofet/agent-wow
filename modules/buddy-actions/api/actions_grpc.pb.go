@@ -21,6 +21,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyActions_FlightpathReference_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
 	BuddyActions_FlightpathObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
 	BuddyActions_QueryFlightpath_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
 	BuddyActions_SelectTarget_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
@@ -81,6 +82,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	QueryFlightpath(ctx context.Context, in *FlightpathQueryRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
@@ -145,6 +147,16 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlightpathReferenceResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_FlightpathReference_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error) {
@@ -691,6 +703,7 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error)
 	QueryFlightpath(context.Context, *FlightpathQueryRequest) (*FlightpathObservationResponse, error)
 	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
@@ -757,6 +770,9 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FlightpathReference not implemented")
+}
 func (UnimplementedBuddyActionsServer) FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FlightpathObservation not implemented")
 }
@@ -938,6 +954,24 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_FlightpathReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FlightpathReferenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).FlightpathReference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_FlightpathReference_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).FlightpathReference(ctx, req.(*FlightpathReferenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_FlightpathObservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1919,6 +1953,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "FlightpathReference",
+			Handler:    _BuddyActions_FlightpathReference_Handler,
+		},
 		{
 			MethodName: "FlightpathObservation",
 			Handler:    _BuddyActions_FlightpathObservation_Handler,
