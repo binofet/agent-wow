@@ -48,7 +48,7 @@ func TestIndependentActionsRejectOwnerControlsEvenWithVisibleOwner(t *testing.T)
 
 func TestIndependentModeRetainsBoundedOwnPractice(t *testing.T) {
 	base, f, _ := practiceRig(t, 8)
-	s := NewIndependentService(f, 1)
+	s := NewIndependentService(f, 1, base.sessionID)
 	s.now, s.planPath, s.planMapPath = base.now, base.planPath, base.planMapPath
 	s.SetNavigationDataDir("/fixture/client-data")
 	learnSpells(s, fireball)
