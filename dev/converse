@@ -455,7 +455,38 @@ builtin --expected-revision HASH. Never substitute a new body SID after a stale
 binding rejection. Lua takes effect only after a verified same-body policy
 revision result. Make gameplay changes in Lua. Inspect the reflected native
 contracts with session.describe when you need a game action. Report missing
-native bindings with the exact requested action and receipt. Shared mission Lua FSMs instead use the
+native bindings with the exact requested action and receipt.
+For a temporary gameplay request such as waiting here for Joel's next pull,
+create or adapt a Lua task frame with an ID, current body/visit, stages, observed
+completion, cancellation and cleanup. Do not add chat phrase parsers or sticky
+wait flags. Generating and running a small disposable Lua task fulfills that
+gameplay request; Joel does not need to separately request development or approve
+its code. Preserve the shared targeting queue, current CC, healing and defense;
+only suspend the task's voluntary follow/pull movement. Resume ordinary behavior
+when the pull arrives or the task ends, restoring only unchanged intent owned by
+that task. Existing task-runner missions can use behaviors/task-stack.lua
+push/await/pop/call; an attached policy needs an explicit Lua integration.
+Use a finite native movement lease with expiry/fallback for a temporary hold.
+follow(false) alone stays disabled after worker loss; stop_movement alone cannot
+hold future native follow. An interaction lease also blocks casts. If the needed
+movement lease is absent, report that precise harness gap; do not claim the wait
+task is already built or make a permanent toggle its cleanup mechanism.
+For spatial tactics, share a Lua plan with a cleared anchor/area, uncleared
+frontier/chokepoint, pull lane, untouched-pack danger zones and role-specific
+operating areas, allowing temporary CC/scout exceptions. A tank-first doorway
+pull keeps other roles behind the cleared frontier until observed outcomes
+justify advancing it. The target queue chooses enemies; the spatial plan chooses
+permissible positions and accounts for risk. Do not invent room/pack facts or
+advertise these script concepts as an already-built spatial planner.
+Use development.policyCommands.input for structured intent to an existing Lua
+handler. It invokes dev/policy-input and the reflected session.send_event host
+method with this exact sessionId/characterGuid, kind command and object value.
+If no handler implements the desired task yet, read show, implement/test it and
+CAS-apply the complete source first. Do not assume arbitrary task names work.
+If older chat metadata omits input, inspect session.describe hostMethods: a
+missing helper entry does not prove the native host method is absent. An event
+queued ACK is delivery, not a completed task; verify phase and actual effects.
+Shared mission Lua FSMs instead use the
 actual shared_tasks.<kind>.sourcePath recorded by that task host. Edit that
 configured mission source (including its composed modules), not only sharedScripts
 or native behavior CAS. The host hot reloads this path on its next tick, retaining
@@ -3135,7 +3166,7 @@ class BuddyControls:
 
 
 class Conversation:
-    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None):
+    def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False):
         self.rpc, self.brain, self.player_guid, self.status = rpc, brain, player_guid, status
         self.cursor = 0
         self.session_id = ""
@@ -3151,6 +3182,7 @@ class Conversation:
         self.history = {"SAY": [], "PARTY": [], "WHISPER": []}
         self.replies = 0
         self.initialized = False
+        self.resume_whispers = resume_whispers
         self.stopped = stopped
         self.shared_quest_attempts = set()
         self.reply_emotes = dict(LEGACY_EMOTES)
@@ -3281,14 +3313,50 @@ class Conversation:
         except ConversationError:
             self.status(sharedQuestPhase="reconciling_shared_quest_request")
 
+    def owner_whisper_recipient(self, message):
+        # Inbound AzerothCore whispers can repeat the sender in this field.
+        # The server's body-specific chat feed already supplies the routing.
+        return integer(message.get("receiverGuid", "0")) in (0, self.player_guid, self.character_guid)
+
+    def retained_owner_whisper(self, result):
+        messages = result.get("messages", [])
+        if not isinstance(messages, list) or len(messages) > 256:
+            raise ConversationError("Chat poll messages are invalid")
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            sender = integer(message.get("senderGuid", "0"))
+            channel = message.get("channel")
+            if channel == "WHISPER_INFORM" and message.get("self") is True and sender == self.player_guid:
+                # A later private reply already covered the retained input.
+                return None
+            if (channel == "WHISPER" and sender == self.player_guid and message.get("self", False) is False
+                    and self.owner_whisper_recipient(message)):
+                try:
+                    plain_text(message.get("text"))
+                except ConversationError:
+                    continue
+                return message
+        return None
+
     def baseline(self):
         result = self.rpc.call("buddy-chat.poll", {"afterSequence": "0", "limit": 256})
-        self.cursor = integer(result.get("latestSequence", "0"))
-        self.session_id = result.get("sessionId", "")
-        if not isinstance(self.session_id, str) or len(self.session_id) > 128:
+        latest = integer(result.get("latestSequence", "0"))
+        session = result.get("sessionId", "")
+        if not isinstance(session, str) or len(session) > 128:
             raise ConversationError("Chat module session identifier is invalid")
+        retained = self.retained_owner_whisper(result) if self.resume_whispers and session else None
+        self.resume_whispers = False
+        self.session_id = session
+        self.cursor = latest
         self.initialized = True
+        if retained:
+            sequence = integer(retained.get("sequence", "0"))
+            if 0 < sequence <= latest:
+                self.cursor = sequence - 1
+                return dict(result, messages=[retained], nextSequence=str(latest), cursorLost=False)
         self.status(phase="listening", cursor=self.cursor)
+        return None
 
     def reset_body(self):
         self.initialized = False
@@ -3381,18 +3449,23 @@ class Conversation:
             if callable(poll_combat):poll_combat()
         self.poll_shared_quest()
         if not self.initialized:
-            self.baseline()
-            return
-        try:
-            params = {"afterSequence": str(self.cursor), "limit": 256}
-            if self.session_id:
-                params["sessionId"] = self.session_id
-            result = self.rpc.call("buddy-chat.poll", params)
-        except CursorReset:
-            # Session-local sequence numbers are not durable. Tail the replacement
-            # ring rather than interpreting stale history as new player input.
-            self.reset_body()
-            return
+            result = self.baseline()
+            if result is None:
+                return
+            # The retained packet is the latest unanswered owner whisper from
+            # this live chat body. Apply ordinary ownership, development and
+            # post-generation body checks; startup is not a read-only mode.
+        else:
+            try:
+                params = {"afterSequence": str(self.cursor), "limit": 256}
+                if self.session_id:
+                    params["sessionId"] = self.session_id
+                result = self.rpc.call("buddy-chat.poll", params)
+            except CursorReset:
+                # Session-local sequence numbers are not durable. Tail the replacement
+                # ring rather than interpreting stale history as new player input.
+                self.reset_body()
+                return
         latest = integer(result.get("latestSequence", "0"))
         next_sequence = integer(result.get("nextSequence", str(self.cursor)))
         if latest < self.cursor or next_sequence < self.cursor or next_sequence > latest:
@@ -3993,6 +4066,8 @@ def main(argv=None):
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
                         help="Override the registered in-game Lua development worktree")
+    parser.add_argument("--resume-whispers", action="store_true",
+                        help="Handle the latest unanswered owner whisper in the current live chat body once")
     parser.add_argument("--poll-seconds", type=float, default=1)
     parser.add_argument("--reply-timeout", type=float, default=120)
     parser.add_argument("--max-replies", type=int, default=200)
@@ -4056,7 +4131,7 @@ def main(argv=None):
         record["modelSelection"] = brain.model_selection()
         controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid)
         conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
-                                    controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster)
+                                    controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers)
         deadline = time.monotonic() + args.max_hours * 3600
         status()
         print(f"{args.character_name} ({args.character_class}) is listening for {args.player_name} and addressed roster party messages.", flush=True)
