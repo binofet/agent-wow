@@ -76,9 +76,18 @@ func (s *Service) offenseCustodyFor(spell spellcatalog.Spell) bool {
 	}
 	return !s.closed && !s.clientControlLost && !s.clientControlRestoring && !s.state.CastPending &&
 		!s.state.Traveling && !s.state.MotionUnconfirmed && !s.state.AutoAttackUnconfirmed &&
-		!s.state.AutoAttackRequested && !s.autoStopping && s.state.InteractionOwner == "" && !s.state.Practicing &&
+		(!s.state.AutoAttackRequested || s.acknowledgedSwingActiveLocked()) && !s.autoStopping && s.state.InteractionOwner == "" && !s.state.Practicing &&
 		!s.engage.active && !s.fargodeep.active && !s.crowdControl.active && !s.recovery.state.Active &&
 		!s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal)
+}
+
+// AutoAttackRequested records the still-desired attack and remains true after
+// ATTACKSTART. A current matching server acknowledgement releases the start
+// reservation so instant strikes may coexist with the active swing.
+func (s *Service) acknowledgedSwingActiveLocked() bool {
+	return s.state.AutoAttacking && s.autoTarget != 0 && s.state.AutoAttackTargetGuid == s.autoTarget &&
+		s.encounterVisit.bound && s.meleeAcknowledgedVisit == s.encounterVisit.revision &&
+		s.pendingMeleeOperationLocked() == nil
 }
 
 func (s *Service) offenseCasterFor(self *worldv1.PlayerState, spell spellcatalog.Spell) bool {

@@ -59,6 +59,55 @@ func TestExactWeaponStrikesCoexistWithMovingAutoswingAndUseCatalogGCD(t *testing
 	}
 }
 
+func TestWeaponStrikeAfterRealAttackStartAcknowledgement(t *testing.T) {
+	for _, mode := range []string{"acknowledged", "pending", "unconfirmed", "stale visit", "foreign swing"} {
+		t.Run(mode, func(t *testing.T) {
+			s, f, start, _ := exactMeleeFixture(t)
+			learnSpells(s, autoAttack, 1760)
+			self := f.world.Self
+			self.ClassId, self.PowerType, self.Power, self.MaxPower = 4, 3, 100, 100
+			s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 15, inventory: 13, valid: true}
+			f.world.RequestedCreature.X = 3
+			s.state.Moving, self.MovementFlags = true, 1
+			if _, err := s.Melee(exactMeleeContext(), start); err != nil {
+				t.Fatal(err)
+			}
+			if mode != "pending" {
+				acknowledgeExactMeleeStart(t, s, enemyGUID)
+				if !s.state.AutoAttacking || !s.state.AutoAttackRequested {
+					t.Fatal("fixture did not retain the actual acknowledged requested state", s.stateLocked())
+				}
+			}
+			switch mode {
+			case "unconfirmed":
+				s.state.AutoAttackUnconfirmed = true
+			case "stale visit":
+				s.meleeAcknowledgedVisit++
+			case "foreign swing":
+				s.state.AutoAttackTargetGuid++
+			}
+			obs := &actionsv1.EncounterObservationResponse{Spells: map[string]*actionsv1.EncounterSpell{}}
+			s.encounterSpells(f.world, nil, obs)
+			row := obs.Spells["1760"]
+			wantReady := mode == "acknowledged"
+			if row == nil || row.Ready != wantReady {
+				t.Fatal("reflection disagrees with actual start receipt", mode, row)
+			}
+			out, err := s.CastOffense(context.Background(), &actionsv1.CastOffenseRequest{SessionId: start.SessionId, SelfGuid: start.SelfGuid, TargetGuid: start.TargetGuid, SpellId: 1760})
+			if !wantReady {
+				if status.Code(err) != codes.FailedPrecondition || len(f.packets) != 1 {
+					t.Fatal("pending or unconfirmed start allowed a strike", mode, out, err, f.packets)
+				}
+				return
+			}
+			if err != nil || len(f.packets) != 2 || f.packets[0].Opcode != opcode.CMSGAttackswing || f.packets[1].Opcode != opcode.CMSGCastSpell ||
+				!out.GetAutoAttacking() || !out.GetAutoAttackRequested() || !out.GetMoving() || !out.GetLastSpellOperation().GetTransportWritten() {
+				t.Fatal("acknowledged moving autoswing blocked strike or was interrupted", out, err, f.packets)
+			}
+		})
+	}
+}
+
 func TestExactWeaponStrikeRequiresMechanicalWeaponPositionAndComboProof(t *testing.T) {
 	for _, mode := range []string{"front_backstab", "wrong_weapon", "broken_weapon", "range", "energy", "combo_unknown", "combo_foreign", "combo_zero", "pacified", "disarmed"} {
 		t.Run(mode, func(t *testing.T) {
