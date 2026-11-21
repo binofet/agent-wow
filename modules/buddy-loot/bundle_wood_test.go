@@ -1,7 +1,6 @@
 package buddyloot
 
 import (
-	"context"
 	"encoding/binary"
 	"testing"
 	"time"
