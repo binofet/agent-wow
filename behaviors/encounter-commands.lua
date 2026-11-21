@@ -2,6 +2,7 @@
 -- below stays in Lua, including binding marks, approaching and entering Stealth.
 local state = {requests={}}
 local movement = encounter_movement
+local tactics = encounter_tactics
 local icons = {star=1,circle=2,diamond=3,triangle=4,moon=5,square=6,x=7,skull=8}
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 
@@ -23,11 +24,12 @@ local function selector(value)
     local target, mark = guid(value.targetGuid), icons[value.mark] and value.mark
     if target and not mark then return {targetGuid=target} end
     if mark and not target then return {mark=mark} end
+    if value.auto == true and not target and not mark then return {auto=true} end
 end
 
 local function request_id(value)
     if type(value.id) == "string" and #value.id > 0 and #value.id <= 80 then return value.id end
-    return value.technique .. ":" .. (value.targetGuid or value.mark)
+    return value.technique .. ":" .. (value.targetGuid or value.mark or "auto")
 end
 
 local function cancel(value)
@@ -58,17 +60,23 @@ local function on_event(event)
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
     if value.task == "control" then
-        if value.cancel == true or value.enabled == false then cancel(value); return true end
+        if value.cancel == true or value.enabled == false then
+            if value.auto == true then state.autoPolymorph = false end
+            cancel(value); return true
+        end
         if value.technique ~= "polymorph" and value.technique ~= "sap" then return true end
         local target = selector(value)
         if not target or value.spellId ~= nil and not spell_id(value.spellId) then return true end
-        local row = {technique=value.technique, targetGuid=target.targetGuid, mark=target.mark, spellId=value.spellId,
+        if value.auto == true then state.autoPolymorph = true end
+        local row = {technique=value.technique, targetGuid=target.targetGuid, mark=target.mark, auto=target.auto, spellId=value.spellId,
                      behind=value.behind == nil and value.technique == "sap" or value.behind == true,
                      maintain=value.maintain ~= false}
         row.id = type(value.id) == "string" and #value.id > 0 and #value.id <= 80 and value.id or request_id(row)
+        cancel({id="automatic:polymorph"})
         cancel({id=row.id})
         if #state.requests < 8 then state.requests[#state.requests+1] = row end
     elseif value.task == "cancel_control" then
+        if not value.targetGuid and not value.mark then state.autoPolymorph = false end
         cancel(value)
     elseif value.task == "focus" then
         if value.cancel == true then state.focus = nil else state.focus = selector(value) or state.focus end
@@ -122,6 +130,10 @@ local function refresh(obs)
         end
         local target = row.visitId == obs.visitId and (obs.targets or {})[row.boundGuid]
         local dead = target and target.present == true and target.aliveKnown == true and target.alive == false
+        if row.auto and (dead or row.visitId ~= obs.visitId) then
+            row.boundGuid,row.visitId,row.controlPending,row.stealthPending = nil,nil,nil,nil
+            dead = false
+        end
         row.controlActive = row.visitId == obs.visitId and observed_control(obs, row) or false
         if row.controlActive then row.controlPending = nil end
         if not dead and not (row.controlActive and row.maintain == false) then requests[#requests+1] = row end
@@ -174,8 +186,70 @@ local function distance(self, target)
     return math.sqrt(x*x+y*y+z*z)
 end
 
+local function automatic_target(obs, request, focusGuid)
+    if not tactics then return end
+    local self = (obs.players or {})[obs.selfGuid]
+    if not alive(self) then return end
+    local spell = highest_spell(obs, request.technique, request.spellId)
+    if not spell or spell.ready == 0 then return end
+    local focused,observed,targets = {},{},{}
+    for _, target in ipairs({focusGuid or "",obs.observedOwnerFocus or "",obs.activeMeleeTargetGuid or ""}) do
+        if guid(target) then focused[target] = true end
+    end
+    for _, aura in ipairs(obs.protectedAuras or {}) do
+        if aura.durationKnown ~= true or (tonumber(aura.remainingMs) or 0) > 0 then
+            observed[aura.targetGuid] = {active=true,casterGuid=aura.casterGuid,technique=aura.capability}
+        end
+    end
+    for key, target in pairs(obs.targets or {}) do
+        local attack = (obs.engagement or {})[key] or {}
+        local separation = distance(self,target)
+        targets[key] = {present=target.present,aliveKnown=target.aliveKnown,alive=target.alive,
+            attackable=target.attackable,attackVictimKnown=target.engaged == true and guid(attack.victimGuid) ~= nil,
+            attackVictimGuid=attack.victimGuid,attackAgeMs=tonumber(attack.ageMs) or 0,
+            healthPercent=target.healthKnown == true and (target.maxHealth or 0) > 0 and target.health*100/target.maxHealth or nil,
+            inRange=target.mapKnown == true and target.mapId == obs.mapId and separation ~= nil and
+                    separation >= (spell.row.minRange or 0) and separation <= (spell.row.maxRange or 0)}
+        if target.protected == true then observed[key] = observed[key] or {active=true} end
+    end
+    if request.technique == "sap" then
+        if self.combatKnown ~= true or self.inCombat == true then return end
+        local best,health
+        for key,target in pairs(targets) do
+            local raw = obs.targets[key]
+            if guid(key) and alive(target) and target.attackable and target.inRange and not focused[key] and not observed[key] and
+               raw.unitFlagsKnown == true and math.floor((raw.unitFlags or 0)/524288)%2 == 0 and target.healthPercent and
+               (not best or target.healthPercent > health or target.healthPercent == health and key < best) then
+                best,health = key,target.healthPercent
+            end
+        end
+        return best
+    end
+    local result = tactics.decide({kind="automatic_control",casterGuid=obs.selfGuid,inCombat=true,
+        party=obs.party,focusGuid=focusGuid,focusTargets=focused,controlObserved=observed,targets=targets,
+        preferredGuid=request.boundGuid,capabilities={{guid=obs.selfGuid,technique="polymorph",ready=true}}})
+    return result.control and result.control.targetGuid
+end
+
 local function control_action(obs, frame, focusGuid)
     refresh(obs)
+    if #state.requests == 0 and state.autoPolymorph ~= false and highest_spell(obs,"polymorph") then
+        local automatic = {id="automatic:polymorph",technique="polymorph",auto=true,maintain=true,behind=false}
+        local target = automatic_target(obs,automatic,focusGuid)
+        if target then
+            automatic.boundGuid,automatic.visitId = target,obs.visitId
+            state.requests[1] = automatic
+        end
+    end
+    for _, request in ipairs(state.requests) do
+        if request.auto and not request.controlActive and not request.controlPending then
+            local target = automatic_target(obs,request,focusGuid)
+            if target then request.boundGuid,request.visitId = target,obs.visitId
+            elseif request.boundGuid == focusGuid or request.boundGuid == obs.observedOwnerFocus then
+                request.boundGuid,request.visitId = nil,nil
+            end
+        end
+    end
     local first = state.requests[1]
     if not first then return end
     local status = {pending=true, requestId=first.id, technique=first.technique,
