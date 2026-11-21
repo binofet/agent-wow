@@ -120,14 +120,14 @@ func TestTargetMovementBehindUsesRearGoalAndFiniteMovingSpline(t *testing.T) {
 	if s.targetMovement.nav.target.x >= 10 || !targetMovementBehind(s.targetMovement.nav.target, position{x: 10}) {
 		t.Fatalf("not a rear goal: %+v", s.targetMovement.nav.target)
 	}
-	c := &worldv1.CreatureState{PositionKnown: true, X: 10, Trajectory: &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500, DestinationKnown: true, DestinationX: 20, DestinationY: 10}}
+	c := &worldv1.CreatureState{Guid: enemyGUID, Present: true, MapKnown: true, PositionKnown: true, X: 10, Trajectory: &worldv1.CreatureTrajectory{Known: true, DurationMs: 1000, AgeMs: 500, DestinationKnown: true, DestinationX: 20, DestinationY: 10}}
 	p, known, estimated := creaturePosition(c)
 	if !known || !estimated || p.x != 15 || p.y != 5 {
 		t.Fatalf("current spline pose: %+v %v %v", p, known, estimated)
 	}
-	cc, known, ready := crowdControlPose(c)
-	if !known || !ready || cc != p {
-		t.Fatal("valid moving target refused CC", cc, known, ready)
+	cc, known := targetMovementPosition(&worldv1.SnapshotResponse{RequestedCreature: c}, enemyGUID, 0)
+	if !known || cc != p {
+		t.Fatal("valid moving target refused exact positioning", cc, known)
 	}
 	c.Trajectory.DestinationX = float32(math.NaN())
 	if _, known, _ := creaturePosition(c); known {

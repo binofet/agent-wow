@@ -127,7 +127,7 @@ func TestExactEncounterDispatchRequiresCurrentLeaseAndWorldVisit(t *testing.T) {
 	}
 }
 
-func TestEncounterLeaseWaitsForNativeCrowdControlAndBlocksNewApproaches(t *testing.T) {
+func TestEncounterLeaseNeverReinstallsNativeCrowdControlPreparation(t *testing.T) {
 	ctx := context.Background()
 	s, f, advance, request := polymorphFixture(t)
 	if err := s.UseHostEncounterWriter(testEncounterKey); err != nil {
@@ -136,39 +136,35 @@ func TestEncounterLeaseWaitsForNativeCrowdControlAndBlocksNewApproaches(t *testi
 	s.encounterVisit = encounterVisit{revision: 1, bound: true}
 	f.world.VisitRevision = 1
 	request.Approach = true
-	if got, err := s.Polymorph(ctx, request); err != nil || !got.GetCrowdControl().GetActive() {
-		t.Fatal("inactive lease rejected native approach", got, err)
+	if _, err := s.Polymorph(ctx, request); status.Code(err) != codes.InvalidArgument || len(f.packets) != 0 {
+		t.Fatal("native legacy flags started a preparation", err, f.packets)
 	}
-	renew := func() error {
-		_, err := s.RenewPolicyEncounterLease(encounterHostContext(testEncounterKey, 1), wrapperspb.UInt64(1))
-		return err
+	if _, err := s.RenewPolicyEncounterLease(encounterHostContext(testEncounterKey, 1), wrapperspb.UInt64(1)); err != nil || !s.hostEncounterActiveLocked() {
+		t.Fatal("retired CC controller blocked the valid writer", err)
 	}
-	if err := renew(); status.Code(err) != codes.FailedPrecondition || s.hostEncounterActiveLocked() {
-		t.Fatal("takeover competed with an active native approach", err)
+	request.Approach = false
+	if _, err := s.Polymorph(ctx, request); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
+		t.Fatal("untagged exact cast competed with active writer", err, f.packets)
 	}
-	request.Approach, request.Cancel = false, true
-	if got, err := s.Polymorph(ctx, request); err != nil || got.GetCrowdControl().GetActive() {
-		t.Fatal("native cleanup did not release movement", got, err)
-	}
-	if err := renew(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Polymorph(ctx, request); err != nil {
-		t.Fatal("idempotent cleanup was blocked by active lease", err)
-	}
-	request.Cancel = false
-	for _, approach := range []bool{false, true} {
-		request.Approach = approach
-		if _, err := s.Polymorph(ctx, request); status.Code(err) != codes.FailedPrecondition || len(f.packets) != 0 {
-			t.Fatal("untagged crowd control competed with the active writer", err, f.packets)
+	for _, cancel := range []bool{false, true} {
+		request.Approach, request.Cancel = !cancel, cancel
+		if _, err := s.Polymorph(ctx, request); status.Code(err) != codes.InvalidArgument || len(f.packets) != 0 {
+			t.Fatal("legacy preparation/cancel reached native task state", err, f.packets)
 		}
 	}
 	advance(encounterLeaseDuration)
-	request.Approach = false
+	s.Tick(ctx)
+	if len(f.packets) != 0 {
+		t.Fatal("lease expiry authored CC preparation or cast", f.packets)
+	}
+	// Expiry does not remove the reusable exact primitive from an otherwise idle
+	// body. The public host routes ordinary requests through Lua; this direct
+	// Service call verifies one explicitly chosen rank/target still executes.
+	request.Approach, request.Cancel = false, false
 	request.TargetGuid++
 	f.lookupCreatures[request.TargetGuid] = encounterTestCreature(request.TargetGuid, 0)
 	if got, err := s.Polymorph(ctx, request); err != nil || !got.GetCastPending() || lastCast(f) != 118 {
-		t.Fatal("fallback did not restore public exact casts", got, err, f.packets)
+		t.Fatal("explicit exact cast was lost with retired preparation", got, err, f.packets)
 	}
 }
 

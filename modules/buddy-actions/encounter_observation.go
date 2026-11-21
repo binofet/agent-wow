@@ -294,7 +294,7 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	}
 	self := w.Self
 	currentCaster := safeSelfCombat(w, s.selfGUID) == ""
-	controlCaster := currentCaster && s.crowdControlIdleLocked() && !s.crowdControl.active &&
+	controlCaster := currentCaster && s.crowdControlIdleLocked() &&
 		self.ClassKnown && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
 	polyCaster := controlCaster && self.ClassId == 8
 	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 && self.ChannelObjectGuid == 0 &&

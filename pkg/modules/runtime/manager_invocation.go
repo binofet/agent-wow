@@ -180,6 +180,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 			return m.queueLegacyEngage(ctx, inst, req, result)
 		}
 	}
+	if technique, legacy := legacyControlRequest(ctx, name, md.Path()); legacy {
+		return m.queueLegacyControl(ctx, inst, req, result, technique)
+	}
 	if legacyResurrectionRequest(name, md.Path(), req) {
 		return m.queueLegacyResurrection(ctx, inst, req, result)
 	}

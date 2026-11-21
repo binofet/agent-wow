@@ -37,7 +37,7 @@ func (s *Service) healCasterReadyLocked(w *worldv1.SnapshotResponse) string {
 	}
 	if s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed ||
 		s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) ||
-		s.crowdControl.active || self.ChannelSpellId != 0 || self.UnitFlags&0x2000 != 0 {
+		self.ChannelSpellId != 0 || self.UnitFlags&0x2000 != 0 {
 		return "healing_caster_busy"
 	}
 	return ""

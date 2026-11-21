@@ -29,6 +29,7 @@ type SessionPolicy struct {
 	encounterLeaseHeld bool // guarded by advance
 	followFallback     atomic.Pointer[policyFollowFallback]
 	gearEvaluation     atomic.Pointer[policyFollowFallback]
+	lastDispatch       atomic.Pointer[policyDispatchRecord]
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -167,6 +168,7 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	stop := context.AfterFunc(p.lifetime, cancel)
 	defer stop()
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
+	p.publishDispatch(s, id, dispatch.Module, outcome, payload)
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	if dispatch.spell != nil {
 		err = p.recordSpellTransport(dispatch.spell, receipt)
