@@ -1,0 +1,110 @@
+{
+  "sourceRevision": "b8c2e189651d262ab94d6f012b1a9d38591a091b",
+  "status": "Derived from pinned public reader; no live packet capture, cast, spell admission or effect claim. Arbitrary object/item/string examples exercise wire shape only.",
+  "sources": [
+    "https://github.com/azerothcore/azerothcore-wotlk/blob/b8c2e189651d262ab94d6f012b1a9d38591a091b/src/server/game/Spells/Spell.cpp#L163-L214",
+    "https://github.com/azerothcore/azerothcore-wotlk/blob/b8c2e189651d262ab94d6f012b1a9d38591a091b/src/server/game/Spells/SpellInfo.h#L44-L74",
+    "https://github.com/azerothcore/azerothcore-wotlk/blob/b8c2e189651d262ab94d6f012b1a9d38591a091b/src/server/game/Handlers/SpellHandler.cpp#L35-L55"
+  ],
+  "vectors": [
+    {
+      "name": "arcane_explosion_implicit",
+      "castCount": 1,
+      "spellId": 1449,
+      "castFlags": 0,
+      "targetMask": 0,
+      "hex": "01 a9 05 00 00 00 00 00 00 00",
+      "bytes": 10
+    },
+    {
+      "name": "flamestrike_ground_1_2_3",
+      "castCount": 1,
+      "spellId": 2120,
+      "castFlags": 0,
+      "targetMask": 64,
+      "hex": "01 48 08 00 00 00 40 00 00 00 00 00 00 80 3f 00 00 00 40 00 00 40 40",
+      "bytes": 23
+    },
+    {
+      "name": "blizzard_ground_1_2_3",
+      "castCount": 1,
+      "spellId": 10,
+      "castFlags": 0,
+      "targetMask": 64,
+      "hex": "01 0a 00 00 00 00 40 00 00 00 00 00 00 80 3f 00 00 00 40 00 00 40 40",
+      "bytes": 23
+    },
+    {
+      "name": "source_then_destination",
+      "castCount": 1,
+      "spellId": 2120,
+      "castFlags": 0,
+      "targetMask": 96,
+      "hex": "01 48 08 00 00 00 60 00 00 00 00 00 00 80 3f 00 00 00 40 00 00 40 40 00 00 00 80 40 00 00 a0 40 00 00 c0 40",
+      "bytes": 36
+    },
+    {
+      "name": "unit_guid_f130000063000001_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 2,
+      "hex": "01 85 00 00 00 00 02 00 00 00 c9 01 63 30 f1",
+      "bytes": 15
+    },
+    {
+      "name": "gameobject_guid_f110000063000001_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 2048,
+      "hex": "01 85 00 00 00 00 00 08 00 00 c9 01 63 10 f1",
+      "bytes": 15
+    },
+    {
+      "name": "item_guid_4000000000000099_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 16,
+      "hex": "01 85 00 00 00 00 10 00 00 00 81 99 40",
+      "bytes": 13
+    },
+    {
+      "name": "trade_nontraded_slot_6_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 4096,
+      "hex": "01 85 00 00 00 00 00 10 00 00 01 06",
+      "bytes": 12
+    },
+    {
+      "name": "string_utf8_hi_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 8192,
+      "hex": "01 85 00 00 00 00 00 20 00 00 68 69 00",
+      "bytes": 13
+    },
+    {
+      "name": "transport_relative_destination_guid1_wire_only",
+      "castCount": 1,
+      "spellId": 133,
+      "castFlags": 0,
+      "targetMask": 64,
+      "hex": "01 85 00 00 00 00 40 00 00 00 01 01 00 00 80 3f 00 00 00 40 00 00 40 40",
+      "bytes": 24
+    },
+    {
+      "name": "trajectory_half_radian_speed20_no_movement_wire_only",
+      "castCount": 7,
+      "spellId": 133,
+      "castFlags": 2,
+      "targetMask": 0,
+      "hex": "07 85 00 00 00 02 00 00 00 00 00 00 00 3f 00 00 a0 41 00",
+      "bytes": 19
+    }
+  ]
+}

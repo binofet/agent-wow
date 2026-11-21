@@ -115,7 +115,8 @@ CHARACTER_CLASS in a private World of Warcraft realm. Joel is a human warrior. T
 naturally in the game: warm, curious, concise, with occasional dry humor. Use
 first person; avoid canned assistant offers. You can chat and perform WAVE, BOW,
 or other emotes exposed in the reply schema. The supplied control state shows whether following and learned spells are available. Following uses the installed client navigation on the
-current map. Other abilities exist only when supplied abilities say available.
+current map. Discover other abilities from the actual learned toolkit and
+session.describe; the legacy reply action list is not the native cast surface.
 DISCOVER_QUESTS reads the nearest interactable NPC's actual offers. ACCEPT_QUEST
 requests one offered quest: quest_id is the exact observed ID, or0 only for a
 unique available offer. Looting eligible corpses, including quest drops, is
@@ -131,12 +132,15 @@ DISABLE_BUFFS only clears legacy status and never turns off shared Lua support.
 Older pinned clients retain their installed toggle semantics. spell_toolkit
 contains the actually learned spell IDs, with names only for verified metadata.
 Their mechanic contracts include targeting, costs, casting time, equipment and
-stealth/behind requirements. A blockedReason names an unsupported mechanic;
-report that exact reason instead of claiming that the learned spell is absent.
+stealth/behind requirements. Automatic effect classification is separate from
+casting: classificationReason and legacy blockedReason do not prohibit an
+explicit learned cast. Inspect the reflected cast capability and the spell's
+raw mechanics before deciding that a native control is missing.
 The current shared Lua policy chooses buff ranks, recipients and refresh timing,
 with healing/combat taking priority. A request or cast GO is not a confirmed buff;
 only lastBuff.auraConfirmed confirms its target aura. Unknown spell metadata does
-not mean a spell is unlearned, and a known spell does not mean a usable control.
+not mean a spell is unlearned. genericCastSupported describes learned-cast
+support; selfCastSupported is a separate existing exact self-cast route.
 professions contains the actual learned skill ranks and known recipe IDs. Use
 those facts and the reported automatic gathering/disenchanting state; do not
 claim a control is absent merely because it is not a model action.
@@ -306,16 +310,39 @@ def spell_toolkit_context(raw, actions, guid):
     for row in rows:
         if not isinstance(row, dict): return unknown
         spell = integer(row.get("spellId", 0))
-        if not 0 < spell < 2**31 or spell in seen: return unknown
+        if not 0 < spell < 2**32 or spell in seen: return unknown
         seen.add(spell)
         item = {"spellId": spell, "metadataKnown": row.get("metadataKnown") is True}
+        # Exact learned casting is independent of automatic effect categories.
+        # Missing new fields on an old module mean discover, never prohibit.
+        for key in ('selfCastSupported','channeled','genericCastSupported','passive'):
+            if key in row:
+                if type(row[key]) is not bool:return unknown
+                item[key]=row[key]
+        if item.get('passive') is True:item['genericCastSupported']=False
+        reason=row.get('classificationReason',row.get('blockedReason',''))
+        if isinstance(reason,str) and re.fullmatch(r'[a-z_0-9]{0,100}',reason):
+            item['classificationReason']=reason
+            if 'classificationReason' not in row and reason:item['classificationSource']='legacy_blocked_reason'
+        mechanics=row.get('mechanics')
+        if isinstance(mechanics,dict):
+            # Raw attributes, reagents and effects stay inspectable on demand.
+            item['mechanicsAvailable']=True
+            hint={}
+            for key in ('targetMask','castMinMs','gcdMs','durationIndex','cooldownMs'):
+                if key in mechanics:hint[key]=integer(mechanics[key])
+            effects=mechanics.get('effects',[])
+            if isinstance(effects,list) and len(effects)<=3:
+                hint['targetSelectors']=[dict(a=integer(effect.get('targetSelectorA',0)),b=integer(effect.get('targetSelectorB',0)))
+                    for effect in effects if isinstance(effect,dict)]
+            item['mechanicsHint']=hint
         if item["metadataKnown"]:
             item.update(name=plain_text(row.get("name"), 100),
                         rank=integer(row.get("rank", 0)),
                         selfOnly=row.get("selfOnly") is True,
                         automaticBuffSupported=row.get("automaticBuffSupported") is True)
             # Declarative mechanics and prerequisites from the actual spellbook.
-            for key in ("capability","targetRule","blockedReason"):
+            for key in ("capability","targetRule"):
                 value=row.get(key,"")
                 if isinstance(value,str) and re.fullmatch(r"[a-z_0-9]{0,100}",value):item[key]=value
             for key in ("castTimeMs","flatCost","requiredSubclassMask"):
@@ -331,6 +358,7 @@ def spell_toolkit_context(raw, actions, guid):
     result = {"available": True, "spellbookRevision": str(integer(raw.get("spellbookRevision", 0))),
               "spells": clean[:128], "spellsTruncated": len(clean) > 128,
               "targetedResurrectionSupported": raw.get("targetedResurrectionSupported") is True}
+    result.update(inspectMethod="buddy-actions.spell_toolkit",castDiscoveryMethod="session.describe")
     last = raw.get("lastBuff", {})
     if isinstance(last, dict) and re.fullmatch(r"[a-z_]{1,100}", str(last.get("phase", ""))):
         result["lastBuff"] = {"phase": last["phase"], "spellId": integer(last.get("spellId", 0)),
@@ -401,8 +429,9 @@ true. A queued repair is not installed. Idle banter never starts development.
 DEVELOPER_PERMISSIONS = """
 Owner conversation and control requests take priority over background repairs.
 For follow/stop, status, or ordinary conversation, answer briefly with the existing
-control action first; do not claim files or start a coding investigation unless
-the owner actually requests development. The newest owner message supersedes
+control action first. A request to use a learned spell or another temporary
+gameplay task already authorizes its necessary Lua edit and same-session attempt;
+it does not require a separate development request. The newest owner message supersedes
 older instructions. A repair turn may be interrupted for new owner input; leave
 already-written code and pending receipts intact and report only verified work.
 This SAME conversation generation has direct development tools. Joel authorizes
@@ -456,6 +485,26 @@ binding rejection. Lua takes effect only after a verified same-body policy
 revision result. Make gameplay changes in Lua. Inspect the reflected native
 contracts with session.describe when you need a game action. Report missing
 native bindings with the exact requested action and receipt.
+When Joel asks you to use a learned spell, fulfill the request with the direct
+tools in this generation: inspect development.policyCommands.spell and
+session.describe, read the current policy, implement/test any missing Lua
+invocation, CAS-apply in this same body, then submit structured intent and
+observe its actual attempt/result. No separate development request or workshop
+queue is needed. The reusable spell-invocation.lua handler accepts an exact
+spell ID and reflected targets/trajectory objects; effect categories and class
+lists are not cast allowlists. Ground-target Flamestrike and Blizzard need an
+observed destination; caster-centered Arcane Explosion uses implicit targets.
+Discover cast_spell rather than assuming an older client has it. Inspect an
+unfamiliar learned ID instead of demanding a new Go effect handler. Preserve
+pending/unknown custody and never replay an uncertain cast. Distinguish native
+admission, transport, cast GO, channel updates and observed effects. After tools
+performed the request, return action NONE so the reply cannot duplicate it.
+controls.assistReason and the legacy assisting shortcut describe the older
+native controller. They are not the committed Lua phase or current cast
+readiness. When current alive/vitals, session.policy_state or a recent exact
+operation/effect contradicts a legacy reason such as player_dead_or_unknown,
+report those observations separately; do not claim idle or refuse casting from
+that stale reason. Compare each observation's body, revision and freshness.
 For a temporary gameplay request such as waiting here for Joel's next pull,
 create or adapt a Lua task frame with an ID, current body/visit, stages, observed
 completion, cancellation and cleanup. Do not add chat phrase parsers or sticky
@@ -2563,6 +2612,8 @@ class BuddyControls:
                  "town_upkeep": party_town_snapshot(self.character_guid, body_session=self.inventory.get("sessionId")),
                  "party_maintenance": party_maintenance_snapshot(self.character_guid,self.quests.get('sessionId') if self.quests_available else None),
                  "controls": self.actions if self.actions_available else {},
+                 "controlFieldScopes": {"assistReason":"legacy_native_controller",
+                    "abilities.assisting":"legacy_reply_shortcut_not_generic_spell_availability"},
                  "party": self.party.get("group", {}) if self.party_available else {},
                  "quests": self.quests if self.quests_available else {},
                  "journal": self.journal if self.journal_available else {"available":False,"entries":[]},
@@ -3406,9 +3457,16 @@ class Conversation:
             missionRepairPolicy=dict(entryPoint="mission_repair",sourceMethod="session.policy_source",
                 library=str(Path(workspace)/"behaviors/mission-repair.lua"),acceptedSourceRequired=True),
             policyCommands={"show":base+["show"]+binding,
+                "spell":base+["spell"]+binding+["--spell-id","<LEARNED_ID>"],
+                "test":[str(ROOT/'data/bin/luapolicy'),"--mode","evaluate","--modules",str(ROOT/'modules'),
+                    "--source","<PATH>","--source-bytes","8388608","--value-bytes","8388608","--execution-ms","1000"],
                 "apply":base+["apply"]+binding+["--source","<PATH>","--expected-revision","<HASH>"],
                 "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"],
                 "input":["python3","-B",str(Path(workspace)/"dev/policy-input")]+binding+["--value","<JSON object>"]},
+            spellCasting=dict(discoverMethod='session.describe',toolkitMethod='buddy-actions.spell_toolkit',
+                candidateMethod='buddy-actions.cast_spell',requiresAdvertisedMethod=True,
+                luaExample=str(Path(workspace)/'behaviors/spell-invocation.lua'),task='cast_spell',
+                testInput='stdin JSON fixture; evaluation does not dispatch game actions'),
             **({"gmTasks":gm_tasks.tools(ROOT,self.character_guid,url)} if self.character_guid==87 else {}))
 
     def poll_shared_quest(self):
