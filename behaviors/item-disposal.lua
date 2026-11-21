@@ -267,6 +267,14 @@ local function gray_armor(item,context,gear)
 end
 
 local function classify(mode,item,context,gear)
+    if mode=="owned_destroy" then
+        local miscellaneous=classify("misc_destroy",item,context,gear)
+        if miscellaneous.status=="eligible" then return miscellaneous end
+        local armor=gray_armor(item,context,gear)
+        if armor.status=="eligible" then return armor end
+        if miscellaneous.status=="unknown" then return miscellaneous end
+        return armor
+    end
     if mode=="gray_armor_destroy" then return gray_armor(item,context,gear) end
     if mode~="vendor_sale" and mode~="misc_destroy" then return result("unknown","disposal_mode_unknown") end
     if not object(item) or item.available~=true or

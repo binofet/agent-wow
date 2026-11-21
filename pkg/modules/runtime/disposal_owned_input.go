@@ -26,7 +26,7 @@ func (m *Manager) ownedDisposalInput(ctx context.Context, sid, self string, inpu
 		return nil, nil, errors.New("exact owned disposal input required")
 	}
 	mode, ok := input["mode"].(string)
-	if !ok || mode != "misc_destroy" && mode != "gray_armor_destroy" && mode != "vendor_sale" {
+	if !ok || mode != "misc_destroy" && mode != "gray_armor_destroy" && mode != "vendor_sale" && mode != "owned_destroy" {
 		return nil, nil, errors.New("known disposal mode required")
 	}
 	source := &inventoryv1.ItemRef{}
@@ -77,6 +77,14 @@ func (m *Manager) ownedDisposalInput(ctx context.Context, sid, self string, inpu
 	context, err := project(inv, world, journal, source)
 	if err != nil {
 		return nil, nil, err
+	}
+	if mode == "owned_destroy" {
+		// Common ownership must be valid for every operation. Gear facts are
+		// an additional observation: if they cannot be validated, leave their
+		// coverage unknown. Lua decides whether the observed facts suffice.
+		if armor, err := projectDisposalContext(inv, world, journal, source); err == nil {
+			context = armor
+		}
 	}
 	template, err := disposalMessageMap(item)
 	if err != nil {
