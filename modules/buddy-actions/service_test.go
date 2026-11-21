@@ -268,7 +268,7 @@ func TestHealKnownSpellHealthManaRangeAndStaleGates(t *testing.T) {
 		func(s *Service, f *fakeSession) { s.setKnownSpell(2050, false) },
 		func(s *Service, f *fakeSession) { f.world.Owner.Health = 100 }, func(s *Service, f *fakeSession) { f.world.Owner.HealthKnown = false },
 		func(s *Service, f *fakeSession) { f.world.Self.Power = 20 }, func(s *Service, f *fakeSession) { f.world.Self.PowerType = 1 },
-		func(s *Service, f *fakeSession) { f.world.Owner.X = 36 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },
+		func(s *Service, f *fakeSession) { f.world.Owner.X = 41 }, func(s *Service, f *fakeSession) { f.world.Owner.MovementFlags = 1; f.world.Owner.PositionAgeMs = 3000 },
 	} {
 		s, f, _ := rig(t)
 		learn(s)
@@ -559,6 +559,12 @@ func TestFreshAuthoritativeStoppedPositionClearsUnconfirmedMotion(t *testing.T) 
 	f.failClock = false
 	f.world.Self.PositionRevision++
 	f.world.Self.MovementFlags = 0
+	// Exact admission exposes the fresh correction instead of silently
+	// resubmitting the previous decision. The next caller observation may retry.
+	_, err := s.CastHeal(context.Background(), &actionsv1.CastHealRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: 2050})
+	if status.Code(err) != codes.FailedPrecondition || state(t, s).MotionUnconfirmed {
+		t.Fatal("fresh correction was not an explicit undispatched refusal", err)
+	}
 	result, _ := testExactHeal(s, 2050, ownerGUID)
 	if result.MotionUnconfirmed || !result.CastPending {
 		t.Fatalf("authoritative stopped position failed to recover %+v", result)
