@@ -686,7 +686,9 @@ func (s *Service) snapshot(ctx context.Context, creatureGUID ...uint64) (*worldv
 
 func (s *Service) readWorldSnapshot(ctx context.Context, creatureGUID ...uint64) (*worldv1.SnapshotResponse, error) {
 	query := &worldv1.SnapshotRequest{}
-	if len(creatureGUID) != 0 {
+	// The exact World lookup is NPC-only. Player and corpse targets already
+	// belong to the normal observed rows and must not become creature_guid.
+	if len(creatureGUID) != 0 && creatureGUID[0]>>48 == 0xf130 && creatureGUID[0]&0xffffff != 0 {
 		query.CreatureGuid = creatureGUID[0]
 	}
 	return s.readWorldSnapshotRequest(ctx, query)
