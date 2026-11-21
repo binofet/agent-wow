@@ -8,6 +8,8 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
+  query_flightpath: /warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath
   select_target: /warcraftbuddy.actions.v1.BuddyActions/SelectTarget
   approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
@@ -58,6 +60,9 @@ rpc:
   approach_corpse: /warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse
   reclaim_corpse: /warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse
 packets:
+  SMSG_TAXINODE_STATUS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_NEW_TAXI_PATH: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_SHOWTAXINODES: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -96,6 +101,8 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  flightpath_observation: {effect: read, description: Observe the bound flightmaster query receipt; known nodes imply no route price or travel completion}
+  query_flightpath: {effect: mutation, description: Issue one exact status or learn-menu query to an observed nearby flightmaster under an exploration lease; never activates travel or spends money}
   acquire_movement: {effect: mutation, description: Acquire or renew finite idle and follow movement custody while preserving healing defense casting and explicit actor movement}
   release_movement: {effect: mutation, description: Release the exact session body and owner movement token without changing standing follow intent}
   select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}

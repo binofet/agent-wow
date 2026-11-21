@@ -896,7 +896,53 @@ message PolicyDecisionFailure {
   string error = 4;
 }
 
+// Exactly one flightmaster query. Neither mode activates a flight or spends
+// money. A discover query can learn a node OR return a menu, never both by
+// assumption; a newly learned node needs a later explicit menu query.
+message FlightpathQueryRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  string token = 4; // current owned exploration interaction
+  uint64 npc_guid = 5;
+  string mode = 6; // status or discover
+  uint64 expected_revision = 7;
+}
+message FlightpathOperation {
+  uint64 revision = 1;
+  string session_id = 2;
+  uint64 self_guid = 3;
+  uint64 visit_id = 4;
+  uint64 npc_guid = 5;
+  string mode = 6;
+  bool pending = 7;
+  bool transport_written = 8;
+  bool transport_unknown = 9;
+  bool status_known = 10;
+  bool node_known = 11;
+  // This packet has no identity. Alone it proves no NPC or node learned.
+  bool learning_notice_observed = 12;
+  // Requires this discovery's unknown baseline, notice and matching NPC status.
+  bool learned = 13;
+  bool menu_known = 14;
+  uint32 source_node = 15;
+  // Server mask facts only: no route edges, costs or arrival are implied.
+  repeated uint32 known_nodes = 16;
+  string phase = 17;
+  string error = 18;
+}
+message FlightpathObservationResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 revision = 4;
+  bool visit_bound = 5;
+  FlightpathOperation operation = 6;
+}
+
 service BuddyActions {
+  rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
+  rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);

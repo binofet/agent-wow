@@ -176,6 +176,7 @@ type Service struct {
 	buffOp                               *buffAttempt
 	transportSequence                    uint64
 	lastTransportError                   error
+	flightpath                           flightpathTracker
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -1349,6 +1350,12 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	s.expireMeleeOperationLocked()
 	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)
+	if handled, err := s.flightpathPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	s.expireCrowdControlLocked()
 	if packet.Opcode == opcode.SMSGCreatureQueryResponse {
 		s.observeControlTemplateLocked(p)
