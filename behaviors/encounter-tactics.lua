@@ -33,10 +33,21 @@ local function target_guid_before(a, b)
     return #a < #b or #a == #b and a < b
 end
 
+-- Emergency overrides use observed health/cast facts, never invented DPS or
+-- kill time. These thresholds are Lua tuning and may be changed while live.
+local queue_tuning = {finish_health_fraction=0.20, finish_seconds=2,
+                      high_threat_ratio=1.5, healing_cast_window_ms=3000}
+
 -- The queue covers potential pulls as well as current enemies. Focus is only
 -- a recommendation for a target the harness already observed in the fight.
 local function combat_queue(input)
     local rows, candidates = {}, {}
+    local tuning = {}
+    for key, value in pairs(queue_tuning) do tuning[key] = value end
+    for key, value in pairs(input.tuning or {}) do
+        if tuning[key] ~= nil and finite_number(value) and value >= 0 and
+           (key ~= "finish_health_fraction" or value <= 1) then tuning[key] = value end
+    end
     local measured_rate, measured_count = 0, 0
     for key, npc in pairs(input.targets or {}) do
         local target = guid(key)
@@ -53,7 +64,7 @@ local function combat_queue(input)
                 elseif rate > 0 then
                     measured_rate, measured_count = measured_rate + rate, measured_count + 1
                 end
-                local row = {targetGuid=target, seconds=seconds, rate=rate,
+                local row = {targetGuid=target, seconds=seconds, rate=rate, npc=npc,
                              engaged=npc.engaged == true, protected=npc.protected == true}
                 rows[#rows+1], candidates[target] = row, row
             end
@@ -65,6 +76,23 @@ local function combat_queue(input)
         row.rate = row.rate or typical
         row.score = row.rate / row.seconds
         if row.engaged and not row.protected then aggregate = aggregate + row.rate end
+        if row.engaged and not row.protected then
+            local npc = row.npc
+            local measured_time = positive_number(npc.killSeconds) or positive_number(input.partyDPS)
+            local low = positive_number(npc.health) and positive_number(npc.maxHealth) and
+                npc.health <= npc.maxHealth * tuning.finish_health_fraction
+            local soon = measured_time and row.seconds <= tuning.finish_seconds
+            local heal = npc.healingCastKnown == true and positive_number(npc.healingCastRemainingMs) and
+                npc.healingCastRemainingMs <= tuning.healing_cast_window_ms
+            if heal or low or soon then
+                row.urgency = heal and 2 or 1
+                row.reason = heal and "prevent_heal" or
+                    positive_number(npc.incomingDPS) and npc.incomingDPS >= typical * tuning.high_threat_ratio and
+                    "high_threat_finish" or "finish"
+                row.burstIntent = {targetGuid=row.targetGuid, reason=row.reason,
+                                   deadlineMs=heal and npc.healingCastRemainingMs or nil}
+            end
+        end
     end
     -- The Lua harness supplies no table library. Visible candidates are
     -- bounded by the observation feed, and GUIDs remain exact decimal strings.
@@ -84,10 +112,29 @@ local function combat_queue(input)
         local row = candidates[target]
         if not row or added[target] then return end
         added[target] = true
-        result.queue[#result.queue+1] = {targetGuid=target, engaged=row.engaged, protected=row.protected}
-        if not result.focusGuid and row.engaged and not row.protected then result.focusGuid = target end
+        result.queue[#result.queue+1] = {targetGuid=target, engaged=row.engaged, protected=row.protected,
+                                      reason=row.reason, burstIntent=row.burstIntent}
+        if not result.focusGuid and row.engaged and not row.protected then
+            result.focusGuid, result.burstIntent = target, row.burstIntent
+        end
     end
 
+    -- Reorder urgent rows inside this same queue before ordinary guidance.
+    -- Protected or unengaged targets never acquire emergency authority.
+    for tier=2,1,-1 do
+        local urgent = {}
+        for _, row in ipairs(rows) do if row.urgency == tier then urgent[#urgent+1] = row end end
+        if tier == 2 then
+            for i=2,#urgent do
+                local row, j = urgent[i], i-1
+                while j >= 1 and row.npc.healingCastRemainingMs < urgent[j].npc.healingCastRemainingMs do
+                    urgent[j+1], j = urgent[j], j-1
+                end
+                urgent[j+1] = row
+            end
+        end
+        for _, row in ipairs(urgent) do append(row.targetGuid) end
+    end
     for _, target in ipairs(input.explicitOrder or {}) do append(target) end
     if #result.queue == 0 then append(input.ownerFocus) end
     local current = candidates[input.currentFocus]

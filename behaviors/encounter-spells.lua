@@ -186,7 +186,7 @@ function M.damage_spell(obs, target, override, options)
                     end
                 end
                 local cooldown = math.max(number(row.cooldownMs) or 0, number(row.categoryCooldownMs) or 0)
-                if cooldown >= (number(tuning.long_cooldown_ms) or 10000) and health and target.maxHealth and
+                if options.burst ~= true and cooldown >= (number(tuning.long_cooldown_ms) or 10000) and health and target.maxHealth and
                    health < target.maxHealth*(number(tuning.cooldown_min_health_fraction) or 0.15) and
                    filler_dps > 0 and health <= filler_dps*1.5 then allowed = false end
                 local score = (direct+periodic)/seconds * family_weight(tuning, candidate.family)
@@ -197,9 +197,9 @@ function M.damage_spell(obs, target, override, options)
                 local kills = health and health > 0 and direct >= health or false
                 local prefer = not best
                 if best then
-                    if finisher ~= best_finisher then prefer = finisher
-                    elseif kills ~= best_kills then prefer = kills
+                    if kills ~= best_kills then prefer = kills
                     elseif kills and seconds ~= best_time then prefer = seconds < best_time
+                    elseif finisher ~= best_finisher then prefer = finisher
                     else prefer = score > best_score or score == best_score and id < best end
                 end
                 if allowed and score > 0 and prefer then
