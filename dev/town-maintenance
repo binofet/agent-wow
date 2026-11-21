@@ -19,8 +19,12 @@ base = importlib.util.module_from_spec(_spec)
 _loader.exec_module(base)
 Error, number, positive, token, item_guid = base.Error, base.number, base.positive, base.token, base.item_guid
 ROOT = Path(__file__).resolve().parent.parent
+_loader = importlib.machinery.SourceFileLoader('town_destination_policy', str(ROOT/'dev/town_policy.py'))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+destination_policy = importlib.util.module_from_spec(_spec)
+_loader.exec_module(destination_policy)
 METHODS = {"buddy-inventory." + n for n in ("state", "discover", "move", "equip", "sell")} | {
-    "buddy-mail.state", "buddy-mail.list", "buddy-mail.claim_bag_attachment"}
+    "buddy-mail.state", "buddy-mail.list", "buddy-mail.claim_bag_attachment", "session.policy_source", "session.attach"}
 TERMINAL = {"confirmed", "blocked", "server_rejected"}
 PHASES = TERMINAL | {"reserved", "requested", "transport_unknown", "outcome_unconfirmed", "receipt_mismatch", "new_session_requires_review"}
 
@@ -37,10 +41,11 @@ class RPC:
         request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
             "method": method, "params": params}, allow_nan=False).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
+        response_limit = 8*1024*1024 if method == 'session.attach' else 262144
         try:
             with self.opener.open(request, timeout=12) as response:
-                raw = response.read() if method in ("buddy-inventory.state", "buddy-inventory.discover") else response.read(262145)
-            if method not in ("buddy-inventory.state", "buddy-inventory.discover") and len(raw) > 262144:
+                raw = response.read() if method in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") else response.read(response_limit+1)
+            if method not in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") and len(raw) > response_limit:
                 raise Error("rpc_response_too_large")
             reply = base.decode_json(raw)
         except (OSError, ValueError):
@@ -55,6 +60,13 @@ def boolean(row, field):
     if type(row.get(field, False)) is not bool:
         raise Error("invalid_boolean_evidence")
     return row.get(field, False)
+
+
+def rank_vendors(rpc, state, candidates, scope):
+    try:
+        return destination_policy.rank_vendors(rpc, state, candidates, scope)
+    except destination_policy.Error as error:
+        raise Error(str(error)) from None
 
 
 def ref(row):
@@ -305,7 +317,10 @@ class Worker:
                 continue
             if vendor_guid is None or g == positive(vendor_guid):
                 vendors.append((d, g))
-        vendors.sort()
+        # An explicit caller-selected destination stays exact. Convenience
+        # selection uses the same current Lua export as standing town planning.
+        if vendor_guid is None and vendors:
+            vendors = rank_vendors(self.rpc, state, vendors, 'interactable')
         return state, vendors
 
     def record(self, kind, request, **extra):
