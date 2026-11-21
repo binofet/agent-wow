@@ -24,6 +24,10 @@ converse = importlib.util.module_from_spec(spec)
 loader.exec_module(converse)
 Error = converse.ConversationError
 integer = converse.integer
+objective_loader = importlib.machinery.SourceFileLoader("starter_objective_policy", str(Path(__file__).with_name("starter-objective-policy.py")))
+objective_spec = importlib.util.spec_from_loader(objective_loader.name, objective_loader)
+objective_policy = importlib.util.module_from_spec(objective_spec)
+objective_loader.exec_module(objective_policy)
 DESIRED = frozenset((7, 18, 3903))
 INTRO = 783
 EAGAN_INTRO = 5261
@@ -269,17 +273,84 @@ class CharacterSync:
             return False
         return True
 
+    def objective(self, stage, loot=None):
+        def counter(value):
+            try:
+                return str(integer(value))
+            except Error:
+                return False
+        def timer(value):
+            return value if type(value) in (int, float) and abs(value) <= 2**53 - 1 and math.isfinite(value) else False
+        def flags(value, mask):
+            try:
+                return True, bool(integer(value) & mask)
+            except Error:
+                return False, False
+        state = getattr(self, "objective_state", {})
+        owner = getattr(self, "objective_owner", {})
+        player = self.self_player
+        owner_known = isinstance(owner, dict)
+        if not owner_known:
+            owner = {}
+        combat_known, combat = flags(player.get("unitFlags", 0), 0x80000)
+        away_known, away = flags(owner.get("playerFlags", 0), 6)
+        routine = self.data.get("routine", {})
+        if not isinstance(routine, dict):
+            routine = {}
+        a = self.actions
+        wolf = next((row for row in state.get("questLog", []) if integer(row.get("questId", 0)) == WOLVES), {})
+        facts = dict(stage=stage, selfGuid=str(self.guid), autonomous=self.autonomous,
+            activeQuestIds=self.status.get("activeQuestIds", []), desiredQuestIds=sorted(DESIRED),
+            confirmedQuestIds=self.status.get("confirmedPrerequisiteQuestIds", []),
+            wolfComplete=wolf.get("complete") is True, wolfFailed=wolf.get("failed") is True,
+            levelKnown=self.status.get("levelKnown") is True, level=self.status.get("level", 0),
+            now=timer(self.now()), nextMutationAt=timer(self.data["nextMutationAt"]),
+            self=dict(present=player.get("present") is True, aliveKnown=player.get("aliveKnown") is True,
+                      alive=player.get("alive") is True, combatFlagsKnown=combat_known, inCombat=combat),
+            owner=dict(objectKnown=owner_known, guid=counter(owner.get("guid", 0)),
+                       present=owner.get("present") is True, aliveKnown=owner.get("aliveKnown") is True,
+                       alive=owner.get("alive") is True, awayFlagsKnown=away_known, away=away),
+            actionInFlight=state.get("actionInFlight") is True,
+            routine=dict(practiceOwned=routine.get("practiceOwned") is True,
+                         practiceOwnerPresent=bool(routine.get("practiceOwned"))),
+            actions=dict(**{key: a.get(key) is True for key in
+                          ("practicing", "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed")},
+                         practicePhase=a.get("practicePhase", "") if isinstance(a.get("practicePhase", ""), str)
+                             and len(a.get("practicePhase", "")) <= 128 else False,
+                         practiceLeaseRemainingMs=counter(a.get("practiceLeaseRemainingMs", 0))),
+            loot=loot or {})
+        result = objective_policy.evaluate(facts)
+        if not isinstance(result, dict) or result.get("status") != "ready" or not isinstance(result.get("choice"), dict):
+            self.status["phase"] = "waiting_for_shared_lua_starter_objective_policy"
+            return {"kind": "wait"}
+        choice = result["choice"]
+        if choice.get("kind") not in ("wait", "continue", "hold_follow", "continue_quests", "practice",
+                                      "enable_loot", "enable_practice", "disable_practice"):
+            raise Error("Lua starter objective action is invalid")
+        if "phase" in choice:
+            if not isinstance(choice["phase"], str) or not 1 <= len(choice["phase"]) <= 128:
+                raise Error("Lua starter objective phase is invalid")
+            self.status["phase"] = choice["phase"]
+        return choice
+
     def stop_practice_for_quests(self):
-        routine = self.data["routine"]
-        if (self.actions.get("practicing") is True or routine.get("practiceOwned") is True
-                and any(self.actions.get(key) is True for key in ("autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed"))):
+        choice = self.objective("before_quests")
+        if choice["kind"] == "disable_practice":
+            if not (self.actions.get("practicing") is True or self.data["routine"].get("practiceOwned") is True
+                    and any(self.actions.get(key) is True for key in ("autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed"))):
+                raise Error("Lua practice stop is not bound to observed practice ownership")
             self.mutate("buddy-actions.practice", {"enabled": False})
             return False
-        if self.actions.get("autoAttackUnconfirmed") is True:
-            self.status["phase"] = "waiting_for_practice_attack_stop"
+        if choice["kind"] == "wait":
             return False
-        if routine.get("practiceOwned"):
-            routine["practiceOwned"] = False
+        if choice["kind"] != "continue_quests":
+            raise Error("Lua practice stop decision is invalid")
+        if choice.get("practiceOwned") is False:
+            if (self.actions.get("practicing") is True or self.actions.get("autoAttackUnconfirmed") is True
+                    or self.data["routine"].get("practiceOwned") is True and
+                    any(self.actions.get(key) is True for key in ("autoAttacking", "autoAttackRequested"))):
+                raise Error("Lua cannot clear practice ownership before an observed stop")
+            self.data["routine"]["practiceOwned"] = False
             self.save(self.data)
         return True
 
@@ -287,11 +358,11 @@ class CharacterSync:
         # navAvailable is an observation of a previous plan, not installation
         # readiness. The actuator must validate its first complete route before
         # moving or pulling; initial false cannot prevent that first plan.
-        if self.actions.get("practicing") is True and integer(self.actions.get("practiceLeaseRemainingMs", 0)) > 60000:
-            self.status["phase"] = "practicing_for_wolf_quest" if WOLVES in self.status.get("activeQuestIds", []) else "practicing_to_level_2"
+        choice = self.objective("practice")
+        if choice["kind"] == "wait":
             return
-        if self.now() < self.data["nextMutationAt"]:
-            return
+        if choice["kind"] != "enable_practice" or not self.autonomous or choice.get("practiceOwned") is not True:
+            raise Error("Lua practice enable decision is invalid")
         self.data["routine"]["practiceOwned"] = True
         self.mutate("buddy-actions.practice", {"enabled": True})
 
@@ -299,11 +370,16 @@ class CharacterSync:
         try:
             loot = self.call("buddy-loot.state", {})
         except Error:
-            self.status["phase"] = "waiting_for_wolf_loot_module"
-            return False
-        if loot.get("enabled") is True:
+            facts = {"known": False}
+        else:
+            facts = {"known": True, "enabled": loot.get("enabled") is True}
+        choice = self.objective("loot", facts)
+        if choice["kind"] == "continue":
             return True
-        self.status["phase"] = "waiting_for_confirmed_wolf_looting"
+        if choice["kind"] == "wait":
+            return False
+        if choice["kind"] != "enable_loot" or not self.autonomous:
+            raise Error("Lua wolf loot decision is invalid")
         self.mutate("buddy-loot.enable", {"enabled": True})
         # Even a positive enable response is reconciled by a fresh state read
         # on a later tick before any new practice request.
@@ -548,6 +624,7 @@ class CharacterSync:
         if not isinstance(self_player, dict) or integer(self_player.get("guid", 0)) != self.guid:
             raise Error("RPC character identity does not match this goal")
         self.self_player = self_player
+        self.objective_state, self.objective_owner = state, owner
         active = active_log(state)
         self.remember_observed_givers(state, session)
         level_known = self_player.get("levelKnown") is True
@@ -564,62 +641,30 @@ class CharacterSync:
         self.observe_rewards(state, session, active)
         confirmed = set(self.status["confirmedPrerequisiteQuestIds"])
         wolf_log = next((row for row in state.get("questLog", []) if integer(row.get("questId", 0)) == WOLVES), {})
-        wolf_complete, wolf_failed = wolf_log.get("complete") is True, wolf_log.get("failed") is True
+        wolf_complete = wolf_log.get("complete") is True
         self.status["wolfQuestComplete"] = WOLVES in active and wolf_complete
-        needs_wolves = WOLVES in active and not wolf_complete and not wolf_failed
-        # The normal chain supplies XP while collecting its actual objective.
-        # XP-only practice is a fallback after the wolf prerequisite is proven,
-        # or when3903 is already active; it cannot bypass obtaining quest33.
-        xp_needed = (level_known and level == 1 and self.guid in (4, 5) and 18 in missing
-                     and (3903 in active or WOLVES in confirmed))
-        practice_needed = needs_wolves and level_known and 1 <= level <= 5 or xp_needed
-        own_practice = self.autonomous and self.data.get("routine", {}).get("practiceOwned") is True
-        if active == DESIRED and not own_practice:
-            self.status["phase"] = "matched_requested_active_quest_ids"
+        objective = self.objective("classify")
+        if objective["kind"] == "wait":
             return
-        if self.autonomous:
-            if (self_player.get("present") is not True or self_player.get("aliveKnown") is not True
-                    or self_player.get("alive") is not True):
-                self.status["phase"] = "waiting_for_alive_observed_character"
-                return
+        if objective["kind"] == "hold_follow":
+            if not self.autonomous:
+                raise Error("Lua starter follow hold is outside this goal's authority")
             if not self.hold_follow(session):
                 return
-            # Party XP can raise us to2 while our own previously pulled wolf
-            # is still attacking. The actuator finishes that engagement and
-            # auto-stops; synchronization must not interrupt it with a quest.
-            if (self.actions.get("practicePhase") in ("finishing_current_fight_to_level2", "finishing_current_fight_to_goal")
-                    or not practice_needed and (wolf_complete or level_known and level >= 2)
-                    and self.actions.get("practicing") is True):
-                self.status["phase"] = "finishing_current_practice_engagement_before_quests"
+        elif objective["kind"] != "continue":
+            raise Error("Lua starter classification is invalid")
+        objective = self.objective("post_hold")
+        if objective["kind"] == "wait":
+            return
+        if objective["kind"] == "practice":
+            if not self.autonomous or type(objective.get("lootRequired")) is not bool:
+                raise Error("Lua starter practice intent is invalid")
+            if objective["lootRequired"] and not self.ensure_wolf_looting():
                 return
-            if integer(self_player.get("unitFlags", 0)) & 0x80000:
-                self.status["phase"] = "waiting_out_of_combat_before_quests"
-                return
-            if active == DESIRED:
-                self.status["phase"] = "matched_requested_active_quest_ids"
-                return
-        elif (not isinstance(owner, dict) or integer(owner.get("guid", 0)) != 3
-                or any(player.get("present") is not True or player.get("aliveKnown") is not True or player.get("alive") is not True for player in (self_player, owner))
-                or integer(owner.get("playerFlags", 0)) & 6):
-            self.status["phase"] = "waiting_for_alive_present_owner_and_character"
+            self.practice()
             return
-        if state.get("actionInFlight") is True:
-            self.status["phase"] = "waiting_for_existing_quest_operation"
-            return
-        if wolf_failed:
-            self.status["phase"] = "waiting_for_failed_wolf_prerequisite_resolution"
-            return
-        if practice_needed:
-            if self.autonomous:
-                if needs_wolves and not self.ensure_wolf_looting():
-                    return
-                self.practice()
-            else:
-                self.status["phase"] = "waiting_for_own_wolf_objectives" if needs_wolves else "waiting_for_level_2"
-            return
-        if needs_wolves:
-            self.status["phase"] = "waiting_for_supported_wolf_practice_level"
-            return
+        if objective["kind"] != "continue_quests":
+            raise Error("Lua starter objective decision is invalid")
         self.status["phase"] = "waiting_for_mutation_cooldown" if self.now() < self.data["nextMutationAt"] else "checking_observed_quest_offers"
         all_candidates = self.candidates(state)
         reward_quest = next((q for q in (INTRO, EAGAN_INTRO, WOLVES)
@@ -692,11 +737,11 @@ class CharacterSync:
         elif needed_entry == 196 and 3903 in missing and WOLVES not in confirmed:
             allowed.add(WOLVES)
         if not allowed:
-            self.status["phase"] = "waiting_for_level_2" if level_known and level < 2 else "waiting_for_level_observation"
-            if self.autonomous and level_known and level == 1 and missing & {18, 3903}:
+            fallback = self.objective("fallback")
+            if fallback["kind"] == "practice":
                 self.practice()
-            if not missing:
-                self.status["phase"] = "requested_ids_present_extra_quests_unchanged"
+            elif fallback["kind"] != "wait":
+                raise Error("Lua starter fallback decision is invalid")
             return
         offer = state.get("offer", {})
         nearby_guids = {row[2] for row in candidates}
