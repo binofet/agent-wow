@@ -5,6 +5,7 @@ local M = {}
 local tau, half_turn = 6.283185307179586, 3.141592653589793
 local roles = {[5]={3.8,-3.1}, [8]={5.1,.2}, [4]={2.4,3.5}, [9]={1,-5.2}}
 local near_stop, near_limit = 3,30
+local portal_ahead, portal_side = {8,12,16}, {-6,6}
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -46,6 +47,25 @@ function M.decide(input)
        not pose(owner,true) or type(owner.moving)~="boolean" or
        input.self~=nil and (not pose(input.self,false) or type(input.self.moving)~="boolean") or
        input.ownerArrival~=nil and type(input.ownerArrival)~="boolean" then return {} end
+
+    if input.mode=="portal_catch_up" then
+        if not input.self then return {} end
+        local candidates={{x=owner.x,y=owner.y,z=owner.z}}
+        local dx,dy=owner.x-input.self.x,owner.y-input.self.y
+        local gap=math.sqrt(dx*dx+dy*dy)
+        if gap>45 then
+            dx,dy=dx/gap,dy/gap
+            for _,ahead in ipairs(portal_ahead) do
+                for _,side in ipairs(portal_side) do
+                    local candidate={x=input.self.x+ahead*dx-side*dy,
+                        y=input.self.y+ahead*dy+side*dx,z=input.self.z}
+                    if not pose(candidate,false) then return {} end
+                    candidates[#candidates+1]=candidate
+                end
+            end
+        end
+        return {candidates=candidates}
+    end
 
     if input.mode=="near_owner" then
         if not input.self then return {} end

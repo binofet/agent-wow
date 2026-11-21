@@ -30,6 +30,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 	switch op {
 	case opcode.SMSGTransferPending:
 		if len(payload) >= 4 {
+			s.portalGoal = portalCatchupGoal{}
 			s.encounterVisit.bound = false
 			s.navigationGoalKnown = false
 		}
@@ -39,6 +40,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 		}
 		s.formation.Reset()
 		s.followGoal = followFormationGoal{}
+		s.portalGoal = portalCatchupGoal{}
 		s.encounterVisit.revision++
 		s.encounterVisit.mapID = binary.LittleEndian.Uint32(payload)
 		s.encounterVisit.bound = true
@@ -108,6 +110,9 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 		Engagement: make(map[string]*actionsv1.EncounterEngagement),
 		Spells:     make(map[string]*actionsv1.EncounterSpell),
 	}
+	if s.state.LastTransportFailure != nil {
+		out.LastTransportFailure = proto.Clone(s.state.LastTransportFailure).(*actionsv1.TransportFailure)
+	}
 	state := s.readPartyStateLocked(ctx)
 	var online map[uint64]bool
 	if state.GetSessionId() == s.sessionID {
@@ -123,6 +128,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	if s.state.BodyMovement != nil {
 		out.Navigation.BodyMovement = proto.Clone(s.state.BodyMovement).(*actionsv1.BodyMovementState)
 	}
+	out.Navigation.Portal = s.portalObservationLocked(w)
 	out.MeleeKnown = s.spellbookKnown && s.state.KnownAutoAttack && s.weaponReady(w.Self)
 	if s.state.AutoAttacking && !s.state.AutoAttackUnconfirmed && s.meleeAcknowledgedVisit == w.VisitRevision {
 		out.ActiveMeleeTargetGuid = s.state.AutoAttackTargetGuid

@@ -73,7 +73,8 @@ func (s *Service) ApproachTarget(ctx context.Context, r *actionsv1.ApproachTarge
 	s.targetMovementExecuting = true
 	defer func() { s.targetMovementExecuting = false }()
 	movement := &s.targetMovement
-	if movement.view.TargetGuid != r.TargetGuid || movement.view.VisitId != r.VisitId || movement.view.RangeYards != r.RangeYards || movement.view.Behind != r.Behind || movement.view.RequireLos != r.RequireLos {
+	if movement.view.TargetGuid != r.TargetGuid || movement.view.VisitId != r.VisitId || movement.view.RangeYards != r.RangeYards || movement.view.Behind != r.Behind || movement.view.RequireLos != r.RequireLos ||
+		movement.nav.selfRevision != s.positionRevision || movement.nav.mapID != s.posMap {
 		movement.nav.Reset()
 	}
 	movement.view = actionsv1.TargetMovementState{TargetGuid: r.TargetGuid, VisitId: r.VisitId, RangeYards: r.RangeYards, Behind: r.Behind, RequireLos: r.RequireLos}

@@ -32,6 +32,23 @@ type followFormation struct {
 
 func (f *followFormation) Reset() { f.memory = nil }
 
+func (f *followFormation) decide(input map[string]any) map[string]any {
+	if f.runtime == nil {
+		runtime := behavior.New()
+		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+			return nil
+		}
+		f.runtime = runtime
+	}
+	output, err := f.runtime.Evaluate(input)
+	if err != nil {
+		// Preserve the detached committed memory if a pure evaluation fails.
+		f.runtime = nil
+		return nil
+	}
+	return output
+}
+
 func formationAngle(value float64) float64 {
 	value = math.Mod(value, 2*math.Pi)
 	if value < 0 {
@@ -61,13 +78,6 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 		f.Reset()
 		return formationTarget{}
 	}
-	if f.runtime == nil {
-		runtime := behavior.New()
-		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
-			return formationTarget{}
-		}
-		f.runtime = runtime
-	}
 	input := map[string]any{
 		"nowMs": float64(now.UnixMilli()), "selfGuid": strconv.FormatUint(selfGUID, 10), "classId": classID,
 		"owner":        map[string]any{"x": owner.x, "y": owner.y, "z": owner.z, "o": owner.o, "moving": ownerMoving},
@@ -82,11 +92,8 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 	if selfPos != nil {
 		input["self"] = map[string]any{"x": selfPos.x, "y": selfPos.y, "z": selfPos.z, "moving": selfMoving}
 	}
-	output, err := f.runtime.Evaluate(input)
-	if err != nil {
-		// A failed pure evaluation cannot replace the last committed Lua
-		// memory. Rebuild only the evaluator before the next observation.
-		f.runtime = nil
+	output := f.decide(input)
+	if output == nil {
 		return formationTarget{}
 	}
 	var result struct {

@@ -684,9 +684,14 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
-    if out.encounterOwnership and movement and movement.follow_formation and policy_observation and
+    if out.encounterOwnership and movement and policy_observation and
        not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and not out.action then
-        out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
+        if movement.portal_catchup then
+            out.portalCatchup = movement.portal_catchup(frame, policy_observation, state.sequence)
+        end
+        if not out.portalCatchup and movement.follow_formation then
+            out.followFormation = movement.follow_formation(frame, policy_observation, state.sequence)
+        end
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
     if consumables and (policy_observation or observation) then
