@@ -46,7 +46,7 @@ func (p *SessionPolicy) resolveMovementOwner(action map[string]any) (PolicyDispa
 		return PolicyDispatch{}, err
 	}
 	return PolicyDispatch{Module: actionsModule, Send: func(ctx context.Context) (behavior.ActionOutcome, map[string]any) {
-		payload := map[string]any{"capability": "movement_owner", "mode": mode, "owner": owner}
+		payload := map[string]any{"capability": "movement_owner", "mode": mode, "owner": owner, "leaseMs": action["leaseMs"]}
 		response, callErr := p.manager.invokeJSON(ctx, method, raw, true)
 		if callErr != nil {
 			payload["error"] = callErr.Error()
@@ -54,12 +54,20 @@ func (p *SessionPolicy) resolveMovementOwner(action map[string]any) (PolicyDispa
 			case codes.InvalidArgument, codes.FailedPrecondition, codes.NotFound, codes.PermissionDenied:
 				return behavior.ActionNotDispatched, payload
 			}
-			return behavior.ActionUnknown, payload
+			// A finite custody attempt has no future spell/packet receipt. Keep
+			// its uncertainty in the task, without blocking the global combat
+			// action ledger while the observed native lease expires.
+			payload["reconciliationRequired"] = true
+			return behavior.ActionSettledUnverified, payload
 		}
 		var value map[string]any
 		if err := json.Unmarshal(response, &value); err != nil {
 			payload["error"] = "movement ownership result unavailable"
-			return behavior.ActionUnknown, payload
+			// A finite custody attempt has no future spell/packet receipt. Keep
+			// its uncertainty in the task, without blocking the global combat
+			// action ledger while the observed native lease expires.
+			payload["reconciliationRequired"] = true
+			return behavior.ActionSettledUnverified, payload
 		}
 		// This confirms custody metadata, not arrival, stopping or combat success.
 		payload["result"] = value

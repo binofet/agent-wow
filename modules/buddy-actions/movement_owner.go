@@ -54,6 +54,9 @@ func (s *Service) AcquireMovement(ctx context.Context, r *actionsv1.MovementOwne
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
 	if s.closed || s.session == nil || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "current connected body required")
 	}
@@ -81,6 +84,9 @@ func (s *Service) AcquireMovement(ctx context.Context, r *actionsv1.MovementOwne
 		if _, err := rand.Read(token); err != nil {
 			return nil, status.Error(codes.Internal, "movement token unavailable")
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, status.FromContextError(err).Err()
+		}
 		s.movementOwner.owner, s.movementOwner.token = r.Owner, hex.EncodeToString(token)
 		s.movementOwner.revision++
 	}
@@ -98,6 +104,9 @@ func (s *Service) ReleaseMovement(ctx context.Context, r *actionsv1.MovementOwne
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
 	if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID {
 		return nil, status.Error(codes.FailedPrecondition, "current connected body required")
 	}

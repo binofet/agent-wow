@@ -23,8 +23,12 @@ func TestPolicyMovementOwnerRoutesTypedReflectedAcquireAndRelease(t *testing.T) 
 	}
 	t.Cleanup(vm.Close)
 	calls := 0
+	failNext := false
 	conn, err := grpc.NewClient("passthrough:///lease-fixture", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithUnaryInterceptor(func(_ context.Context, method string, request, reply any, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 		calls++
+		if failNext {
+			return status.Error(codes.DeadlineExceeded, "lease response unknown")
+		}
 		raw, err := proto.Marshal(request.(proto.Message))
 		if err != nil {
 			t.Fatal(err)
@@ -81,6 +85,15 @@ func TestPolicyMovementOwnerRoutesTypedReflectedAcquireAndRelease(t *testing.T) 
 	if outcome != behavior.ActionConfirmed || calls != 2 {
 		t.Fatal(outcome, payload, calls)
 	}
+	failNext = true
+	dispatch, err = host.resolveKnownSpell(acquire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, payload = dispatch.Send(context.Background())
+	if outcome != behavior.ActionSettledUnverified || payload["reconciliationRequired"] != true || payload["error"] == nil || calls != 3 {
+		t.Fatal("unknown finite metadata became success or a global pending fence", outcome, payload, calls)
+	}
 	for _, mode := range []string{"wrong_session", "wrong_body", "no_token", "unbounded_time"} {
 		bad := map[string]any{}
 		for k, v := range acquire {
@@ -100,7 +113,7 @@ func TestPolicyMovementOwnerRoutesTypedReflectedAcquireAndRelease(t *testing.T) 
 			t.Fatal("invalid owner action admitted", mode, err)
 		}
 	}
-	if calls != 2 {
+	if calls != 3 {
 		t.Fatal("validation dispatched gameplay", calls)
 	}
 }
