@@ -74,6 +74,12 @@ import_state=function(v)return v.version==1 end}`
 			t.Fatal(err)
 		}
 		input["goalGuid"] = encounterGUID(r.TargetGuid)
+		if failure := s.state.LastTransportFailure; failure != nil && observed.GetLastTransportFailure().GetSequence() != failure.Sequence {
+			t.Fatal("Lua observation hid the exact failed packet", observed)
+		}
+		if _, err := vm.Enqueue(behavior.Event{Kind: "encounter_observation", Value: input}); err != nil {
+			t.Fatal(err)
+		}
 		decision, err := vm.Decide(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
