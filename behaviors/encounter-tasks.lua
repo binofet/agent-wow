@@ -212,6 +212,12 @@ function M.allow(view,obs,proposed)
     if anchor and near(anchor,position(npc,obs.mapId),range) then return true end
     local attack=(obs.engagement or {})[proposed.targetGuid]
     local victim=attack and (obs.players or {})[attack.victimGuid]
+    if cap=="move_body" and anchor then
+        for _,incoming in pairs(obs.engagement or {}) do
+            local patient=(obs.players or {})[incoming.victimGuid]
+            if alive(patient) and near(anchor,position(patient,obs.mapId),range) then return true end
+        end
+    end
     return anchor and alive(victim) and near(anchor,position(victim,obs.mapId),range) or false
 end
 

@@ -19,6 +19,7 @@ local state = {bindings={}, defeated={}, controls={}, engaged={}}
 local mana_observation, mana_sequence
 local observation
 local task_view
+local task_support_action
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 local icons = {star=1, circle=2, diamond=3, triangle=4, moon=5, square=6, x=7, skull=8}
 
@@ -294,6 +295,7 @@ end
 
 local function decide_encounter(frame)
     task_view=nil
+    task_support_action=nil
     local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
     local obs = observation
     if not obs or obs.sessionId ~= frame.session_id or not guid(obs.selfGuid) or not current_visit(obs) then return out end
@@ -438,6 +440,7 @@ local function decide_encounter(frame)
        support.selfGuid == obs.selfGuid and guid(support.targetGuid) and members[support.targetGuid] and
        alive(players[support.targetGuid]) and same_map(players[support.targetGuid], obs.mapId) and
        usable_spell(obs, support.spellId, "heal") then
+        task_support_action=true
         if active_melee then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
@@ -566,7 +569,7 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
-    if transient_tasks and not transient_tasks.allow(task_view,observation or {},out.action) then out.action=nil end
+    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,observation or {},out.action) then out.action=nil end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, observation
     local expected

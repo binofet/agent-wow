@@ -95,6 +95,28 @@ func TestEncounterTemporaryWaitKeepsRealHealingAndReloadState(t *testing.T) {
 	}
 }
 
+func TestEncounterTemporaryWaitAllowsHealingRouteRecovery(t *testing.T) {
+	p, obs := beginWaitTask(t)
+	heal := positionedHealObservation()
+	heal.Navigation = obs.Navigation
+	heal.Navigation.BodyMovementSupported = true
+	heal.Healing.Patients[0].Distance = float64Pointer(45)
+	heal.Players["8"].X = 55
+	heal.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: 8, VisitId: 1, RangeYards: 40,
+		RequireLos: true, Phase: "follow_navigation_unavailable"}
+	for i := 0; i < 3; i++ {
+		out := p.decide(observeSparseEncounter(t, p, heal)).Output
+		action, _ := out["action"].(map[string]any)
+		want := "approach_target"
+		if i == 2 {
+			want = "move_body"
+		}
+		if action["capability"] != want {
+			t.Fatal("temporary hold blocked selected healing movement/recovery", i, out)
+		}
+	}
+}
+
 func TestEncounterTemporaryWaitReleasesOnArrivalAndNeverReplaysRetiredIntent(t *testing.T) {
 	for _, reason := range []string{"pull_arrived", "canceled", "visit_changed", "dead"} {
 		t.Run(reason, func(t *testing.T) {
@@ -150,7 +172,8 @@ func TestEncounterTemporaryWaitSupersedingTaskCleansOldOwnerFirst(t *testing.T) 
 	}
 }
 
-func boolPointer(value bool) *bool { return &value }
+func boolPointer(value bool) *bool          { return &value }
+func float64Pointer(value float64) *float64 { return &value }
 
 func TestTemporaryTaskRequiresClockAndLeaseAndReconcilesUnknownGrant(t *testing.T) {
 	body := `local i=frame.input
