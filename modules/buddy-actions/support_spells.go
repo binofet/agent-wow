@@ -95,6 +95,13 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 			delete(s.resurrectionBindings, owner)
 			if s.supportOp != nil && s.supportOp.owner == owner && s.supportOp.view.Capability == string(spellcatalog.Resurrect) {
 				s.supportOp.view.EffectObserved = true
+				// Actual observed life resolves this death even if the original
+				// cast write had an unknown transport outcome. Do not clear a
+				// newer cast which happens to share the patient.
+				if s.pendingSpell == s.supportOp.view.SpellId && s.castCount == s.supportOp.count {
+					s.state.CastPending = false
+					s.pendingSpell, s.pendingTarget = 0, 0
+				}
 				if s.supportOp.view.ServerCastGo {
 					s.supportOp.view.Phase = "confirmed_alive"
 				}
@@ -342,7 +349,6 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 		}
 		if op.view.Capability == string(spellcatalog.Resurrect) {
 			delete(s.resurrectionBindings, op.owner)
-			s.nextHeal = s.now().Add(10 * time.Second)
 		}
 	}
 	s.state.CastPending = false

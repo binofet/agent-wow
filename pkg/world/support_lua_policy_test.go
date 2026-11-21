@@ -20,11 +20,10 @@ func newSupportPolicy(t *testing.T, decision string) *fallbackPolicyTest {
 	source := "local support=(function()\n" + string(script) + "\nend)()\n" + `
 local observation
 return {
-  on_event=function(event) if event.kind=="encounter_observation" then observation=event.value end return true end,
+  on_event=function(event) if event.kind=="encounter_observation" then observation=event.value end return support.on_event(event) end,
   decide=function(frame) if #frame.pending~=0 or not observation then return {} end
-    return {action=support.` + decision + `(observation)} end,
-  export_state=function() return {version=1,data={}} end,
-  import_state=function(state) return state.version==1 end,
+    return {action=support.` + decision + `(observation,frame)} end,
+  export_state=support.export_state,import_state=support.import_state,
 }`
 	host, err := behavior.NewSession(context.Background(), fallbackSession, source)
 	if err != nil {

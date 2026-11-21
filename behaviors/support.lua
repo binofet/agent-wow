@@ -1,6 +1,7 @@
 -- Shared support decisions. Go supplies observed bodies, active casts and
 -- mechanical spell eligibility; all ordering and movement choices live here.
-local state={blocked={}}
+local state={blocked={},resurrections={}}
+local resurrection_tuning={retry_ms=500}
 local cleanse_tuning={aura_weights={[3]=2,[5]=5,[6]=5,[7]=5,[12]=4,[26]=3,[27]=4},spell_weights={}}
 local function guid(value)
   if type(value) ~= "string" or #value == 0 or #value > 20 or byte_at(value, 1) == 48 then return false end
@@ -43,13 +44,26 @@ local function party_online(obs, patient)
   return true
 end
 
-local function resurrect(obs)
+local function resurrection_ready(option,frame)
+  local prior=state.resurrections[option.patientGuid]
+  if not prior then return true end
+  if prior.blocked then return false end
+  if prior.retry then
+    local now=frame and frame.clock and frame.clock.monotonicMs
+    if type(now)~="number" then return false end
+    if not prior.at then prior.at=now+resurrection_tuning.retry_ms end
+    if now<prior.at then return false end
+  end
+  return true
+end
+
+local function resurrect(obs,frame)
   if not current(obs) or obs.support.casterInCombat == true then return end
   local best, leader = nil, (((obs.party or {}).group or {}).leaderGuid)
   for _, option in ipairs(obs.support.resurrections or {}) do
     if guid(option.patientGuid) and guid(option.castTargetGuid) and option.patientGuid ~= obs.selfGuid and
        party_online(obs, option.patientGuid) and type(option.spellId) == "number" and option.spellId > 0 and
-       (option.ready == true or option.canApproach == true) then
+       (option.ready == true or option.canApproach == true) and resurrection_ready(option,frame) then
       local patient = (obs.players or {})[option.patientGuid]
       if not patient or patient.aliveKnown ~= true or patient.alive ~= true then
         local rank, best_rank = spell_number(obs, option.spellId, "rank"), best and spell_number(obs, best.spellId, "rank") or 0
@@ -67,7 +81,19 @@ local function resurrect(obs)
   if obs.activeMeleeTargetGuid and obs.activeMeleeTargetGuid ~= "0" then
     return action(obs, "melee_stop", obs.activeMeleeTargetGuid)
   end
+  local prior=state.resurrections[best.patientGuid]
+  if prior and prior.reposition then
+    local position=obs.targetMovement or {}
+    if prior.castTarget~=best.castTargetGuid then prior.checked=nil;prior.castTarget=best.castTargetGuid end
+    if not prior.checked or position.targetGuid~=best.castTargetGuid or position.visitId~=obs.visitId or
+       position.ready~=true or position.rangeYards~=best.rangeYards or position.requireLos~=true then
+      return approach(obs,best.castTargetGuid,best.rangeYards)
+    end
+  end
   if best.ready ~= true then return approach(obs, best.castTargetGuid, best.rangeYards) end
+  -- Merely proposing a cast is not dispatch evidence. The receipt below owns
+  -- the no-replay binding; definite rejection permits a fresh Lua decision.
+  state.resurrections[best.patientGuid]={spell=best.spellId,castTarget=best.castTargetGuid}
   local request = action(obs, "resurrect", best.patientGuid, best.spellId)
   request.castTargetGuid = best.castTargetGuid
   return request
@@ -108,8 +134,14 @@ end
 local function on_event(event)
   if event.kind=="encounter_observation" and type(event.value)=="table" then
     local obs=event.value
-    if state.sessionId and state.sessionId~=obs.sessionId then state.blocked={} end
+    if state.sessionId and state.sessionId~=obs.sessionId then state.blocked={};state.resurrections={} end
     state.sessionId=obs.sessionId
+    for patient in pairs(state.resurrections) do
+      local body=(obs.players or {})[patient]
+      if body and body.present==true and body.aliveKnown==true and body.alive==true then
+        state.resurrections[patient]=nil
+      end
+    end
     for _,set in ipairs((obs.support or {}).playerAuras or {}) do
       local prior=state.blocked[set.targetGuid]
       if prior then
@@ -124,6 +156,23 @@ local function on_event(event)
   end
   local r=event.receipt
   local p=r and r.payload or {}
+  if p.capability=="resurrect" and guid(p.target_guid) then
+    local prior=state.resurrections[p.target_guid]
+    if prior and prior.spell==p.spell_id then
+      if r.outcome=="failed" or r.outcome=="not_dispatched" then
+        prior.blocked=nil;prior.retry=true;prior.at=nil;prior.reposition=true;prior.checked=nil
+      elseif r.outcome=="transport_accepted" or r.outcome=="unknown" or
+             r.outcome=="settled_unverified" or r.outcome=="confirmed" then
+        prior.blocked=true
+      end
+    end
+  elseif p.capability=="approach_target" and guid(p.target_guid) then
+    for _,prior in pairs(state.resurrections) do
+      if prior.reposition and prior.castTarget==p.target_guid and r.outcome=="settled_unverified" then
+        prior.checked=true
+      end
+    end
+  end
   if p.capability=="cleanse" and guid(p.target_guid) and guid(p.aura_revision) and
      number(p.aura_slot) and p.aura_slot>=0 and p.aura_slot<255 then
     local target,slot=p.target_guid,tostring(p.aura_slot)
@@ -208,7 +257,8 @@ end
 local function import_state(saved)
   if type(saved)~="table" or saved.version~=1 or type(saved.data)~="table" or type(saved.data.blocked)~="table" then return false end
   state=saved.data
+  state.resurrections=state.resurrections or {}
   return true
 end
 return {resurrect=resurrect,interrupt=interrupt,cleanse=cleanse,on_event=on_event,
-        cleanse_tuning=cleanse_tuning,export_state=function()return {version=1,data=state} end,import_state=import_state}
+        cleanse_tuning=cleanse_tuning,resurrection_tuning=resurrection_tuning,export_state=function()return {version=1,data=state} end,import_state=import_state}
