@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-«ò
+Èý
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -792,7 +792,7 @@ targetGuid
 
 session_id (	R	sessionId
 	self_guid (RselfGuidF
-targeted_resurrection_supported (RtargetedResurrectionSupported" #
+targeted_resurrection_supported (RtargetedResurrectionSupported"‚$
 State
 	following (R	following
 moving (Rmoving*
@@ -893,7 +893,13 @@ engage_npcm (2(.warcraftbuddy.actions.v1.EngageNPCStateR	engageNpcV
 last_melee_operationt (2(.warcraftbuddy.actions.v1.MeleeOperationRlastMeleeOperationV
 target_movementu (2-.warcraftbuddy.actions.v1.TargetMovementStateRtargetMovementP
 body_movementv (2+.warcraftbuddy.actions.v1.BodyMovementStateRbodyMovementS
-movement_ownerw (2,.warcraftbuddy.actions.v1.MovementOwnerStateRmovementOwnerJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"ˆ
+movement_ownerw (2,.warcraftbuddy.actions.v1.MovementOwnerStateRmovementOwner`
+last_transport_failurex (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailureJJJFGJIdJqrRhealingRhealing_lease_remaining_ms"…
+TransportFailure
+sequence (Rsequence
+opcode (Ropcode
+error (	Rerror'
+outcome_unknown (RoutcomeUnknown"ˆ
 ProtectedTarget
 target_guid (R
 targetGuid
@@ -1077,7 +1083,7 @@ session_id (	R	sessionId
 threat (2(.warcraftbuddy.actions.v1.SelfManaThreatRthreat?
 spells (2'.warcraftbuddy.actions.v1.SelfManaSpellRspells
 
-host_owned (R	hostOwned"ã
+host_owned (R	hostOwned"Å
 EncounterObservationResponse
 
 session_id (	R	sessionId
@@ -1111,7 +1117,8 @@ meleeKnown7
 support (2*.warcraftbuddy.actions.v1.EncounterSupportRsupportO
 
 navigation (2/.warcraftbuddy.actions.v1.NavigationObservationR
-navigatione
+navigation`
+last_transport_failure (2*.warcraftbuddy.actions.v1.TransportFailureRlastTransportFailuree
 PlayersEntry
 key (	Rkey?
 value (2).warcraftbuddy.actions.v1.EncounterPlayerRvalue:8g
@@ -1167,7 +1174,7 @@ owner_guid (R	ownerGuid6
 ready (Rready
 hold (Rhold'
 follow_revision (RfollowRevision
-phase (	Rphase"¹
+phase (	Rphase"„
 NavigationObservation6
 body_movement_supported (RbodyMovementSupported
 	following (R	following
@@ -1189,7 +1196,42 @@ goal_known (R	goalKnown
 owner_arrival (RownerArrivalL
 follow_owner (2).warcraftbuddy.actions.v1.EncounterPlayerRfollowOwner'
 follow_revision (RfollowRevision@
-ground_navigation_configured (RgroundNavigationConfigured"­
+ground_navigation_configured (RgroundNavigationConfiguredI
+portal (21.warcraftbuddy.actions.v1.PortalFollowObservationRportal"7
+PortalPoint
+x (Rx
+y (Ry
+z (Rz"„
+PortalFollowObservation)
+witness_revision (RwitnessRevision&
+source_visit_id (RsourceVisitId'
+follow_revision (RfollowRevision
+
+owner_guid (R	ownerGuid"
+source_map_id (RsourceMapId,
+destination_map_id (RdestinationMapId
+
+trigger_id (R	triggerId=
+ground (2%.warcraftbuddy.actions.v1.PortalPointRground>
+start	 (2(.warcraftbuddy.actions.v1.ClientPositionRstart
+catching_up
+ (R
+catchingUp
+notified (Rnotified!
+owner_absent (RownerAbsent"ç
+PortalCatchupRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+
+owner_guid (R	ownerGuid'
+follow_revision (RfollowRevision)
+witness_revision (RwitnessRevision>
+start (2(.warcraftbuddy.actions.v1.ClientPositionRstartE
+
+candidates (2%.warcraftbuddy.actions.v1.PortalPointR
+candidates"­
 EncounterParty3
 group (2.warcraftbuddy.party.v1.GroupRgroupJ
 raid_targets (2'.warcraftbuddy.party.v1.RaidTargetStateRraidTargets
@@ -1445,13 +1487,14 @@ casterGuid"Q
 
 session_id (	R	sessionId
 target_guid (R
-targetGuid2—!
+targetGuid2ó!
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`
 InterruptCast..warcraftbuddy.actions.v1.InterruptCastRequest.warcraftbuddy.actions.v1.State^
-SetFollowFormation0.warcraftbuddy.actions.v1.FollowFormationRequest.google.protobuf.EmptyR
+SetFollowFormation0.warcraftbuddy.actions.v1.FollowFormationRequest.google.protobuf.EmptyZ
+SetPortalCatchup..warcraftbuddy.actions.v1.PortalCatchupRequest.google.protobuf.EmptyR
 Follow'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateR
 Assist'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.StateX
 	EngageNPC*.warcraftbuddy.actions.v1.EngageNPCRequest.warcraftbuddy.actions.v1.StateC
