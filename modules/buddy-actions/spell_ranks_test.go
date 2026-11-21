@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"testing"
 	"time"
 )

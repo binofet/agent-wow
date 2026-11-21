@@ -11,7 +11,6 @@ import (
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func learnSpells(s *Service, spells ...uint32) {
