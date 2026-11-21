@@ -127,6 +127,8 @@ func TestActualPartyResurrectionOfferAcceptedOnceNotForgedOrUnsolicited(t *testi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f, _ := recoveryRig(t)
+			// The shared policy reads the actual complete group projection.
+			f.party.Group.GroupGuid, f.party.Group.LeaderGuid = 100, 3
 			p := binary.LittleEndian.AppendUint64(nil, tc.caster)
 			p = binary.LittleEndian.AppendUint32(p, 1)
 			p = append(p, tc.tail...)
