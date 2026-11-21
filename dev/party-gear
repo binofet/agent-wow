@@ -43,8 +43,9 @@ class RPC(town.RPC):
         self.calls+=1
         request=town.urllib.request.Request(self.url,data=json.dumps(dict(jsonrpc='2.0',id=self.calls,method=method,params=params),allow_nan=False).encode(),headers={'Content-Type':'application/json'})
         try:
-            with self.opener.open(request,timeout=12) as response:raw=response.read(262145)
-            value=town.base.decode_json(raw) if len(raw)<=262144 else None
+            with self.opener.open(request,timeout=12) as response:
+                raw=response.read() if method=='buddy-inventory.state' else response.read(262145)
+            value=town.base.decode_json(raw) if method=='buddy-inventory.state' or len(raw)<=262144 else None
         except (OSError,ValueError):raise Error('gear_response_unconfirmed') from None
         if (not isinstance(value,dict) or value.get('jsonrpc')!='2.0' or type(value.get('id')) is not int
                 or value['id']!=self.calls or 'error' in value or not isinstance(value.get('result'),dict)):raise Error('gear_response_unconfirmed')

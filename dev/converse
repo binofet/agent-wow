@@ -1817,11 +1817,11 @@ class RPC:
             response_limit = (8192 if method in ("session.describe", "session.attach") else
                               1024 if method == "session.policy_source" else 256) * 1024
             with self.opener.open(request, timeout=request_timeout) as response:
-                # policy_state contains both checkpoint and decision, each
-                # already bounded by the session's configurable value budget.
-                # A second fixed chat cap would hide valid running Lua state.
-                raw = response.read() if method in ("session.policy_state","session.policy_source") else response.read(response_limit + 1)
-            if method not in ("session.policy_state","session.policy_source") and len(raw) > response_limit:
+                # Policy values use configured budgets; inventory views carry
+                # native-bounded owned slots and complete item-template facts.
+                # A second small chat cap would hide valid reflected state.
+                raw = response.read() if method in ("session.policy_state","session.policy_source","buddy-inventory.state","buddy-inventory.discover") else response.read(response_limit + 1)
+            if method not in ("session.policy_state","session.policy_source","buddy-inventory.state","buddy-inventory.discover") and len(raw) > response_limit:
                 raise ConversationError("Chat RPC response exceeds the limit")
             result = json.loads(raw)
         except (OSError, ValueError, urllib.error.URLError):
