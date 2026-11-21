@@ -41,10 +41,11 @@ class RPC:
         request = urllib.request.Request(self.url, data=json.dumps({"jsonrpc": "2.0", "id": self.calls,
             "method": method, "params": params}, allow_nan=False).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
+        response_limit = 8*1024*1024 if method == 'session.attach' else 262144
         try:
             with self.opener.open(request, timeout=12) as response:
-                raw = response.read() if method in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") else response.read(262145)
-            if method not in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") and len(raw) > 262144:
+                raw = response.read() if method in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") else response.read(response_limit+1)
+            if method not in ("buddy-inventory.state", "buddy-inventory.discover", "session.policy_source") and len(raw) > response_limit:
                 raise Error("rpc_response_too_large")
             reply = base.decode_json(raw)
         except (OSError, ValueError):

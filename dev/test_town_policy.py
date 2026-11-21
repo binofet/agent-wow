@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -144,6 +146,24 @@ class VendorDestinationTests(unittest.TestCase):
             self.assertEqual(worker.discovery(VENDOR)[1],[(1,VENDOR)])
             self.assertFalse(any(m.startswith('session.') for m,_ in local.calls[before:]))
             self.assertEqual(local.mutations(),[])
+
+    def test_finite_metadata_reader_accepts_actual_sized_catalog_with_one_matching_read(self):
+        import test_town_maintenance as finite
+        result=policy_reply(service_source(),dict(sessionId='body1',selfGuid='6'))
+        result['catalog']=[dict(name='actual-reflected-metadata',methods='x'*440000)]
+        raw=json.dumps(dict(jsonrpc='2.0',id=1,result=result)).encode()
+        self.assertGreater(len(raw),262144)
+        class Opener:
+            def __init__(self):self.calls=[]
+            def open(self,request,timeout):
+                self.calls.append((json.loads(request.data),timeout))
+                return io.BytesIO(raw)
+        opener=Opener()
+        rpc=finite.m.RPC(finite.URL,opener=opener)
+        self.assertEqual(rpc.call('session.attach',dict(sessionId='body1',characterGuid='6')),result)
+        self.assertEqual(len(opener.calls),1)
+        self.assertEqual(opener.calls[0][0]['method'],'session.attach')
+        self.assertEqual(opener.calls[0][0]['params'],dict(sessionId='body1',characterGuid='6'))
 
 
 if __name__=='__main__':unittest.main()
