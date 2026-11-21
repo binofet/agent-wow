@@ -6,10 +6,10 @@ compose:
   file: compose.yaml
   service: module
 grpc:
-  cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
-  cancel_spell: /warcraftbuddy.actions.v1.BuddyActions/CancelSpell
   descriptor_set: module.pb
 rpc:
+  cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
+  cancel_spell: /warcraftbuddy.actions.v1.BuddyActions/CancelSpell
   flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
   query_flightpath: /warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath
   select_target: /warcraftbuddy.actions.v1.BuddyActions/SelectTarget

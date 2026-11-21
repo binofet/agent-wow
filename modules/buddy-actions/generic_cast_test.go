@@ -49,7 +49,7 @@ func genericGo(s *Service, id uint32, target *actionsv1.SpellCastTargets) []byte
 }
 
 func TestCastSpellLearnsNewGroundImplicitAndUncataloguedSpellsInRunningActor(t *testing.T) {
-	s, f, advance := genericCastRig(t)
+	s, f, _ := genericCastRig(t)
 	ctx := context.Background()
 	for _, id := range []uint32{2120, 10, 1449, 4000000000} {
 		if _, err := s.CastSpell(ctx, genericRequest(s, id)); status.Code(err) != codes.FailedPrecondition {
@@ -84,15 +84,12 @@ func TestCastSpellLearnsNewGroundImplicitAndUncataloguedSpellsInRunningActor(t *
 		if _, err = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: genericGo(s, id, r.Targets)}); err != nil {
 			t.Fatal(err)
 		}
+		if id == 4000000000 && (!s.state.CastPending || s.supportOp.view.Phase != "waiting_channel_observation") {
+			t.Fatal("missing metadata GO incorrectly established no channel", s.stateLocked())
+		}
 		if id == 10 || id == 4000000000 { // Known and newly observed channels keeps channel custody after GO, then observed end resolves.
 			_, _ = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.MSGChannelStart, Payload: selfCastChannelPacket(s.selfGUID, id, 8000)})
 			_, _ = s.OnPacket(ctx, &modv1.WorldPacket{Opcode: opcode.MSGChannelUpdate, Payload: selfCastChannelPacket(s.selfGUID, 0)})
-		}
-		if id == 4000000000 {
-			if !s.state.CastPending || s.supportOp.view.Phase != "waiting_channel_observation" {
-				t.Fatal("missing metadata GO incorrectly established no channel", s.stateLocked())
-			}
-			advance(4 * time.Second)
 		}
 		st = state(t, s)
 		if st.CastPending || st.LastSpellOperation.EffectObserved || !st.LastSpellOperation.ServerCastGo {
