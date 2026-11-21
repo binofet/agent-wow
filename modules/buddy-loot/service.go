@@ -15,6 +15,7 @@ import (
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementflags"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
@@ -68,6 +69,9 @@ type Service struct {
 	pausedGather                               bool
 	inventoryWriteRevision                     uint64
 	rejectedInventoryRevision                  uint64
+	corpseRequests                             map[string]*corpseRequest
+	corpseRequest                              *corpseRequest
+	exactCorpse                                bool
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -112,7 +116,7 @@ func (s *Service) fault(reason string) {
 }
 
 func (s *Service) automaticCorpseContext(w *worldv1.SnapshotResponse, a *actionsv1.State) bool {
-	return s.automatic && w != nil && w.Self != nil && w.Self.Guid == s.selfGUID &&
+	return (s.automatic || s.exactCorpse) && w != nil && w.Self != nil && w.Self.Guid == s.selfGUID &&
 		w.Self.MapKnown && a != nil && a.Position != nil && a.Position.Known &&
 		a.Position.MapKnown && w.Self.MapId == a.Position.MapId && !a.MotionUnconfirmed
 }
@@ -206,12 +210,21 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 	if s.session == nil {
 		return false
 	}
+	if s.exactCorpse && s.corpseRequest != nil && (op == opcode.CMSGLoot || op == opcode.CMSGLootRelease) {
+		if op == opcode.CMSGLoot {
+			s.corpseRequest.receipt.OpeningTransportAttempted = true
+		}
+		ctx = modcb.ForwardPolicySpell(ctx)
+	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
 	if err != nil {
 		s.fault("transport_error_no_retry")
 		return false
 	}
 	s.state.TransportWrites++
+	if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot {
+		s.corpseRequest.receipt.OpeningTransportWritten = true
+	}
 	return true
 }
 func (s *Service) releaseLease(ctx context.Context) {
@@ -234,9 +247,13 @@ func (s *Service) finish(ctx context.Context) {
 	// Every exit must retain an unsettled ordinary mutation. A failed release,
 	// lost lease or disable cannot turn generic cleanup into a success receipt.
 	if !s.questGather && s.cleanup.source == 0 && s.pendingGUID() != 0 && s.hasUnsettledLootMutation() {
+		s.finishCorpseReceipt("mutation_unconfirmed", false)
 		s.reserveMutationQuarantine()
 		s.releaseLease(ctx)
 		return
+	}
+	if s.exactCorpse {
+		s.finishCorpseReceipt("closed_unverified", true)
 	}
 	s.releaseLease(ctx)
 	if s.questGather {
@@ -268,6 +285,7 @@ func (s *Service) finish(ctx context.Context) {
 	s.questColdridge = false
 	s.questFargodeep = false
 	s.coldridgeGoal = coldridgeLootGoal{}
+	s.exactCorpse = false
 	if s.state.Enabled {
 		s.state.Phase = "idle"
 	} else {
@@ -756,6 +774,13 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.tryGatherLocked(ctx, world) {
 		return
 	}
+	// Ordinary corpse discovery, ranking and movement belong to the attached
+	// Lua policy. This remaining native path is only the explicitly named
+	// starter-quest controller, alongside legacy quest-container gathering.
+	if s.automatic || !ownWolfQuest(world, s.selfGUID) && !ownColdridgeQuest(world, s.selfGUID) && !ownFargodeepQuest(world, s.selfGUID) {
+		s.state.Reason = "ordinary_corpse_selection_owned_by_lua"
+		return
+	}
 	if len(s.retired) >= maxRetiredLootSources {
 		s.state.Reason = "loot_retired_source_bound_waiting_for_actual_new_life"
 		return
@@ -791,12 +816,10 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Reason = "client_position_unavailable"
 		return
 	}
-	ownerNearby := activeOwnerReady(world) && actions.Position != nil && actions.Position.Known && actions.Position.MapKnown && world.Owner.MapKnown && world.Owner.MapId == actions.Position.MapId && world.Owner.PositionKnown && math.Pow(float64(actions.Position.X-world.Owner.X), 2)+math.Pow(float64(actions.Position.Y-world.Owner.Y), 2)+math.Pow(float64(actions.Position.Z-world.Owner.Z), 2) <= 30*30
-	automaticScope := s.automaticCorpseContext(world, actions)
 	wolfScope := !s.automatic && !actions.MotionUnconfirmed && wolfQuestContext(world, actions.Position, s.selfGUID)
 	coldridgeScope := !s.automatic && !actions.MotionUnconfirmed && coldridgeQuestContext(world, actions.Position, s.selfGUID)
 	fargodeepScope := !s.automatic && ownFargodeepQuest(world, s.selfGUID) && s.fargodeepPartyCurrent(ctx)
-	if !automaticScope && !ownerNearby && !wolfScope && !coldridgeScope && !fargodeepScope {
+	if !wolfScope && !coldridgeScope && !fargodeepScope {
 		s.state.Reason = "loot_deferred_owner_not_nearby"
 		return
 	}
@@ -810,7 +833,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 		goal, matchesColdridge := selectColdridgeLootGoal(world, s.selfGUID, c)
 		matchesFargodeep := fargodeepScope && fargodeepLootSelection(world, actions, s.selfGUID, c.Guid)
-		if !automaticScope && !ownerNearby && !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !matchesFargodeep {
+		if !(wolfScope && c.Entry == 299) && !(coldridgeScope && matchesColdridge) && !matchesFargodeep {
 			continue
 		}
 		if s.seen[c.Guid] || s.retired[c.Guid] || !eligibleWithin(world.Self, actions.Position, c, 12, 1.5) {
@@ -946,6 +969,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		s.items = nil
 		s.index = 0
 		s.state.LootWindowsObserved++
+		if s.exactCorpse && s.corpseRequest != nil {
+			s.corpseRequest.receipt.WindowObserved = true
+		}
 		if s.questGather {
 			s.state.LastGather.LootWindowObserved = true
 		}
@@ -1045,6 +1071,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 		}
 		if s.token != "" && binary.LittleEndian.Uint64(p) == s.pendingGUID() {
 			if p[8] == 1 {
+				if s.exactCorpse && s.corpseRequest != nil {
+					s.corpseRequest.receipt.ReleaseObserved = true
+				}
 				s.state.ReleasesObserved++
 				if !s.questGather && s.hasUnsettledLootMutation() {
 					s.quarantineReleasedMutation(true)

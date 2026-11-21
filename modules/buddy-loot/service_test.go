@@ -204,8 +204,10 @@ func rig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
 		f.world.Backpack = append(f.world.Backpack, &worldv1.BackpackSlot{Slot: uint32(i)})
 	}
 	f.world.Self.MapKnown, f.world.Self.PositionKnown, f.world.Self.PositionRevision = true, true, 1
+	f.actions.SessionId, f.actions.Position.Revision = "loot-session", 1
+	f.world.LootableCorpses[0].PositionRevision = 1
 	fixtureCarriedInventory(f.world)
-	s := NewService(f, 1)
+	s := NewService(f, 1, "loot-session")
 	now := time.Unix(1000, 0)
 	s.now = func() time.Time { return now }
 	return s, f, func(d time.Duration) { now = now.Add(d) }

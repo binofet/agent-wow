@@ -156,6 +156,9 @@ func (s *Service) openingContext(w *worldv1.SnapshotResponse, a *actionsv1.State
 		}
 		return false
 	}
+	if s.exactCorpse && s.corpseRequest != nil {
+		return exactCorpseCurrent(s.corpseRequest.request, w, a)
+	}
 	if s.questWolf && !wolfQuestContext(w, a.Position, s.selfGUID) || s.questColdridge && !s.coldridgeGoal.context(w, a.Position, s.selfGUID, s.pendingGUID()) {
 		return false
 	}

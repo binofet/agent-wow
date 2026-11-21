@@ -7,6 +7,8 @@
 package lootv1
 
 import (
+	api1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	api "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	v1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -546,11 +548,420 @@ func (x *State) GetInventoryPaused() bool {
 	return false
 }
 
+// Exact source identity, not a request for the native module to choose a corpse.
+type OpenCorpseRequest struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid                  uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	CorpseGuid                uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
+	RequestId                 string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	ExpectedPositionRevision  uint64                 `protobuf:"varint,5,opt,name=expected_position_revision,json=expectedPositionRevision,proto3" json:"expected_position_revision,omitempty"`
+	ExpectedCorpseRevision    uint64                 `protobuf:"varint,6,opt,name=expected_corpse_revision,json=expectedCorpseRevision,proto3" json:"expected_corpse_revision,omitempty"`
+	ExpectedInventoryRevision uint64                 `protobuf:"varint,7,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *OpenCorpseRequest) Reset() {
+	*x = OpenCorpseRequest{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenCorpseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenCorpseRequest) ProtoMessage() {}
+
+func (x *OpenCorpseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenCorpseRequest.ProtoReflect.Descriptor instead.
+func (*OpenCorpseRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *OpenCorpseRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *OpenCorpseRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *OpenCorpseRequest) GetCorpseGuid() uint64 {
+	if x != nil {
+		return x.CorpseGuid
+	}
+	return 0
+}
+
+func (x *OpenCorpseRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *OpenCorpseRequest) GetExpectedPositionRevision() uint64 {
+	if x != nil {
+		return x.ExpectedPositionRevision
+	}
+	return 0
+}
+
+func (x *OpenCorpseRequest) GetExpectedCorpseRevision() uint64 {
+	if x != nil {
+		return x.ExpectedCorpseRevision
+	}
+	return 0
+}
+
+func (x *OpenCorpseRequest) GetExpectedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ExpectedInventoryRevision
+	}
+	return 0
+}
+
+type CloseCorpseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid      uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	CorpseGuid    uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseCorpseRequest) Reset() {
+	*x = CloseCorpseRequest{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseCorpseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseCorpseRequest) ProtoMessage() {}
+
+func (x *CloseCorpseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseCorpseRequest.ProtoReflect.Descriptor instead.
+func (*CloseCorpseRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CloseCorpseRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CloseCorpseRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *CloseCorpseRequest) GetCorpseGuid() uint64 {
+	if x != nil {
+		return x.CorpseGuid
+	}
+	return 0
+}
+
+type CorpseOperation struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid                  uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	CorpseGuid                uint64                 `protobuf:"varint,3,opt,name=corpse_guid,json=corpseGuid,proto3" json:"corpse_guid,omitempty"`
+	RequestId                 string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Phase                     string                 `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
+	Reason                    string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	OpeningTransportAttempted bool                   `protobuf:"varint,7,opt,name=opening_transport_attempted,json=openingTransportAttempted,proto3" json:"opening_transport_attempted,omitempty"`
+	OpeningTransportWritten   bool                   `protobuf:"varint,8,opt,name=opening_transport_written,json=openingTransportWritten,proto3" json:"opening_transport_written,omitempty"`
+	WindowObserved            bool                   `protobuf:"varint,9,opt,name=window_observed,json=windowObserved,proto3" json:"window_observed,omitempty"`
+	ReleaseObserved           bool                   `protobuf:"varint,10,opt,name=release_observed,json=releaseObserved,proto3" json:"release_observed,omitempty"`
+	Terminal                  bool                   `protobuf:"varint,11,opt,name=terminal,proto3" json:"terminal,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *CorpseOperation) Reset() {
+	*x = CorpseOperation{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CorpseOperation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CorpseOperation) ProtoMessage() {}
+
+func (x *CorpseOperation) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CorpseOperation.ProtoReflect.Descriptor instead.
+func (*CorpseOperation) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CorpseOperation) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CorpseOperation) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *CorpseOperation) GetCorpseGuid() uint64 {
+	if x != nil {
+		return x.CorpseGuid
+	}
+	return 0
+}
+
+func (x *CorpseOperation) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *CorpseOperation) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *CorpseOperation) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *CorpseOperation) GetOpeningTransportAttempted() bool {
+	if x != nil {
+		return x.OpeningTransportAttempted
+	}
+	return false
+}
+
+func (x *CorpseOperation) GetOpeningTransportWritten() bool {
+	if x != nil {
+		return x.OpeningTransportWritten
+	}
+	return false
+}
+
+func (x *CorpseOperation) GetWindowObserved() bool {
+	if x != nil {
+		return x.WindowObserved
+	}
+	return false
+}
+
+func (x *CorpseOperation) GetReleaseObserved() bool {
+	if x != nil {
+		return x.ReleaseObserved
+	}
+	return false
+}
+
+func (x *CorpseOperation) GetTerminal() bool {
+	if x != nil {
+		return x.Terminal
+	}
+	return false
+}
+
+type CorpseObservation struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid          uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	Self              *api.PlayerState       `protobuf:"bytes,3,opt,name=self,proto3" json:"self,omitempty"`
+	Actions           *api1.State            `protobuf:"bytes,4,opt,name=actions,proto3" json:"actions,omitempty"`
+	Corpses           []*api.CreatureState   `protobuf:"bytes,5,rep,name=corpses,proto3" json:"corpses,omitempty"`
+	NearbyCreatures   []*api.CreatureState   `protobuf:"bytes,6,rep,name=nearby_creatures,json=nearbyCreatures,proto3" json:"nearby_creatures,omitempty"`
+	InventoryKnown    bool                   `protobuf:"varint,7,opt,name=inventory_known,json=inventoryKnown,proto3" json:"inventory_known,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,8,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	GeneralFreeSlots  uint32                 `protobuf:"varint,9,opt,name=general_free_slots,json=generalFreeSlots,proto3" json:"general_free_slots,omitempty"`
+	State             *State                 `protobuf:"bytes,10,opt,name=state,proto3" json:"state,omitempty"`
+	Operation         *CorpseOperation       `protobuf:"bytes,11,opt,name=operation,proto3" json:"operation,omitempty"`
+	RetiredSources    []uint64               `protobuf:"varint,12,rep,packed,name=retired_sources,json=retiredSources,proto3" json:"retired_sources,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CorpseObservation) Reset() {
+	*x = CorpseObservation{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CorpseObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CorpseObservation) ProtoMessage() {}
+
+func (x *CorpseObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CorpseObservation.ProtoReflect.Descriptor instead.
+func (*CorpseObservation) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CorpseObservation) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CorpseObservation) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *CorpseObservation) GetSelf() *api.PlayerState {
+	if x != nil {
+		return x.Self
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetActions() *api1.State {
+	if x != nil {
+		return x.Actions
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetCorpses() []*api.CreatureState {
+	if x != nil {
+		return x.Corpses
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetNearbyCreatures() []*api.CreatureState {
+	if x != nil {
+		return x.NearbyCreatures
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetInventoryKnown() bool {
+	if x != nil {
+		return x.InventoryKnown
+	}
+	return false
+}
+
+func (x *CorpseObservation) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *CorpseObservation) GetGeneralFreeSlots() uint32 {
+	if x != nil {
+		return x.GeneralFreeSlots
+	}
+	return 0
+}
+
+func (x *CorpseObservation) GetState() *State {
+	if x != nil {
+		return x.State
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetOperation() *CorpseOperation {
+	if x != nil {
+		return x.Operation
+	}
+	return nil
+}
+
+func (x *CorpseObservation) GetRetiredSources() []uint64 {
+	if x != nil {
+		return x.RetiredSources
+	}
+	return nil
+}
+
 var File_modules_buddy_loot_loot_proto protoreflect.FileDescriptor
 
 const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\n" +
-	"\x1dmodules/buddy-loot/loot.proto\x12\x15warcraftbuddy.loot.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\")\n" +
+	"\x1dmodules/buddy-loot/loot.proto\x12\x15warcraftbuddy.loot.v1\x1a\x1bapi/module/v1/session.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fmodules/buddy-world/world.proto\x1a#modules/buddy-actions/actions.proto\")\n" +
 	"\rEnableRequest\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\"Y\n" +
 	"\vItemReceipt\x12\x17\n" +
@@ -599,17 +1010,69 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"lastGather\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x13 \x01(\tR\tsessionId\x12)\n" +
-	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused*\x97\x01\n" +
+	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused\"\xc7\x02\n" +
+	"\x11OpenCorpseRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vcorpse_guid\x18\x03 \x01(\x04R\n" +
+	"corpseGuid\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x12<\n" +
+	"\x1aexpected_position_revision\x18\x05 \x01(\x04R\x18expectedPositionRevision\x128\n" +
+	"\x18expected_corpse_revision\x18\x06 \x01(\x04R\x16expectedCorpseRevision\x12>\n" +
+	"\x1bexpected_inventory_revision\x18\a \x01(\x04R\x19expectedInventoryRevision\"q\n" +
+	"\x12CloseCorpseRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vcorpse_guid\x18\x03 \x01(\x04R\n" +
+	"corpseGuid\"\xa7\x03\n" +
+	"\x0fCorpseOperation\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vcorpse_guid\x18\x03 \x01(\x04R\n" +
+	"corpseGuid\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x12\x14\n" +
+	"\x05phase\x18\x05 \x01(\tR\x05phase\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason\x12>\n" +
+	"\x1bopening_transport_attempted\x18\a \x01(\bR\x19openingTransportAttempted\x12:\n" +
+	"\x19opening_transport_written\x18\b \x01(\bR\x17openingTransportWritten\x12'\n" +
+	"\x0fwindow_observed\x18\t \x01(\bR\x0ewindowObserved\x12)\n" +
+	"\x10release_observed\x18\n" +
+	" \x01(\bR\x0freleaseObserved\x12\x1a\n" +
+	"\bterminal\x18\v \x01(\bR\bterminal\"\xff\x04\n" +
+	"\x11CorpseObservation\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x127\n" +
+	"\x04self\x18\x03 \x01(\v2#.warcraftbuddy.world.v1.PlayerStateR\x04self\x129\n" +
+	"\aactions\x18\x04 \x01(\v2\x1f.warcraftbuddy.actions.v1.StateR\aactions\x12?\n" +
+	"\acorpses\x18\x05 \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\acorpses\x12P\n" +
+	"\x10nearby_creatures\x18\x06 \x03(\v2%.warcraftbuddy.world.v1.CreatureStateR\x0fnearbyCreatures\x12'\n" +
+	"\x0finventory_known\x18\a \x01(\bR\x0einventoryKnown\x12-\n" +
+	"\x12inventory_revision\x18\b \x01(\x04R\x11inventoryRevision\x12,\n" +
+	"\x12general_free_slots\x18\t \x01(\rR\x10generalFreeSlots\x122\n" +
+	"\x05state\x18\n" +
+	" \x01(\v2\x1c.warcraftbuddy.loot.v1.StateR\x05state\x12D\n" +
+	"\toperation\x18\v \x01(\v2&.warcraftbuddy.loot.v1.CorpseOperationR\toperation\x12'\n" +
+	"\x0fretired_sources\x18\f \x03(\x04R\x0eretiredSources*\x97\x01\n" +
 	"\fGatherStatus\x12\x0f\n" +
 	"\vGATHER_NONE\x10\x00\x12\x14\n" +
 	"\x10GATHER_REQUESTED\x10\x01\x12\x16\n" +
 	"\x12GATHER_ITEM_STORED\x10\x02\x12\x14\n" +
 	"\x10GATHER_CONFIRMED\x10\x03\x12\x1a\n" +
 	"\x16GATHER_SERVER_REJECTED\x10\x04\x12\x16\n" +
-	"\x12GATHER_UNCONFIRMED\x10\x052\xa0\x02\n" +
+	"\x12GATHER_UNCONFIRMED\x10\x052\xb6\x04\n" +
 	"\tBuddyLoot\x12L\n" +
 	"\x06Enable\x12$.warcraftbuddy.loot.v1.EnableRequest\x1a\x1c.warcraftbuddy.loot.v1.State\x12@\n" +
-	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1c.warcraftbuddy.loot.v1.State\x12C\n" +
+	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1c.warcraftbuddy.loot.v1.State\x12R\n" +
+	"\x0eObserveCorpses\x12\x16.google.protobuf.Empty\x1a(.warcraftbuddy.loot.v1.CorpseObservation\x12^\n" +
+	"\n" +
+	"OpenCorpse\x12(.warcraftbuddy.loot.v1.OpenCorpseRequest\x1a&.warcraftbuddy.loot.v1.CorpseOperation\x12`\n" +
+	"\vCloseCorpse\x12).warcraftbuddy.loot.v1.CloseCorpseRequest\x1a&.warcraftbuddy.loot.v1.CorpseOperation\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-loot/api;lootv1b\x06proto3"
 
@@ -626,33 +1089,52 @@ func file_modules_buddy_loot_loot_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_loot_loot_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_modules_buddy_loot_loot_proto_goTypes = []any{
-	(GatherStatus)(0),      // 0: warcraftbuddy.loot.v1.GatherStatus
-	(*EnableRequest)(nil),  // 1: warcraftbuddy.loot.v1.EnableRequest
-	(*ItemReceipt)(nil),    // 2: warcraftbuddy.loot.v1.ItemReceipt
-	(*GatherReceipt)(nil),  // 3: warcraftbuddy.loot.v1.GatherReceipt
-	(*State)(nil),          // 4: warcraftbuddy.loot.v1.State
-	(*emptypb.Empty)(nil),  // 5: google.protobuf.Empty
-	(*v1.WorldPacket)(nil), // 6: agentwow.module.v1.WorldPacket
+	(GatherStatus)(0),          // 0: warcraftbuddy.loot.v1.GatherStatus
+	(*EnableRequest)(nil),      // 1: warcraftbuddy.loot.v1.EnableRequest
+	(*ItemReceipt)(nil),        // 2: warcraftbuddy.loot.v1.ItemReceipt
+	(*GatherReceipt)(nil),      // 3: warcraftbuddy.loot.v1.GatherReceipt
+	(*State)(nil),              // 4: warcraftbuddy.loot.v1.State
+	(*OpenCorpseRequest)(nil),  // 5: warcraftbuddy.loot.v1.OpenCorpseRequest
+	(*CloseCorpseRequest)(nil), // 6: warcraftbuddy.loot.v1.CloseCorpseRequest
+	(*CorpseOperation)(nil),    // 7: warcraftbuddy.loot.v1.CorpseOperation
+	(*CorpseObservation)(nil),  // 8: warcraftbuddy.loot.v1.CorpseObservation
+	(*api.PlayerState)(nil),    // 9: warcraftbuddy.world.v1.PlayerState
+	(*api1.State)(nil),         // 10: warcraftbuddy.actions.v1.State
+	(*api.CreatureState)(nil),  // 11: warcraftbuddy.world.v1.CreatureState
+	(*emptypb.Empty)(nil),      // 12: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),     // 13: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
-	0, // 0: warcraftbuddy.loot.v1.GatherReceipt.status:type_name -> warcraftbuddy.loot.v1.GatherStatus
-	2, // 1: warcraftbuddy.loot.v1.State.recent_items:type_name -> warcraftbuddy.loot.v1.ItemReceipt
-	3, // 2: warcraftbuddy.loot.v1.State.last_gather:type_name -> warcraftbuddy.loot.v1.GatherReceipt
-	1, // 3: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
-	5, // 4: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
-	6, // 5: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	5, // 6: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
-	4, // 7: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
-	4, // 8: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
-	5, // 9: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
-	5, // 10: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
-	7, // [7:11] is the sub-list for method output_type
-	3, // [3:7] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: warcraftbuddy.loot.v1.GatherReceipt.status:type_name -> warcraftbuddy.loot.v1.GatherStatus
+	2,  // 1: warcraftbuddy.loot.v1.State.recent_items:type_name -> warcraftbuddy.loot.v1.ItemReceipt
+	3,  // 2: warcraftbuddy.loot.v1.State.last_gather:type_name -> warcraftbuddy.loot.v1.GatherReceipt
+	9,  // 3: warcraftbuddy.loot.v1.CorpseObservation.self:type_name -> warcraftbuddy.world.v1.PlayerState
+	10, // 4: warcraftbuddy.loot.v1.CorpseObservation.actions:type_name -> warcraftbuddy.actions.v1.State
+	11, // 5: warcraftbuddy.loot.v1.CorpseObservation.corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	11, // 6: warcraftbuddy.loot.v1.CorpseObservation.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	4,  // 7: warcraftbuddy.loot.v1.CorpseObservation.state:type_name -> warcraftbuddy.loot.v1.State
+	7,  // 8: warcraftbuddy.loot.v1.CorpseObservation.operation:type_name -> warcraftbuddy.loot.v1.CorpseOperation
+	1,  // 9: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
+	12, // 10: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
+	12, // 11: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
+	5,  // 12: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
+	6,  // 13: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
+	13, // 14: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	12, // 15: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
+	4,  // 16: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
+	4,  // 17: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
+	8,  // 18: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
+	7,  // 19: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	7,  // 20: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	12, // 21: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
+	12, // 22: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
+	16, // [16:23] is the sub-list for method output_type
+	9,  // [9:16] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_loot_loot_proto_init() }
@@ -666,7 +1148,7 @@ func file_modules_buddy_loot_loot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_loot_loot_proto_rawDesc), len(file_modules_buddy_loot_loot_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   4,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

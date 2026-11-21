@@ -11,6 +11,7 @@ local healing = encounter_healing
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
 local consumables = encounter_consumables
+local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
 local movement = encounter_movement
 local commands = encounter_commands
@@ -53,6 +54,7 @@ local function on_event(event)
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
     if consumables and not consumables.on_event(event) then return false end
+    if corpse_loot and not corpse_loot.on_event(event) then return false end
     if buffs and not buffs.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
@@ -89,6 +91,7 @@ local function export_state()
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
                             consumables=consumables and consumables.export_state(),
+                            corpseLoot=corpse_loot and corpse_loot.export_state(),
                             movement=movement and movement.export_state and movement.export_state()}}
 end
 
@@ -115,6 +118,7 @@ local function import_state(checkpoint)
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
+    if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
     if checkpoint.data.movement and (not movement or not movement.import_state or
        not movement.import_state(checkpoint.data.movement)) then return false end
     state = saved
@@ -701,6 +705,17 @@ local function decide(frame)
         end
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
+    if corpse_loot and (policy_observation or observation) then
+        local current=policy_observation or observation
+        local action=out.action
+        local urgent=out.focusGuid~=nil or action and (action.capability=="heal" or action.capability=="cleanse" or
+            action.capability=="interrupt" or action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start")
+        local loot=corpse_loot.decide(frame,current,out.action==nil and not out.focusGuid and #frame.pending==0,urgent)
+        out.corpseLoot=loot
+        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+            out.action=loot.action
+        end
+    end
     if consumables and (policy_observation or observation) then
         local resting=consumables.decide(frame,policy_observation or observation,out.action==nil and #frame.pending==0)
         out.consumable=resting

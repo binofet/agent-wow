@@ -48,6 +48,7 @@ type policySpell struct {
 	melee          *policyMelee
 	movement       *policyMovement
 	consumable     *policyConsumable
+	corpse         *policyCorpse
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -59,6 +60,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "loot_open" || capability == "loot_close" {
+		return p.resolveCorpseLoot(action, capability)
+	}
 	if capability == "consume" {
 		return p.resolveConsumable(action)
 	}
@@ -300,6 +304,13 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.corpse != nil {
+		want := uint32(opcode.CMSGLoot)
+		if op.corpse.close {
+			want = opcode.CMSGLootRelease
+		}
+		return code == want && len(payload) == 8 && binary.LittleEndian.Uint64(payload) == op.target
+	}
 	if op.consumable != nil {
 		return op.matchesConsumablePacket(code, payload)
 	}
