@@ -126,5 +126,14 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         self.assertEqual(data['lastCancel']['receipt']['outcome'],'settled_unverified')
         self.assertNotIn('cancel',data)
 
+    def test_cancel_only_claims_body_without_a_classified_spell_or_module_cast_task(self):
+        events=[dict(kind='encounter_observation',sequence='2',value=self.obs()),
+            dict(kind='command',sequence='3',value=dict(task='cancel_spell',id='cancel-old-channel',
+                spellId=10,expectedOperationRevision='987654321098765432',channel=True))]
+        result=self.run_policy(events,pending=[dict(action_id='1',outcome='unknown')],composed=True)
+        self.assertEqual(result['output']['action']['capability'],'cancel_spell')
+        self.assertIn('encounterOwnership',result['output'])
+        self.assertNotIn('current',result['checkpoint']['data']['spellInvocation']['data'])
+
 
 if __name__=='__main__':unittest.main()

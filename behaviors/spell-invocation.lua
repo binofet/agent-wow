@@ -173,7 +173,7 @@ function M.commit(action)
 end
 
 function M.export_state() return {version=1,data=copy(state)} end
-function M.pending() return state.current~=nil end
+function M.pending() return state.current~=nil or state.cancel~=nil end
 function M.import_state(checkpoint)
     if checkpoint.version~=1 or type(checkpoint.data)~="table" or type(checkpoint.data.seen)~="table" then return false end
     local task=checkpoint.data.current
