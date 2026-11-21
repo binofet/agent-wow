@@ -178,9 +178,14 @@ func TestPracticeRequiresVerifiedRouteBeforeEvenNearbyMagePull(t *testing.T) {
 }
 
 func finishPracticeCast(s *Service) {
-	p := smiteEvent(true, s.castCount, enemyGUID)
-	binary.LittleEndian.PutUint32(p[5:], s.pendingSpell)
+	spell, target := s.pendingSpell, s.pendingTarget
+	p := smiteEvent(true, s.castCount, target)
+	binary.LittleEndian.PutUint32(p[5:], spell)
 	s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellGo, Payload: p})
+	if op := s.pendingExplicitCastLocked(); op != nil && op.view.Capability == offenseCapability && op.view.ServerCastGo {
+		s.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.SMSGSpellnonmeleedamagelog,
+			Payload: exactOffenseDamageLog(s.selfGUID, target, spell, 10)})
+	}
 }
 
 func TestPracticeWaitsForOutOfCombatRegenerationBeforeNextPull(t *testing.T) {
