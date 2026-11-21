@@ -3369,6 +3369,25 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual((record['omittedTools'],record['omittedPendingTools']),(24,4))
             self.assertFalse(record['streamComplete']);self.assertEqual(record['counts']['failedCommands'],40)
 
+    def test_broken_stdin_cleanup_preserves_original_error_and_prior_tool_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,_=self.brain(Path(temporary),'')
+            class BrokenInput:
+                closed=False
+                def write(self,data):raise BrokenPipeError('original write failure')
+                def close(self):raise BrokenPipeError('secondary close failure')
+            def launch(*args,**kwargs):
+                kwargs['stdout'].write(b'{"type":"turn.started"}\n{"type":"item.completed","item":{"id":"cas-before-pipe-close","type":"command_execution","status":"completed","exit_code":0}}\n')
+                return types.SimpleNamespace(stdin=BrokenInput(),returncode=1,poll=lambda:1)
+            with patch.object(converse.subprocess,'Popen',side_effect=launch) as process:
+                with self.assertRaisesRegex(BrokenPipeError,'original write failure'):brain.generate([],state)
+            self.assertEqual(process.call_count,1)
+            record=converse.read_json(brain.state_dir/'development-events-last.json')
+            self.assertEqual((record['reason'],record['errorType']),('process_io_failed','BrokenPipeError'))
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['tools'][0]['itemId'],'cas-before-pipe-close')
+            self.assertFalse(record['streamComplete'])
+
 
 from test_gm_tasks import TestGMTaskTransport, TestGMTaskHost
 from test_gm_task_observations import GMTaskObservationTests
