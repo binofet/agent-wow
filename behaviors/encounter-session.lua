@@ -536,16 +536,6 @@ local function decide_encounter(frame)
     if task_view and task_view.action then
         out.action=task_view.action;transient_tasks.commit(task_view,out.action);return out
     end
-    local buff = buffs and buffs.choose(obs,frame)
-    if buff then
-        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or movement and movement.needs_position(buff.targetGuid)) then
-            out.action=position_for(buff.targetGuid,buff.spellId)
-        else
-            buff.observationSequence=state.sequence
-            out.action=buff
-        end
-        return out
-    end
     local command_action, command_status
     if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid, control ~= nil and control ~= false,
         function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
@@ -627,6 +617,16 @@ local function decide_encounter(frame)
                 out.action = proposal(obs, "melee_start", out.focusGuid)
             end
         end
+    end
+    local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame)
+    if buff then
+        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or movement and movement.needs_position(buff.targetGuid)) then
+            out.action=position_for(buff.targetGuid,buff.spellId)
+        else
+            buff.observationSequence=state.sequence
+            out.action=buff
+        end
+        return out
     end
     if not out.action and not out.focusGuid and movement and movement.idle_recovery and not (task_view and task_view.hold) then
         out.action = movement.idle_recovery(obs, state.sequence).action

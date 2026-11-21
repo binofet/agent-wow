@@ -209,3 +209,26 @@ func TestEncounterBuffPolicyYieldsToHealingAndApproachesSelectedAlly(t *testing.
 		t.Fatal("buff gave up instead of positioning", out)
 	}
 }
+
+func TestEncounterCommandedControlPrecedesIdleBuffMaintenance(t *testing.T) {
+	p := newFallbackPolicyTest(t, "")
+	obs := positionedHealObservation()
+	obs.Healing.Patients, obs.Healing.Spells = nil, nil
+	self := obs.Players[fallbackGUID(fallbackSelf)]
+	self.CombatKnown, self.PowerKnown, self.HealthKnown = true, true, true
+	self.Power, self.MaxPower, self.Health, self.MaxHealth = 100, 100, 100, 100
+	obs.Spells = map[string]*actionsv1.EncounterSpell{
+		"1244": {Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", TargetRule: "ally", FamilyId: 1243, Rank: 2, Cost: 10, MaxRange: 30},
+		"118":  {Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "polymorph", FamilyId: 118, Rank: 1, MaxRange: 30}}
+	obs.MeleeKnown = true
+	addFallbackTarget(obs, fallbackNPC, 0, 100)
+	_, err := p.host.Enqueue(behavior.Event{Kind: "command", Value: map[string]any{"task": "control", "technique": "polymorph", "targetGuid": fallbackGUID(fallbackNPC)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	action, _ := out["action"].(map[string]any)
+	if action["targetGuid"] != fallbackGUID(fallbackNPC) || (action["capability"] != "approach_target" && action["capability"] != "polymorph") {
+		t.Fatal("idle buffs displaced the player's explicit control", out)
+	}
+}
