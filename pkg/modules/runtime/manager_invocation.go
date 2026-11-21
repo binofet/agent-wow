@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/modules/discovery"
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
@@ -113,6 +114,9 @@ func (m *Manager) invokeJSON(ctx context.Context, full string, params json.RawMe
 }
 
 func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv1.InvokeModuleRequest) (*modv1.InvokeModuleResponse, error) {
+	if req.GetModule() == modcb.FollowPolicyModule && req.GetMethod() == modcb.FollowPolicyMethod {
+		return m.readFollowDecision(ctx, callerName, req)
+	}
 	caller, ok := m.registry.Lookup(callerName)
 	if !ok || !caller.Requires(req.GetModule()) {
 		return nil, status.Error(codes.PermissionDenied, "target is not a directly declared dependency")
@@ -165,6 +169,16 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	}
 	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/HealOnce" {
 		return m.queueLegacyHeal(ctx, inst, result)
+	}
+	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC" {
+		fields := req.ProtoReflect().Descriptor().Fields()
+		enabled := req.ProtoReflect().Get(fields.ByName("enabled")).Bool()
+		m.mu.Lock()
+		attached := m.policy != nil
+		m.mu.Unlock()
+		if enabled || attached {
+			return m.queueLegacyEngage(ctx, inst, req, result)
+		}
 	}
 	if legacyResurrectionRequest(name, md.Path(), req) {
 		return m.queueLegacyResurrection(ctx, inst, req, result)

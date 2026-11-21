@@ -240,7 +240,11 @@ class SyncTests(unittest.TestCase):
     def test_unavailable_reward_evaluator_never_uses_a_python_handoff(self):
         profile,rpc,_,_=self.rig()
         rpc.active={783}
-        with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-reward-evaluator"}):
+        original=sync.converse.quest_rewards.starter_handoff
+        def unavailable(facts):
+            with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-reward-evaluator"}):
+                return original(facts)
+        with patch.object(sync.converse.quest_rewards,"starter_handoff",side_effect=unavailable):
             profile.tick()
         self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_prerequisite_reward_policy")
         self.assertFalse(self.mutate_calls(rpc))
@@ -516,6 +520,7 @@ class SyncTests(unittest.TestCase):
         profile.tick()
         self.assertTrue(rpc.actions["practicing"])
         self.assertEqual(profile.status["phase"], "practicing_to_level_2")
+
         rpc.level = 2
         clock[0] += 10
         profile.tick()
@@ -533,6 +538,115 @@ class SyncTests(unittest.TestCase):
         profile.tick()
         self.assertTrue(any(method == "buddy-actions.practice" for method, _ in rpc.calls))
         self.assertEqual(profile.status["phase"], "practicing_to_level_2")
+
+    def test_objective_policy_failure_at_each_stage_cannot_patch_ownership_or_write(self):
+        for stage in ("classify","post_hold","loot","practice","before_quests","fallback"):
+            profile,rpc,clock,_=self.rig()
+            profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+            if stage=="fallback":rpc.active,rpc.level={7,3903},1
+            profile.tick()  # Establish the existing, observed follow hold.
+            if stage=="before_quests":rpc.wolves_complete=True
+            before=len(self.mutate_calls(rpc))
+            owned=profile.data["routine"]["practiceOwned"]
+            original=sync.objective_policy.evaluate
+            def rejected(facts):
+                return {"status":"pending"} if facts["stage"]==stage else original(facts)
+            clock[0]+=10
+            with patch.object(sync.objective_policy,"evaluate",side_effect=rejected):profile.tick()
+            self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_objective_policy",stage)
+            self.assertEqual(len(self.mutate_calls(rpc)),before,stage)
+            self.assertEqual(profile.data["routine"]["practiceOwned"],owned,stage)
+
+    def test_unavailable_objective_evaluator_has_no_python_objective_fallback(self):
+        profile,rpc,_,_=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-objective-evaluator"}):profile.tick()
+        self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_objective_policy")
+        self.assertFalse(self.mutate_calls(rpc))
+        self.assertNotIn("routine",profile.data)
+
+    def test_uncertain_practice_enable_keeps_saved_ownership_and_observed_lease_prevents_replay(self):
+        profile,rpc,clock,saved=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        profile.tick()
+        original_call=rpc.call
+        def ambiguous(method,params):
+            result=original_call(method,params)
+            if method=="buddy-actions.practice" and params.get("enabled") is True:
+                raise sync.Error("Practice enable transport outcome is unknown")
+            return result
+        rpc.call=ambiguous
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual(profile.status["phase"],"request_unconfirmed_reconciling_fresh_state")
+        self.assertTrue(saved[-1]["routine"]["practiceOwned"])
+        clock[0]+=10
+        profile.tick()
+        self.assertEqual([m for m,_ in rpc.calls].count("buddy-actions.practice"),1)
+        self.assertTrue(profile.data["routine"]["practiceOwned"])
+        rpc.call=original_call
+        profile.cleanup()
+        self.assertFalse(rpc.actions["practicing"])
+        self.assertTrue(profile.data["routine"]["closed"])
+
+    def test_lua_cannot_clear_owned_or_uncertain_practice_before_observed_stop(self):
+        for state in ({"practicing":True},{"autoAttacking":True},
+                      {"autoAttackRequested":True},{"autoAttackUnconfirmed":True}):
+            profile,rpc,_,saved=self.rig()
+            profile.data["routine"]={"session":rpc.session,"practiceOwned":True}
+            profile.actions=state
+            with patch.object(sync.objective_policy,"evaluate",return_value={"status":"ready",
+                              "choice":{"kind":"continue_quests","practiceOwned":False}}):
+                with self.assertRaises(sync.Error):profile.stop_practice_for_quests()
+            self.assertTrue(profile.data["routine"]["practiceOwned"])
+            self.assertFalse(saved)
+            self.assertFalse(self.mutate_calls(rpc))
+
+    def test_lua_cannot_stop_an_unowned_uncertain_attack_as_practice(self):
+        profile,rpc,_,saved=self.rig()
+        profile.data["routine"]={"session":rpc.session,"practiceOwned":False}
+        profile.actions={"autoAttackUnconfirmed":True}
+        with patch.object(sync.objective_policy,"evaluate",return_value={"status":"ready",
+                          "choice":{"kind":"disable_practice"}}):
+            with self.assertRaises(sync.Error):profile.stop_practice_for_quests()
+        self.assertFalse(saved)
+        self.assertFalse(self.mutate_calls(rpc))
+
+    def test_objective_source_edit_and_broken_candidate_keep_same_profile_ownership(self):
+        profile,rpc,clock,_=self.rig()
+        profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
+        profile.tick();clock[0]+=10;profile.tick()
+        rpc.actions["practiceLeaseRemainingMs"]="90000"
+        clock[0]+=10;profile.tick()
+        count=[m for m,_ in rpc.calls].count("buddy-actions.practice")
+        self.assertEqual(count,1)
+        source=sync.objective_policy.SOURCE.read_text()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"starter-objectives.lua"
+            path.write_text(source.replace('#lease>5 or #lease==5 and lease>"60000"',
+                                           '#lease>6 or #lease==6 and lease>"120000"'))
+            self.assertNotEqual(path.read_text(),source)
+            with patch.object(sync.objective_policy,"SOURCE",path):
+                original_call=rpc.call
+                def ambiguous(method,params):
+                    result=original_call(method,params)
+                    if method=="buddy-actions.practice" and params.get("enabled") is True:
+                        raise sync.Error("Practice renewal transport outcome is unknown")
+                    return result
+                rpc.call=ambiguous
+                clock[0]+=10;profile.tick()
+                self.assertEqual([m for m,_ in rpc.calls].count("buddy-actions.practice"),count+1)
+                self.assertTrue(profile.data["routine"]["practiceOwned"])
+                path.write_text("invalid candidate")
+                clock[0]+=10;profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_objective_policy")
+                self.assertEqual([m for m,_ in rpc.calls].count("buddy-actions.practice"),count+1)
+                self.assertTrue(profile.data["routine"]["practiceOwned"])
+                path.write_text(source)
+                clock[0]+=10;profile.tick()
+        self.assertEqual(rpc.session,"quest-session")
+        self.assertEqual([m for m,_ in rpc.calls].count("buddy-actions.practice"),count+1)
+        self.assertTrue(profile.data["routine"]["practiceOwned"])
 
     def test_party_xp_level2_does_not_interrupt_owned_current_fight(self):
         profile, rpc, clock, _ = self.rig(4)

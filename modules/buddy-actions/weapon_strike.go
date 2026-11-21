@@ -77,7 +77,7 @@ func (s *Service) offenseCustodyFor(spell spellcatalog.Spell) bool {
 	return !s.closed && !s.clientControlLost && !s.clientControlRestoring && !s.state.CastPending &&
 		!s.state.Traveling && !s.state.MotionUnconfirmed && !s.state.AutoAttackUnconfirmed &&
 		(!s.state.AutoAttackRequested || s.acknowledgedSwingActiveLocked()) && !s.autoStopping && s.state.InteractionOwner == "" && !s.state.Practicing &&
-		!s.engage.active && !s.fargodeep.active && !s.recovery.state.Active &&
+		!s.fargodeep.active && !s.recovery.state.Active &&
 		!s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal)
 }
 

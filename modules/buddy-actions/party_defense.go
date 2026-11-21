@@ -1,9 +1,6 @@
 package buddyactions
 
 import (
-	"context"
-	"math"
-
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
 
@@ -27,20 +24,6 @@ func ongoingAttack(c *worldv1.CreatureState, victim *worldv1.PlayerState) bool {
 		return true
 	}
 	return c.TargetKnown && c.TargetGuid == victim.Guid && c.UnitFlagsKnown && c.UnitFlags&0x80000 != 0
-}
-
-func (s *Service) rejectOverlevelTargetLocked(w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
-	self := w.Self
-	if !self.LevelKnown || !target.LevelKnown || uint64(target.Level) <= uint64(self.Level)+3 {
-		return false
-	}
-	if s.selfDefenseTarget == target.Guid && ongoingAttack(target, self) {
-		return false
-	}
-	// Party defense binds the victim only after checking current membership.
-	// The write path checks that membership and the attack again after facing.
-	return s.partyDefenseTarget != target.Guid || s.partyDefenseVictim == 0 ||
-		!ongoingAttack(target, observedHealingPlayer(w, s.partyDefenseVictim))
 }
 
 func partyDefenseCreature(w *worldv1.SnapshotResponse, guid uint64) *worldv1.CreatureState {
@@ -75,149 +58,4 @@ func partyDefenseEligible(w *worldv1.SnapshotResponse, c *worldv1.CreatureState,
 	}
 	_, known, _ := creaturePosition(c)
 	return known
-}
-
-// Defend current online party members even while the owner is offline. This is
-// separate from owner target assistance: only an actual hostile attack relation
-// can select a target, and independent profiles acquire no new group authority.
-func (s *Service) partyDefenseLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	if s.independent || safeSelfCombat(w, s.selfGUID) != "" || s.state.MotionUnconfirmed || len(w.NearbyCreatures) > 32 {
-		return false
-	}
-	potential := false
-	for _, c := range w.NearbyCreatures {
-		if c != nil && c.AttackVictimKnown && c.AttackVictimGuid != s.selfGUID {
-			potential = true
-			break
-		}
-	}
-	if !potential {
-		return false
-	}
-	online := s.healingPartyLocked(ctx)
-	var target *worldv1.CreatureState
-	best := math.Inf(1)
-	for _, c := range w.NearbyCreatures {
-		if !partyDefenseEligible(w, c, online) || s.targetProtection.blocks(c.Guid, s.now()) {
-			continue
-		}
-		p, _, _ := creaturePosition(c)
-		d := distance(s.pos, p)
-		if d < best || d == best && (target == nil || c.Guid < target.Guid) {
-			target, best = c, d
-		}
-	}
-	if target == nil {
-		return false
-	}
-
-	if s.state.MotionUnconfirmed || !s.refreshPositionLocked(w) {
-		return true
-	}
-	s.partyDefenseTarget, s.partyDefenseVictim = target.Guid, target.AttackVictimGuid
-	defer func() { s.partyDefenseTarget, s.partyDefenseVictim = 0, 0; s.state.AssistReason = s.state.Reason }()
-	s.assistObservedTargetLocked(ctx, w, target, true)
-	// Caster range/mana refusals and failed melee routes must not leave prior
-	// approach movement running or fall through into ordinary owner following.
-	if !s.state.Moving || s.state.Reason != "rogue_approaching_engaged_target_nav" {
-		s.stopLocked(ctx)
-	}
-	return true
-}
-
-// Recheck after clock/planning/facing callbacks, immediately before a new
-// movement, attack, or cast. The current lease remains separately enforced.
-func (s *Service) partyDefenseCurrentLocked(ctx context.Context) (*worldv1.SnapshotResponse, bool) {
-	// Membership callbacks may themselves coincide with packet updates. Fetch
-	// membership first, then the final world snapshot used to authorize a write.
-	online := s.healingPartyLocked(ctx)
-	w, err := s.snapshot(ctx)
-	if err != nil || s.independent || s.partyDefenseTarget == 0 || safeSelfCombat(w, s.selfGUID) != "" || w.Self.MapId != s.posMap || w.Self.PositionRevision != s.positionRevision {
-		return nil, false
-	}
-	c := partyDefenseCreature(w, s.partyDefenseTarget)
-	return w, c != nil && c.AttackVictimGuid == s.partyDefenseVictim && partyDefenseEligible(w, c, online)
-}
-
-func (s *Service) partyDefenseOffenseAllowedLocked(ctx context.Context, target uint64, spell uint32) bool {
-	s.state.Reason = "party_defense_authority_changed_before_cast"
-	w, ok := s.partyDefenseCurrentLocked(ctx)
-	if !ok || target != s.partyDefenseTarget {
-		return false
-	}
-	return s.defenseOffenseAllowedLocked(w, target, spell)
-}
-
-// A definite correlated spell failure can settle one defensive cast without
-// retiring defense against a still-attacking enemy. Initial pulls and uncertain
-// casts keep their existing quarantine. The final observation follows facing.
-func (s *Service) failedDefenseRetryAllowedLocked(ctx context.Context, target uint64, spell uint32) bool {
-	s.state.Reason = "defense_retry_requires_current_attacker"
-	if target == 0 || s.failedAssistTarget != target || s.failedAssistCastTarget != target ||
-		s.state.Practicing || s.fargodeep.active || s.now().Before(s.nextAssist) {
-		return false
-	}
-	if s.partyDefenseTarget != 0 {
-		return target == s.partyDefenseTarget && s.partyDefenseOffenseAllowedLocked(ctx, target, spell)
-	}
-	w, err := s.snapshot(ctx)
-	if err != nil || safeSelfCombat(w, s.selfGUID) != "" || w.Self.MapId != s.posMap || w.Self.PositionRevision != s.positionRevision {
-		return false
-	}
-	c := partyDefenseCreature(w, target)
-	if c == nil || !c.Present || !c.MapKnown || c.MapId != w.Self.MapId || !c.AliveKnown || !c.Alive || !c.HealthKnown || c.Health == 0 || !ongoingAttack(c, w.Self) {
-		return false
-	}
-	if kind := c.Guid >> 48; kind != 0xf130 && kind != 0xf150 {
-		return false
-	}
-	return s.defenseOffenseAllowedLocked(w, target, spell)
-}
-
-func (s *Service) defenseOffenseAllowedLocked(w *worldv1.SnapshotResponse, target uint64, spell uint32) bool {
-	c := partyDefenseCreature(w, target)
-	p, known, _ := creaturePosition(c)
-	self := w.Self
-	if !known || !self.ClassKnown || c.UnitFlags&(0x2|0x80|0x100|0x10000|0x2000000|0x80000000) != 0 || c.UnitFlags_2&1 != 0 || c.DynamicFlags&0x20 != 0 || s.rejectOverlevelTargetLocked(w, c) {
-		return false
-	}
-	limit := float64(28)
-	if self.ClassId == 8 {
-		limit = 33
-	}
-	if spell == 0 || self.ClassId == 4 {
-		if spell == 0 && !s.state.KnownAutoAttack {
-			return false
-		}
-		if !self.BaseAttackTimeKnown || !self.CombatReachKnown || !c.CombatReachKnown || self.UnitFlags&(0x20000|0x200000) != 0 || !s.weaponReady(self) {
-			return false
-		}
-		limit = math.Max(5, float64(self.CombatReach+c.CombatReach)+4.0/3.0) - 0.5
-		if spell != 0 {
-			r, ok := s.learnedContractsLocked()[spell]
-			if !ok || r.Capability().Kind != "weapon_strike" || !s.casterRequirementsLocked(r) || r.Behind && !behindEnemy(s.pos, p) || r.Attrs[0]&0x20000 != 0 && !s.stealthedLocked() {
-				return false
-			}
-			cost := spellCost(r, self)
-			if r.Family == sinisterStrike {
-				cost = uint64(s.state.SinisterStrikeEnergyCost)
-			}
-			if !self.PowerKnown || self.PowerType != 3 || uint64(self.Power) < cost {
-				s.state.Reason = "party_defense_resources_changed_before_cast"
-				return false
-			}
-		}
-	} else {
-		r, ok := s.learnedContractsLocked()[spell]
-		if !ok || r.Capability().Kind != "damage" || !s.casterRequirementsLocked(r) || self.UnitFlags&0x2000 != 0 || !self.PowerKnown || self.PowerType != 0 {
-			return false
-		}
-		limit = r.MaxHostile - 2
-		cost, reserve := spellCost(r, self), s.healingReserveLocked(self)
-		if cost == 0 || uint64(self.Power) < cost+reserve {
-			s.state.Reason = "party_defense_resources_changed_before_cast"
-			return false
-		}
-	}
-	return distance(s.pos, p) <= limit
 }

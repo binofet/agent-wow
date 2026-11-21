@@ -35,7 +35,8 @@ function M.portal_catchup(frame, obs, sequence)
     local planned=encounter_formation.decide({mode="portal_catch_up",nowMs=frame.clock.monotonicMs,
         selfGuid=obs.selfGuid,classId=self.classKnown and self.classId or 0,
         self={x=start.x or 0,y=start.y or 0,z=start.z or 0,moving=self.moving==true},
-        owner={x=ground.x or 0,y=ground.y or 0,z=ground.z or 0,o=start.orientation or 0,moving=false}})
+        owner={x=ground.x or 0,y=ground.y or 0,z=ground.z or 0,o=start.orientation or 0,moving=false,
+            playerFlags=(nav.followOwner or {}).playerFlags}})
     if type(planned.candidates)~="table" or #planned.candidates==0 then return end
     return {sessionId=obs.sessionId,selfGuid=obs.selfGuid,visitId=obs.visitId,observationSequence=sequence,
         witnessRevision=portal.witnessRevision,followRevision=portal.followRevision,ownerGuid=portal.ownerGuid,
@@ -55,7 +56,7 @@ function M.follow_formation(frame, obs, sequence)
     local planned = encounter_formation.decide({
         mode=nav.groundNavigationConfigured == false and "near_owner" or "formation",
         nowMs=frame.clock.monotonicMs, selfGuid=obs.selfGuid, classId=self.classKnown and self.classId or 0,
-        owner={x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,o=owner.orientation or 0,moving=owner.moving == true},
+        owner={x=owner.x or 0,y=owner.y or 0,z=owner.z or 0,o=owner.orientation or 0,moving=owner.moving == true,playerFlags=owner.playerFlags},
         self={x=self.x or 0,y=self.y or 0,z=self.z or 0,moving=self.moving == true},
         ownerArrival=nav.ownerArrival == true, memory=formation_memory,
     })

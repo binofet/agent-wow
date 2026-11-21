@@ -456,7 +456,7 @@ func (s *Service) fargodeepTickLocked(ctx context.Context, w *worldv1.SnapshotRe
 		return true
 	}
 	attempts := s.state.AssistAttempts
-	s.assistObservedTargetLocked(ctx, w, target, true)
+	s.starterAssistObservedTargetLocked(ctx, w, target)
 	if s.state.AssistAttempts > attempts || s.autoTarget == f.target {
 		f.pulled = true
 		f.route = nil

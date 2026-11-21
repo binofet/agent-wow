@@ -56,10 +56,20 @@ local function on_event(event)
             end
         end
     end
-    if event.kind == "encounter_observation" then state.sequence = event.sequence end
+    if event.kind == "encounter_observation" then
+        state.sequence=event.sequence
+        local obs=event.value or {}
+        if state.session and state.session~=obs.sessionId then state.pull=nil end
+        local self=(obs.players or {})[obs.selfGuid]
+        if self and self.aliveKnown==true and self.alive==false then state.pull=nil end
+        state.session,state.visitId=obs.sessionId,obs.visitId
+    end
     if event.kind ~= "command" or type(event.value) ~= "table" then return true end
     local value = event.value
-    if value.task == "control" then
+    if value.task == "engage" then
+        if value.enabled==false or value.cancel==true then state.pull=nil
+        elseif guid(value.targetGuid) then state.pull={targetGuid=value.targetGuid,visitId=state.visitId} end
+    elseif value.task == "control" then
         if value.cancel == true or value.enabled == false then
             if value.auto == true then state.autoPolymorph = false end
             cancel(value); return true
@@ -148,7 +158,17 @@ local function queue_intent(obs)
         local resolved = guid(target) or marked_target(obs, target)
         if resolved then out.killOrder[#out.killOrder+1] = resolved end
     end
-    out.focusGuid = resolve(obs, state.focus)
+    if state.pull then
+        local pull=state.pull
+        pull.visitId=pull.visitId or obs.visitId
+        local npc=(obs.targets or {})[pull.targetGuid]
+        if pull.visitId~=obs.visitId or npc and npc.present==true and npc.aliveKnown==true and npc.alive==false then
+            state.pull=nil
+        elseif alive(npc) and npc.mapKnown==true and npc.mapId==obs.mapId then
+            out.pullGuid=pull.targetGuid
+        end
+    end
+    out.focusGuid = out.pullGuid or resolve(obs, state.focus)
     for _, row in ipairs(state.requests) do
         if guid(row.boundGuid) and row.visitId == obs.visitId then out.controlTargets[row.boundGuid] = true end
     end

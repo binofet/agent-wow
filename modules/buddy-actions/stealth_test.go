@@ -42,16 +42,16 @@ func TestStealthNeedsObservedCasterAuraStateAndActualOwnAura(t *testing.T) {
 	s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 15, inventory: 13, valid: true}
 	s.pos = position{x: 0}
 	target := position{x: 2, o: 0}
-	if r := s.weaponStrikeLocked(f.world.Self, target); r.ID != 53 {
+	if r := s.starterWeaponStrikeLocked(f.world.Self, target); r.ID != 53 {
 		t.Fatal("behind dagger strike not selected", r)
 	}
 	target.o = float32(math.Pi)
-	if r := s.weaponStrikeLocked(f.world.Self, target); r.ID == 53 {
+	if r := s.starterWeaponStrikeLocked(f.world.Self, target); r.ID == 53 {
 		t.Fatal("Backstab from front")
 	}
 	target.o = 0
 	s.weapons[2092] = weaponProof{entry: 2092, class: 2, subclass: 4, inventory: 13, valid: true}
-	if r := s.weaponStrikeLocked(f.world.Self, target); r.ID == 53 {
+	if r := s.starterWeaponStrikeLocked(f.world.Self, target); r.ID == 53 {
 		t.Fatal("Backstab without dagger")
 	}
 }

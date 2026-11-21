@@ -2,15 +2,14 @@ package buddyactions
 
 import (
 	"context"
-	"strings"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"strings"
+	"testing"
+	"time"
 )
 
 func acquireMovementForTest(t *testing.T, s *Service, ms uint32) *actionsv1.MovementOwnerLease {
@@ -99,12 +98,11 @@ func TestMovementOwnerLeavesLearnedHealingAndPartyDefenseAvailable(t *testing.T)
 		}
 	})
 	t.Run("defense", func(t *testing.T) {
-		s, f, c, _ := partyDefenseRig(t, 8)
-		s.sessionID = f.party.SessionId
-		acquireMovementForTest(t, s, 3000)
-		tickLuaHealing(t, s)
-		if s.state.AssistAttempts != 1 || s.state.LastCastTargetGuid != c.Guid || lastCast(f) == 0 || !s.stateLocked().MovementOwner.Active {
-			t.Fatal("movement custody disabled actual party defense", s.stateLocked(), f.packets)
+		x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
+		acquireMovementForTest(t, x.s, 3000)
+		x.cast()
+		if x.s.state.LastCastTargetGuid != enemyGUID || countPackets(x.f, opcode.CMSGCastSpell) != 1 || !x.s.stateLocked().MovementOwner.Active {
+			t.Fatal("movement custody disabled Lua defense", x.s.stateLocked())
 		}
 	})
 }

@@ -159,6 +159,15 @@ func (s *Session) Status() SessionStatus {
 	return s.statusLocked()
 }
 
+// HasExport reports a Lua function present in the accepted policy's returned
+// table at load time. It runs no Lua and does not consume observations or
+// receipts. The immutable facts remain readable after the VM is closed.
+func (s *Session) HasExport(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.vm != nil && s.vm.exports[name]
+}
+
 // Inspect ties the revision and pending receipts to the same observation.
 func (s *Session) Inspect() (SessionStatus, []ActionReceipt) {
 	s.mu.Lock()

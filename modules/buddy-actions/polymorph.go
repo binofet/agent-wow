@@ -130,7 +130,7 @@ func (s *Service) castCrowdControl(ctx context.Context, session string, rank uin
 func (s *Service) crowdControlIdleLocked() bool {
 	return !s.closed && !s.state.CastPending && !s.state.Moving && !s.state.MotionUnconfirmed &&
 		!s.state.AutoAttacking && !s.state.AutoAttackRequested && !s.state.AutoAttackUnconfirmed && s.autoTarget == 0 && !s.autoStopping &&
-		s.state.InteractionOwner == "" && !s.state.Practicing && !s.engage.active && !s.fargodeep.active && !s.state.Traveling && !s.recovery.state.Active &&
+		s.state.InteractionOwner == "" && !s.state.Practicing && !s.fargodeep.active && !s.state.Traveling && !s.recovery.state.Active &&
 		!s.now().Before(s.nextHeal) && !s.now().Before(s.nextAssist)
 }
 

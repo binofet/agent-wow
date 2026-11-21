@@ -2,16 +2,15 @@ package buddyactions
 
 import (
 	"context"
-	"reflect"
-	"testing"
-	"time"
-
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"reflect"
+	"testing"
+	"time"
 )
 
 func harvestRig(t *testing.T) (*Service, *fakeSession, func(time.Duration)) {
@@ -133,18 +132,28 @@ func TestHarvestRenewRevokesOnlyItsExactLeaseOnDanger(t *testing.T) {
 
 func TestHarvestTickYieldsToActualPreFlagDefenseAndUrgentHealing(t *testing.T) {
 	t.Run("defense", func(t *testing.T) {
-		s, f, attacker, _ := selfDefenseRig(t, 8)
-		f.world.Self.UnitFlags, f.world.NearbyCreatures = 0, nil
-		f.party = &partyv1.StateResponse{SessionId: "this-body", Group: &partyv1.Group{Known: true}}
-		s.state.Following = true
-		s.followUntil = s.now().Add(lease)
-		harvestLease(t, s, "professions")
-		f.world.NearbyCreatures = []*worldv1.CreatureState{attacker}
-		tickLuaHealing(t, s)
-		if s.state.InteractionOwner != "" || s.state.InteractionHarvest || lastCast(f) != fireball || !s.state.CastPending {
-			t.Fatal("harvest suppressed existing defense", &s.state, f.packets)
+		x := newCombatExecutionFixture(t, combatReplayCatalog, 585)
+		c := x.f.world.RequestedCreature
+		x.f.world.Self.UnitFlags = 0
+		x.f.world.Owner.Health = 100
+		x.f.world.NearbyCreatures = nil
+		x.f.world.RequestedCreature = nil
+		x.s.state.Following = true
+		x.s.followUntil = x.s.now().Add(lease)
+		harvestLease(t, x.s, "professions")
+		x.f.world.NearbyCreatures = []*worldv1.CreatureState{c}
+		x.f.world.RequestedCreature = c
+		x.s.Tick(context.Background())
+		if x.s.state.InteractionOwner != "" || x.s.state.InteractionHarvest {
+			t.Fatal("real attack did not release harvest custody", x.s.stateLocked())
 		}
-		harvestIntents(t, s)
+		x.cast()
+		if !x.s.state.CastPending {
+			t.Fatal("Lua defense did not execute after harvest yielded", x.s.stateLocked())
+		}
+		if !x.s.state.Following || x.s.state.Assisting {
+			t.Fatal("harvest or defense rewrote unrelated legacy intent", x.s.stateLocked())
+		}
 	})
 	t.Run("heal", func(t *testing.T) {
 		s, f, _ := harvestRig(t)

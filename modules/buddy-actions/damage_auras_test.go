@@ -19,7 +19,7 @@ func TestWarlockUsesAnInstantAfterInterruptionWithoutRefreshingActiveCurse(t *te
 	s.state.LastCastFailure, s.state.LastCastTargetGuid = spellFailedInterrupted, target.Guid
 	pos, _, _ := creaturePosition(target)
 	choose := func(health uint32) uint32 {
-		return s.bestDamageLocked(self, pos, health, target.Guid).ID
+		return s.starterBestDamageLocked(self, pos, health, target.Guid).ID
 	}
 	if got := choose(0); got != agony {
 		t.Fatal("expected a learned instant on the healthy attacker after interruption", got)
