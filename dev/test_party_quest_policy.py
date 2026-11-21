@@ -161,6 +161,56 @@ class PartyQuestPolicyTests(unittest.TestCase):
         value["offer"]["quests"][-2:] = list(reversed(value["offer"]["quests"][-2:]))
         self.choice(value, "accept", npc, 15)
 
+    def test_sparse_uint32_accept_ids_sort_numerically_but_keep_actual_menu_order(self):
+        npc = giver()
+        value = facts(ownerActiveQuestIds=[4294967295, 99000], offer=pickup(npc, [
+            dict(questId=4294967295, available=True), dict(questId=99000, available=True)]))
+        result, _ = self.choice(value, "accept", npc, 4294967295)
+        self.assertEqual(self.rows(result, "allowedAcceptQuestIds"), [99000, 4294967295])
+        value["ownQuestIds"] = [4294967295]
+        result, _ = self.choice(value, "accept", npc, 99000)
+        self.assertEqual(self.rows(result, "allowedAcceptQuestIds"), [99000])
+        value["ownQuestIds"].append(99000)
+        result, _ = self.choice(value, "wait")
+        self.assertEqual(self.rows(result, "allowedAcceptQuestIds"), [])
+
+    def test_sparse_uint32_rewards_use_exact_unknown_giver_offer_and_reserved_ready_path(self):
+        npc = giver(entry=999)
+        for qid in (99000, 4294967295):
+            with self.subTest(questId=qid):
+                value = facts(ownQuestIds=[4294967295, 99000], ownerDoneQuestIds=[4294967295, 99000],
+                              nearby=[npc], questLog=[dict(questId=4294967295, complete=True),
+                                                     dict(questId=99000, complete=True)],
+                              turnInOffer=reward(npc, qid))
+                result, selected = self.ready_reward(value, "claim_reward", npc, qid)
+                self.assertEqual(self.rows(result, "allowedRewardQuestIds"), [99000, 4294967295])
+                self.assertEqual(selected["offerRevision"], "8")
+                value["reservations"] = {"claim:" + str(qid): [SESSION, npc["guid"], "8"]}
+                self.ready_reward(value, "turn_in", npc, qid)
+                value["queries"] = [dict(npc="reward:" + str(qid) + ":" + npc["guid"],
+                                         signature=value["rewardSignature"], at=99)]
+                self.ready_reward(value, "wait", npc, qid)
+                value["turnInOffer"]["questId"] = 900
+                self.choice(value, "wait")
+
+    def test_string_offer_ids_stay_ineligible_for_standing_numeric_quest_sets(self):
+        npc = giver()
+        value = facts(ownerActiveQuestIds=[7, 99000, 4294967295], offer=pickup(npc, [
+            dict(questId="7", available=True), dict(questId="99000", available=True),
+            dict(questId="4294967295", available=True)]))
+        result, _ = self.choice(value, "offer", npc)
+        self.assertEqual(self.rows(result, "allowedAcceptQuestIds"), [7, 99000, 4294967295])
+        value["offer"]["quests"].append(dict(questId=99000, available=True))
+        self.choice(value, "accept", npc, 99000)
+
+    def test_sparse_quest_sets_still_reject_duplicate_and_overflow_ids(self):
+        for field in ("ownQuestIds", "ownerActiveQuestIds", "ownerDoneQuestIds"):
+            for rows in ([99000, 99000], [4294967295, 4294967295], [4294967296]):
+                with self.subTest(field=field, rows=rows):
+                    result = self.bridge.evaluate(self.source, facts(**{field: rows}))
+                    self.assertEqual(result.get("status"), "invalid", result)
+                    self.assertNotIn("choice", result)
+
     def test_full_own_log_prevents_pickup_but_does_not_prevent_completed_reward(self):
         npc = giver()
         value = facts(ownQuestIds=list(range(1, 26)), ownerActiveQuestIds=[100],
