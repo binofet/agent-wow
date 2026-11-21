@@ -195,7 +195,7 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	}
 	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if err == nil && name == "buddy-inventory" && md.Path() == "/warcraftbuddy.inventory.v1.BuddyInventory/GetState" {
-		m.decorateGearState(ctx, result)
+		m.decorateGearState(ctx, inst, result)
 	}
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)

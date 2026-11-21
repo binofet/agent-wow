@@ -26,7 +26,10 @@ func (p *SessionPolicy) gearDecision(ctx context.Context, input map[string]any) 
 
 // Compatibility projection is the current accepted Lua export, never a Go
 // comparison. An unavailable evaluator leaves raw facts readable and explicit.
-func (m *Manager) decorateGearState(ctx context.Context, result proto.Message) {
+func (m *Manager) decorateGearState(ctx context.Context, inst *instance, result proto.Message) {
+	if !gearFactsAdvertised(inst) {
+		return
+	}
 	state := &inventoryv1.State{}
 	raw, err := proto.Marshal(result)
 	if err != nil || proto.Unmarshal(raw, state) != nil || state.GearContext == nil {
@@ -137,7 +140,9 @@ func (m *Manager) resolveLegacyGearComparison(ctx context.Context, inst *instanc
 	if err != nil || proto.Unmarshal(raw, selected) != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid exact gear request")
 	}
-	if !selected.RequireConservativeUpgrade {
+	if !selected.RequireConservativeUpgrade || !gearFactsAdvertised(inst) {
+		// An old pinned module still owns its original advertised ABI. New
+		// descriptors never fall back to its retired native comparison.
 		return request, nil
 	}
 	state := &inventoryv1.State{}
@@ -191,4 +196,21 @@ func (m *Manager) resolveLegacyGearComparison(ctx context.Context, inst *instanc
 		return nil, err
 	}
 	return exact, nil
+}
+
+func gearFactsAdvertised(inst *instance) bool {
+	if inst == nil || inst.definition == nil {
+		return false
+	}
+	method, ok := inst.definition.RPC("state")
+	if !ok {
+		return false
+	}
+	fields := method.Descriptor().Output().Fields()
+	context, items := fields.ByName("gear_context"), fields.ByName("items")
+	if context == nil || context.Number() != 42 || context.Message() == nil || items == nil || items.Message() == nil {
+		return false
+	}
+	facts := items.Message().Fields().ByName("gear_facts")
+	return facts != nil && facts.Number() == 15 && facts.Message() != nil
 }

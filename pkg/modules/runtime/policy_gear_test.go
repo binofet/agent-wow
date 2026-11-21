@@ -3,6 +3,7 @@ package modrt
 import (
 	"context"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"path/filepath"
 )
@@ -186,5 +188,92 @@ func TestGearEvaluatorFailureKeepsRawFactsReadableWithoutNativeFallback(t *testi
 		if err = requestGearState(t, m, state); err == nil || len(peer.writes) != 0 {
 			t.Fatal("faulted gear policy authorized write", err)
 		}
+	}
+}
+
+func TestLegacyGearPinnedDescriptorKeepsItsExistingRPCDuringCoreOnlyUpgrade(t *testing.T) {
+	m, peer := gearInputManager(t)
+	root := t.TempDir()
+	source := filepath.Join("..", "..", "..", "modules")
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err = os.Stat(filepath.Join(source, entry.Name(), "module.yaml")); err != nil {
+			continue
+		}
+		dst := filepath.Join(root, entry.Name())
+		if err = os.Mkdir(dst, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"module.yaml", "module.pb", "compose.yaml"} {
+			raw, err := os.ReadFile(filepath.Join(source, entry.Name(), name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(dst, name), raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	path := filepath.Join(root, "buddy-inventory", "module.pb")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := &descriptorpb.FileDescriptorSet{}
+	if err = proto.Unmarshal(raw, set); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range set.File {
+		if file.GetName() == "modules/buddy-inventory/inventory.proto" {
+			for _, message := range file.MessageType {
+				var fields []*descriptorpb.FieldDescriptorProto
+				for _, field := range message.Field {
+					if message.GetName() == "State" && field.GetNumber() == 42 || message.GetName() == "ItemEligibility" && field.GetNumber() == 15 {
+						continue
+					}
+					fields = append(fields, field)
+				}
+				message.Field = fields
+			}
+		}
+	}
+	raw, err = proto.Marshal(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := moddisc.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, _ := registry.Lookup("buddy-inventory")
+	m.registry = registry
+	m.instances["buddy-inventory"].definition = definition
+	peer.state.GearContext = nil
+	peer.state.Items[0].GearFacts = nil
+	peer.state.Items[0].GearEquipEligible, peer.state.Items[0].ConservativeUpgrade = true, true
+	peer.state.Items[0].GearEquipmentSlot, peer.state.Items[0].ExpectedEquippedItemGuid = 6, peer.state.Equipment[6].ItemGuid
+	host, err := m.StartPolicy(context.Background(), followFallbackBundle(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	state := readGearState(t, m)
+	if !state.Items[0].ConservativeUpgrade || gearFactsAdvertised(m.instances["buddy-inventory"]) {
+		t.Fatal("old pinned state comparison changed", state)
+	}
+	if err = requestGearState(t, m, state); err != nil || len(peer.writes) != 1 || !peer.writes[0].RequireConservativeUpgrade {
+		t.Fatal("core-only upgrade replaced the old advertised RPC", err, peer.writes)
+	}
+	if host.vm.Status().Buffered != 0 {
+		t.Fatal("legacy pinned RPC injected unsupported policy input", host.vm.Status())
 	}
 }
