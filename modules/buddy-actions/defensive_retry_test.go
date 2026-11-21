@@ -214,7 +214,7 @@ func TestDefensiveRetryWaitsForPendingDeadlineOrTransportBackoff(t *testing.T) {
 			if mode == "transport" {
 				want++
 			}
-			if countPackets(f, opcode.CMSGCastSpell) != want || s.failedAssistCastTarget != 0 || s.state.Assisting != (mode != "transport") {
+			if countPackets(f, opcode.CMSGCastSpell) != want || s.failedAssistCastTarget != 0 || !s.state.Assisting {
 				t.Fatal("pending deadline/backoff or transport guard was bypassed", s.stateLocked())
 			}
 			advance(6 * time.Second)

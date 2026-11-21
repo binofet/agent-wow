@@ -38,8 +38,6 @@ func (s *Service) faceEnemyLocked(ctx context.Context, target position) bool {
 		facing.o += 2 * math.Pi
 	}
 	if !s.movementLocked(ctx, opcode.MSGMoveSetFacing, facing, false) {
-		s.state.Assisting = false
-		s.stopAutoAttackLocked(ctx)
 		return false
 	}
 	return true

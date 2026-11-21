@@ -76,7 +76,6 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 		return fail("assist_mana_reserved_for_healing")
 	}
 	if !s.stopLocked(ctx) {
-		s.state.Assisting = false
 		s.state.Reason = "movement_stop_unconfirmed_assist_aborted"
 		return false
 	}

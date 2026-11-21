@@ -103,8 +103,5 @@ func (s *Service) revokeHarvestLocked(ctx context.Context, reason string) bool {
 func (s *Service) stopHarvestMovementLocked(ctx context.Context) bool {
 	call, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
-	follow, assist := s.state.Following, s.state.Assisting
-	stopped := s.stopLocked(call)
-	s.state.Following, s.state.Assisting = follow, assist
-	return stopped
+	return s.stopLocked(call)
 }

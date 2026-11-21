@@ -91,7 +91,7 @@ func TestStopDistinguishesKnownPrewriteRejectionFromAmbiguousSend(t *testing.T) 
 				t.Fatal("fixture's failed stop was reported as written")
 			}
 			if mode == "transport" {
-				if !s.state.MotionUnconfirmed || s.state.Moving || s.state.Following || s.state.Assisting || len(f.packets) != before+1 {
+				if !s.state.MotionUnconfirmed || s.state.Moving || !s.state.Following || !s.state.Assisting || len(f.packets) != before+1 {
 					t.Fatal("real ambiguous SendPacket was not fenced", s.stateLocked(), len(f.packets)-before)
 				}
 				if s.stopLocked(context.Background()) || len(f.packets) != before+1 {

@@ -376,6 +376,15 @@ message State {
   TargetMovementState target_movement = 117;
   BodyMovementState body_movement = 118;
   MovementOwnerState movement_owner = 119;
+  TransportFailure last_transport_failure = 120;
+}
+// A failed attempted packet write is uncertainty, not a behavior cancellation.
+// Sequence identifies the attempted write; it does not confirm server receipt.
+message TransportFailure {
+  uint64 sequence = 1;
+  uint32 opcode = 2;
+  string error = 3;
+  bool outcome_unknown = 4;
 }
 message ProtectedTarget {
   uint64 target_guid = 1;
@@ -523,6 +532,7 @@ message EncounterObservationResponse {
   TargetMovementState target_movement = 23;
   EncounterSupport support = 24;
   NavigationObservation navigation = 25;
+  TransportFailure last_transport_failure = 26;
 }
 message BodyMovementRequest {
   string session_id = 1;
