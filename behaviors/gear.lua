@@ -21,7 +21,7 @@ local function stats(item)
  local out={}
  for _,stat in ipairs(item.stats or {}) do
   local kind,value=number(stat.type or 0),number(stat.value or 0)
-  if not kind or kind%1~=0 or out[kind]~=nil or not value or value<0 or
+  if not kind or kind%1~=0 or out[kind]~=nil or not value or
    not (kind<=1 or kind>=3 and kind<=7 or kind>=12 and kind<=39 or kind>=43 and kind<=48) then return end
   out[kind]=value
  end

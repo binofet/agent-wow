@@ -71,6 +71,27 @@ func compareGearPolicy(t *testing.T, candidate itemMetadata, carried *worldv1.Ba
 	return out["upgrade"] == true
 }
 
+func TestGearPolicyComparesObservedSignedStatsWithoutInventingUnknowns(t *testing.T) {
+	item := func(id uint32, stamina int) map[string]any {
+		return map[string]any{"itemId": id, "available": true, "itemClass": 4, "inventoryType": 5, "armorComparisonKnown": true,
+			"stats": []any{map[string]any{"type": 7, "value": stamina}}}
+	}
+	for _, tc := range []struct {
+		name      string
+		candidate int
+		upgrade   bool
+		score     float64
+	}{{"smaller penalty", -1, true, 2}, {"larger penalty", -5, false, -2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runGearPolicy(t, map[string]any{"candidate": item(90001, tc.candidate), "current": item(90002, -3),
+				"source": map[string]any{"enhancementsKnown": true}, "equipped": map[string]any{"itemGuid": "1", "enhancementsKnown": true}}, true)
+			if out["upgrade"] != tc.upgrade || out["score"] != tc.score || out["reason"] == "candidate_stats_unknown" {
+				t.Fatal("known signed server stat lost its actual upgrade/downgrade meaning", out)
+			}
+		})
+	}
+}
+
 // Native packet/effect fixtures use the same Lua comparison as the public host
 // bridge before forwarding an exact action. No Go upgrade formula lives here.
 func equipGearPolicyTest(t *testing.T, s *Service, r *inventoryv1.EquipGearRequest) (*inventoryv1.State, error) {
