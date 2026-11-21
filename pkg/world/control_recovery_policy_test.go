@@ -126,6 +126,7 @@ func TestControlRecoveryInstantBreakPrecedesHeldLootWindowCleanup(t *testing.T) 
 	defer host.Close()
 	observer := &fallbackPolicyTest{t: t, host: host}
 	obs := positionedHealObservation()
+	obs.Interaction = &actionsv1.InteractionObservation{Owner: "loot", Token: "same-loot-token"}
 	obs.Support = &actionsv1.EncounterSupport{ControlRecovery: &actionsv1.ControlRecoveryObservation{FleeingKnown: true, Fleeing: true,
 		FearAuras: []*actionsv1.ObservedAura{{Slot: 5, SpellId: 7399, Revision: 1, MetadataKnown: true, Negative: true}}, Options: []*actionsv1.ControlBreakOption{{SpellId: 59752, Ready: true}}}}
 	corpse := fallbackGUID(0xf130000001000001)
@@ -142,5 +143,29 @@ func TestControlRecoveryInstantBreakPrecedesHeldLootWindowCleanup(t *testing.T) 
 	a, _ := d.Output["action"].(map[string]any)
 	if a["capability"] != "fear_break" {
 		t.Fatal("loot close/STOP displaced instant legal control break", d.Output)
+	}
+}
+
+func TestControlRecoveryInstantBreakPrecedesTrainingHandoffInCombinedPolicy(t *testing.T) {
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, readEncounterBundle(t), behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	observer := &fallbackPolicyTest{t: t, host: host}
+	obs := positionedHealObservation()
+	obs.Interaction = &actionsv1.InteractionObservation{Owner: "training", Token: "unchanged-private-training-token"}
+	obs.Support = &actionsv1.EncounterSupport{ControlRecovery: &actionsv1.ControlRecoveryObservation{FleeingKnown: true, Fleeing: true,
+		FearAuras: []*actionsv1.ObservedAura{{Slot: 5, SpellId: 7399, Revision: 1, MetadataKnown: true, Negative: true}}, Options: []*actionsv1.ControlBreakOption{{SpellId: 59752, Ready: true}}}}
+	// The shared encounter's real engagement/healing facts normally request
+	// interaction release. Instant self recovery must run without that STOP.
+	obs.Targets[fallbackGUID(fallbackNPC)].Engaged = true
+	d, err := host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observer.observe(obs)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := d.Output["action"].(map[string]any)
+	if a["capability"] != "fear_break" || d.Output["interaction"] != nil {
+		t.Fatal("combined policy replaced self break with interaction STOP/release", d.Output)
 	}
 }
