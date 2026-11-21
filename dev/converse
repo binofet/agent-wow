@@ -2021,6 +2021,13 @@ class CodexBrain:
                 catalog = prompt_state["emote_catalog"]
                 prompt_state["emote_catalog"] = {k:catalog[k] for k in ("available","revision","source") if k in catalog}
                 prompt_state["emote_catalog"]["count"] = len(emotes)
+            if isinstance(prompt_state.get("combat"), dict):
+                write_json(self.state_dir / "combat-context-last.json", {
+                    "preparedAtUnixMs": int(time.time()*1000),
+                    "character": prompt_state.get("character", {}),
+                    "requestSource": request.get("source"),
+                    "combat": prompt_state["combat"],
+                })
             prompt = ((self.developer_persona if developer else self.persona) + ownership + "\nCurrent observations and control state JSON:\n"
                       + json.dumps(prompt_state, ensure_ascii=False)
                       + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False))
