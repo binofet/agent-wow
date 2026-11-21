@@ -82,6 +82,10 @@ message RawTemplateFacts {
   uint32 max_durability = 6;
   uint32 bag_family = 7;
   uint32 duration = 8;
+  // Raw Stackable wire word. Signed sentinel values require interpretation
+  // before using this value as an effective stacking capacity.
+  // Absence remains unknown for producers of the original eight-field message.
+  optional uint32 max_stack_count = 9;
 }
 // Static template facts from a complete normal server item-query response.
 // These are not proof that this character can equip or owns the item.

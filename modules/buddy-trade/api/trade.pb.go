@@ -885,8 +885,12 @@ type RawTemplateFacts struct {
 	MaxDurability  uint32                 `protobuf:"varint,6,opt,name=max_durability,json=maxDurability,proto3" json:"max_durability,omitempty"`
 	BagFamily      uint32                 `protobuf:"varint,7,opt,name=bag_family,json=bagFamily,proto3" json:"bag_family,omitempty"`
 	Duration       uint32                 `protobuf:"varint,8,opt,name=duration,proto3" json:"duration,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Raw Stackable wire word. Signed sentinel values require interpretation
+	// before using this value as an effective stacking capacity.
+	// Absence remains unknown for producers of the original eight-field message.
+	MaxStackCount *uint32 `protobuf:"varint,9,opt,name=max_stack_count,json=maxStackCount,proto3,oneof" json:"max_stack_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RawTemplateFacts) Reset() {
@@ -971,6 +975,13 @@ func (x *RawTemplateFacts) GetBagFamily() uint32 {
 func (x *RawTemplateFacts) GetDuration() uint32 {
 	if x != nil {
 		return x.Duration
+	}
+	return 0
+}
+
+func (x *RawTemplateFacts) GetMaxStackCount() uint32 {
+	if x != nil && x.MaxStackCount != nil {
+		return *x.MaxStackCount
 	}
 	return 0
 }
@@ -1445,7 +1456,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\fWeaponDamage\x12\x18\n" +
 	"\aminimum\x18\x01 \x01(\x02R\aminimum\x12\x18\n" +
 	"\amaximum\x18\x02 \x01(\x02R\amaximum\x12\x16\n" +
-	"\x06school\x18\x03 \x01(\rR\x06school\"\x8e\x02\n" +
+	"\x06school\x18\x03 \x01(\rR\x06school\"\xcf\x02\n" +
 	"\x10RawTemplateFacts\x12'\n" +
 	"\x0fcontainer_slots\x18\x01 \x01(\rR\x0econtainerSlots\x12\x18\n" +
 	"\abonding\x18\x02 \x01(\rR\abonding\x12\x1b\n" +
@@ -1456,7 +1467,9 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x0emax_durability\x18\x06 \x01(\rR\rmaxDurability\x12\x1d\n" +
 	"\n" +
 	"bag_family\x18\a \x01(\rR\tbagFamily\x12\x1a\n" +
-	"\bduration\x18\b \x01(\rR\bduration\"\xb0\t\n" +
+	"\bduration\x18\b \x01(\rR\bduration\x12+\n" +
+	"\x0fmax_stack_count\x18\t \x01(\rH\x00R\rmaxStackCount\x88\x01\x01B\x12\n" +
+	"\x10_max_stack_count\"\xb0\t\n" +
 	"\vItemDetails\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\rR\x06itemId\x12\x1c\n" +
 	"\tavailable\x18\x02 \x01(\bR\tavailable\x12\x18\n" +
@@ -1584,6 +1597,7 @@ func file_modules_buddy_trade_trade_proto_init() {
 	if File_modules_buddy_trade_trade_proto != nil {
 		return
 	}
+	file_modules_buddy_trade_trade_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
