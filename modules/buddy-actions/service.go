@@ -1279,10 +1279,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if (nativeEncounter || !s.hostResurrectionOwned) && resurrector && s.resurrectionTickLocked(ctx, snapshot) {
-		s.lastStep = now
-		return
-	}
 	if (nativeEncounter || !s.hostInterruptOwned) && s.interruptHealLocked(ctx, snapshot) {
 		s.lastStep = now
 		return

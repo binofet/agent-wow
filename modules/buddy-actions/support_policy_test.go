@@ -103,7 +103,7 @@ func TestPolicyInterruptRejectsChangedCastWithoutSubstitution(t *testing.T) {
 	}
 }
 
-func TestHostResurrectionUsesLuaOnlyAndResumesNativeOnLeaseExpiry(t *testing.T) {
+func TestHostResurrectionKeepsNativeTickPassiveAfterLuaLeaseExpiry(t *testing.T) {
 	s, f, advance := resRig(t)
 	learnSpells(s, 2006)
 	s.sessionID = f.party.SessionId
@@ -133,8 +133,11 @@ func TestHostResurrectionUsesLuaOnlyAndResumesNativeOnLeaseExpiry(t *testing.T) 
 	f.party.Group.Members[1].Online = true
 	advance(encounterLeaseDuration)
 	s.Tick(context.Background())
-	if lastCast(f) != 2006 {
-		t.Fatal("unreplaced native support did not resume after host exit", s.stateLocked())
+	if countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("expired host lease restarted native patient selection", s.stateLocked())
+	}
+	if _, err := requestResurrection(s); err != nil || lastCast(f) != 2006 {
+		t.Fatal("exact learned resurrection unavailable after lease expiry", err)
 	}
 }
 
@@ -166,12 +169,15 @@ func TestLuaResurrectionCarriesExactCorpseAndNativeEffectReceipt(t *testing.T) {
 	}
 }
 
-func TestEncounterLeaseWithoutLuaSupportDoesNotDisableResurrection(t *testing.T) {
+func TestEncounterLeaseWithoutLuaSupportPreservesExactResurrectionCapability(t *testing.T) {
 	s, f, _ := resRig(t)
 	s.sessionID = f.party.SessionId
 	activateEncounterWriter(t, s, f)
 	s.Tick(context.Background())
-	if lastCast(f) != 2006 {
-		t.Fatal("an unrelated Lua policy suppressed native resurrection", s.stateLocked())
+	if countPackets(f, opcode.CMSGCastSpell) != 0 {
+		t.Fatal("native Tick selected an unrequested patient")
+	}
+	if _, err := requestResurrection(s); err != nil || lastCast(f) != 2006 {
+		t.Fatal("an unrelated Lua policy suppressed the exact resurrection capability", err, s.stateLocked())
 	}
 }
