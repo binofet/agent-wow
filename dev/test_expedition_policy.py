@@ -111,7 +111,7 @@ class Endpoint:
 @unittest.skipUnless(BINARY, 'set BUDDY_LUAPOLICY_TEST_BINARY to the compiled local bridge')
 class ExpeditionTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir='/private/tmp'); self.addCleanup(temporary.cleanup)
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         self.folder = Path(temporary.name) / 'state'
         self.rpc = Endpoint(); self.rpc.discover()
         self.bridge = host.Bridge(BINARY, ROOT / 'modules')
