@@ -482,12 +482,14 @@ class CharacterSync:
                         for priority, distance, npc, entry in candidates],
             turnInOffer=dict(npcGuid=counter(offer.get("npcGuid", 0), True), questId=counter(offer.get("questId", 0)),
                 revision=counter(offer.get("revision", 0), True), expiresInMs=counter(offer.get("expiresInMs", 0), True),
-                source=offer.get("source", "") if isinstance(offer.get("source", ""), str) else False, canComplete=offer.get("canComplete") is True,
+                source=offer.get("source", "") if isinstance(offer.get("source", ""), str) and len(offer.get("source", "")) <= 128 else False,
+                canComplete=offer.get("canComplete") is True,
                 rewardRequested=offer.get("rewardRequested") is True, choices=rows),
             classKnown=self.self_player.get("classKnown") is True,
             classId=counter(self.self_player.get("classId", 0)),
             claimReservation=self.data["reservations"].get("claim:" + str(quest_id), False),
-            lastMutation=dict(method=last.get("method", "") if isinstance(last.get("method", ""), str) else False,
+            lastMutation=dict(method=last.get("method", "") if isinstance(last.get("method", ""), str)
+                    and len(last.get("method", "")) <= 128 else False,
                 questId=counter(last.get("questId", 0)), at=last.get("at", 0) if type(last.get("at", 0)) in (int, float)
                     and abs(last.get("at", 0)) <= 2**53 - 1 and math.isfinite(last.get("at", 0)) else False) if isinstance(last, dict) else False,
             questLogRevision=counter(state.get("questLogRevision", 0), True))

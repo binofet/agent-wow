@@ -319,6 +319,19 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(profile.data["reservations"],{})
         self.assertEqual(profile.data["nextMutationAt"],0)
 
+    def test_unused_oversized_enum_text_does_not_cross_the_bridge_frame_bound(self):
+        for field in ("source","method"):
+            profile,rpc,_,_=self.rig()
+            rpc.active={783}
+            state=rpc.state()
+            if field=="source":
+                state["turnInOffer"]={"questId":783,"npcGuid":str(MCBRIDE),"source":"x"*35000,
+                                      "canComplete":True,"expiresInMs":False}
+            else:
+                profile.data["lastMutation"]={"method":"x"*35000,"questId":783,"at":False}
+            self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+            self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.turn_in")
+
     def test_claim_timeout_never_replays_same_offer_and_needs_both_reward_proofs(self):
         profile, rpc, clock, _ = self.rig()
         rpc.active, rpc.apply_claim = {783}, False
