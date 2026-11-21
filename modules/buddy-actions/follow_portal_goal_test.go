@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/behaviors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +22,16 @@ import (
 func portalGoalFixture(t *testing.T) (*Service, *fakeSession, *actionsv1.PortalCatchupRequest, context.Context, func(time.Duration)) {
 	t.Helper()
 	s, f, advance := rig(t)
+	// Witness/goal semantics need the actual shared evaluator to be healthy;
+	// the independent production watchdog test retains its default 5ms budget.
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
 	s.sessionID = f.party.SessionId
 	s.navDataDir = "/client/portal-fixture"
 	portal := dungeonEntrances[0]
@@ -35,7 +47,7 @@ func portalGoalFixture(t *testing.T) (*Service, *fakeSession, *actionsv1.PortalC
 	s.lastWorld = f.world
 	s.observeDungeonPortalLocked(f.world, s.now())
 	if !s.followPortal.catchingUp || s.followPortal.witness == 0 {
-		t.Fatal("fixture did not establish an actual entrance sighting", s.followPortal)
+		t.Fatal("fixture did not establish an actual entrance sighting", s.followPortal, s.formation.lastFailure, runtime.Status())
 	}
 	f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
 	s.followPortal.lostAt = s.now().Add(-time.Second)
