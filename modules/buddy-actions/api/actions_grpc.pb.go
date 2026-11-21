@@ -23,6 +23,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	BuddyActions_CastSpell_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
 	BuddyActions_CancelSpell_FullMethodName           = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
+	BuddyActions_FlightpathReference_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
 	BuddyActions_FlightpathObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
 	BuddyActions_QueryFlightpath_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
 	BuddyActions_SelectTarget_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
@@ -85,6 +86,7 @@ const (
 type BuddyActionsClient interface {
 	CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error)
 	CancelSpell(ctx context.Context, in *CancelSpellRequest, opts ...grpc.CallOption) (*State, error)
+	FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	QueryFlightpath(ctx context.Context, in *FlightpathQueryRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
@@ -165,6 +167,16 @@ func (c *buddyActionsClient) CancelSpell(ctx context.Context, in *CancelSpellReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyActions_CancelSpell_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlightpathReferenceResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_FlightpathReference_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -717,6 +729,7 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 type BuddyActionsServer interface {
 	CastSpell(context.Context, *CastSpellRequest) (*State, error)
 	CancelSpell(context.Context, *CancelSpellRequest) (*State, error)
+	FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error)
 	FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error)
 	QueryFlightpath(context.Context, *FlightpathQueryRequest) (*FlightpathObservationResponse, error)
 	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
@@ -788,6 +801,9 @@ func (UnimplementedBuddyActionsServer) CastSpell(context.Context, *CastSpellRequ
 }
 func (UnimplementedBuddyActionsServer) CancelSpell(context.Context, *CancelSpellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelSpell not implemented")
+}
+func (UnimplementedBuddyActionsServer) FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FlightpathReference not implemented")
 }
 func (UnimplementedBuddyActionsServer) FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FlightpathObservation not implemented")
@@ -1004,6 +1020,24 @@ func _BuddyActions_CancelSpell_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).CancelSpell(ctx, req.(*CancelSpellRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_FlightpathReference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FlightpathReferenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).FlightpathReference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_FlightpathReference_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).FlightpathReference(ctx, req.(*FlightpathReferenceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1994,6 +2028,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelSpell",
 			Handler:    _BuddyActions_CancelSpell_Handler,
+		},
+		{
+			MethodName: "FlightpathReference",
+			Handler:    _BuddyActions_FlightpathReference_Handler,
 		},
 		{
 			MethodName: "FlightpathObservation",

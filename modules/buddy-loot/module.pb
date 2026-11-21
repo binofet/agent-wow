@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Õ¬
+ñ–
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"Ú
 SpellCastTargets
 mask (Rmask
@@ -1751,10 +1751,65 @@ session_id (	R	sessionId
 revision (Rrevision
 visit_bound (R
 visitBoundK
-	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2˜(
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation"5
+FlightpathReferenceRequest
+node_id (RnodeId"∑
+FlightpathReferenceNode
+node_id (RnodeId
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz
+name (	Rname.
+map_reference_known (RmapReferenceKnown"è
+FlightpathReferencePath
+path_id (RpathId
+source_node (R
+sourceNode)
+destination_node (RdestinationNode2
+reference_base_copper (RreferenceBaseCopper2
+reference_price_known (RreferencePriceKnown'
+endpoints_known (RendpointsKnown"û
+FlightpathReferenceInfo
+format (Rformat#
+claimed_build (RclaimedBuild
+name_locale (	R
+nameLocale
+
+repository (	R
+repository'
+upstream_commit (	RupstreamCommit!
+nodes_sha256 (	RnodesSha256!
+paths_sha256 (	RpathsSha256
+
+map_sha256 (	R	mapSha256
+node_url	 (	RnodeUrl
+path_url
+ (	RpathUrl
+
+map_source (	R	mapSource
+
+node_count (R	nodeCount
+
+path_count (R	pathCount#
+unnamed_nodes (RunnamedNodes%
+unmapped_nodes (RunmappedNodes4
+invalid_endpoint_paths (RinvalidEndpointPaths8
+duplicate_endpoint_pairs (RduplicateEndpointPairs(
+zero_price_paths (RzeroPricePaths"ù
+FlightpathReferenceResponse%
+reference_only (RreferenceOnly
+
+node_found (R	nodeFoundE
+node (21.warcraftbuddy.actions.v1.FlightpathReferenceNodeRnodeX
+outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
+info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
+live_fare_known (RliveFareKnown(
+live_route_known (RliveRouteKnown2¸)
 BuddyActionsX
 	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
-CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.Stateh
+CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.StateÇ
+FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
 QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
