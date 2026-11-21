@@ -31,8 +31,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-œB
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ı
+ùu
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -100,7 +100,128 @@ levelKnown
 shapeshift_form_known5 (RshapeshiftFormKnown'
 shapeshift_form6 (RshapeshiftForm@
 offhand7 (2&.warcraftbuddy.world.v1.EquippedWeaponRoffhand)
-offhand_revision8 (RoffhandRevision"˚
+offhand_revision8 (RoffhandRevision
+
+race_known9 (R	raceKnown
+race_id: (RraceId(
+aura_state_known; (RauraStateKnown
+
+aura_state< (R	auraState+
+position_inferred= (RpositionInferred"◊
+MovementTransportFacts
+guid (Rguid
+x (Rx
+y (Ry
+z (Rz 
+orientation (Rorientation
+time (Rtime
+seat (Rseat
+time2_known (R
+time2Known
+time2	 (Rtime2"Ñ
+MovementJumpFacts
+velocity (Rvelocity
+	sin_angle (RsinAngle
+	cos_angle (RcosAngle
+xy_speed (RxySpeed"Ï
+MovementInfoFacts
+flags (Rflags
+extra_flags (R
+extraFlags
+time (Rtime
+x (Rx
+y (Ry
+z (Rz 
+orientation (RorientationL
+	transport (2..warcraftbuddy.world.v1.MovementTransportFactsR	transport
+pitch_known	 (R
+pitchKnown
+pitch
+ (Rpitch
+	fall_time (RfallTime=
+jump (2).warcraftbuddy.world.v1.MovementJumpFactsRjump4
+spline_elevation_known (RsplineElevationKnown)
+spline_elevation (RsplineElevation"÷
+OwnMovementFacts
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision#
+source_opcode (RsourceOpcode
+age_ms (RageMs
+	map_known (RmapKnown
+map_id (RmapId=
+info	 (2).warcraftbuddy.world.v1.MovementInfoFactsRinfo
+
+wire_image
+ (R	wireImage"œ
+OwnSplineFacts
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision#
+source_opcode (RsourceOpcode
+age_ms (RageMs
+id_known (RidKnown
+	spline_id (RsplineId
+flags	 (Rflags
+duration_ms
+ (R
+durationMs
+
+elapsed_ms (R	elapsedMs+
+destination_known (RdestinationKnown#
+destination_x (RdestinationX#
+destination_y (RdestinationY#
+destination_z (RdestinationZ-
+transport_relative (RtransportRelative%
+transport_guid (RtransportGuid%
+transport_seat (RtransportSeat
+stopped (Rstopped
+cyclic (Rcyclic
+	map_known (RmapKnown
+map_id (RmapId"é
+EquipmentSlotState
+slot (Rslot
+
+slot_known (R	slotKnown
+	item_guid (RitemGuid%
+metadata_known (RmetadataKnown
+entry (Rentry
+stack_count (R
+stackCount)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"»
+CorpseState
+guid (Rguid
+
+owner_guid (R	ownerGuid
+present (Rpresent
+	map_known (RmapKnown
+map_id (RmapId%
+position_known (RpositionKnown
+x (Rx
+y (Ry
+z	 (Rz 
+orientation
+ (Rorientation+
+position_revision (RpositionRevision&
+position_age_ms (RpositionAgeMs,
+observation_age_ms (RobservationAgeMs
+flags_known (R
+flagsKnown
+flags (Rflags.
+dynamic_flags_known (RdynamicFlagsKnown#
+dynamic_flags (RdynamicFlags
+
+race_known (R	raceKnown
+race_id (RraceId"˚
 EquippedWeapon
 
 slot_known (R	slotKnown
@@ -111,11 +232,35 @@ slot_known (R	slotKnown
 
 durability (R
 durability%
-max_durability (RmaxDurability"â
+max_durability (RmaxDurability"Å
 SnapshotRequest#
 creature_guid (RcreatureGuid%
 creature_entry (RcreatureEntry*
-game_object_entry (RgameObjectEntry"›
+game_object_entry (RgameObjectEntry:
+include_gathering_objects (RincludeGatheringObjects:
+creature_faction_template (RcreatureFactionTemplate"É
+ClientMovementRequest
+	self_guid (RselfGuid
+map_id (RmapId8
+server_position_revision (RserverPositionRevision
+sequence (Rsequence
+valid (Rvalid
+x (Rx
+y (Ry
+z (Rz 
+orientation	 (Rorientation"ú
+DiscoveryAnchor
+	self_guid (RselfGuid
+map_id (RmapId8
+server_position_revision (RserverPositionRevision
+sequence (Rsequence
+x (Rx
+y (Ry
+z (Rz 
+orientation (Rorientation
+	estimated	 (R	estimated
+age_ms
+ (RageMs"›
 GameObjectState
 guid (Rguid
 entry (Rentry
@@ -143,7 +288,7 @@ flagsKnown
 created_by_guid (RcreatedByGuid
 state_known (R
 stateKnown
-state (Rstate"É
+state (Rstate"§
 CreatureState
 guid (Rguid
 entry (Rentry
@@ -191,7 +336,19 @@ trajectory,
 combat_reach$ (RcombatReach
 level_known% (R
 levelKnown
-level& (Rlevel"√
+level& (Rlevel(
+unit_flags_known' (RunitFlagsKnown.
+dynamic_flags_known( (RdynamicFlagsKnownE
+active_cast) (2$.warcraftbuddy.world.v1.CreatureCastR
+activeCast"®
+CreatureCast
+spell_id (RspellId
+
+cast_count (R	castCount!
+remaining_ms (RremainingMs
+target_guid (R
+targetGuid
+revision (Rrevision"√
 CreatureTrajectory
 known (Rknown
 duration_ms (R
@@ -216,7 +373,7 @@ durationMs
 failed (Rfailed)
 objective_counts (RobjectiveCounts
 expire_time (R
-expireTime"Ø
+expireTime"˚
 BackpackSlot
 bag (Rbag
 slot (Rslot
@@ -224,7 +381,15 @@ expireTime"Ø
 entry (Rentry
 stack_count (R
 stackCount%
-metadata_known (RmetadataKnown"•
+metadata_known (RmetadataKnown)
+durability_known (RdurabilityKnown
+
+durability (R
+durability%
+max_durability	 (RmaxDurability-
+enhancements_known
+ (RenhancementsKnown)
+has_enhancements (RhasEnhancements"•
 InventoryBag
 bag (Rbag
 
@@ -244,7 +409,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"¶
+permanent_bonus (RpermanentBonus"Û
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -285,10 +450,64 @@ selfSkills@
 requested_game_objects! (2'.warcraftbuddy.world.v1.GameObjectStateRrequestedGameObjects'
 inventory_known" (RinventoryKnown-
 inventory_revision# (RinventoryRevisionK
-inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBags2∞
+inventory_bags$ (2$.warcraftbuddy.world.v1.InventoryBagRinventoryBagsR
+skinnable_corpses% (2%.warcraftbuddy.world.v1.CreatureStateRskinnableCorpsesJ
+nearby_players& (2#.warcraftbuddy.world.v1.PlayerStateRnearbyPlayersa
+nearby_gathering_objects' (2'.warcraftbuddy.world.v1.GameObjectStateRnearbyGatheringObjectsR
+trainer_creatures( (2%.warcraftbuddy.world.v1.CreatureStateRtrainerCreatures0
+self_equipment_known) (RselfEquipmentKnown6
+self_equipment_revision* (RselfEquipmentRevisionQ
+self_equipment+ (2*.warcraftbuddy.world.v1.EquipmentSlotStateRselfEquipmentB
 
-BuddyWorld]
-Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponseC
+own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
+discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchorJ
+player_corpses. (2#.warcraftbuddy.world.v1.CorpseStateRplayerCorpses%
+visit_revision/ (RvisitRevisionX
+self_movement_facts0 (2(.warcraftbuddy.world.v1.OwnMovementFactsRselfMovementFactsR
+self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts"q
+CombatEventsRequest
+
+session_id (	R	sessionId%
+after_sequence (RafterSequence
+limit (Rlimit"Æ
+CombatEvent
+sequence (Rsequence-
+received_at_unix_ms (RreceivedAtUnixMs
+opcode (Ropcode
+kind (	Rkind
+source_guid (R
+sourceGuid
+target_guid (R
+targetGuid
+spell_id (RspellId!
+amount_known (RamountKnown
+amount	 (Ramount!
+result_known
+ (RresultKnown
+result (Rresult
+raw_payload (R
+rawPayload
+	malformed (R	malformed
+detail (	Rdetail"x
+CombatEventGap#
+from_sequence (RfromSequence)
+through_sequence (RthroughSequence
+reason (	Rreason"€
+CombatEventsResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid%
+first_sequence (RfirstSequence'
+latest_sequence (RlatestSequence#
+next_sequence (RnextSequence
+has_more (RhasMore;
+events (2#.warcraftbuddy.world.v1.CombatEventRevents:
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2˚
+
+BuddyWorldi
+CombatEvents+.warcraftbuddy.world.v1.CombatEventsRequest,.warcraftbuddy.world.v1.CombatEventsResponse]
+Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
+ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3
 ˜
 +modules/buddy-quest-items/quest_items.protowarcraftbuddy.questitems.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto"|
