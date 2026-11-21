@@ -18,6 +18,7 @@ def main():
         ("encounter_self_mana", behaviors / "self-mana.lua"),
         ("encounter_support", behaviors / "support.lua"),
         ("encounter_formation", behaviors / "follow-formation.lua"),
+        ("encounter_buffs", behaviors / "buffs.lua"),
         ("encounter_movement", behaviors / "encounter-movement.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),

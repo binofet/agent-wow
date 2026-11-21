@@ -83,6 +83,8 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	method := capability
 	switch capability {
 	case "polymorph", "sap":
+	case "buff":
+		method = "cast_buff"
 	case "heal":
 		method = "cast_heal"
 	case "offense":
@@ -205,7 +207,7 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		return behavior.ActionNotDispatched, op.payload("missing_action_origin", false, false, false)
 	}
 	bridge := modcb.PolicySpellService
-	if op.capability == "resurrect" || op.capability == "interrupt" || op.capability == "cleanse" {
+	if op.capability == "resurrect" || op.capability == "interrupt" || op.capability == "cleanse" || op.capability == "buff" {
 		bridge = modcb.PolicySupportSpellService
 	}
 	switch {

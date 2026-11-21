@@ -101,7 +101,7 @@ end
 function M.choose(obs,frame)
     local self=(obs.players or {})[obs.selfGuid]
     if (obs.hostOwned~=true and obs.hostRequested~=true) or obs.spellbookKnown~=true or not alive(self) or
-       self.mapKnown~=true or self.mapId~=obs.mapId or self.positionKnown~=true or self.inCombat==true then return end
+       self.mapKnown~=true or self.mapId~=obs.mapId or self.positionKnown~=true or self.combatKnown~=true or self.inCombat==true then return end
     for _,npc in pairs(obs.targets or {}) do if alive(npc) and npc.engaged==true then return end end
     local now=frame.clock and frame.clock.monotonicMs
     if type(now)~='number' then return end
@@ -150,7 +150,11 @@ function M.choose(obs,frame)
     if not best then return end
     local s,target=best.spell,best.target
     state.last={target=target,spell=s.id,family=s.familyId}
-    return {capability='buff',sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=target,spellId=s.id}
+    local p=(obs.players or {})[target]
+    local d=(self.x or 0)-(p.x or 0);local e=(self.y or 0)-(p.y or 0);local f=(self.z or 0)-(p.z or 0)
+    local distance=math.sqrt(d*d+e*e+f*f)
+    return {capability='buff',sessionId=obs.sessionId,selfGuid=obs.selfGuid,targetGuid=target,spellId=s.id,
+        needsApproach=target~=obs.selfGuid and (distance>(s.maxRange or 0) or distance<(s.minRange or 0))}
 end
 function M.export_state() return {version=1,data=state} end
 function M.import_state(saved)
