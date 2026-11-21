@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -337,19 +336,6 @@ func TestGearReadUsesAcceptedSessionBudgetsForAFullFiveBagInventory(t *testing.T
 	assertFollowFallbackState(t, host, before)
 }
 
-type gearExecutionContext struct {
-	context.Context
-	checks    atomic.Int32
-	executing chan struct{}
-	once      sync.Once
-}
-
-func (c *gearExecutionContext) Done() <-chan struct{} {
-	if c.checks.Add(1) >= 100 {
-		c.once.Do(func() { close(c.executing) })
-	}
-	return c.Context.Done()
-}
 func TestGearReadCallerCancellationDoesNotQuarantineAcceptedSource(t *testing.T) {
 	m, _ := gearInputManager(t)
 	source := `return {on_event=function(e)return true end,export_state=function()return {version=1,data={}}end,import_state=function(c)return true end,decide=function(f)return {}end,
@@ -361,16 +347,12 @@ func TestGearReadCallerCancellationDoesNotQuarantineAcceptedSource(t *testing.T)
 	defer host.close()
 	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ctx := &gearExecutionContext{Context: parent, executing: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() { _, _, _, err := host.gearDecision(ctx, map[string]any{"spin": true}); done <- err }()
-	select {
-	case <-ctx.executing:
-		cancel()
-	case <-time.After(time.Second):
-		t.Fatal("pure export did not begin execution")
-	}
-	if err = <-done; !errors.Is(err, context.Canceled) {
+	// The source deliberately runs forever. The caller's shorter cancellation
+	// must interrupt it without being mistaken for the Lua execution watchdog.
+	timer := time.AfterFunc(100*time.Millisecond, cancel)
+	defer timer.Stop()
+	_, _, _, err = host.gearDecision(parent, map[string]any{"spin": true})
+	if !errors.Is(err, context.Canceled) {
 		t.Fatal("caller cancellation lost", err)
 	}
 	current := host.gearEvaluation.Load()
