@@ -85,6 +85,7 @@ jobs:
           BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_party_disenchant.py
           BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_town_maintenance.py
           BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_bag_equipment.py
+          BUDDY_LUAPOLICY_TEST_BINARY="${RUNNER_TEMP}/luapolicy" python3 -B dev/test_vendor_sale_policy.py
 
       - name: Test legacy client quest addon
         run: |
