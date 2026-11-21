@@ -10,6 +10,7 @@ local spells = assert(encounter_spells)
 local healing = encounter_healing
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
+local buffs = encounter_buffs
 local movement = encounter_movement
 local commands = encounter_commands
 local transient_tasks = encounter_tasks
@@ -49,6 +50,7 @@ local function on_event(event)
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if support_policy and support_policy.on_event and not support_policy.on_event(event) then return false end
+    if buffs and not buffs.on_event(event) then return false end
     if event.kind == "encounter_observation" then
         local obs = event.value
         observation = obs
@@ -79,7 +81,7 @@ local function on_event(event)
 end
 
 local function export_state()
-    return {version=1, data={encounter=state, healing=healing and healing.export_state(),
+    return {version=1, data={encounter=state,buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
@@ -88,6 +90,7 @@ end
 
 local function import_state(checkpoint)
     if checkpoint.version ~= 1 or type(checkpoint.data) ~= "table" then return false end
+    if checkpoint.data.buffs and (not buffs or not buffs.import_state(checkpoint.data.buffs)) then return false end
     local saved = checkpoint.data.encounter
     if type(saved) ~= "table" or type(saved.bindings) ~= "table" or type(saved.defeated) ~= "table"
        or type(saved.controls) ~= "table" then return false end
@@ -614,6 +617,16 @@ local function decide_encounter(frame)
                 out.action = proposal(obs, "melee_start", out.focusGuid)
             end
         end
+    end
+    local buff = not out.action and not out.focusGuid and buffs and buffs.choose(obs,frame)
+    if buff then
+        if buff.targetGuid ~= obs.selfGuid and (buff.needsApproach or movement and movement.needs_position(buff.targetGuid)) then
+            out.action=position_for(buff.targetGuid,buff.spellId)
+        else
+            buff.observationSequence=state.sequence
+            out.action=buff
+        end
+        return out
     end
     if not out.action and not out.focusGuid and movement and movement.idle_recovery and not (task_view and task_view.hold) then
         out.action = movement.idle_recovery(obs, state.sequence).action

@@ -709,6 +709,18 @@ message EncounterSpell {
   bool damage_model_known = 30;
   bool requires_facing = 31;
   uint32 friendly_dispel_mask = 32;
+  string target_rule = 33;
+  uint32 family_set = 34;
+  repeated uint32 family_flags = 35;
+  repeated EncounterAuraEffect aura_effects = 36;
+}
+// Raw catalog effect facts, without class-specific preference or ranking.
+message EncounterAuraEffect {
+  uint32 kind = 1;
+  uint32 a = 2;
+  uint32 b = 3;
+  uint32 aura = 4;
+  int32 misc = 5;
 }
 message EncounterPeriodicDamage {
   double damage_per_tick = 1;
@@ -739,6 +751,7 @@ message EncounterSupport {
   repeated ResurrectionOption resurrections = 2;
   repeated InterruptOption interrupts = 3;
   repeated PlayerAuras player_auras = 4;
+  map<uint32, EncounterSpell> aura_spells = 5;
 }
 message ResurrectionOption {
   uint64 patient_guid = 1;
@@ -765,6 +778,12 @@ message InterruptCastRequest {
   uint64 target_guid = 3;
   uint32 spell_id = 4;
   uint64 cast_revision = 5;
+}
+message CastBuffRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 target_guid = 3;
+  uint32 spell_id = 4;
 }
 message CastCleanseRequest {
   string session_id = 1;
@@ -830,6 +849,7 @@ service BuddyActions {
   rpc CastHeal(CastHealRequest) returns (State);
   rpc CastOffense(CastOffenseRequest) returns (State);
   rpc CastCleanse(CastCleanseRequest) returns (State);
+  rpc CastBuff(CastBuffRequest) returns (State);
   rpc Melee(MeleeRequest) returns (State);
   rpc SelfManaObservation(google.protobuf.Empty) returns (SelfManaObservationResponse);
 }

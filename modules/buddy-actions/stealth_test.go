@@ -69,7 +69,7 @@ func TestFollowUsesActualSlowerStealthSpeed(t *testing.T) {
 }
 func TestImplicitSelfCastNormalizationRequiresActualSelfHitAndExactSpell(t *testing.T) {
 	s, _, _ := buffRig(t, 8, 168)
-	s.Tick(context.Background())
+	castBuff(t, s, s.selfGUID, 168)
 	p := buffGo(s, s.selfGUID)
 	_, _, _, off, _ := castEvent(p)
 	targetOffset := off + 8 + 1 + 8 + 1
