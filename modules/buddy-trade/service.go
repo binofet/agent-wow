@@ -47,6 +47,7 @@ type Service struct {
 	lookup                      itemLookupRuntime
 	junkPending                 *tradev1.JunkDisposal
 	carriedJunkProof            *carriedJunkProof
+	junkRequests                map[string]*junkRequestRecord
 	junkUntil, junkNext         time.Time
 }
 
