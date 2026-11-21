@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agent-wow/agent-wow/behaviors"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
@@ -34,6 +35,45 @@ func portalTimingFixture(t *testing.T, catchingUp bool) (*Service, *fakeSession,
 	return s, f, advance
 }
 
+// Timing semantics use the actual shared source independently of the real
+// default-budget watchdog tests. Seed it before any sighting is classified.
+func healthyPortalTimingFixture(t *testing.T, catchingUp bool) (*Service, *fakeSession, func(time.Duration)) {
+	t.Helper()
+	s, f, advance := rig(t)
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
+	s.sessionID, s.navDataDir = f.party.SessionId, "/client/portal-fixture"
+	portal := dungeonEntrances[0]
+	start := portal.center
+	start.y -= 80
+	if !catchingUp {
+		start.y = portal.center.y - float32(portal.radius+2)
+	}
+	putAtPortal(f.world.Self, portal.source, start)
+	putAtPortal(f.world.Owner, portal.source, portal.center)
+	activateEncounterWriter(t, s, f)
+	toggle(t, s, true)
+	if !s.refreshPositionLocked(f.world) {
+		t.Fatal("fixture could not observe its current pose")
+	}
+	s.lastWorld = f.world
+	s.observeDungeonPortalLocked(f.world, s.now())
+	if s.followPortal.portal.trigger != portal.trigger || s.followPortal.witness == 0 ||
+		s.followPortal.sourceVisit != f.world.VisitRevision || s.followPortal.followRevision != s.followRevision ||
+		s.followPortal.catchingUp != catchingUp {
+		t.Fatal("timing fixture did not establish its actual bound entrance sighting", s.followPortal, s.formation.lastFailure, runtime.Status())
+	}
+	f.world.Owner.Present, f.world.Owner.MapKnown, f.world.Owner.PositionKnown = false, false, false
+	s.followPortal.seenAt, s.followPortal.lostAt = s.now(), s.now()
+	return s, f, advance
+}
+
 func TestPortalFollowPolicyOwnsExactFreshnessAndWaitBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -53,11 +93,11 @@ func TestPortalFollowPolicyOwnsExactFreshnessAndWaitBoundaries(t *testing.T) {
 		{"catchup expired", true, 75*time.Second + time.Millisecond, time.Second, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, f, _ := portalTimingFixture(t, tc.catchingUp)
+			s, f, _ := healthyPortalTimingFixture(t, tc.catchingUp)
 			s.followPortal.seenAt, s.followPortal.lostAt = s.now().Add(-tc.sighting), s.now().Add(-tc.lost)
 			got := s.portalPolicyLocked(f.world, s.now())
 			if !got.Valid || got.Eligible != tc.eligible || got.Ready != tc.ready || len(f.packets) != 0 {
-				t.Fatal("shared Lua timing boundary changed", got, f.packets)
+				t.Fatal("shared Lua timing boundary changed", got, f.packets, s.followPortal, s.formation.lastFailure)
 			}
 			view := s.portalObservationLocked(f.world)
 			if !view.GetSightingAgeKnown() || view.GetSightingAgeMs() != uint64(tc.sighting.Milliseconds()) ||
@@ -70,7 +110,7 @@ func TestPortalFollowPolicyOwnsExactFreshnessAndWaitBoundaries(t *testing.T) {
 
 func TestPortalFollowPolicyDoesNotInventUnknownOrFutureAges(t *testing.T) {
 	t.Run("disappearance clock starts at observation", func(t *testing.T) {
-		s, f, advance := portalTimingFixture(t, false)
+		s, f, advance := healthyPortalTimingFixture(t, false)
 		s.followPortal.lostAt = time.Time{}
 		first := s.now()
 		s.observeDungeonPortalLocked(f.world, first)
@@ -78,12 +118,12 @@ func TestPortalFollowPolicyDoesNotInventUnknownOrFutureAges(t *testing.T) {
 		s.observeDungeonPortalLocked(f.world, s.now())
 		got := s.portalPolicyLocked(f.world, s.now())
 		if s.followPortal.lostAt != first || !got.Valid || !got.Eligible || !got.Ready || len(f.packets) != 0 {
-			t.Fatal("delayed follow execution restarted the actually observed disappearance clock", s.followPortal, got, f.packets)
+			t.Fatal("delayed follow execution restarted the actually observed disappearance clock", s.followPortal, got, f.packets, s.formation.lastFailure)
 		}
 	})
 	for _, name := range []string{"unknown sighting", "future sighting", "unknown disappearance", "future disappearance", "legacy zero visit"} {
 		t.Run(name, func(t *testing.T) {
-			s, f, _ := portalTimingFixture(t, false)
+			s, f, _ := healthyPortalTimingFixture(t, false)
 			s.followPortal.lostAt = s.now().Add(-time.Second)
 			sightingKnown, lostKnown, eligible, ready := true, true, true, true
 			switch name {
@@ -104,7 +144,7 @@ func TestPortalFollowPolicyDoesNotInventUnknownOrFutureAges(t *testing.T) {
 			}
 			got := s.portalPolicyLocked(f.world, s.now())
 			if !got.Valid || got.Eligible != eligible || got.Ready != ready || len(f.packets) != 0 {
-				t.Fatal("unknown timing granted entry or matching legacy visits were lost", got, f.packets)
+				t.Fatal("unknown timing granted entry or matching legacy visits were lost", got, f.packets, s.followPortal, s.formation.lastFailure)
 			}
 			if name != "legacy zero visit" {
 				view := s.portalObservationLocked(f.world)
