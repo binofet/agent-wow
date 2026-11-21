@@ -76,7 +76,7 @@ func TestTargetedResurrectionReleaseContract(t *testing.T) {
 	if field == nil || !toolkit.Get(field).Bool() {
 		t.Fatal("the release descriptor must expose the service's targeted Resurrection capability")
 	}
-	invoke("resurrect_once", `{"sessionId":"actions-test-body","selfGuid":"1","targetGuid":"3"}`)
+	invoke("resurrect_once", `{"sessionId":"actions-test-body","selfGuid":"1","targetGuid":"3","spellId":2006}`)
 	if got := actions.Manifest().ScriptAPI["resurrect_once"].Effect; got != moddisc.EffectMutation {
 		t.Fatalf("resurrect_once script effect = %q, want mutation", got)
 	}
