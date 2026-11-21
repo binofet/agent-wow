@@ -440,6 +440,7 @@ func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.Interacti
 	if s.state.InteractionOwner != r.Owner || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease does not match")
 	}
+	ctx = modcb.ForwardPolicySpell(ctx)
 	stopped := false
 	if s.state.InteractionHarvest {
 		stopped = s.stopHarvestMovementLocked(ctx)
