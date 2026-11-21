@@ -764,7 +764,7 @@ local function decide(frame)
         if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
             out.action=loot.action
         end
-        if loot.action or loot.phase=="native_window_settlement" then out.followFormation=nil;out.portalCatchup=nil end
+        if loot.action or loot.corpseGuid then out.followFormation=nil;out.portalCatchup=nil end
     end
     -- Do not reserve a release proposal that a loot-window close will replace.
     -- Dead-body window cleanup retains its own exact receipt custody first.
@@ -779,4 +779,8 @@ end
 return {decide=decide, on_event=on_event, export_state=export_state, import_state=import_state,
         follow_formation=encounter_formation and encounter_formation.decide,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
+        disposal_evaluation=encounter_disposal and function(input)
+            if type(input)~="table" then return encounter_disposal.decide(input) end
+            return encounter_disposal.classify(input.mode,input.item,input.context,encounter_gear)
+        end,
         starter_spell=starter_spells and function(input) return starter_spells.decide(input,intent.damage) end}

@@ -64,7 +64,7 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "release_spirit" || capability == "query_corpse" {
 		return p.resolveDeathAction(action, capability)
 	}
-	if capability == "loot_open" || capability == "loot_close" {
+	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {
 		return p.resolveCorpseLoot(action, capability)
 	}
 	if capability == "consume" {
@@ -315,6 +315,12 @@ func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 		return op.matchesRecoveryPacket(code, payload)
 	}
 	if op.corpse != nil {
+		if op.corpse.money {
+			return code == opcode.CMSGLootMoney && len(payload) == 0
+		}
+		if op.corpse.slot != nil {
+			return code == opcode.CMSGAutostoreLootItem && len(payload) == 1 && payload[0] == *op.corpse.slot
+		}
 		want := uint32(opcode.CMSGLoot)
 		if op.corpse.close {
 			want = opcode.CMSGLootRelease

@@ -72,6 +72,10 @@ type Service struct {
 	corpseRequests                             map[string]*corpseRequest
 	corpseRequest                              *corpseRequest
 	exactCorpse                                bool
+	windowRevision                             uint64
+	windowRequests                             map[string]*windowRequest
+	windowRequest                              *windowRequest
+	lastLootWriteError                         error
 }
 
 func NewService(session sessionAPI, self uint64, sessionID ...string) *Service {
@@ -212,6 +216,7 @@ func (s *Service) invoke(ctx context.Context, module, method string, in, out pro
 	return result.Result.UnmarshalTo(out)
 }
 func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
+	s.lastLootWriteError = nil
 	if s.session == nil {
 		return false
 	}
@@ -222,10 +227,15 @@ func (s *Service) write(ctx context.Context, op uint32, p []byte) bool {
 		ctx = modcb.ForwardPolicySpell(ctx)
 	}
 	_, err := s.session.SendPacket(ctx, &modv1.SendPacketRequest{Opcode: op, Payload: p})
+	s.lastLootWriteError = err
 	if err != nil {
 		if s.exactCorpse && s.corpseRequest != nil && op == opcode.CMSGLoot && modcb.PacketWasNotDispatched(err) {
 			s.corpseRequest.receipt.OpeningTransportAttempted = false
 			s.state.Reason = "opening_callback_rejected_before_transport"
+			return false
+		}
+		if s.exactCorpse && op == opcode.CMSGLootRelease {
+			s.state.Reason = "loot_release_outcome_unconfirmed"
 			return false
 		}
 		s.fault("transport_error_no_retry")
@@ -313,6 +323,7 @@ func (s *Service) finishReleased(ctx context.Context) {
 	s.finish(ctx)
 }
 func (s *Service) beginRelease(ctx context.Context) {
+	previousPhase := s.state.Phase
 	if s.questGather && s.opened && (s.state.Phase == "waiting_open" || s.state.Phase == "abort") && !s.state.LastGather.LootWindowObserved {
 		packet := []byte{s.gatherCastCount}
 		packet = binary.LittleEndian.AppendUint32(packet, s.boundHarvestRecipe().openSpell)
@@ -335,6 +346,14 @@ func (s *Service) beginRelease(ctx context.Context) {
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
 	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.pendingGUID())) {
+		if s.exactCorpse {
+			if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
+				s.state.Phase = previousPhase
+				return
+			}
+			s.beginOrdinaryTimeout(ctx, "release_transport_unconfirmed")
+			return
+		}
 		s.finish(ctx)
 	}
 }
@@ -534,6 +553,15 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	if s.cleanup.source != 0 {
 		s.tickOrdinaryCleanup(ctx)
+		return
+	}
+	if s.exactCorpse {
+		// Observe settlement only. Lua owns window choice, ordering, timeout,
+		// retry and release; a native timer must never take another item.
+		s.observeWindowMutation()
+		if s.state.Phase == "release_observed" {
+			s.finishReleased(ctx)
+		}
 		return
 	}
 	if s.token != "" {
@@ -983,6 +1011,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			break
 		}
 		s.window = window
+		s.windowRevision++
 		s.removedSlots = map[byte]bool{}
 		s.items = nil
 		s.index = 0
@@ -997,11 +1026,11 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			if s.questGather && item.id != s.boundHarvestRecipe().itemID {
 				continue
 			}
-			if item.slotType == 0 || item.slotType == 4 {
+			if s.exactCorpse || item.slotType == 0 || item.slotType == 4 {
 				s.items = append(s.items, item)
 			}
 		}
-		if s.automatic && !s.questGather {
+		if !s.exactCorpse && s.automatic && !s.questGather {
 			slices.SortStableFunc(s.items, func(a, b lootItem) int {
 				return int(b.slotType) - int(a.slotType)
 			})
@@ -1011,7 +1040,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			s.state.Phase = "abort"
 			break
 		}
-		if window.gold > 0 && !s.questGather {
+		if s.exactCorpse {
+			s.state.Phase = "window_ready"
+		} else if window.gold > 0 && !s.questGather {
 			s.state.Phase = "ready_money"
 		} else {
 			s.state.Phase = "ready_item"
@@ -1028,6 +1059,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 						s.removedSlots = map[byte]bool{}
 					}
 					s.removedSlots[p[0]] = true
+					s.windowRevision++
 					break
 				}
 			}
@@ -1064,6 +1096,7 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			bad = true
 		} else if s.token != "" && s.moneySent {
 			s.moneyCleared = true
+			s.windowRevision++
 		}
 	case opcode.SMSGLootMoneyNotify:
 		if len(p) != 5 || p[4] > 1 {
@@ -1081,6 +1114,9 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				if p[8] == 1 && !s.cleanup.releaseObserved {
 					s.cleanup.releaseObserved = true
 					s.state.ReleasesObserved++
+					if s.exactCorpse && s.corpseRequest != nil {
+						s.corpseRequest.receipt.ReleaseObserved = true
+					}
 				} else if p[8] == 0 && !s.cleanup.releaseObserved {
 					s.cleanup.releaseRejected = true
 				}
@@ -1102,6 +1138,16 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				}
 				s.state.Phase = "release_observed"
 			} else {
+				if s.exactCorpse {
+					s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), timedOutPhase: s.state.Phase, safeToContinue: !s.hasUnsettledLootMutation(), releaseRequested: s.state.Phase == "waiting_release", releaseRejected: true}
+					if s.retired == nil {
+						s.retired = map[uint64]bool{}
+					}
+					s.retired[s.pendingGUID()] = true
+					s.state.Phase = "loot_cleanup_unconfirmed"
+					s.state.Reason = "server_release_rejected_no_retry"
+					break
+				}
 				s.fault("server_release_unconfirmed")
 				if !s.questGather && s.hasUnsettledLootMutation() {
 					s.quarantineReleasedMutation(false)
@@ -1120,6 +1166,14 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 			// A real inventory rejection settles this request as rejected, not
 			// as an ambiguous pickup. Keep its existing pause/disable policy.
 			s.itemRequested = false
+			if s.exactCorpse && s.windowRequest != nil {
+				s.windowRequest.receipt.ServerRejected = true
+				s.windowRequest.receipt.InventoryError = uint32(p[0])
+				s.windowRequest.receipt.Terminal = true
+				s.windowRevision++
+				s.state.Phase = "window_ready"
+				break
+			}
 			if p[0] == 50 && s.state.Phase == "waiting_item" {
 				s.state.InventoryPaused = true
 				if s.inventoryWriteRevision > s.rejectedInventoryRevision {
@@ -1144,5 +1198,6 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 	if bad {
 		s.state.MalformedPackets++
 	}
+	s.observeWindowMutation()
 	return &emptypb.Empty{}, nil
 }

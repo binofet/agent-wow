@@ -210,7 +210,7 @@ func TestOrdinarySettledMutationAndLateReleaseKeepActualProofAndDisableIntent(t 
 	emit(s, opcode.SMSGLootClearMoney, nil)
 	advance(3 * time.Second)
 	tickCorpseLua(t, s)
-	if !s.cleanup.safeToContinue {
+	if !s.moneyCleared || s.hasUnsettledLootMutation() {
 		t.Fatal("actual money-clear receipt ignored")
 	}
 	emit(s, opcode.SMSGLootReleaseResponse, releasePacket())
@@ -304,7 +304,7 @@ func TestOrdinaryDisableDuringTimeoutCleanupNeverResendsOrRestoresIntent(t *test
 	f.failOpcode = opcode.CMSGLootRelease
 	advance(3 * time.Second)
 	tickCorpseLua(t, s)
-	if current(t, s).Enabled {
-		t.Fatal("transport ambiguity silently kept active execution")
+	if !current(t, s).Enabled || s.cleanup.source != corpseGUID || s.cleanup.releaseObserved {
+		t.Fatal("transport ambiguity discarded intent or invented cleanup")
 	}
 }

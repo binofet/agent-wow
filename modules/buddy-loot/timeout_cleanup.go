@@ -2,6 +2,7 @@ package buddyloot
 
 import (
 	"context"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"sort"
 	"time"
 
@@ -31,6 +32,7 @@ func (s *Service) hasUnsettledLootMutation() bool {
 // uncertain money remains blocked. An uncertain mutation is never retried.
 func (s *Service) beginOrdinaryTimeout(ctx context.Context, reason string) {
 	phase := s.state.Phase
+	previouslyRetired := s.retired[s.pendingGUID()]
 	s.cleanup = ordinaryLootCleanup{source: s.state.PendingCorpseGuid, timedOutPhase: phase, safeToContinue: !s.hasUnsettledLootMutation()}
 	if s.retired == nil {
 		s.retired = make(map[uint64]bool)
@@ -66,6 +68,15 @@ func (s *Service) beginOrdinaryTimeout(ctx context.Context, reason string) {
 	s.state.Phase = "waiting_release"
 	s.deadline = s.now().Add(2 * time.Second)
 	if !s.write(ctx, opcode.CMSGLootRelease, guidPacket(s.cleanup.source)) {
+		if s.exactCorpse && modcb.PacketWasNotDispatched(s.lastLootWriteError) {
+			if !previouslyRetired {
+				delete(s.retired, s.cleanup.source)
+			}
+			s.cleanup = ordinaryLootCleanup{}
+			s.state.Phase = phase
+			s.state.Reason = "release_callback_rejected_before_transport"
+			return
+		}
 		s.state.Reason = "loot_timeout_cleanup_transport_unconfirmed"
 		s.pauseOrdinaryCleanup(ctx)
 	}
