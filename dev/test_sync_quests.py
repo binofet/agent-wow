@@ -406,6 +406,17 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(mutate.call_args.args[0],"buddy-quests.offer")
         self.assertEqual(mutate.call_args.args[1]["npcGuid"],str(other))
 
+    def test_pickup_derived_infinite_elapsed_keeps_original_comparison(self):
+        for now,at,query in ((1e308,-1e308,True),(-1e308,1e308,False)):
+            profile,rpc,_,_=self.rig()
+            profile.now=lambda:now
+            profile.data["queries"]=[{"npc":str(MCBRIDE),"signature":[rpc.session,"1","1"],"at":at}]
+            with patch.object(profile,"mutate",return_value=True) as mutate:
+                profile.pickup(rpc.state(),rpc.session,[(0,2,MCBRIDE,197)],set(),{7},197,1)
+            self.assertEqual(mutate.called,query)
+            if query:self.assertEqual(mutate.call_args.args[0],"buddy-quests.offer")
+            else:self.assertEqual(profile.status["phase"],"waiting_for_new_offer_or_prerequisite_state")
+
     def test_pickup_missing_evaluator_and_invented_outputs_never_reserve(self):
         for decision in (None,{"status":"ready","choice":{"kind":"offer","npcGuid":"123"}},
                          {"status":"ready","choice":{"kind":"accept","npcGuid":str(WILLEM),"questId":999,"offerRevision":"99"}},

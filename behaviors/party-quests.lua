@@ -72,6 +72,10 @@ end
 -- Exact finite clock facts are decimal parts, so large prior query times keep
 -- their original ordering without crossing the bridge's exact-number bound.
 local function clock_parts(v)
+    if type(v)=="table" and v.infinite~=nil and type(v.infinite)~="boolean" then return false end
+    if type(v)=="table" and v.infinite==true then
+        return type(v.negative)=="boolean" and v.whole==nil and v.fraction==nil
+    end
     if type(v)~="table" or type(v.negative)~="boolean" or type(v.whole)~="string" or
        #v.whole==0 or #v.whole>309 or type(v.fraction)~="string" or #v.fraction>1074 or
        #v.whole>1 and byte_at(v.whole,1)==48 or #v.fraction>0 and byte_at(v.fraction,#v.fraction)==48 then return false end
@@ -81,6 +85,11 @@ local function clock_parts(v)
     return not (v.negative and v.whole=="0" and v.fraction=="")
 end
 local function clock_less(a,b)
+    if a.infinite==true then
+        if b.infinite==true then return a.negative and not b.negative end
+        return a.negative
+    end
+    if b.infinite==true then return not b.negative end
     if a.negative~=b.negative then return a.negative end
     local function magnitude_less(x,y)
         if #x.whole~=#y.whole then return #x.whole<#y.whole end
@@ -165,7 +174,7 @@ local function starter_pickup(input)
         end
         if not skip then
             local at=prior and prior.at or zero
-            if not valid_clock(at) then return invalid end
+            if not valid_clock(at) or at.infinite==true then return invalid end
             local better=not best or g.priority<best.priority
             if best and g.priority==best.priority then
                 if clock_less(at,best_at) then better=true

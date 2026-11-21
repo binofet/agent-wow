@@ -630,11 +630,13 @@ class CharacterSync:
         def wire_counter(value):
             value = counter(value)
             return str(value) if type(value) is int else value
-        def clock(value):
+        def clock(value, derived=False):
             if type(value) not in (int, float):
                 return False
             try:
                 if not math.isfinite(value):
+                    if derived and math.isinf(value):
+                        return dict(infinite=True, negative=value < 0)
                     return False
                 text = format(Decimal(value), "f")
             except (ValueError, OverflowError):
@@ -664,7 +666,7 @@ class CharacterSync:
             queries.append(dict(npc=old.get("npc") if isinstance(old.get("npc"), str) and len(old["npc"]) <= 20 else False,
                 signature=[part(p, maximum) for p,maximum in zip(signature,(128,20,2))]
                     if isinstance(signature, list) and len(signature) == 3 else False,
-                at=clock(old.get("at")), elapsed=clock(elapsed)))
+                at=clock(old.get("at")), elapsed=clock(elapsed, derived=True)))
         reservations = {key: [part(p, maximum) for p,maximum in zip(value,(128,20,20))]
                         for key,value in self.data["reservations"].items()}
         facts = dict(mode="starter_pickup", sessionId=session, autonomous=self.autonomous, neededEntry=needed_entry,

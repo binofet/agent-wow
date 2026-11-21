@@ -188,6 +188,23 @@ class StarterPickupPolicyTests(unittest.TestCase):
         rows = [previous(a, 0, 59), previous(a, 0, 60)]
         self.choice(facts(candidates=[a], queries=rows), "wait")
 
+    def test_only_derived_elapsed_accepts_signed_infinity(self):
+        npc = candidate()
+        row = previous(npc, -1e308)
+        row["elapsed"] = dict(infinite=True, negative=False)
+        self.choice(facts(queries=[row]), "offer", npc)
+        row["elapsed"] = dict(infinite=True, negative=True)
+        self.choice(facts(queries=[row]), "wait")
+        row["elapsed"] = dict(infinite=True, negative=False)
+        row["at"] = dict(infinite=True, negative=False)
+        self.invalid(facts(queries=[row]))
+        row["at"] = exact_time(0)
+        for malformed in (dict(infinite="yes",negative=False,whole="0",fraction=""),
+                          dict(infinite=True,negative=False,whole="0"),
+                          dict(infinite=True,negative=0)):
+            row["elapsed"] = malformed
+            self.invalid(facts(queries=[row]))
+
     def test_unused_other_npc_query_fields_are_not_eagerly_validated(self):
         npc = candidate()
         rows = [dict(npc=candidate(spawn=2)["guid"], signature=False, at=False, elapsed=False),
