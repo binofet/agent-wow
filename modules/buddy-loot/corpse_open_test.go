@@ -253,6 +253,21 @@ func TestSharedLuaChoosesNearestCorpseAndApproachesBeforeCustody(t *testing.T) {
 // target policy. Their actual OPEN source now comes from the shared Lua module.
 var corpseTestVMs sync.Map
 
+func corpsePolicyPaused(t *testing.T, s *Service) bool {
+	t.Helper()
+	value, ok := corpseTestVMs.Load(s)
+	if !ok {
+		return false
+	}
+	snapshot, e := value.(*behavior.Session).State(context.Background())
+	if e != nil {
+		t.Fatal(e)
+	}
+	data, _ := snapshot.Checkpoint["data"].(map[string]any)
+	paused, _ := data["paused"].(map[string]any)
+	return len(paused) > 0
+}
+
 func tickCorpseLua(t *testing.T, s *Service) {
 	t.Helper()
 	if (s.token == "" || s.exactCorpse) && s.cleanup.source == 0 && !s.questGather {

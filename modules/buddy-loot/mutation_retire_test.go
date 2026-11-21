@@ -218,7 +218,7 @@ func TestOrdinaryLateUnknownPushCannotBindNewWindow(t *testing.T) {
 	}
 	f.world.InventoryRevision++
 	tickCorpseLua(t, s)
-	if got := current(t, s); got.Phase != "ready_item" || got.ItemsStoredConfirmed != 0 || len(got.RecentItems) != 0 {
+	if got := current(t, s); got.Phase != "waiting_release" || got.ItemsStoredConfirmed != 0 || len(got.RecentItems) != 0 || s.windowRequest == nil || !s.windowRequest.receipt.InventoryDeltaObserved {
 		t.Fatal("actual newer owned delta not isolated", got)
 	}
 	tickCorpseLua(t, s)
@@ -344,8 +344,9 @@ func TestOrdinaryAmbiguousStoreAbortAndDisabledReleaseKeepCorrelationBarrier(t *
 				disableLoot(t, s)
 			}
 			f.failOpcode = 0
-			tickCorpseLua(t, s) // abort cleanup, one release
-			if s.state.Phase != "waiting_release" || s.state.Enabled {
+			advance(3 * time.Second) // Lua chooses when to retire an uncertain request.
+			tickCorpseLua(t, s)      // exact cleanup, one release
+			if s.state.Phase != "waiting_release" || s.state.Enabled != (mode != "disabled_ack" && mode != "disabled_timeout") {
 				t.Fatal("fixture not disabled/releasing", current(t, s))
 			}
 			before := len(f.packets)

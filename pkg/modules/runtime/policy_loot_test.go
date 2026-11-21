@@ -200,9 +200,12 @@ func TestPolicyCorpseLootUsesActualNativeOpenAndSourceReceiptWithoutBlockingDefe
 	alive.Health = 1
 	alive.MaxHealth = 1
 	w.NearbyCreatures = []*worldv1.CreatureState{alive}
+	w.RequestedCreature = alive
 	w.LootableCorpses = nil
+	native.Tick(context.Background())
 	step(false)
 	w.NearbyCreatures = nil
+	w.RequestedCreature = dead
 	w.LootableCorpses = []*worldv1.CreatureState{dead}
 	step(false)
 	window := binary.LittleEndian.AppendUint64(nil, corpse)

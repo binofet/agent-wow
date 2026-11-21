@@ -3,11 +3,13 @@ package buddyloot
 import (
 	"context"
 	lootv1 "github.com/agent-wow/agent-wow/modules/buddy-loot/api"
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,6 +29,36 @@ func windowTakeRequest(t *testing.T, s *Service, slot bool) *lootv1.TakeLootRequ
 		r.ExpectedInventoryRevision = o.InventoryRevision
 	}
 	return r
+}
+
+func TestLuaWindowQuestSpaceChoiceRetunesInTheSameSession(t *testing.T) {
+	s, f, open := exactCorpseRig(t)
+	f.world.SelfQuestLogKnown = true
+	f.world.SelfQuestLog = []*worldv1.QuestLogEntry{{QuestId: 386}}
+	for i, slot := range f.world.Backpack[:15] {
+		slot.ItemGuid = 0x4000000000000100 + uint64(i)
+		slot.Entry = 25
+		slot.StackCount = 1
+		slot.MetadataKnown = true
+	}
+	s.OpenCorpse(context.Background(), open)
+	emit(s, opcode.SMSGLootResponse, windowPacket(corpseGUID, 0, lootItem{slot: 2, id: 42, count: 1}))
+	vm := corpsePolicyVM(t, open.SessionId)
+	view, _ := s.ObserveCorpses(context.Background(), &emptypb.Empty{})
+	before := corpsePolicyDecision(t, vm, view, true, false, 1000)
+	a, _ := before["action"].(map[string]any)
+	if a["capability"] != "loot_close" || len(f.packets) != 1 {
+		t.Fatal("quest-space policy did not reserve last slot without writing", before, f.packets)
+	}
+	source := strings.Replace(corpsePolicySource(t), "reserveQuestSlots=1", "reserveQuestSlots=0", 1)
+	if _, e := vm.Reload(context.Background(), source, vm.Status().Revision); e != nil {
+		t.Fatal(e)
+	}
+	after := corpsePolicyDecision(t, vm, view, true, false, 1001)
+	a, _ = after["action"].(map[string]any)
+	if a["capability"] != "loot_slot" || a["slot"] != float64(2) || vm.Status().SessionID != open.SessionId || len(f.packets) != 1 {
+		t.Fatal("reload did not tune the same sole window policy", after, vm.Status(), f.packets)
+	}
 }
 func TestExactWindowActionsArePassiveUntilSelectedAndBindEveryFact(t *testing.T) {
 	s, f, open := exactCorpseRig(t)
