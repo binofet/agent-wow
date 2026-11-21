@@ -19,6 +19,7 @@ def main():
         ("encounter_support", behaviors / "support.lua"),
         ("encounter_movement", behaviors / "encounter-movement.lua"),
         ("encounter_commands", behaviors / "encounter-commands.lua"),
+        ("encounter_tasks", behaviors / "encounter-tasks.lua"),
     ]
     if args.intent:
         modules.append(("encounter_intent", args.intent))

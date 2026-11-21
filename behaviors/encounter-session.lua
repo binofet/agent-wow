@@ -12,11 +12,14 @@ local self_mana = encounter_self_mana
 local support_policy = encounter_support
 local movement = encounter_movement
 local commands = encounter_commands
+local transient_tasks = encounter_tasks
 local intent = encounter_intent or {}
 local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
+local task_view
+local task_support_action
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 local icons = {star=1, circle=2, diamond=3, triangle=4, moon=5, square=6, x=7, skull=8}
 
@@ -41,6 +44,7 @@ end
 local function on_event(event)
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
+    if transient_tasks and not transient_tasks.on_event(event) then return false end
     if healing and not healing.on_event(event) then return false end
     if self_mana and not self_mana.on_event(event) then return false end
     if event.kind == "encounter_observation" then
@@ -74,7 +78,8 @@ end
 
 local function export_state()
     return {version=1, data={encounter=state, healing=healing and healing.export_state(),
-                            selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state()}}
+                            selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
+                            tasks=transient_tasks and transient_tasks.export_state()}}
 end
 
 local function import_state(checkpoint)
@@ -96,6 +101,7 @@ local function import_state(checkpoint)
         cursor=checkpoint.cursor, pending=checkpoint.pending
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
+    if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
     state = saved
     state.engaged = state.engaged or {}
     observation = saved.observation
@@ -288,6 +294,8 @@ local function marked_plan(frame, obs, plan, targets, auras, in_combat)
 end
 
 local function decide_encounter(frame)
+    task_view=nil
+    task_support_action=nil
     local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
     local obs = observation
     if not obs or obs.sessionId ~= frame.session_id or not guid(obs.selfGuid) or not current_visit(obs) then return out end
@@ -388,6 +396,15 @@ local function decide_encounter(frame)
         out.encounterOwnership = {visitId=obs.visitId, observationSequence=state.sequence,
             resurrection=support_policy ~= nil, interrupts=support_policy ~= nil}
     end
+    if transient_tasks then
+        local current=host_can_decide(obs) and obs.hostOwned==true and frame.input.observationSequence==state.sequence and
+            state.settledAt~=state.sequence and #frame.pending==0
+        task_view=transient_tasks.step(obs,frame,state.sequence,targets,in_combat,current)
+        out.task=task_view.status
+        if current and not alive(self) and task_view.action then
+            out.action=task_view.action;transient_tasks.commit(task_view,out.action);return out
+        end
+    end
     if not host_can_decide(obs) or fallback and obs.hostOwned ~= true or
        frame.input.observationSequence ~= state.sequence or state.settledAt == state.sequence or
        #frame.pending ~= 0 or not alive(self) or not same_map(self, obs.mapId) then
@@ -423,6 +440,7 @@ local function decide_encounter(frame)
        support.selfGuid == obs.selfGuid and guid(support.targetGuid) and members[support.targetGuid] and
        alive(players[support.targetGuid]) and same_map(players[support.targetGuid], obs.mapId) and
        usable_spell(obs, support.spellId, "heal") then
+        task_support_action=true
         if active_melee then
             out.action = proposal(obs, "melee_stop", active_melee)
         else
@@ -438,8 +456,12 @@ local function decide_encounter(frame)
         out.action = resurrection
         return out
     end
+    if task_view and task_view.action then
+        out.action=task_view.action;transient_tasks.commit(task_view,out.action);return out
+    end
     local command_action, command_status
-    if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid, control ~= nil and control ~= false) end
+    if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid, control ~= nil and control ~= false,
+        function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
     if active_melee then
@@ -519,7 +541,7 @@ local function decide_encounter(frame)
             end
         end
     end
-    if not out.action and not out.focusGuid and movement and movement.idle_recovery then
+    if not out.action and not out.focusGuid and movement and movement.idle_recovery and not (task_view and task_view.hold) then
         out.action = movement.idle_recovery(obs, state.sequence).action
     end
     return out
@@ -547,6 +569,7 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
+    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,observation or {},out.action) then out.action=nil end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
     local input, encounter = frame.input, observation
     local expected

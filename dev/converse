@@ -470,7 +470,16 @@ Use a finite native movement lease with expiry/fallback for a temporary hold.
 follow(false) alone stays disabled after worker loss; stop_movement alone cannot
 hold future native follow. An interaction lease also blocks casts. If the needed
 movement lease is absent, report that precise harness gap; do not claim the wait
-task is already built or make a permanent toggle its cleanup mechanism.
+task is installed or make a permanent toggle its cleanup mechanism. The bundled
+behaviors/encounter-tasks.lua example accepts wait_for_pull with a unique id,
+optional ownerGuid/responseYards/deadlineMonotonicMs, and cancel_task with its id.
+A replacement wait id or explicit supersedes id retires the old task first.
+Inspect the actual running bundle before using that handler. Discover the body
+with session.describe: if session.policy_state is advertised, inspect its
+committed checkpoint/latestDecision for Lua task/queue phase using its reflected
+identity binding. Older clients can verify hold/release only through native
+movementOwner plus pose/following; never invent an unavailable Lua phase field.
+Policy output alone is not proof of actual gameplay effects.
 For spatial tactics, share a Lua plan with a cleared anchor/area, uncleared
 frontier/chokepoint, pull lane, untouched-pack danger zones and role-specific
 operating areas, allowing temporary CC/scout exceptions. A tank-first doorway
