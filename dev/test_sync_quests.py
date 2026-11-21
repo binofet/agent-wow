@@ -394,6 +394,66 @@ class SyncTests(unittest.TestCase):
             profile.tick()
             self.assertEqual([p["questId"] for m, p in rpc.calls if m == "buddy-quests.accept"], [7])
 
+    def test_pickup_adapter_keeps_exact_large_prior_query_times(self):
+        profile,rpc,_,_=self.rig()
+        other=MCBRIDE+1
+        state=rpc.state()
+        candidates=[(0,1,MCBRIDE,197),(0,7,other,197)]
+        profile.data["queries"]=[{"npc":str(MCBRIDE),"signature":["old","1","1"],"at":2**64-1},
+                                 {"npc":str(other),"signature":["old","1","1"],"at":2**64-2}]
+        with patch.object(profile,"mutate",return_value=True) as mutate:
+            profile.pickup(state,rpc.session,candidates,set(),{7},197,1)
+        self.assertEqual(mutate.call_args.args[0],"buddy-quests.offer")
+        self.assertEqual(mutate.call_args.args[1]["npcGuid"],str(other))
+
+    def test_pickup_missing_evaluator_and_invented_outputs_never_reserve(self):
+        for decision in (None,{"status":"ready","choice":{"kind":"offer","npcGuid":"123"}},
+                         {"status":"ready","choice":{"kind":"accept","npcGuid":str(WILLEM),"questId":999,"offerRevision":"99"}},
+                         {"status":"ready","choice":{"kind":"travel","entry":197}}):
+            profile,rpc,_,saved=self.rig()
+            state=rpc.state();candidates=profile.candidates(state)
+            if decision is None:
+                with patch.dict(os.environ,{"BUDDY_LUAPOLICY_BINARY":"/nonexistent/starter-pickup-evaluator"}):
+                    profile.pickup(state,rpc.session,candidates,set(),{783},823,1)
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_pickup_policy")
+            else:
+                with patch.object(sync.pickup_policy,"evaluate",return_value=decision):
+                    with self.assertRaises(sync.Error):profile.pickup(state,rpc.session,candidates,set(),{783},823,1)
+            self.assertFalse(self.mutate_calls(rpc))
+            self.assertFalse(saved)
+            self.assertEqual(profile.data["reservations"],{})
+
+    def test_pickup_source_edit_and_invalid_candidate_preserve_ambiguous_menu(self):
+        profile,rpc,clock,_=self.rig()
+        rpc.active,rpc.level={7,18},2
+        rpc.apply_accept=False;rpc.error_on="buddy-quests.accept"
+        profile.tick();clock[0]+=10;profile.tick()
+        reserved=copy.deepcopy(profile.data["reservations"])
+        self.assertIn("accept:5261",reserved)
+        for row in rpc.offer["quests"]:row["acceptRequested"]=False
+        count=len(self.mutate_calls(rpc))
+        source=sync.pickup_policy.SOURCE.read_text()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"party-quests.lua"
+            path.write_text(source.replace('local sixty={negative=false,whole="60",fraction=""}',
+                                           'local sixty={negative=false,whole="300",fraction=""}'))
+            self.assertNotEqual(path.read_text(),source)
+            with patch.object(sync.pickup_policy,"SOURCE",path):
+                clock[0]+=60;profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_new_offer_or_prerequisite_state")
+                self.assertEqual(len(self.mutate_calls(rpc)),count)
+                path.write_text("invalid candidate")
+                profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_pickup_policy")
+                self.assertEqual(profile.data["reservations"],reserved)
+                self.assertEqual(len(self.mutate_calls(rpc)),count)
+                path.write_text(source)
+                profile.tick()
+        self.assertEqual(rpc.session,"quest-session")
+        self.assertEqual(profile.data["reservations"],reserved)
+        self.assertEqual([m for m,_ in rpc.calls].count("buddy-quests.accept"),1)
+        self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.offer")
+
     def test_reservation_persist_failure_prevents_every_mutation(self):
         profile, rpc, _, _ = self.rig()
         profile.save = lambda value: (_ for _ in ()).throw(OSError("disk full"))

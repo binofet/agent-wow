@@ -69,7 +69,118 @@ local function signature(v)
     for _,s in ipairs(v) do if type(s)~="string" or #s>512 then return false end end
     return true
 end
+-- Exact finite clock facts are decimal parts, so large prior query times keep
+-- their original ordering without crossing the bridge's exact-number bound.
+local function clock_parts(v)
+    if type(v)~="table" or type(v.negative)~="boolean" or type(v.whole)~="string" or
+       #v.whole==0 or #v.whole>309 or type(v.fraction)~="string" or #v.fraction>1074 or
+       #v.whole>1 and byte_at(v.whole,1)==48 or #v.fraction>0 and byte_at(v.fraction,#v.fraction)==48 then return false end
+    for _,part in ipairs({v.whole,v.fraction}) do
+        for i=1,#part do local c=byte_at(part,i); if c<48 or c>57 then return false end end
+    end
+    return not (v.negative and v.whole=="0" and v.fraction=="")
+end
+local function clock_less(a,b)
+    if a.negative~=b.negative then return a.negative end
+    local function magnitude_less(x,y)
+        if #x.whole~=#y.whole then return #x.whole<#y.whole end
+        if x.whole~=y.whole then return x.whole<y.whole end
+        return x.fraction<y.fraction
+    end
+    if a.negative then return magnitude_less(b,a) end
+    return magnitude_less(a,b)
+end
+local function starter_pickup(input)
+    local function ready(choice) return {status="ready",choice=choice} end
+    local invalid={status="invalid"}
+    local active,allowed=ids(input.activeQuestIds,25),ids(input.allowedQuestIds,25)
+    if not active or not allowed or not text(input.sessionId,128) or type(input.autonomous)~="boolean" or
+       not uint(input.neededEntry,4294967295) or not array(input.candidates,64) or type(input.reservations)~="table" then return invalid end
+    local givers={}
+    for _,g in ipairs(input.candidates) do
+        if type(g)~="table" or not decimal(g.guid) or not uint(g.priority,4294967295) or
+           not number(g.distance) or g.distance<0 or g.distance>9007199254740991 or not uint(g.entry,4294967295) then return invalid end
+        givers[g.guid]=true
+    end
+    local offer=input.offer
+    if input.offerObjectKnown==true then
+        if type(offer)~="table" or not decimal(offer.npcGuid) then return invalid end
+        if givers[offer.npcGuid] then
+            if not decimal(offer.expiresInMs) then return invalid end
+            if offer.expiresInMs~="0" then
+                if not array(offer.quests,32) then return invalid end
+                local desired={}
+                for _,row in ipairs(offer.quests) do
+                    if type(row)~="table" then return invalid end
+                    local q=row.questId
+                    if not uint(q,9007199254740991) and not decimal(q) then return invalid end
+                    if type(q)=="string" then q=#q<=10 and tonumber(q) or nil end
+                    if q and row.available==true and row.acceptRequested~=true and row.repeatable~=true and
+                       not active[q] and allowed[q] then desired[q]=true end
+                end
+                local ordered=sorted_ids(desired)
+                local q=ordered[1]
+                if q==783 and #ordered>1 then q=ordered[2] end -- Intro is deliberately last.
+                if q then
+                    if not decimal(offer.revision) or offer.revision=="0" then return invalid end
+                    local used=false
+                    for key,bound in pairs(input.reservations) do
+                        if not text(key,64) then return invalid end
+                        if byte_at(key,1)==97 and byte_at(key,2)==99 and byte_at(key,3)==99 and
+                           byte_at(key,4)==101 and byte_at(key,5)==112 and byte_at(key,6)==116 and byte_at(key,7)==58 and
+                           same(bound,{input.sessionId,offer.npcGuid,offer.revision}) then used=true end
+                    end
+                    if not used then
+                        return ready({kind="accept",questId=q,npcGuid=offer.npcGuid,offerRevision=offer.revision})
+                    end
+                end
+            end
+        end
+    end
+    if #input.candidates==0 then
+        if input.autonomous then return ready({kind="travel",entry=input.neededEntry}) end
+        return ready({kind="wait",phase="waiting_for_observed_starter_questgiver_within_8yd"})
+    end
+    if not signature(input.querySignature) or #input.querySignature~=3 or not array(input.queries,8) then return invalid end
+    local previous={}
+    for _,row in ipairs(input.queries) do
+        if type(row)~="table" then return invalid end
+        if type(row.npc)=="string" and previous[row.npc]==nil then previous[row.npc]=row end
+    end
+    local zero={negative=false,whole="0",fraction=""}
+    local sixty={negative=false,whole="60",fraction=""}
+    local best,best_at
+    local validated={}
+    local function valid_clock(value)
+        if type(value)~="table" then return false end
+        if validated[value]==nil then validated[value]=clock_parts(value) end
+        return validated[value]
+    end
+    for _,g in ipairs(input.candidates) do
+        local prior=previous[g.guid]
+        local skip=false
+        if prior and same(prior.signature,input.querySignature) then
+            if not valid_clock(prior.elapsed) then return invalid end
+            skip=clock_less(prior.elapsed,sixty)
+        end
+        if not skip then
+            local at=prior and prior.at or zero
+            if not valid_clock(at) then return invalid end
+            local better=not best or g.priority<best.priority
+            if best and g.priority==best.priority then
+                if clock_less(at,best_at) then better=true
+                elseif not clock_less(best_at,at) then
+                    better=g.distance<best.distance or g.distance==best.distance and less_guid(g.guid,best.guid)
+                end
+            end
+            if better then best,best_at=g,at end
+        end
+    end
+    if not best then return ready({kind="wait",phase="waiting_for_new_offer_or_prerequisite_state"}) end
+    return ready({kind="offer",npcGuid=best.guid})
+end
 function M.decide(input)
+    if type(input)=="table" and input.mode=="starter_pickup" then return starter_pickup(input) end
     local invalid={status="invalid"}
     if type(input)~="table" or not text(input.sessionId,128) or not number(input.now) then return invalid end
     local pickup_offer,turnin_offer=offer_defaults(input.offer),offer_defaults(input.turnInOffer)

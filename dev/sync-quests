@@ -13,6 +13,7 @@ import signal
 import sys
 import time
 import uuid
+from decimal import Decimal
 import urllib.request
 import urllib.error
 
@@ -28,6 +29,10 @@ objective_loader = importlib.machinery.SourceFileLoader("starter_objective_polic
 objective_spec = importlib.util.spec_from_loader(objective_loader.name, objective_loader)
 objective_policy = importlib.util.module_from_spec(objective_spec)
 objective_loader.exec_module(objective_policy)
+pickup_loader = importlib.machinery.SourceFileLoader("starter_pickup_policy", str(Path(__file__).with_name("party-quest-policy.py")))
+pickup_spec = importlib.util.spec_from_loader(pickup_loader.name, pickup_loader)
+pickup_policy = importlib.util.module_from_spec(pickup_spec)
+pickup_loader.exec_module(pickup_policy)
 DESIRED = frozenset((7, 18, 3903))
 INTRO = 783
 EAGAN_INTRO = 5261
@@ -615,6 +620,96 @@ class CharacterSync:
             raise Error("Lua prerequisite reward action is invalid")
         return True
 
+    def pickup(self, state, session, candidates, active, allowed, needed_entry, level):
+        def counter(value):
+            try:
+                value = integer(value)
+            except Error:
+                return False
+            return str(value) if value > 2**53 - 1 else value
+        def wire_counter(value):
+            value = counter(value)
+            return str(value) if type(value) is int else value
+        def clock(value):
+            if type(value) not in (int, float):
+                return False
+            try:
+                if not math.isfinite(value):
+                    return False
+                text = format(Decimal(value), "f")
+            except (ValueError, OverflowError):
+                return False
+            negative = text.startswith("-")
+            whole, _, fraction = text.lstrip("-").partition(".")
+            fraction = fraction.rstrip("0")
+            return dict(negative=negative and not (whole == "0" and not fraction), whole=whole, fraction=fraction)
+        def part(value, maximum):
+            return value if isinstance(value, str) and len(value) <= maximum else False
+        offer = state.get("offer", {})
+        offer_known = isinstance(offer, dict)
+        if not offer_known:
+            offer = {}
+        rows = offer.get("quests", [])
+        offered = [dict(questId=counter(q.get("questId", 0)), **{key: q.get(key) is True
+                       for key in ("available", "acceptRequested", "repeatable")}) if isinstance(q, dict) else False
+                   for q in rows] if isinstance(rows, list) and len(rows) <= 32 else False
+        queries = []
+        now = self.now()
+        for old in self.data["queries"]:
+            try:
+                elapsed = now - old.get("at")
+            except (TypeError, OverflowError):
+                elapsed = False
+            signature = old.get("signature")
+            queries.append(dict(npc=old.get("npc") if isinstance(old.get("npc"), str) and len(old["npc"]) <= 20 else False,
+                signature=[part(p, maximum) for p,maximum in zip(signature,(128,20,2))]
+                    if isinstance(signature, list) and len(signature) == 3 else False,
+                at=clock(old.get("at")), elapsed=clock(elapsed)))
+        reservations = {key: [part(p, maximum) for p,maximum in zip(value,(128,20,20))]
+                        for key,value in self.data["reservations"].items()}
+        facts = dict(mode="starter_pickup", sessionId=session, autonomous=self.autonomous, neededEntry=needed_entry,
+            activeQuestIds=sorted(active), allowedQuestIds=sorted(allowed),
+            candidates=[dict(priority=p, distance=d, guid=str(npc), entry=entry) for p,d,npc,entry in candidates],
+            offerObjectKnown=offer_known, offer=dict(npcGuid=wire_counter(offer.get("npcGuid", 0)),
+                expiresInMs=wire_counter(offer.get("expiresInMs", 0)), revision=wire_counter(offer.get("revision", 0)), quests=offered),
+            reservations=reservations, queries=queries,
+            querySignature=[session, wire_counter(state.get("questLogRevision", 0)), str(level)])
+        decision = pickup_policy.evaluate(facts)
+        if not isinstance(decision, dict) or decision.get("status") == "pending":
+            self.status["phase"] = "waiting_for_shared_lua_starter_pickup_policy"
+            return
+        if decision.get("status") != "ready" or not isinstance(decision.get("choice"), dict):
+            raise Error("Shared Lua starter pickup policy rejected its observations")
+        choice = decision["choice"]
+        kind = choice.get("kind")
+        if kind == "wait":
+            if choice.get("phase") not in ("waiting_for_observed_starter_questgiver_within_8yd", "waiting_for_new_offer_or_prerequisite_state"):
+                raise Error("Lua starter pickup wait state is invalid")
+            self.status["phase"] = choice["phase"]
+            return
+        if kind == "travel":
+            if not self.autonomous or choice.get("entry") != needed_entry:
+                raise Error("Lua starter pickup destination is outside this goal")
+            self.travel(state, entry=needed_entry)
+            return
+        npc = integer(choice.get("npcGuid", 0))
+        if npc not in {row[2] for row in candidates}:
+            raise Error("Lua starter pickup giver is unobserved")
+        if kind == "accept":
+            qid, revision = choice.get("questId"), integer(offer.get("revision", 0))
+            if (type(qid) is not int or qid not in allowed or qid in active or choice.get("offerRevision") != str(revision)
+                    or not offer_known or integer(offer.get("npcGuid", 0)) != npc or not isinstance(rows, list)
+                    or not any(isinstance(q, dict) and integer(q.get("questId", 0)) == qid for q in rows)):
+                raise Error("Lua starter acceptance is not bound to the actual menu")
+            self.mutate("buddy-quests.accept", {"sessionId": session, "offerRevision": str(revision),
+                "npcGuid": str(npc), "questId": qid}, "accept:" + str(qid), binding(session, npc, revision))
+        elif kind == "offer":
+            signature = [session, str(integer(state.get("questLogRevision", 0))), str(level)]
+            self.mutate("buddy-quests.offer", {"sessionId": session, "npcGuid": str(npc)},
+                        query={"npc": str(npc), "signature": signature, "at": self.now()})
+        else:
+            raise Error("Lua starter pickup action is invalid")
+
     def tick(self):
         self.status["observationsCurrent"] = False
         world = self.call("buddy-world.snapshot", {})
@@ -743,53 +838,7 @@ class CharacterSync:
             elif fallback["kind"] != "wait":
                 raise Error("Lua starter fallback decision is invalid")
             return
-        offer = state.get("offer", {})
-        nearby_guids = {row[2] for row in candidates}
-        if (isinstance(offer, dict) and integer(offer.get("npcGuid", 0)) in nearby_guids
-                and integer(offer.get("expiresInMs", 0)) > 0):
-            quests = offer.get("quests", [])
-            if not isinstance(quests, list) or len(quests) > 32:
-                raise Error("Observed offer quest list is invalid")
-            desired = []
-            for quest in quests:
-                if not isinstance(quest, dict):
-                    raise Error("Observed offer quest is invalid")
-                quest_id = integer(quest.get("questId", 0))
-                if (quest.get("available") is True and quest.get("acceptRequested") is not True
-                        and quest.get("repeatable") is not True and quest_id not in active
-                        and quest_id in allowed):
-                    desired.append(quest_id)
-            desired.sort(key=lambda quest_id: (quest_id == INTRO, quest_id))
-            for quest_id in desired:
-                npc, revision = integer(offer["npcGuid"]), integer(offer.get("revision", 0))
-                if not revision:
-                    raise Error("Quest offer revision is unknown")
-                current_binding = binding(session, npc, revision)
-                if any(key.startswith("accept:") and value == current_binding for key, value in self.data["reservations"].items()):
-                    break # Refresh the actual menu after every acceptance.
-                if self.data["reservations"].get("accept:" + str(quest_id)) != current_binding:
-                    self.mutate("buddy-quests.accept", {"sessionId": session, "offerRevision": str(revision),
-                        "npcGuid": str(npc), "questId": quest_id}, "accept:" + str(quest_id), current_binding)
-                    return
-        if not candidates:
-            if self.autonomous:
-                self.travel(state, entry=needed_entry)
-                return
-            self.status["phase"] = "waiting_for_observed_starter_questgiver_within_8yd"
-            return
-        signature = [session, str(integer(state.get("questLogRevision", 0))), str(level)]
-        eligible = []
-        for priority, distance, npc, entry in candidates:
-            previous = next((q for q in self.data["queries"] if q["npc"] == str(npc)), None)
-            if previous and previous["signature"] == signature and self.now() - previous["at"] < 60:
-                continue
-            eligible.append((priority, previous["at"] if previous else 0, distance, npc))
-        if not eligible:
-            self.status["phase"] = "waiting_for_new_offer_or_prerequisite_state"
-            return
-        _, _, _, npc = min(eligible)
-        self.mutate("buddy-quests.offer", {"sessionId": session, "npcGuid": str(npc)},
-                    query={"npc": str(npc), "signature": signature, "at": self.now()})
+        self.pickup(state, session, candidates, active, allowed, needed_entry, level)
 
 
 def main(argv=None):
