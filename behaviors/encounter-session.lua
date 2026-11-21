@@ -18,6 +18,7 @@ local state = {bindings={}, defeated={}, controls={}, engaged={}}
 -- A recovery channel requires a new sample after reload or action settlement.
 local mana_observation, mana_sequence
 local observation
+local policy_observation
 local task_view
 local task_support_action
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
@@ -212,6 +213,9 @@ end
 
 local function observe_targets(obs, members)
     local targets, auras, protected = {}, {}, {}
+    local classified = {}
+    for key, value in pairs(obs) do classified[key] = value end
+    classified.targets, classified.engagement = {}, {}
     -- Read CC reservations before evaluating reset evidence. Full health is
     -- normal under Polymorph and must not erase an active encounter target.
     for _, aura in ipairs(obs.protectedAuras or {}) do protected[aura.targetGuid] = true end
@@ -235,6 +239,14 @@ local function observe_targets(obs, members)
             if npc.aliveKnown == true and npc.alive == false or reset then state.engaged[target] = nil end
             local engaged = state.engaged[target] == true
             targets[target] = copy_target(npc, engaged, reserved)
+            local row = {}
+            for key, value in pairs(npc) do row[key] = value end
+            row.engaged, row.protected = engaged, reserved
+            classified.targets[target] = row
+            if witnessed then
+                local attack = type(npc.attackObservation) == "table" and npc.attackObservation or (obs.engagement or {})[target]
+                classified.engagement[target] = {victimGuid=attack.victimGuid,ageMs=attack.ageMs or "0"}
+            end
             if engaged and alive(npc) then in_combat = true end
         end
     end
@@ -265,7 +277,7 @@ local function observe_targets(obs, members)
             auras[guid] = rows
         end
     end
-    return targets, auras, in_combat
+    return targets, auras, in_combat, classified
 end
 
 local function marked_plan(frame, obs, plan, targets, auras, in_combat)
@@ -320,6 +332,7 @@ local function marked_plan(frame, obs, plan, targets, auras, in_combat)
 end
 
 local function decide_encounter(frame)
+    policy_observation=nil
     task_view=nil
     task_support_action=nil
     local out = {queue={}, protected={}, phase="waiting_for_encounter_observation"}
@@ -349,7 +362,11 @@ local function decide_encounter(frame)
             if guid(member.guid) then members[member.guid] = member.online == true end
         end
     end
-    local targets, auras, in_combat = observe_targets(obs, members)
+    local targets, auras, in_combat, classified = observe_targets(obs, members)
+    -- All consumers use the same Lua engagement result: queue/execution,
+    -- interrupts, automatic CC, temporary tasks and mana recovery. The raw
+    -- ingress observation remains unchanged for checkpoint and inspection.
+    obs, policy_observation = classified, classified
     local marked, stale, all_control_observed
     if plan then
         marked, stale, all_control_observed = marked_plan(frame, obs, plan, targets, auras, in_combat)
@@ -595,9 +612,9 @@ end
 
 local function decide(frame)
     local out = decide_encounter(frame)
-    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,observation or {},out.action) then out.action=nil end
+    if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
     if not self_mana or out.action or #frame.pending ~= 0 then return out end
-    local input, encounter = frame.input, observation
+    local input, encounter = frame.input, policy_observation or observation
     local expected
     if input.kind == "self_mana" then
         -- A separate mana tick cannot supersede a bound encounter decision.
