@@ -162,6 +162,7 @@ func TestServiceTravelPolicyBentRouteCannotArriveByDirectDistanceAlone(t *testin
 				return []position{from, {x: from.x, y: from.y + 20, z: from.z}, {x: to.x, y: from.y + 20, z: from.z}, to}, nil
 			}
 			host := newFollowPolicySession(t, r.s, r.f)
+			host.runtime = healthyServiceTravelRuntime(t) // Route semantics; production watchdog remains separate.
 			r.s.UseHostFollowPolicy()
 			actualLua := r.s.formation.remote
 			guardObserved, reloaded := false, false
