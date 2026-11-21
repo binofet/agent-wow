@@ -263,6 +263,9 @@ func TestCarriedJunkConfirmationNeedsOriginalEmptySlotAndGuidAbsentEverywhere(t 
 			}
 			f.world = complete
 			f.world.InventoryRevision++
+			if name == "moved_to_equipment" {
+				f.world.SelfEquipmentRevision++
+			}
 			s.Tick(context.Background())
 			state := s.snapshot()
 			if state.JunkStacksDestroyed != 1 || state.LastJunkDisposal.Status != "SERVER_SLOT_REMOVAL_CONFIRMED" ||
@@ -387,9 +390,88 @@ func TestCarriedJunkPartialOwnershipStillRaisesReceiptRevisionFloor(t *testing.T
 				t.Fatal("same-revision complete absence overrode partial ownership")
 			}
 			f.world.InventoryRevision = 45
+			if view == "equipment" {
+				f.world.SelfEquipmentRevision++
+			}
 			s.Tick(context.Background())
 			if s.snapshot().JunkStacksDestroyed != 1 || f.count(opcode.CMSGDestroyitem) != 1 {
 				t.Fatal("later complete absence failed to settle without replay", s.snapshot())
+			}
+		})
+	}
+}
+
+func TestCarriedJunkEquipmentPresenceHasIndependentRevisionFloor(t *testing.T) {
+	for _, reader := range []string{"tick", "state"} {
+		for _, inventoryRevision := range []uint64{0, 43} {
+			t.Run(fmt.Sprintf("%s/inventory%d", reader, inventoryRevision), func(t *testing.T) {
+				s, f := carriedJunkFixture(4, 0)
+				r := carriedJunkRequest(s, f, 4, 0)
+				if _, err := s.DestroyJunk(context.Background(), r); err != nil {
+					t.Fatal(err)
+				}
+				complete := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+				complete.InventoryBags[4].Slots[0] = &worldv1.BackpackSlot{Bag: 4}
+				complete.InventoryRevision = 44
+				f.world = proto.Clone(complete).(*worldv1.SnapshotResponse)
+				f.world.InventoryRevision, f.world.SelfEquipmentRevision = inventoryRevision, 12
+				f.world.SelfEquipmentKnown = false
+				f.world.SelfEquipment[8] = &worldv1.EquipmentSlotState{Slot: 8, SlotKnown: true,
+					ItemGuid: r.ExpectedItemGuid, Entry: 4865, StackCount: 1, MetadataKnown: true}
+				if reader == "state" {
+					if _, err := s.GetState(context.Background(), nil); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					s.Tick(context.Background())
+				}
+				f.world = complete
+				for _, equipmentRevision := range []uint64{10, 12} {
+					f.world.SelfEquipmentRevision = equipmentRevision
+					s.Tick(context.Background())
+					if s.snapshot().JunkStacksDestroyed != 0 || s.junkPending == nil {
+						t.Fatal("stale or same equipment absence overrode observed ownership", equipmentRevision, s.snapshot())
+					}
+				}
+				f.world.SelfEquipmentRevision = 13
+				s.Tick(context.Background())
+				if s.snapshot().JunkStacksDestroyed != 1 || f.count(opcode.CMSGDestroyitem) != 1 ||
+					s.snapshot().LastJunkDisposal.InventoryRevision != 42 {
+					t.Fatal("fresh equipment absence did not settle the original receipt exactly once", s.snapshot())
+				}
+			})
+		}
+	}
+}
+
+func TestCarriedJunkUnversionedPositiveOwnershipRemainsUnconfirmed(t *testing.T) {
+	for _, location := range []string{"inventory", "equipment"} {
+		t.Run(location, func(t *testing.T) {
+			s, f := carriedJunkFixture(4, 0)
+			r := carriedJunkRequest(s, f, 4, 0)
+			if _, err := s.DestroyJunk(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+			complete := proto.Clone(f.world).(*worldv1.SnapshotResponse)
+			complete.InventoryBags[4].Slots[0] = &worldv1.BackpackSlot{Bag: 4}
+			complete.InventoryRevision, complete.SelfEquipmentRevision = 44, 13
+			if location == "inventory" {
+				f.world.InventoryRevision, f.world.InventoryKnown = 0, false
+			} else {
+				f.world = proto.Clone(complete).(*worldv1.SnapshotResponse)
+				f.world.SelfEquipmentRevision, f.world.SelfEquipmentKnown = 0, false
+				f.world.SelfEquipment[8] = &worldv1.EquipmentSlotState{Slot: 8, SlotKnown: true,
+					ItemGuid: r.ExpectedItemGuid, Entry: 4865, StackCount: 1, MetadataKnown: true}
+			}
+			if _, err := s.GetState(context.Background(), nil); err != nil {
+				t.Fatal(err)
+			}
+			f.world = complete
+			for range 2 {
+				s.Tick(context.Background())
+				if s.snapshot().JunkStacksDestroyed != 0 || s.junkPending == nil || f.count(opcode.CMSGDestroyitem) != 1 {
+					t.Fatal("unorderable positive ownership was treated as confirmed removal or replayed")
+				}
 			}
 		})
 	}

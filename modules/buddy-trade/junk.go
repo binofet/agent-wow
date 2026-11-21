@@ -200,7 +200,8 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	if r.InventoryRevision != 0 {
 		s.junkPending.SourceBag, s.junkPending.SourceSlot = selected.Bag, selected.Slot
 		s.junkPending.InventoryRevision = w.InventoryRevision
-		s.carriedJunkProof = &carriedJunkProof{revision: w.InventoryRevision, presentRevision: w.InventoryRevision}
+		s.carriedJunkProof = &carriedJunkProof{revision: w.InventoryRevision, presentRevision: w.InventoryRevision,
+			equipmentRevision: w.SelfEquipmentRevision}
 		bag, slot = byte(18+selected.Bag), byte(selected.Slot)
 	} else {
 		s.carriedJunkProof = nil

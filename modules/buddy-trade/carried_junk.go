@@ -6,8 +6,12 @@ import (
 )
 
 type carriedJunkProof struct {
-	revision        uint64
-	presentRevision uint64
+	revision                     uint64
+	presentRevision              uint64
+	equipmentRevision            uint64
+	equipmentPresentRevision     uint64
+	unversionedInventoryPresence bool
+	unversionedEquipmentPresence bool
 }
 
 func carriedJunkItemGUID(guid uint64) bool {
@@ -177,11 +181,14 @@ func carriedJunkRemovalConfirmed(w *worldv1.SnapshotResponse, pending *tradev1.J
 // The public receipt retains its original revision. Later reads can establish
 // a higher floor without converting an out-of-order absence into removal.
 func (proof *carriedJunkProof) observe(w *worldv1.SnapshotResponse, pending *tradev1.JunkDisposal) {
-	if proof == nil || w == nil || pending == nil || w.InventoryRevision == 0 {
+	if proof == nil || w == nil || pending == nil {
 		return
 	}
 	if w.InventoryRevision > proof.revision {
 		proof.revision = w.InventoryRevision
+	}
+	if w.SelfEquipmentRevision > proof.equipmentRevision {
+		proof.equipmentRevision = w.SelfEquipmentRevision
 	}
 	present := false
 	for _, bag := range w.InventoryBags {
@@ -196,11 +203,21 @@ func (proof *carriedJunkProof) observe(w *worldv1.SnapshotResponse, pending *tra
 	for _, item := range w.Backpack {
 		present = present || item.GetItemGuid() == pending.ItemGuid
 	}
-	for _, item := range w.SelfEquipment {
-		present = present || item.GetItemGuid() == pending.ItemGuid
+	if present {
+		if w.InventoryRevision == 0 {
+			proof.unversionedInventoryPresence = true
+		} else if w.InventoryRevision > proof.presentRevision {
+			proof.presentRevision = w.InventoryRevision
+		}
 	}
-	if present && w.InventoryRevision > proof.presentRevision {
-		proof.presentRevision = w.InventoryRevision
+	for _, item := range w.SelfEquipment {
+		if item.GetItemGuid() == pending.ItemGuid {
+			if w.SelfEquipmentRevision == 0 {
+				proof.unversionedEquipmentPresence = true
+			} else if w.SelfEquipmentRevision > proof.equipmentPresentRevision {
+				proof.equipmentPresentRevision = w.SelfEquipmentRevision
+			}
+		}
 	}
 }
 
@@ -209,6 +226,9 @@ func (proof *carriedJunkProof) removalConfirmed(w *worldv1.SnapshotResponse, pen
 		return false
 	}
 	proof.observe(w, pending)
-	return w.InventoryRevision >= proof.revision && w.InventoryRevision > proof.presentRevision &&
+	return !proof.unversionedInventoryPresence && !proof.unversionedEquipmentPresence &&
+		w.InventoryRevision >= proof.revision && w.InventoryRevision > proof.presentRevision &&
+		w.SelfEquipmentRevision >= proof.equipmentRevision &&
+		w.SelfEquipmentRevision > proof.equipmentPresentRevision &&
 		carriedJunkRemovalConfirmed(w, pending)
 }
