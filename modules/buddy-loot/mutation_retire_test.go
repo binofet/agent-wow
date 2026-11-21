@@ -299,18 +299,16 @@ func TestOrdinaryEarlyServerCloseCannotBypassUnknownMutationBarrier(t *testing.T
 			if len(f.packets) != before || f.releases != 0 {
 				t.Fatal("packet callback performed cleanup")
 			}
-			if mode == "gather" {
-				if s.cleanup.source != 0 || s.state.Phase != "release_observed" {
-					t.Fatal("ordinary policy altered gather")
-				}
-				return
-			}
 			if s.cleanup.source != guid || !s.cleanup.releaseObserved || s.state.ReleasesObserved != 1 {
 				t.Fatal("early close bypassed barrier", current(t, s))
 			}
 			tickCorpseLua(t, s)
-			if mode == "item" {
-				if s.cleanup.source != 0 || s.state.PendingCorpseGuid != 0 || !s.unconfirmedItems[123] {
+			if mode == "item" || mode == "gather" {
+				item := uint32(123)
+				if mode == "gather" {
+					item = harvestItemID
+				}
+				if s.cleanup.source != 0 || s.pendingGUID() != 0 || !s.unconfirmedItems[item] {
 					t.Fatal("early close not retired", current(t, s))
 				}
 			} else if s.cleanup.source != guid || s.state.Phase != "loot_mutation_unconfirmed" {

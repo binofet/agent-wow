@@ -383,12 +383,12 @@ func TestHarvestOpeningTimeoutPreservesIntentButNeverMixesLateSourceWindow(t *te
 	if current(t, s).Phase != "waiting_item" || f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem {
 		t.Fatal(current(t, s))
 	}
-	// Once storage might have been sent, GUID-less receipt ambiguity requires
-	// the old fail-closed behavior; do not continue to another crate.
+	// Once storage might have been sent, preserve intent but quarantine the
+	// exact source/mutation and yield custody; never retry that pickup.
 	advance(3 * time.Second)
 	tickGatherWindow(t, s)
-	if current(t, s).Enabled {
-		t.Fatal("ambiguous item timeout preserved intent")
+	if !current(t, s).Enabled || len(f.packets) != before+2 || f.packets[len(f.packets)-1].Opcode != opcode.CMSGLootRelease || s.cleanup.source != nextGUID || f.leaseOwner != "" {
+		t.Fatal("ambiguous item replayed or retained body custody", current(t, s), f.packets)
 	}
 }
 
@@ -421,7 +421,7 @@ func TestHarvestMalformedForeignAndInventoryFailureCannotClaimSuccess(t *testing
 	tickGatherWindow(t, s)
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(harvestGUID), 1))
 	tickGatherWindow(t, s)
-	if r := current(t, s); r.Enabled || r.LastGather.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED || r.LastGather.ItemPushObserved || f.leaseOwner != "" {
+	if r := current(t, s); !r.Enabled || r.LastGather.Status != lootv1.GatherStatus_GATHER_SERVER_REJECTED || r.LastGather.ItemPushObserved || f.leaseOwner != "" {
 		t.Fatal(r)
 	}
 }

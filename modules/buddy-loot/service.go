@@ -1174,6 +1174,14 @@ func (s *Service) OnPacket(_ context.Context, r *modv1.WorldPacket) (*emptypb.Em
 				if s.questGather {
 					s.state.LastGather.Status = lootv1.GatherStatus_GATHER_SERVER_REJECTED
 					s.state.LastGather.Reason = "server_inventory_rejected"
+					if p[0] == 50 {
+						// Preserve the observed rejection/source revision for the
+						// retained pre-opening gather workflow. Lua still decides
+						// whether/when to close this current window.
+						s.state.InventoryPaused = true
+						s.rejectedInventoryRevision = max(s.rejectedInventoryRevision, s.inventoryWriteRevision)
+						s.pausedSource, s.pausedGather = s.pendingGUID(), true
+					}
 				}
 				s.windowRevision++
 				s.state.Phase = "window_ready"

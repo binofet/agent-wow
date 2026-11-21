@@ -41,8 +41,12 @@ func disableLoot(t *testing.T, s *Service) *lootv1.State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.exactCorpse && s.corpseRequest != nil {
-		_, err = s.CloseCorpse(context.Background(), &lootv1.CloseCorpseRequest{SessionId: s.state.SessionId, SelfGuid: s.selfGUID, CorpseGuid: s.corpseRequest.request.CorpseGuid})
+	if s.policyWindow() {
+		request := &lootv1.CloseCorpseRequest{SessionId: s.state.SessionId, SelfGuid: s.selfGUID, CorpseGuid: s.pendingGUID()}
+		if s.questGather {
+			request.CorpseGuid, request.SourceGuid = 0, s.pendingGUID()
+		}
+		_, err = s.CloseCorpse(context.Background(), request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,11 +94,7 @@ func TestDisableDuringOutstandingReleasePreservesDeadlineAndReceiptBinding(t *te
 		s, f, advance, guid, _ := storedLootWaitingRelease(t, gather)
 		deadline, token := s.deadline, s.token
 		got := disableLoot(t, s)
-		expectedReleases := 0
-		if !gather {
-			expectedReleases = 1
-		}
-		if got.Enabled || got.Phase != "waiting_release" || s.token != token || !s.deadline.Equal(deadline) || len(f.packets) != 3 || f.releases != expectedReleases {
+		if got.Enabled || got.Phase != "waiting_release" || s.token != token || !s.deadline.Equal(deadline) || len(f.packets) != 3 || f.releases != 1 {
 			t.Fatal("disable overwrote in-flight release", got)
 		}
 		advance(time.Second)

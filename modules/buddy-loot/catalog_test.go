@@ -68,7 +68,7 @@ func TestUnseenCatalogContainerUsesOwnQuestAndExactSource(t *testing.T) {
 				t.Fatal(current(t, s))
 			}
 			emit(s, opcode.SMSGLootResponse, harvestWindow(g.Guid, lootItem{slot: 1, id: 91235, count: 12, slotType: 4}))
-			s.Tick(context.Background())
+			tickGatherWindow(t, s)
 			if f.packets[len(f.packets)-1].Opcode != opcode.CMSGAutostoreLootItem {
 				t.Fatal("catalog pickup retained old count-eight restriction")
 			}
