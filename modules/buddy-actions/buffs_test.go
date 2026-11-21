@@ -66,7 +66,6 @@ func buffRig(t *testing.T, class uint32, ids ...uint32) (*Service, *fakeSession,
 	s, f, advance := rig(t)
 	s.sessionID = f.party.SessionId
 	f.world.Self.ClassId = class
-	f.world.Self.ChannelSpellKnown = true
 	f.world.Self.LevelKnown = true
 	f.world.Self.Level = 12
 	f.world.Self.Power = 1000
@@ -113,6 +112,9 @@ func TestBuffExactLearnedRankNormalWireAndActualAura(t *testing.T) {
 	for _, auraFirst := range []bool{false, true} {
 		t.Run(fmt.Sprint(auraFirst), func(t *testing.T) {
 			s, f, advance := buffRig(t, 5, 1243, 1244)
+			if f.world.Self.ChannelSpellKnown {
+				t.Fatal("fixture must retain omitted initial zero channel field")
+			}
 			// The harness honors the caller's lower learned rank; rank policy is Lua.
 			castBuff(t, s, s.selfGUID, 1243)
 			if got := buffCasts(f); len(got) != 1 || !bytes.Equal(got[0].Payload, spellPacket(s.castCount, 1243, s.selfGUID)) {
