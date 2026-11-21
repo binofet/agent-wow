@@ -1,7 +1,7 @@
 -- Shared reloadable buff policy. The harness supplies learned spell mechanics
 -- and observed auras; this module owns rank, recipient, refresh and retry choices.
-local M = {tuning={reserve_fraction=.35,self_health_fraction=.95,party_health_fraction=.90,
-    water_refresh_ms=60000,retry_ms=5000}}
+local M = {tuning={reserve_fraction=.35,reserve_fraction_by_class={[5]=.30},self_health_fraction=.95,party_health_fraction=.90,
+    water_refresh_ms=60000,retry_ms=5000},self_reserve_by_class={[2]=.05}}
 local state={blocked={}}
 local function alive(p) return p and p.present==true and p.aliveKnown==true and p.alive==true end
 local function guid_less(a,b) return #a<#b or #a==#b and a<b end
@@ -128,7 +128,8 @@ function M.choose(obs,frame)
             if other.known==true and other.metadataKnown==true and alternate_stronger(other,s) then suppressed=true end
         end
         local wet=water(s)
-        local reserve=wet and 0 or (self.maxPower or 0)*M.tuning.reserve_fraction
+        local reserve_fraction=self.classKnown==true and M.tuning.reserve_fraction_by_class[self.classId] or M.tuning.reserve_fraction
+        local self_reserve=self.classKnown==true and M.self_reserve_by_class[self.classId] or reserve_fraction
         local context=wet or healthy(self,M.tuning.self_health_fraction)
         if not wet then
             for target in pairs(group) do
@@ -136,15 +137,16 @@ function M.choose(obs,frame)
                 if alive(p) and p.mapKnown==true and p.mapId==obs.mapId and not healthy(p,M.tuning.party_health_fraction) then context=false end
             end
         end
-        if not suppressed and context and self.powerKnown==true and self.powerType==s.powerType and
-           (self.power or 0)>=(s.cost or 0)+reserve then
+        if not suppressed and context and self.powerKnown==true and self.powerType==s.powerType then
             for target in pairs(group) do
                 local p=(obs.players or {})[target]
                 local key=target..':'..tostring(s.familyId)
                 local retry=state.blocked[key]
                 if retry and not retry.at then retry.at=now+M.tuning.retry_ms end
                 local mana_ok=not effect(s,29,3) or p and p.powerKnown==true and p.powerType==0
-                if alive(p) and p.positionKnown==true and p.mapKnown==true and p.mapId==obs.mapId and
+                local reserve=wet and 0 or (self.maxPower or 0)*(target==obs.selfGuid and self_reserve or reserve_fraction)
+                if (self.power or 0)>=(s.cost or 0)+reserve and
+                   alive(p) and p.positionKnown==true and p.mapKnown==true and p.mapId==obs.mapId and
                    (target==obs.selfGuid or s.targetRule=='ally') and mana_ok and
                    (not retry or now>=retry.at) and not observed_buff(obs,target,s) then
                     local candidate={target=target,spell=s,water=wet,selfOnly=s.targetRule=='self',selfTarget=target==obs.selfGuid}
