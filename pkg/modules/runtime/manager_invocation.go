@@ -120,6 +120,9 @@ func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv
 	if req.GetModule() == modcb.StarterSpellPolicyModule && req.GetMethod() == modcb.StarterSpellPolicyMethod {
 		return m.readStarterSpellDecision(ctx, callerName, req)
 	}
+	if req.GetModule() == modcb.DisposalPolicyModule && req.GetMethod() == modcb.DisposalPolicyMethod {
+		return m.readDisposalDecision(ctx, callerName, req)
+	}
 	caller, ok := m.registry.Lookup(callerName)
 	if !ok || !caller.Requires(req.GetModule()) {
 		return nil, status.Error(codes.PermissionDenied, "target is not a directly declared dependency")
@@ -169,6 +172,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	}
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
+	}
+	if legacyRecoveryIntent(name, md.Path(), inst) {
+		return m.queueLegacyRecoveryIntent(ctx, inst, result)
 	}
 	if legacyBuffEnsureRequest(name, md.Path(), inst, req) {
 		return m.queueLegacyBuffEnsure(ctx, inst, result)

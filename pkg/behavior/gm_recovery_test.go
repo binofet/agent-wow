@@ -373,49 +373,39 @@ func TestGMRecoveryFinalVerificationRechecksRosterAndColocation(t *testing.T) {
 	}
 }
 
-func TestGMRecoveryDestinationRouteUsesObservedServerRevisionNotPlannedStartRevision(t *testing.T) {
+func TestGMRecoveryObservedTeleportArrivalDoesNotNeedWalkingRoute(t *testing.T) {
 	f := gmRecoveryRig(t)
 	f.colocate(f.gm())
 	f.gm()["positionRevision"], f.gm()["observationRevision"] = "7", "7"
 	route := f.observations["destinationRoute"].(map[string]any)
-	route["start"].(map[string]any)["revision"] = "6"
+	route["goalReached"] = false
 	route["serverPositionRevision"] = "6"
-	out := f.step(t)
-	if out["action"] != nil || out["error"] != "destination_ground_corridor_unconfirmed" {
-		t.Fatal("stale route accepted", out)
-	}
-	route["serverPositionRevision"] = "7"
 	a := recoveryAction(t, f.step(t))
 	if a["command"] != ".group remove Nixwick" {
-		t.Fatal("valid measured route start mismatch was wrongly rejected", a)
+		t.Fatal("walking route incorrectly blocked an observed teleport arrival", a)
 	}
 }
-func TestGMRecoveryBadMemberLandingStaysDeadUntilCurrentMeasuredRoute(t *testing.T) {
+func TestGMRecoveryRevivesObservedSummonedMemberWithoutWalkingCorridor(t *testing.T) {
 	f := gmRecoveryRig(t)
 	f.goal["members"].([]any)[0].(map[string]any)["rpcUrl"] = "http://127.0.0.1:8086/rpc"
 	patient := f.member("Arlen")
 	patient["observationRevision"] = "7"
-	var blocked map[string]any
-	for i := 0; i < 20; i++ {
+	patient["landingRoute"] = map[string]any{"goalReached": false, "error": "no walking corridor"}
+	for i := 0; i < 30; i++ {
 		out := f.step(t)
 		if out["error"] != nil {
-			blocked = out
-			break
+			t.Fatal("walking route blocked observed teleport landing", out)
 		}
-		f.apply(t, recoveryAction(t, out))
+		a := recoveryAction(t, out)
+		if a["command"] == ".revive Arlen" {
+			if patient["visibleToGm"] != true || patient["x"] != 100 || patient["y"] != 100 || patient["alive"] != false {
+				t.Fatal("revival did not require the actual summoned body", patient)
+			}
+			return
+		}
+		f.apply(t, a)
 	}
-	if blocked == nil || blocked["error"] != "member_ground_corridor_unconfirmed:Arlen" || patient["alive"] != false {
-		t.Fatal("bad landing permitted revival", blocked, patient)
-	}
-	patient["landingRoute"] = map[string]any{"sessionId": patient["sessionId"], "goalReached": true, "serverPositionRevision": "6", "endpoint": map[string]any{"known": true, "mapId": 189, "x": 100, "y": 100, "z": 0}}
-	if out := f.step(t); out["action"] != nil {
-		t.Fatal("stale member route accepted", out)
-	}
-	patient["landingRoute"].(map[string]any)["serverPositionRevision"] = "7"
-	a := recoveryAction(t, f.step(t))
-	if a["command"] != ".revive Arlen" {
-		t.Fatal(a)
-	}
+	t.Fatal("observed summoned member was not revived")
 }
 
 func TestGMRecoveryAlreadyReadyPartyCompletesWithoutMutatingRoster(t *testing.T) {

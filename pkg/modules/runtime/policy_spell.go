@@ -61,10 +61,10 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
-	if capability == "release_spirit" || capability == "query_corpse" {
+	if capability == "release_spirit" || capability == "query_corpse" || capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" {
 		return p.resolveDeathAction(action, capability)
 	}
-	if capability == "loot_open" || capability == "loot_close" {
+	if capability == "loot_open" || capability == "loot_close" || capability == "loot_money" || capability == "loot_slot" {
 		return p.resolveCorpseLoot(action, capability)
 	}
 	if capability == "consume" {
@@ -255,6 +255,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
+	if op.recovery != nil && state.Recovery != nil {
+		op.recovery.phase = state.Recovery.Phase
+	}
 	if op.movement != nil && op.movement.body && state.BodyMovement != nil &&
 		state.BodyMovement.SequenceId == op.movement.sequence && state.BodyMovement.VisitId == op.encounterVisit {
 		op.movement.phase = state.BodyMovement.Phase
@@ -315,6 +318,12 @@ func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
 		return op.matchesRecoveryPacket(code, payload)
 	}
 	if op.corpse != nil {
+		if op.corpse.money {
+			return code == opcode.CMSGLootMoney && len(payload) == 0
+		}
+		if op.corpse.slot != nil {
+			return code == opcode.CMSGAutostoreLootItem && len(payload) == 1 && payload[0] == *op.corpse.slot
+		}
 		want := uint32(opcode.CMSGLoot)
 		if op.corpse.close {
 			want = opcode.CMSGLootRelease

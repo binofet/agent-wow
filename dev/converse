@@ -207,13 +207,13 @@ records the stipend receipt; reserved or unrecorded outcomes remain unconfirmed.
 invent spell names or claim new training from an attempted purchase. If
 observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
-Normal death recovery is automatic when controls.recovery.enabled is true.
-The controller releases spirit, follows verified ground routes to the actual
-own corpse, waits for the server reclaim timer, and reclaims. Actual life and
+The shared Lua death policy attempts ordinary recovery by default. It chooses
+release/query, ghost routing, reclaim timing and continuation; Go exposes the
+raw death/corpse/timer facts and exact epoch-bound packets and measured movement.
+Legacy recovery toggles cannot turn this ordinary support off. Actual life and
 reconciled movement complete that physical operation; the same shared Lua
 healing and consumable policies own subsequent health/mana recovery and tuning.
-Explain its actual phase and reason when asked; do not say that
-corpse recovery is unavailable when it is enabled. A request or a movement
+Explain its actual policy phase, native packet/motion receipts and blockers when asked. A request or a movement
 write is not a successful resurrection: use aliveObserved. Do not infer Lua
 resource recovery from the legacy native rested flag; inspect the current
 policy's healing/consumable status and actual health/mana/item/aura receipts.
@@ -1906,7 +1906,7 @@ def codex_command(binary, workspace, schema, output, developer=False, model=None
     return command + ["-"]
 
 
-def inspect_events(raw, developer=False):
+def inspect_events(raw, developer=False, *, evidence=None):
     """Validate a complete CLI stream and reject unexpected tools/CLI errors.
 
     Ordinary chat forbids tools. Development admits coding events and records
@@ -1914,53 +1914,72 @@ def inspect_events(raw, developer=False):
     """
     completed, turn_started, pending = False, False, set()
     outcomes = dict(failedCommands=0,successfulCommands=0,failedPatches=0,completedPatches=0)
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except (ValueError, UnicodeError):
-            raise ConversationError("Codex returned non-JSON events") from None
-        if not isinstance(event, dict):
-            raise ConversationError("Codex returned an invalid event")
-        kind = event.get("type")
-        if kind in ("item.started", "item.updated", "item.completed"):
-            item = event.get("item", {})
-            if (not turn_started and kind == "item.completed" and isinstance(item, dict)
-                    and item.get("type") == "error"
-                    and item.get("message") == DISABLED_CODE_MODE_WARNING):
-                # Installed CLI emits this diagnostic because we intentionally
-                # removed the code-mode host. No model turn/tools have begun.
+    tools=[]
+    valid=False
+    last_kind=None
+    try:
+        for line in raw.splitlines():
+            if not line.strip():
                 continue
-            if developer and isinstance(item,dict) and item.get("type") in ("command_execution","file_change"):
-                identity=item.get("id")
-                if not turn_started or not isinstance(identity,str) or not 0<len(identity)<=128:
-                    raise ConversationError("Developer tool event identity is invalid")
-                if kind=="item.completed":
-                    if item.get("status") not in ("completed","failed"):
-                        raise ConversationError("Developer tool outcome is malformed")
-                    if item['type']=='command_execution':
-                        code=item.get('exit_code')
-                        if type(code) is not int and not (code is None and item['status']=='failed'):
-                            raise ConversationError("Developer command exit code is malformed")
-                        outcomes['successfulCommands' if code==0 and item['status']=='completed' else 'failedCommands']+=1
+            try:
+                event = json.loads(line)
+            except (ValueError, UnicodeError):
+                raise ConversationError("Codex returned non-JSON events") from None
+            if not isinstance(event, dict):
+                raise ConversationError("Codex returned an invalid event")
+            kind = event.get("type")
+            last_kind=kind if kind in ("item.started","item.updated","item.completed","turn.started","turn.completed","turn.failed","error","thread.started") else "unexpected"
+            if kind in ("item.started", "item.updated", "item.completed"):
+                item = event.get("item", {})
+                if (not turn_started and kind == "item.completed" and isinstance(item, dict)
+                        and item.get("type") == "error"
+                        and item.get("message") == DISABLED_CODE_MODE_WARNING):
+                    # Installed CLI emits this diagnostic because we intentionally
+                    # removed the code-mode host. No model turn/tools have begun.
+                    continue
+                if developer and isinstance(item,dict) and item.get("type") in ("command_execution","file_change"):
+                    identity=item.get("id")
+                    if not turn_started or not isinstance(identity,str) or not 0<len(identity)<=128:
+                        raise ConversationError("Developer tool event identity is invalid")
+                    if kind=="item.completed":
+                        if item.get("status") not in ("completed","failed"):
+                            raise ConversationError("Developer tool outcome is malformed")
+                        if item['type']=='command_execution':
+                            code=item.get('exit_code')
+                            if type(code) is not int and not (code is None and item['status']=='failed'):
+                                raise ConversationError("Developer command exit code is malformed")
+                            outcomes['successfulCommands' if code==0 and item['status']=='completed' else 'failedCommands']+=1
+                        else:
+                            outcomes['completedPatches' if item['status']=='completed' else 'failedPatches']+=1
+                        row=dict(itemId=identity if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}",identity) else "sha256:"+hashlib.sha256(identity.encode('utf-8','surrogatepass')).hexdigest(),type=item["type"],status=item["status"])
+                        if item["type"]=="command_execution":
+                            row["exitCode"]=code if code is None or -(2**31)<=code<2**31 else None
+                        tools.append(row)
+                        if len(tools)>16:del tools[0]
+                        pending.discard(identity)
                     else:
-                        outcomes['completedPatches' if item['status']=='completed' else 'failedPatches']+=1
-                    pending.discard(identity)
-                else:
-                    pending.add(identity)
-                continue
-            if not isinstance(item, dict) or item.get("type") not in (("agent_message", "reasoning", "todo_list") if developer else ("agent_message", "reasoning")):
-                raise ConversationError("Codex attempted a tool; no reply was sent")
-        elif kind == "turn.started":
-            turn_started = True
-        elif kind == "turn.completed":
-            completed = True
-        elif kind != "thread.started":
-            raise ConversationError("Codex reported an error or unexpected event")
-    if not completed or pending:
-        raise ConversationError("Codex did not complete a reply")
-    return outcomes if developer else None
+                        pending.add(identity)
+                    continue
+                if not isinstance(item, dict) or item.get("type") not in (("agent_message", "reasoning", "todo_list") if developer else ("agent_message", "reasoning")):
+                    raise ConversationError("Codex attempted a tool; no reply was sent")
+            elif kind == "turn.started":
+                turn_started = True
+            elif kind == "turn.completed":
+                completed = True
+            elif kind != "thread.started":
+                raise ConversationError("Codex reported an error or unexpected event")
+        if not completed or pending:
+            raise ConversationError("Codex did not complete a reply")
+        valid=True
+        return outcomes if developer else None
+    finally:
+        if developer and evidence is not None:
+            ids=[value if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}",value) else "sha256:"+hashlib.sha256(value.encode('utf-8','surrogatepass')).hexdigest() for value in pending]
+            total=sum(outcomes.values())
+            evidence.update(counts=outcomes,tools=tools,omittedTools=max(0,total-len(tools)),
+                pendingTools=sorted(ids)[:16],omittedPendingTools=max(0,len(ids)-16),
+                turnStarted=turn_started,turnCompleted=completed,streamComplete=valid,
+                lastEventType=last_kind)
 
 
 class CodexBrain:
@@ -1979,6 +1998,7 @@ class CodexBrain:
         self.developer_workspace = checked_developer_workspace(developer_workspace) if developer_workspace is not None else None
         self.developer_persona = character_persona(character_name, character_class, developer=True)
         self.last_development_events = None
+        self.last_development_result = None
 
     def model_selection(self):
         return dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
@@ -2021,6 +2041,28 @@ class CodexBrain:
         except (ConversationError,TypeError,ValueError,AttributeError):
             return False
 
+    def retain_development_events(self, events, errors, limit, development, reason, error_type, process):
+        """Keep typed dispositions privately; never retain tool text or replay it."""
+        record=dict(version=1,sessionId=development['sessionId'],selfGuid=str(development['selfGuid']),
+            recordedAtUnixMs=int(time.time()*1000),outcome='completed' if reason is None else 'failed',
+            reason=reason,errorType=error_type,processExitCode=process.returncode)
+        try:
+            events.seek(0);raw=events.read(limit+1)
+            record['eventBytesTruncated']=len(raw)>limit
+            record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
+            record['stderrBytes']=os.fstat(errors.fileno()).st_size
+            try:inspect_events(raw[:limit],developer=True,evidence=record)
+            except ConversationError as error:record['streamError']=str(error)
+            if record['eventBytesTruncated']:record['streamComplete']=False
+            self.last_development_events=dict(record['counts'])
+            self.last_development_result=record
+            write_json(self.state_dir/'development-events-last.json',record)
+        except (OSError,ConversationError) as error:
+            # Evidence persistence must not change the completed write's outcome
+            # or replace the original model failure with an unrelated exception.
+            record['retentionError']=type(error).__name__
+            self.last_development_result=record
+
     def generate(self, history, control_state=None, cancelled=None):
         developer = self.development_enabled(control_state)
         if (isinstance(control_state,dict) and isinstance(control_state.get('current_request'),dict)
@@ -2031,6 +2073,7 @@ class CodexBrain:
             request.get("source") == "party_agent" and request.get("verifiedPeer") is True and request.get("developmentWhisper") is True))
         emotes = supported_emotes(control_state)
         self.last_development_events = None
+        self.last_development_result = None
         limit = 4*1024*1024 if developer else 1024*1024
         # Keep the empty working directory outside the repository's project
         # configuration ancestry. Schema/replies/events stay in private state.
@@ -2086,52 +2129,82 @@ class CodexBrain:
                                                         model=self.model, reasoning_effort=self.reasoning_effort),
                                            stdin=subprocess.PIPE, stdout=events, stderr=errors,
                                            start_new_session=True)
+                reason,error_type='process_io_failed',None
                 try:
                     process.stdin.write(prompt.encode())
                     process.stdin.close()
                     deadline = time.monotonic() + self.timeout
                     while process.poll() is None:
                         if self.stopped():
+                            reason='stop_requested'
                             raise Stopped("Conversation stop requested")
                         if cancelled and cancelled():
+                            reason='owner_input_waiting'
                             raise OwnerInputPending("Fresh owner input is waiting")
                         if time.monotonic() >= deadline:
+                            reason='timeout'
                             raise ConversationError("Codex reply timed out")
                         if events.tell() > limit or errors.tell() > limit:
+                            reason='output_limit'
                             raise ConversationError("Codex output exceeds the limit")
                         time.sleep(0.1)
                     if process.returncode:
+                        reason='process_failed'
                         raise ConversationError("Codex reply failed; verify codex login status")
                     if errors.tell() > limit:
+                        reason='output_limit'
                         raise ConversationError("Codex output exceeds the limit")
                     events.seek(0)
                     raw = events.read(limit + 1)
                     if len(raw) > limit:
+                        reason='output_limit'
                         raise ConversationError("Codex output exceeds the limit")
+                    reason='event_stream_invalid'
                     self.last_development_events = inspect_events(raw, developer=developer)
+                    reason='reply_missing_or_oversized'
                     if not output.is_file() or output.stat().st_size > 4096:
                         raise ConversationError("Codex did not produce a bounded JSON reply")
+                    reason='reply_invalid_json'
                     try:
                         value = json.loads(output.read_text())
                     except (ValueError, UnicodeError):
                         raise ConversationError("Codex reply is invalid JSON") from None
-                    return validate_reply(value, emotes, allow_silent=allow_silent)
+                    reason='reply_validation_failed'
+                    reply=validate_reply(value, emotes, allow_silent=allow_silent)
+                    reason=None
+                    return reply
+                except BaseException as error:
+                    error_type=type(error).__name__
+                    raise
                 finally:
-                    if process.poll() is None:
-                        try:
-                            os.killpg(process.pid, signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass  # The tracked child exited between poll and signal.
-                        try:
-                            process.wait(timeout=2)
-                        except subprocess.TimeoutExpired:
+                    try:
+                        if process.poll() is None:
                             try:
-                                os.killpg(process.pid, signal.SIGKILL)
+                                os.killpg(process.pid, signal.SIGTERM)
                             except ProcessLookupError:
-                                pass
-                            process.wait(timeout=2)
-                    if process.stdin and not process.stdin.closed:
-                        process.stdin.close()
+                                pass  # The tracked child exited between poll and signal.
+                            try:
+                                process.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                try:
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    pass
+                                process.wait(timeout=2)
+                    except BaseException as error:
+                        if error_type is None:reason,error_type='process_teardown_failed',type(error).__name__
+                        raise
+                    finally:
+                        try:
+                            if process.stdin and not process.stdin.closed:
+                                process.stdin.close()
+                        except OSError as error:
+                            if error_type is None:
+                                reason,error_type='process_io_failed',type(error).__name__
+                                raise
+                        finally:
+                            if developer:
+                                self.retain_development_events(events,errors,limit,prompt_state['development'],reason,error_type,process)
 
 
 def queue_lua_control(controls, technique, mark=None, target_guid=None):

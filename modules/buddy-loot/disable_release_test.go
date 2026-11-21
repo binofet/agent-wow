@@ -149,7 +149,7 @@ func TestDisableBeforeReleaseKeepsExistingAbortAndFailureGuards(t *testing.T) {
 	// between its callback and the transaction's normal finalization.
 	emit(s, opcode.SMSGLootReleaseResponse, append(guidPacket(corpseGUID), 0))
 	got = disableLoot(t, s)
-	if got.Enabled || got.Phase != "disabled" || got.ReleasesObserved != 0 || got.ItemsStoredConfirmed != 0 || len(f.packets) != 2 || f.releases != 1 {
+	if got.Enabled || got.Phase != "waiting_release" && got.Phase != "loot_cleanup_unconfirmed" || got.ReleasesObserved != 0 || got.ItemsStoredConfirmed != 0 || len(f.packets) != 2 || f.releases != 1 {
 		t.Fatal(got, f.packets)
 	}
 }

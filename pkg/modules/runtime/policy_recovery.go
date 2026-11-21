@@ -2,6 +2,8 @@ package modrt
 
 import (
 	"context"
+	"encoding/binary"
+	"math"
 	"strconv"
 
 	"github.com/agent-wow/agent-wow/pkg/behavior"
@@ -16,6 +18,8 @@ import (
 type policyRecovery struct {
 	self, epoch uint64
 	query       bool
+	corpse      uint64
+	phase       string
 }
 
 func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability string) (PolicyDispatch, error) {
@@ -28,9 +32,46 @@ func (p *SessionPolicy) resolveDeathAction(action map[string]any, capability str
 		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current session, body and observed death epoch required")
 	}
 	op := &policySpell{vm: p.vm, capability: capability, recovery: &policyRecovery{self: selfID, epoch: epochID, query: capability == "query_corpse"}}
-	dispatch, err := p.preparePolicyDispatch(capability, map[protoreflect.Name]protoreflect.Value{
+	method := capability
+	values := map[protoreflect.Name]protoreflect.Value{
 		"session_id": protoreflect.ValueOfString(session), "self_guid": protoreflect.ValueOfUint64(selfID), "death_epoch": protoreflect.ValueOfUint64(epochID),
-	}, op)
+	}
+	if capability == "approach_corpse" || capability == "stop_corpse" || capability == "reclaim_corpse" {
+		revision, _ := action["expectedPositionRevision"].(string)
+		pose, err := strconv.ParseUint(revision, 10, 64)
+		if err != nil || pose == 0 || revision != strconv.FormatUint(pose, 10) {
+			return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact current pose revision required")
+		}
+		values["expected_position_revision"] = protoreflect.ValueOfUint64(pose)
+		if capability == "reclaim_corpse" {
+			guid, _ := action["corpseGuid"].(string)
+			rev, _ := action["expectedCorpseRevision"].(string)
+			corpse, e := strconv.ParseUint(guid, 10, 64)
+			cr, re := strconv.ParseUint(rev, 10, 64)
+			if e != nil || re != nil || corpse == 0 || cr == 0 || guid != strconv.FormatUint(corpse, 10) || rev != strconv.FormatUint(cr, 10) {
+				return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact corpse GUID and revision required")
+			}
+			op.recovery.corpse = corpse
+			values["corpse_guid"] = protoreflect.ValueOfUint64(corpse)
+			values["expected_corpse_revision"] = protoreflect.ValueOfUint64(cr)
+		} else {
+			method = "approach_corpse"
+			stop := capability == "stop_corpse"
+			op.movement = &policyMovement{self: selfID, stop: stop}
+			values["stop"] = protoreflect.ValueOfBool(stop)
+			if !stop {
+				query, _ := action["corpseQueryRevision"].(string)
+				qr, e := strconv.ParseUint(query, 10, 64)
+				radius, _ := action["rangeYards"].(float64)
+				if e != nil || qr == 0 || query != strconv.FormatUint(qr, 10) || math.IsNaN(radius) || math.IsInf(radius, 0) || radius <= 0 || radius > math.MaxFloat32 {
+					return PolicyDispatch{}, status.Error(codes.InvalidArgument, "exact corpse query and finite range required")
+				}
+				values["corpse_query_revision"] = protoreflect.ValueOfUint64(qr)
+				values["range_yards"] = protoreflect.ValueOfFloat32(float32(radius))
+			}
+		}
+	}
+	dispatch, err := p.preparePolicyDispatch(method, values, op)
 	if err == nil {
 		dispatch.spell = nil
 	}
@@ -51,12 +92,19 @@ func (m *Manager) invokePolicyRecovery(ctx context.Context, inst *instance, md m
 	return outcome, payload
 }
 func (op *policySpell) matchesRecoveryPacket(code uint32, payload []byte) bool {
+	if op.capability == "approach_corpse" || op.capability == "stop_corpse" {
+		return op.matchesMovementPacket(code, payload)
+	}
+	if op.capability == "reclaim_corpse" {
+		return code == opcode.CMSGReclaimCorpse && len(payload) == 8 && binary.LittleEndian.Uint64(payload) == op.recovery.corpse
+	}
 	if op.recovery.query {
 		return code == opcode.MSGCorpseQuery && len(payload) == 0
 	}
 	return code == opcode.CMSGRepopRequest && len(payload) == 1 && payload[0] == 0
 }
 func (op *policySpell) recoveryPayload(phase string, written bool) map[string]any {
+
 	return map[string]any{"capability": op.capability, "phase": phase, "self_guid": strconv.FormatUint(op.recovery.self, 10),
-		"death_epoch": strconv.FormatUint(op.recovery.epoch, 10), "transport_written": written, "effect_observed": false}
+		"death_epoch": strconv.FormatUint(op.recovery.epoch, 10), "transport_written": written, "effect_observed": false, "native_phase": op.recovery.phase}
 }

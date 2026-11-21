@@ -51,6 +51,10 @@ func (s *Service) endExplicitCastLocked(phase string) {
 
 func (s *Service) expireExplicitCastLocked() {
 	if op := s.pendingExplicitCastLocked(); op != nil && !s.now().Before(op.until) {
+		if op.owner != 0 && op.view.Capability == offenseCapability && !op.view.ServerCastGo {
+			s.failedAssistTarget, s.failedAssistCastTarget = op.owner, op.owner
+			s.starterSpells.uncertainStrike = op
+		}
 		s.endExplicitCastLocked("outcome_unconfirmed_no_retry")
 	}
 }
@@ -93,9 +97,19 @@ func (s *Service) explicitCastPacketLocked(code uint32, p []byte) (bool, error) 
 		if op.view.ServerCastGo {
 			// A rejection after GO cannot establish the absence of an effect.
 			s.endExplicitCastLocked("server_cast_go_effect_unverified")
-		} else if healing {
+		} else if healing || op.owner != 0 {
+			if s.starterSpells.uncertainStrike == op {
+				s.starterSpells.uncertainStrike = nil
+				if s.failedAssistTarget == op.owner && s.failedAssistCastTarget == op.owner {
+					s.failedAssistTarget, s.failedAssistCastTarget = 0, 0
+				}
+			}
 			op.view.Phase = "server_rejected_no_replay"
-			s.castFailedLocked(uint32(p[n+5]), "server_cast_failed_healing_paused")
+			reason := "server_cast_failed_healing_paused"
+			if !healing {
+				reason = "server_offense_cast_rejected"
+			}
+			s.castFailedLocked(uint32(p[n+5]), reason)
 		} else {
 			s.endExplicitCastLocked("server_rejected_no_replay")
 			s.state.LastCastFailure = uint32(p[n+5])
@@ -128,6 +142,12 @@ func (s *Service) explicitCastPacketLocked(code uint32, p []byte) (bool, error) 
 			return true, nil
 		}
 		op.view.ServerCastGo = true
+		if s.starterSpells.uncertainStrike == op {
+			s.starterSpells.uncertainStrike = nil
+		}
+		if op.owner != 0 && op.view.Capability == offenseCapability && s.failedAssistTarget == op.owner && s.failedAssistCastTarget == op.owner {
+			s.failedAssistTarget, s.failedAssistCastTarget = 0, 0
+		}
 		if healing {
 			s.state.ServerCastGo++
 			s.state.Reason = "server_spell_go_health_effect_unverified"

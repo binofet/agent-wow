@@ -31,7 +31,7 @@ func TestStarterSpellNativeSameBodyCASChangesDecisionWithoutReconnect(t *testing
 	// This is the existing identity-bound source editor, not a new controller.
 	req := &actionsv1.BehaviorReloadRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID,
 		Source: `return {decide=function(input) return {kind="wait",spellId=0} end}`}
-	accepted, err := s.ReloadBehavior(context.Background(), req)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), req)
 	if err != nil || accepted.Revision == "" {
 		t.Fatal(accepted, err)
 	}
@@ -40,11 +40,11 @@ func TestStarterSpellNativeSameBodyCASChangesDecisionWithoutReconnect(t *testing
 		t.Fatal(after, s.starterSpells.failure())
 	}
 	req.Source = behaviors.StarterSpellSource
-	if _, err := s.ReloadBehavior(context.Background(), req); err == nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), req); err == nil {
 		t.Fatal("stale editor revision replaced the accepted source")
 	}
 	req.ExpectedRevision = accepted.Revision
-	if _, err := s.ReloadBehavior(context.Background(), req); err != nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	final := s.starterSpellDecisionLocked(context.Background(), f.world, target, point)
@@ -92,7 +92,7 @@ func TestStarterSpellNativeQuarantinedAuthoredSourceCannotRestoreOlderCast(t *te
 		return false, "", nil, nil // Connected host has no attached source.
 	}
 	req := &actionsv1.BehaviorReloadRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: behaviors.StarterSpellSource}
-	accepted, err := s.ReloadBehavior(context.Background(), req)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestStarterSpellNativeQuarantinedAuthoredSourceCannotRestoreOlderCast(t *te
 		t.Fatal(initial, s.starterSpells.failure())
 	}
 	req.ExpectedRevision, req.Source = accepted.Revision, `return {decide=function(input) error("current starter failed") end}`
-	broken, err := s.ReloadBehavior(context.Background(), req)
+	broken, err := reloadStarterSemanticBehavior(t, s, context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestStarterSpellNativeQuarantinedAuthoredSourceCannotRestoreOlderCast(t *te
 	// The existing runtime exposes the restored active revision to its editor.
 	// Only an explicit successful CAS edit releases this adapter's refusal.
 	req.ExpectedRevision, req.Source = s.behavior.Status().Revision, behaviors.StarterSpellSource
-	if _, err := s.ReloadBehavior(context.Background(), req); err != nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	if fixed := s.starterSpellDecisionLocked(context.Background(), f.world, target, point); !fixed.valid || fixed.kind != "cast" {

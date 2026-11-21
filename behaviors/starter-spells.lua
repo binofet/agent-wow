@@ -27,12 +27,13 @@ local function cost(value)
         value<=9007199254740991 and value%1==0
 end
 
-local function offense_mechanics(obs)
+local function offense_mechanics(obs, expected_power)
+    expected_power=expected_power or 0
     for key,row in pairs(obs.spells) do
         if type(row)=="table" and row.known==true and row.capability=="offense" then
             local power=row.powerType
             if type(power)~="number" or power<-2147483648 or power>2147483647 or power%1~=0 then return false end
-            if power==0 then
+            if power==expected_power then
                 if not guid(key) or #key>10 or tonumber(key)>4294967295 or row.metadataKnown~=true or
                    not cost(row.cost) or not scalar(row.minRange,false) or row.maxRange==nil or
                    not scalar(row.maxRange,false) or (row.minRange or 0)>row.maxRange or
@@ -70,6 +71,43 @@ local function pose(unit)
     return true
 end
 
+local function boolean(value) return value==nil or type(value)=="boolean" end
+
+local function orientation(unit)
+    local value=unit.orientation
+    return value==nil or type(value)=="number" and value-value==0
+end
+
+local function weapon_choice(obs, target, self, override)
+    local wait={kind="wait",spellId=0}
+    if self.classId~=4 or self.powerType~=3 or not offense_mechanics(obs,3) or
+       not orientation(self) or not orientation(target) or not boolean(self.comboKnown) then return wait end
+    if self.comboKnown==true then
+        local points,combo_target=self.comboPoints or 0,self.comboTargetGuid or "0"
+        if not uint(points) or points>5 or not decimal(combo_target) or points>0 and not guid(combo_target) then return wait end
+    end
+    local projected,eligible={},{}
+    for key,value in pairs(obs) do projected[key]=value end
+    for key,row in pairs(obs.spells) do
+        if type(row)=="table" and row.known==true and row.capability=="offense" and row.powerType==3 then
+            for _,field in ipairs({"weaponStrike","damageModelKnown","requiresComboPoints","requiresBehind","requiresFacing","requiresStealth","ready","available"}) do
+                if not boolean(row[field]) then return wait end
+            end
+            if not scalar(row.weaponDamageMultiplier,false) or not scalar(row.comboPointsGenerated,true) or
+               row.weaponBonusDamage~=nil and (type(row.weaponBonusDamage)~="number" or row.weaponBonusDamage-row.weaponBonusDamage~=0) then return wait end
+            -- A combo finisher's unknown scaling is handled by the existing
+            -- exact-target/five-point guard. Unknown base weapon damage has
+            -- no invented score and cannot compete with an observed model.
+            if row.weaponStrike==true and (row.damageModelKnown==true or row.requiresComboPoints==true) then eligible[key]=row end
+        end
+    end
+    projected.spells=eligible
+    local selected=spells.damage_spell(projected,target,override,
+        {instant_only=true,require_metadata=true,power_type=3,max_cost=self.power})
+    if selected then return {kind="cast",spellId=selected} end
+    return {kind="melee",spellId=0}
+end
+
 function M.decide(input, override)
     local wait={kind="wait",spellId=0}
     if type(input)~="table" or type(input.sessionId)~="string" or #input.sessionId==0 or
@@ -82,6 +120,10 @@ function M.decide(input, override)
     if type(self)~="table" or self.guid~=input.selfGuid or self.classKnown~=true or
        not uint(self.classId) or self.classId==0 or self.powerKnown~=true or
        not uint(self.power) or not uint(self.powerType) or not pose(self) or not pose(target) then return wait end
+    if input.selection~=nil then
+        if input.selection~="weapon_strike" then return wait end
+        return weapon_choice(obs,target,self,override)
+    end
     local reserve=healing.resource_reserve(obs)
     if reserve==nil or not offense_mechanics(obs) then return wait end
     if self.classId==4 then return {kind="melee",spellId=0} end

@@ -2,6 +2,8 @@ package buddyloot
 
 import (
 	"context"
+	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"math"
 	"sort"
 	"time"
@@ -49,6 +51,28 @@ func (s *Service) ObserveCorpses(ctx context.Context, _ *emptypb.Empty) (*lootv1
 		Owner: w.Owner, SourceObservation: w.RequestedCreature,
 		Corpses: w.LootableCorpses, NearbyCreatures: w.NearbyCreatures, InventoryKnown: w.InventoryKnown,
 		InventoryRevision: w.InventoryRevision, GeneralFreeSlots: uint32(ownKnownFreeSlots(w, s.selfGUID)), State: s.snapshotLocked()}
+	if s.exactCorpse && s.windowRequest != nil && !s.windowRequest.receipt.Terminal && s.unconfirmedItemDelta(w) {
+		s.windowRequest.receipt.SlotRemoved = true
+		s.windowRequest.receipt.InventoryDeltaObserved = true
+		s.windowRequest.receipt.Terminal = true
+		s.itemRequested = false
+		s.state.Phase = "window_ready"
+	}
+	out.Window = s.windowObservation()
+	out.QuestLogKnown, out.QuestLog = w.SelfQuestLogKnown, w.SelfQuestLog
+	for _, q := range w.SelfQuestLog {
+		if q != nil {
+			for _, item := range gamecatalog.RequiredQuestItems(q.QuestId) {
+				out.QuestRequirements = append(out.QuestRequirements, &lootv1.QuestItemRequirement{QuestId: q.QuestId, ItemId: item.ItemID, Count: item.Count})
+			}
+		}
+	}
+	counts, known := completeOwnItemCounts(w, s.selfGUID)
+	out.ItemCountsKnown = known
+	for entry, count := range counts {
+		out.ItemCounts = append(out.ItemCounts, &lootv1.OwnedItemCount{ItemId: entry, Count: count})
+	}
+	sort.Slice(out.ItemCounts, func(i, j int) bool { return out.ItemCounts[i].ItemId < out.ItemCounts[j].ItemId })
 	if s.corpseRequest != nil {
 		out.Operation = s.corpseReceiptLocked()
 	}
@@ -197,9 +221,28 @@ func (s *Service) CloseCorpse(ctx context.Context, r *lootv1.CloseCorpseRequest)
 		s.finishReleased(ctx)
 		return s.corpseReceiptLocked(), nil
 	}
+	if s.state.Phase == "waiting_release" && r.RetireUnconfirmed {
+		s.beginOrdinaryTimeout(ctx, "caller_retired_unconfirmed_release")
+		return s.corpseReceiptLocked(), nil
+	}
 	if s.state.Phase != "waiting_release" && s.state.Phase != "release_observed" {
+		lease := &actionsv1.InteractionLease{}
+		if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "loot", Token: s.token, LeaseMs: 15000}, lease); err != nil || lease.Token != s.token || lease.State == nil || lease.State.InteractionOwner != "loot" {
+			s.cleanup = ordinaryLootCleanup{source: s.pendingGUID(), safeToContinue: !s.hasUnsettledLootMutation()}
+			s.state.Reason = "loot_release_exact_custody_lost"
+			s.pauseOrdinaryCleanup(ctx)
+			return s.corpseReceiptLocked(), nil
+		}
 		s.state.Reason = "caller_released_corpse_operation"
-		s.beginRelease(ctx)
+		s.lastLootWriteError = nil
+		if !s.corpseRequest.receipt.WindowObserved || s.hasUnsettledLootMutation() {
+			s.beginOrdinaryTimeout(ctx, "caller_abandoned_unconfirmed_corpse")
+		} else {
+			s.beginRelease(ctx)
+		}
+		if modcb.PacketWasNotDispatched(s.lastLootWriteError) {
+			return s.corpseReceiptLocked(), s.lastLootWriteError
+		}
 	}
 	if s.token != "" {
 		// Keep the private UI token for matching the outstanding release ACK,

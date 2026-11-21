@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 	"time"
 
@@ -23,8 +22,8 @@ import (
 const ghostFlag = uint32(0x10)
 const ghostWaterWalking = uint32(0x10000000)
 
-func planRecoveryNavigation(ctx context.Context, root string, mapID uint32, from, corpse position) ([]position, error) {
-	points, err := buddynav.PlanRecoveryLegContext(ctx, root, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: corpse.x, Y: corpse.y, Z: corpse.z})
+func planRecoveryNavigation(ctx context.Context, root string, mapID uint32, from, corpse position, arrival float64) ([]position, error) {
+	points, err := buddynav.PlanRecoveryLegRangeContext(ctx, root, mapID, buddynav.Point{X: from.x, Y: from.y, Z: from.z}, buddynav.Point{X: corpse.x, Y: corpse.y, Z: corpse.z}, arrival)
 	if err != nil {
 		return nil, err
 	}
@@ -36,26 +35,27 @@ func planRecoveryNavigation(ctx context.Context, root string, mapID uint32, from
 }
 
 type deathRecovery struct {
-	state                                                                      actionsv1.RecoveryState
-	enabledUntil, deadline, started, lastAlive, delayAt, delayUntil, reclaimAt time.Time
-	queryPending                                                               bool
-	preparedEpoch                                                              uint64
-	lifeKnown, lastObservedAlive                                               bool
-	path                                                                       []position
-	index                                                                      int
-	mapID                                                                      uint32
-	revision                                                                   uint64
-	expected                                                                   position
-	token                                                                      string
-	releasePositionRevision                                                    uint64
-	releaseMap                                                                 uint32
-	graveyardPoseObserved                                                      bool
+	state                        actionsv1.RecoveryState
+	delayAt, delayUntil          time.Time
+	delayEpoch                   uint64
+	queryPending                 bool
+	lifeKnown, lastObservedAlive bool
+	path                         []position
+	index                        int
+	mapID                        uint32
+	revision                     uint64
+	expected                     position
+	token                        string
+	releasePositionRevision      uint64
+	releaseMap                   uint32
+	graveyardPoseObserved        bool
 }
 
 func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 	s := proto.Clone(&r.state).(*actionsv1.RecoveryState)
+	s.Enabled = true // Compatibility capability fact, never an ordinary off switch.
 	s.CorpseQueryPending = r.queryPending
-	if s.Active && now.Before(r.delayUntil) {
+	if s.ReclaimDelayKnown && now.Before(r.delayUntil) {
 		s.ReclaimDelayRemainingMs = uint64(r.delayUntil.Sub(now).Milliseconds())
 	}
 	return s
@@ -73,27 +73,14 @@ func (s *Service) Recovery(ctx context.Context, request *actionsv1.ToggleRequest
 	if s.closed {
 		return nil, status.Error(codes.FailedPrecondition, "session is closing")
 	}
-	r := &s.recovery
-	if request.Enabled {
-		wasEnabled := r.state.Enabled
-		r.state.Enabled = true
-		r.enabledUntil = s.now().Add(lease)
-		if r.state.DeathEpoch == 0 {
-			r.state.Phase = "enabled_waiting_for_observed_death"
-		}
-		if !wasEnabled && r.state.DeathEpoch != 0 && r.state.Phase == "cancelled" && !r.state.MovementUnconfirmed && s.now().Before(r.deadline) {
-			r.state.Active = true
-			r.state.Phase = "resuming_existing_death_epoch"
-			r.path = nil
-		}
-	} else {
-		r.state.Enabled = false
-		if s.recoveryOwnsLocked() {
-			s.explicitStopLocked(ctx)
-			r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
-		}
-		s.endRecoveryLocked(ctx, "cancelled", "explicit_recovery_disabled")
+	// Compatibility input no longer owns a standing recovery enable switch.
+	// Attached policy callers queue an ensure request; a direct old toggle can
+	// only reconcile this body's existing physical motion, never disable Lua.
+	s.recovery.state.Enabled = true
+	if !request.Enabled && s.recoveryOwnsLocked() {
+		s.finishRecoveryMotionLocked(ctx, "stopped", "legacy_stop_of_owned_physical_motion")
 	}
+
 	return s.stateLocked(), nil
 }
 
@@ -111,26 +98,27 @@ func ghostSelf(w *worldv1.SnapshotResponse, self uint64) bool {
 func (s *Service) recoveryOwnsLocked() bool {
 	return s.recovery.token != "" && s.state.InteractionOwner == "recovery" && s.interactionToken == s.recovery.token
 }
-func (s *Service) endRecoveryLocked(ctx context.Context, phase, reason string) {
+
+// A physical owner is retired only after its STOP is known. Unknown transport
+// and definite pre-write STOP refusal retain custody for fresh reconciliation.
+func (s *Service) finishRecoveryMotionLocked(ctx context.Context, phase, reason string) bool {
 	r := &s.recovery
 	if s.recoveryOwnsLocked() {
-		if !s.stopLocked(ctx) {
-			r.state.MovementUnconfirmed = true
-			phase = "movement_unconfirmed_no_retry"
+		if !s.stopLocked(ctx) || s.state.MotionUnconfirmed {
+			r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
+			r.state.Reason = "waiting_for_owned_stop"
+			return false
 		}
-		if !s.state.Moving && !s.state.MotionUnconfirmed {
-			s.state.InteractionOwner = ""
-			s.interactionToken = ""
-			r.token = ""
-		}
+		s.state.InteractionOwner = ""
+		s.interactionToken = ""
 	}
+	r.token = ""
+	r.path = nil
 	r.state.Active = false
+	r.state.MovementUnconfirmed = false
 	r.state.Phase = phase
 	r.state.Reason = reason
-	r.path = nil
-	if !s.recoveryOwnsLocked() && s.state.InteractionOwner != "recovery" {
-		r.token = ""
-	}
+	return true
 }
 
 // Life identity is raw observation bookkeeping, independent of recovery policy
@@ -142,294 +130,88 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 		return
 	}
 	if !p.Alive && (!r.lifeKnown || r.lastObservedAlive) {
-		r.state = actionsv1.RecoveryState{Enabled: r.state.Enabled, Active: r.state.Active,
-			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed}
+		r.state = actionsv1.RecoveryState{Enabled: true, Active: r.state.Active,
+			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed,
+			ReclaimDelayKnown: r.delayEpoch == r.state.DeathEpoch+1}
 		r.queryPending = false
+		r.path = nil
 		r.releasePositionRevision, r.releaseMap = 0, 0
 		r.graveyardPoseObserved = false
 	}
 	r.lifeKnown, r.lastObservedAlive = true, p.Alive
 	if p.Alive && r.state.DeathEpoch != 0 {
 		r.state.AliveObserved = true
+		if r.token == "" {
+			r.state.Phase = "alive_observed"
+			r.state.Reason = "actual_alive_receipt_shared_Lua_resource_policy"
+		}
 	}
 	if !p.Alive && p.PlayerFlags&ghostFlag != 0 {
 		r.state.GhostObserved = true
+		if !r.state.ReleaseAttempted || (p.PositionRevision != r.releasePositionRevision || p.MapId != r.releaseMap) && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
+			r.graveyardPoseObserved = true
+		}
+	}
+	r.state.GhostMovementSupported = ghostSelf(w, s.selfGUID) && r.graveyardPoseObserved && !s.clientControlLost && !s.clientControlRestoring
+	// Fresh authoritative graveyard correction settles old unknown motion; it
+	// does not send or resume movement. Lua still requests any required STOP.
+	if r.state.GhostMovementSupported && s.state.MotionUnconfirmed && (p.PositionRevision != s.positionRevision || p.MapId != s.posMap) && p.MovementFlagsKnown && p.MovementFlags&0xff == 0 {
+		s.refreshPositionLocked(w)
+	}
+	r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
+	r.state.OwnCorpse = nil
+	if c := w.OwnCorpse; c != nil {
+		r.state.OwnCorpse = &actionsv1.RecoveryCorpse{Guid: c.Guid, OwnerGuid: c.OwnerGuid, Present: c.Present, FlagsKnown: c.FlagsKnown, Flags: c.Flags,
+			Position: &actionsv1.ClientPosition{Known: c.PositionKnown, MapKnown: c.MapKnown, MapId: c.MapId, X: c.X, Y: c.Y, Z: c.Z, Revision: c.PositionRevision}}
 	}
 }
 
-func (s *Service) beginRecoveryLocked(ctx context.Context) {
+// Native maintenance only reconciles an existing physical execution. It never
+// chooses release, a route, reclaim, a recovery deadline or a future retry.
+func (s *Service) recoveryTickLocked(ctx context.Context) bool {
 	r := &s.recovery
-	r.preparedEpoch = r.state.DeathEpoch
-	r.state.Active = true
-	r.state.Phase = "observed_death"
-	r.started = s.now()
-	r.deadline = s.now().Add(10 * time.Minute)
-	r.path = nil
-	r.index = 0
-	r.reclaimAt = time.Time{}
-	r.graveyardPoseObserved = false
-	// If this body joined an already released ghost, no timer packet may remain.
-	// Player.cpp's source maximum is120s. Waiting that whole maximum grants no
-	// resurrection; the server still validates its actual timer and corpse.
-	if r.delayAt.IsZero() || r.delayAt.Before(r.lastAlive) {
-		r.delayUntil = s.now().Add(120 * time.Second)
-	} else {
-		r.state.ReclaimDelayKnown = true
-	}
-	// Actual death cancels this controller's living combat intents. Historical
-	// cast/damage receipts and all other modules' uncertain item ledgers survive.
-	s.state.CastPending = false
-	s.pendingSpell = 0
-	s.pendingTarget = 0
-	if s.encounterSwing.target != 0 {
-		s.stopEncounterMeleeLocked(ctx)
-	} else {
-		s.state.AutoAttacking = false
-		s.state.AutoAttackRequested = false
-		s.state.AutoAttackUnconfirmed = false
-		s.autoTarget = 0
-		s.autoStopping = false
-	}
-	s.state.Practicing = false
-}
-
-// Returns true while recovery owns the tick. It does not turn on follow/heal/
-// assist, restore revoked intent, clear another module's ledger or use a healer.
-func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
-	r := &s.recovery
-	defer func() {
-		if handled {
-			s.state.Reason = "death_recovery_" + r.state.Phase
-		}
-	}()
-	if !r.state.Enabled {
+	if r.token == "" {
 		return false
 	}
-	if !s.now().Before(r.enabledUntil) {
-		s.endRecoveryLocked(ctx, "expired", "recovery_enable_lease_expired")
-		r.state.Enabled = false
+	if !s.recoveryOwnsLocked() {
+		r.token = ""
+		r.path = nil
+		r.state.Active = false
 		return false
-	}
-	if r.state.Active && r.token != "" {
-		if !s.recoveryOwnsLocked() {
-			r.token = ""
-			r.state.Active = false
-			r.state.Phase = "blocked"
-			r.state.Reason = "recovery_custody_changed_no_retry"
-			return true
-		}
-		s.interactionUntil = s.now().Add(15 * time.Second)
 	}
 	w, err := s.snapshot(ctx)
 	if err != nil || !recoverySelf(w, s.selfGUID) {
-		if r.state.Active {
-			if s.recoveryOwnsLocked() {
-				s.stopLocked(ctx)
-			}
-			r.state.Reason = "waiting_for_actual_self_observation"
-			return true
-		}
-		return false
+		s.stopLocked(ctx)
+		r.state.Reason = "waiting_for_actual_self_observation"
+		return true
 	}
-	p := w.Self
-	if p.Alive {
-		r.lastAlive = s.now()
-		if r.state.DeathEpoch != 0 {
-			r.state.AliveObserved = true
-		}
-		if !r.state.Active {
-			return false
-		}
+	if s.controlRecoveryLocked(ctx) {
+		r.state.Reason = "waiting_for_controllable_position_before_owned_stop"
+		return true
+	}
+	w = s.lastWorld
+	if !recoverySelf(w, s.selfGUID) {
+		return true
+	}
+	if w.Self.Alive {
 		r.state.AliveObserved = true
 		r.state.Phase = "alive_observed"
 		if s.controlRecoveryLocked(ctx) {
 			r.state.Reason = "waiting_for_controllable_position_before_owned_stop"
 			return true
 		}
-		// Control reconciliation may have consumed a newer world observation.
-		// Do not rebase STOP to the pre-return pose or retire a newly dead body.
 		w = s.lastWorld
 		if !recoverySelf(w, s.selfGUID) || !w.Self.Alive {
-			r.state.Reason = "alive_observation_changed_before_owned_stop"
 			return true
 		}
 		s.refreshPositionLocked(w)
-		if stopped := s.stopLocked(ctx); !stopped || s.state.MotionUnconfirmed {
-			r.state.MovementUnconfirmed = s.state.MotionUnconfirmed
-			r.state.Reason = "alive_waiting_for_owned_stop"
-			if s.state.MotionUnconfirmed {
-				r.state.Reason = "alive_but_stop_unconfirmed"
-			}
-			return true
-		}
-		r.state.MovementUnconfirmed = false
-		// Actual life completes this physical corpse operation. Shared Lua
-		// healing/consumables own recuperation, thresholds and interruption;
-		// this lane must not retain an alive character's tick while it waits
-		// for a second native health/mana policy. Other action ledgers remain.
-		s.endRecoveryLocked(ctx, "alive_observed", "actual_alive_receipt_shared_Lua_resource_policy")
-		return false
+		return !s.finishRecoveryMotionLocked(ctx, "alive_observed", "actual_alive_receipt_shared_Lua_resource_policy")
 	}
-	if r.state.Active && r.preparedEpoch != r.state.DeathEpoch {
-		// A new actual death during recuperation is a new epoch, not a retry
-		// of the previous epoch's already consumed release/reclaim requests.
-		s.beginRecoveryLocked(ctx)
-	}
-	if !r.state.Active {
-		if r.preparedEpoch == r.state.DeathEpoch {
-			return true
-		}
-		if s.state.InteractionOwner != "" {
-			return false
-		}
-		s.beginRecoveryLocked(ctx)
-	}
-	if !s.now().Before(r.deadline) {
-		s.endRecoveryLocked(ctx, "recovery_timeout", "finite_recovery_deadline_no_retry")
-		return true
-	}
-	if s.state.InteractionOwner != "" && !s.recoveryOwnsLocked() {
-		r.state.Reason = "waiting_for_other_interaction_cleanup"
-		return true
-	}
-	if r.token == "" {
+	// This is the existing finite interaction write lease, not a gameplay
+	// deadline. No fresh Lua input means physical travel must stop.
+	if !s.now().Before(s.interactionUntil) {
 		s.refreshPositionLocked(w)
-		// Release does not carry a position. Actual HP0/non-ghost death may
-		// release even when the pre-death movement result was uncertain; only
-		// the later authoritative graveyard pose can authorize ghost movement.
-		unreleasedDeath := p.Health == 0 && p.PlayerFlags&ghostFlag == 0
-		if !unreleasedDeath && (s.state.MotionUnconfirmed || !s.stopLocked(ctx)) {
-			s.endRecoveryLocked(ctx, "blocked", "death_movement_stop_unconfirmed")
-			return true
-		}
-		r.token = fmt.Sprintf("death-recovery-%d", r.state.DeathEpoch)
-		s.interactionToken = r.token
-		s.state.InteractionOwner = "recovery"
-	}
-	s.interactionUntil = s.now().Add(15 * time.Second)
-	if p.PlayerFlags&ghostFlag == 0 {
-		r.state.Reason = "waiting_for_Lua_release_or_actual_ghost"
-		return true
-	}
-	r.state.GhostObserved = true
-	if r.state.ReleaseAttempted && !r.graveyardPoseObserved {
-		if p.PositionRevision == r.releasePositionRevision && p.MapId == r.releaseMap || !p.MovementFlagsKnown || p.MovementFlags&0xff != 0 {
-			r.state.Phase = "waiting_for_actual_graveyard_position_baseline"
-			return true
-		}
-		r.graveyardPoseObserved = true
-	}
-	if !ghostSelf(w, s.selfGUID) {
-		s.stopLocked(ctx)
-		r.state.Reason = "waiting_for_supported_actual_ghost_movement"
-		return true
-	}
-	s.refreshPositionLocked(w)
-	if s.state.MotionUnconfirmed {
-		s.endRecoveryLocked(ctx, "blocked", "ghost_movement_unconfirmed_no_retry")
-		return true
-	}
-	r.state.MovementUnconfirmed = false
-	if s.state.Moving && r.path == nil && !s.stopLocked(ctx) {
-		s.endRecoveryLocked(ctx, "blocked", "graveyard_movement_stop_unconfirmed")
-		return true
-	}
-	if !r.state.CorpseQueryKnown {
-		r.state.Reason = "waiting_for_Lua_corpse_query_or_actual_response"
-		return true
-	}
-	if !r.state.CorpseFound || r.state.CorpseLocation == nil {
-		s.endRecoveryLocked(ctx, "blocked", "server_reports_no_reclaimable_corpse")
-		return true
-	}
-	location := r.state.CorpseLocation
-	if p.MapId != location.MapId || p.MapId != r.state.CorpseMapId {
-		s.endRecoveryLocked(ctx, "blocked", "corpse_requires_map_transition_not_supported")
-		return true
-	}
-	to := position{x: location.X, y: location.Y, z: location.Z}
-	if distance(s.pos, to) > 35 {
-		if r.path == nil {
-			if r.state.VerifiedLegs >= 32 {
-				s.endRecoveryLocked(ctx, "blocked", "finite_ghost_route_leg_limit")
-				return true
-			}
-			from, revision := s.pos, s.positionRevision
-			var path []position
-			var planErr error
-			if s.planRecoveryPath != nil {
-				path, planErr = s.planRecoveryPath(ctx, s.navDataDir, p.MapId, from, to)
-			} else if distance(from, to) <= 200 {
-				path, planErr = s.mapNavigationPath(ctx, s.navDataDir, p.MapId, from, to)
-			} else {
-				planErr = errors.New("bounded multi-leg recovery planner unavailable")
-			}
-			if planErr == nil && (len(path) < 2 || !validMapNavigationPath(path, from, path[len(path)-1]) || routeRemaining(from, path, 0) > 180) {
-				planErr = errors.New("verified recovery leg exceeded route/endpoint bounds")
-			}
-			if planErr != nil {
-				s.state.NavReason = navigationDiagnostic(planErr, s.navDataDir)
-				s.endRecoveryLocked(ctx, "blocked", "corpse_navigation_unavailable")
-				return true
-			}
-			fresh, e := s.snapshot(ctx)
-			if e != nil || !ghostSelf(fresh, s.selfGUID) || fresh.Self.MapId != p.MapId || fresh.Self.PositionRevision != revision {
-				s.endRecoveryLocked(ctx, "blocked", "ghost_changed_during_planning")
-				return true
-			}
-			r.path, r.index, r.mapID, r.revision, r.expected = path, 0, p.MapId, revision, from
-			r.state.VerifiedLegs++
-		}
-		if p.MapId != r.mapID || p.PositionRevision != r.revision || distance(s.pos, r.expected) > .05 {
-			s.endRecoveryLocked(ctx, "blocked", "ghost_authoritative_pose_changed_replan_required")
-			return true
-		}
-		if routeRemaining(s.pos, r.path, r.index) <= .75 {
-			if !s.stopLocked(ctx) {
-				s.endRecoveryLocked(ctx, "blocked", "ghost_leg_stop_unconfirmed")
-				return true
-			}
-			r.path = nil
-			r.state.Phase = "planning_next_verified_ghost_leg"
-			return true
-		}
-		r.state.Phase = "following_verified_ghost_route"
-		if !s.mapNavigationStepLocked(ctx, r.path, &r.index) {
-			s.endRecoveryLocked(ctx, "blocked", "ghost_route_step_or_transport_failed")
-			return true
-		}
-		r.expected = s.pos
-		return true
-	}
-	if !s.stopLocked(ctx) {
-		s.endRecoveryLocked(ctx, "blocked", "corpse_arrival_stop_unconfirmed")
-		return true
-	}
-	r.path = nil
-	if s.now().Before(r.delayUntil) {
-		r.state.Phase = "waiting_for_reclaim_delay"
-		return true
-	}
-	c := w.OwnCorpse
-	if c == nil || c.Guid>>48 != 0xf101 || c.OwnerGuid != s.selfGUID || !c.Present || !c.MapKnown || c.MapId != p.MapId || !c.PositionKnown || !finite(position{x: c.X, y: c.Y, z: c.Z}) || !c.FlagsKnown || c.Flags&1 != 0 || distance(position{x: c.X, y: c.Y, z: c.Z}, to) > 2 || distance(s.pos, position{x: c.X, y: c.Y, z: c.Z}) > 35 {
-		r.state.Phase = "waiting_for_actual_own_corpse_guid"
-		return true
-	}
-	r.state.CorpseGuid = c.Guid
-	if !r.state.ReclaimAttempted {
-		// Clock and STOP can run callbacks. Recheck actual ghost/map/corpse
-		// immediately before reserving the single normal reclaim write.
-		fresh, e := s.snapshot(ctx)
-		if e != nil || !ghostSelf(fresh, s.selfGUID) || fresh.Self.MapId != p.MapId || fresh.Self.PositionRevision != s.positionRevision || !sameRecoveryCorpse(fresh.OwnCorpse, c) {
-			r.state.Reason = "corpse_changed_before_reclaim"
-			return true
-		}
-		r.state.ReclaimAttempted = true
-		r.reclaimAt = s.now()
-		r.state.Phase = "reclaim_requested"
-		r.state.ReclaimWritten = s.sendLocked(ctx, opcode.CMSGReclaimCorpse, binary.LittleEndian.AppendUint64(nil, c.Guid))
-	} else if s.now().Sub(r.reclaimAt) > 10*time.Second {
-		s.endRecoveryLocked(ctx, "outcome_unconfirmed", "reclaim_without_actual_alive_receipt_no_retry")
+		return !s.finishRecoveryMotionLocked(ctx, "movement_lease_expired", "fresh_Lua_input_required")
 	}
 	return true
 }
@@ -444,6 +226,7 @@ func (s *Service) recoveryPacketLocked(op uint32, payload []byte) (bool, error) 
 	case opcode.MSGCorpseQuery:
 		if len(payload) == 1 && payload[0] == 0 {
 			if r.queryPending {
+				r.state.CorpseQueryRevision++
 				r.state.CorpseQueryKnown = true
 				r.state.CorpseFound = false
 				r.queryPending = false
@@ -459,6 +242,7 @@ func (s *Service) recoveryPacketLocked(op uint32, payload []byte) (bool, error) 
 			return true, errors.New("invalid corpse query location")
 		}
 		if r.queryPending {
+			r.state.CorpseQueryRevision++
 			r.state.CorpseQueryKnown = true
 			r.state.CorpseFound = true
 			r.state.CorpseMapId = actual
@@ -471,8 +255,12 @@ func (s *Service) recoveryPacketLocked(op uint32, payload []byte) (bool, error) 
 			return true, errors.New("invalid corpse reclaim delay")
 		}
 		r.delayAt = s.now()
+		r.delayEpoch = r.state.DeathEpoch
+		if !r.lifeKnown || r.lastObservedAlive {
+			r.delayEpoch++
+		}
 		r.delayUntil = s.now().Add(time.Duration(binary.LittleEndian.Uint32(payload)) * time.Millisecond)
-		r.state.ReclaimDelayKnown = true
+		r.state.ReclaimDelayKnown = r.delayEpoch == r.state.DeathEpoch
 		return true, nil
 	case opcode.SMSGDeathReleaseLoc:
 		if len(payload) != 16 {

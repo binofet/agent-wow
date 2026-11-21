@@ -135,7 +135,7 @@ type Service struct {
 	navDataDir                           string
 	planPath                             func(context.Context, string, position, position) ([]position, error)
 	planMapPath                          func(context.Context, string, uint32, position, position) ([]position, error)
-	planRecoveryPath                     func(context.Context, string, uint32, position, position) ([]position, error)
+	planRecoveryPath                     func(context.Context, string, uint32, position, position, float64) ([]position, error)
 	planLegPath                          func(context.Context, string, uint32, position, position) ([]position, error)
 	planColdridgePath                    func(context.Context, string, position, position) ([]position, error)
 	planColdridge182Path                 func(context.Context, string, position, position) ([]position, error)
@@ -175,6 +175,7 @@ type Service struct {
 	buffAuraRevision, buffSequence       uint64
 	buffOp                               *buffAttempt
 	transportSequence                    uint64
+	lastTransportError                   error
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -213,6 +214,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 		out.LastFollowPolicyFailure = proto.Clone(s.formation.lastFailure).(*actionsv1.PolicyDecisionFailure)
 	}
 	out.Recovery = s.recovery.snapshot(s.now())
+	out.Recovery.MotionPending = s.state.Moving || s.state.MotionUnconfirmed
 	out.Fargodeep = s.fargodeep.snapshot(s.now())
 	out.EngageNpc = s.engage.snapshot(s.now())
 	out.CrowdControlApproachSupported = true
@@ -797,7 +799,9 @@ func (s *Service) sendPacketLocked(ctx context.Context, op uint32, payload []byt
 		sendCtx = modcb.ForwardPolicySpell(ctx)
 	}
 	s.transportSequence++
+	s.lastTransportError = nil
 	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: op, Payload: payload}); err != nil {
+		s.lastTransportError = err
 		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: !modcb.PacketWasNotDispatched(err)}
 		s.state.Reason = "transport_error_outcome_unconfirmed"
 		// Only the exact operation's caller can fence its uncertain physical
@@ -968,7 +972,12 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		flags := binary.LittleEndian.Uint32(payload[at:]) | w.Self.MovementFlags&ghostWaterWalking
 		binary.LittleEndian.PutUint32(payload[at:], flags)
 	}
+	before := s.transportSequence
 	if !s.sendLocked(ctx, op, payload) {
+		if failure := s.state.LastTransportFailure; failure != nil && failure.Sequence > before && !failure.OutcomeUnknown {
+			s.state.Reason = "movement_not_dispatched"
+			return false
+		}
 		s.state.MotionUnconfirmed = true
 		s.publishClientMovementLocked(ctx, nil, p, false)
 		return false

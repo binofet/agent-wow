@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-ƒÑ
+Úç
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"ô
@@ -672,7 +672,7 @@ pointCount!
 token (	Rtoken"_
 InteractionLease
 token (	Rtoken5
-state (2.warcraftbuddy.actions.v1.StateRstate"€
+state (2.warcraftbuddy.actions.v1.StateRstate"π	
 RecoveryState
 enabled (Renabled
 active (Ractive
@@ -699,7 +699,42 @@ corpseGuidW
 rested (Rrested1
 movement_unconfirmed (RmovementUnconfirmed#
 verified_legs (RverifiedLegs0
-corpse_query_pending (RcorpseQueryPending"q
+corpse_query_pending (RcorpseQueryPendingG
+
+own_corpse (2(.warcraftbuddy.actions.v1.RecoveryCorpseR	ownCorpse8
+ghost_movement_supported (RghostMovementSupported2
+corpse_query_revision (RcorpseQueryRevision%
+motion_pending (RmotionPending"⁄
+RecoveryCorpse
+guid (Rguid
+
+owner_guid (R	ownerGuid
+present (RpresentD
+position (2(.warcraftbuddy.actions.v1.ClientPositionRposition
+flags_known (R
+flagsKnown
+flags (Rflags"õ
+CorpseApproachRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+death_epoch (R
+deathEpoch<
+expected_position_revision (RexpectedPositionRevision2
+corpse_query_revision (RcorpseQueryRevision
+range_yards (R
+rangeYards
+stop (Rstop"å
+ReclaimCorpseRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+death_epoch (R
+deathEpoch<
+expected_position_revision (RexpectedPositionRevision
+corpse_guid (R
+corpseGuid8
+expected_corpse_revision (RexpectedCorpseRevision"q
 DeathActionRequest
 
 session_id (	R	sessionId
@@ -1506,7 +1541,7 @@ targetGuid"Ä
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror2±#
+error (	Rerror2˜$
 BuddyActionsm
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
@@ -1539,7 +1574,9 @@ targetGuid"Ä
 FargodeepEncounter3.warcraftbuddy.actions.v1.FargodeepEncounterRequest.warcraftbuddy.actions.v1.StateT
 Recovery'.warcraftbuddy.actions.v1.ToggleRequest.warcraftbuddy.actions.v1.State^
 ReleaseSpirit,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.State\
-QueryCorpse,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.StateC
+QueryCorpse,.warcraftbuddy.actions.v1.DeathActionRequest.warcraftbuddy.actions.v1.Stateb
+ApproachCorpse/.warcraftbuddy.actions.v1.CorpseApproachRequest.warcraftbuddy.actions.v1.State`
+ReclaimCorpse..warcraftbuddy.actions.v1.ReclaimCorpseRequest.warcraftbuddy.actions.v1.StateC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.Empty`
 ResurrectOnce..warcraftbuddy.actions.v1.ResurrectOnceRequest.warcraftbuddy.actions.v1.Statej
@@ -1558,7 +1595,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ô"
+¿4
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1619,13 +1656,14 @@ corpseGuid
 request_id (	R	requestId<
 expected_position_revision (RexpectedPositionRevision8
 expected_corpse_revision (RexpectedCorpseRevision>
-expected_inventory_revision (RexpectedInventoryRevision"q
+expected_inventory_revision (RexpectedInventoryRevision"†
 CloseCorpseRequest
 
 session_id (	R	sessionId
 	self_guid (RselfGuid
 corpse_guid (R
-corpseGuid"ß
+corpseGuid-
+retire_unconfirmed (RretireUnconfirmed"ß
 CorpseOperation
 
 session_id (	R	sessionId
@@ -1641,7 +1679,7 @@ request_id (	R	requestId
 window_observed	 (RwindowObserved)
 release_observed
  (RreleaseObserved
-terminal (Rterminal"ê
+terminal (Rterminal"á	
 CorpseObservation
 
 session_id (	R	sessionId
@@ -1658,20 +1696,93 @@ session_id (	R	sessionId
 	operation (2&.warcraftbuddy.loot.v1.CorpseOperationR	operation'
 retired_sources (RretiredSources9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRownerT
-source_observation (2%.warcraftbuddy.world.v1.CreatureStateRsourceObservation*ó
+source_observation (2%.warcraftbuddy.world.v1.CreatureStateRsourceObservation9
+window (2!.warcraftbuddy.loot.v1.LootWindowRwindow&
+quest_log_known (RquestLogKnownB
+	quest_log (2%.warcraftbuddy.world.v1.QuestLogEntryRquestLogZ
+quest_requirements (2+.warcraftbuddy.loot.v1.QuestItemRequirementRquestRequirements*
+item_counts_known (RitemCountsKnownF
+item_counts (2%.warcraftbuddy.loot.v1.OwnedItemCountR
+itemCounts"`
+QuestItemRequirement
+quest_id (RquestId
+item_id (RitemId
+count (Rcount"?
+OwnedItemCount
+item_id (RitemId
+count (Rcount"Ñ
+LootSlot
+slot (Rslot
+item_id (RitemId
+count (Rcount
+	slot_type (RslotType
+removed (Rremoved"È
+
+LootWindow
+corpse_guid (R
+corpseGuid&
+open_request_id (	RopenRequestId
+revision (Rrevision
+observed (Robserved
+money (Rmoney'
+money_requested (RmoneyRequested#
+money_cleared (RmoneyCleared5
+slots (2.warcraftbuddy.loot.v1.LootSlotRslots?
+mutation	 (2#.warcraftbuddy.loot.v1.LootMutationRmutation"É
+TakeLootRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+corpse_guid (R
+corpseGuid&
+open_request_id (	RopenRequestId'
+window_revision (RwindowRevision
+
+request_id (	R	requestId
+slot (Rslot(
+expected_item_id (RexpectedItemId%
+expected_count	 (RexpectedCount>
+expected_inventory_revision
+ (RexpectedInventoryRevision"Æ
+LootMutation
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+corpse_guid (R
+corpseGuid&
+open_request_id (	RopenRequestId'
+window_revision (RwindowRevision
+
+request_id (	R	requestId
+kind (	Rkind
+slot (Rslot
+item_id	 (RitemId
+count
+ (Rcount/
+transport_attempted (RtransportAttempted+
+transport_written (RtransportWritten!
+slot_removed (RslotRemoved,
+item_push_observed (RitemPushObserved#
+money_cleared (RmoneyCleared'
+server_rejected (RserverRejected'
+inventory_error (RinventoryError
+terminal (Rterminal8
+inventory_delta_observed (RinventoryDeltaObserved*ó
 GatherStatus
 GATHER_NONE 
 GATHER_REQUESTED
 GATHER_ITEM_STORED
 GATHER_CONFIRMED
 GATHER_SERVER_REJECTED
-GATHER_UNCONFIRMED2∂
+GATHER_UNCONFIRMED2È
 	BuddyLootL
 Enable$.warcraftbuddy.loot.v1.EnableRequest.warcraftbuddy.loot.v1.State@
 GetState.google.protobuf.Empty.warcraftbuddy.loot.v1.StateR
 ObserveCorpses.google.protobuf.Empty(.warcraftbuddy.loot.v1.CorpseObservation^
 
 OpenCorpse(.warcraftbuddy.loot.v1.OpenCorpseRequest&.warcraftbuddy.loot.v1.CorpseOperation`
-CloseCorpse).warcraftbuddy.loot.v1.CloseCorpseRequest&.warcraftbuddy.loot.v1.CorpseOperationC
+CloseCorpse).warcraftbuddy.loot.v1.CloseCorpseRequest&.warcraftbuddy.loot.v1.CorpseOperationX
+	TakeMoney&.warcraftbuddy.loot.v1.TakeLootRequest#.warcraftbuddy.loot.v1.LootMutationW
+TakeSlot&.warcraftbuddy.loot.v1.TakeLootRequest#.warcraftbuddy.loot.v1.LootMutationC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-loot/api;lootv1bproto3

@@ -22,6 +22,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	BuddyInventory_GetState_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/GetState"
+	BuddyInventory_RawGearFacts_FullMethodName = "/warcraftbuddy.inventory.v1.BuddyInventory/RawGearFacts"
 	BuddyInventory_Discover_FullMethodName     = "/warcraftbuddy.inventory.v1.BuddyInventory/Discover"
 	BuddyInventory_Move_FullMethodName         = "/warcraftbuddy.inventory.v1.BuddyInventory/Move"
 	BuddyInventory_Equip_FullMethodName        = "/warcraftbuddy.inventory.v1.BuddyInventory/Equip"
@@ -38,6 +39,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyInventoryClient interface {
 	GetState(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
+	RawGearFacts(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error)
 	Discover(ctx context.Context, in *DiscoverRequest, opts ...grpc.CallOption) (*Discovery, error)
 	Move(ctx context.Context, in *MoveRequest, opts ...grpc.CallOption) (*State, error)
 	Equip(ctx context.Context, in *EquipRequest, opts ...grpc.CallOption) (*State, error)
@@ -61,6 +63,16 @@ func (c *buddyInventoryClient) GetState(ctx context.Context, in *emptypb.Empty, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(State)
 	err := c.cc.Invoke(ctx, BuddyInventory_GetState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyInventoryClient) RawGearFacts(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyInventory_RawGearFacts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +174,7 @@ func (c *buddyInventoryClient) BeforeLogout(ctx context.Context, in *emptypb.Emp
 // for forward compatibility.
 type BuddyInventoryServer interface {
 	GetState(context.Context, *emptypb.Empty) (*State, error)
+	RawGearFacts(context.Context, *emptypb.Empty) (*State, error)
 	Discover(context.Context, *DiscoverRequest) (*Discovery, error)
 	Move(context.Context, *MoveRequest) (*State, error)
 	Equip(context.Context, *EquipRequest) (*State, error)
@@ -183,6 +196,9 @@ type UnimplementedBuddyInventoryServer struct{}
 
 func (UnimplementedBuddyInventoryServer) GetState(context.Context, *emptypb.Empty) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
+}
+func (UnimplementedBuddyInventoryServer) RawGearFacts(context.Context, *emptypb.Empty) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RawGearFacts not implemented")
 }
 func (UnimplementedBuddyInventoryServer) Discover(context.Context, *DiscoverRequest) (*Discovery, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Discover not implemented")
@@ -246,6 +262,24 @@ func _BuddyInventory_GetState_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyInventoryServer).GetState(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyInventory_RawGearFacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyInventoryServer).RawGearFacts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyInventory_RawGearFacts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyInventoryServer).RawGearFacts(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -422,6 +456,10 @@ var BuddyInventory_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetState",
 			Handler:    _BuddyInventory_GetState_Handler,
+		},
+		{
+			MethodName: "RawGearFacts",
+			Handler:    _BuddyInventory_RawGearFacts_Handler,
 		},
 		{
 			MethodName: "Discover",
