@@ -167,8 +167,10 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 		return
 	}
 	if finishing {
+		session, selfGUID, until, questID, targetGUID := s.sessionID, s.selfGUID, s.practiceUntil, goal.questID, s.practiceTarget
 		defer func() {
-			if s.state.Practicing {
+			if s.state.Practicing && s.sessionID == session && s.selfGUID == selfGUID && s.practiceUntil == until &&
+				s.coldridgeGoal.questID == questID && s.practiceTarget == targetGUID {
 				s.state.PracticePhase = "finishing_current_fight_to_goal"
 			}
 		}()
@@ -309,22 +311,8 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 			return
 		}
 	}
-	rank := s.selectedSpellLocked(shadowBolt)
-	if rank.id != shadowBolt {
-		s.stopPracticeLocked(ctx, "required_spell_unknown")
+	if !s.starterColdridgeCasterLocked(ctx, w, target, p) {
 		return
-	}
-	if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) && s.faceEnemyLocked(ctx, p) {
-		if !s.coldridgeCastReadyLocked(ctx, w, p, rank) {
-			return
-		}
-		if !s.practicePullStarted {
-			// Only dispatching the first cast reserves an owned pull. Waiting
-			// for cooldown, mana or facing cannot waive fresh claim checks.
-			s.practicePullStarted, s.practiceRoute = true, nil
-			s.state.PracticePulls++
-		}
-		s.castStarterOffenseLocked(ctx, rank.id, target.Guid, 2*time.Second)
 	}
 	s.state.PracticePhase = "fighting_observed_coldridge_wolf"
 	if goal.questID == 170 {
@@ -342,21 +330,31 @@ func (s *Service) coldridgePracticeTickLocked(ctx context.Context, w *worldv1.Sn
 // Facing itself obtains clock/world observations. Use a final requested-target
 // snapshot so neither that newer evidence nor discovery truncation can leave a
 // stale goal, claim or physical baseline immediately before cast dispatch.
-func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv1.SnapshotResponse, aimed position, rank spellRank) bool {
-	reject := func(reason string) bool {
-		s.stopPracticeLocked(ctx, "coldridge_precast_"+reason)
-		return false
+func (s *Service) coldridgeCastObservationsLocked(ctx context.Context, original *worldv1.SnapshotResponse, aimed position, current func() bool) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
+	reject := func(reason string) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
+		if current() {
+			s.stopPracticeLocked(ctx, "coldridge_precast_"+reason)
+		}
+		return nil, nil, position{}, false
+	}
+	if !current() {
+		return nil, nil, position{}, false
 	}
 	w, err := s.snapshot(ctx, s.practiceTarget)
+	if !current() {
+		return nil, nil, position{}, false
+	}
 	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" {
 		return reject("own_observations_unavailable_or_unsafe")
 	}
 	self := w.Self
 	goal := &s.coldridgeGoal
-	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision || !goal.baselineContains(playerPosition(self)) || !goal.contains(s.pos) || s.state.MotionUnconfirmed {
+	if original == nil || original.Self == nil || self.MapId != original.Self.MapId || self.PositionRevision != original.Self.PositionRevision ||
+		distance(playerPosition(self), playerPosition(original.Self)) > .05 || s.posMap != self.MapId || s.positionRevision != self.PositionRevision ||
+		!goal.baselineContains(playerPosition(self)) || !goal.contains(s.pos) || s.state.MotionUnconfirmed {
 		return reject("physical_baseline_changed")
 	}
-	if !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || self.UnitFlags&0x2000 != 0 || uint64(self.Power) < manaBudget(self, uint64(rank.manaPercent)) {
+	if !self.PowerKnown || !self.BaseManaKnown || self.BaseMana == 0 || self.PowerType != 0 || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 || self.UnitFlags&0x2000 != 0 || !s.state.KnownShadowBolt {
 		return reject("own_combat_prerequisites_changed")
 	}
 	active, needed := goal.observe(w, s.selfGUID)
@@ -384,13 +382,13 @@ func (s *Service) coldridgeCastReadyLocked(ctx context.Context, original *worldv
 			return reject("unexpected_hostile_requires_help")
 		}
 	}
-	position, known, _ := creaturePosition(target)
-	if !known || !goal.contains(position) || !goal.positionEvidenceWithin(target) || distance(s.pos, position) > 25 || distance(aimed, position) > 2 {
+	point, known, _ := creaturePosition(target)
+	if !known || !goal.contains(point) || !goal.positionEvidenceWithin(target) || distance(s.pos, point) > 25 || distance(aimed, point) > 2 {
 		// A roaming target may need another bounded route/facing cycle. This
 		// grants no pull authority and never reuses the earlier facing now.
 		s.practiceRoute = nil
 		s.state.PracticePhase = "waiting_for_fresh_coldridge_target_position"
-		return false
+		return nil, nil, position{}, false
 	}
-	return true
+	return w, target, point, true
 }
