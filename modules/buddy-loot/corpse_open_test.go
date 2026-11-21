@@ -303,6 +303,15 @@ func tickCorpseLua(t *testing.T, s *Service) {
 					t.Fatal(err)
 				}
 				_, _ = s.OpenCorpse(context.Background(), r)
+			} else if ok && a["capability"] == "loot_resume_source" {
+				delete(a, "capability")
+				delete(a, "observationSequence")
+				raw, _ := json.Marshal(a)
+				r := &lootv1.ResumeSourceRequest{}
+				if err = protojson.Unmarshal(raw, r); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = s.ResumeSource(context.Background(), r)
 			} else if ok && (a["capability"] == "loot_money" || a["capability"] == "loot_slot") {
 				money := a["capability"] == "loot_money"
 				delete(a, "capability")
