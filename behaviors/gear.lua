@@ -120,7 +120,14 @@ function M.compare(candidate,carried,current,equipped,options)
  return dominates and gain>(options.minimum_score_gain or 0),gain,dominates and "" or "comparison_not_an_upgrade"
 end
 
+function M.preview(frame)
+ local options=options_for(frame.context,frame.options)
+ options.classId=(frame.context or {}).classId or options.classId
+ local upgrade,gain,reason=M.compare(frame.candidate,frame.candidateFacts,frame.current,frame.currentFacts,options)
+ return {upgrade=upgrade,scoreGain=gain,reason=reason}
+end
 function M.evaluate(frame)
+ if frame.mode=="preview" then return M.preview(frame) end
  local inventory=frame.inventory or frame
  local context=inventory.gearContext or {}
  local options=options_for(context,frame.options)
