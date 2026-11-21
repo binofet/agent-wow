@@ -22,6 +22,7 @@ type sessionVM struct {
 	mu             sync.Mutex
 	state          *lua.LState
 	callbacks      map[string]*lua.LFunction
+	exports        map[string]bool // immutable load-time Lua function facts, retained after close
 	executionLimit time.Duration
 	valueBytes     int
 }
@@ -79,6 +80,14 @@ func (v *sessionVM) load(parent context.Context, source string) error {
 		}
 		v.callbacks[name] = callback
 	}
+	v.exports = make(map[string]bool)
+	callbacks.ForEach(func(key, value lua.LValue) {
+		name, named := key.(lua.LString)
+		callback, function := value.(*lua.LFunction)
+		if named && function && !callback.IsG {
+			v.exports[string(name)] = true
+		}
+	})
 	return parent.Err()
 }
 

@@ -21,10 +21,11 @@ type policyEditRequest struct {
 
 type policySourceResponse struct {
 	PolicySnapshot
-	Source           string `json:"source"`
-	SessionID        string `json:"sessionId"`
-	CharacterGUID    string `json:"characterGuid"`
-	SourceLimitBytes int    `json:"sourceLimitBytes"`
+	Source           string                       `json:"source"`
+	SessionID        string                       `json:"sessionId"`
+	CharacterGUID    string                       `json:"characterGuid"`
+	SourceLimitBytes int                          `json:"sourceLimitBytes"`
+	FollowFallback   policyFollowFallbackMetadata `json:"followFallback"`
 }
 
 // The local control plane edits the existing host using the same revision
@@ -80,5 +81,5 @@ func (m *Manager) editPolicy(ctx context.Context, full string, params json.RawMe
 		return fault(-32000, err)
 	}
 	return json.Marshal(policySourceResponse{PolicySnapshot: view, Source: host.source, SessionID: request.SessionID,
-		CharacterGUID: request.CharacterGUID, SourceLimitBytes: host.vm.SourceLimitBytes()})
+		CharacterGUID: request.CharacterGUID, SourceLimitBytes: host.vm.SourceLimitBytes(), FollowFallback: host.followFallbackMetadata()})
 }

@@ -1344,7 +1344,7 @@ func (s *Service) Tick(ctx context.Context) {
 		if snapshot.Self.ClassKnown {
 			classID = snapshot.Self.ClassId
 		}
-		if !s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0).Valid {
+		if !s.formation.Target(now, s.selfGUID, classID, playerPosition(snapshot.Owner), snapshot.Owner.MovementFlags&0x3f != 0, snapshot.Owner.PlayerFlags).Valid {
 			s.stopLocked(ctx)
 			s.lastStep = now
 			s.state.Reason = "formation_position_invalid"

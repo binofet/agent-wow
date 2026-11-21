@@ -112,7 +112,7 @@ func (s *Service) portalCandidatesLocked(w *worldv1.SnapshotResponse, now time.T
 		"selfGuid": strconv.FormatUint(s.selfGUID, 10), "classId": 0,
 		"self": map[string]any{"x": s.pos.x, "y": s.pos.y, "z": s.pos.z, "moving": s.state.Moving},
 		"owner": map[string]any{"x": s.followPortal.ground.x, "y": s.followPortal.ground.y,
-			"z": s.followPortal.ground.z, "o": s.followPortal.ground.o, "moving": false}}
+			"z": s.followPortal.ground.z, "o": s.followPortal.ground.o, "moving": false, "playerFlags": w.GetOwner().GetPlayerFlags()}}
 	output := s.formation.decide(input)
 	var result struct{ Candidates []*actionsv1.PortalPoint }
 	body, err := json.Marshal(output)

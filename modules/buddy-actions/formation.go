@@ -26,13 +26,25 @@ type formationTarget struct {
 // followFormation keeps detached policy memory and a private builtin runtime
 // under the controller lock. Attached policies compose the same source.
 type followFormation struct {
-	memory  map[string]any
-	runtime *behavior.Runtime
+	memory         map[string]any
+	runtime        *behavior.Runtime
+	remote         func(map[string]any) (bool, string, map[string]any, error)
+	sourceRevision string
 }
 
 func (f *followFormation) Reset() { f.memory = nil }
 
 func (f *followFormation) decide(input map[string]any) map[string]any {
+	if f.remote != nil {
+		available, revision, output, err := f.remote(input)
+		if err != nil {
+			return nil // Never replace a failed active edit with an older default.
+		}
+		if available {
+			f.sourceRevision = revision
+			return output
+		}
+	}
 	if f.runtime == nil {
 		runtime := behavior.New()
 		if _, err := runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
@@ -40,6 +52,7 @@ func (f *followFormation) decide(input map[string]any) map[string]any {
 		}
 		f.runtime = runtime
 	}
+	f.sourceRevision = f.runtime.Status().Revision
 	output, err := f.runtime.Evaluate(input)
 	if err != nil {
 		// Preserve the detached committed memory if a pure evaluation fails.
@@ -61,19 +74,19 @@ func formationAngleDifference(a, b float64) float64 {
 	return math.Remainder(a-b, 2*math.Pi)
 }
 
-func (f *followFormation) Target(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool) formationTarget {
-	return f.evaluate(now, selfGUID, classID, owner, ownerMoving, nil, false, false)
+func (f *followFormation) Target(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, ownerFlags ...uint32) formationTarget {
+	return f.evaluate(now, selfGUID, classID, owner, ownerMoving, nil, false, false, ownerFlags, "")
 }
 
-func (f *followFormation) Plan(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos position, selfMoving, ownerArrival bool) formationTarget {
-	return f.evaluate(now, selfGUID, classID, owner, ownerMoving, &selfPos, selfMoving, ownerArrival)
+func (f *followFormation) Plan(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos position, selfMoving, ownerArrival bool, ownerFlags ...uint32) formationTarget {
+	return f.evaluate(now, selfGUID, classID, owner, ownerMoving, &selfPos, selfMoving, ownerArrival, ownerFlags, "")
 }
 
-func (f *followFormation) NearOwner(now time.Time, selfGUID uint64, owner position, ownerMoving bool, selfPos position, selfMoving bool) formationTarget {
-	return f.evaluate(now, selfGUID, 0, owner, ownerMoving, &selfPos, selfMoving, false, "near_owner")
+func (f *followFormation) NearOwner(now time.Time, selfGUID uint64, owner position, ownerMoving bool, selfPos position, selfMoving bool, ownerFlags ...uint32) formationTarget {
+	return f.evaluate(now, selfGUID, 0, owner, ownerMoving, &selfPos, selfMoving, false, ownerFlags, "near_owner")
 }
 
-func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos *position, selfMoving, ownerArrival bool, mode ...string) formationTarget {
+func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint32, owner position, ownerMoving bool, selfPos *position, selfMoving, ownerArrival bool, ownerFlags []uint32, mode string) formationTarget {
 	if selfGUID == 0 || !finite(owner) || selfPos != nil && !finite(*selfPos) {
 		f.Reset()
 		return formationTarget{}
@@ -83,8 +96,11 @@ func (f *followFormation) evaluate(now time.Time, selfGUID uint64, classID uint3
 		"owner":        map[string]any{"x": owner.x, "y": owner.y, "z": owner.z, "o": owner.o, "moving": ownerMoving},
 		"ownerArrival": ownerArrival,
 	}
-	if len(mode) != 0 {
-		input["mode"] = mode[0]
+	if len(ownerFlags) != 0 {
+		input["owner"].(map[string]any)["playerFlags"] = ownerFlags[0]
+	}
+	if mode != "" {
+		input["mode"] = mode
 	}
 	if f.memory != nil {
 		input["memory"] = f.memory

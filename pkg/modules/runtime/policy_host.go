@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
@@ -26,6 +27,7 @@ type SessionPolicy struct {
 	advance            sync.Mutex
 	dispatchDone       chan struct{}
 	encounterLeaseHeld bool // guarded by advance
+	followFallback     atomic.Pointer[policyFollowFallback]
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -48,6 +50,7 @@ func (m *Manager) StartPolicyWithOptions(ctx context.Context, source string, opt
 		return nil, err
 	}
 	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx, source: source, builtin: source}
+	host.publishFollowFallback(source, vm.Status().Revision)
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
 		filepath.Base(m.dir) != catalog.SessionID || strconv.FormatUint(m.session.Identity.CharacterGUID, 10) != host.body {
@@ -207,6 +210,7 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 	revision, err := p.vm.Reload(ctx, source, expectedRevision)
 	if err == nil {
 		p.source = source
+		p.publishFollowFallback(source, revision)
 	}
 	return revision, err
 }
