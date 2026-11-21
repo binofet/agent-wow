@@ -106,7 +106,11 @@ class TrainerDestinationTests(unittest.TestCase):
         subject=maintenance.m
         rpc=maintenance.RPC()
         npc=int(rpc.offer['npcGuid'])
-        positions={npc:50.,npc+1:20.}
+        positions={npc:2.,npc+1:20.}
+        # The accepted policy deliberately ranks a travel candidate before a
+        # currently interactable trainer. Python must execute that first row.
+        rpc.policy_source=rpc.policy_source.replace(
+            'then before=candidate.interactable end','then before=other.interactable end')
         rpc.world['self'].update(classKnown=True,classId=5,levelKnown=True,movementFlagsKnown=True)
         rpc.world['owner'].update(mapKnown=True,positionKnown=True,movementFlagsKnown=True,x=0.,y=0.,z=0.)
         original=rpc.call

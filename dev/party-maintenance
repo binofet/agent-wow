@@ -695,7 +695,8 @@ class Maintenance:
             row.get('blockedReason')=='trainer_outside_conservative_range' and
             self.travel_attempts.get((sync.session_id(state),integer(row.get('creature',{}).get('guid',0)),integer(own.get('level',0))),0)<3]
         ranked=self.trainer_destinations(state,candidates)
-        trainers = [row for row in ranked if row.get('interactable') is True]
+        selected=ranked[0] if ranked else None
+        trainers = [selected] if selected is not None and selected.get('interactable') is True else []
         travel_guard=None
         if not trainers:
             candidates=ranked
