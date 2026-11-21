@@ -294,6 +294,31 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(claim[0],"buddy-quests.claim_reward")
         self.assertEqual(claim[1]["expectedItemId"],80)
 
+    def test_unused_oversized_mutation_timers_do_not_cross_the_bridge_number_bound(self):
+        for timer in (2**64-1,1e300,2**2048):
+            for ready_claim in (False,True):
+                profile,rpc,_,_=self.rig()
+                rpc.active={783}
+                profile.data["lastMutation"]={"method":"buddy-quests.turn_in","questId":33,"at":timer}
+                if ready_claim:
+                    rpc.reward={"questId":783,"npcGuid":str(MCBRIDE),"revision":"5","expiresInMs":"60000",
+                                "source":"reward_offer","canComplete":True,"choices":[{"itemId":80,"count":1}]}
+                state=rpc.state()
+                self.assertTrue(profile.reward(state,rpc.session,profile.candidates(state),{783}))
+                self.assertEqual(self.mutate_calls(rpc)[-1][0],
+                                 "buddy-quests.claim_reward" if ready_claim else "buddy-quests.turn_in")
+
+    def test_consulted_oversized_mutation_timer_rejects_before_reserving(self):
+        profile,rpc,_,_=self.rig()
+        rpc.active={783}
+        profile.data["lastMutation"]={"method":"buddy-quests.turn_in","questId":783,"at":2**64-1}
+        state=rpc.state()
+        with self.assertRaises(sync.Error):
+            profile.reward(state,rpc.session,profile.candidates(state),{783})
+        self.assertFalse(self.mutate_calls(rpc))
+        self.assertEqual(profile.data["reservations"],{})
+        self.assertEqual(profile.data["nextMutationAt"],0)
+
     def test_claim_timeout_never_replays_same_offer_and_needs_both_reward_proofs(self):
         profile, rpc, clock, _ = self.rig()
         rpc.active, rpc.apply_claim = {783}, False

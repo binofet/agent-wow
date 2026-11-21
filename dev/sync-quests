@@ -489,7 +489,7 @@ class CharacterSync:
             claimReservation=self.data["reservations"].get("claim:" + str(quest_id), False),
             lastMutation=dict(method=last.get("method", "") if isinstance(last.get("method", ""), str) else False,
                 questId=counter(last.get("questId", 0)), at=last.get("at", 0) if type(last.get("at", 0)) in (int, float)
-                    and math.isfinite(last.get("at", 0)) else False) if isinstance(last, dict) else False,
+                    and abs(last.get("at", 0)) <= 2**53 - 1 and math.isfinite(last.get("at", 0)) else False) if isinstance(last, dict) else False,
             questLogRevision=counter(state.get("questLogRevision", 0), True))
         decision = converse.quest_rewards.starter_handoff(facts)
         if not isinstance(decision, dict) or decision.get("status") == "pending":
