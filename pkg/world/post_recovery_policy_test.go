@@ -2,7 +2,10 @@ package world
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
@@ -12,7 +15,17 @@ import (
 // Recuperation uses the existing complete policy, not a second resurrection
 // resource selector or a native active-recovery gate after observed life.
 func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.T) {
-	p, obs := newFallbackPolicyTest(t, ""), positionedHealObservation()
+	module, err := os.ReadFile(filepath.Join("..", "..", "behaviors", "consumables.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := "local encounter_consumables=(function()\n" + string(module) + "\nend)()\n" + readEncounterBundle(t)
+	host, err := behavior.NewSessionWithOptions(context.Background(), fallbackSession, source, behavior.SessionOptions{ExecutionLimit: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Close)
+	p, obs := &fallbackPolicyTest{t: t, host: host}, positionedHealObservation()
 	key := fallbackGUID(fallbackSelf)
 	self := obs.Players[key]
 	self.HealthKnown, self.Health, self.MaxHealth = true, 0, 100
@@ -25,16 +38,23 @@ func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.
 	obs.Navigation = &actionsv1.NavigationObservation{MovementOwner: &actionsv1.MovementOwnerState{}}
 	view, _ := consumablePolicyFixture()
 	view["sessionId"], view["selfGuid"] = fallbackSession, key
-	observeInventory := func() {
+	observeInventory := func() string {
 		t.Helper()
-		if _, err := p.host.Enqueue(behavior.Event{Kind: "inventory_observation", Value: view}); err != nil {
+		seq, err := p.host.Enqueue(behavior.Event{Kind: "inventory_observation", Value: view})
+		if err != nil {
 			t.Fatal(err)
 		}
+		return fallbackGUID(seq)
 	}
 	step := func() behavior.Decision {
 		t.Helper()
-		observeInventory()
-		return p.decide(observeSparseEncounter(t, p, obs))
+		inventorySequence := observeInventory()
+		out, err := p.host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observeSparseEncounter(t, p, obs),
+			"observationSequences": map[string]any{"inventory": inventorySequence}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
 	receive := func(id uint64, outcome behavior.ActionOutcome, payload map[string]any) {
 		t.Helper()
@@ -59,7 +79,7 @@ func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.
 	}
 	healPayload := map[string]any{"capability": "heal", "target_guid": key, "spell_id": action["spellId"]}
 	receive(id, behavior.ActionUnknown, healPayload)
-	if _, err = p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- same-body resource recovery", p.host.Status().Revision); err != nil {
+	if _, err = p.host.Reload(context.Background(), source+"\n-- same-body resource recovery", p.host.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
 	self.Health, patient.Health = 100, 100
@@ -92,7 +112,7 @@ func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.
 		t.Fatal(err)
 	}
 	receive(useID, behavior.ActionSettledUnverified, map[string]any{"capability": "consume", "requestId": item["requestId"], "reconciliationRequired": true})
-	if _, err = p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- preserve uncertain item", p.host.Status().Revision); err != nil {
+	if _, err = p.host.Reload(context.Background(), source+"\n-- preserve uncertain item", p.host.Status().Revision); err != nil {
 		t.Fatal(err)
 	}
 	obs.Spells["585"] = &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true,

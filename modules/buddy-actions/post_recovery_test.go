@@ -48,7 +48,7 @@ func TestPostRecoveryUnknownStopWaitsForActualFreshPose(t *testing.T) {
 	f.world.Self.PositionRevision++
 	s.Tick(context.Background())
 	if s.recovery.state.Active || s.state.MotionUnconfirmed || s.state.Moving ||
-		s.state.InteractionOwner != "" || countOpcode(f, opcode.MSGMoveStop) != 2 ||
+		s.state.InteractionOwner != "" || countOpcode(f, opcode.MSGMoveStop) != 1 || s.recovery.state.MovementUnconfirmed ||
 		s.recovery.state.Phase != "alive_observed" || s.recovery.state.Rested {
 		t.Fatal("actual fresh pose did not reconcile only owned STOP", s.stateLocked(), f.packets)
 	}

@@ -225,6 +225,7 @@ func (s *Service) recoveryTickLocked(ctx context.Context) (handled bool) {
 			r.state.Reason = "alive_but_stop_unconfirmed"
 			return true
 		}
+		r.state.MovementUnconfirmed = false
 		// Actual life completes this physical corpse operation. Shared Lua
 		// healing/consumables own recuperation, thresholds and interruption;
 		// this lane must not retain an alive character's tick while it waits

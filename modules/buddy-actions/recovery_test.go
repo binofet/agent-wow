@@ -356,7 +356,7 @@ func TestRecoveryProtocolStrictFramesAtomicAndUnsolicitedQueryIgnored(t *testing
 	}
 }
 
-func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
+func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) {
 	s, f, advance := recoveryRig(t)
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
 	advance(time.Second)
@@ -370,6 +370,7 @@ func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
 	s.Tick(context.Background())
 	f.world.Self.Alive = true
 	f.world.Self.Health = 50
+	f.world.Self.Power = 0
 	f.world.Self.PlayerFlags = 0
 	f.world.Self.MovementFlags = 0
 	f.world.Self.RunSpeed = 7
@@ -378,8 +379,8 @@ func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
 		s.Tick(context.Background())
 		state(t, s)
 	}
-	if s.state.InteractionOwner != "recovery" || !s.recovery.state.Active {
-		t.Fatal("rest custody expired", s.stateLocked())
+	if s.state.InteractionOwner != "" || s.recovery.state.Active || !s.recovery.state.AliveObserved || s.recovery.state.Rested {
+		t.Fatal("native resource thresholds retained an alive body", s.stateLocked())
 	}
 	s.state.InteractionOwner = "professions"
 	s.interactionToken = "replacement"
