@@ -34,6 +34,8 @@ const (
 	BuddyActions_SpellToolkit_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/SpellToolkit"
 	BuddyActions_ReloadBehavior_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior"
 	BuddyActions_Behavior_FullMethodName             = "/warcraftbuddy.actions.v1.BuddyActions/Behavior"
+	BuddyActions_AcquireMovement_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/AcquireMovement"
+	BuddyActions_ReleaseMovement_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseMovement"
 	BuddyActions_AcquireInteraction_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction"
 	BuddyActions_ReleaseInteraction_FullMethodName   = "/warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction"
 	BuddyActions_ApproachLoot_FullMethodName         = "/warcraftbuddy.actions.v1.BuddyActions/ApproachLoot"
@@ -81,6 +83,8 @@ type BuddyActionsClient interface {
 	SpellToolkit(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SpellToolkitState, error)
 	ReloadBehavior(ctx context.Context, in *BehaviorReloadRequest, opts ...grpc.CallOption) (*BehaviorStatus, error)
 	Behavior(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BehaviorStatus, error)
+	AcquireMovement(ctx context.Context, in *MovementOwnerRequest, opts ...grpc.CallOption) (*MovementOwnerLease, error)
+	ReleaseMovement(ctx context.Context, in *MovementOwnerRelease, opts ...grpc.CallOption) (*State, error)
 	AcquireInteraction(ctx context.Context, in *InteractionRequest, opts ...grpc.CallOption) (*InteractionLease, error)
 	ReleaseInteraction(ctx context.Context, in *InteractionRelease, opts ...grpc.CallOption) (*State, error)
 	ApproachLoot(ctx context.Context, in *ApproachLootRequest, opts ...grpc.CallOption) (*State, error)
@@ -245,6 +249,26 @@ func (c *buddyActionsClient) Behavior(ctx context.Context, in *emptypb.Empty, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BehaviorStatus)
 	err := c.cc.Invoke(ctx, BuddyActions_Behavior_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) AcquireMovement(ctx context.Context, in *MovementOwnerRequest, opts ...grpc.CallOption) (*MovementOwnerLease, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MovementOwnerLease)
+	err := c.cc.Invoke(ctx, BuddyActions_AcquireMovement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) ReleaseMovement(ctx context.Context, in *MovementOwnerRelease, opts ...grpc.CallOption) (*State, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(State)
+	err := c.cc.Invoke(ctx, BuddyActions_ReleaseMovement_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -548,6 +572,8 @@ type BuddyActionsServer interface {
 	SpellToolkit(context.Context, *emptypb.Empty) (*SpellToolkitState, error)
 	ReloadBehavior(context.Context, *BehaviorReloadRequest) (*BehaviorStatus, error)
 	Behavior(context.Context, *emptypb.Empty) (*BehaviorStatus, error)
+	AcquireMovement(context.Context, *MovementOwnerRequest) (*MovementOwnerLease, error)
+	ReleaseMovement(context.Context, *MovementOwnerRelease) (*State, error)
 	AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error)
 	ReleaseInteraction(context.Context, *InteractionRelease) (*State, error)
 	ApproachLoot(context.Context, *ApproachLootRequest) (*State, error)
@@ -626,6 +652,12 @@ func (UnimplementedBuddyActionsServer) ReloadBehavior(context.Context, *Behavior
 }
 func (UnimplementedBuddyActionsServer) Behavior(context.Context, *emptypb.Empty) (*BehaviorStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Behavior not implemented")
+}
+func (UnimplementedBuddyActionsServer) AcquireMovement(context.Context, *MovementOwnerRequest) (*MovementOwnerLease, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcquireMovement not implemented")
+}
+func (UnimplementedBuddyActionsServer) ReleaseMovement(context.Context, *MovementOwnerRelease) (*State, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReleaseMovement not implemented")
 }
 func (UnimplementedBuddyActionsServer) AcquireInteraction(context.Context, *InteractionRequest) (*InteractionLease, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcquireInteraction not implemented")
@@ -962,6 +994,42 @@ func _BuddyActions_Behavior_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).Behavior(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_AcquireMovement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MovementOwnerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).AcquireMovement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_AcquireMovement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).AcquireMovement(ctx, req.(*MovementOwnerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_ReleaseMovement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MovementOwnerRelease)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).ReleaseMovement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_ReleaseMovement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).ReleaseMovement(ctx, req.(*MovementOwnerRelease))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1528,6 +1596,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Behavior",
 			Handler:    _BuddyActions_Behavior_Handler,
+		},
+		{
+			MethodName: "AcquireMovement",
+			Handler:    _BuddyActions_AcquireMovement_Handler,
+		},
+		{
+			MethodName: "ReleaseMovement",
+			Handler:    _BuddyActions_ReleaseMovement_Handler,
 		},
 		{
 			MethodName: "AcquireInteraction",
