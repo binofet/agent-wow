@@ -3,12 +3,15 @@
 -- Distances and spell ranges are in yards. Amount and cost are computed from
 -- the observed caster and spell data. Admission rechecks the exact cast.
 local observation, sequence
+local request_pending = false
+local tuning = {heal_below_percent=85, self_urgent_percent=50, critical_percent=40,
+                rank_mode="effective_per_resource"}
 
 local function patient_priority(patient, selfGuid)
-  if patient.guid == selfGuid and patient.health * 100 < patient.maxHealth * 50 then
+  if patient.guid == selfGuid and patient.health * 100 < patient.maxHealth * tuning.self_urgent_percent then
     return 1
   end
-  if patient.health * 100 < patient.maxHealth * 40 then return 2 end
+  if patient.health * 100 < patient.maxHealth * tuning.critical_percent then return 2 end
   if patient.underAttack then return 3 end
   return 4
 end
@@ -70,7 +73,7 @@ local function choose_rank(patient, selfGuid, spells)
   local best, bestScore = nil, -1
   local missing = patient.maxHealth - patient.health
   local self = patient.guid == selfGuid
-  local urgent = patient.underAttack or patient.health * 100 < patient.maxHealth * 40
+  local urgent = patient.underAttack or patient.health * 100 < patient.maxHealth * tuning.critical_percent
   local current_range
   for _, spell in ipairs(spells) do
     if not self and within_range(spell, patient.distance) then current_range = true end
@@ -81,7 +84,7 @@ local function choose_rank(patient, selfGuid, spells)
       local effective = math.min(spell.amount, missing)
       local denominator = math.max(1, spell.cost)
       if urgent then denominator = math.max(1500, spell.castMs) end
-      local score = effective / denominator
+      local score = tuning.rank_mode == "largest" and effective or effective / denominator
       -- If no rank reaches yet, choose the longest available friendly reach
       -- before comparing efficiency. That is the range the movement policy
       -- should achieve; it must not silently substitute a different rank.
@@ -95,9 +98,9 @@ local function choose_rank(patient, selfGuid, spells)
   return best
 end
 
-local function choose_cast(view)
+local function choose_cast(view, explicit)
   local caster = view.caster
-  if view.standing == false or type(caster) ~= "table" or caster.ready ~= true or
+  if type(caster) ~= "table" or caster.ready ~= true or
       type(caster.guid) ~= "string" or type(caster.mana) ~= "number" or caster.mana < 0 or
       type(view.patients) ~= "table" or type(view.spells) ~= "table" then
     return nil, nil
@@ -108,7 +111,7 @@ local function choose_cast(view)
   for _, patient in ipairs(view.patients) do
     if type(patient) == "table" and type(patient.guid) == "string" and
         type(patient.health) == "number" and patient.health > 0 and
-        type(patient.maxHealth) == "number" and patient.health * 100 < patient.maxHealth * 85 and
+        type(patient.maxHealth) == "number" and patient.health * 100 < patient.maxHealth * (explicit and 100 or tuning.heal_below_percent) and
         (patient.guid == caster.guid or
           (type(patient.distance) == "number" and patient.distance >= 0)) and
         prefer_patient(patient, target, caster.guid) and can_heal(patient, caster.guid, spells) then
@@ -123,6 +126,8 @@ return {
   on_event = function(event)
     if event.kind == "healing_observation" then
       observation, sequence = event.value, event.sequence
+    elseif event.kind == "healing_request" then
+      request_pending = true
     end
     return true
   end,
@@ -133,7 +138,9 @@ return {
     -- A transport or effect receipt cannot make a consumed snapshot fresh.
     local view = observation
     observation, sequence = nil, nil
-    local target, rank = choose_cast(view)
+    if #frame.pending ~= 0 then return {} end
+    local target, rank = choose_cast(view, request_pending)
+    if view.caster and view.caster.ready == true then request_pending = false end
     if not target then return {} end
     local action = {
       capability = "heal", sessionId = frame.session_id, selfGuid = view.caster.guid,
@@ -146,9 +153,11 @@ return {
     return {action = action}
   end,
   export_state = function()
-    return {version = 1, data = {}}
+    return {version = 1, data = {requestPending=request_pending}}
   end,
   import_state = function(checkpoint)
-    return checkpoint.version == 1
+    if checkpoint.version ~= 1 or type(checkpoint.data) ~= "table" then return false end
+    request_pending = checkpoint.data.requestPending == true
+    return true
   end,
 }

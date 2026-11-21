@@ -37,7 +37,7 @@ func (s *Service) healCasterReadyLocked(w *worldv1.SnapshotResponse) string {
 	}
 	if s.clientControlLost || s.clientControlRestoring || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed ||
 		s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) ||
-		s.recovery.state.Active || s.crowdControl.active || self.ChannelSpellId != 0 || self.UnitFlags&0x2000 != 0 {
+		s.crowdControl.active || self.ChannelSpellId != 0 || self.UnitFlags&0x2000 != 0 {
 		return "healing_caster_busy"
 	}
 	return ""
@@ -63,7 +63,7 @@ func observedHealingAttack(w *worldv1.SnapshotResponse, patient *worldv1.PlayerS
 	for _, creatures := range [][]*worldv1.CreatureState{w.NearbyCreatures, {w.OwnerTarget}} {
 		for _, creature := range creatures {
 			if creature != nil && creature.Present && creature.MapKnown && creature.MapId == patient.MapId &&
-				creature.AliveKnown && creature.Alive && ongoingAttack(creature, patient) {
+				creature.AliveKnown && creature.Alive && creature.AttackVictimKnown && creature.AttackVictimGuid == patient.Guid {
 				return true
 			}
 		}
@@ -125,8 +125,8 @@ func (s *Service) healingOptionsLocked(w *worldv1.SnapshotResponse, onlineMember
 	}
 	for _, players := range [][]*worldv1.PlayerState{{self, w.Owner}, w.NearbyPlayers} {
 		for _, p := range players {
-			if !healablePlayer(p, self.MapId) || !injuredForHealing(p, false) ||
-				p != self && (p.Guid == s.selfGUID || !members[p.Guid] || observedHealingPlayer(w, p.Guid) != p) {
+			if !healablePlayer(p, self.MapId) || !injuredForHealing(p) ||
+				p != self && (p.Guid == s.selfGUID || !s.healingAllyLocked(w, p, members) || observedHealingPlayer(w, p.Guid) != p) {
 				continue
 			}
 			rangeYards := float64(0)
@@ -167,13 +167,13 @@ func (s *Service) CastHeal(ctx context.Context, r *actionsv1.CastHealRequest) (*
 	}
 	self, target := w.Self, observedHealingPlayer(w, r.TargetGuid)
 	heal, learned := s.learnedContractsLocked()[r.SpellId]
-	if !healablePlayer(target, self.MapId) || !injuredForHealing(target, false) ||
-		target.Guid != s.selfGUID && (s.independent || !s.healingPartyLocked(ctx)[target.Guid]) ||
+	if !healablePlayer(target, self.MapId) || !injuredForHealing(target) ||
+		!s.healingAllyLocked(w, target, s.healingPartyLocked(ctx)) ||
 		!s.spellbookKnown || !learned || !s.healRankEligibleLocked(self, target, heal, s.pos) {
 		return nil, status.Error(codes.FailedPrecondition, "exact learned heal and current injured in-range patient required")
 	}
 	attempts := s.state.HealAttempts
-	if !s.castHealLocked(ctx, target, heal, false, false, true) && s.state.HealAttempts == attempts {
+	if !s.castHealLocked(ctx, target, heal) && s.state.HealAttempts == attempts {
 		return nil, status.Error(codes.FailedPrecondition, s.state.Reason)
 	}
 	return s.stateLocked(), nil

@@ -149,9 +149,9 @@ func TestLearnedUnfamiliarHealAdaptsWithoutIDOrClassBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.spellData = c
-	s.setKnownSpell(987654, true)
+	s.applySpellbookLocked(map[uint32]bool{987654: true})
 	f.world.Owner.Health = 30
-	s.Tick(context.Background())
+	tickLuaHealing(t, s)
 	if lastCast(f) != 987654 {
 		t.Fatal("new learned heal did not adapt", &s.state)
 	}
