@@ -31,9 +31,7 @@ func TestItemDisposalActualEncounterBundleUsesItsSharedGear(t *testing.T) {
 		{"edited_shared_score", strings.Replace(string(bundle), expression, expression+"-100", 1), "keep"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := New()
-			load(t, r, "local policy=(function()\n"+tc.source+"\nend)()\nreturn {decide=policy.disposal_evaluation}")
-			disposalArmorResult(t, r, frame, tc.want)
+			disposalArmorProductionResult(t, "local policy=(function()\n"+tc.source+"\nend)()\nreturn {decide=policy.disposal_evaluation}", frame, tc.want)
 		})
 	}
 }
