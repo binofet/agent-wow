@@ -31,6 +31,7 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 	case opcode.SMSGTransferPending:
 		if len(payload) >= 4 {
 			s.encounterVisit.bound = false
+			s.navigationGoalKnown = false
 		}
 	case opcode.SMSGLoginVerifyWorld, opcode.SMSGNewWorld:
 		if !validEncounterWorldEntry(payload) {
@@ -39,6 +40,8 @@ func (s *Service) observeEncounterVisitLocked(op uint32, payload []byte) {
 		s.encounterVisit.revision++
 		s.encounterVisit.mapID = binary.LittleEndian.Uint32(payload)
 		s.encounterVisit.bound = true
+		s.navigationGoalKnown = false
+		s.state.BodyMovement = nil
 		if op == opcode.SMSGLoginVerifyWorld {
 			s.targetProtection.reset()
 		}
