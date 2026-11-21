@@ -37,6 +37,7 @@ func planRecoveryNavigation(ctx context.Context, root string, mapID uint32, from
 type deathRecovery struct {
 	state                        actionsv1.RecoveryState
 	delayAt, delayUntil          time.Time
+	delayEpoch                   uint64
 	queryPending                 bool
 	lifeKnown, lastObservedAlive bool
 	path                         []position
@@ -54,7 +55,7 @@ func (r *deathRecovery) snapshot(now time.Time) *actionsv1.RecoveryState {
 	s := proto.Clone(&r.state).(*actionsv1.RecoveryState)
 	s.Enabled = true // Compatibility capability fact, never an ordinary off switch.
 	s.CorpseQueryPending = r.queryPending
-	if now.Before(r.delayUntil) {
+	if s.ReclaimDelayKnown && now.Before(r.delayUntil) {
 		s.ReclaimDelayRemainingMs = uint64(r.delayUntil.Sub(now).Milliseconds())
 	}
 	return s
@@ -130,7 +131,8 @@ func (s *Service) observeRecoveryLifeLocked(w *worldv1.SnapshotResponse) {
 	}
 	if !p.Alive && (!r.lifeKnown || r.lastObservedAlive) {
 		r.state = actionsv1.RecoveryState{Enabled: true, Active: r.state.Active,
-			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed}
+			DeathEpoch: r.state.DeathEpoch + 1, Phase: "observed_death", MovementUnconfirmed: s.state.MotionUnconfirmed,
+			ReclaimDelayKnown: r.delayEpoch == r.state.DeathEpoch+1}
 		r.queryPending = false
 		r.path = nil
 		r.releasePositionRevision, r.releaseMap = 0, 0
@@ -243,8 +245,12 @@ func (s *Service) recoveryPacketLocked(op uint32, payload []byte) (bool, error) 
 			return true, errors.New("invalid corpse reclaim delay")
 		}
 		r.delayAt = s.now()
+		r.delayEpoch = r.state.DeathEpoch
+		if !r.lifeKnown || r.lastObservedAlive {
+			r.delayEpoch++
+		}
 		r.delayUntil = s.now().Add(time.Duration(binary.LittleEndian.Uint32(payload)) * time.Millisecond)
-		r.state.ReclaimDelayKnown = true
+		r.state.ReclaimDelayKnown = r.delayEpoch == r.state.DeathEpoch
 		return true, nil
 	case opcode.SMSGDeathReleaseLoc:
 		if len(payload) != 16 {

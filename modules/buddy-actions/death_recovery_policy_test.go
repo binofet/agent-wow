@@ -111,6 +111,7 @@ func TestDeathReleaseQueryNativeTickIsPassiveAndEpochIsObservedWithoutEnable(t *
 	if countOpcode(f, opcode.CMSGRepopRequest) != 0 {
 		t.Fatal("native maintenance selected release", f.packets)
 	}
+	s.EncounterObservation(context.Background(), &emptypb.Empty{})
 	r := &actionsv1.DeathActionRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, DeathEpoch: s.recovery.state.DeathEpoch}
 	if _, err := s.Recovery(context.Background(), &actionsv1.ToggleRequest{}); err != nil {
 		t.Fatal(err)
