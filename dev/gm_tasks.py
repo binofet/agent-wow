@@ -477,12 +477,12 @@ def main(argv=None):
     with runtime.Store(args.state_dir.absolute()) as store:
         store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
         rpc=runtime.RPC(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
+        host=Host(store,rpc,SessionTransport(rpc,config),runtime.Bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
+        identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
+        prior=host.data.get('identity')
+        if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
         with runtime.Store(writer_folder(ROOT,sid,config).absolute()) as owner:
             owned=claim_writer(owner,store.folder)
-            host=Host(store,rpc,SessionTransport(rpc,config),runtime.Bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
-            identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
-            prior=host.data.get('identity')
-            if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
             host.data['identity']=identity;host.persist()
             for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:setattr(host,'stopping',True))
             result=host.run()

@@ -59,6 +59,15 @@ class GMTaskLifecycleTests(unittest.TestCase):
    root=Path(temp).resolve();folder,policy=self.fixture(root);policy.unlink()
    fault=gm.task_faults(root,87,'aw-123','http://127.0.0.1:8090/rpc')[0]
    self.assertTrue(fault['evidence']['sourceError']);self.assertEqual(fault['sourcePath'],str(policy))
+ def test_replaced_body_cannot_claim_writer_for_old_recovery(self):
+  with tempfile.TemporaryDirectory() as temp:
+   root=Path(temp).resolve();folder,_=self.fixture(root)
+   (root/'goal.json').write_text('{"id":"a"}');(root/'transport.json').write_text('{}')
+   rpc=types.SimpleNamespace(call=lambda *a,**k:{'sessionId':'aw-456','selfGuid':'87'})
+   with patch.object(gm.runtime,'RPC',return_value=rpc),patch.object(gm,'claim_writer') as claim:
+    with self.assertRaisesRegex(ValueError,'another GM body'):
+     gm.main(['run','--state-dir',str(folder),'--goal',str(root/'goal.json'),'--transport',str(root/'transport.json'),'--rpc-url','http://127.0.0.1:8090/rpc'])
+   claim.assert_not_called()
  def test_legacy_process_metadata_is_interpreted_not_executed_as_argv(self):
   with tempfile.TemporaryDirectory() as temp:
    root=Path(temp).resolve();folder,_=self.fixture(root);store=gm.runtime.Store(folder)
