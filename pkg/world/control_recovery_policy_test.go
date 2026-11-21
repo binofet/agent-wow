@@ -159,7 +159,7 @@ func TestControlRecoveryInstantBreakPrecedesTrainingHandoffInCombinedPolicy(t *t
 		FearAuras: []*actionsv1.ObservedAura{{Slot: 5, SpellId: 7399, Revision: 1, MetadataKnown: true, Negative: true}}, Options: []*actionsv1.ControlBreakOption{{SpellId: 59752, Ready: true}}}}
 	// The shared encounter's real engagement/healing facts normally request
 	// interaction release. Instant self recovery must run without that STOP.
-	obs.Targets[fallbackGUID(fallbackNPC)].Engaged = true
+	addFallbackTarget(obs, fallbackNPC, fallbackSelf, 100)
 	d, err := host.Decide(context.Background(), map[string]any{"kind": "encounter", "observationSequence": observer.observe(obs)})
 	if err != nil {
 		t.Fatal(err)
