@@ -7,6 +7,31 @@ import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
 message ToggleRequest { bool enabled = 1; }
+// Finite custody of idle/follow movement only. Does not disable standing
+// intents, healing, defense, casting or explicit actor movement capabilities.
+message MovementOwnerRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string owner = 3;
+  string token = 4; // exact token renews this owner; empty acquires a new lease
+  uint32 lease_ms = 5; // caller chooses a positive finite TTL
+}
+message MovementOwnerRelease {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string owner = 3;
+  string token = 4;
+}
+message MovementOwnerState {
+  bool active = 1;
+  string owner = 2;
+  uint64 remaining_ms = 3;
+  uint64 revision = 4;
+}
+message MovementOwnerLease {
+  string token = 1; // never included in ordinary observations
+  State state = 2;
+}
 // Normal client UI selection only; does not change the Lua combat queue.
 message SelectTargetRequest {
   string session_id = 1;
@@ -346,6 +371,7 @@ message State {
   MeleeOperation last_melee_operation = 116;
   TargetMovementState target_movement = 117;
   BodyMovementState body_movement = 118;
+  MovementOwnerState movement_owner = 119;
 }
 message ProtectedTarget {
   uint64 target_guid = 1;
@@ -529,6 +555,7 @@ message NavigationObservation {
   float goal_y = 10;
   float goal_z = 11;
   BodyMovementState body_movement = 12;
+  MovementOwnerState movement_owner = 13;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -718,6 +745,8 @@ service BuddyActions {
   rpc SpellToolkit(google.protobuf.Empty) returns (SpellToolkitState);
   rpc ReloadBehavior(BehaviorReloadRequest) returns (BehaviorStatus);
   rpc Behavior(google.protobuf.Empty) returns (BehaviorStatus);
+  rpc AcquireMovement(MovementOwnerRequest) returns (MovementOwnerLease);
+  rpc ReleaseMovement(MovementOwnerRelease) returns (State);
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);

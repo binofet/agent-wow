@@ -114,7 +114,7 @@ func (s *Service) EncounterObservation(ctx context.Context, _ *emptypb.Empty) (*
 	players := s.encounterPlayers(w, online, out)
 	out.TargetMovement = s.targetMovementSnapshotLocked()
 	out.Navigation = &actionsv1.NavigationObservation{BodyMovementSupported: true, Following: s.state.Following,
-		OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
+		MovementOwner: s.movementOwnerStateLocked(), OwnerGuid: w.GetOwner().GetGuid(), Phase: s.state.Reason, Detail: s.state.NavReason, RouteAvailable: s.state.NavAvailable,
 		MotionUnconfirmed: s.state.MotionUnconfirmed, GoalKnown: s.navigationGoalKnown,
 		GoalX: s.navigationGoal.x, GoalY: s.navigationGoal.y, GoalZ: s.navigationGoal.z}
 	if s.state.BodyMovement != nil {

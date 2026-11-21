@@ -99,6 +99,7 @@ type Service struct {
 	navigationGoal                             position
 	navigationGoalKnown                        bool
 	thermaplugg                                thermapluggButtons
+	movementOwner                              movementOwner
 	interactionToken                           string
 	interactionUntil                           time.Time
 	harvestGuardAt                             time.Time
@@ -215,6 +216,7 @@ func (s *Service) stateLocked() *actionsv1.State {
 	out.CrowdControlApproachSupported = true
 	out.CrowdControl = s.crowdControl.snapshot(s.now())
 	out.TargetMovement = s.targetMovementSnapshotLocked()
+	out.MovementOwner = s.movementOwnerStateLocked()
 	s.targetProtection.snapshot(out, s.now())
 	out.Buffing = s.state.Buffing
 	out.BuffLeaseRemainingMs = s.buffLeaseRemainingLocked()
@@ -646,6 +648,8 @@ func (s *Service) BeforeLogout(ctx context.Context, _ *emptypb.Empty) (*emptypb.
 	s.state.InteractionHarvest = false
 	s.state.HarvestGuardGuids = nil
 	s.interactionToken = ""
+	s.movementOwner.owner, s.movementOwner.token = "", ""
+	s.movementOwner.until = time.Time{}
 	s.state.Following = false
 	s.state.Assisting = false
 	s.state.Practicing = false
@@ -1082,6 +1086,7 @@ func (s *Service) explicitStopLocked(ctx context.Context) bool {
 func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.expireMovementOwnerLocked()
 	s.observeHostWeaponMetadataLocked(ctx)
 	if s.bodyMoving {
 		return
@@ -1308,6 +1313,14 @@ func (s *Service) Tick(ctx context.Context) {
 	// may still act; native formation must not steer back toward the owner.
 	if s.targetMovementActiveLocked() {
 		s.lastStep = now
+		return
+	}
+	if s.movementOwner.owner != "" {
+		// Explicit Lua movement and standing support/defense have already had
+		// their turn above. Only the competing idle/follow writer yields.
+		s.stopLocked(ctx)
+		s.lastStep = now
+		s.state.Reason = "finite_movement_owner_active"
 		return
 	}
 	if s.followDungeonPortalLocked(ctx, snapshot, now) {

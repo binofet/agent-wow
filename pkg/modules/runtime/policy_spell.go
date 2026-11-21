@@ -55,6 +55,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "movement_owner" {
+		return p.resolveMovementOwner(action)
+	}
 	if capability == "move_body" {
 		return p.resolveBodyMovement(action)
 	}

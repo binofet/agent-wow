@@ -34,6 +34,8 @@ rpc:
   spell_toolkit: /warcraftbuddy.actions.v1.BuddyActions/SpellToolkit
   reload_behavior: /warcraftbuddy.actions.v1.BuddyActions/ReloadBehavior
   behavior: /warcraftbuddy.actions.v1.BuddyActions/Behavior
+  acquire_movement: /warcraftbuddy.actions.v1.BuddyActions/AcquireMovement
+  release_movement: /warcraftbuddy.actions.v1.BuddyActions/ReleaseMovement
   acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
   release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
@@ -86,6 +88,8 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  acquire_movement: {effect: mutation, description: Acquire or renew finite idle and follow movement custody while preserving healing defense casting and explicit actor movement}
+  release_movement: {effect: mutation, description: Release the exact session body and owner movement token without changing standing follow intent}
   select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}
   approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
   move_body: {effect: mutation, description: Execute one bounded body-relative step or hop at observed speed; unsupported starts settle to measured ground on the current visit}
