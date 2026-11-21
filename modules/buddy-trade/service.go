@@ -472,8 +472,23 @@ func (s *Service) Tick(ctx context.Context) {
 	if phase != "OPEN" || s.prepareTradePickLock(call, wCombat) || !accepted {
 		return
 	}
+	consent, reason := s.requestTradeConsent(call, wCombat)
+	if consent == nil {
+		s.tradeConsentWait(reason)
+		return
+	}
+	if err := consent.renew(call, s); err != nil {
+		s.tradeConsentWait("trade_consent_lease_unconfirmed")
+		return
+	}
 	if err := s.nearby(call); err != nil {
 		s.fail("trade_partner_not_nearby")
+		return
+	}
+	// Nearby's Actions observation may follow a lease revocation/replacement.
+	// Status exposes no token, so prove the same token again before last World.
+	if err := consent.renew(call, s); err != nil {
+		s.tradeConsentWait("trade_consent_lease_unconfirmed")
 		return
 	}
 	// Check every offered GUID and entire stack again immediately before consent.
@@ -499,6 +514,11 @@ func (s *Service) Tick(ctx context.Context) {
 			s.fail("offered_stack_changed")
 			return
 		}
+	}
+	if !consent.readyLocked(call, s, w) {
+		s.mu.Unlock()
+		s.tradeConsentWait("trade_consent_context_changed_before_accept")
+		return
 	}
 	s.state.Phase = "ACCEPT_SENT"
 	s.pickLock.accepted = s.pickLock.queued

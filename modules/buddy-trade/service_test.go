@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type fakeSession struct {
@@ -57,6 +59,10 @@ func (f *fakeSession) InvokeModule(_ context.Context, r *modv1.InvokeModuleReque
 	defer f.mu.Unlock()
 	var result proto.Message
 	switch r.Module + "." + r.Method {
+	case "session.trade_consent":
+		// Existing tests exercise native mechanics with explicit policy consent.
+		result, _ = structpb.NewStruct(map[string]any{"available": true, "revision": strings.Repeat("ab", 32),
+			"decision": map[string]any{"kind": "accept", "reason": "fixture_accept"}})
 	case "buddy-world.snapshot":
 		result = f.world
 	case "buddy-actions.status":
