@@ -50,6 +50,9 @@ message JunkDisposal {
   string name = 5;
   string status = 6;
   uint64 backpack_revision = 7;
+  uint32 source_bag = 8;
+  uint32 source_slot = 9;
+  uint64 inventory_revision = 10;
 }
 message JunkToggle { bool enabled = 1; }
 message JunkRequest {
@@ -58,6 +61,9 @@ message JunkRequest {
   uint64 backpack_revision = 3;
   uint32 backpack_slot = 4;
   uint64 expected_item_guid = 5;
+  uint32 source_bag = 6;
+  uint32 source_slot = 7;
+  uint64 inventory_revision = 8;
 }
 message BoundRequest { string session_id = 1; uint64 revision = 2; }
 message ItemRequest {

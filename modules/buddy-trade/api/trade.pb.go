@@ -354,16 +354,19 @@ func (x *State) GetJunkReason() string {
 }
 
 type JunkDisposal struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	BackpackSlot     uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
-	ItemGuid         uint64                 `protobuf:"varint,2,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
-	Entry            uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
-	Count            uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
-	Name             string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
-	Status           string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
-	BackpackRevision uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	BackpackSlot      uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ItemGuid          uint64                 `protobuf:"varint,2,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry             uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count             uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	Name              string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+	Status            string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	SourceBag         uint32                 `protobuf:"varint,8,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot        uint32                 `protobuf:"varint,9,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,10,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *JunkDisposal) Reset() {
@@ -445,6 +448,27 @@ func (x *JunkDisposal) GetBackpackRevision() uint64 {
 	return 0
 }
 
+func (x *JunkDisposal) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
 type JunkToggle struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -490,14 +514,17 @@ func (x *JunkToggle) GetEnabled() bool {
 }
 
 type JunkRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Revision         uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	BackpackRevision uint64                 `protobuf:"varint,3,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	BackpackSlot     uint32                 `protobuf:"varint,4,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
-	ExpectedItemGuid uint64                 `protobuf:"varint,5,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision          uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,3,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	BackpackSlot      uint32                 `protobuf:"varint,4,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ExpectedItemGuid  uint64                 `protobuf:"varint,5,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
+	SourceBag         uint32                 `protobuf:"varint,6,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot        uint32                 `protobuf:"varint,7,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,8,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *JunkRequest) Reset() {
@@ -561,6 +588,27 @@ func (x *JunkRequest) GetBackpackSlot() uint32 {
 func (x *JunkRequest) GetExpectedItemGuid() uint64 {
 	if x != nil {
 		return x.ExpectedItemGuid
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
 	}
 	return 0
 }
@@ -1413,7 +1461,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x12last_junk_disposal\x18\x18 \x01(\v2$.warcraftbuddy.trade.v1.JunkDisposalR\x10lastJunkDisposal\x122\n" +
 	"\x15junk_stacks_destroyed\x18\x19 \x01(\x04R\x13junkStacksDestroyed\x12\x1f\n" +
 	"\vjunk_reason\x18\x1a \x01(\tR\n" +
-	"junkReason\"\xd5\x01\n" +
+	"junkReason\"\xc4\x02\n" +
 	"\fJunkDisposal\x12#\n" +
 	"\rbackpack_slot\x18\x01 \x01(\rR\fbackpackSlot\x12\x1b\n" +
 	"\titem_guid\x18\x02 \x01(\x04R\bitemGuid\x12\x14\n" +
@@ -1421,17 +1469,28 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x04 \x01(\rR\x05count\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12+\n" +
-	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\"&\n" +
+	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18\b \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18\t \x01(\rR\n" +
+	"sourceSlot\x12-\n" +
+	"\x12inventory_revision\x18\n" +
+	" \x01(\x04R\x11inventoryRevision\"&\n" +
 	"\n" +
 	"JunkToggle\x12\x18\n" +
-	"\aenabled\x18\x01 \x01(\bR\aenabled\"\xc8\x01\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\"\xb7\x02\n" +
 	"\vJunkRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\x12+\n" +
 	"\x11backpack_revision\x18\x03 \x01(\x04R\x10backpackRevision\x12#\n" +
 	"\rbackpack_slot\x18\x04 \x01(\rR\fbackpackSlot\x12,\n" +
-	"\x12expected_item_guid\x18\x05 \x01(\x04R\x10expectedItemGuid\"I\n" +
+	"\x12expected_item_guid\x18\x05 \x01(\x04R\x10expectedItemGuid\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18\x06 \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18\a \x01(\rR\n" +
+	"sourceSlot\x12-\n" +
+	"\x12inventory_revision\x18\b \x01(\x04R\x11inventoryRevision\"I\n" +
 	"\fBoundRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
