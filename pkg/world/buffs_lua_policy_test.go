@@ -185,9 +185,31 @@ func TestEncounterBuffPolicyYieldsToHealingAndApproachesSelectedAlly(t *testing.
 	self.MaxHealth = 100
 	buff := &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", TargetRule: "ally", FamilyId: 1243, Rank: 2, Cost: 10, MaxRange: 30}
 	obs.Spells["1244"] = buff
-	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	decision := p.decide(observeSparseEncounter(t, p, obs))
+	out := decision.Output
 	if out["action"].(map[string]any)["capability"] != "heal" {
 		t.Fatal("buff displaced real triage", out)
+	}
+	id, err := p.host.ReserveAction(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.host.Enqueue(behavior.Event{Kind: "buff_request", Value: map[string]any{"source": "buffs"}}); err != nil {
+		t.Fatal(err)
+	}
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || p.host.Status().Pending != 1 {
+		t.Fatal("ensure request bypassed pending healing custody", out, p.host.Status())
+	}
+	if _, err = p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- same-session buff request", p.host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	if p.host.Status().Pending != 1 {
+		t.Fatal("reload lost the outstanding heal")
+	}
+	if _, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionNotDispatched}}); err != nil {
+		t.Fatal(err)
 	}
 	obs.Healing.Patients, obs.Healing.Spells = nil, nil
 	obs.Spells["6063"].Ready = false
