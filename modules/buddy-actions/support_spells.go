@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"sort"
 	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
@@ -106,56 +105,6 @@ func (s *Service) supportSnapshotLocked(w *worldv1.SnapshotResponse) {
 			s.pendingTarget = 0
 		}
 	}
-}
-
-func (s *Service) resurrectionTickLocked(ctx context.Context, w *worldv1.SnapshotResponse) bool {
-	s.supportSnapshotLocked(w)
-	if s.independent || s.closed || s.state.InteractionOwner != "" || s.state.CastPending || s.now().Before(s.nextHeal) || s.now().Before(s.nextAssist) || safeSelfCombat(w, s.selfGUID) != "" || w.Self.UnitFlags&(0x80000|0x2000) != 0 || !s.refreshPositionLocked(w) || s.state.MotionUnconfirmed {
-		return false
-	}
-	spells := s.candidatesLocked(spellcatalog.Resurrect)
-	if len(spells) == 0 {
-		return false
-	}
-	members := s.healingPartyLocked(ctx)
-	owners := make([]uint64, 0, len(members))
-	for guid, on := range members {
-		if !on || guid == s.selfGUID {
-			continue
-		}
-		p := observedHealingPlayer(w, guid)
-		if p != nil && p.Present && p.UnitFlagsKnown && p.UnitFlags&0x80000 != 0 {
-			return false
-		}
-		if !s.resurrectionBindings[guid] {
-			owners = append(owners, guid)
-		}
-	}
-	sort.Slice(owners, func(i, j int) bool { return owners[i] < owners[j] })
-	for _, r := range spells {
-		if r.Power != 0 || !w.Self.PowerKnown || w.Self.PowerType != 0 || uint64(w.Self.Power) < spellCost(r, w.Self) || s.now().Before(s.spellReady[r.ID]) {
-			continue
-		}
-		for _, owner := range owners {
-			target := s.resurrectionTargetLocked(w, owner, r, 0)
-			if target == 0 {
-				continue
-			}
-			if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
-				return true
-			}
-			fresh, err := s.snapshot(ctx)
-			if err != nil || safeSelfCombat(fresh, s.selfGUID) != "" || fresh.Self.UnitFlags&(0x80000|0x2000) != 0 || !s.refreshPositionLocked(fresh) || !fresh.Self.PowerKnown || fresh.Self.PowerType != 0 || uint64(fresh.Self.Power) < spellCost(r, fresh.Self) || !s.healingPartyLocked(ctx)[owner] {
-				return false
-			}
-			again := s.resurrectionTargetLocked(fresh, owner, r, 0)
-			if again != target {
-				return false
-			}
-			return s.castResurrectionLocked(ctx, r, target, owner)
-		}
-	}
-	return false
 }
 
 func (s *Service) castResurrectionLocked(ctx context.Context, r spellcatalog.Spell, target, owner uint64) bool {
