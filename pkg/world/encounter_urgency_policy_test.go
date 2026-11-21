@@ -18,7 +18,7 @@ func urgencyModule(t *testing.T, file, body string) *behavior.Session {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := "local module=(function()\n" + string(data) + "\nend)()\nreturn {decide=function(frame) " + body + " end}"
+	source := "local module=(function()\n" + string(data) + "\nend)()\nreturn {on_event=function() return true end, decide=function(frame) " + body + " end, export_state=function() return {version=1,data={}} end, import_state=function(saved) return saved.version==1 end}"
 	host, err := behavior.NewSession(context.Background(), "urgency-module", source)
 	if err != nil {
 		t.Fatal(err)
