@@ -26,6 +26,10 @@ _harvest_loader = importlib.machinery.SourceFileLoader('maintenance_harvest', st
 _harvest_spec = importlib.util.spec_from_loader(_harvest_loader.name, _harvest_loader)
 harvest = importlib.util.module_from_spec(_harvest_spec)
 _harvest_loader.exec_module(harvest)
+_town_loader = importlib.machinery.SourceFileLoader('maintenance_town_policy', str(ROOT/'dev/town_policy.py'))
+_town_spec = importlib.util.spec_from_loader(_town_loader.name, _town_loader)
+town_policy = importlib.util.module_from_spec(_town_spec)
+_town_loader.exec_module(town_policy)
 c, Error, integer = sync.converse, sync.Error, sync.integer
 ROSTER = sync.ROSTER
 IDENTITY = {'version': 1, 'ownerGuid': 3, 'mode': 'training_stipend_and_class_training',
@@ -533,8 +537,14 @@ class Maintenance:
             raise Error('Class trainer is moving')
         distance=math.sqrt(sum((creature.get(k,0)-pos.get(k,0))**2 for k in ('x','y','z')))
         key=(body,npc,integer(world['self'].get('level',0)))
-        if (not 4<distance<=100 or self.travel_attempts.get(key,0)>=3
+        if (self.travel_attempts.get(key,0)>=3
                 or key not in self.travel_attempts and len(self.travel_attempts)>=128):
+            self.status['phase']='class_trainer_outside_local_travel_or_attempt_limit'
+            return None
+        # Recheck the selected destination against the current pose and the
+        # same accepted Lua range policy; never substitute another NPC here.
+        current=dict(candidate,distanceKnown=True,distance=distance,interactable=False)
+        if not self.trainer_destinations(state,[current],scope='travel'):
             self.status['phase']='class_trainer_outside_local_travel_or_attempt_limit'
             return None
         controls={k:actions.get(k,False) for k in ('following','healing','assisting','buffing')}
@@ -570,6 +580,23 @@ class Maintenance:
             self.status['phase']='class_trainer_arrival_not_observed'
             return None
         return fresh,matches[0],world['self'],(body,owner,controls)
+
+    def trainer_destinations(self,state,rows,scope='nearby'):
+        observed, candidates = {}, []
+        for row in rows:
+            if not isinstance(row,dict):raise Error('Actual trainer observation required')
+            guid=integer(row.get('creature',{}).get('guid',0))
+            distance=row.get('distance',0)
+            if (guid>>48!=0xf130 or not guid&0xffffff or row.get('distanceKnown') is not True
+                    or type(distance) not in (int,float) or not math.isfinite(distance) or distance<0):continue
+            if guid in observed:raise Error('Duplicate trainer observation')
+            observed[guid]=row
+            candidates.append((distance,guid,row.get('interactable') is True))
+        if not candidates:return []
+        try:
+            ranked=town_policy.rank_trainers(self.rpc,state,self.guid,candidates,scope)
+        except town_policy.Error as error:raise Error(str(error)) from None
+        return [observed[guid] for _,guid in ranked]
 
     def tick(self):
         if self.persistence_failed:raise Error('Maintenance persistence failed; restart from the durable journal')
@@ -664,17 +691,18 @@ class Maintenance:
                 for row in exhausted_nearby:
                     self.return_from_exhausted_inn(sync.session_id(state),row.get('creature',{}))
                 return
-        trainers = [row for row in nearby if row.get('interactable') is True]
+        candidates=[row for row in nearby if row.get('interactable') is True or
+            row.get('blockedReason')=='trainer_outside_conservative_range' and
+            self.travel_attempts.get((sync.session_id(state),integer(row.get('creature',{}).get('guid',0)),integer(own.get('level',0))),0)<3]
+        ranked=self.trainer_destinations(state,candidates)
+        trainers = [row for row in ranked if row.get('interactable') is True]
         travel_guard=None
         if not trainers:
-            candidates=[row for row in nearby if row.get('blockedReason')=='trainer_outside_conservative_range'
-                and row.get('distanceKnown') is True and type(row.get('distance')) in (int,float)
-                and math.isfinite(row['distance']) and 4<row['distance']<=100
-                and self.travel_attempts.get((sync.session_id(state),integer(row.get('creature',{}).get('guid',0)),integer(own.get('level',0))),0)<3]
+            candidates=ranked
             if not candidates:
                 self.status['phase'] = 'waiting_for_training_confirmation' if pending else 'waiting_near_class_trainer_or_mailbox'
                 return
-            arrival=self.travel_trainer(discovery,min(candidates,key=lambda row:(row['distance'],integer(row['creature']['guid']))))
+            arrival=self.travel_trainer(discovery,candidates[0])
             if arrival is None:return
             discovery,trainer,own,travel_guard=arrival
             state,trainers=discovery['state'],[trainer]

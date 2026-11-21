@@ -11,6 +11,8 @@ local portal_approach_yards = 45
 local service_arrival_yards = 3
 local vendor_search_yards, vendor_interaction_yards = 35,4.5
 local vendor_prefer_nearest = true
+local trainer_search_yards, trainer_interaction_yards = 100,4
+local trainer_prefer_nearest = true
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -46,29 +48,44 @@ local function at_target(self, target, radius)
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
 end
 
--- Both town planning and the finite sale worker consult this export from the
+-- Town planning and the finite service workers consult this export from the
 -- character's current accepted policy. Callers supply mechanically validated
 -- observed NPCs; this policy owns the search radius and destination order.
 function M.service_destination(input)
-    if type(input)~="table" or input.kind~="vendor" or
-       (input.scope~="nearby" and input.scope~="interactable") or
-       type(input.candidates)~="table" or #input.candidates>96 then return {} end
-    local radius=input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards
+    if type(input)~="table" or (input.kind~="vendor" and input.kind~="trainer") or
+       (input.scope~="nearby" and input.scope~="interactable" and input.scope~="travel") or
+       type(input.candidates)~="table" or #input.candidates>97 then return {} end
+    local trainer=input.kind=="trainer"
+    if not trainer and (input.scope=="travel" or #input.candidates>96) then return {} end
+    local radius=trainer and trainer_search_yards or
+        (input.scope=="nearby" and vendor_search_yards or vendor_interaction_yards)
+    local prefer_nearest=trainer and trainer_prefer_nearest or not trainer and vendor_prefer_nearest
     if not number(radius) or radius<=0 then return {} end
     local ranked,seen={},{}
     for _,candidate in ipairs(input.candidates) do
         if type(candidate)~="table" or not identity(candidate.guid) or seen[candidate.guid] or
-           not number(candidate.distance) or candidate.distance<0 then return {} end
+           not number(candidate.distance) or candidate.distance<0 or
+           trainer and type(candidate.interactable)~="boolean" then return {} end
         seen[candidate.guid]=true
-        if candidate.distance<=radius then
+        local within=candidate.distance<=radius
+        local eligible=false
+        if trainer then
+            if candidate.interactable then
+                if input.scope~="travel" then eligible=true end
+            elseif input.scope~="interactable" and candidate.distance>trainer_interaction_yards and within then
+                eligible=true
+            end
+        elseif within then eligible=true end
+        if eligible then
             local index=#ranked+1
             for i,other in ipairs(ranked) do
                 local before=candidate.distance~=other.distance and
-                    ((vendor_prefer_nearest and candidate.distance<other.distance) or
-                     (not vendor_prefer_nearest and candidate.distance>other.distance))
+                    ((prefer_nearest and candidate.distance<other.distance) or
+                     (not prefer_nearest and candidate.distance>other.distance))
                 if candidate.distance==other.distance then
                     before=#candidate.guid<#other.guid or #candidate.guid==#other.guid and candidate.guid<other.guid
                 end
+                if trainer and candidate.interactable~=other.interactable then before=candidate.interactable end
                 if before then index=i;break end
             end
             for i=#ranked,index,-1 do ranked[i+1]=ranked[i] end
@@ -77,6 +94,7 @@ function M.service_destination(input)
     end
     local vendors={}
     for i,candidate in ipairs(ranked) do vendors[i]=candidate.guid end
+    if trainer then return {trainers=vendors} end
     return {vendors=vendors}
 end
 

@@ -9,10 +9,12 @@ import os
 import tempfile
 import types
 from unittest.mock import patch
+from test_town_policy import service_source, source_reply, policy_reply, bridge_factory
 
 loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__).with_name('party-maintenance')))
 spec=importlib.util.spec_from_loader(loader.name,loader)
 m=importlib.util.module_from_spec(spec);loader.exec_module(m)
+TRAINER_BRIDGE = m.town_policy.runtime.Bridge
 
 class RPC:
     def __init__(self):
@@ -25,6 +27,7 @@ class RPC:
         self.offer={'revision':'2','npcGuid':'17379390965327856171','expiresInMs':'20000','spells':[
             {'spellId':123,'costCopper':100,'requiredLevel':4}]}
         self.training={'sessionId':'body1','copperKnown':True,'copper':10000,'offer':self.offer}
+        self.policy_source=service_source()
         self.mail={'sessionId':'body1','listKnown':True,'listCurrent':True,'listRevision':'2',
             'mailboxGuid':'17370300000000000001','stipends':[{'mailId':5,'copper':10000}]}
         self.claim={'mailId':5,'status':'CLAIM_CONFIRMED','serverAcknowledged':True,'walletIncreaseObserved':True,'confirmedCopper':10000}
@@ -34,11 +37,15 @@ class RPC:
         self.route_reason,self.before_acquire,self.after_travel='trainer_travel_within_distance',None,None
     def call(self,method,params):
         self.calls.append((method,copy.deepcopy(params)))
-        if method=='buddy-world.snapshot':value=self.world
+        if method=='session.policy_source':
+            value=source_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']))
+        elif method=='session.attach':
+            value=policy_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']))
+        elif method=='buddy-world.snapshot':value=self.world
         elif method=='buddy-party.state':value={'group':self.group}
         elif method=='buddy-actions.status':value=self.actions
         elif method=='buddy-training.discover':
-            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'creature':{'guid':self.offer['npcGuid']}}]}
+            if self.trainer_x is None:value={'state':self.training,'nearby':[{'interactable':True,'distanceKnown':True,'distance':0,'creature':{'guid':self.offer['npcGuid']}}]}
             else:
                 x=self.actions['position']['x'];distance=abs(self.trainer_x-x)
                 creature=dict(guid=self.offer['npcGuid'],entry=(int(self.offer['npcGuid'])>>24)&0xffffff,
@@ -139,6 +146,8 @@ class InnRPC(RPC):
 
 class MaintenanceTests(unittest.TestCase):
     def setUp(self):
+        bridge_patch=patch.object(m.town_policy.runtime,'Bridge',side_effect=bridge_factory(TRAINER_BRIDGE))
+        bridge_patch.start();self.addCleanup(bridge_patch.stop)
         self.rpc=RPC();self.saved=[];self.now=[100]
         for name in ('quest_task_snapshot','area_quest_snapshot','party_town_snapshot'):
             mock=patch.object(m.c,name,return_value={'active':False});mock.start();self.addCleanup(mock.stop)
@@ -994,6 +1003,6 @@ class HarvestStatusTests(unittest.TestCase):
         m.harvest_after_maintenance(actor,worker,9)
         self.assertEqual(calls,['tick'])
 
-from test_town_policy import VendorDestinationTests
+from test_town_policy import VendorDestinationTests, TrainerDestinationTests
 
 if __name__=='__main__':unittest.main()
