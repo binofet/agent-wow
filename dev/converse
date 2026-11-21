@@ -32,6 +32,9 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
+_gm_task_spec=importlib.util.spec_from_file_location("gm_tasks",ROOT/"dev/gm_tasks.py")
+gm_tasks=importlib.util.module_from_spec(_gm_task_spec)
+_gm_task_spec.loader.exec_module(gm_tasks)
 _reward_spec = importlib.util.spec_from_file_location("quest_rewards", Path(__file__).with_name("quest-rewards.py"))
 quest_rewards = importlib.util.module_from_spec(_reward_spec)
 _reward_spec.loader.exec_module(quest_rewards)
@@ -3181,7 +3184,8 @@ class Conversation:
             policyCommands={"show":base+["show"]+binding,
                 "apply":base+["apply"]+binding+["--source","<PATH>","--expected-revision","<HASH>"],
                 "builtin":base+["builtin"]+binding+["--expected-revision","<HASH>"],
-                "input":["python3","-B",str(Path(workspace)/"dev/policy-input")]+binding+["--value","<JSON object>"]})
+                "input":["python3","-B",str(Path(workspace)/"dev/policy-input")]+binding+["--value","<JSON object>"]},
+            **({"gmTasks":gm_tasks.tools(ROOT,self.character_guid,url)} if self.character_guid==87 else {}))
 
     def poll_shared_quest(self):
         # The standing three-character worker owns main-party shares. Nix's

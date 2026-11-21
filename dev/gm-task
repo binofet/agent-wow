@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""Run, inspect or cancel a directly editable, ordered GM gameplay task."""
+from gm_tasks import main
+if __name__ == '__main__':
+    raise SystemExit(main())
