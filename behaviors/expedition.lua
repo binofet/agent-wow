@@ -89,24 +89,19 @@ local function reward_choice(context,choices)
         return choices[1],"only_offered_choice"
     end
     local config=context.state.goal.params.rewardSelection or rewardConfig
-    if type(config)~="table" or config.mode~="vendor_value" or type(config.items)~="table" then
+    if type(config)~="table" or type(config.items)~="table" then
         return nil,"reward_choice_requires_selection"
     end
-    if #choices>6 then return nil,"reward_choices_invalid" end
-    local best,bestValue,indices,ids=nil,-1,{},{}
-    for _,choice in ipairs(choices) do
-        local id,index,count=number(choice.itemId),number(choice.index),number(choice.count)
-        local item=config.items[tostring(id)]
-        if id<=0 or id%1~=0 or index<0 or index>=6 or index%1~=0 or count<1 or count>1000 or count%1~=0
-           or indices[tostring(index)] or ids[tostring(id)] then return nil,"reward_choices_invalid" end
-        indices[tostring(index)],ids[tostring(id)]=true,true
-        if type(item)~="table" or not equal(item.itemId,id) or item.available~=true or item.sellPriceKnown~=true
-           or type(item.sellPrice)~="number" or item.sellPrice<0 or item.sellPrice>1000000000
-           or item.sellPrice%1~=0 then return nil,"reward_choice_metadata_unknown" end
-        local value=item.sellPrice*count
-        if value>bestValue or (value==bestValue and index<number(best.index)) then best,bestValue=choice,value end
-    end
-    return best,"highest_verified_vendor_value",bestValue
+    local self=(context.observations.world or {}).self or {}
+    local selected=quest_rewards.decide({
+        mode=config.mode,choices=choices,items=config.items,
+        classId=self.classKnown==true and self.classId or nil,
+        level=self.levelKnown==true and self.level or nil,
+        raceId=self.raceKnown==true and self.raceId or nil,
+        weaponSubclasses=config.weaponSubclasses or {},
+    })
+    if selected.status~="selected" then return nil,selected.reason end
+    return choices[selected.position],selected.reason,selected.vendorValueCopper
 end
 
 local handlers,extensions={},{}
