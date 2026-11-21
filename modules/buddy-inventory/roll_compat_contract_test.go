@@ -76,7 +76,7 @@ func TestRollCompatibilityPreservesCurrentInventoryAndImportedTradeContracts(t *
 		var roundtrip inventoryv1.RollState
 		if err != nil || proto.Unmarshal(body, &roundtrip) != nil || !proto.Equal(feed, &roundtrip) ||
 			(roundtrip.Metadata[0].RawTemplateFacts.MaxStackCount == nil) != (maximum == nil) {
-			t.Fatal("nested roll metadata changed rich main facts or optional zero", feed, roundtrip, err)
+			t.Fatal("nested roll metadata changed rich main facts or optional zero", feed, &roundtrip, err)
 		}
 	}
 }
