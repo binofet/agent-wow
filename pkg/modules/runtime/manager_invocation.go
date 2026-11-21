@@ -166,6 +166,9 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/HealOnce" {
 		return m.queueLegacyHeal(ctx, inst, result)
 	}
+	if legacyResurrectionRequest(name, md.Path(), req) {
+		return m.queueLegacyResurrection(ctx, inst, req, result)
+	}
 	if consumable, legacy := legacyConsumableRequest(name, md.Path(), req); legacy {
 		return m.queueLegacyConsumable(ctx, inst, req, result, consumable)
 	}
