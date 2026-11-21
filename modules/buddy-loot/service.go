@@ -148,6 +148,11 @@ func (s *Service) Enable(ctx context.Context, r *lootv1.EnableRequest) (*lootv1.
 		s.until = s.now().Add(maintenanceLootPause)
 	}
 	s.state.Enabled = r.Enabled
+	if s.exactCorpse {
+		// Compatibility scheduling metadata applies to the remaining named
+		// gather controller, never the current Lua-selected corpse operation.
+		return s.snapshotLocked(), nil
+	}
 	if s.cleanup.source != 0 {
 		if r.Enabled {
 			s.until = s.now().Add(4 * time.Hour)
@@ -598,7 +603,7 @@ func (s *Service) Tick(ctx context.Context) {
 			}
 		}
 		if (s.state.Phase == "waiting_open" || s.state.Phase == "waiting_item" || s.state.Phase == "waiting_money" || s.state.Phase == "waiting_release") && !now.Before(s.deadline) {
-			if !s.questGather && (s.state.Enabled || s.hasUnsettledLootMutation()) {
+			if !s.questGather && (s.exactCorpse || s.state.Enabled || s.hasUnsettledLootMutation()) {
 				s.beginOrdinaryTimeout(ctx, "loot_response_timeout")
 				return
 			}

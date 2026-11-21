@@ -5,6 +5,7 @@ import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 import "modules/buddy-world/world.proto";
 import "modules/buddy-actions/actions.proto";
+// Legacy named quest/container scheduler only; ordinary corpse policy is Lua.
 message EnableRequest { bool enabled = 1; }
 message ItemReceipt { uint32 item_id = 1; uint32 count = 2; uint32 loot_slot = 3; }
 

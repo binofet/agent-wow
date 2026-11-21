@@ -693,7 +693,7 @@ local function quiet_for_mana(view, session_id, encounter)
         threat.attackingSelf == false and threat.attackingParty == false
 end
 
-local function decide(frame)
+local function decide_policy(frame)
     local out = decide_encounter(frame)
     if out.encounterOwnership and movement and policy_observation and
        not out.focusGuid and not (task_view and task_view.hold) and #frame.pending == 0 and not out.action then
@@ -705,17 +705,6 @@ local function decide(frame)
         end
     end
     if transient_tasks and not task_support_action and not transient_tasks.allow(task_view,policy_observation or observation or {},out.action) then out.action=nil end
-    if corpse_loot and (policy_observation or observation) then
-        local current=policy_observation or observation
-        local action=out.action
-        local urgent=out.focusGuid~=nil or action and (action.capability=="heal" or action.capability=="cleanse" or
-            action.capability=="interrupt" or action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start")
-        local loot=corpse_loot.decide(frame,current,out.action==nil and not out.focusGuid and #frame.pending==0,urgent)
-        out.corpseLoot=loot
-        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
-            out.action=loot.action
-        end
-    end
     if consumables and (policy_observation or observation) then
         local resting=consumables.decide(frame,policy_observation or observation,out.action==nil and #frame.pending==0)
         out.consumable=resting
@@ -746,6 +735,28 @@ local function decide(frame)
        action.observationSequence == expected and type(action.spellId) == "number" and
        action.spellId > 0 and action.spellId <= 4294967295 and action.spellId % 1 == 0 then
         out.action = action
+    end
+    return out
+end
+
+
+local function decide(frame)
+    local out=decide_policy(frame)
+    local current=policy_observation or observation
+    if corpse_loot and current then
+        local action=out.action
+        local urgent=out.focusGuid~=nil or task_support_action or action and
+            (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
+             action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
+             action.capability=="sap" or action.capability=="polymorph")
+        local quiet=out.action==nil and not out.focusGuid and #frame.pending==0 and
+            not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
+        local loot=corpse_loot.decide(frame,current,quiet,urgent)
+        out.corpseLoot=loot
+        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+            out.action=loot.action
+        end
+        if loot.action or loot.phase=="native_window_settlement" then out.followFormation=nil;out.portalCatchup=nil end
     end
     return out
 end

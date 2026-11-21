@@ -1,7 +1,7 @@
 -- One editable policy for ordinary corpse choice, movement and opening.
 -- Window/slot packet settlement is native; it does not choose the next corpse.
 local M={tuning={searchRange=12,maxHeight=1.5,openRange=3.75}}
-local state={seen={},sequence=0}
+local state={seen={},paused={},sequence=0}
 local observed
 local function id(value)return type(value)=="string" and value~="" and value~="0" end
 local function finite(value)local n=tonumber(value);return n and n==n and n-n==0 and n end
@@ -25,13 +25,23 @@ end
 function M.on_event(event)
  if event.kind=="corpse_loot_observation" then
   observed=event.value;state.sequence=event.sequence
-  if state.sessionId~=observed.sessionId then state={seen={},sessionId=observed.sessionId,sequence=event.sequence} end
+  if state.sessionId~=observed.sessionId then state={seen={},paused={},sessionId=observed.sessionId,sequence=event.sequence} end
   -- Absence is not proof that an uncertain corpse is a new loot source.
   for _,c in ipairs(observed.nearbyCreatures or {}) do
    if c.present and c.aliveKnown and c.alive and c.healthKnown and (c.health or 0)>0 then state.seen[c.guid]=nil end
   end
   local op=observed.operation
-  if op and op.openingTransportAttempted and id(op.corpseGuid) then state.seen[op.corpseGuid]=true end
+  if op and op.openingTransportAttempted and id(op.corpseGuid) and state.lastRequest~=op.requestId then
+   state.seen[op.corpseGuid]=true;state.lastRequest=op.requestId
+  end
+  if op and id(op.corpseGuid) and (observed.state or {}).inventoryPaused==true then
+   state.paused[op.corpseGuid]=observed.inventoryRevision
+  end
+  if (observed.state or {}).inventoryPaused~=true and (observed.generalFreeSlots or 0)>0 then
+   for g,revision in pairs(state.paused) do
+    if observed.inventoryRevision~=revision then state.seen[g]=nil;state.paused[g]=nil end
+   end
+  end
  elseif event.receipt and event.receipt.payload and event.receipt.payload.capability=="loot_open" then
   local p=event.receipt.payload
   if p.opening_transport_attempted and id(p.corpse_guid) then state.seen[p.corpse_guid]=true end
@@ -41,7 +51,7 @@ end
 function M.export_state()return {version=1,data=state}end
 function M.import_state(checkpoint)
  if checkpoint.version~=1 or type(checkpoint.data)~="table" or type(checkpoint.data.seen)~="table" then return false end
- state=checkpoint.data;observed=nil;return true
+ state=checkpoint.data;state.paused=state.paused or {};observed=nil;return true
 end
 function M.decide(frame,encounter,quiet,urgent)
  local o=observed

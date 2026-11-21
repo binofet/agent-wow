@@ -83,6 +83,7 @@ func (GatherStatus) EnumDescriptor() ([]byte, []int) {
 	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{0}
 }
 
+// Legacy named quest/container scheduler only; ordinary corpse policy is Lua.
 type EnableRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`

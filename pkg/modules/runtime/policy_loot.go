@@ -98,6 +98,9 @@ func (p *SessionPolicy) resolveCorpseLoot(action map[string]any, capability stri
 		var receipt map[string]any
 		if json.Unmarshal(raw, &receipt) == nil {
 			payload["result"] = receipt
+			if capability == "loot_open" && receipt["openingTransportAttempted"] != true && !attempted {
+				return behavior.ActionNotDispatched, payload
+			}
 		}
 		return behavior.ActionSettledUnverified, payload
 	}}, nil

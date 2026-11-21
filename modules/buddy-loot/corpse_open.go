@@ -116,8 +116,8 @@ func (s *Service) OpenCorpse(ctx context.Context, r *lootv1.OpenCorpseRequest) (
 		}
 		return proto.Clone(prior.receipt).(*lootv1.CorpseOperation), nil
 	}
-	if s.token != "" || s.cleanup.source != 0 || s.retired[r.CorpseGuid] || s.seen[r.CorpseGuid] {
-		return nil, status.Error(codes.FailedPrecondition, "source already opened, uncertain, or another loot operation remains active")
+	if s.token != "" || s.cleanup.source != 0 || s.retired[r.CorpseGuid] {
+		return nil, status.Error(codes.FailedPrecondition, "source remains uncertain or another loot operation remains active")
 	}
 	w, a := &worldv1.SnapshotResponse{}, &actionsv1.State{}
 	if err := s.invoke(ctx, "buddy-world", "snapshot", &worldv1.SnapshotRequest{CreatureGuid: r.CorpseGuid}, w); err != nil {

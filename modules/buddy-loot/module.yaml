@@ -14,6 +14,7 @@ rpc:
   open_corpse: /warcraftbuddy.loot.v1.BuddyLoot/OpenCorpse
   close_corpse: /warcraftbuddy.loot.v1.BuddyLoot/CloseCorpse
 script_api:
+  enable: {effect: mutation, description: Legacy named quest/container scheduling metadata; ordinary corpse choice remains in Lua}
   state: {effect: read, description: Read current native loot-window and packet settlement facts}
   observe_corpses: {effect: read, description: Read this body's observed corpse, position, capacity and exact opening receipts without choosing a source}
   open_corpse: {effect: mutation, description: Open one exact current in-range corpse, bound to body, source and inventory revisions and an idempotent request ID}
