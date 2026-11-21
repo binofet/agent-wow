@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 1,
+  "build": 12340,
+  "sourceCommit": "49bdb66ce2fe00771c9e27a9859afd344b7b1344",
+  "source": {
+    "url": "https://raw.githubusercontent.com/azerothcore/azerothcore-wotlk/49bdb66ce2fe00771c9e27a9859afd344b7b1344/data/sql/base/db_world/item_template.sql",
+    "sha256": "bd4859be01946ca1521f7896f558f665e1e1d98890757a3df30e717b62768cc6",
+    "bytes": 16159418
+  },
+  "items": {
+    "18834": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18845": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18846": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18849": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18850": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18851": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18852": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18853": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18854": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18856": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18857": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18858": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18859": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18862": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18863": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "18864": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "28234": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28235": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28236": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28237": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28238": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28239": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28240": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28241": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28242": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "28243": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "29592": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "29593": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "30343": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30344": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30345": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30346": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30348": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30349": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30350": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "30351": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "37864": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "37865": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "38588": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "38589": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "40476": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "40477": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "40483": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "42122": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "42123": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "42124": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "42126": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "44097": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "44098": {
+      "cooldownMs": 300000,
+      "category": 1182,
+      "categoryCooldownMs": 300000
+    },
+    "46081": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "46082": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "46083": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "46084": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "46085": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "51377": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    },
+    "51378": {
+      "cooldownMs": 120000,
+      "category": 1182,
+      "categoryCooldownMs": 120000
+    }
+  }
+}

@@ -18,6 +18,16 @@ class CatalogTests(unittest.TestCase):
                          "INSERT INTO `t` VALUES (7,'Crate, O\\'Brien; \\nnext',NULL),(8,'It''s safe',3);")
             self.assertEqual(list(g.sql_rows(p)),[dict(id=7,name="Crate, O'Brien; \nnext",amount=None),dict(id=8,name="It's safe",amount=3)])
 
+    def test_fear_break_item_cooldowns_preserve_exact_overrides(self):
+        row=dict(entry=18854, **{'class':4,'inventorytype':12})
+        for i in range(1,6):
+            row.update({f'spellid_{i}':0,f'spelltrigger_{i}':0,f'spellcooldown_{i}':-1,
+                        f'spellcategory_{i}':0,f'spellcategorycooldown_{i}':-1})
+        row.update(spellid_1=42292,spellcooldown_1=300000,spellcategory_1=1182,spellcategorycooldown_1=300000)
+        from unittest.mock import patch
+        with patch.object(g,'sql_rows',return_value=iter([row,dict(row,entry=7,inventorytype=16)])):
+            self.assertEqual(g.fear_break_items(None),{18854:dict(cooldownMs=300000,category=1182,categoryCooldownMs=300000)})
+
     def test_lua_preserves_utf8_and_control_bytes(self):
         encoded=g.lua('Élune\x005\u0001')
         self.assertIn('Élune',encoded)

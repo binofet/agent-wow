@@ -11,6 +11,7 @@ local healing = encounter_healing
 local starter_spells = encounter_starter_spells
 local self_mana = encounter_self_mana
 local support_policy = encounter_support
+local control_recovery = encounter_control_recovery
 local consumables = encounter_consumables
 local corpse_loot = encounter_corpse_loot
 local buffs = encounter_buffs
@@ -52,6 +53,7 @@ local function host_can_decide(obs)
 end
 
 local function on_event(event)
+    if control_recovery and not control_recovery.on_event(event) then return false end
     if movement and not movement.on_event(event) then return false end
     if commands and not commands.on_event(event) then return false end
     if transient_tasks and not transient_tasks.on_event(event) then return false end
@@ -92,7 +94,7 @@ local function on_event(event)
 end
 
 local function export_state()
-    return {version=1, data={encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
+    return {version=1, data={controlRecovery=control_recovery and control_recovery.export_state(),encounter=state,deathRecovery=death_recovery and death_recovery.export_state(),buffs=buffs and buffs.export_state(), healing=healing and healing.export_state(),
                             selfMana=self_mana and self_mana.export_state(), commands=commands and commands.export_state(),
                             tasks=transient_tasks and transient_tasks.export_state(),
                             support=support_policy and support_policy.export_state and support_policy.export_state(),
@@ -123,6 +125,7 @@ local function import_state(checkpoint)
     })) then return false end
     if checkpoint.data.commands and (not commands or not commands.import_state(checkpoint.data.commands)) then return false end
     if checkpoint.data.tasks and (not transient_tasks or not transient_tasks.import_state(checkpoint.data.tasks)) then return false end
+    if checkpoint.data.controlRecovery and (not control_recovery or not control_recovery.import_state(checkpoint.data.controlRecovery)) then return false end
     if checkpoint.data.support and (not support_policy or not support_policy.import_state or not support_policy.import_state(checkpoint.data.support)) then return false end
     if checkpoint.data.consumables and (not consumables or not consumables.import_state(checkpoint.data.consumables)) then return false end
     if checkpoint.data.corpseLoot and (not corpse_loot or not corpse_loot.import_state(checkpoint.data.corpseLoot)) then return false end
@@ -200,6 +203,7 @@ local function owns_current_observation(obs, frame, self)
        not host_can_decide(obs) or obs.spellbookKnown ~= true or not alive(self) or
        not same_map(self, obs.mapId) then return false end
     if obs.meleeKnown == true then return true end
+    if control_recovery and #(((obs.support or {}).controlRecovery or {}).options or {})>0 then return true end
     for _, spell in pairs(obs.spells or {}) do
         if spell.capability == "offense" and spell.known == true then return true end
     end
@@ -530,6 +534,8 @@ local function decide_encounter(frame)
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
     end
+    local breaking = control_recovery and control_recovery.decide(frame,obs)
+    if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
     local interrupt = support_policy and support_policy.interrupt(obs)
     if interrupt then
         interrupt.observationSequence = state.sequence
@@ -748,6 +754,9 @@ end
 
 
 local function interaction_access(frame, obs, out)
+    -- An admitted instant self control break needs no custody detour or STOP.
+    -- Preserve its higher-priority proposal when that capability is composed.
+    if out.action and out.action.capability == "fear_break" then return end
     local held = obs and obs.interaction
     local self = obs and (obs.players or {})[obs.selfGuid]
     if type(held) ~= "table" or type(held.owner) ~= "string" or held.owner == "" or
@@ -777,7 +786,7 @@ local function decide(frame)
         local action=out.action
         local self=(current.players or {})[current.selfGuid]
         local urgent=self and self.aliveKnown==true and self.alive==false or out.focusGuid~=nil or task_support_action or action and
-            (action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
+            (action.capability=="fear_break" or action.capability=="heal" or action.capability=="cleanse" or action.capability=="interrupt" or
              action.capability=="resurrect" or action.capability=="offense" or action.capability=="melee_start" or
              action.capability=="sap" or action.capability=="polymorph")
         if healing and healing.needs_access and current.healing then
@@ -787,7 +796,7 @@ local function decide(frame)
             not (task_view and task_view.hold) and not (out.consumable and out.consumable.hold)
         local loot=corpse_loot.decide(frame,current,quiet,urgent)
         out.corpseLoot=loot
-        if #frame.pending==0 and (not out.action or loot.action and loot.action.capability=="loot_close") then
+        if #frame.pending==0 and (not out.action or out.action.capability~="fear_break" and loot.action and loot.action.capability=="loot_close") then
             out.action=loot.action
         end
         if loot.action or loot.corpseGuid then out.followFormation=nil;out.portalCatchup=nil end

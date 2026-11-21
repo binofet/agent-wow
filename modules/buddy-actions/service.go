@@ -114,8 +114,7 @@ type Service struct {
 	spellCooldownBaselineKnown                 bool
 	weaponCombo                                comboObservation
 	categoryReady                              map[uint32]time.Time
-	fearBreakReady                             time.Time
-	fearBreakAttempted                         bool
+	controlBreakBindings                       map[uint32]observedBuffAura
 	supportOp                                  *supportAttempt
 	meleeOp                                    *meleeAttempt
 	encounterSwing                             encounterMeleeSwing
@@ -1117,11 +1116,6 @@ func (s *Service) Tick(ctx context.Context) {
 			s.followNav.Reset()
 		}
 	}()
-	if !s.closed && !s.state.CastPending && s.hasObservedFearLocked() {
-		if w, err := s.snapshot(ctx); err == nil && s.breakControlLocked(ctx, w) {
-			return
-		}
-	}
 	if s.controlRecoveryLocked(ctx) {
 		return
 	}
