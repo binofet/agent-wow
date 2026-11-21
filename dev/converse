@@ -628,7 +628,8 @@ def mission_runtime_context(guid, session_id, rpc_url):
         'taskStack':str(ROOT/'behaviors/task-stack.lua'), 'expedition':str(ROOT/'behaviors/expedition.lua'),
         'questRewards':str(ROOT/'behaviors/quest-rewards.lua'),
         'partyQuests':str(ROOT/'behaviors/party-quests.lua'),
-        'starterObjectives':str(ROOT/'behaviors/starter-objectives.lua')})
+        'starterObjectives':str(ROOT/'behaviors/starter-objectives.lua'),
+        'itemDisposal':str(ROOT/'behaviors/item-disposal.lua')})
     for kind in ('expedition', 'fishing'):
         actor = ROOT/'data/tasks'/kind/str(guid)
         folder = actor/'runtime'
