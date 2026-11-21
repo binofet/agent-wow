@@ -27,10 +27,7 @@ var dungeonEntrances = [...]dungeonPortal{
 	{trigger: 45, source: 0, destination: 189, center: position{x: 2924.38, y: -798.429, z: 161.611}, radius: 8}, // Scarlet Monastery Graveyard
 }
 
-const (
-	portalApproachDistance = 45
-	portalCatchUpWindow    = 75 * time.Second
-)
+const portalApproachDistance = 45
 
 type dungeonPortalFollow struct {
 	portal                dungeonPortal
@@ -66,6 +63,9 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 		s.portalGoal = portalCatchupGoal{}
 	}
 	if !owner.Present {
+		if s.followPortal.portal.trigger != 0 && s.followPortal.lostAt.IsZero() {
+			s.followPortal.lostAt = now
+		}
 		return
 	}
 	f := s.followPortal
@@ -104,29 +104,45 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	}
 }
 
-func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
+func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
 	f := s.followPortal
 	p, owner := w.GetSelf(), w.GetOwner()
-	maxAge, maxDistance := 20*time.Second, float64(portalApproachDistance)
+	maxDistance := float64(portalApproachDistance)
 	if f.catchingUp {
-		maxAge, maxDistance = portalCatchUpWindow, buddynav.MaxRouteLength
+		maxDistance = buddynav.MaxRouteLength
 	}
 	return s.state.Following && now.Before(s.followUntil) && !s.independent &&
 		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
 		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
-		f.portal.trigger != 0 && !now.Before(f.seenAt) && now.Sub(f.seenAt) <= maxAge &&
+		f.portal.trigger != 0 &&
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
 		safeQuestCharacter(w, s.selfGUID) == "" && p.MapId == f.portal.source &&
 		distance(playerPosition(p), f.ground) <= maxDistance
 }
 
-func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool {
+func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
+	if !s.portalSourceCurrentLocked(w, now) {
+		return false
+	}
+	policy := s.portalPolicyLocked(w, now)
+	return policy.Valid && policy.Eligible
+}
+
+func (s *Service) portalMovementCurrentLocked(w *worldv1.SnapshotResponse) bool {
 	f := s.followPortal
-	return f.movementInProgress && s.portalSourceReadyLocked(w, s.now()) &&
+	return f.movementInProgress && s.portalSourceCurrentLocked(w, s.now()) &&
 		f.witness == f.movementWitness && f.sourceVisit == f.movementVisit && s.followRevision == f.movementFollow &&
 		f.movementHost == s.hostEncounterActiveLocked() && (!f.movementHost ||
 		!f.catchingUp || s.now().Before(s.portalGoal.until) && s.portalGoal.witness == f.witness)
+}
+
+func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool {
+	if !s.portalMovementCurrentLocked(w) {
+		return false
+	}
+	policy := s.portalPolicyLocked(w, s.now())
+	return policy.Valid && policy.Eligible && policy.Ready
 }
 
 // A single query can find a partial corridor between two floors that become
@@ -170,19 +186,25 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_instance_transfer_observed"
 		return true
 	}
-	if !s.portalSourceReadyLocked(w, now) {
+	if !s.portalSourceCurrentLocked(w, now) {
 		return false
 	}
-	if f.lostAt.IsZero() {
-		f.lostAt = now
-		s.followNav.Reset()
+	policy := s.portalPolicyLocked(w, now)
+	if !policy.Valid {
+		s.stopLocked(ctx)
+		s.lastStep = now
+		s.state.Reason = "follow_instance_policy_unavailable"
+		return true
+	}
+	if !policy.Eligible {
+		return false
 	}
 	s.lastStep = now
 	if f.notified {
 		s.state.Reason = "follow_waiting_for_instance_transfer"
 		return true
 	}
-	if now.Sub(f.lostAt) < 500*time.Millisecond {
+	if !policy.Ready {
 		s.stopLocked(ctx)
 		s.state.Reason = "follow_waiting_at_instance_entrance"
 		return true
@@ -200,8 +222,21 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		// STOP and the party lookup may race an owner reappearance, combat, or
 		// correction. Bind entry to the fresh source map and current tracker.
 		fresh, err := s.snapshot(ctx)
-		if err != nil || !s.portalSourceReadyLocked(fresh, s.now()) ||
+		if err != nil || !s.portalSourceCurrentLocked(fresh, s.now()) ||
 			!s.refreshPositionLocked(fresh) || distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
+			s.state.Reason = "follow_instance_source_changed"
+			return true
+		}
+		current := s.portalPolicyLocked(fresh, s.now())
+		if !current.Valid || !current.Eligible || !current.Ready {
+			s.state.Reason = "follow_instance_policy_changed"
+			return true
+		}
+		// The pure source read can race a new World observation. Recheck
+		// physical entry after it, with no further policy callback before send.
+		latest, err := s.snapshot(ctx)
+		if err != nil || !s.portalSourceCurrentLocked(latest, s.now()) || !s.refreshPositionLocked(latest) ||
+			distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
 			s.state.Reason = "follow_instance_source_changed"
 			return true
 		}

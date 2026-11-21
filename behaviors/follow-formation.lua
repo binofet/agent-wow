@@ -6,6 +6,7 @@ local tau, half_turn = 6.283185307179586, 3.141592653589793
 local roles = {[5]={3.8,-3.1}, [8]={5.1,.2}, [4]={2.4,3.5}, [9]={1,-5.2}}
 local near_stop, near_limit = 3,30
 local portal_ahead, portal_side = {8,12,16}, {-6,6}
+local portal_wait_ms, portal_seen_ms, portal_catchup_ms = 500,20000,75000
 local fallback = {{3.8,-3.1}, {5.1,.2}, {2.4,3.5}}
 
 local function number(value)
@@ -34,6 +35,8 @@ end
 
 local function angle(value) return value%tau end
 
+local function revision(value) return value=="0" or identity(value)~=nil end
+
 local function at_target(self, target, radius)
     local dx,dy=self.x-target.x,self.y-target.y
     return dx*dx+dy*dy<=radius*radius and math.abs(self.z-target.z)<=1.5
@@ -46,7 +49,23 @@ function M.decide(input)
        not number(class) or class<0 or class>4294967295 or class%1~=0 or
        not pose(owner,true) or type(owner.moving)~="boolean" or
        input.self~=nil and (not pose(input.self,false) or type(input.self.moving)~="boolean") or
-       input.ownerArrival~=nil and type(input.ownerArrival)~="boolean" then return {} end
+       input.ownerArrival~=nil and type(input.ownerArrival)~="boolean" then
+        if input.mode=="portal_follow" then return {eligible=false,ready=false} end
+        return {}
+    end
+
+    if input.mode=="portal_follow" then
+        local p=input.portal
+        local eligible=type(p)=="table" and p.following==true and p.ownerAbsent==true and
+            type(p.catchingUp)=="boolean" and revision(p.sourceVisitId) and
+            p.sourceVisitId==p.currentVisitId and revision(p.followRevision) and
+            p.followRevision==p.currentFollowRevision and p.sightingAgeKnown==true and
+            number(p.sightingAgeMs) and p.sightingAgeMs>=0 and
+            p.sightingAgeMs<=(p.catchingUp and portal_catchup_ms or portal_seen_ms)
+        local ready=eligible and p.disappearanceAgeKnown==true and
+            number(p.disappearanceAgeMs) and p.disappearanceAgeMs>=0 and p.disappearanceAgeMs>=portal_wait_ms
+        return {eligible=eligible,ready=ready}
+    end
 
     if input.mode=="portal_catch_up" then
         if not input.self then return {} end
