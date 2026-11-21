@@ -634,7 +634,10 @@ class CharacterSync:
             if type(value) not in (int, float):
                 return False
             try:
-                if not math.isfinite(value):
+                derived_integer = derived and type(value) is int
+                if derived_integer and value.bit_length() > 1025:
+                    return False
+                if not derived_integer and not math.isfinite(value):
                     if derived and math.isinf(value):
                         return dict(infinite=True, negative=value < 0)
                     return False

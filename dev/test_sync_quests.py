@@ -407,7 +407,8 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(mutate.call_args.args[1]["npcGuid"],str(other))
 
     def test_pickup_derived_infinite_elapsed_keeps_original_comparison(self):
-        for now,at,query in ((1e308,-1e308,True),(-1e308,1e308,False)):
+        for now,at,query in ((1e308,-1e308,True),(-1e308,1e308,False),
+                             (10**308,-10**308,True),(-10**308,10**308,False)):
             profile,rpc,_,_=self.rig()
             profile.now=lambda:now
             profile.data["queries"]=[{"npc":str(MCBRIDE),"signature":[rpc.session,"1","1"],"at":at}]
