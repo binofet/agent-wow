@@ -270,3 +270,66 @@ func TestPolicyGhostRecoveryRealReclaimAndUnknownOutcomeWaitForActualLife(t *tes
 		})
 	}
 }
+
+func TestPolicyGhostApproachAndStopRouteToActualNativeDescriptor(t *testing.T) {
+	m, native, cb := friendlyEncounterManager(t)
+	self := cb.world.Self
+	self.Alive = false
+	self.Health = 1
+	self.PlayerFlags = 0x10
+	self.PositionRevision = 2
+	self.MovementFlags = 0x10000000
+	self.SpeedsKnown = true
+	self.RunSpeed = 8.75
+	p, err := m.StartPolicy(context.Background(), recoveryRuntimeSource(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	step := func() *behavior.ActionReceipt {
+		t.Helper()
+		v, e := m.readPolicyObservation(context.Background(), friendlyEncounterSession, encounterObservationMethod)
+		if e != nil {
+			t.Fatal(e)
+		}
+		seq, e := p.Enqueue(behavior.Event{Kind: "encounter_observation", Value: v})
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, r, e := p.Step(context.Background(), map[string]any{"observationSequence": strconv.FormatUint(seq, 10)}, nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return r
+	}
+	if r := step(); r == nil || len(cb.writes) != 1 || cb.writes[0].Opcode != opcode.MSGCorpseQuery {
+		t.Fatal(r, cb.writes)
+	}
+	payload := binary.LittleEndian.AppendUint32([]byte{1}, 0)
+	for _, v := range []float32{10, 0, 0} {
+		payload = binary.LittleEndian.AppendUint32(payload, math.Float32bits(v))
+	}
+	payload = append(payload, make([]byte, 8)...)
+	if _, err = native.OnPacket(context.Background(), &modv1.WorldPacket{Opcode: opcode.MSGCorpseQuery, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	action := func(capability string) string {
+		return `return {on_event=function()return true end,export_state=function()return {version=1,data={}}end,import_state=function()return true end,decide=function(f)return {action={capability="` + capability + `",sessionId=f.session_id,selfGuid="22",deathEpoch="1",expectedPositionRevision="2",corpseQueryRevision="1",rangeYards=5}}end}`
+	}
+	if _, err = p.Reload(context.Background(), action("approach_corpse"), p.vm.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	r := step()
+	// No private client assets are used. A real native geometry precondition is
+	// the expected result, and is distinct from a missing/unimplemented RPC.
+	if r == nil || r.Outcome != behavior.ActionNotDispatched || r.Payload["grpc_status"] != "FailedPrecondition" || r.Payload["grpc_message"] != "verified corpse route unavailable" || len(cb.writes) != 1 {
+		t.Fatal("approach alias/descriptor did not reach native executor", r, cb.writes)
+	}
+	if _, err = p.Reload(context.Background(), action("stop_corpse"), p.vm.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	r = step()
+	if r == nil || r.Outcome != behavior.ActionSettledUnverified || r.Payload["native_phase"] != "stopped" || r.Payload["effect_observed"] != false || len(cb.writes) != 1 {
+		t.Fatal("stop mode did not route through exact native method", r, cb.writes)
+	}
+}
