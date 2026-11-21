@@ -29,9 +29,14 @@ func TestServiceTravelProductionWatchdogStopsStartedJourneyWithoutFallback(t *te
 				}
 				// Deliberately replace the healthy mechanical fixture evaluator
 				// with a fresh runtime using the production five-millisecond
-				// default. It has no last-good policy to hide the stalled read.
-				stalled = behavior.New()
+				// decision default. Source validation alone gets a healthy test
+				// allowance; fresh chunk replay and decide remain cumulatively5ms.
+				// It has no last-good policy to hide the stalled read.
 				var err error
+				stalled, err = behavior.NewWithInitializationLimit(behavior.SessionOptions{}, 100*time.Millisecond)
+				if err != nil {
+					t.Fatal(err)
+				}
 				revision, err = stalled.Reload("return {decide=function(input) while true do end end}", "")
 				if err != nil {
 					t.Fatal("could not load the production-budget stalled policy", err)
@@ -60,7 +65,8 @@ func TestServiceTravelProductionWatchdogStopsStartedJourneyWithoutFallback(t *te
 			failure := got.GetLastFollowPolicyFailure()
 			assertFollowFailureText(t, failure)
 			if failure.Mode != "service_travel" || failure.Stage != "evaluate" || failure.SourceRevision != revision ||
-				r.s.formation.sourceRevision != revision || !strings.Contains(failure.Error, "context deadline exceeded") {
+				r.s.formation.sourceRevision != revision || !strings.Contains(failure.Error, "(5ms configured)") ||
+				!strings.Contains(failure.Error, "context deadline exceeded") {
 				t.Fatal("watchdog lost its exact failed mode, revision or deadline cause", failure)
 			}
 			state := stalled.Status()
