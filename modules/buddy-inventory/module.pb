@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Åú
+°¶
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"ô
@@ -1594,8 +1594,53 @@ targetGuid"Ä
 mode (	Rmode
 stage (	Rstage'
 source_revision (	RsourceRevision
-error (	Rerror2◊%
-BuddyActionsm
+error (	Rerror"·
+FlightpathQueryRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+token (	Rtoken
+npc_guid (RnpcGuid
+mode (	Rmode+
+expected_revision (RexpectedRevision"Œ
+FlightpathOperation
+revision (Rrevision
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+npc_guid (RnpcGuid
+mode (	Rmode
+pending (Rpending+
+transport_written (RtransportWritten+
+transport_unknown	 (RtransportUnknown!
+status_known
+ (RstatusKnown
+
+node_known (R	nodeKnown8
+learning_notice_observed (RlearningNoticeObserved
+learned (Rlearned
+
+menu_known (R	menuKnown
+source_node (R
+sourceNode
+known_nodes (R
+knownNodes
+phase (	Rphase
+error (	Rerror"Ä
+FlightpathObservationResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+revision (Rrevision
+visit_bound (R
+visitBoundK
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2ø'
+BuddyActionsh
+FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
+QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`
