@@ -121,7 +121,11 @@ func TestPostRecoverySharedLuaHealingDrinkAndDefenseKeepTheirCustody(t *testing.
 	self.CombatKnown, self.InCombat = true, true
 	defense := step()
 	attack, _ := defense.Output["action"].(map[string]any)
-	if attack["capability"] != "offense" || attack["targetGuid"] != fallbackGUID(fallbackNPC) || p.host.Status().Pending != 0 {
+	// A new attacker legitimately needs the normal measured range/LoS approach
+	// before its exact cast. Either action must serve that same shared target,
+	// never another drink or a native recovery wait.
+	defending := attack["capability"] == "offense" || attack["capability"] == "approach_target"
+	if !defending || attack["targetGuid"] != fallbackGUID(fallbackNPC) || p.host.Status().Pending != 0 {
 		t.Fatal("resource recovery suppressed defense or replayed unknown drink", defense.Output, p.host.Status())
 	}
 }
