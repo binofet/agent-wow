@@ -107,6 +107,15 @@ func TestControlBreakTypedNoWriteRearmsButUnknownWaitsForObservedApplication(t *
 	if _, err := s.BreakControl(context.Background(), r); err == nil || len(f.packets) != 1 {
 		t.Fatal("replayed same unknown application", err, f.packets)
 	}
+	// Losing an aura cache is not positive removal evidence. Retain native
+	// no-replay even though there is currently no eligible aura to propose.
+	saved := s.buffAuras
+	s.buffAuras = nil
+	s.controlBreakObservationLocked(f.world)
+	if len(s.controlBreakBindings) != 1 || s.supportOp.view.Phase != "outcome_unconfirmed_no_retry" {
+		t.Fatal("unavailable aura cache fabricated clearance", s.supportOp)
+	}
+	s.buffAuras = saved
 	// A same-slot/caster refresh has a new raw revision but is not proof that
 	// the uncertain prior application ended.
 	applyTestFear(s, 7399)
@@ -119,6 +128,9 @@ func TestControlBreakTypedNoWriteRearmsButUnknownWaitsForObservedApplication(t *
 		t.Fatal("refresh reopened unknown fear break", err, f.packets)
 	}
 	applyTestFear(s, 0)
+	if len(s.controlBreakBindings) != 0 {
+		t.Fatal("actual removal packet was not retained between policy samples")
+	}
 	s.controlBreakObservationLocked(f.world)
 	if s.supportOp.view.EffectObserved || s.supportOp.view.ServerCastGo || s.supportOp.view.Phase != "observed_control_clear_effect_unverified" || len(s.controlBreakBindings) != 0 {
 		t.Fatal("observed clearance claimed own success", s.supportOp)

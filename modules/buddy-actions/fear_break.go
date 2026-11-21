@@ -73,6 +73,41 @@ func (s *Service) controlBreakCasterLocked(w *worldv1.SnapshotResponse) bool {
 		self.GetHealthKnown() && self.GetHealth() > 0 && self.GetUnitFlagsKnown() && self.GetUnitFlags()&fleeingUnitFlag != 0 && channelstate.Idle(self)
 }
 
+// Unavailable/partial aura baselines cannot prove that an in-flight source's
+// application ended. A real changed slot or newer complete cache can do so.
+func (s *Service) controlBreakRetiredLocked(slot uint32, prior observedBuffAura) bool {
+	set := s.buffAuras[s.selfGUID]
+	if set == nil {
+		return false
+	}
+	current := set.slots[slot]
+	if current.spell != prior.spell || current.caster != prior.caster {
+		return current.revision > prior.revision || set.complete && set.fullRevision > prior.revision
+	}
+	return current.durationKnown && current.remaining(s.now()) == 0
+}
+
+// Called on actual aura packets as well as reads, so a removal and a new
+// same-caster application between policy samples do not retain stale custody.
+func (s *Service) retireControlBreaksLocked() {
+	for slot, prior := range s.controlBreakBindings {
+		if s.controlBreakRetiredLocked(slot, prior) {
+			delete(s.controlBreakBindings, slot)
+		}
+	}
+	if op := s.supportOp; op != nil && op.view.Capability == fearBreakCapability && op.breakAuraRevision != 0 {
+		if s.controlBreakRetiredLocked(op.breakAuraSlot, op.breakAura) {
+			if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
+				s.state.CastPending = false
+				s.pendingSpell, s.pendingTarget = 0, 0
+			}
+			if !op.view.EffectObserved {
+				op.view.Phase = "observed_control_clear_effect_unverified"
+			}
+		}
+	}
+}
+
 // Snapshot all actual options without choosing a spell, rank, trinket or aura.
 func (s *Service) controlBreakObservationLocked(w *worldv1.SnapshotResponse) *actionsv1.ControlRecoveryObservation {
 	out := &actionsv1.ControlRecoveryObservation{FleeingKnown: w.GetSelf().GetUnitFlagsKnown(), Fleeing: w.GetSelf().GetUnitFlags()&fleeingUnitFlag != 0}
@@ -83,36 +118,16 @@ func (s *Service) controlBreakObservationLocked(w *worldv1.SnapshotResponse) *ac
 			}
 		}
 	}
-	// Revisions also advance on a same-application refresh. A changed duration
-	// cannot retire an unknown write; require observed removal/replacement of
-	// that exact slot/spell/caster before admitting a new application there.
+	s.retireControlBreaksLocked()
 	for slot, prior := range s.controlBreakBindings {
-		current := observedBuffAura{}
 		if set := s.buffAuras[s.selfGUID]; set != nil {
-			current = set.slots[slot]
-		}
-		if !s.isObservedFearLocked(current) || current.spell != prior.spell || current.caster != prior.caster {
-			delete(s.controlBreakBindings, slot)
-		} else {
-			out.AttemptedAuraRevisions = append(out.AttemptedAuraRevisions, current.revision)
+			current := set.slots[slot]
+			if current.revision != 0 && current.spell == prior.spell && current.caster == prior.caster {
+				out.AttemptedAuraRevisions = append(out.AttemptedAuraRevisions, current.revision)
+			}
 		}
 	}
 	sort.Slice(out.AttemptedAuraRevisions, func(i, j int) bool { return out.AttemptedAuraRevisions[i] < out.AttemptedAuraRevisions[j] })
-	if op := s.supportOp; op != nil && op.view.Capability == fearBreakCapability && op.breakAuraRevision != 0 {
-		current := observedBuffAura{}
-		if set := s.buffAuras[s.selfGUID]; set != nil {
-			current = set.slots[op.breakAuraSlot]
-		}
-		if !s.isObservedFearLocked(current) || current.spell != op.breakAura.spell || current.caster != op.breakAura.caster {
-			if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
-				s.state.CastPending = false
-				s.pendingSpell, s.pendingTarget = 0, 0
-			}
-			if !op.view.EffectObserved {
-				op.view.Phase = "observed_control_clear_effect_unverified"
-			}
-		}
-	}
 	caster := len(out.FearAuras) > 0 && s.controlBreakCasterLocked(w)
 	for _, r := range s.learnedContractsLocked() {
 		if r.ID == pvpBreakSpell || !fearBreakSpell(r) {
