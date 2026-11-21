@@ -95,14 +95,14 @@ func fullBackpack(w *worldv1.SnapshotResponse) bool {
 func (s *Service) junkReason(reason string) { s.mu.Lock(); s.state.JunkReason = reason; s.mu.Unlock() }
 
 func (s *Service) junkSafe(ctx context.Context, w *worldv1.SnapshotResponse) error {
-	if w == nil || w.Self == nil || w.Self.Guid != s.selfGUID || !w.Self.Present || !w.Self.AliveKnown || !w.Self.Alive || !w.Self.UnitFlagsKnown || w.Self.UnitFlags&0x80000 != 0 {
-		return status.Error(codes.FailedPrecondition, "junk disposal requires observed alive noncombat character")
+	if err := s.junkWorldSafe(w); err != nil {
+		return err
 	}
 	a := &actionsv1.State{}
 	if err := s.invoke(ctx, "buddy-actions", "status", &emptypb.Empty{}, a); err != nil {
 		return err
 	}
-	if a.Moving || a.MotionUnconfirmed || a.CastPending || a.AutoAttacking || a.AutoAttackRequested || a.AutoAttackUnconfirmed || a.Traveling || (a.InteractionOwner != "" && a.InteractionOwner != "trade") {
+	if !junkActionsSafe(a) {
 		return status.Error(codes.FailedPrecondition, "inventory interaction, casting or movement is busy")
 	}
 	return nil
@@ -120,7 +120,7 @@ func (s *Service) DestroyJunk(ctx context.Context, r *tradev1.JunkRequest) (*tra
 	}
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	call, cancel := context.WithTimeout(ctx, 3*time.Second)
+	call, cancel := context.WithTimeout(ctx, junkWriteTimeout)
 	defer cancel()
 	if err := s.destroyJunk(call, r); err != nil {
 		return nil, err
@@ -131,6 +131,8 @@ func (s *Service) DestroyJunk(ctx context.Context, r *tradev1.JunkRequest) (*tra
 // opMu serializes all outgoing inventory/trade mutations. The actions lease
 // excludes loot, mail, quest and training mutations while this write settles.
 func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, junkWriteTimeout)
+	defer cancel()
 	s.mu.Lock()
 	err := s.boundLocked(r.SessionId, r.Revision)
 	busy := active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil
@@ -171,15 +173,25 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 		(selected.Entry != initial.Entry || selected.StackCount != initial.StackCount) {
 		return status.Error(codes.FailedPrecondition, "inventory source changed before disposal")
 	}
-	if err := s.junkSafe(ctx, w); err != nil {
+	w, selected, guard, err := s.junkFinalWorld(ctx, r, w)
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
+	if err := s.boundLocked(r.SessionId, r.Revision); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	meta, known := s.metadata[selected.Entry]
 	if active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil || !known ||
 		(!meta.disposable() && !s.grayArmorJunk(w, selected)) {
 		s.mu.Unlock()
 		return status.Error(codes.FailedPrecondition, "only fully queried gray junk with no remaining use is disposable")
+	}
+	until := s.now().Add(5 * time.Second)
+	if err := s.junkDispatchReady(ctx, guard); err != nil {
+		s.mu.Unlock()
+		return err
 	}
 	// Reserve before SendPacket: an ambiguous error must never resend a destroy.
 	s.junkPending = &tradev1.JunkDisposal{ItemGuid: selected.ItemGuid, Entry: selected.Entry,
@@ -198,7 +210,7 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	s.state.LastJunkDisposal = proto.Clone(s.junkPending).(*tradev1.JunkDisposal)
 	s.state.JunkReason = "waiting_for_server_inventory_update"
 	s.state.Revision++
-	s.junkUntil = s.now().Add(5 * time.Second)
+	s.junkUntil = until
 	s.mu.Unlock()
 	reserved = true
 	// ItemPackets::DestroyItem: bag, inventory slot, count(0=whole stack), 3 unused bytes.
