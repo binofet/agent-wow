@@ -174,6 +174,7 @@ type Service struct {
 	ownDamageAuras                       map[damageAuraSlot]observedBuffAura
 	buffAuraRevision, buffSequence       uint64
 	buffOp                               *buffAttempt
+	transportSequence                    uint64
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -817,17 +818,15 @@ func (s *Service) sendLocked(ctx context.Context, op uint32, payload []byte) boo
 	if op == opcode.CMSGCastSpell {
 		sendCtx = modcb.ForwardPolicySpell(ctx)
 	}
-	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: uint32(op), Payload: payload}); err != nil {
-		s.state.Following = false
-		s.state.Assisting = false
-		s.state.Practicing = false
-		s.state.PracticePhase = "transport_error_no_retry"
-		s.state.Reason = "transport_error_no_retry"
-		if s.autoTarget != 0 && !s.autoStopping {
-			s.stopAutoAttackLocked(ctx)
-		}
+	s.transportSequence++
+	if _, err := s.session.SendPacket(sendCtx, &modv1.SendPacketRequest{Opcode: op, Payload: payload}); err != nil {
+		s.state.LastTransportFailure = &actionsv1.TransportFailure{Sequence: s.transportSequence, Opcode: op, Error: err.Error(), OutcomeUnknown: true}
+		s.state.Reason = "transport_error_outcome_unconfirmed"
+		// Only the exact operation's caller can fence its uncertain physical
+		// state. A failed packet cannot revoke goals or send unrelated packets.
 		return false
 	}
+
 	s.state.TransportWrites++
 	return true
 }
@@ -956,7 +955,6 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		s.state.Reason = "movement_current_ground_mode_unsupported"
 		return false
 	}
-	follow, assist := s.state.Following, s.state.Assisting
 	var passive uint32
 	if snapshotErr == nil && w.Self.AliveKnown && w.Self.Alive && w.Self.MovementFlagsKnown {
 		passive = w.Self.MovementFlags & movementflags.PassiveModifiers
@@ -997,9 +995,6 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 		binary.LittleEndian.PutUint32(payload[at:], flags)
 	}
 	if !s.sendLocked(ctx, op, payload) {
-		if s.state.InteractionHarvest {
-			s.state.Following, s.state.Assisting = follow, assist
-		}
 		s.state.MotionUnconfirmed = true
 		s.publishClientMovementLocked(ctx, nil, p, false)
 		return false
@@ -1050,12 +1045,10 @@ func (s *Service) stopLocked(ctx context.Context) bool {
 		// motion remains known and still owes a STOP; preserve standing intent
 		// so a fresh ordinary tick can retry that undispatched stop.
 		s.state.Moving = true
-	} else if !written {
-		// writeMovementLocked itself fences an actual ambiguous transport.
-		s.state.Following = false
-		s.state.Assisting = false
-		s.stopAutoAttackLocked(ctx)
 	}
+	// An actual failed write is already fenced by MotionUnconfirmed. Preserve
+	// standing goals and the separately observed attack; do not issue another
+	// packet merely because the stop's outcome is unknown.
 	return written
 }
 
@@ -1338,8 +1331,7 @@ func (s *Service) Tick(ctx context.Context) {
 		}
 	}
 	if s.state.MotionUnconfirmed {
-		s.state.Assisting = false
-		s.state.Reason = "motion_unconfirmed_explicit_stop_required"
+		s.state.Reason = "motion_unconfirmed_waiting_for_fresh_pose"
 		return
 	}
 	if s.state.Following && s.navDataDir != "" {
