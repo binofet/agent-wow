@@ -1967,6 +1967,18 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(converse.ConversationError, "response exceeds"):
                 rpc.call("buddy-world.snapshot", {})
 
+    def test_policy_state_read_preserves_configured_session_values_without_chat_truncation(self):
+        state = {"checkpoint": {"data": {"payload": "x" * (9 * 1024 * 1024)}},
+                 "latestDecision": {"output": {"task": {"phase": "waiting"}}}}
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": state}).encode()
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit=-1): return body if limit < 0 else body[:limit]
+        rpc = converse.RPC("http://127.0.0.1:8086/rpc")
+        with patch.object(rpc.opener, "open", return_value=Response()):
+            self.assertEqual(rpc.call("session.policy_state", {"sessionId":"aw-4","characterGuid":"4"}), state)
+
     def test_rpc_validates_response_id_and_precise_restart_fault(self):
         class Response:
             def __init__(self, data):
