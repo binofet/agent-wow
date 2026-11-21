@@ -524,8 +524,46 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-Å¶
-#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
+ÍÂ
+#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
+SpellCastTargets
+mask (Rmask
+object_guid (R
+objectGuid
+	item_guid (RitemGuidC
+source (2+.warcraftbuddy.actions.v1.SpellCastLocationRsourceM
+destination (2+.warcraftbuddy.actions.v1.SpellCastLocationRdestination#
+string_target (	RstringTarget%
+trade_revision (RtradeRevision,
+trade_partner_guid (RtradePartnerGuid"d
+SpellCastLocation%
+transport_guid (RtransportGuid
+x (Rx
+y (Ry
+z (Rz"Ž
+SpellCastTrajectory
+	elevation (R	elevation
+speed (Rspeed'
+movement_opcode (RmovementOpcode
+movement (Rmovement"™
+CastSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+spell_id (RspellIdD
+targets (2*.warcraftbuddy.actions.v1.SpellCastTargetsRtargetsM
+
+trajectory (2-.warcraftbuddy.actions.v1.SpellCastTrajectoryR
+trajectory"à
+CancelSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId>
+expected_operation_revision (RexpectedOperationRevision
+visit_id (RvisitId
+channel (Rchannel")
 ToggleRequest
 enabled (Renabled"™
 MovementOwnerRequest
@@ -864,7 +902,7 @@ dispelType"=
  (Rpoints
 dice (Rdice
 misc (Rmisc(
-points_per_level (RpointsPerLevel"¹
+points_per_level (RpointsPerLevel"ž
 SpellOperation
 spell_id (RspellId
 target_guid (R
@@ -885,7 +923,12 @@ capability
 inventory_confirmed (RinventoryConfirmed'
 channel_started (RchannelStarted#
 channel_ended (RchannelEnded0
-channel_remaining_ms (RchannelRemainingMs"ã
+channel_remaining_ms (RchannelRemainingMs-
+operation_revision (RoperationRevision
+visit_id (RvisitId)
+cancel_attempted (RcancelAttempted8
+cancel_transport_written (RcancelTransportWritten4
+cancel_outcome_unknown (RcancelOutcomeUnknown"ã
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -1708,8 +1751,10 @@ session_id (	R	sessionId
 revision (Rrevision
 visit_bound (R
 visitBoundK
-	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2¿'
-BuddyActionsh
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2÷(
+BuddyActionsX
+	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
+CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.Stateh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
 QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb

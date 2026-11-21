@@ -6,6 +6,8 @@ compose:
   file: compose.yaml
   service: module
 grpc:
+  cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
+  cancel_spell: /warcraftbuddy.actions.v1.BuddyActions/CancelSpell
   descriptor_set: module.pb
 rpc:
   flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
@@ -102,6 +104,8 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  cast_spell: {effect: mutation, description: 'Issue one normal cast of any exact learned spell with composable current-visit targets; server validates spell requirements and effects remain unverified'}
+  cancel_spell: {effect: mutation, description: 'Cancel only the exact current owned cast or channel operation; an unknown cancellation is never replayed'}
   flightpath_observation: {effect: read, description: Observe the bound flightmaster query receipt; known nodes imply no route price or travel completion}
   query_flightpath: {effect: mutation, description: Issue one exact status or learn-menu query to an observed nearby flightmaster under an exploration lease; never activates travel or spends money}
   acquire_movement: {effect: mutation, description: Acquire or renew finite idle and follow movement custody while preserving healing defense casting and explicit actor movement}

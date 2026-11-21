@@ -6,6 +6,49 @@ import "modules/buddy-party/party.proto";
 import "modules/buddy-world/world.proto";
 import "google/protobuf/empty.proto";
 
+// Normal build-12340 cast targets. The mask composes wire fields, not spell
+// effects; object target masks share one object GUID. TRADE_ITEM uses slot0..6
+// in item_guid, never an invented private item GUID.
+message SpellCastTargets {
+  uint32 mask = 1;
+  uint64 object_guid = 2;
+  uint64 item_guid = 3;
+  SpellCastLocation source = 4;
+  SpellCastLocation destination = 5;
+  string string_target = 6;
+  uint64 trade_revision = 7;
+  uint64 trade_partner_guid = 8;
+}
+message SpellCastLocation {
+  uint64 transport_guid = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+}
+// Presence adds the normal castFlags0x02 projectile tail. Movement, if present,
+// is one complete normal own-body MovementInfo after movement_opcode.
+message SpellCastTrajectory {
+  float elevation = 1;
+  float speed = 2;
+  uint32 movement_opcode = 3;
+  bytes movement = 4;
+}
+message CastSpellRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint32 spell_id = 4;
+  SpellCastTargets targets = 5;
+  SpellCastTrajectory trajectory = 6;
+}
+message CancelSpellRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint32 spell_id = 3;
+  uint64 expected_operation_revision = 4;
+  uint64 visit_id = 5;
+  bool channel = 6;
+}
 message ToggleRequest { bool enabled = 1; }
 // Finite custody of idle/follow movement only. Does not disable standing
 // intents, healing, defense, casting or explicit actor movement capabilities.
@@ -352,6 +395,11 @@ message SpellOperation {
   bool channel_started = 14;
   bool channel_ended = 15;
   uint32 channel_remaining_ms = 16;
+  uint64 operation_revision = 17;
+  uint64 visit_id = 18;
+  bool cancel_attempted = 19;
+  bool cancel_transport_written = 20;
+  bool cancel_outcome_unknown = 21;
 }
 message ObservedAura {
   uint32 slot = 1;
@@ -1064,6 +1112,8 @@ message FlightpathObservationResponse {
 }
 
 service BuddyActions {
+  rpc CastSpell(CastSpellRequest) returns (State);
+  rpc CancelSpell(CancelSpellRequest) returns (State);
   rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
   rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
