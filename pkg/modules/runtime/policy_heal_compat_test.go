@@ -98,6 +98,12 @@ func TestLegacyHealOnceRejectsMissingPolicyAndForeignStatus(t *testing.T) {
 	if _, err = m.InvokeJSON(context.Background(), "buddy-actions.heal_once", nil); err == nil {
 		t.Fatal("foreign module status admitted input")
 	}
+	// Reusing a character GUID cannot authorize an old VM after a session
+	// replacement, even when the module status now identifies the new body.
+	m.dir = "/private/replaced"
+	if _, err = m.InvokeJSON(context.Background(), "buddy-actions.heal_once", nil); err == nil {
+		t.Fatal("stale attached VM accepted input for a replacement session")
+	}
 	if host.vm.Status().Buffered != 0 || peer.direct.Load() != 0 {
 		t.Fatal("rejected request reached policy or native selector")
 	}

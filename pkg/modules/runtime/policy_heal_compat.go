@@ -27,6 +27,9 @@ func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result pr
 	if host == nil || host.body != catalog.CharacterGUID {
 		return status.Error(codes.FailedPrecondition, "HealOnce requires the current attached Lua policy; exact callers use CastHeal")
 	}
+	if _, err := host.observe(ctx, catalog.SessionID, catalog.CharacterGUID); err != nil {
+		return err
+	}
 	method, ok := inst.definition.RPC("status")
 	if !ok {
 		return status.Error(codes.FailedPrecondition, "current action status unavailable")
