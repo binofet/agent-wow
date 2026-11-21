@@ -261,6 +261,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
+	if op.roll != nil && !op.attempted && err == nil {
+		if outcome, payload := op.undispatchedRollResult(state); outcome != "" {
+			return outcome, payload
+		}
+	}
 	if actions, ok := state.(*actionsv1.State); ok && op.movement != nil && op.movement.body && actions.BodyMovement != nil &&
 		actions.BodyMovement.SequenceId == op.movement.sequence && actions.BodyMovement.VisitId == op.encounterVisit {
 		op.movement.phase = actions.BodyMovement.Phase

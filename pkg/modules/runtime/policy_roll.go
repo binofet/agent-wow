@@ -113,6 +113,27 @@ func (op *policySpell) decodeRollEffect(body []byte) (behavior.ActionOutcome, ma
 	return outcome, op.rollPayload(native.GetPhase(), native.GetTransportWritten(), native.GetServerVoteObserved()), nil
 }
 
+func (op *policySpell) undispatchedRollResult(result proto.Message) (behavior.ActionOutcome, map[string]any) {
+	state, ok := result.(*inventoryv1.RollState)
+	if !ok || state.GetSessionId() != op.origin.SessionID || state.GetSelfGuid() != op.roll.self {
+		return "", nil
+	}
+	for _, receipt := range state.GetReceipts() {
+		if receipt.GetPhase() != "not_dispatched" || receipt.GetTransportAttempted() || receipt.GetTransportWritten() {
+			continue
+		}
+		body, err := proto.Marshal(receipt)
+		if err != nil {
+			return "", nil
+		}
+		outcome, payload, err := op.decodeRollEffect(body)
+		if err == nil && outcome == behavior.ActionNotDispatched {
+			return outcome, payload
+		}
+	}
+	return "", nil
+}
+
 // A read can observe a native deadline retirement without an incoming world
 // packet. Correlate that retained receipt before queuing the newer feed value.
 func (m *Manager) reconcileRollReceipts(sessionID string, raw []byte) error {
