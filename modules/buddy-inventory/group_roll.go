@@ -8,7 +8,6 @@ import (
 	"time"
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
-	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
@@ -297,26 +296,7 @@ func (s *Service) Rolls(ctx context.Context, _ *emptypb.Empty) (*inventoryv1.Rol
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	metadataValid := true
-	for at := 0; at < len(ids) && metadataValid; at += 6 {
-		batch := ids[at:min(at+6, len(ids))]
-		result := &tradev1.LookupItemsResponse{}
-		if s.invoke(call, "buddy-trade", "lookup_items", &tradev1.LookupItemsRequest{ItemIds: batch}, result) != nil ||
-			result.SessionId != out.SessionId || len(result.Items) != len(batch) {
-			out.Reason = "roll_item_metadata_unavailable"
-			break
-		}
-		seen := map[uint32]bool{}
-		for _, row := range result.Items {
-			if row == nil || !entries[row.ItemId] || seen[row.ItemId] || !containsRollEntry(batch, row.ItemId) {
-				out.Metadata, out.Reason = nil, "roll_item_metadata_unavailable"
-				metadataValid = false
-				break
-			}
-			seen[row.ItemId] = true
-			out.Metadata = append(out.Metadata, row)
-		}
-	}
+	out.Metadata = s.rollItemMetadata(call, ids)
 	s.mu.Lock()
 	fresh := s.rollSnapshotLocked()
 	s.mu.Unlock()

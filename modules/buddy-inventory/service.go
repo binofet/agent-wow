@@ -74,6 +74,7 @@ type Service struct {
 	addon                         *addonBridge
 	groupRolls                    map[uint64]*groupRoll
 	rollRequests                  map[string]*rollAttempt
+	rollItemTemplates             map[uint32]*tradev1.ItemDetails
 	rollRevision                  uint64
 	rollVisitID                   uint64
 	rollVisitMap                  uint32
@@ -830,6 +831,7 @@ func (s *Service) OnPacket(ctx context.Context, p *modv1.WorldPacket) (*emptypb.
 			s.state.MalformedPackets++
 		} else if s.queried[m.entry] && m.known {
 			s.metadata[m.entry] = m
+			s.observeRollItemMetadataLocked(p.Payload)
 			s.eligibilityLocked()
 			s.state.Revision++
 		}

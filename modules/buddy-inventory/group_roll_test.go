@@ -9,12 +9,9 @@ import (
 	"time"
 
 	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
-	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -22,28 +19,9 @@ const rollTestGUID = uint64(0x400000000000aa01)
 const rollTestEntry = uint32(2962)
 
 // The ordinary inventory fixture remains responsible for World observations.
-// Static templates are unavailable here so every vote is the exact caller's
-// choice and cannot come from native equipment classification.
+// These vote tests do not synthesize metadata replies; explicit choices remain
+// independent of whether a full template response has actually arrived.
 type rollTestSession struct{ *fakeInventory }
-
-func (f *rollTestSession) InvokeModule(ctx context.Context, request *modv1.InvokeModuleRequest, options ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
-	if request.Module != "buddy-trade" || request.Method != "lookup_items" {
-		return f.fakeInventory.InvokeModule(ctx, request, options...)
-	}
-	var lookup tradev1.LookupItemsRequest
-	if err := request.Request.UnmarshalTo(&lookup); err != nil {
-		return nil, err
-	}
-	f.mu.Lock()
-	f.calls = append(f.calls, "buddy-trade.lookup_items")
-	f.mu.Unlock()
-	out := &tradev1.LookupItemsResponse{SessionId: "body"}
-	for _, entry := range lookup.ItemIds {
-		out.Items = append(out.Items, &tradev1.ItemDetails{ItemId: entry, Pending: true})
-	}
-	packed, err := anypb.New(out)
-	return &modv1.InvokeModuleResponse{Result: packed}, err
-}
 
 func rollTestOffer(guid uint64, entry, suffix, property, countdown uint32, mask byte) []byte {
 	body := binary.LittleEndian.AppendUint64(nil, guid)
@@ -126,7 +104,9 @@ func rollTestWrites(fixture *fakeInventory) []*modv1.SendPacketRequest {
 	defer fixture.mu.Unlock()
 	var out []*modv1.SendPacketRequest
 	for _, packet := range fixture.packets {
-		out = append(out, proto.Clone(packet).(*modv1.SendPacketRequest))
+		if packet.Opcode != opcode.CMSGItemQuerySingle {
+			out = append(out, proto.Clone(packet).(*modv1.SendPacketRequest))
+		}
 	}
 	return out
 }

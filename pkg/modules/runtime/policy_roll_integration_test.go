@@ -11,9 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	inventoryv1 "github.com/agent-wow/agent-wow/modules/buddy-inventory/api"
+	buddytrade "github.com/agent-wow/agent-wow/modules/buddy-trade"
 	tradev1 "github.com/agent-wow/agent-wow/modules/buddy-trade/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
@@ -23,8 +27,11 @@ import (
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -70,18 +77,12 @@ func (packagedRollWorld) BeforeLogout(context.Context, *emptypb.Empty) (*emptypb
 
 type packagedRollTrade struct {
 	tradev1.UnimplementedBuddyTradeServer
-	session string
+	lookups *atomic.Int32
 }
 
-func (t packagedRollTrade) LookupItems(_ context.Context, req *tradev1.LookupItemsRequest) (*tradev1.LookupItemsResponse, error) {
-	out := &tradev1.LookupItemsResponse{SessionId: t.session}
-	for _, id := range req.ItemIds {
-		out.Items = append(out.Items, &tradev1.ItemDetails{ItemId: id, Available: true,
-			ItemClass: 4, Subclass: 1, InventoryType: 20, Quality: 2, ItemLevel: 10,
-			RequiredLevel: 10, AllowableClass: 0xffffffff, AllowableRace: 0xffffffff,
-			ArmorComparisonKnown: true, Armor: 10, Stats: []*tradev1.ItemStat{{Type: 5, Value: 2}}})
-	}
-	return out, nil
+func (t packagedRollTrade) LookupItems(context.Context, *tradev1.LookupItemsRequest) (*tradev1.LookupItemsResponse, error) {
+	t.lookups.Add(1)
+	return nil, status.Error(codes.Unimplemented, "roll facts must come from Inventory's own solicited item queries")
 }
 func (packagedRollTrade) OnPacket(context.Context, *modv1.WorldPacket) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
@@ -90,12 +91,59 @@ func (packagedRollTrade) BeforeLogout(context.Context, *emptypb.Empty) (*emptypb
 	return &emptypb.Empty{}, nil
 }
 
+func packagedRollObservedItem(id uint32) *tradev1.ItemDetails {
+	return &tradev1.ItemDetails{ItemId: id, Name: "Fixture Roll Cloth", Available: true,
+		ItemClass: 4, Subclass: 1, InventoryType: 20, Quality: 2, ItemLevel: 10,
+		RequiredLevel: 10, AllowableClass: 0xffffffff, AllowableRace: 0xffffffff,
+		Armor: 10, Stats: []*tradev1.ItemStat{{Type: 5, Value: 2}}}
+}
+
+// Normal ItemHandler item-template wire order, as in the independent native
+// lookupTemplate/metadataFixture fixtures. Comparison flags are never written
+// into this packet: the real Inventory decoder must establish that coverage.
+func packagedRollItemReply(item *tradev1.ItemDetails) []byte {
+	body := []byte{}
+	word := func(n uint32) { body = binary.LittleEndian.AppendUint32(body, n) }
+	for _, n := range []uint32{item.ItemId, item.ItemClass, item.Subclass, 0} {
+		word(n)
+	}
+	body = append(body, []byte(item.Name)...)
+	body = append(body, 0, 0, 0, 0)
+	for _, n := range []uint32{0, item.Quality, item.Flags, item.Flags2, item.BuyPrice, item.SellPrice,
+		item.InventoryType, item.AllowableClass, item.AllowableRace, item.ItemLevel, item.RequiredLevel,
+		item.RequiredSkill, item.RequiredSkillRank, item.RequiredSpell, item.RequiredHonorRank, item.RequiredCityRank,
+		item.RequiredReputationFaction, item.RequiredReputationRank, 0, 1, 0, uint32(len(item.Stats))} {
+		word(n)
+	}
+	for _, stat := range item.Stats {
+		word(stat.Type)
+		word(uint32(stat.Value))
+	}
+	for range 8 { // Scaling distribution/value and two physical damage triples.
+		word(0)
+	}
+	word(item.Armor)
+	for range 9 { // Six resistances, delay, ammunition and range modifier.
+		word(0)
+	}
+	for range 30 { // Five six-word spell records.
+		word(0)
+	}
+	word(0)                // Bonding.
+	body = append(body, 0) // Description terminator.
+	for range 29 {         // Complete normal trailing property record.
+		word(0)
+	}
+	return body
+}
+
 type packagedRollRunner struct {
 	binary   string
 	process  *exec.Cmd
 	peers    map[string]*grpc.Server
 	equipped bool
 	self     uint64
+	lookups  atomic.Int32
 }
 
 func (r *packagedRollRunner) Up(_ context.Context, launch modrunner.Launch) error {
@@ -127,7 +175,7 @@ func (r *packagedRollRunner) Up(_ context.Context, launch modrunner.Launch) erro
 	case "buddy-world":
 		worldv1.RegisterBuddyWorldServer(server, packagedRollWorld{equipped: r.equipped, self: r.self})
 	case "buddy-trade":
-		tradev1.RegisterBuddyTradeServer(server, packagedRollTrade{session: launch.Environment["AGENT_WOW_SESSION_ID"]})
+		tradev1.RegisterBuddyTradeServer(server, packagedRollTrade{lookups: &r.lookups})
 	}
 	ready := health.NewServer()
 	ready.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
@@ -228,10 +276,47 @@ func TestPackagedInventoryObservedLuaRoll(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			writes := make(chan policySpellWrite, 4)
+			replies := map[uint32][]byte{}
+			ids := []uint32{5000}
+			if test.equipped {
+				ids = append(ids, 5001)
+			}
+			for _, id := range ids {
+				item := packagedRollObservedItem(id)
+				body := packagedRollItemReply(item)
+				decoded, err := buddytrade.DecodeItemTemplateQuery(body)
+				if err != nil || !decoded.GetAvailable() || !decoded.GetArmorComparisonKnown() || decoded.GetWeaponComparisonKnown() ||
+					decoded.GetItemId() != item.ItemId || decoded.GetArmor() != item.Armor || len(decoded.GetStats()) != 1 ||
+					decoded.Stats[0].Type != 5 || decoded.Stats[0].Value != 2 || decoded.GetRawTemplateFacts() == nil || decoded.RawTemplateFacts.GetMaxStackCount() != 1 {
+					t.Fatal("full wire fixture did not establish actual template coverage", decoded, err)
+				}
+				replies[id] = body
+			}
+			var queryMu sync.Mutex
+			queries := map[uint32]int{}
 			if err := manager.Start(ctx, modsession.Session{
 				Identity: modsession.Identity{CharacterGUID: test.self},
 				Clock:    func() uint32 { return 1 },
 				SendPacket: func(ctx context.Context, code uint32, body []byte) error {
+					if code == opcode.CMSGItemQuerySingle {
+						if len(body) != 4 {
+							return fmt.Errorf("item query must be exactly four bytes: %x", body)
+						}
+						id := binary.LittleEndian.Uint32(body)
+						response, exists := replies[id]
+						if !exists {
+							return fmt.Errorf("unobserved fixture item query %d", id)
+						}
+						queryMu.Lock()
+						queries[id]++
+						queryMu.Unlock()
+						// Publish queues the actual solicited reply without waiting
+						// inside the module's outgoing transport callback.
+						return manager.Publish(opcode.SMSGItemQuerySingleResponse, response)
+					}
+					if code != opcode.CMSGLootRoll {
+						return fmt.Errorf("unexpected packaged roll write %#x", code)
+					}
 					writes <- policySpellWrite{code, bytes.Clone(body), modsession.WriteOriginFromContext(ctx)}
 					return nil
 				},
@@ -262,6 +347,32 @@ func TestPackagedInventoryObservedLuaRoll(t *testing.T) {
 			if cast.opcode != opcode.CMSGLootRoll || !bytes.Equal(cast.body, want) || cast.origin.Writer != "lua" ||
 				cast.origin.Module != inventoryModule || cast.origin.ActionID != "1" || cast.origin.PolicyRevision != before.Revision {
 				t.Fatalf("native vote = %#x %x %+v", cast.opcode, cast.body, cast.origin)
+			}
+			queryMu.Lock()
+			if len(queries) != len(ids) {
+				t.Errorf("roll skipped its complete solicited item queries: %v", queries)
+			}
+			for _, id := range ids {
+				if queries[id] != 1 {
+					t.Errorf("expected one query for observed item %d, got %v", id, queries)
+				}
+			}
+			queryMu.Unlock()
+			if calls := runner.lookups.Load(); calls != 0 {
+				t.Fatalf("Inventory borrowed Trade lookup facts %d times", calls)
+			}
+			rawFacts, err := manager.InvokeJSON(ctx, "buddy-inventory.rolls", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts := &inventoryv1.RollState{}
+			if err := protojson.Unmarshal(rawFacts, facts); err != nil || len(facts.Metadata) != len(ids) {
+				t.Fatal("native roll feed lost solicited metadata", string(rawFacts), err)
+			}
+			for _, item := range facts.Metadata {
+				if _, observed := replies[item.GetItemId()]; !observed || !item.GetAvailable() || !item.GetArmorComparisonKnown() || item.GetRawTemplateFacts() == nil {
+					t.Fatal("native roll feed manufactured or lost complete query coverage", item)
+				}
 			}
 			for host.vm.Status().Pending != 1 {
 				select {
