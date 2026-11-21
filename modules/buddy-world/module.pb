@@ -31,7 +31,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-à[
+Çd
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ö
 PlayerState
 guid (Rguid
@@ -388,9 +388,48 @@ selfSkills@
 own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchorJ
 player_corpses. (2#.warcraftbuddy.world.v1.CorpseStateRplayerCorpses%
-visit_revision/ (RvisitRevision2
+visit_revision/ (RvisitRevision"q
+CombatEventsRequest
 
-BuddyWorld]
+session_id (	R	sessionId%
+after_sequence (RafterSequence
+limit (Rlimit"®
+CombatEvent
+sequence (Rsequence-
+received_at_unix_ms (RreceivedAtUnixMs
+opcode (Ropcode
+kind (	Rkind
+source_guid (R
+sourceGuid
+target_guid (R
+targetGuid
+spell_id (RspellId!
+amount_known (RamountKnown
+amount	 (Ramount!
+result_known
+ (RresultKnown
+result (Rresult
+raw_payload (R
+rawPayload
+	malformed (R	malformed
+detail (	Rdetail"x
+CombatEventGap#
+from_sequence (RfromSequence)
+through_sequence (RthroughSequence
+reason (	Rreason"Û
+CombatEventsResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid%
+first_sequence (RfirstSequence'
+latest_sequence (RlatestSequence#
+next_sequence (RnextSequence
+has_more (RhasMore;
+events (2#.warcraftbuddy.world.v1.CombatEventRevents:
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2û
+
+BuddyWorldi
+CombatEvents+.warcraftbuddy.world.v1.CombatEventsRequest,.warcraftbuddy.world.v1.CombatEventsResponse]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
 ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-world/api;worldv1bproto3

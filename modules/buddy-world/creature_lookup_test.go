@@ -226,12 +226,26 @@ func TestRequestedCreatureDescriptorUsesExistingSnapshotAlias(t *testing.T) {
 		t.Fatal("missing buddy-world descriptor")
 	}
 	method, ok := module.RPC("snapshot")
-	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 2 {
+	if !ok || method.Path() != "/warcraftbuddy.world.v1.BuddyWorld/Snapshot" || len(module.Manifest().RPC) != 3 {
 		t.Fatal("snapshot/discovery observation aliases changed")
 	}
 	clientMovement, ok := module.RPC("observe_client_movement")
 	if !ok || clientMovement.Path() != "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement" || clientMovement.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.ClientMovementRequest" {
 		t.Fatal("client-written discovery observation descriptor missing")
+	}
+	combat, ok := module.RPC("combat_events")
+	if !ok || combat.Path() != "/warcraftbuddy.world.v1.BuddyWorld/CombatEvents" || combat.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.CombatEventsRequest" || combat.Descriptor().Output().FullName() != "warcraftbuddy.world.v1.CombatEventsResponse" {
+		t.Fatal("combat event read descriptor missing")
+	}
+	for name, kind := range map[protoreflect.Name]protoreflect.Kind{"session_id": protoreflect.StringKind, "after_sequence": protoreflect.Uint64Kind, "limit": protoreflect.Uint32Kind} {
+		field := combat.Descriptor().Input().Fields().ByName(name)
+		if field == nil || field.Kind() != kind {
+			t.Fatal("combat event request descriptor mismatch", name, field)
+		}
+	}
+	events := combat.Descriptor().Output().Fields().ByName("events")
+	if events == nil || !events.IsList() || events.Message().FullName() != "warcraftbuddy.world.v1.CombatEvent" || events.Message().Fields().ByName("raw_payload").Kind() != protoreflect.BytesKind {
+		t.Fatal("combat event evidence descriptor mismatch", events)
 	}
 	guid := method.Descriptor().Input().Fields().ByName("creature_guid")
 	creature := method.Descriptor().Output().Fields().ByName("requested_creature")
