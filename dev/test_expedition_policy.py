@@ -805,6 +805,41 @@ return mission
             self.assertEqual(claim['expectedItemId'],9001);self.assertNotIn('choiceIndex',claim)
             self.assertEqual(runner.data['memory']['rewardSelections']['701']['reason'],'highest_verified_vendor_value')
 
+    def test_shared_useful_reward_policy_claims_exact_choice_and_keeps_uncertain_receipt(self):
+        self.reward_catalog()
+        original_call = self.rpc.call
+        def call(method, params, timeout=5):
+            value = original_call(method, params, timeout)
+            if method == 'buddy-world.snapshot':
+                value['self'].update(classKnown=True, classId=8, levelKnown=True, level=10, raceKnown=True, raceId=1)
+            return value
+        self.rpc.call = call
+        self.rpc.choices = [dict(itemId=6076, count=1), dict(index=4, itemId=3070, count=1)]
+        items = {
+            '6076': dict(itemId=6076, available=True, itemClass=4, subclass=2, inventoryType=7, armor=25,
+                         allowableClass=0xffffffff, allowableRace=0xffffffff, sellPrice=100),
+            '3070': dict(itemId=3070, available=True, itemClass=4, subclass=1, inventoryType=16, armor=6,
+                         allowableClass=0xffffffff, allowableRace=0xffffffff, sellPrice=1),
+        }
+        self.goal['params']['rewardSelection'] = dict(mode='useful', items=items)
+        self.rpc.fail_claim = True
+        with host.Store(self.folder) as store:
+            runner = self.runner(store)
+            self.until(runner, lambda: self.count('buddy-quests.claim_reward') == 1)
+            claim = next(params for method, params in self.rpc.calls if method == 'buddy-quests.claim_reward')
+            self.assertEqual((claim['expectedItemId'], claim['choiceIndex'], claim['offerRevision']), (3070, 4, '3'))
+            for _ in range(2):
+                runner.tick()
+            self.assertTrue(runner.data['pending'])
+            self.assertNotIn('701', runner.data['memory'].get('completed', {}))
+        with host.Store(self.folder) as store:
+            runner = self.runner(store)
+            runner.tick()
+            self.assertEqual(self.count('buddy-quests.claim_reward'), 1)
+            self.rpc.confirm_reward()
+            self.until(runner, lambda: '701' in runner.data['memory'].get('completed', {}))
+            self.assertEqual(self.count('buddy-quests.claim_reward'), 1)
+
     def test_travel_normal_token_route_cleanup_then_fresh_giver(self):
         self.rpc.pose['x'] = -200; self.rpc.quest['nearby'] = []
         with host.Store(self.folder) as store:

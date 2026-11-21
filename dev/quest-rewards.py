@@ -9,21 +9,14 @@ Enums and use restrictions follow AzerothCore ItemTemplate.h / PlayerStorage.cpp
 https://github.com/azerothcore/azerothcore-wotlk/tree/master/src/server/game/Entities
 """
 
+import importlib.machinery
+import importlib.util
 import math
+import os
+from pathlib import Path
 
 
 _UINT32 = (1 << 32) - 1
-_RACES = {1, 2, 3, 4, 5, 6, 7, 8, 10, 11}
-_RACE_MASK = sum(1 << (race - 1) for race in _RACES)
-_ALLIANCE = {1, 3, 4, 7, 11}
-_BODY_SLOTS = {1, 3, 5, 6, 7, 8, 9, 10, 20}
-_COMMON_SLOTS = {2, 11, 12, 16}
-_WEAPON_SLOTS = {13, 15, 17, 21, 25, 26}
-_CASTER_STATS = {0: .02, 1: .01, 5: 4, 6: 3, 7: 2, 18: 3, 21: 3,
-                 30: 3, 31: 3, 32: 3, 36: 3, 41: 2, 42: 5, 43: 3,
-                 45: 5, 46: 1, 47: 1}
-_ROGUE_STATS = {1: .01, 3: 4, 4: 2, 7: 2, 13: 1, 16: 3, 19: 3,
-                28: 3, 31: 3, 32: 3, 36: 3, 37: 3, 38: 2, 44: 2, 46: 1}
 _UINT_FIELDS = ("itemClass", "subclass", "inventoryType", "quality", "itemLevel",
                 "requiredLevel", "buyPrice", "sellPrice", "allowableClass",
                 "allowableRace", "requiredSkill", "requiredSkillRank", "requiredSpell",
@@ -94,65 +87,36 @@ def _validate_item(item):
     return True
 
 
-def _requirements_met(item, class_id, level, race_id):
-    if not item.get("allowableClass", 0) & (1 << (class_id - 1)):
-        return False
-    race_mask = item.get("allowableRace", 0)
-    if race_id is None:
-        if race_mask & _RACE_MASK != _RACE_MASK:
-            return False
-    elif not race_mask & (1 << (race_id - 1)):
-        return False
-    flags2 = item.get("flags2", 0)
-    if flags2 & 3:
-        if race_id is None or (flags2 & 1 and race_id in _ALLIANCE) or (flags2 & 2 and race_id not in _ALLIANCE):
-            return False
-    required_level = item.get("requiredLevel", 0)
-    if required_level and (level is None or level < required_level):
-        return False
-    # These prerequisites are not exposed as actual character knowledge here.
-    if any(item.get(field, 0) for field in ("requiredSkill", "requiredSkillRank",
-                                           "requiredSpell", "requiredReputationFaction",
-                                           "requiredReputationRank", "requiredHonorRank",
-                                           "requiredCityRank")):
-        return False
-    return not item.get("flags", 0) & 0x10  # Deprecated/unusable item.
-
-
-def _useful_score(item, class_id, level, race_id, weapon_subclasses):
-    if not _requirements_met(item, class_id, level, race_id):
-        return None
-    kind, subclass, slot = (item.get(key, 0) for key in ("itemClass", "subclass", "inventoryType"))
-    is_weapon = kind == 2 and slot in _WEAPON_SLOTS and subclass in weapon_subclasses
-    if kind == 4:
-        if slot in _COMMON_SLOTS:
-            if subclass not in ({0, 1, 2} if class_id == 4 else {0, 1}):
-                return None
-        elif slot in _BODY_SLOTS:
-            if subclass not in ({1, 2} if class_id == 4 else {1}):
-                return None
-        elif slot == 23 and class_id in {5, 8} and subclass in {0, 1}:
-            pass  # Caster held-in-off-hand item; not a weapon or shield.
-        else:
-            return None
-    elif not is_weapon:
-        return None
-    weights = _ROGUE_STATS if class_id == 4 else _CASTER_STATS
-    score = 10 + item.get("armor", 0) * .15
-    score += sum(weights.get(stat.get("type", 0), 0) * stat.get("value", 0)
-                 for stat in item.get("stats", []))
-    if is_weapon and item.get("delayMs", 0):
-        dps = sum((damage.get("minimum", 0) + damage.get("maximum", 0)) / 2
-                  for damage in item.get("damages", [])) * 1000 / item["delayMs"]
-        score += dps * (4 if class_id == 4 else 1)
-    return score
-
-
 def _label(item):
     # Names are display data, never commands or ranking input.
     name = " ".join("".join(char if char.isprintable() else " "
                             for char in item.get("name", "")).split())[:100]
     return name or f"item {item['itemId']}"
+
+
+def _evaluate(facts):
+    loader = importlib.machinery.SourceFileLoader("quest_reward_task_runtime", str(Path(__file__).with_name("task-runtime")))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    runtime = importlib.util.module_from_spec(spec)
+    loader.exec_module(runtime)
+    root = Path(__file__).resolve().parent.parent
+    binary = os.environ.get("BUDDY_LUAPOLICY_BINARY", os.environ.get("BUDDY_LUAPOLICY_TEST_BINARY", root / "data/bin/luapolicy"))
+    try:
+        return runtime.Bridge(binary, root / "modules").evaluate(
+            (root / "behaviors/quest-rewards.lua").read_text(), facts)
+    except (runtime.Error, OSError, UnicodeError):
+        return {"status": "pending", "reason": "Waiting for the shared Lua reward policy."}
+
+
+def preferred_reward(choices, quest_id, class_id):
+    """Resolve the Lua policy's exact offered preference without item inference."""
+    decision = _evaluate(dict(mode="offer_preference", choices=choices, questId=quest_id, classId=class_id))
+    position = decision.get("position")
+    if decision.get("status") == "selected" and type(position) is int and 1 <= position <= len(choices):
+        choice = choices[position - 1]
+        if decision.get("itemId") == choice.get("itemId"):
+            return choice
+    return None
 
 
 def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_subclasses=()):
@@ -184,25 +148,49 @@ def select_reward(choices, items, class_id, *, level=None, race_id=None, weapon_
             return _result("pending", f"Waiting for complete server item details for item {item_id}.")
         if not _validate_item(item):
             return _result("invalid", f"Invalid server item details for item {item_id}.")
-    if type(class_id) is not int or class_id not in {4, 5, 8}:
-        return _result("pending", "Character class is unknown or unsupported for reward selection.")
-    if level is not None and (not _uint(level, 255) or level == 0):
-        return _result("invalid", "Character level is invalid.")
-    if race_id is not None and (type(race_id) is not int or race_id not in _RACES):
-        return _result("invalid", "Character race is invalid.")
     if not isinstance(weapon_subclasses, (tuple, list, set, frozenset)) or len(weapon_subclasses) > 21:
         return _result("invalid", "Invalid known weapon proficiencies.")
     if any(not _uint(subclass, 20) for subclass in weapon_subclasses):
         return _result("invalid", "Invalid known weapon proficiencies.")
-    ranked = []
-    for choice in choices:
-        item = metadata[choice["itemId"]]
-        score = _useful_score(item, class_id, level, race_id, weapon_subclasses)
-        if score is not None and score > 0:
-            ranked.append((score, item.get("sellPrice", 0) * choice["count"], -choice["itemId"], -choice.get("index", 0), choice))
-    if ranked:
-        choice = max(ranked, key=lambda row: row[:4])[-1]
+    if level is not None and (not _uint(level, 255) or level == 0):
+        return _result("invalid", "Character level is invalid.")
+    if race_id is not None and type(race_id) is not int:
+        return _result("invalid", "Character race is invalid.")
+    # The existing evaluator accepts only bounded facts. Display names and
+    # unoffered metadata stay outside the decision input.
+    rows = []
+    for item_id in sorted(ids):
+        item = metadata[item_id]
+        damages = []
+        for damage in item.get("damages", []):
+            row = {"school": damage.get("school", 0)}
+            for field in ("minimum", "maximum"):
+                value = damage.get(field, 0)
+                # The evaluator's JSON-number bound protects exact identities.
+                # Preserve larger finite damage facts as decimal text.
+                if value > (1 << 53) - 1:
+                    row[field + "Decimal"] = format(value, ".17e")
+                else:
+                    row[field] = value
+            damages.append(row)
+        rows.append(dict(itemId=item_id, available=True,
+                         **{key: item.get(key, 0) for key in _UINT_FIELDS},
+                         stats=item.get("stats", []), damages=damages))
+    facts = dict(mode="useful", choices=list(choices), items=rows, classId=class_id if type(class_id) is int else None,
+                 level=level, raceId=race_id, weaponSubclasses=list(weapon_subclasses))
+    decision = _evaluate(facts)
+    if decision.get("status") != "selected":
+        status = decision.get("status")
+        return _result(status if status in ("pending", "invalid") else "invalid", str(decision.get("reason", "Invalid Lua reward decision.")))
+    position = decision.get("position")
+    if type(position) is not int or not 1 <= position <= len(choices):
+        return _result("invalid", "Lua reward decision does not identify an actual offered choice.")
+    choice = choices[position - 1]
+    if decision.get("itemId") != choice["itemId"] or decision.get("choiceIndex") != choice.get("index", 0):
+        return _result("invalid", "Lua reward decision differs from the actual offered choice.")
+    if decision.get("reason") == "useful":
         return _result("selected", f"Choose {_label(metadata[choice['itemId']])} for useful equipment and stats.", choice)
-    choice = max(choices, key=lambda row: (metadata[row["itemId"]].get("sellPrice", 0) * row["count"], -row["itemId"], -row.get("index", 0)))
+    if decision.get("reason") != "vendor":
+        return _result("invalid", "Lua reward decision has no supported selection reason.")
     value = metadata[choice["itemId"]].get("sellPrice", 0) * choice["count"]
     return _result("selected", f"Choose {_label(metadata[choice['itemId']])} for its sell value ({value} copper).", choice)

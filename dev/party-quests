@@ -22,9 +22,6 @@ converse, Error, integer = sync.converse, sync.Error, sync.integer
 IDENTITY = converse.PARTY_QUEST_IDENTITY
 ROSTER = sync.ROSTER
 REWARD_GIVERS = {783: 197, 7: 197, 15: 197, 18: 823, 21: 197, 54: 240, 3903: 9296, 5261: 196, 33: 196}
-# Official Northshire item_template weapon/armor categories; selection only,
-# never equipment changes. Every preferred ID must be in the actual offer.
-REWARD_CHOICES = converse.QUEST_REWARD_PREFERENCES
 
 
 class PartyRPC(sync.SyncRPC):
@@ -315,10 +312,9 @@ class PartyQuestSync:
         if len(valid) <= 1:
             return valid[0] if valid else None
         class_id = integer(player.get("classId", 0)) if player.get("classKnown") is True else 0
-        preferred = REWARD_CHOICES.get(integer(offer.get("questId", 0)), {}).get(class_id)
-        matches = [item for item in valid if item["itemId"] == preferred]
-        if len(matches) == 1:
-            return matches[0]
+        preferred = converse.quest_rewards.preferred_reward(valid, integer(offer.get("questId", 0)), class_id)
+        if preferred is not None:
+            return preferred
         key = (session, integer(offer.get("questId", 0)), integer(offer.get("npcGuid", 0)),
                integer(offer.get("revision", 0)), tuple((row["index"], row["itemId"], row["count"]) for row in valid))
         if lookup:

@@ -598,7 +598,10 @@ class Runner:
     def evaluate(self, value):
         error = ''
         try:
-            code = 'local tasks=(function()\n' + read_file(self.library, self.source_bytes).decode() + '\nend)()\n' + read_file(self.source, self.source_bytes).decode()
+            rewards = read_file(ROOT / 'behaviors/quest-rewards.lua', self.source_bytes).decode()
+            code = ('local quest_rewards=(function()\n' + rewards + '\nend)()\n'
+                    + 'local tasks=(function()\n' + read_file(self.library, self.source_bytes).decode() + '\nend)()\n'
+                    + read_file(self.source, self.source_bytes).decode())
             require(0 < len(code.encode()) <= self.source_bytes, 'combined_source_size_bound')
             revision = hashlib.sha256(code.encode()).hexdigest()
             # Input-dependent failure does not revoke a source that already
