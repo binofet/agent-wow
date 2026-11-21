@@ -63,8 +63,9 @@ func TestNativeTickDoesNotSelectInterruptEnemyOrRank(t *testing.T) {
 			case "following":
 				toggle(t, s, true)
 			case "interaction_emergency":
-				s.state.InteractionOwner = "fixture"
-				s.interactionUntil = s.now().Add(time.Minute)
+				if _, err := s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "trade", LeaseMs: 30000}); err != nil {
+					t.Fatal(err)
+				}
 			case "expired_host_lease":
 				activateEncounterWriter(t, s, f)
 				advance(encounterLeaseDuration)
@@ -80,6 +81,16 @@ func TestNativeTickDoesNotSelectInterruptEnemyOrRank(t *testing.T) {
 			}
 			w, _ := s.snapshot(context.Background())
 			view := s.encounterSupportLocked(context.Background(), w, s.onlineHealingGroup(f.party.Group))
+			if mode == "interaction_emergency" {
+				if s.state.InteractionOwner != "trade" || len(view.Interrupts) != 0 {
+					t.Fatal("native defense stole custody or claimed cast readiness", view, s.stateLocked())
+				}
+				if _, err := s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "trade", Token: s.interactionToken}); err != nil {
+					t.Fatal(err)
+				}
+				w, _ = s.snapshot(context.Background())
+				view = s.encounterSupportLocked(context.Background(), w, s.onlineHealingGroup(f.party.Group))
+			}
 			if len(view.Interrupts) != 1 || !view.Interrupts[0].Ready || view.Interrupts[0].SpellId != 1766 || view.Interrupts[0].CastRevision != 7 {
 				t.Fatal("removing native selection hid the exact learned interrupt", view)
 			}

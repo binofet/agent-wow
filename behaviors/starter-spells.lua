@@ -2,6 +2,7 @@
 -- rank, damage and resource comparison; native admission owns the exact cast.
 local spells = assert(encounter_spells)
 local healing = assert(encounter_healing)
+local starter_movement = encounter_movement
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
 
@@ -124,14 +125,23 @@ local function weapon_choice(obs, target, self, override)
     return {kind="melee",spellId=0}
 end
 
-function M.decide(input, override)
-    local wait={kind="wait",spellId=0}
+function M.decide(input, override, movement)
+    local wait=type(input)=="table" and input.selection=="practice_approach" and
+        {kind="wait",standYards=0} or {kind="wait",spellId=0}
     if type(input)~="table" or type(input.sessionId)~="string" or #input.sessionId==0 or
        not guid(input.selfGuid) or type(input.autoAttackKnown)~="boolean" then return wait end
     local obs,target=input.observation,input.target
     if type(obs)~="table" or obs.sessionId~=input.sessionId or obs.selfGuid~=input.selfGuid or
        type(obs.players)~="table" then return wait end
     local self=obs.players[input.selfGuid]
+    if input.selection=="practice_approach" then
+        movement=movement or starter_movement
+        if type(self)~="table" or self.guid~=input.selfGuid or type(target)~="table" or not guid(target.guid) or
+           type(movement)~="table" or type(movement.practice_approach)~="function" then
+            return {kind="wait",standYards=0}
+        end
+        return movement.practice_approach(input)
+    end
     if type(self)~="table" or self.guid~=input.selfGuid or self.classKnown~=true or
        not uint(self.classId) or self.classId==0 or self.powerKnown~=true or
        not uint(self.power) or not uint(self.powerType) then return wait end

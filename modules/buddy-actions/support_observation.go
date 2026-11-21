@@ -14,7 +14,7 @@ import (
 // deliberately does not choose a patient, an enemy cast, or an interrupt rank.
 func (s *Service) encounterSupportLocked(ctx context.Context, w *worldv1.SnapshotResponse, online map[uint64]bool) *actionsv1.EncounterSupport {
 	out := &actionsv1.EncounterSupport{CasterInCombat: w.Self.UnitFlags&0x80000 != 0,
-		PlayerAuras: s.observedPlayerAurasLocked(w)}
+		PlayerAuras: s.observedPlayerAurasLocked(w), ControlRecovery: s.controlBreakObservationLocked(w)}
 	catalog := s.spellData
 	if catalog == nil {
 		catalog = spellcatalog.Default()

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from test_town_policy import service_source, source_reply, policy_reply, bridge_factory
 
 def load(name,file):
     loader=importlib.machinery.SourceFileLoader(name,str(Path(__file__).with_name(file)))
@@ -24,6 +25,7 @@ class RPC:
     url="http://127.0.0.1:8086/rpc"
     def __init__(self):
         self.inv=finite.initial();self.inv["selfGuid"]="1"
+        self.policy_source=service_source()
         # Leave only a real gray stack and an ordinary item initially.
         self.inv["inventoryBags"][0]["slots"][2]={"slot":2}
         self.inv["items"]=[item for item in self.inv["items"] if item["item"]["slot"] != 2]
@@ -46,6 +48,8 @@ class RPC:
         return dict(self.player(VENDOR,self.vendor_x),entry=VENDOR>>24&0xffffff,npcFlags=128)
     def call(self,method,params):
         self.calls.append((method,copy.deepcopy(params)))
+        if method=='session.policy_source':return source_reply(self.policy_source,self.inv)
+        if method=='session.attach':return policy_reply(self.policy_source,self.inv)
         if method=="buddy-inventory.state":return copy.deepcopy(self.inv)
         if method=="buddy-world.snapshot":
             own=self.player(1,self.x);own["unitFlags"]=0x80000 if self.combat else 0
@@ -89,6 +93,8 @@ class RPC:
 
 class TownTests(unittest.TestCase):
     def setUp(self):
+        self.bridge=patch.object(m.town.destination_policy.runtime,'Bridge',side_effect=bridge_factory(m.town.destination_policy.runtime.Bridge))
+        self.bridge.start();self.addCleanup(self.bridge.stop)
         self.patches=[patch.object(m.c,"quest_task_snapshot",return_value={"active":False}),
                       patch.object(m.c,"area_quest_snapshot",return_value={"active":False}),
                       patch.object(m,"profession_active",return_value=False)]

@@ -361,8 +361,8 @@ class Supervisor:
                     or integer(p.get("mapId", 0)) != integer(pos.get("mapId", 0))): continue
             seen.add(guid)
             d = distance(pos, p)
-            if d <= 35: result.append((d, guid))
-        return sorted(result)
+            result.append((d, guid))
+        return town.rank_vendors(self.rpc, state, result, 'nearby') if result else []
 
     def release(self):
         if self.token is None: return

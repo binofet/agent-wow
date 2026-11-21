@@ -15,6 +15,7 @@ rpc:
   approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
   interrupt_cast: /warcraftbuddy.actions.v1.BuddyActions/InterruptCast
+  break_control: /warcraftbuddy.actions.v1.BuddyActions/BreakControl
   set_follow_formation: /warcraftbuddy.actions.v1.BuddyActions/SetFollowFormation
   set_portal_catchup: /warcraftbuddy.actions.v1.BuddyActions/SetPortalCatchup
   follow: /warcraftbuddy.actions.v1.BuddyActions/Follow
@@ -110,6 +111,7 @@ script_api:
   select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}
   approach_target: {effect: mutation, description: Move one physical navigation step toward the exact observed target and caller-selected range}
   move_body: {effect: mutation, description: Execute one bounded body-relative step or hop at observed speed; unsupported starts settle to measured ground on the current visit}
+  break_control: {effect: mutation, description: Execute the exact learned or equipped fear break against the selected observed self aura without movement preparation}
   interrupt_cast: {effect: mutation, description: Cast one exact learned interrupt on the selected observed enemy cast revision}
   plan_route_leg: {effect: read, description: Physically verified next endpoint along a complete bounded same-map corridor; no movement authority}
   status: {effect: read}
@@ -139,7 +141,7 @@ script_api:
   buffs: {effect: mutation, description: 'Compatibility input: enable queues a useful-buff check in current Lua; disable clears legacy status while shared Lua maintenance stays active'}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}
-  release_interaction: {effect: mutation}
+  release_interaction: {effect: mutation, description: 'Release the exact caller-selected interaction lease after normal STOP; optional session/body/visit guards bind current Lua requests'}
   approach_loot: {effect: mutation}
   approach_quest: {effect: mutation}
   travel_quest: {effect: mutation}

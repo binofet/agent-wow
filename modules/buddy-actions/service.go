@@ -114,8 +114,7 @@ type Service struct {
 	spellCooldownBaselineKnown                 bool
 	weaponCombo                                comboObservation
 	categoryReady                              map[uint32]time.Time
-	fearBreakReady                             time.Time
-	fearBreakAttempted                         bool
+	controlBreakBindings                       map[uint32]observedBuffAura
 	supportOp                                  *supportAttempt
 	meleeOp                                    *meleeAttempt
 	encounterSwing                             encounterMeleeSwing
@@ -429,9 +428,19 @@ func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.Interacti
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireInteractionLocked()
+	if r.SessionId != "" || r.SelfGuid != 0 || r.VisitId != 0 {
+		if s.closed || r.SessionId != s.sessionID || r.SelfGuid != s.selfGUID || r.VisitId == 0 {
+			return nil, status.Error(codes.FailedPrecondition, "current interaction body and visit required")
+		}
+		w, err := s.snapshot(ctx)
+		if err != nil || !s.matchesCurrentEncounterVisitLocked(w) || w.VisitRevision != r.VisitId {
+			return nil, status.Error(codes.FailedPrecondition, "current observed interaction visit required")
+		}
+	}
 	if s.state.InteractionOwner != r.Owner || subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.interactionToken)) != 1 {
 		return nil, status.Error(codes.FailedPrecondition, "interaction lease does not match")
 	}
+	ctx = modcb.ForwardPolicySpell(ctx)
 	stopped := false
 	if s.state.InteractionHarvest {
 		stopped = s.stopHarvestMovementLocked(ctx)
@@ -442,6 +451,7 @@ func (s *Service) ReleaseInteraction(ctx context.Context, r *actionsv1.Interacti
 		return nil, status.Error(codes.FailedPrecondition, "interaction movement stop unconfirmed")
 	}
 	s.state.InteractionOwner = ""
+	s.state.Traveling = false
 	s.state.InteractionHarvest = false
 	s.state.HarvestGuardGuids = nil
 	s.interactionToken = ""
@@ -845,6 +855,15 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			return false
 		}
 	}
+	if moving {
+		if guard, ok := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard); ok {
+			var allowed bool
+			w, allowed = guard(ctx, w)
+			if !allowed {
+				return false
+			}
+		}
+	}
 	if snapshotErr != nil {
 		// Visibility/RPC loss must still permit one bounded STOP of movement
 		// already written at the last known position. It never permits travel.
@@ -1106,20 +1125,11 @@ func (s *Service) Tick(ctx context.Context) {
 			s.followNav.Reset()
 		}
 	}()
-	if !s.closed && !s.state.CastPending && s.hasObservedFearLocked() {
-		if w, err := s.snapshot(ctx); err == nil && s.breakControlLocked(ctx, w) {
-			return
-		}
-	}
 	if s.controlRecoveryLocked(ctx) {
 		return
 	}
 	s.expirePendingCastLocked(ctx)
 	if s.encounterSwing.target != 0 {
-		s.lastStep = s.now()
-		return
-	}
-	if s.emergencyDefenseLocked(ctx) {
 		s.lastStep = s.now()
 		return
 	}
