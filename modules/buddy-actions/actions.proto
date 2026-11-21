@@ -595,6 +595,37 @@ message NavigationObservation {
   EncounterPlayer follow_owner = 16;
   uint64 follow_revision = 17;
   bool ground_navigation_configured = 18;
+  PortalFollowObservation portal = 19;
+}
+message PortalPoint {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+// A witnessed owner pose inside an entrance, not evidence of an instance or wing.
+message PortalFollowObservation {
+  uint64 witness_revision = 1;
+  uint64 source_visit_id = 2;
+  uint64 follow_revision = 3;
+  uint64 owner_guid = 4;
+  uint32 source_map_id = 5;
+  uint32 destination_map_id = 6;
+  uint32 trigger_id = 7;
+  PortalPoint ground = 8;
+  ClientPosition start = 9;
+  bool catching_up = 10;
+  bool notified = 11;
+  bool owner_absent = 12;
+}
+message PortalCatchupRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 owner_guid = 4;
+  uint64 follow_revision = 5;
+  uint64 witness_revision = 6;
+  ClientPosition start = 7;
+  repeated PortalPoint candidates = 8;
 }
 message EncounterParty {
   warcraftbuddy.party.v1.Group group = 1;
@@ -819,6 +850,7 @@ service BuddyActions {
   rpc MoveBody(BodyMovementRequest) returns (State);
   rpc InterruptCast(InterruptCastRequest) returns (State);
   rpc SetFollowFormation(FollowFormationRequest) returns (google.protobuf.Empty);
+  rpc SetPortalCatchup(PortalCatchupRequest) returns (google.protobuf.Empty);
   rpc Follow(ToggleRequest) returns (State);
   rpc Assist(ToggleRequest) returns (State);
   rpc EngageNPC(EngageNPCRequest) returns (State);

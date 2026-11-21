@@ -159,6 +159,8 @@ type Service struct {
 	followRevision                       uint64
 	followNav                            followNavigation
 	followPortal                         dungeonPortalFollow
+	portalGoal                           portalCatchupGoal
+	portalWitnessRevision                uint64
 	swimFollow                           swimFollowRoute
 	swimTrail                            swimTrail
 	planSwimPath                         func(context.Context, string, uint32, buddynav.Point, buddynav.Point) ([]buddynav.SwimPoint, error)
@@ -919,6 +921,10 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 	}
 	if moving && s.targetMovementExecuting && (!s.matchesCurrentEncounterVisitLocked(w) || !s.admitsPolicyEncounterLocked(ctx, w)) {
 		s.state.Reason = "target_movement_visit_changed"
+		return false
+	}
+	if moving && s.followPortal.movementInProgress && !s.portalMovementAllowedLocked(w) {
+		s.state.Reason = "follow_instance_source_changed"
 		return false
 	}
 	if moving && !s.targetMovementExecuting && s.partyDefenseTarget == 0 && !s.engage.executing && !s.crowdControl.executing && !missionMovement && !s.independent && !s.state.Practicing && s.state.InteractionOwner == "" && (s.state.Following || s.state.Assisting) && (w.Owner == nil || !w.Owner.Present || !w.Owner.MapKnown || w.Owner.MapId != w.Self.MapId) && !s.portalMovementAllowedLocked(w) {
