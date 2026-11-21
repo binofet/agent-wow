@@ -118,8 +118,18 @@ func (s *Service) DestroyJunk(ctx context.Context, r *tradev1.JunkRequest) (*tra
 	if !legacy && !carried {
 		return nil, status.Error(codes.InvalidArgument, "one exact inventory source is required")
 	}
+	if err := validateJunkRequestHistory(r); err != nil {
+		return nil, err
+	}
+	r = proto.Clone(r).(*tradev1.JunkRequest)
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	if out, handled, err := s.replayJunkRequest(r); handled {
+		return out, err
+	}
 	call, cancel := context.WithTimeout(ctx, junkWriteTimeout)
 	defer cancel()
 	if err := s.destroyJunk(call, r); err != nil {
@@ -135,6 +145,9 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	defer cancel()
 	s.mu.Lock()
 	err := s.boundLocked(r.SessionId, r.Revision)
+	if err == nil && r.RequestId != "" && len(s.junkRequests) >= junkRequestHistoryLimit {
+		err = status.Error(codes.ResourceExhausted, "junk_request_history_full")
+	}
 	busy := active(s.state.Phase) || s.state.Phase == "CANCEL_SENT" || s.pendingBegin || s.pendingCancel || s.junkPending != nil
 	s.mu.Unlock()
 	if err != nil {
@@ -150,6 +163,9 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	initial := junkSource(w, r)
 	if initial == nil {
 		return status.Error(codes.FailedPrecondition, "full capacity and exact inventory source required")
+	}
+	if err := junkRequestContextSafe(w, r); err != nil {
+		return err
 	}
 	// Do not interrupt an existing interaction; acquire may stop ordinary follow.
 	if err := s.junkSafe(ctx, w); err != nil {
@@ -207,6 +223,7 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 		s.carriedJunkProof = nil
 		s.junkPending.BackpackSlot, s.junkPending.BackpackRevision = selected.Slot, w.BackpackRevision
 	}
+	s.reserveJunkRequestLocked(r, w)
 	s.state.LastJunkDisposal = proto.Clone(s.junkPending).(*tradev1.JunkDisposal)
 	s.state.JunkReason = "waiting_for_server_inventory_update"
 	s.state.Revision++
@@ -216,7 +233,7 @@ func (s *Service) destroyJunk(ctx context.Context, r *tradev1.JunkRequest) error
 	// ItemPackets::DestroyItem: bag, inventory slot, count(0=whole stack), 3 unused bytes.
 	if err := s.send(ctx, opcode.CMSGDestroyitem, []byte{bag, slot, 0, 0, 0, 0}); err != nil {
 		s.mu.Lock()
-		s.state.LastJunkDisposal.Status = "TRANSPORT_UNCONFIRMED_NO_RETRY"
+		s.junkReceiptStatusLocked("TRANSPORT_UNCONFIRMED_NO_RETRY")
 		s.state.JunkReason = "transport_unconfirmed_no_retry"
 		s.mu.Unlock()
 	}
@@ -263,7 +280,7 @@ func (s *Service) junkTick(ctx context.Context) {
 		}
 		if confirmed {
 			s.mu.Lock()
-			s.state.LastJunkDisposal.Status = "SERVER_SLOT_REMOVAL_CONFIRMED"
+			s.junkReceiptStatusLocked("SERVER_SLOT_REMOVAL_CONFIRMED")
 			s.state.JunkStacksDestroyed++
 			s.state.JunkReason = "server_confirmed_junk_stack_removed"
 			s.state.Revision++
@@ -275,7 +292,7 @@ func (s *Service) junkTick(ctx context.Context) {
 		}
 		if !s.now().Before(s.junkUntil) {
 			s.mu.Lock()
-			s.state.LastJunkDisposal.Status = "UNCONFIRMED_NO_RETRY"
+			s.junkReceiptStatusLocked("UNCONFIRMED_NO_RETRY")
 			s.state.JunkReason = "slot_update_unconfirmed_disposal_blocked"
 			s.mu.Unlock()
 			s.release(ctx)
