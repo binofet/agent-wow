@@ -49,28 +49,41 @@ func TestOwnedDisposalMiscellaneousUsesExistingModeWithoutGearOrContext(t *testi
 
 func TestOwnedDisposalArmorDelegatesToActualSharedGearAndReloads(t *testing.T) {
 	source, frame := disposalArmorHostProjection(t, disposalArmorFrame(t))
-	r := New()
-	first := load(t, r, source)
+	r := disposalArmorSemanticRuntime(t, source)
+	first := r.Status().Revision
 	gray := ownedDisposalResult(t, r, frame)
+	if actual := disposalArmorProductionResult(t, source, frame, "eligible"); !reflect.DeepEqual(actual, gray) {
+		t.Fatal("production gray mode differs from the semantic shared comparison", actual, gray)
+	}
 	frame["mode"] = "owned_destroy"
 	before := disposalArmorClone(t, frame)
 	owned := ownedDisposalResult(t, r, frame)
 	if gray["status"] != "eligible" || !reflect.DeepEqual(owned, gray) || !reflect.DeepEqual(frame, before) {
 		t.Fatal("owned union did not reuse exact armor policy", gray, owned)
 	}
+	if actual := disposalArmorProductionResult(t, source, frame, "eligible"); !reflect.DeepEqual(actual, owned) {
+		t.Fatal("production owned mode differs from the semantic shared comparison", actual, owned)
+	}
 	const score = "local gain=(candidate.armor or 0)-(current.armor or 0)"
 	if strings.Count(source, score) != 1 {
 		t.Fatal("actual shared armor scorer not found exactly once")
 	}
-	second, err := r.Reload(strings.Replace(source, score, score+"-100", 1), first)
+	edited := strings.Replace(source, score, score+"-100", 1)
+	second, err := r.Reload(edited, first)
 	if err != nil || first == second {
 		t.Fatal("actual shared scorer edit was not accepted", second, err)
 	}
 	owned = ownedDisposalResult(t, r, frame)
+	if actual := disposalArmorProductionResult(t, edited, frame, "keep"); !reflect.DeepEqual(actual, owned) {
+		t.Fatal("production owned mode bypassed the exact shared-scorer edit", actual, owned)
+	}
 	frame["mode"] = "gray_armor_destroy"
 	gray = ownedDisposalResult(t, r, frame)
 	if owned["status"] != "keep" || !reflect.DeepEqual(owned, gray) {
 		t.Fatal("owned union bypassed edited shared comparison", owned, gray)
+	}
+	if actual := disposalArmorProductionResult(t, edited, frame, "keep"); !reflect.DeepEqual(actual, gray) {
+		t.Fatal("production gray mode bypassed the exact shared-scorer edit", actual, gray)
 	}
 }
 
@@ -99,10 +112,11 @@ func TestOwnedDisposalUnknownBranchesStayFailClosed(t *testing.T) {
 }
 
 func TestOwnedDisposalArmorUncertaintyAndFunctionalItemsMatchExistingModes(t *testing.T) {
-	_, base := disposalArmorHostProjection(t, disposalArmorFrame(t))
+	productionSource, base := disposalArmorHostProjection(t, disposalArmorFrame(t))
 	// These inputs must refuse before scoring. Keep the current classifier
 	// and make an unexpected comparison observable, without initializing the
-	// unused shared scorer inside each negative case's five-millisecond VM.
+	// unused shared scorer inside the semantic refusal matrix. The exact full
+	// host source and each proposal also run through the default production CLI.
 	source := "local compared=false\nlocal gear={compare=function(...)compared=true error('refusal reached shared scorer')end}\nlocal disposal=(function()\n" + disposalPolicySource(t) + `
 end)()
 return {decide=function(input)
@@ -122,8 +136,7 @@ end}`
 		"functional_spell":  {func(frame map[string]any) { frame["item"].(map[string]any)["hasSpell"] = true }, "keep"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := New()
-			load(t, r, source)
+			r := disposalArmorSemanticRuntime(t, source)
 			frame := disposalArmorClone(t, base)
 			test.change(frame)
 			gray := ownedDisposalResult(t, r, frame)
@@ -133,6 +146,16 @@ end}`
 			owned := ownedDisposalResult(t, r, frame)
 			if owned["status"] != test.want || gray["status"] != test.want || miscellaneous["status"] == "eligible" {
 				t.Fatal("owned union changed existing refusal semantics", owned, gray, miscellaneous)
+			}
+			for _, proposal := range []struct {
+				mode string
+				want map[string]any
+			}{{"gray_armor_destroy", gray}, {"misc_destroy", miscellaneous}, {"owned_destroy", owned}} {
+				frame["mode"] = proposal.mode
+				actual := disposalArmorProductionResult(t, productionSource, frame, proposal.want["status"].(string))
+				if !reflect.DeepEqual(actual, proposal.want) {
+					t.Fatal("production refusal differs from the same classifier and proposal", proposal.mode, actual, proposal.want)
+				}
 			}
 		})
 	}
