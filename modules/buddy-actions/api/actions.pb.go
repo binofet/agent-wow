@@ -6264,6 +6264,7 @@ type EncounterPlayer struct {
 	ComboKnown       bool                   `protobuf:"varint,31,opt,name=combo_known,json=comboKnown,proto3" json:"combo_known,omitempty"`
 	ComboTargetGuid  uint64                 `protobuf:"varint,32,opt,name=combo_target_guid,json=comboTargetGuid,proto3" json:"combo_target_guid,omitempty"`
 	ComboPoints      uint32                 `protobuf:"varint,33,opt,name=combo_points,json=comboPoints,proto3" json:"combo_points,omitempty"`
+	PlayerFlags      uint32                 `protobuf:"varint,34,opt,name=player_flags,json=playerFlags,proto3" json:"player_flags,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -6525,6 +6526,13 @@ func (x *EncounterPlayer) GetComboTargetGuid() uint64 {
 func (x *EncounterPlayer) GetComboPoints() uint32 {
 	if x != nil {
 		return x.ComboPoints
+	}
+	return 0
+}
+
+func (x *EncounterPlayer) GetPlayerFlags() uint32 {
+	if x != nil {
+		return x.PlayerFlags
 	}
 	return 0
 }
@@ -9019,7 +9027,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eEncounterParty\x123\n" +
 	"\x05group\x18\x01 \x01(\v2\x1d.warcraftbuddy.party.v1.GroupR\x05group\x12J\n" +
 	"\fraid_targets\x18\x02 \x01(\v2'.warcraftbuddy.party.v1.RaidTargetStateR\vraidTargets\x12\x1a\n" +
-	"\brevision\x18\x03 \x01(\x04R\brevision\"\xfb\a\n" +
+	"\brevision\x18\x03 \x01(\x04R\brevision\"\x9e\b\n" +
 	"\x0fEncounterPlayer\x12\x12\n" +
 	"\x04guid\x18\x01 \x01(\x04R\x04guid\x12\x18\n" +
 	"\apresent\x18\x02 \x01(\bR\apresent\x12\x1b\n" +
@@ -9062,7 +9070,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vcombo_known\x18\x1f \x01(\bR\n" +
 	"comboKnown\x12*\n" +
 	"\x11combo_target_guid\x18  \x01(\x04R\x0fcomboTargetGuid\x12!\n" +
-	"\fcombo_points\x18! \x01(\rR\vcomboPointsB\t\n" +
+	"\fcombo_points\x18! \x01(\rR\vcomboPoints\x12!\n" +
+	"\fplayer_flags\x18\" \x01(\rR\vplayerFlagsB\t\n" +
 	"\a_map_idB\b\n" +
 	"\x06_alive\"\xad\a\n" +
 	"\x11EncounterCreature\x12\x12\n" +
