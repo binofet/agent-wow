@@ -485,6 +485,12 @@ func (s *Service) Tick(ctx context.Context) {
 		s.fail("trade_partner_not_nearby")
 		return
 	}
+	// Nearby's Actions observation may follow a lease revocation/replacement.
+	// Status exposes no token, so prove the same token again before last World.
+	if err := consent.renew(call, s); err != nil {
+		s.tradeConsentWait("trade_consent_lease_unconfirmed")
+		return
+	}
 	// Check every offered GUID and entire stack again immediately before consent.
 	w, err := s.inventory(call)
 	if err != nil {

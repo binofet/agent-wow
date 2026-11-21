@@ -22,14 +22,15 @@ import (
 
 type tradeConsentSession struct {
 	*fakeSession
-	response    map[string]any
-	fault       error
-	inputs      []map[string]any
-	calls       []string
-	renewals    []*actionsv1.InteractionRequest
-	before      func(context.Context, string)
-	after       func(string, *modv1.InvokeModuleResponse)
-	beforeWrite func(*modv1.SendPacketRequest)
+	response     map[string]any
+	fault        error
+	inputs       []map[string]any
+	calls        []string
+	renewals     []*actionsv1.InteractionRequest
+	renewalCheck func(*actionsv1.InteractionRequest) error
+	before       func(context.Context, string)
+	after        func(string, *modv1.InvokeModuleResponse)
+	beforeWrite  func(*modv1.SendPacketRequest)
 }
 
 func (f *tradeConsentSession) InvokeModule(ctx context.Context, request *modv1.InvokeModuleRequest, opts ...grpc.CallOption) (*modv1.InvokeModuleResponse, error) {
@@ -60,6 +61,11 @@ func (f *tradeConsentSession) InvokeModule(ctx context.Context, request *modv1.I
 			return nil, err
 		}
 		f.renewals = append(f.renewals, r)
+		if f.renewalCheck != nil {
+			if err := f.renewalCheck(r); err != nil {
+				return nil, err
+			}
+		}
 	}
 	response, err := f.fakeSession.InvokeModule(ctx, request, opts...)
 	if err == nil && f.after != nil {
@@ -143,9 +149,12 @@ func TestTradeConsentAcceptReadsPolicyBeforeFinalGuardsAndReservesOneEmptyPacket
 	}
 	s.Tick(context.Background())
 	s.Tick(context.Background())
-	if f.count(opcode.CMSGAcceptTrade) != 1 || len(wrapper.inputs) != 1 || len(wrapper.renewals) != 1 || wrapper.renewals[0].Token != "lease-token" ||
+	if f.count(opcode.CMSGAcceptTrade) != 1 || len(wrapper.inputs) != 1 || len(wrapper.renewals) != 2 || wrapper.renewals[0].Token != "lease-token" ||
 		wrapper.renewals[0].Owner != "trade" || wrapper.renewals[0].LeaseMs != 30000 || s.snapshot().CompletedTrades != 0 {
 		t.Fatal("native consent was repeated, unbound or invented completion", s.snapshot(), wrapper.calls)
+	}
+	if wrapper.renewals[1].Token != "lease-token" || wrapper.renewals[1].Owner != "trade" || wrapper.renewals[1].LeaseMs != 30000 {
+		t.Fatal("last-World renewal replaced the captured token", wrapper.renewals)
 	}
 	envelope := wrapper.inputs[0]
 	input := envelope["input"].(map[string]any)
@@ -163,7 +172,8 @@ func TestTradeConsentAcceptReadsPolicyBeforeFinalGuardsAndReservesOneEmptyPacket
 			acceptAt = index
 		}
 	}
-	if policyAt < 0 || acceptAt <= policyAt+3 || wrapper.calls[policyAt+1] != "buddy-actions.acquire_interaction" || wrapper.calls[policyAt+2] != "buddy-world.snapshot" || wrapper.calls[policyAt+3] != "buddy-actions.status" {
+	if policyAt < 0 || acceptAt <= policyAt+5 || wrapper.calls[policyAt+1] != "buddy-actions.acquire_interaction" || wrapper.calls[policyAt+2] != "buddy-world.snapshot" || wrapper.calls[policyAt+3] != "buddy-actions.status" ||
+		wrapper.calls[policyAt+4] != "buddy-actions.acquire_interaction" || wrapper.calls[policyAt+5] != "buddy-world.snapshot" {
 		t.Fatal("policy evaluation followed native final guards", wrapper.calls)
 	}
 	statusPacket(s, 8)
@@ -327,5 +337,49 @@ func TestTradeConsentAmbiguousAcceptRemainsNativeOnceAcrossPolicyChange(t *testi
 	s.Tick(context.Background())
 	if f.count(opcode.CMSGAcceptTrade) != 1 || len(wrapper.inputs) != 1 || s.snapshot().CompletedTrades != 0 {
 		t.Fatal("uncertain native acceptance was redecided or replayed", s.snapshot(), wrapper.calls)
+	}
+}
+
+func TestTradeConsentRevalidatesActionsCustodyAfterNearby(t *testing.T) {
+	for _, replacement := range []string{"released", "same_owner_new_token"} {
+		t.Run(replacement, func(t *testing.T) {
+			s, f, wrapper := tradeConsentFixture()
+			actualOwner, actualToken := "trade", "lease-token"
+			wrapper.renewalCheck = func(request *actionsv1.InteractionRequest) error {
+				// Mirror maintained Actions: an old nonempty token cannot acquire
+				// a released lease or renew another token with the same owner.
+				if actualOwner == "" || request.Owner != actualOwner || request.Token != actualToken {
+					return errors.New("actual Actions lease no longer belongs to captured token")
+				}
+				return nil
+			}
+			changed := false
+			wrapper.after = func(method string, response *modv1.InvokeModuleResponse) {
+				if method != "buddy-actions.status" || len(wrapper.renewals) != 1 || changed {
+					return
+				}
+				changed = true
+				if replacement == "released" {
+					actualOwner, actualToken = "", ""
+				} else {
+					actualToken = "replacement-token"
+				}
+				state := &actionsv1.State{}
+				if err := response.Result.UnmarshalTo(state); err != nil {
+					t.Fatal(err)
+				}
+				state.InteractionOwner, state.InteractionLeaseRemainingMs = actualOwner, 30000
+				if actualOwner == "" {
+					state.InteractionLeaseRemainingMs = 0
+				}
+				response.Result, _ = anypb.New(state)
+			}
+			s.Tick(context.Background())
+			if !changed || s.token != "lease-token" || f.count(opcode.CMSGAcceptTrade) != 0 ||
+				len(wrapper.renewals) != 2 || wrapper.renewals[1].Token != "lease-token" ||
+				s.snapshot().Phase != "OPEN" || s.snapshot().Reason != "trade_consent_lease_unconfirmed" {
+				t.Fatal("revoked Actions custody reached consent using stale local token/expiry", s.snapshot(), wrapper.calls)
+			}
+		})
 	}
 }

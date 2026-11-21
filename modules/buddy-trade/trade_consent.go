@@ -117,6 +117,9 @@ func (p *tradeConsentAdmission) renew(ctx context.Context, s *Service) error {
 		return errors.New("exact_trade_consent_lease_required")
 	}
 	started := s.now()
+	if !p.until.IsZero() && !started.Before(p.until) {
+		return errors.New("trade_consent_lease_already_expired")
+	}
 	lease := &actionsv1.InteractionLease{}
 	if err := s.invoke(ctx, "buddy-actions", "acquire_interaction", &actionsv1.InteractionRequest{Owner: "trade", Token: p.token, LeaseMs: 30000}, lease); err != nil {
 		return err
@@ -127,6 +130,9 @@ func (p *tradeConsentAdmission) renew(ctx context.Context, s *Service) error {
 	}
 	// Include elapsed renewal/final observations in the local expiry bound.
 	p.until = started.Add(time.Duration(lease.State.InteractionLeaseRemainingMs) * time.Millisecond)
+	if ctx.Err() != nil || !s.now().Before(p.until) {
+		return errors.New("trade_consent_renewal_exceeded_lease")
+	}
 	return nil
 }
 
