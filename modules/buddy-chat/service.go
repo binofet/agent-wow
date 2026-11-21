@@ -93,8 +93,13 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	// must therefore be accounted for locally and acknowledged successfully.
 	var message *chatv1.Message
 	err := errUnsupportedChat
-	if packet != nil && packet.Opcode == uint32(opcode.SMSGMessagechat) {
-		message, err = decodeChat(packet.Payload)
+	if packet != nil {
+		switch packet.Opcode {
+		case uint32(opcode.SMSGMessagechat):
+			message, err = decodeChat(packet.Payload)
+		case uint32(opcode.SMSGGMMessagechat):
+			message, err = decodeGMChat(packet.Payload)
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

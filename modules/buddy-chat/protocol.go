@@ -79,7 +79,8 @@ func encodeChat(request *chatv1.SendRequest) ([]byte, error) {
 
 // Supported SMSG_MESSAGECHAT layout: uint8 type, int32 language, uint64 sender,
 // uint32 flags, uint64 receiver, uint32 text length INCLUDING NUL, text, uint8 tag.
-// GM-message, monster, channel, addon, and other layouts are intentionally ignored.
+// Monster, channel, addon, and other layouts are intentionally ignored.
+// decodeGMChat separately normalizes the GM-only sender-name prefix.
 func decodeChat(payload []byte) (*chatv1.Message, error) {
 	if len(payload) == 0 {
 		return nil, errors.New("missing chat type")
@@ -111,4 +112,27 @@ func decodeChat(payload []byte) (*chatv1.Message, error) {
 		ReceiverGuid: binary.LittleEndian.Uint64(payload[17:25]), Text: string(text),
 		ChatTag: uint32(payload[len(payload)-1]),
 	}, nil
+}
+
+// ChatHandler::BuildChatPacket chooses SMSG_GM_MESSAGECHAT and inserts a
+// uint32 length + NUL-terminated sender name after the shared 17-byte header.
+// The name is display metadata, never authority: retain the actual sender GUID.
+// https://github.com/azerothcore/azerothcore-wotlk/blob/master/src/server/game/Chat/Chat.cpp#L250-L321
+func decodeGMChat(payload []byte) (*chatv1.Message, error) {
+	if len(payload) < 21 {
+		return nil, errors.New("truncated GM chat sender header")
+	}
+	length := uint64(binary.LittleEndian.Uint32(payload[17:21]))
+	if length == 0 || length > uint64(len(payload)-21) {
+		return nil, errors.New("invalid GM chat sender name length")
+	}
+	end := 21 + int(length)
+	name := payload[21:end]
+	if name[len(name)-1] != 0 || bytes.IndexByte(name[:len(name)-1], 0) >= 0 || !utf8.Valid(name[:len(name)-1]) {
+		return nil, errors.New("invalid GM chat sender name encoding or terminator")
+	}
+	ordinary := make([]byte, 0, len(payload)-4-int(length))
+	ordinary = append(ordinary, payload[:17]...)
+	ordinary = append(ordinary, payload[end:]...)
+	return decodeChat(ordinary)
 }
