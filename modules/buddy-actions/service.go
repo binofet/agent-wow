@@ -75,6 +75,7 @@ type Service struct {
 	posKnown                                   bool
 	positionRevision                           uint64
 	castCount, cancelCastCount                 byte
+	spellOperationSequence                     uint64
 	protectedCastCancelAttempted               bool
 	lastWorld                                  *worldv1.SnapshotResponse
 	posMap                                     uint32
