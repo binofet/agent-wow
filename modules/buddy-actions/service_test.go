@@ -337,7 +337,7 @@ func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 	}
 }
 
-func TestHealAbortsIfMovementStopCannotBeWritten(t *testing.T) {
+func TestHealAbortsOnUndispatchedStopThenRecoversWithoutReset(t *testing.T) {
 	s, f, _ := rig(t)
 	learn(s)
 	toggle(t, s, true)
@@ -346,15 +346,34 @@ func TestHealAbortsIfMovementStopCannotBeWritten(t *testing.T) {
 	f.world.Owner.Health = 50
 	f.failClock = true
 	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
-	if result.CastPending || len(f.packets) != 1 || result.Reason != "movement_stop_unconfirmed_heal_aborted" {
+	if result.CastPending || result.HealAttempts != 0 || len(f.packets) != 1 || result.MotionUnconfirmed || !result.Moving || !result.Following {
+		t.Fatalf("clock refusal dispatched a heal or lost known motion %+v", result)
+	}
+	f.failClock = false
+	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
+	if !result.CastPending || result.MotionUnconfirmed || result.Moving || !result.Following || len(f.packets) != 3 || f.packets[1].Opcode != opcode.MSGMoveStop || f.packets[2].Opcode != opcode.CMSGCastSpell {
+		t.Fatalf("heal did not recover after an undispatched stop %+v packets=%v", result, f.packets)
+	}
+}
+
+func TestHealAbortsIfMovementStopWriteIsAmbiguous(t *testing.T) {
+	s, f, _ := rig(t)
+	learn(s)
+	toggle(t, s, true)
+	f.world.Owner.Health = 100
+	s.Tick(context.Background())
+	f.world.Owner.Health = 50
+	f.failSend = true
+	result, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	if result.CastPending || len(f.packets) != 2 || result.Reason != "movement_stop_unconfirmed_heal_aborted" {
 		t.Fatalf("heal despite stop failure %+v", result)
 	}
 	if !result.MotionUnconfirmed || result.Following {
 		t.Fatalf("unconfirmed stop not latched %+v", result)
 	}
-	f.failClock = false
+	f.failSend = false
 	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
-	if result.CastPending || len(f.packets) != 1 || !result.MotionUnconfirmed {
+	if result.CastPending || len(f.packets) != 2 || !result.MotionUnconfirmed {
 		t.Fatalf("second heal bypassed unconfirmed stop %+v", result)
 	}
 	toggle(t, s, true)
@@ -362,11 +381,11 @@ func TestHealAbortsIfMovementStopCannotBeWritten(t *testing.T) {
 		t.Fatal("follow bypassed unconfirmed stop")
 	}
 	toggle(t, s, false)
-	if state(t, s).MotionUnconfirmed || len(f.packets) != 2 || f.packets[1].Opcode != opcode.MSGMoveStop {
+	if state(t, s).MotionUnconfirmed || len(f.packets) != 3 || f.packets[2].Opcode != opcode.MSGMoveStop {
 		t.Fatal("explicit stop failed to recover")
 	}
 	result, _ = s.HealOnce(context.Background(), &emptypb.Empty{})
-	if !result.CastPending || len(f.packets) != 3 {
+	if !result.CastPending || len(f.packets) != 4 {
 		t.Fatalf("heal did not recover after explicit stop %+v", result)
 	}
 }

@@ -251,8 +251,11 @@ func TestTransferPendingNeverWritesOldMapCoordinates(t *testing.T) {
 		f.world.Self.MapKnown = false
 		f.world.Self.PositionKnown = false
 	}
-	if s.followFormationStepLocked(context.Background(), target, .8) || len(f.packets) != 1 || !s.state.MotionUnconfirmed || s.state.Moving {
-		t.Fatal("wrote into transfer", s.stateLocked(), f.packets)
+	if s.followFormationStepLocked(context.Background(), target, .8) || len(f.packets) != 1 || s.state.MotionUnconfirmed || !s.state.Moving {
+		t.Fatal("transfer refusal wrote old coordinates or lost known movement intent", s.stateLocked(), f.packets)
+	}
+	if s.followFormationStepLocked(context.Background(), target, .8) || len(f.packets) != 1 {
+		t.Fatal("missing current map permitted another movement write", s.stateLocked(), f.packets)
 	}
 }
 
