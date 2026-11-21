@@ -4,6 +4,7 @@ option go_package = "github.com/agent-wow/agent-wow/modules/buddy-inventory/api;
 import "api/module/v1/session.proto";
 import "google/protobuf/empty.proto";
 import "modules/buddy-world/world.proto";
+import "modules/buddy-actions/actions.proto";
 
 message ItemRef { uint32 bag = 1; uint32 slot = 2; uint64 item_guid = 3; uint32 entry = 4; uint32 stack_count = 5; }
 message ItemEligibility {
@@ -20,6 +21,7 @@ message ItemEligibility {
   uint64 expected_equipped_item_guid = 11;
   bool conservative_upgrade = 12;
   string gear_blocked_reason = 13;
+  ConsumableMetadata consumable = 14;
 }
 message Operation {
   string request_id = 1;
@@ -72,6 +74,41 @@ message State {
   bool equipment_known = 18;
   uint64 equipment_revision = 19;
   repeated warcraftbuddy.world.v1.EquipmentSlotState equipment = 20;
+  bool drinking_supported = 21;
+  GroupRollReceipt last_group_roll = 22;
+  bool food_buff_supported = 23;
+  bool buff_food_available = 24;
+  optional uint32 mana_drink_count = 25;
+  ConsumableUse last_consumable_use = 40;
+  ConsumableContext consumable_context = 41;
+}
+// Deployed State22 contract. New roll controls use their separate Roll* types.
+message GroupRollReceipt {
+  uint64 roll_guid = 1; uint32 item_entry = 2; uint32 loot_slot = 3;
+  uint32 offered_mask = 4; string choice = 5; string phase = 6;
+  string reason = 7; bool transport_written = 8; bool server_vote_observed = 9;
+}
+message ConsumableAuraEffect { uint32 aura_type = 1; int32 misc_value = 2; int32 points = 3; int32 dice = 4; }
+message ConsumableSpell {
+  uint32 spell_id = 1; string name = 2; int32 mana_per_tick = 3;
+  uint32 food_aura_spell_id = 4; uint32 food_delay_ms = 5;
+  repeated ConsumableAuraEffect food_effects = 6;
+  bool drink_supported = 7; bool food_supported = 8;
+}
+message ConsumableMetadata { bool usable = 1; string blocked_reason = 2; repeated ConsumableSpell spells = 3; }
+message ConsumableContext {
+  bool body_ready = 1; bool dungeon = 2;
+  warcraftbuddy.actions.v1.PlayerAuras self_auras = 3;
+  bool food_buff_present = 4; bool food_buff_known = 5;
+}
+message ConsumableUse {
+  string request_id = 1; string kind = 2; ItemRef source = 3;
+  uint32 spell_id = 4; uint32 aura_spell_id = 5;
+  uint64 baseline_inventory_revision = 6; uint64 observed_inventory_revision = 7;
+  bool transport_attempted = 8; bool transport_written = 9;
+  bool inventory_confirmed = 10; bool aura_observed = 11;
+  bool server_rejected = 12; uint32 server_error = 13; string phase = 14;
+  uint64 baseline_aura_revision = 15;
 }
 message DiscoverRequest { uint32 vendor_entry = 1; uint64 vendor_guid = 2; }
 message Vendor { warcraftbuddy.world.v1.CreatureState creature = 1; bool interactable = 2; string blocked_reason = 3; double distance = 4; }
@@ -93,6 +130,25 @@ message EquipGearRequest {
   ItemRef source = 5; uint32 equipment_slot = 6; uint64 expected_equipment_revision = 7;
   uint64 expected_equipped_item_guid = 8; bool require_conservative_upgrade = 9;
 }
+message DrinkRequest {
+  string session_id = 1; uint64 self_guid = 2;
+  ItemRef source = 3; uint32 spell_id = 4; uint64 expected_inventory_revision = 5; string request_id = 6;
+}
+message DrinkReceipt {
+  string session_id = 1; uint64 self_guid = 2; uint64 item_guid = 3;
+  uint32 item_entry = 4; uint32 spell_id = 5; uint32 stack_count_before = 6;
+  bool transport_written = 7; string reason = 8; uint32 baseline_mana = 9;
+  uint64 baseline_inventory_revision = 10; string request_id = 11; ConsumableUse operation = 12;
+}
+message EatBuffFoodRequest {
+  string session_id = 1; uint64 self_guid = 2;
+  ItemRef source = 3; uint32 spell_id = 4; uint64 expected_inventory_revision = 5; string request_id = 6;
+}
+message EatBuffFoodReceipt {
+  string session_id = 1; uint64 self_guid = 2; uint32 item_entry = 3;
+  uint32 spell_id = 4; uint32 food_aura_spell_id = 5; bool transport_written = 6;
+  uint32 time_until_buff_ms = 7; string request_id = 8; ConsumableUse operation = 9; string reason = 10;
+}
 service BuddyInventory {
   rpc GetState(google.protobuf.Empty) returns (State);
   rpc Discover(DiscoverRequest) returns (Discovery);
@@ -100,6 +156,8 @@ service BuddyInventory {
   rpc Equip(EquipRequest) returns (State);
   rpc EquipGear(EquipGearRequest) returns (State);
   rpc Sell(SellRequest) returns (State);
+  rpc Drink(DrinkRequest) returns (DrinkReceipt);
+  rpc EatBuffFood(EatBuffFoodRequest) returns (EatBuffFoodReceipt);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

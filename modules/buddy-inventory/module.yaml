@@ -14,8 +14,15 @@ rpc:
   equip: /warcraftbuddy.inventory.v1.BuddyInventory/Equip
   equip_gear: /warcraftbuddy.inventory.v1.BuddyInventory/EquipGear
   sell: /warcraftbuddy.inventory.v1.BuddyInventory/Sell
+  drink: /warcraftbuddy.inventory.v1.BuddyInventory/Drink
+  eat_buff_food: /warcraftbuddy.inventory.v1.BuddyInventory/EatBuffFood
+script_api:
+  state: {effect: read, description: 'Current owned inventory, item-use metadata and observed consumable effects'}
+  drink: {effect: mutation, description: 'Use an exact selected carried mana drink, or queue a no-item request to the current Lua policy'}
+  eat_buff_food: {effect: mutation, description: 'Use exact selected carried buff food, or queue a no-item request to the current Lua policy'}
 packets:
   SMSG_ITEM_QUERY_SINGLE_RESPONSE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
+  SMSG_CAST_FAILED: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_INVENTORY_CHANGE_FAILURE: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_SELL_ITEM: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket
   SMSG_MESSAGECHAT: /warcraftbuddy.inventory.v1.BuddyInventory/OnPacket

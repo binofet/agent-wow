@@ -13,6 +13,7 @@ type itemMetadata struct {
 	entry, class, subclass, quality, flags, flags2, inventoryType, containerSlots                         uint32
 	bonding, startQuest, lockID, pageText, bagFamily, duration, maxDurability                             uint32
 	hasSpell                                                                                              bool
+	onUseSpells                                                                                           [5]uint32
 	hasRequirement                                                                                        bool
 	allowableClass, allowableRace, requiredLevel, requiredSkill, requiredSkillRank                        uint32
 	requiredSpell, requiredHonorRank, requiredCityRank, requiredReputationFaction, requiredReputationRank uint32
@@ -162,16 +163,20 @@ func parseItemMetadata(data []byte) (itemMetadata, error) {
 	if math.IsNaN(float64(rangeModifier)) || math.IsInf(float64(rangeModifier), 0) || rangeModifier < 0 {
 		return m, malformed
 	}
-	for range 5 {
+	for i := range m.onUseSpells {
 		spell, ok := read()
 		if !ok {
 			return m, malformed
 		}
 		m.hasSpell = m.hasSpell || spell != 0
-		if len(data)-at < 20 {
+		trigger, ok := read()
+		if !ok || len(data)-at < 16 {
 			return m, malformed
 		}
-		at += 20
+		if spell != 0 && trigger == 0 { // ITEM_SPELLTRIGGER_ON_USE
+			m.onUseSpells[i] = spell
+		}
+		at += 16
 	}
 	var ok bool
 	if m.bonding, ok = read(); !ok || m.bonding > 5 || !str(4096) {

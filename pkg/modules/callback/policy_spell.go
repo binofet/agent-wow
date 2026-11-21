@@ -23,6 +23,9 @@ const PolicySupportSpellService = "agentwow.policy-support-spell.v1"
 // and stop operations on the policy callback bridge.
 const PolicyMeleeService = "agentwow.policy-melee.v1"
 
+// PolicyConsumableService advertises exact owned-item callback attribution.
+const PolicyConsumableService = "agentwow.policy-consumable.v1"
+
 const (
 	policySpellKey        = "agentwow-policy-spell"
 	policyReceiptKey      = "agentwow-policy-spell-receipt-bin"

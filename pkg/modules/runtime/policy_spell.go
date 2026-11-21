@@ -47,6 +47,7 @@ type policySpell struct {
 	auraRevision   uint64
 	melee          *policyMelee
 	movement       *policyMovement
+	consumable     *policyConsumable
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -58,6 +59,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "consume" {
+		return p.resolveConsumable(action)
+	}
 	if capability == "movement_owner" {
 		return p.resolveMovementOwner(action)
 	}
@@ -286,6 +290,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.consumable != nil {
+		return op.matchesConsumablePacket(code, payload)
+	}
 	if op.movement != nil {
 		return op.matchesMovementPacket(code, payload)
 	}
