@@ -6,6 +6,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 )
@@ -66,8 +67,7 @@ func (s *Service) strikeWeaponReady(self *worldv1.PlayerState, spell spellcatalo
 
 func observedWeaponCaster(self *worldv1.PlayerState) bool {
 	return self != nil && self.ClassKnown && self.ClassId != 0 && self.UnitFlagsKnown &&
-		self.UnitFlags&(0x20000|0x200000) == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0 &&
-		self.ChannelObjectKnown && self.ChannelObjectGuid == 0
+		self.UnitFlags&(0x20000|0x200000) == 0 && channelstate.Idle(self)
 }
 
 func (s *Service) offenseCustodyFor(spell spellcatalog.Spell) bool {

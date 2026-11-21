@@ -27,8 +27,6 @@ var dungeonEntrances = [...]dungeonPortal{
 	{trigger: 45, source: 0, destination: 189, center: position{x: 2924.38, y: -798.429, z: 161.611}, radius: 8}, // Scarlet Monastery Graveyard
 }
 
-const portalApproachDistance = 45
-
 type dungeonPortalFollow struct {
 	portal                dungeonPortal
 	ground                position
@@ -84,10 +82,15 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	ground := playerPosition(owner)
 	for _, portal := range dungeonEntrances {
 		if owner.MapId == portal.source && distance(ground, portal.center) < portal.radius {
+			catchingUp, valid := s.portalSightingPolicyLocked(w, now)
+			if !valid {
+				s.portalGoal = portalCatchupGoal{}
+				return
+			}
 			witness := f.witness
 			if witness == 0 || f.portal.trigger != portal.trigger || f.sourceVisit != w.VisitRevision ||
 				f.followRevision != s.followRevision || f.ownerPoseRevision != owner.PositionRevision ||
-				f.ground != ground || !f.lostAt.IsZero() || f.notified {
+				f.ground != ground || f.catchingUp != catchingUp || !f.lostAt.IsZero() || f.notified {
 				s.portalWitnessRevision++
 				witness = s.portalWitnessRevision
 				s.portalGoal = portalCatchupGoal{}
@@ -96,7 +99,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 				portal:      portal,
 				ground:      ground,
 				seenAt:      now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
-				catchingUp:  distance(playerPosition(w.Self), ground) > portalApproachDistance,
+				catchingUp:  catchingUp,
 				sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
 			}
 			return
@@ -107,10 +110,6 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
 	f := s.followPortal
 	p, owner := w.GetSelf(), w.GetOwner()
-	maxDistance := float64(portalApproachDistance)
-	if f.catchingUp {
-		maxDistance = buddynav.MaxRouteLength
-	}
 	return s.state.Following && now.Before(s.followUntil) && !s.independent &&
 		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
 		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
@@ -118,7 +117,7 @@ func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now tim
 		owner != nil && owner.Guid == ownerGUID && !owner.Present &&
 		(!owner.MapKnown || owner.MapId == f.portal.source || owner.MapId == f.portal.destination) &&
 		safeQuestCharacter(w, s.selfGUID) == "" && p.MapId == f.portal.source &&
-		distance(playerPosition(p), f.ground) <= maxDistance
+		distance(playerPosition(p), f.ground) <= buddynav.MaxRouteLength
 }
 
 func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
@@ -236,6 +235,8 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		// physical entry after it, with no further policy callback before send.
 		latest, err := s.snapshot(ctx)
 		if err != nil || !s.portalSourceCurrentLocked(latest, s.now()) || !s.refreshPositionLocked(latest) ||
+			latest.GetSelf().GetPositionRevision() != fresh.GetSelf().GetPositionRevision() ||
+			playerPosition(latest.GetSelf()) != playerPosition(fresh.GetSelf()) ||
 			distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
 			s.state.Reason = "follow_instance_source_changed"
 			return true

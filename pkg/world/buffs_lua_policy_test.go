@@ -2,6 +2,7 @@ package world
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,82 @@ func TestLuaBuffPolicySuppressesManaWasteAndStrongerArmor(t *testing.T) {
 		})
 	}
 }
+
+func TestLuaBuffPolicyPreservesActorClassReserveScopes(t *testing.T) {
+	type reserveCase struct {
+		name           string
+		class          float64
+		known, omitted bool
+		self, party    float64
+	}
+	classes := []reserveCase{
+		{"paladin", 2, true, false, 5, 35},
+		{"priest", 5, true, false, 30, 30},
+		{"unknown_paladin", 2, false, false, 35, 35},
+		{"unknown_priest", 5, false, false, 35, 35},
+		{"omitted_class_known", 5, false, true, 35, 35},
+		{"unknown_id", 0, true, false, 35, 35},
+		{"unmapped_id", 999, true, false, 35, 35},
+	}
+	for _, class := range []float64{1, 3, 4, 6, 7, 8, 9, 11} {
+		classes = append(classes, reserveCase{fmt.Sprintf("other_class_%g", class), class, true, false, 35, 35})
+	}
+	source := buffsPolicySource(t)
+	for _, class := range classes {
+		for _, target := range []string{"4", "3"} {
+			reserve := class.self
+			if target == "3" {
+				reserve = class.party
+			}
+			for _, delta := range []float64{-1, 0} {
+				t.Run(fmt.Sprintf("%s/target%s/boundary%g", class.name, target, delta), func(t *testing.T) {
+					host, obs := newBuffPolicy(t, source), buffPolicyObservation()
+					self := obs["players"].(map[string]any)["4"].(map[string]any)
+					self["classId"], self["power"] = class.class, 10+reserve+delta
+					if !class.omitted {
+						self["classKnown"] = class.known
+					}
+					if target == "3" {
+						installBuffAura(obs, "4", 1244, 600000, false)
+					}
+					action := decideBuff(t, host, obs)
+					if delta < 0 && action != nil || delta == 0 && (action["targetGuid"] != target || action["spellId"] != float64(1244)) {
+						t.Fatal("class/recipient reserve or exact cost boundary changed", reserve, self["power"], action)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestLuaActorBuffReserveKeepsWaterAndObservedResourceChecks(t *testing.T) {
+	source := buffsPolicySource(t)
+	for _, class := range []float64{2, 5, 8} {
+		for _, mode := range []string{"water_exact_cost", "water_insufficient_power", "unknown_power", "other_resource"} {
+			t.Run(fmt.Sprintf("class%g/%s", class, mode), func(t *testing.T) {
+				host, obs := newBuffPolicy(t, source), buffPolicyObservation()
+				self := obs["players"].(map[string]any)["4"].(map[string]any)
+				self["classKnown"], self["classId"], self["power"] = true, class, float64(10)
+				if mode == "water_exact_cost" || mode == "water_insufficient_power" {
+					for _, spell := range obs["spells"].(map[string]any) {
+						spell.(map[string]any)["auraEffects"] = []any{map[string]any{"kind": float64(6), "aura": float64(82)}}
+					}
+					if mode == "water_insufficient_power" {
+						self["power"] = float64(9)
+					}
+				} else if mode == "unknown_power" {
+					self["powerKnown"], self["power"] = false, float64(100)
+				} else {
+					self["powerType"], self["power"] = float64(3), float64(100)
+				}
+				action := decideBuff(t, host, obs)
+				if mode == "water_exact_cost" && action["spellId"] != float64(1244) || mode != "water_exact_cost" && action != nil {
+					t.Fatal("reserve tuning changed water cost or observed-resource admission", mode, action)
+				}
+			})
+		}
+	}
+}
 func TestLuaWaterBreathingRefreshRetryAndSameSessionTuning(t *testing.T) {
 	source := buffsPolicySource(t)
 	host := newBuffPolicy(t, source)
@@ -185,9 +262,31 @@ func TestEncounterBuffPolicyYieldsToHealingAndApproachesSelectedAlly(t *testing.
 	self.MaxHealth = 100
 	buff := &actionsv1.EncounterSpell{Known: true, Ready: true, Available: true, MetadataKnown: true, Capability: "buff", TargetRule: "ally", FamilyId: 1243, Rank: 2, Cost: 10, MaxRange: 30}
 	obs.Spells["1244"] = buff
-	out := p.decide(observeSparseEncounter(t, p, obs)).Output
+	decision := p.decide(observeSparseEncounter(t, p, obs))
+	out := decision.Output
 	if out["action"].(map[string]any)["capability"] != "heal" {
 		t.Fatal("buff displaced real triage", out)
+	}
+	id, err := p.host.ReserveAction(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.host.Enqueue(behavior.Event{Kind: "buff_request", Value: map[string]any{"source": "buffs"}}); err != nil {
+		t.Fatal(err)
+	}
+	out = p.decide(observeSparseEncounter(t, p, obs)).Output
+	if out["action"] != nil || p.host.Status().Pending != 1 {
+		t.Fatal("ensure request bypassed pending healing custody", out, p.host.Status())
+	}
+	if _, err = p.host.Reload(context.Background(), readEncounterBundle(t)+"\n-- same-session buff request", p.host.Status().Revision); err != nil {
+		t.Fatal(err)
+	}
+	if p.host.Status().Pending != 1 {
+		t.Fatal("reload lost the outstanding heal")
+	}
+	if _, err = p.host.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{
+		SessionID: fallbackSession, ActionID: id, Outcome: behavior.ActionNotDispatched}}); err != nil {
+		t.Fatal(err)
 	}
 	obs.Healing.Patients, obs.Healing.Spells = nil, nil
 	obs.Spells["6063"].Ready = false

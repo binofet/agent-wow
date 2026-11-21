@@ -7,6 +7,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
@@ -118,8 +119,7 @@ func (s *Service) offenseCustodyAvailableLocked() bool {
 
 func observedOffenseCaster(self *worldv1.PlayerState) bool {
 	return self != nil && self.ClassKnown && self.ClassId != 0 && self.MovementFlags&0xff == 0 &&
-		self.UnitFlags&0x2000 == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0 &&
-		self.ChannelObjectKnown && self.ChannelObjectGuid == 0
+		self.UnitFlags&0x2000 == 0 && channelstate.Idle(self)
 }
 
 func (s *Service) offenseRankSupportedLocked(spell spellcatalog.Spell) bool {

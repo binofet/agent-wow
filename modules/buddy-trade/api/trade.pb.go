@@ -117,26 +117,27 @@ type State struct {
 	AcceptTransportWritten bool                   `protobuf:"varint,6,opt,name=accept_transport_written,json=acceptTransportWritten,proto3" json:"accept_transport_written,omitempty"`
 	// Our requested offers are transport intentions; the server does not always
 	// echo them to their sender. Joel reviews them in his normal trade window.
-	OwnRequestedItems   []*Item       `protobuf:"bytes,7,rep,name=own_requested_items,json=ownRequestedItems,proto3" json:"own_requested_items,omitempty"`
-	OwnRequestedCopper  uint32        `protobuf:"varint,8,opt,name=own_requested_copper,json=ownRequestedCopper,proto3" json:"own_requested_copper,omitempty"`
-	PartnerItems        []*Item       `protobuf:"bytes,9,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
-	PartnerCopper       uint32        `protobuf:"varint,10,opt,name=partner_copper,json=partnerCopper,proto3" json:"partner_copper,omitempty"`
-	LastServerStatus    uint32        `protobuf:"varint,11,opt,name=last_server_status,json=lastServerStatus,proto3" json:"last_server_status,omitempty"`
-	Reason              string        `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
-	CompletedTrades     uint64        `protobuf:"varint,13,opt,name=completed_trades,json=completedTrades,proto3" json:"completed_trades,omitempty"`
-	TransportWrites     uint64        `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
-	MalformedPackets    uint64        `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
-	BackpackKnown       bool          `protobuf:"varint,16,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
-	BackpackRevision    uint64        `protobuf:"varint,17,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	Backpack            []*Item       `protobuf:"bytes,18,rep,name=backpack,proto3" json:"backpack,omitempty"`
-	Limitation          string        `protobuf:"bytes,19,opt,name=limitation,proto3" json:"limitation,omitempty"`
-	CopperKnown         bool          `protobuf:"varint,20,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
-	Copper              uint32        `protobuf:"varint,21,opt,name=copper,proto3" json:"copper,omitempty"`
-	CopperRevision      uint64        `protobuf:"varint,22,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
-	JunkDisposalEnabled bool          `protobuf:"varint,23,opt,name=junk_disposal_enabled,json=junkDisposalEnabled,proto3" json:"junk_disposal_enabled,omitempty"`
-	LastJunkDisposal    *JunkDisposal `protobuf:"bytes,24,opt,name=last_junk_disposal,json=lastJunkDisposal,proto3" json:"last_junk_disposal,omitempty"`
-	JunkStacksDestroyed uint64        `protobuf:"varint,25,opt,name=junk_stacks_destroyed,json=junkStacksDestroyed,proto3" json:"junk_stacks_destroyed,omitempty"`
-	JunkReason          string        `protobuf:"bytes,26,opt,name=junk_reason,json=junkReason,proto3" json:"junk_reason,omitempty"`
+	OwnRequestedItems   []*Item         `protobuf:"bytes,7,rep,name=own_requested_items,json=ownRequestedItems,proto3" json:"own_requested_items,omitempty"`
+	OwnRequestedCopper  uint32          `protobuf:"varint,8,opt,name=own_requested_copper,json=ownRequestedCopper,proto3" json:"own_requested_copper,omitempty"`
+	PartnerItems        []*Item         `protobuf:"bytes,9,rep,name=partner_items,json=partnerItems,proto3" json:"partner_items,omitempty"`
+	PartnerCopper       uint32          `protobuf:"varint,10,opt,name=partner_copper,json=partnerCopper,proto3" json:"partner_copper,omitempty"`
+	LastServerStatus    uint32          `protobuf:"varint,11,opt,name=last_server_status,json=lastServerStatus,proto3" json:"last_server_status,omitempty"`
+	Reason              string          `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	CompletedTrades     uint64          `protobuf:"varint,13,opt,name=completed_trades,json=completedTrades,proto3" json:"completed_trades,omitempty"`
+	TransportWrites     uint64          `protobuf:"varint,14,opt,name=transport_writes,json=transportWrites,proto3" json:"transport_writes,omitempty"`
+	MalformedPackets    uint64          `protobuf:"varint,15,opt,name=malformed_packets,json=malformedPackets,proto3" json:"malformed_packets,omitempty"`
+	BackpackKnown       bool            `protobuf:"varint,16,opt,name=backpack_known,json=backpackKnown,proto3" json:"backpack_known,omitempty"`
+	BackpackRevision    uint64          `protobuf:"varint,17,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	Backpack            []*Item         `protobuf:"bytes,18,rep,name=backpack,proto3" json:"backpack,omitempty"`
+	Limitation          string          `protobuf:"bytes,19,opt,name=limitation,proto3" json:"limitation,omitempty"`
+	CopperKnown         bool            `protobuf:"varint,20,opt,name=copper_known,json=copperKnown,proto3" json:"copper_known,omitempty"`
+	Copper              uint32          `protobuf:"varint,21,opt,name=copper,proto3" json:"copper,omitempty"`
+	CopperRevision      uint64          `protobuf:"varint,22,opt,name=copper_revision,json=copperRevision,proto3" json:"copper_revision,omitempty"`
+	JunkDisposalEnabled bool            `protobuf:"varint,23,opt,name=junk_disposal_enabled,json=junkDisposalEnabled,proto3" json:"junk_disposal_enabled,omitempty"`
+	LastJunkDisposal    *JunkDisposal   `protobuf:"bytes,24,opt,name=last_junk_disposal,json=lastJunkDisposal,proto3" json:"last_junk_disposal,omitempty"`
+	JunkStacksDestroyed uint64          `protobuf:"varint,25,opt,name=junk_stacks_destroyed,json=junkStacksDestroyed,proto3" json:"junk_stacks_destroyed,omitempty"`
+	JunkReason          string          `protobuf:"bytes,26,opt,name=junk_reason,json=junkReason,proto3" json:"junk_reason,omitempty"`
+	JunkOperations      []*JunkDisposal `protobuf:"bytes,35,rep,name=junk_operations,json=junkOperations,proto3" json:"junk_operations,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -353,17 +354,30 @@ func (x *State) GetJunkReason() string {
 	return ""
 }
 
+func (x *State) GetJunkOperations() []*JunkDisposal {
+	if x != nil {
+		return x.JunkOperations
+	}
+	return nil
+}
+
 type JunkDisposal struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	BackpackSlot     uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
-	ItemGuid         uint64                 `protobuf:"varint,2,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
-	Entry            uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
-	Count            uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
-	Name             string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
-	Status           string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
-	BackpackRevision uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	BackpackSlot      uint32                 `protobuf:"varint,1,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ItemGuid          uint64                 `protobuf:"varint,2,opt,name=item_guid,json=itemGuid,proto3" json:"item_guid,omitempty"`
+	Entry             uint32                 `protobuf:"varint,3,opt,name=entry,proto3" json:"entry,omitempty"`
+	Count             uint32                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
+	Name              string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+	Status            string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	BackpackRevision  uint64                 `protobuf:"varint,7,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	SourceBag         uint32                 `protobuf:"varint,8,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot        uint32                 `protobuf:"varint,9,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,10,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	RequestId         string                 `protobuf:"bytes,11,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	EquipmentRevision uint64                 `protobuf:"varint,12,opt,name=equipment_revision,json=equipmentRevision,proto3" json:"equipment_revision,omitempty"`
+	QuestLogRevision  uint64                 `protobuf:"varint,13,opt,name=quest_log_revision,json=questLogRevision,proto3" json:"quest_log_revision,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *JunkDisposal) Reset() {
@@ -445,6 +459,48 @@ func (x *JunkDisposal) GetBackpackRevision() uint64 {
 	return 0
 }
 
+func (x *JunkDisposal) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *JunkDisposal) GetEquipmentRevision() uint64 {
+	if x != nil {
+		return x.EquipmentRevision
+	}
+	return 0
+}
+
+func (x *JunkDisposal) GetQuestLogRevision() uint64 {
+	if x != nil {
+		return x.QuestLogRevision
+	}
+	return 0
+}
+
 type JunkToggle struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
@@ -490,14 +546,20 @@ func (x *JunkToggle) GetEnabled() bool {
 }
 
 type JunkRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Revision         uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	BackpackRevision uint64                 `protobuf:"varint,3,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
-	BackpackSlot     uint32                 `protobuf:"varint,4,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
-	ExpectedItemGuid uint64                 `protobuf:"varint,5,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Revision                  uint64                 `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	BackpackRevision          uint64                 `protobuf:"varint,3,opt,name=backpack_revision,json=backpackRevision,proto3" json:"backpack_revision,omitempty"`
+	BackpackSlot              uint32                 `protobuf:"varint,4,opt,name=backpack_slot,json=backpackSlot,proto3" json:"backpack_slot,omitempty"`
+	ExpectedItemGuid          uint64                 `protobuf:"varint,5,opt,name=expected_item_guid,json=expectedItemGuid,proto3" json:"expected_item_guid,omitempty"`
+	SourceBag                 uint32                 `protobuf:"varint,6,opt,name=source_bag,json=sourceBag,proto3" json:"source_bag,omitempty"`
+	SourceSlot                uint32                 `protobuf:"varint,7,opt,name=source_slot,json=sourceSlot,proto3" json:"source_slot,omitempty"`
+	InventoryRevision         uint64                 `protobuf:"varint,8,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	RequestId                 string                 `protobuf:"bytes,9,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	ExpectedEquipmentRevision uint64                 `protobuf:"varint,10,opt,name=expected_equipment_revision,json=expectedEquipmentRevision,proto3" json:"expected_equipment_revision,omitempty"`
+	ExpectedQuestLogRevision  uint64                 `protobuf:"varint,11,opt,name=expected_quest_log_revision,json=expectedQuestLogRevision,proto3" json:"expected_quest_log_revision,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *JunkRequest) Reset() {
@@ -561,6 +623,48 @@ func (x *JunkRequest) GetBackpackSlot() uint32 {
 func (x *JunkRequest) GetExpectedItemGuid() uint64 {
 	if x != nil {
 		return x.ExpectedItemGuid
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetSourceBag() uint32 {
+	if x != nil {
+		return x.SourceBag
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetSourceSlot() uint32 {
+	if x != nil {
+		return x.SourceSlot
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *JunkRequest) GetExpectedEquipmentRevision() uint64 {
+	if x != nil {
+		return x.ExpectedEquipmentRevision
+	}
+	return 0
+}
+
+func (x *JunkRequest) GetExpectedQuestLogRevision() uint64 {
+	if x != nil {
+		return x.ExpectedQuestLogRevision
 	}
 	return 0
 }
@@ -1381,7 +1485,7 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12\x1b\n" +
 	"\titem_guid\x18\x04 \x01(\x04R\bitemGuid\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12%\n" +
-	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\x82\t\n" +
+	"\x0emetadata_known\x18\x06 \x01(\bR\rmetadataKnown\"\xd1\t\n" +
 	"\x05State\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -1413,7 +1517,8 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x12last_junk_disposal\x18\x18 \x01(\v2$.warcraftbuddy.trade.v1.JunkDisposalR\x10lastJunkDisposal\x122\n" +
 	"\x15junk_stacks_destroyed\x18\x19 \x01(\x04R\x13junkStacksDestroyed\x12\x1f\n" +
 	"\vjunk_reason\x18\x1a \x01(\tR\n" +
-	"junkReason\"\xd5\x01\n" +
+	"junkReason\x12M\n" +
+	"\x0fjunk_operations\x18# \x03(\v2$.warcraftbuddy.trade.v1.JunkDisposalR\x0ejunkOperations\"\xc0\x03\n" +
 	"\fJunkDisposal\x12#\n" +
 	"\rbackpack_slot\x18\x01 \x01(\rR\fbackpackSlot\x12\x1b\n" +
 	"\titem_guid\x18\x02 \x01(\x04R\bitemGuid\x12\x14\n" +
@@ -1421,17 +1526,37 @@ const file_modules_buddy_trade_trade_proto_rawDesc = "" +
 	"\x05count\x18\x04 \x01(\rR\x05count\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12+\n" +
-	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\"&\n" +
+	"\x11backpack_revision\x18\a \x01(\x04R\x10backpackRevision\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18\b \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18\t \x01(\rR\n" +
+	"sourceSlot\x12-\n" +
+	"\x12inventory_revision\x18\n" +
+	" \x01(\x04R\x11inventoryRevision\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\v \x01(\tR\trequestId\x12-\n" +
+	"\x12equipment_revision\x18\f \x01(\x04R\x11equipmentRevision\x12,\n" +
+	"\x12quest_log_revision\x18\r \x01(\x04R\x10questLogRevision\"&\n" +
 	"\n" +
 	"JunkToggle\x12\x18\n" +
-	"\aenabled\x18\x01 \x01(\bR\aenabled\"\xc8\x01\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\"\xd5\x03\n" +
 	"\vJunkRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\x12+\n" +
 	"\x11backpack_revision\x18\x03 \x01(\x04R\x10backpackRevision\x12#\n" +
 	"\rbackpack_slot\x18\x04 \x01(\rR\fbackpackSlot\x12,\n" +
-	"\x12expected_item_guid\x18\x05 \x01(\x04R\x10expectedItemGuid\"I\n" +
+	"\x12expected_item_guid\x18\x05 \x01(\x04R\x10expectedItemGuid\x12\x1d\n" +
+	"\n" +
+	"source_bag\x18\x06 \x01(\rR\tsourceBag\x12\x1f\n" +
+	"\vsource_slot\x18\a \x01(\rR\n" +
+	"sourceSlot\x12-\n" +
+	"\x12inventory_revision\x18\b \x01(\x04R\x11inventoryRevision\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\t \x01(\tR\trequestId\x12>\n" +
+	"\x1bexpected_equipment_revision\x18\n" +
+	" \x01(\x04R\x19expectedEquipmentRevision\x12=\n" +
+	"\x1bexpected_quest_log_revision\x18\v \x01(\x04R\x18expectedQuestLogRevision\"I\n" +
 	"\fBoundRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
@@ -1561,35 +1686,36 @@ var file_modules_buddy_trade_trade_proto_depIdxs = []int32{
 	0,  // 1: warcraftbuddy.trade.v1.State.partner_items:type_name -> warcraftbuddy.trade.v1.Item
 	0,  // 2: warcraftbuddy.trade.v1.State.backpack:type_name -> warcraftbuddy.trade.v1.Item
 	2,  // 3: warcraftbuddy.trade.v1.State.last_junk_disposal:type_name -> warcraftbuddy.trade.v1.JunkDisposal
-	8,  // 4: warcraftbuddy.trade.v1.ItemDetails.stats:type_name -> warcraftbuddy.trade.v1.ItemStat
-	9,  // 5: warcraftbuddy.trade.v1.ItemDetails.damages:type_name -> warcraftbuddy.trade.v1.WeaponDamage
-	10, // 6: warcraftbuddy.trade.v1.ItemDetails.raw_template_facts:type_name -> warcraftbuddy.trade.v1.RawTemplateFacts
-	11, // 7: warcraftbuddy.trade.v1.LookupItemsResponse.items:type_name -> warcraftbuddy.trade.v1.ItemDetails
-	14, // 8: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
-	5,  // 9: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	6,  // 10: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
-	7,  // 11: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
-	5,  // 12: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
-	3,  // 13: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:input_type -> warcraftbuddy.trade.v1.JunkToggle
-	4,  // 14: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:input_type -> warcraftbuddy.trade.v1.JunkRequest
-	12, // 15: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:input_type -> warcraftbuddy.trade.v1.LookupItemsRequest
-	15, // 16: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	14, // 17: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
-	1,  // 18: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 19: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 20: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 21: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 22: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 23: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:output_type -> warcraftbuddy.trade.v1.State
-	1,  // 24: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:output_type -> warcraftbuddy.trade.v1.State
-	13, // 25: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:output_type -> warcraftbuddy.trade.v1.LookupItemsResponse
-	14, // 26: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
-	14, // 27: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	2,  // 4: warcraftbuddy.trade.v1.State.junk_operations:type_name -> warcraftbuddy.trade.v1.JunkDisposal
+	8,  // 5: warcraftbuddy.trade.v1.ItemDetails.stats:type_name -> warcraftbuddy.trade.v1.ItemStat
+	9,  // 6: warcraftbuddy.trade.v1.ItemDetails.damages:type_name -> warcraftbuddy.trade.v1.WeaponDamage
+	10, // 7: warcraftbuddy.trade.v1.ItemDetails.raw_template_facts:type_name -> warcraftbuddy.trade.v1.RawTemplateFacts
+	11, // 8: warcraftbuddy.trade.v1.LookupItemsResponse.items:type_name -> warcraftbuddy.trade.v1.ItemDetails
+	14, // 9: warcraftbuddy.trade.v1.BuddyTrade.GetState:input_type -> google.protobuf.Empty
+	5,  // 10: warcraftbuddy.trade.v1.BuddyTrade.Open:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	6,  // 11: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:input_type -> warcraftbuddy.trade.v1.ItemRequest
+	7,  // 12: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:input_type -> warcraftbuddy.trade.v1.GoldRequest
+	5,  // 13: warcraftbuddy.trade.v1.BuddyTrade.Cancel:input_type -> warcraftbuddy.trade.v1.BoundRequest
+	3,  // 14: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:input_type -> warcraftbuddy.trade.v1.JunkToggle
+	4,  // 15: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:input_type -> warcraftbuddy.trade.v1.JunkRequest
+	12, // 16: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:input_type -> warcraftbuddy.trade.v1.LookupItemsRequest
+	15, // 17: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	14, // 18: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:input_type -> google.protobuf.Empty
+	1,  // 19: warcraftbuddy.trade.v1.BuddyTrade.GetState:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 20: warcraftbuddy.trade.v1.BuddyTrade.Open:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 21: warcraftbuddy.trade.v1.BuddyTrade.OfferItem:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 22: warcraftbuddy.trade.v1.BuddyTrade.OfferGold:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 23: warcraftbuddy.trade.v1.BuddyTrade.Cancel:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 24: warcraftbuddy.trade.v1.BuddyTrade.JunkDisposal:output_type -> warcraftbuddy.trade.v1.State
+	1,  // 25: warcraftbuddy.trade.v1.BuddyTrade.DestroyJunk:output_type -> warcraftbuddy.trade.v1.State
+	13, // 26: warcraftbuddy.trade.v1.BuddyTrade.LookupItems:output_type -> warcraftbuddy.trade.v1.LookupItemsResponse
+	14, // 27: warcraftbuddy.trade.v1.BuddyTrade.OnPacket:output_type -> google.protobuf.Empty
+	14, // 28: warcraftbuddy.trade.v1.BuddyTrade.BeforeLogout:output_type -> google.protobuf.Empty
+	19, // [19:29] is the sub-list for method output_type
+	9,  // [9:19] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_trade_trade_proto_init() }

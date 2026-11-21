@@ -126,12 +126,14 @@ it offers one whole stack, never equipment or bag contents. OFFER_TRADE_GOLD
 uses an exact gold_copper amount explicitly stated by Joel (1gold=10000copper,
 1silver=100copper); never invent an amount. ENABLE_ASSIST/DISABLE_ASSIST toggles
 assistance on Joel's observed hostile combat target, with healing taking priority.
-ENABLE_BUFFS/DISABLE_BUFFS controls automatic supported buffs. spell_toolkit
+On current Lua clients, ENABLE_BUFFS requests a check of useful buffs;
+DISABLE_BUFFS only clears legacy status and never turns off shared Lua support.
+Older pinned clients retain their installed toggle semantics. spell_toolkit
 contains the actually learned spell IDs, with names only for verified metadata.
 Their mechanic contracts include targeting, costs, casting time, equipment and
 stealth/behind requirements. A blockedReason names an unsupported mechanic;
 report that exact reason instead of claiming that the learned spell is absent.
-Automatic buffs use the highest supported known rank on eligible party members,
+The current shared Lua policy chooses buff ranks, recipients and refresh timing,
 with healing/combat taking priority. A request or cast GO is not a confirmed buff;
 only lastBuff.auraConfirmed confirms its target aura. Unknown spell metadata does
 not mean a spell is unlearned, and a known spell does not mean a usable control.
@@ -207,10 +209,14 @@ observationsCurrent is false, describe the phase as the last report, not live
 progress. The routine has no additional model action.
 Normal death recovery is automatic when controls.recovery.enabled is true.
 The controller releases spirit, follows verified ground routes to the actual
-own corpse, waits for the server reclaim timer, reclaims, and rests before
-resuming. Explain its actual phase and reason when asked; do not say that
+own corpse, waits for the server reclaim timer, and reclaims. Actual life and
+reconciled movement complete that physical operation; the same shared Lua
+healing and consumable policies own subsequent health/mana recovery and tuning.
+Explain its actual phase and reason when asked; do not say that
 corpse recovery is unavailable when it is enabled. A request or a movement
-write is not a successful resurrection: use aliveObserved and rested receipts.
+write is not a successful resurrection: use aliveObserved. Do not infer Lua
+resource recovery from the legacy native rested flag; inspect the current
+policy's healing/consumable status and actual health/mana/item/aura receipts.
 Cross-map corpse trips and unavailable routes may still need Lothar's help.
 party_maintenance.own.harvest describes separate automatic field harvesting:
 Rook skins your party's eligible corpses once normal loot is exhausted and the
@@ -2360,8 +2366,7 @@ class BuddyControls:
 
                               "targeted_resurrection": self.resurrection_available()
                               and self.spell_toolkit.get("targetedResurrectionSupported") is True,
-                              "buffing": self.actions_available and self.spell_toolkit.get("available") is True
-                              and any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", [])),
+                              "buffing": self.actions_available,
                               "quests": self.quests_available, "looting": self.loot_available,
                               "trading": self.trade_available,
                               "assisting": self.actions_available and self.actions.get("classKnown") is True and self.actions.get("classId") == CLASS_IDS[self.character_class] and self.actions.get({"priest":"knownSmite","mage":"knownFireball","rogue":"knownAutoAttack","warlock":"knownShadowBolt"}.get(self.character_class,"unsupported")) is True,
@@ -3135,9 +3140,6 @@ class BuddyControls:
             return "I couldn't confirm that request. I won't retry it automatically."
         if not self.actions_available:
             return "That ability isn't ready yet."
-        if action == "ENABLE_BUFFS" and (self.spell_toolkit.get("available") is not True
-                or not any(row.get("automaticBuffSupported") is True for row in self.spell_toolkit.get("spells", []))):
-            return "I don't have a supported learned buff ready yet."
         commands = {
             "FOLLOW": ("buddy-actions.follow", {"enabled": True}, "I'll follow you across nearby open ground."),
             "STOP_FOLLOWING": ("buddy-actions.follow", {"enabled": False}, "I've turned following off."),
@@ -3165,6 +3167,10 @@ class BuddyControls:
             return "I couldn't enable following yet. Stay nearby and try again."
         if action == "ENABLE_ASSIST" and self.actions.get("assisting") is not True:
             return "I couldn't enable combat assistance yet."
+        if action == "ENABLE_BUFFS" and self.actions.get("reason", "").startswith("lua_buff_request_queued:"):
+            return "I've queued a check of useful buffs in my current Lua policy. A cast still needs its observed effect."
+        if action == "DISABLE_BUFFS" and self.actions.get("buffReason") == "lua_policy_owns_buff_choices":
+            return "I've cleared the legacy buff setting. My Lua policy will keep maintaining useful buffs."
         if action == "ENABLE_BUFFS" and self.actions.get("buffing") is not True:
             return "I couldn't enable automatic buffing yet."
         if action == "DISABLE_BUFFS" and self.actions.get("buffing", False) is not False:

@@ -11,6 +11,7 @@ import (
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
+	"github.com/agent-wow/agent-wow/pkg/channelstate"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/spellcatalog"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -292,16 +293,20 @@ func (s *Service) encounterSpells(w *worldv1.SnapshotResponse, online map[uint64
 	if !s.spellbookKnown {
 		return
 	}
+	// Aura classification uses the same lazily loaded catalog as these ranks.
+	// Initialize it before the first caster-readiness projection, including
+	// rogues whose non-mana healing view does not enter learnedContractsLocked.
+	contracts := s.learnedContractsLocked()
 	self := w.Self
 	currentCaster := safeSelfCombat(w, s.selfGUID) == ""
 	controlCaster := currentCaster && s.crowdControlIdleLocked() &&
-		self.ClassKnown && self.MovementFlags&0xff == 0 && self.ChannelSpellKnown && self.ChannelSpellId == 0
+		self.ClassKnown && self.MovementFlags&0xff == 0 && channelstate.Idle(self)
 	polyCaster := controlCaster && self.ClassId == 8
-	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 && self.ChannelObjectGuid == 0 &&
+	sapCaster := controlCaster && self.ClassId == 4 && self.UnitFlags&0x80000 == 0 &&
 		!s.questApproaching && !s.clientControlLost &&
 		!s.clientControlRestoring && s.stealthedLocked()
 	polyReady, sapReady := false, false
-	for id, spell := range s.learnedContractsLocked() {
+	for id, spell := range contracts {
 		view := encounterSpellMechanics(spell, self)
 		view.SelfAuraKnown, view.SelfAuraActive = s.encounterSelfAura(spell.Family)
 		switch spell.Capability().Kind {

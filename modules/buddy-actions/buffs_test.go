@@ -112,8 +112,8 @@ func TestBuffExactLearnedRankNormalWireAndActualAura(t *testing.T) {
 	for _, auraFirst := range []bool{false, true} {
 		t.Run(fmt.Sprint(auraFirst), func(t *testing.T) {
 			s, f, advance := buffRig(t, 5, 1243, 1244)
-			if f.world.Self.ChannelSpellKnown {
-				t.Fatal("fixture must retain omitted initial zero channel field")
+			if !f.world.Self.ChannelSpellKnown || !f.world.Self.ChannelObjectKnown {
+				t.Fatal("fixture must represent a complete own CREATE's omitted-zero baseline")
 			}
 			// The harness honors the caller's lower learned rank; rank policy is Lua.
 			castBuff(t, s, s.selfGUID, 1243)
@@ -164,7 +164,7 @@ func TestBuffNativeTickNeverChoosesOrRetries(t *testing.T) {
 	}
 }
 func TestBuffExactAdmissionRejectsChangedBodyTargetAndResources(t *testing.T) {
-	for _, name := range []string{"session", "body", "unlearned", "dead", "range", "enemy", "self_only", "mana", "silenced", "fear", "channel", "interaction", "gcd"} {
+	for _, name := range []string{"session", "body", "unlearned", "dead", "range", "enemy", "self_only", "mana", "silenced", "fear", "channel", "channel_object", "channel_spell_unknown", "channel_object_unknown", "interaction", "gcd"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, _ := buffRig(t, 5, 1243, 588)
 			r := &actionsv1.CastBuffRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, TargetGuid: ownerGUID, SpellId: 1243}
@@ -195,6 +195,12 @@ func TestBuffExactAdmissionRejectsChangedBodyTargetAndResources(t *testing.T) {
 				f.world.Self.UnitFlags |= 0x800000
 			case "channel":
 				f.world.Self.ChannelSpellId = 5143
+			case "channel_object":
+				f.world.Self.ChannelObjectGuid = 99
+			case "channel_spell_unknown":
+				f.world.Self.ChannelSpellKnown = false
+			case "channel_object_unknown":
+				f.world.Self.ChannelObjectKnown = false
 			case "interaction":
 				s.state.InteractionOwner = "trade"
 				s.interactionUntil = s.now().Add(time.Hour)
