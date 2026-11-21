@@ -256,6 +256,32 @@ function M.for_spell(obs,sequence,target,spell,options)
     if not number(range) or range <= 0 then return {ready=false,phase="spell_range_unknown"} end
     return M.decide(obs,sequence,target,{rangeYards=range,requireLos=true,behind=options.behind == true,target=options.target})
 end
+
+-- Named Practice uses its verified native route rather than the ordinary
+-- encounter actuator. This is the same spatial module's finite approach plan.
+M.practice_tuning = {melee_yards=3.5, caster_yards=25}
+function M.practice_approach(input)
+    local wait={kind="wait",standYards=0}
+    if type(input)~="table" or type(input.observation)~="table" or type(input.observation.players)~="table" then return wait end
+    local obs,target,route=input.observation,input.target,input.route
+    local self=(obs.players or {})[obs.selfGuid]
+    local tuning=M.practice_tuning
+    if type(self)~="table" or self.classKnown~=true or
+       (self.classId~=4 and self.classId~=5 and self.classId~=8) or
+       type(tuning)~="table" or type(route)~="table" or type(route.known)~="boolean" then return wait end
+    local radius=self.classId==4 and tuning.melee_yards or tuning.caster_yards
+    if not number(radius) or radius<=0 or radius>240 then return wait end
+    local from,to=pose(self),pose(target)
+    if not from or not to or self.mapKnown~=true or target.mapKnown~=true or
+       self.mapId~=obs.mapId or target.mapId~=obs.mapId then return wait end
+    local dx,dy,dz=from.x-to.x,from.y-to.y,from.z-to.z
+    local approach=dx*dx+dy*dy+dz*dz>radius*radius
+    if route.known then
+        if not number(route.remainingYards) or route.remainingYards<0 or type(route.direct)~="boolean" then return wait end
+        approach=approach or route.remainingYards>radius or not route.direct
+    end
+    return {kind=approach and "approach" or "arrived",standYards=radius}
+end
 function M.stop(obs,sequence,target)
     return action(obs,sequence,target,{rangeYards=0},true)
 end

@@ -37,12 +37,16 @@ func (s *Service) practiceOffenseAuthorityLocked(ctx context.Context, targetGUID
 			s.practiceUntil == until && s.now().Before(until) && !s.closed && !s.clientControlLost && !s.clientControlRestoring &&
 			s.state.InteractionOwner == "" && !s.state.MotionUnconfirmed && !s.recovery.state.Active
 	}
+	return s.practiceTaskObservationsLocked(ctx, targetGUID, current)
+}
+
+func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID uint64, current func() bool) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
 	if !current() {
 		return nil, nil, position{}, false
 	}
 	before, revision, mapID := s.pos, s.positionRevision, s.posMap
 	w, err := s.snapshot(ctx, targetGUID)
-	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) ||
+	if err != nil || !current() || safePracticeCharacter(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) ||
 		s.positionRevision != revision || s.posMap != mapID || distance(before, s.pos) > .05 {
 		return nil, nil, position{}, false
 	}
@@ -66,7 +70,7 @@ func (s *Service) practiceOffenseAuthorityLocked(ctx context.Context, targetGUID
 	}
 	active, incomplete := ownWolfQuest(w)
 	goal := incomplete && self.Level >= 1 && self.Level <= 5 || !active && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
-	finishing := self.UnitFlags&0x80000 != 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
+	finishing := s.practicePullStarted && self.UnitFlags&0x80000 != 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
 	if !goal && !finishing {
 		return nil, nil, position{}, false
 	}

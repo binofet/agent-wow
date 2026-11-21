@@ -844,6 +844,15 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			return false
 		}
 	}
+	if moving {
+		if guard, ok := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard); ok {
+			var allowed bool
+			w, allowed = guard(ctx, w)
+			if !allowed {
+				return false
+			}
+		}
+	}
 	if snapshotErr != nil {
 		// Visibility/RPC loss must still permit one bounded STOP of movement
 		// already written at the last known position. It never permits travel.
