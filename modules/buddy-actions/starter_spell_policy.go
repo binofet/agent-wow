@@ -72,7 +72,8 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 	p.revision = before.Revision
 	output, err := runtime.EvaluateContext(ctx, input)
 	after := runtime.Status()
-	if err != nil || after.Revision != before.Revision || after.Failures != before.Failures {
+	quarantined := after.Revision != before.Revision || after.Failures != before.Failures
+	if err != nil || quarantined {
 		p.lastError = after.LastError
 		if err != nil {
 			p.lastError = err.Error()
@@ -82,7 +83,7 @@ func (p *starterSpellPolicy) decide(ctx context.Context, input map[string]any, a
 		}
 		// Runtime may restore a last-good source. A named-task decision must
 		// remain refused until the body owner explicitly accepts another edit.
-		if authored != nil {
+		if authored != nil && quarantined {
 			p.failedAuthored, p.authoredError = authored, p.lastError
 			p.authoredFailedRevision = before.Revision
 		}

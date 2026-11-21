@@ -121,12 +121,12 @@ func TestPracticeCasterLuaAcceptedSharedEditChangesExactCastInSameBody(t *testin
 		t.Fatal("test did not edit the actual shared selector tuning")
 	}
 	request := &actionsv1.BehaviorReloadRequest{SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: source}
-	accepted, err := s.ReloadBehavior(context.Background(), request)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), request)
 	if err != nil || accepted.Revision == "" {
 		t.Fatal(accepted, err)
 	}
 	request.Source = behaviors.StarterSpellSource
-	if _, err := s.ReloadBehavior(context.Background(), request); err == nil {
+	if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), request); err == nil {
 		t.Fatal("stale revision replaced the accepted same-body edit")
 	}
 	// Both choices are ready again; the source edit determines the new cast.
@@ -138,13 +138,48 @@ func TestPracticeCasterLuaAcceptedSharedEditChangesExactCastInSameBody(t *testin
 	}
 }
 
+func TestPracticeCasterLuaCallerCancellationPreservesAcceptedAuthoredSource(t *testing.T) {
+	s, f, target, best, _ := practiceCasterRig(t, 8)
+	accepted, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
+		SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: behaviors.StarterSpellSource})
+	if err != nil || accepted.Revision == "" {
+		t.Fatal("body-bound shared source was not accepted", accepted, err)
+	}
+	point, known, _ := creaturePosition(target)
+	if !known {
+		t.Fatal("fixture lost the observed target pose")
+	}
+	authored := s.behavior
+	first := s.starterSpellDecisionLocked(context.Background(), f.world, target, point)
+	if !first.valid || first.kind != "cast" || first.spell.ID != best || s.starterSpells.revision != accepted.Revision {
+		t.Fatal("accepted shared source did not produce the initial pure choice", first, s.starterSpells.failure())
+	}
+	before := authored.Status()
+	if before.Revision != accepted.Revision || before.Failures != 0 || before.QuarantinedRevision != "" {
+		t.Fatal("fixture did not start with a healthy accepted authored source", before)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	refused := s.starterSpellDecisionLocked(canceled, f.world, target, point)
+	after := authored.Status()
+	if refused.valid || after.Revision != before.Revision || after.Failures != before.Failures ||
+		after.QuarantinedRevision != "" || s.starterSpells.failedAuthored != nil || len(f.packets) != 0 {
+		t.Fatal("caller cancellation poisoned valid source or produced a native write", refused, before, after, s.starterSpells.failure(), f.packets)
+	}
+	fresh := s.starterSpellDecisionLocked(context.Background(), f.world, target, point)
+	if !fresh.valid || fresh.kind != "cast" || fresh.spell.ID != best || s.behavior != authored ||
+		s.starterSpells.revision != accepted.Revision || s.starterSpells.failedAuthored != nil || len(f.packets) != 0 {
+		t.Fatal("fresh caller could not reuse the same accepted source without edit or reconnect", fresh, authored.Status(), s.starterSpells.failure(), f.packets)
+	}
+}
+
 func TestPracticeCasterLuaCurrentPolicyNeverFallsBackToHostileWrite(t *testing.T) {
 	for _, class := range []uint32{8, 5} {
 		for _, mode := range []string{"broken", "transport", "missing export", "malformed", "wait", "melee"} {
 			t.Run(fmt.Sprintf("%d/%s", class, mode), func(t *testing.T) {
 				s, f, _, _, _ := practiceCasterRig(t, class)
 				if mode == "broken" {
-					if _, err := s.ReloadBehavior(context.Background(), &actionsv1.BehaviorReloadRequest{
+					if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
 						SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: `return {decide=function(input)error("current caster failed")end}`}); err != nil {
 						t.Fatal(err)
 					}
@@ -288,7 +323,7 @@ func TestPracticeCasterLuaUncertainCastSurvivesEditRearmAndLaterHealReceipt(t *t
 			}
 			advance(6 * time.Second)
 			s.Tick(context.Background())
-			if _, err := s.ReloadBehavior(context.Background(), &actionsv1.BehaviorReloadRequest{
+			if _, err := reloadStarterSemanticBehavior(t, s, context.Background(), &actionsv1.BehaviorReloadRequest{
 				SessionId: s.sessionID, SelfGuid: s.selfGUID, Source: behaviors.StarterSpellSource + "\n-- accepted after ambiguous caster write"}); err != nil {
 				t.Fatal(err)
 			}
