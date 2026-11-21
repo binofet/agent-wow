@@ -55,6 +55,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "move_body" {
+		return p.resolveBodyMovement(action)
+	}
 	if capability == "approach_target" || capability == "stop_movement" {
 		return p.resolveMovement(action, capability)
 	}
@@ -212,6 +215,9 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 	spells.mu.Lock()
 	defer spells.mu.Unlock()
 	op.admitted = false
+	if op.movement != nil && op.movement.body && state.BodyMovement != nil {
+		op.movement.phase = state.BodyMovement.Phase
+	}
 	switch {
 	case op.written:
 		return behavior.ActionTransportAccepted, op.payload("transport_written", true, false, false)

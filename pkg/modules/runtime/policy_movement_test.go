@@ -13,6 +13,41 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestPolicyBodyHopAcceptsOnlyOwnNormalFallingLayout(t *testing.T) {
+	packet := policyMovementPacket(9)
+	binary.LittleEndian.PutUint32(packet[2:], 0x1001)
+	for _, value := range []float32{7.955547, 0, 1, 7} {
+		packet = binary.LittleEndian.AppendUint32(packet, math.Float32bits(value))
+	}
+	op := &policySpell{movement: &policyMovement{self: 9, body: true, jump: true}}
+	if !op.matchesMovementPacket(opcode.MSGMoveJump, packet) {
+		t.Fatal("normal own jump rejected")
+	}
+	for _, mode := range []string{"old_action", "foreign_body", "truncated", "flying", "extra_flags", "vertical_speed"} {
+		body := append([]byte(nil), packet...)
+		candidate := *op
+		movement := *op.movement
+		candidate.movement = &movement
+		switch mode {
+		case "old_action":
+			movement.body = false
+		case "foreign_body":
+			body[1] = 8
+		case "truncated":
+			body = body[:len(body)-1]
+		case "flying":
+			binary.LittleEndian.PutUint32(body[2:], 0x2001001)
+		case "extra_flags":
+			binary.LittleEndian.PutUint16(body[6:], 0x20)
+		case "vertical_speed":
+			binary.LittleEndian.PutUint32(body[32:], math.Float32bits(20))
+		}
+		if candidate.matchesMovementPacket(opcode.MSGMoveJump, body) {
+			t.Fatal("unrelated or unsupported jump admitted", mode)
+		}
+	}
+}
+
 func policyMovementPacket(guid uint64) []byte {
 	// PackedGUID(9), flags, flags2, time, xyzo, fallTime.
 	out := make([]byte, 32)

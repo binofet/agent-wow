@@ -18,8 +18,43 @@ import (
 )
 
 type policyMovement struct {
-	self uint64
-	stop bool
+	self     uint64
+	stop     bool
+	body     bool
+	jump     bool
+	sequence uint64
+	phase    string
+}
+
+func (p *SessionPolicy) resolveBodyMovement(action map[string]any) (PolicyDispatch, error) {
+	sessionID, _ := action["sessionId"].(string)
+	self, _ := action["selfGuid"].(string)
+	visit, _ := action["visitId"].(string)
+	sequence, _ := action["sequenceId"].(string)
+	selfID, _ := strconv.ParseUint(self, 10, 64)
+	visitID, visitErr := strconv.ParseUint(visit, 10, 64)
+	sequenceID, sequenceErr := strconv.ParseUint(sequence, 10, 64)
+	bearing, _ := action["bearingRadians"].(float64)
+	duration, _ := action["durationMs"].(float64)
+	jump, _ := action["jump"].(bool)
+	if sessionID != p.vm.Status().SessionID || self != p.body || selfID == 0 || visitErr != nil || visitID == 0 ||
+		sequenceErr != nil || sequenceID == 0 || visit != strconv.FormatUint(visitID, 10) || sequence != strconv.FormatUint(sequenceID, 10) ||
+		math.IsNaN(bearing) || math.IsInf(bearing, 0) || math.Abs(bearing) > math.Pi+.001 ||
+		math.IsNaN(duration) || math.IsInf(duration, 0) || duration != math.Trunc(duration) || duration < 0 || duration > 500 || !jump && duration < 100 {
+		return PolicyDispatch{}, status.Error(codes.InvalidArgument, "current body, visit, sequence and bounded relative input required")
+	}
+	values := map[protoreflect.Name]protoreflect.Value{
+		"session_id": protoreflect.ValueOfString(sessionID), "self_guid": protoreflect.ValueOfUint64(selfID),
+		"visit_id": protoreflect.ValueOfUint64(visitID), "sequence_id": protoreflect.ValueOfUint64(sequenceID),
+		"bearing_radians": protoreflect.ValueOfFloat32(float32(bearing)), "duration_ms": protoreflect.ValueOfUint32(uint32(duration)), "jump": protoreflect.ValueOfBool(jump),
+	}
+	op := &policySpell{vm: p.vm, capability: "move_body", encounterVisit: visitID,
+		movement: &policyMovement{self: selfID, body: true, jump: jump, sequence: sequenceID}}
+	dispatch, err := p.preparePolicyDispatch("move_body", values, op)
+	if err == nil {
+		dispatch.spell = nil
+	}
+	return dispatch, err
 }
 
 func (p *SessionPolicy) resolveMovement(action map[string]any, capability string) (PolicyDispatch, error) {
@@ -67,14 +102,22 @@ func (m *Manager) invokePolicyMovement(ctx context.Context, inst *instance, md m
 }
 
 func (op *policySpell) movementPayload(phase string, written bool) map[string]any {
+	if op.movement.body && op.movement.phase != "" {
+		phase = op.movement.phase
+	}
 	return map[string]any{"capability": op.capability, "phase": phase, "self_guid": strconv.FormatUint(op.movement.self, 10),
 		"target_guid": strconv.FormatUint(op.target, 10), "visit_id": strconv.FormatUint(op.encounterVisit, 10),
+		"sequence_id":       strconv.FormatUint(op.movement.sequence, 10),
 		"transport_written": written, "effect_observed": false}
 }
 
 func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 	switch code {
 	case opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveStop, opcode.MSGMoveSetFacing:
+	case opcode.MSGMoveJump, opcode.MSGMoveFallLand:
+		if !op.movement.body || !op.movement.jump {
+			return false
+		}
 	default:
 		return false
 	}
@@ -87,7 +130,7 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 	n := 1 + bits.OnesCount8(body[0])
 	// MovementInfo: flags4, extraFlags2, time4, position/orientation16,
 	// fallTime4. Ground packets have no optional transport/spline/swim tail.
-	if len(body) != n+30 {
+	if len(body) < n+30 {
 		return false
 	}
 	var guid uint64
@@ -99,11 +142,33 @@ func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
 		}
 	}
 	flags := binary.LittleEndian.Uint32(body[n:])
+	if binary.LittleEndian.Uint16(body[n+4:]) != 0 {
+		return false
+	}
 	// Allow only the requested forward motion and observed passive ground
 	// modifiers, never a transported, swimming, flying or jumping packet.
-	const groundFlags = uint32(1) | movementflags.PassiveModifiers
-	if guid != op.movement.self || flags & ^groundFlags != 0 {
+	allowedFlags := uint32(1) | movementflags.PassiveModifiers
+	falling := flags&0x1000 != 0
+	if op.movement.body && op.movement.jump {
+		allowedFlags |= 0x1000
+	}
+	if guid != op.movement.self || flags & ^allowedFlags != 0 ||
+		!falling && len(body) != n+30 || falling && len(body) != n+46 ||
+		code == opcode.MSGMoveJump && !falling || code == opcode.MSGMoveFallLand && falling {
 		return false
+	}
+	if falling {
+		values := [4]float64{}
+		for i := range values {
+			values[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(body[n+30+i*4:])))
+			if math.IsNaN(values[i]) || math.IsInf(values[i], 0) {
+				return false
+			}
+		}
+		if math.Abs(values[0]-7.955547) > .0001 || math.Abs(values[1]*values[1]+values[2]*values[2]-1) > .001 ||
+			values[3] < .1 || values[3] > 14 || binary.LittleEndian.Uint32(body[n+26:]) > 1100 {
+			return false
+		}
 	}
 	for offset := n + 10; offset < n+26; offset += 4 {
 		value := float64(math.Float32frombits(binary.LittleEndian.Uint32(body[offset:])))

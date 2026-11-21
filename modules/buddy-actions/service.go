@@ -92,6 +92,11 @@ type Service struct {
 	targetProtection                           targetProtection
 	targetMovement                             targetMovementIntent
 	targetMovementExecuting                    bool
+	bodyMoving                                 bool
+	bodyMotionPlan                             func(context.Context, string, uint32, buddynav.Point, float64, float64, time.Duration, bool) ([]buddynav.BodyMotionSample, error)
+	bodyMotionWait                             func(context.Context, time.Duration) error
+	navigationGoal                             position
+	navigationGoalKnown                        bool
 	thermaplugg                                thermapluggButtons
 	interactionToken                           string
 	interactionUntil                           time.Time
@@ -834,7 +839,7 @@ func (s *Service) movementLocked(ctx context.Context, op uint32, p position, mov
 }
 
 func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position, moving bool, swim *swimMovement) bool {
-	if s.session == nil || s.clientControlLost || s.clientControlRestoring {
+	if s.bodyMoving || s.session == nil || s.clientControlLost || s.clientControlRestoring {
 		return false
 	}
 	clock, err := s.session.GetClock(ctx, &emptypb.Empty{})
@@ -1058,6 +1063,9 @@ func (s *Service) Tick(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observeHostWeaponMetadataLocked(ctx)
+	if s.bodyMoving {
+		return
+	}
 	if s.dungeonTraceEnabled() {
 		defer s.sampleDungeonTraceLocked(ctx)
 	}
