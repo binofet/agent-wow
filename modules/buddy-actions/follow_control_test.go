@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/behaviors"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -223,6 +224,19 @@ func TestFormationFollowsVerifiedStairsInsteadOfSettlingOnFloorBelow(t *testing.
 	// Start directly beneath the requested personal slot, not just beneath
 	// Joel. Horizontal-only hysteresis previously treated this as arrival.
 	frame := followFormation{}
+	// This test checks the verified stairs and arrival geometry over140ticks.
+	// Keep it independent of the real default-budget watchdog assertions in
+	// TestFollowPolicyProductionWatchdogPausesWithoutFallbackAndKeepsIntent.
+	for _, formation := range []*followFormation{&frame, &s.formation} {
+		runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+			t.Fatal(err)
+		}
+		formation.runtime = runtime
+	}
 	slot := frame.Target(s.now(), 1, 5, playerPosition(f.world.Owner), false).Position
 	f.world.Self.X, f.world.Self.Y = slot.x, slot.y
 	plans := 0

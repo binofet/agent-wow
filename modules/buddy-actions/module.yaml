@@ -137,7 +137,7 @@ script_api:
   buffs: {effect: mutation, description: 'Compatibility input: enable queues a useful-buff check in current Lua; disable clears legacy status while shared Lua maintenance stays active'}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}
-  release_interaction: {effect: mutation}
+  release_interaction: {effect: mutation, description: 'Release the exact caller-selected interaction lease after normal STOP; optional session/body/visit guards bind current Lua requests'}
   approach_loot: {effect: mutation}
   approach_quest: {effect: mutation}
   travel_quest: {effect: mutation}

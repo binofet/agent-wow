@@ -113,6 +113,9 @@ func (op *policySpell) movementPayload(phase string, written bool) map[string]an
 }
 
 func (op *policySpell) matchesMovementPacket(code uint32, body []byte) bool {
+	if op.capability == "release_interaction" {
+		return op.matchesInteractionStop(code, body)
+	}
 	switch code {
 	case opcode.MSGMoveStartForward, opcode.MSGMoveHeartbeat, opcode.MSGMoveStop, opcode.MSGMoveSetFacing:
 	case opcode.MSGMoveJump:

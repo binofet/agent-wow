@@ -27,6 +27,9 @@ local healing_input
 local policy_observation
 local task_view
 local task_support_action
+-- Existing interactions yield to observed needs chosen here, never a native
+-- emergency controller. Loot closes its actual window through corpse-loot.
+local interaction_tuning = {yield_for_healing=true, yield_for_engagement=true}
 local terminal = {confirmed=true, failed=true, not_dispatched=true, settled_unverified=true}
 local icons = {star=1, circle=2, diamond=3, triangle=4, moon=5, square=6, x=7, skull=8}
 
@@ -744,6 +747,29 @@ local function decide_policy(frame)
 end
 
 
+local function interaction_access(frame, obs, out)
+    local held = obs and obs.interaction
+    local self = obs and (obs.players or {})[obs.selfGuid]
+    if type(held) ~= "table" or type(held.owner) ~= "string" or held.owner == "" or
+       held.owner == "loot" or type(held.token) ~= "string" or held.token == "" or
+       #frame.pending ~= 0 or not alive(self) or not current_visit(obs) or
+       not host_can_decide(obs) or frame.input.observationSequence ~= state.sequence or
+       state.settledAt == state.sequence or (obs.navigation or {}).motionUnconfirmed == true then return end
+    local reason
+    if interaction_tuning.yield_for_healing and healing and healing.needs_access and obs.healing and
+       healing.needs_access(healing_input(obs), obs) then reason = "healing_access_needed" end
+    if not reason and interaction_tuning.yield_for_engagement then
+        for _, target in pairs(obs.targets or {}) do
+            if alive(target) and target.engaged == true then reason = "current_encounter_needs_body"; break end
+        end
+    end
+    if not reason then return end
+    out.interaction = {phase="release_for_support_or_defense", reason=reason, owner=held.owner}
+    out.action = {capability="release_interaction", sessionId=obs.sessionId, selfGuid=obs.selfGuid,
+                  visitId=obs.visitId, observationSequence=state.sequence, owner=held.owner, token=held.token}
+    out.followFormation, out.portalCatchup = nil, nil
+end
+
 local function decide(frame)
     local out=decide_policy(frame)
     local current=policy_observation or observation
@@ -773,6 +799,7 @@ local function decide(frame)
         out.deathRecovery=recovery
         if recovery.action then out.action=recovery.action end
     end
+    interaction_access(frame, current, out)
     return out
 end
 

@@ -61,6 +61,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "release_interaction" {
+		return p.resolveInteractionRelease(action)
+	}
 	if capability == "loot_resume_source" {
 		return p.resolveLootCapacityResume(action)
 	}
@@ -265,6 +268,11 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		state.BodyMovement.SequenceId == op.movement.sequence && state.BodyMovement.VisitId == op.encounterVisit {
 		op.movement.phase = state.BodyMovement.Phase
 		op.movement.detail = state.BodyMovement.Detail
+	}
+	if err == nil && op.capability == "release_interaction" && state.InteractionOwner == "" {
+		// The exact lease is released. A STOP write/returned metadata is not a
+		// server movement effect, and has no future spell-effect receipt.
+		return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
 	}
 	switch {
 	case op.written:
