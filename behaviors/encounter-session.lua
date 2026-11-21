@@ -551,7 +551,7 @@ local function decide_encounter(frame)
         else cleanse.needsApproach=nil;cleanse.observationSequence=state.sequence;out.action=cleanse end
         return out
     end
-    local resurrection = support_policy and support_policy.resurrect(obs)
+    local resurrection = support_policy and support_policy.resurrect(obs,frame)
     if resurrection then
         resurrection.observationSequence = state.sequence
         out.action = resurrection
