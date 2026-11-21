@@ -113,7 +113,7 @@ func (x *combatExecutionFixture) cast() behavior.Decision {
 		}
 		switch a["capability"] {
 		case "approach_target":
-			r := &actionsv1.ApproachTargetRequest{SessionId: x.s.sessionID, SelfGuid: x.s.selfGUID, TargetGuid: target, VisitId: 1, RangeYards: a["rangeYards"].(float64)}
+			r := &actionsv1.ApproachTargetRequest{SessionId: x.s.sessionID, SelfGuid: x.s.selfGUID, TargetGuid: target, VisitId: 1, RangeYards: float32(a["rangeYards"].(float64))}
 			r.RequireLos, _ = a["requireLos"].(bool)
 			r.Behind, _ = a["behind"].(bool)
 			if _, err = x.s.ApproachTarget(x.ctx, r); err != nil {
