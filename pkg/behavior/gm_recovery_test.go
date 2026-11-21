@@ -524,3 +524,73 @@ func TestGMRecoveryHoldDefendsObservedAttackAndHealsWhileTaskIsBlocked(t *testin
 		t.Fatal("quiet hold repulled stale target", out, err)
 	}
 }
+
+func TestGMRecoveryReconcilesObservedResourceMaximumChangeWithoutRepeatingTransport(t *testing.T) {
+	for _, kind := range []string{"mana", "health"} {
+		t.Run(kind, func(t *testing.T) {
+			f := gmRecoveryRig(t)
+			f.colocate(f.gm())
+			for _, row := range f.members {
+				p := row.(map[string]any)
+				f.colocate(p)
+				p["alive"], p["hp"], p["mana"] = true, 100, 100
+			}
+			patient := f.member("Arlen")
+			value, maximum, command := "mana", "maxMana", ".modify mana "
+			if kind == "health" {
+				value, maximum, command = "hp", "maxHp", ".modify hp "
+			}
+			patient[value] = 0
+			selectAction := recoveryAction(t, f.step(t))
+			if selectAction["kind"] != "select_target" || selectAction["targetGuid"] != "1" {
+				t.Fatal(selectAction)
+			}
+			f.apply(t, selectAction)
+			old := recoveryAction(t, f.step(t))
+			if old["command"] != command+"100" {
+				t.Fatal(old)
+			}
+			// Actual first refill arrives while a legitimate stat buff changes max.
+			f.apply(t, old)
+			patient[maximum] = 125
+			f.frame["now"] = 20
+			next := recoveryAction(t, f.step(t))
+			if next["command"] != command+"125" || next["id"] == old["id"] {
+				t.Fatal("changed maximum remained blocked or repeated old request", next)
+			}
+			memory := f.frame["memory"].(map[string]any)
+			if memory["stage"] != kind || memory["resourceReconciled"] == nil {
+				t.Fatal("resource correction restarted recovery", memory)
+			}
+			f.apply(t, next)
+			out := f.step(t)
+			if out["done"] != true || out["success"] != true || out["action"] != nil {
+				t.Fatal("corrected maximum did not finish in place", out)
+			}
+		})
+	}
+}
+func TestGMRecoveryMaximumChangeAloneCannotReplayUnobservedRefill(t *testing.T) {
+	f := gmRecoveryRig(t)
+	f.colocate(f.gm())
+	for _, row := range f.members {
+		p := row.(map[string]any)
+		f.colocate(p)
+		p["alive"], p["hp"], p["mana"] = true, 100, 100
+	}
+	patient := f.member("Arlen")
+	patient["mana"] = 0
+	f.apply(t, recoveryAction(t, f.step(t)))
+	old := recoveryAction(t, f.step(t))
+	patient["maxMana"] = 125
+	f.frame["last"] = map[string]any{"id": old["id"], "outcome": "unconfirmed", "error": "transport unknown"}
+	out := f.step(t)
+	if out["action"] != nil || out["phase"] != "observing_mana_Arlen" {
+		t.Fatal("max change or ACK invented refill success", out)
+	}
+	f.frame["now"] = 20
+	out = f.step(t)
+	if out["action"] != nil || out["error"] != "effect_not_observed:mana_Arlen" {
+		t.Fatal("uncertain old write was replayed after timeout", out)
+	}
+}
