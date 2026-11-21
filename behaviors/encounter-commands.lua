@@ -231,9 +231,10 @@ local function automatic_target(obs, request, focusGuid)
     return result.control and result.control.targetGuid
 end
 
-local function control_action(obs, frame, focusGuid)
+local function control_action(obs, frame, focusGuid, planned_control)
     refresh(obs)
-    if #state.requests == 0 and state.autoPolymorph ~= false and highest_spell(obs,"polymorph") then
+    if planned_control then cancel({id="automatic:polymorph"}) end
+    if not planned_control and #state.requests == 0 and state.autoPolymorph ~= false and highest_spell(obs,"polymorph") then
         local automatic = {id="automatic:polymorph",technique="polymorph",auto=true,maintain=true,behind=false}
         local target = automatic_target(obs,automatic,focusGuid)
         if target then

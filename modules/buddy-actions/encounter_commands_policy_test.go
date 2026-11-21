@@ -31,7 +31,7 @@ return {
     return commands.on_event(event)
   end,
   decide=function(frame)
-    local action, control=commands.control_action(observation,frame,frame.input.focusGuid)
+    local action, control=commands.control_action(observation,frame,frame.input.focusGuid,frame.input.plannedControl)
     return {action=action,control=control,intent=commands.queue_intent(observation)}
   end,
   export_state=function() return {version=1,data={observation=observation,commands=commands.export_state()}} end,
@@ -118,6 +118,11 @@ func TestAutomaticLuaPolymorphMaintainsHealthyAddWithoutACommandOrHealthPressure
 	obs.TargetMovement = &actionsv1.TargetMovementState{TargetGuid: add, VisitId: 1, RangeYards: 30, RequireLos: true, Ready: true}
 	decide := func(kill uint64) map[string]any {
 		return commandDecision(t, host, observeCommandPolicy(t, host, obs), encounterGUID(kill))
+	}
+	seq := observeCommandPolicy(t, host, obs)
+	before, err := host.Decide(context.Background(), map[string]any{"observationSequence": seq, "focusGuid": encounterGUID(focus), "plannedControl": true})
+	if err != nil || before.Output["action"] != nil {
+		t.Fatal("automatic default displaced an explicitly authored control plan", before.Output, err)
 	}
 	expectControlAction(t, decide(focus), "polymorph", encounterGUID(add))
 	obs.ProtectedAuras = []*actionsv1.ProtectedTarget{{TargetGuid: add, CasterGuid: 1, Capability: "polymorph", SpellId: 118}}

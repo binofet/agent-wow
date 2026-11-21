@@ -413,7 +413,7 @@ local function decide_encounter(frame)
         return out
     end
     local command_action, command_status
-    if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid) end
+    if commands then command_action, command_status = commands.control_action(obs, frame, first_focus or out.focusGuid, control ~= nil and control ~= false) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
     if active_melee then
