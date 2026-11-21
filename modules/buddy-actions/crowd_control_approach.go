@@ -73,7 +73,7 @@ func (s *Service) requestCrowdControlApproachLocked(ctx context.Context, rank ui
 	if !s.spellbookKnown || !known || spell.Capability().Kind != kind {
 		return nil, status.Error(codes.FailedPrecondition, "exact learned crowd-control rank required")
 	}
-	if s.state.InteractionOwner != "" || s.state.Practicing || s.engage.active || s.fargodeep.active || s.state.Traveling ||
+	if s.state.InteractionOwner != "" || s.state.Practicing || s.fargodeep.active || s.state.Traveling ||
 		s.recovery.state.Active || s.state.CastPending || s.state.MotionUnconfirmed || s.state.AutoAttackUnconfirmed ||
 		s.autoTarget != 0 || s.state.AutoAttackRequested || s.state.AutoAttacking || s.autoStopping {
 		return nil, status.Error(codes.FailedPrecondition, "crowd control preparation needs available movement custody")
@@ -110,7 +110,7 @@ func (s *Service) crowdControlMovementValidLocked(w *worldv1.SnapshotResponse) b
 	c := &s.crowdControl
 	if !c.active || !s.now().Before(c.until) || safeSelfCombat(w, s.selfGUID) != "" || w.Self.MapId != c.mapID ||
 		w.Self.PositionRevision != s.positionRevision || !crowdControlTarget(w, c.target) ||
-		w.Self.ChannelSpellId != 0 || s.selfAttackerLocked(w) != nil {
+		w.Self.ChannelSpellId != 0 || s.hasObservedSelfAttackerLocked(w) {
 		return false
 	}
 	if c.kind == spellcatalog.Sap && (!s.stealthedLocked() || (w.Self.UnitFlags|w.RequestedCreature.UnitFlags)&0x80000 != 0) {
@@ -140,7 +140,7 @@ func (s *Service) observeCrowdControlLocked(ctx context.Context) (*worldv1.Snaps
 		phase = "caster_class_changed"
 	case w.Self.ChannelSpellId != 0:
 		phase = "caster_channeling"
-	case s.selfAttackerLocked(w) != nil:
+	case s.hasObservedSelfAttackerLocked(w):
 		phase = "caster_under_attack"
 	}
 	if phase != "" {

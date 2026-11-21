@@ -17,6 +17,12 @@ import (
 // not a second patient/rank selector. Returning a State acknowledges the queued
 // request only; normal observations and exact CastHeal produce cast receipts.
 func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result proto.Message) error {
+	return m.queueActionPolicyInput(ctx, inst, result, "healing_request", map[string]any{"source": "heal_once"}, "lua_healing_request_queued:")
+}
+
+// Identity/order/acknowledgment only; gameplay interpretation belongs to the
+// currently attached Lua source, including edits made in this same session.
+func (m *Manager) queueActionPolicyInput(ctx context.Context, inst *instance, result proto.Message, kind string, value map[string]any, ack string) error {
 	catalog, _, err := m.observedSession()
 	if err != nil {
 		return err
@@ -25,7 +31,7 @@ func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result pr
 	host := m.policy
 	m.mu.Unlock()
 	if host == nil || host.body != catalog.CharacterGUID {
-		return status.Error(codes.FailedPrecondition, "HealOnce requires the current attached Lua policy; exact callers use CastHeal")
+		return status.Error(codes.FailedPrecondition, "current attached Lua policy required for this intent")
 	}
 	if _, err := host.observe(ctx, catalog.SessionID, catalog.CharacterGUID); err != nil {
 		return err
@@ -35,7 +41,7 @@ func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result pr
 		return status.Error(codes.FailedPrecondition, "current action status unavailable")
 	}
 	view := dynamicpb.NewMessage(method.Descriptor().Output())
-	if err := m.invoke(ctx, internalCall, "session-policy", "buddy-actions", inst, method, &emptypb.Empty{}, view); err != nil {
+	if err := m.invoke(ctx, internalCall, "session-policy", inst.definition.Manifest().Name, inst, method, &emptypb.Empty{}, view); err != nil {
 		return err
 	}
 	fields := view.Descriptor().Fields()
@@ -52,16 +58,16 @@ func (m *Manager) queueLegacyHeal(ctx context.Context, inst *instance, result pr
 	same := m.policy == host
 	m.mu.Unlock()
 	if !same || current.SessionID != catalog.SessionID || current.CharacterGUID != catalog.CharacterGUID {
-		return status.Error(codes.FailedPrecondition, "session changed before healing request")
+		return status.Error(codes.FailedPrecondition, "session changed before policy input")
 	}
 	if err := ctx.Err(); err != nil {
 		return status.FromContextError(err).Err()
 	}
-	sequence, err := host.Enqueue(behavior.Event{Kind: "healing_request", Value: map[string]any{"source": "heal_once"}})
+	sequence, err := host.Enqueue(behavior.Event{Kind: kind, Value: value})
 	if err != nil {
 		return err
 	}
-	view.Set(reason, protoreflect.ValueOfString("lua_healing_request_queued:"+strconv.FormatUint(sequence, 10)))
+	view.Set(reason, protoreflect.ValueOfString(ack+strconv.FormatUint(sequence, 10)))
 	body, err := proto.Marshal(view)
 	if err != nil {
 		return err

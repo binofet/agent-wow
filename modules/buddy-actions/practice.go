@@ -358,7 +358,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.state.PracticePulls++
 	}
 	if self.ClassId == 4 {
-		s.rogueAssistLocked(ctx, w, target, targetPosition)
+		s.starterRogueAssistLocked(ctx, w, target, targetPosition)
 	} else {
 		rank := s.selectedSpellLocked(fireball)
 		if self.ClassId == 5 {
@@ -366,7 +366,7 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		}
 		if !s.now().Before(s.nextAssist) && !s.now().Before(s.nextHeal) && uint64(self.Power) >= manaBudget(self, uint64(rank.manaPercent)) && self.UnitFlags&0x2000 == 0 {
 			if s.faceEnemyLocked(ctx, targetPosition) {
-				s.castOffenseLocked(ctx, rank.id, target.Guid, 3*time.Second)
+				s.castStarterOffenseLocked(ctx, rank.id, target.Guid, 3*time.Second)
 			}
 		}
 	}

@@ -65,7 +65,7 @@ local function combat_queue(input)
                     measured_rate, measured_count = measured_rate + rate, measured_count + 1
                 end
                 local row = {targetGuid=target, seconds=seconds, rate=rate, npc=npc,
-                             engaged=npc.engaged == true, protected=npc.protected == true}
+                             engaged=npc.engaged == true, pullRequested=npc.pullRequested == true, protected=npc.protected == true}
                 rows[#rows+1], candidates[target] = row, row
             end
         end
@@ -113,9 +113,9 @@ local function combat_queue(input)
         if not row or added[target] then return end
         added[target] = true
         result.queue[#result.queue+1] = {targetGuid=target, engaged=row.engaged, protected=row.protected,
-                                      encounterScope=row.engaged and "active_encounter" or "future_pull",
+                                      encounterScope=row.engaged and "active_encounter" or "future_pull", pullRequested=row.pullRequested,
                                       reason=row.reason, burstIntent=row.burstIntent}
-        if not result.focusGuid and row.engaged and not row.protected then
+        if not result.focusGuid and (row.engaged or row.pullRequested) and not row.protected then
             result.focusGuid, result.burstIntent = target, row.burstIntent
         end
     end

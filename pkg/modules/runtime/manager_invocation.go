@@ -166,6 +166,16 @@ func (m *Manager) invoke(ctx context.Context, kind callKind, caller, name string
 	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/HealOnce" {
 		return m.queueLegacyHeal(ctx, inst, result)
 	}
+	if name == "buddy-actions" && md.Path() == "/warcraftbuddy.actions.v1.BuddyActions/EngageNPC" {
+		fields := req.ProtoReflect().Descriptor().Fields()
+		enabled := req.ProtoReflect().Get(fields.ByName("enabled")).Bool()
+		m.mu.Lock()
+		attached := m.policy != nil
+		m.mu.Unlock()
+		if enabled || attached {
+			return m.queueLegacyEngage(ctx, inst, req, result)
+		}
+	}
 	err = inst.conn.Invoke(ctx, md.Path(), req, result, opts...)
 	if status.Code(err) == codes.Unavailable {
 		m.fail(name, err)

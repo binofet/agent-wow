@@ -103,8 +103,8 @@ script_api:
   spell_toolkit: {effect: read}
   set_follow_formation: {effect: mutation, description: Refresh a finite exact Lua follow destination without moving or changing standing intent}
   follow: {effect: mutation}
-  assist: {effect: mutation}
-  engage_npc: {effect: mutation, description: Engage one explicitly selected currently observed NPC using learned abilities or verified melee; false stops the intent}
+  assist: {effect: mutation, description: Legacy starter intent only; ordinary combat and defense are always selected by the attached Lua policy}
+  engage_npc: {effect: mutation, description: Queue explicit target intent in the current attached Lua policy; false cancels only that request and never disables defense}
   resurrect_once: {effect: mutation, description: Cast a learned resurrection spell once on an explicitly selected observed dead same-faction player or their corpse}
   accept_resurrection: {effect: mutation, description: Accept a genuine pending resurrection offer from the explicitly selected caster}
   pick_lock: {effect: mutation, description: Use learned Pick Lock on an observed locked chest and report the server loot window}

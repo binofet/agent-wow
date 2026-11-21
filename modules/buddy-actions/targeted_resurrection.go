@@ -51,7 +51,7 @@ func (s *Service) ResurrectOnce(ctx context.Context, r *actionsv1.ResurrectOnceR
 	p := w.Self
 	if s.state.CastPending || s.state.Moving || s.state.MotionUnconfirmed || s.state.AutoAttacking || s.state.AutoAttackRequested ||
 		s.state.AutoAttackUnconfirmed || s.autoTarget != 0 || s.autoStopping || s.state.InteractionOwner != "" ||
-		p.MovementFlags&0xff != 0 || p.ChannelSpellId != 0 || p.UnitFlags&(0x80000|0x2000) != 0 || s.selfAttackerLocked(w) != nil {
+		p.MovementFlags&0xff != 0 || p.ChannelSpellId != 0 || p.UnitFlags&(0x80000|0x2000) != 0 || s.hasObservedSelfAttackerLocked(w) {
 		return nil, status.Error(codes.FailedPrecondition, "stationary caster out of combat required")
 	}
 	team := observedPlayerTeam(p)
