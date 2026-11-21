@@ -2,7 +2,7 @@
 -- Exact packet/effect settlement is native; corpse and bound-container windows
 -- share this policy. Legacy container source selection/opening remains native.
 local M={tuning={searchRange=12,maxHeight=1.5,openRange=3.75,responseTimeoutMs=2000,windowTimeoutMs=12000,
- reserveQuestSlots=1}}
+ reserveQuestSlots=1,resumeMinFreeSlots=1}}
 local state={seen={},paused={},sequence=0}
 local observed
 local function id(value)return type(value)=="string" and value~="" and value~="0" end
@@ -169,6 +169,21 @@ function M.decide(frame,encounter,quiet,urgent)
   a.castPending or a.autoAttacking or a.autoAttackRequested or a.autoAttackUnconfirmed or a.motionUnconfirmed or
   a.interactionOwner and a.interactionOwner~="" or not p or not p.known or not p.mapKnown or
   o.inventoryKnown~=true or (o.generalFreeSlots or 0)<1 then out.phase="higher_priority_or_unavailable";return out end
+ local pause=(o.state or {}).capacityPause
+ if pause then
+  local function newer(a,b)
+   a=tostring(a or "0");b=tostring(b or "0")
+   return #a>#b or #a==#b and a>b
+  end
+  out.phase="waiting_for_new_container_capacity"
+  if (o.state or {}).enabled==true and id(pause.sourceGuid) and id(pause.gatherId) and id(pause.pauseToken) and
+   (o.generalFreeSlots or 0)>=M.tuning.resumeMinFreeSlots and newer(o.inventoryRevision,pause.inventoryRevision) then
+   out.phase="resume_container_capacity"
+   out.action={capability="loot_resume_source",sessionId=o.sessionId,selfGuid=o.selfGuid,sourceGuid=pause.sourceGuid,
+    gatherId=pause.gatherId,pauseToken=pause.pauseToken,expectedInventoryRevision=o.inventoryRevision,observationSequence=frame.input.observationSequence}
+  end
+  return out
+ end
  local retired={};for _,g in ipairs(o.retiredSources or {}) do retired[g]=true end
  local chosen,best
  for _,c in ipairs(o.corpses or {}) do

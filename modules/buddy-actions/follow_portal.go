@@ -37,28 +37,34 @@ type dungeonPortalFollow struct {
 	catchUpTarget         position
 	catchUpTargetKnown    bool
 	nextCatchUpPlan       time.Time
+	sourceSession         string
+	sourceSelf            uint64
 	sourceVisit           uint64
 	followRevision        uint64
 	ownerPoseRevision     uint64
 	witness               uint64
 	catchUpHost           bool
-	movementWitness       uint64
-	movementVisit         uint64
-	movementFollow        uint64
-	movementHost          bool
+	movementIntent        portalIntent
 }
 
 func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now time.Time) {
 	owner := w.GetOwner()
-	if !s.state.Following || owner == nil || owner.Guid != ownerGUID {
-		s.followPortal = dungeonPortalFollow{}
-		s.portalGoal = portalCatchupGoal{}
-		return
-	}
-	if s.followPortal.portal.trigger != 0 && (s.followPortal.followRevision != s.followRevision ||
+	if s.followPortal.portal.trigger != 0 && (s.followPortal.sourceSession != s.sessionID ||
+		s.followPortal.sourceSelf != s.selfGUID || s.followPortal.followRevision != s.followRevision ||
 		s.followPortal.sourceVisit != w.VisitRevision && !s.followPortal.notified) {
 		s.followPortal = dungeonPortalFollow{}
 		s.portalGoal = portalCatchupGoal{}
+	}
+	// An attempted crossing is a tombstone, not renewable movement authority.
+	// Neither lease expiry nor a reappearing owner proves that its packet was
+	// rejected. Only the actual destination observation below settles it.
+	if s.followPortal.notified {
+		return
+	}
+	if owner == nil || owner.Guid != ownerGUID {
+		s.followPortal = dungeonPortalFollow{}
+		s.portalGoal = portalCatchupGoal{}
+		return
 	}
 	if !owner.Present {
 		if s.followPortal.portal.trigger != 0 && s.followPortal.lostAt.IsZero() {
@@ -66,11 +72,13 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 		}
 		return
 	}
-	f := s.followPortal
-	if f.notified && w.GetSelf().GetMapKnown() && w.GetSelf().GetMapId() == f.portal.destination {
-		return // Let the follow tick observe the transfer before discarding its witness.
+	// Capture a sighting while ordinary following or a finite Lua formation
+	// goal authorizes this visible owner. Its data can outlive that authority.
+	if !s.legacyPortalIntentLocked(now) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
+		return
 	}
-	if f.approaching || f.notified {
+	f := s.followPortal
+	if f.approaching {
 		s.followNav.Reset()
 	}
 	// Reappearance ends this crossing attempt. A later disappearance requires
@@ -83,7 +91,7 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	for _, portal := range dungeonEntrances {
 		if owner.MapId == portal.source && distance(ground, portal.center) < portal.radius {
 			catchingUp, valid := s.portalSightingPolicyLocked(w, now)
-			if !valid {
+			if !valid || !s.legacyPortalIntentLocked(s.now()) && !s.currentFollowFormationGoalLocked(s.followGoal, w) {
 				s.portalGoal = portalCatchupGoal{}
 				return
 			}
@@ -96,10 +104,11 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 				s.portalGoal = portalCatchupGoal{}
 			}
 			s.followPortal = dungeonPortalFollow{
-				portal:      portal,
-				ground:      ground,
-				seenAt:      now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
-				catchingUp:  catchingUp,
+				portal:        portal,
+				ground:        ground,
+				seenAt:        now.Add(-time.Duration(owner.PositionAgeMs) * time.Millisecond),
+				catchingUp:    catchingUp,
+				sourceSession: s.sessionID, sourceSelf: s.selfGUID,
 				sourceVisit: w.VisitRevision, followRevision: s.followRevision, ownerPoseRevision: owner.PositionRevision, witness: witness,
 			}
 			return
@@ -107,10 +116,16 @@ func (s *Service) observeDungeonPortalLocked(w *worldv1.SnapshotResponse, now ti
 	}
 }
 
-func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
+func (s *Service) legacyPortalIntentLocked(now time.Time) bool {
+	return !s.closed && !s.independent && s.state.Following && now.Before(s.followUntil)
+}
+
+// Physical witness validity is independent of the short-lived intent which
+// may consume it. In particular, the first portal goal cannot require itself.
+func (s *Service) portalSourceWitnessCurrentLocked(w *worldv1.SnapshotResponse) bool {
 	f := s.followPortal
 	p, owner := w.GetSelf(), w.GetOwner()
-	return s.state.Following && now.Before(s.followUntil) && !s.independent &&
+	return !s.closed && !s.independent && f.sourceSession == s.sessionID && f.sourceSelf == s.selfGUID &&
 		f.sourceVisit == w.GetVisitRevision() && f.followRevision == s.followRevision &&
 		(f.sourceVisit == 0 || s.matchesCurrentEncounterVisitLocked(w)) &&
 		f.portal.trigger != 0 &&
@@ -120,20 +135,23 @@ func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now tim
 		distance(playerPosition(p), f.ground) <= buddynav.MaxRouteLength
 }
 
+func (s *Service) portalSourceCurrentLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
+	return s.portalSourceWitnessCurrentLocked(w) &&
+		(s.legacyPortalIntentLocked(now) || s.currentPortalGoalLocked(s.portalGoal, w))
+}
+
 func (s *Service) portalSourceReadyLocked(w *worldv1.SnapshotResponse, now time.Time) bool {
-	if !s.portalSourceCurrentLocked(w, now) {
+	intent, current := s.capturePortalIntentLocked(w)
+	if !current {
 		return false
 	}
 	policy := s.portalPolicyLocked(w, now)
-	return policy.Valid && policy.Eligible
+	return policy.Valid && policy.Eligible && s.portalIntentCurrentLocked(intent, w)
 }
 
 func (s *Service) portalMovementCurrentLocked(w *worldv1.SnapshotResponse) bool {
 	f := s.followPortal
-	return f.movementInProgress && s.portalSourceCurrentLocked(w, s.now()) &&
-		f.witness == f.movementWitness && f.sourceVisit == f.movementVisit && s.followRevision == f.movementFollow &&
-		f.movementHost == s.hostEncounterActiveLocked() && (!f.movementHost ||
-		!f.catchingUp || s.now().Before(s.portalGoal.until) && s.portalGoal.witness == f.witness)
+	return f.movementInProgress && !f.notified && s.portalIntentCurrentLocked(f.movementIntent, w)
 }
 
 func (s *Service) portalMovementAllowedLocked(w *worldv1.SnapshotResponse) bool {
@@ -174,10 +192,14 @@ func (s *Service) portalCatchUpTarget(ctx context.Context, ground position, cand
 // realm decides eligibility and which copy this party is allowed to enter.
 func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.SnapshotResponse, now time.Time) bool {
 	f := &s.followPortal
-	if f.portal.trigger == 0 || !s.state.Following {
+	if f.portal.trigger == 0 {
 		return false
 	}
-	if f.notified && w.GetSelf().GetMapKnown() && w.GetSelf().GetMapId() == f.portal.destination {
+	self := w.GetSelf()
+	if f.notified && f.sourceSession == s.sessionID && f.sourceSelf == s.selfGUID &&
+		self.GetGuid() == f.sourceSelf && self.GetPresent() && self.GetMapKnown() && self.GetMapId() == f.portal.destination &&
+		(w.GetVisitRevision() == 0 && f.sourceVisit == 0 ||
+			w.GetVisitRevision() > f.sourceVisit && s.matchesCurrentEncounterVisitLocked(w)) {
 		s.followPortal = dungeonPortalFollow{}
 		s.portalGoal = portalCatchupGoal{}
 		s.followNav.Reset()
@@ -185,7 +207,13 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_instance_transfer_observed"
 		return true
 	}
-	if !s.portalSourceCurrentLocked(w, now) {
+	if f.notified {
+		s.lastStep = now
+		s.state.Reason = "follow_waiting_for_instance_transfer"
+		return true
+	}
+	intent, current := s.capturePortalIntentLocked(w)
+	if !current {
 		return false
 	}
 	policy := s.portalPolicyLocked(w, now)
@@ -195,21 +223,23 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.state.Reason = "follow_instance_policy_unavailable"
 		return true
 	}
+	if !s.portalIntentCurrentLocked(intent, w) {
+		s.stopLocked(ctx)
+		s.lastStep = now
+		s.state.Reason = "follow_instance_source_changed"
+		return true
+	}
 	if !policy.Eligible {
 		return false
 	}
 	s.lastStep = now
-	if f.notified {
-		s.state.Reason = "follow_waiting_for_instance_transfer"
-		return true
-	}
 	if !policy.Ready {
 		s.stopLocked(ctx)
 		s.state.Reason = "follow_waiting_at_instance_entrance"
 		return true
 	}
 	if !s.healingPartyLocked(ctx)[ownerGUID] || !s.refreshPositionLocked(w) ||
-		!s.stopAutoAttackLocked(ctx) || s.state.AutoAttackUnconfirmed {
+		!s.stopAutoAttackLocked(ctx) || s.state.AutoAttackUnconfirmed || !s.portalIntentCurrentLocked(intent, w) {
 		s.stopLocked(ctx)
 		s.state.Reason = "follow_instance_party_or_pose_unavailable"
 		return true
@@ -221,20 +251,20 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		// STOP and the party lookup may race an owner reappearance, combat, or
 		// correction. Bind entry to the fresh source map and current tracker.
 		fresh, err := s.snapshot(ctx)
-		if err != nil || !s.portalSourceCurrentLocked(fresh, s.now()) ||
+		if err != nil || !s.portalIntentCurrentLocked(intent, fresh) ||
 			!s.refreshPositionLocked(fresh) || distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
 			s.state.Reason = "follow_instance_source_changed"
 			return true
 		}
 		current := s.portalPolicyLocked(fresh, s.now())
-		if !current.Valid || !current.Eligible || !current.Ready {
+		if !current.Valid || !current.Eligible || !current.Ready || !s.portalIntentCurrentLocked(intent, fresh) {
 			s.state.Reason = "follow_instance_policy_changed"
 			return true
 		}
 		// The pure source read can race a new World observation. Recheck
 		// physical entry after it, with no further policy callback before send.
 		latest, err := s.snapshot(ctx)
-		if err != nil || !s.portalSourceCurrentLocked(latest, s.now()) || !s.refreshPositionLocked(latest) ||
+		if err != nil || ctx.Err() != nil || !s.portalIntentCurrentLocked(intent, latest) || !s.refreshPositionLocked(latest) ||
 			latest.GetSelf().GetPositionRevision() != fresh.GetSelf().GetPositionRevision() ||
 			playerPosition(latest.GetSelf()) != playerPosition(fresh.GetSelf()) ||
 			distance(s.pos, f.portal.center) >= f.portal.radius-0.03 {
@@ -256,21 +286,22 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		s.followNav.Reset()
 		f.approaching = true
 	}
-	if f.catchingUp {
+	useCandidates := f.catchingUp || intent.finite
+	if useCandidates {
 		host := s.hostEncounterActiveLocked()
 		if f.catchUpHost != host {
 			f.catchUpTargetKnown = false
 			f.catchUpHost = host
 			s.followNav.Reset()
 		}
-		if host && (!now.Before(s.portalGoal.until) || s.portalGoal.witness != f.witness) {
+		if host && !s.currentPortalGoalLocked(s.portalGoal, w) {
 			f.catchUpTargetKnown = false
 			s.stopLocked(ctx)
 			s.state.Reason = "follow_instance_waiting_for_policy"
 			return true
 		}
 	}
-	if f.catchingUp && !f.catchUpTargetKnown {
+	if useCandidates && !f.catchUpTargetKnown {
 		if now.Before(f.nextCatchUpPlan) {
 			return true
 		}
@@ -282,7 +313,6 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		}
 		f.nextCatchUpPlan = now.Add(750 * time.Millisecond)
 		start := s.portalStartLocked(w)
-		witness, follow, visit, host := f.witness, f.followRevision, f.sourceVisit, s.hostEncounterActiveLocked()
 		if start == nil {
 			s.stopLocked(ctx)
 			s.state.Reason = "follow_instance_source_changed"
@@ -295,10 +325,8 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 			return true
 		}
 		fresh, err := s.snapshot(ctx)
-		if err != nil || !s.portalSourceReadyLocked(fresh, s.now()) ||
-			f.witness != witness || f.followRevision != follow || f.sourceVisit != visit ||
-			!samePortalStart(start, s.portalStartLocked(fresh)) || host &&
-			(!s.hostEncounterActiveLocked() || !s.now().Before(s.portalGoal.until) || s.portalGoal.witness != witness) {
+		if err != nil || !s.portalIntentCurrentLocked(intent, fresh) || !s.portalSourceReadyLocked(fresh, s.now()) ||
+			!s.portalIntentCurrentLocked(intent, fresh) || !samePortalStart(start, s.portalStartLocked(fresh)) {
 			s.stopLocked(ctx)
 			s.state.Reason = "follow_instance_source_changed"
 			return true
@@ -314,9 +342,9 @@ func (s *Service) followDungeonPortalLocked(ctx context.Context, w *worldv1.Snap
 		target = f.catchUpTarget
 	}
 	f.movementInProgress = true
-	f.movementWitness, f.movementVisit, f.movementFollow = f.witness, f.sourceVisit, s.followRevision
-	f.movementHost = s.hostEncounterActiveLocked()
+	f.movementIntent = intent
 	s.followFormationStepLocked(ctx, target, .1)
 	f.movementInProgress = false
+	f.movementIntent = portalIntent{}
 	return true
 }

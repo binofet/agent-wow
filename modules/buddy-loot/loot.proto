@@ -58,6 +58,18 @@ message State {
   GatherReceipt last_gather = 18;
   string session_id = 19;
   bool inventory_paused = 20;
+  CapacityPause capacity_pause = 21;
+}
+// Recorded capacity refusal for one retained container operation. This is
+// evidence, not a native decision about when another attempt should start.
+message CapacityPause { uint64 source_guid = 1; uint64 gather_id = 2; uint64 inventory_revision = 3; string pause_token = 4; }
+message ResumeSourceRequest {
+  string session_id = 1; uint64 self_guid = 2; uint64 source_guid = 3;
+  uint64 gather_id = 4; uint64 expected_inventory_revision = 5; string pause_token = 6;
+}
+message ResumeSourceReceipt {
+  string session_id = 1; uint64 self_guid = 2; uint64 source_guid = 3;
+  uint64 gather_id = 4; uint64 inventory_revision = 5; bool cleared = 6; string pause_token = 7;
 }
 // Exact source identity, not a request for the native module to choose a corpse.
 message OpenCorpseRequest {
@@ -128,6 +140,7 @@ service BuddyLoot {
   rpc CloseCorpse(CloseCorpseRequest) returns (CorpseOperation);
   rpc TakeMoney(TakeLootRequest) returns (LootMutation);
   rpc TakeSlot(TakeLootRequest) returns (LootMutation);
+  rpc ResumeSource(ResumeSourceRequest) returns (ResumeSourceReceipt);
   rpc OnPacket(agentwow.module.v1.WorldPacket) returns (google.protobuf.Empty);
   rpc BeforeLogout(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

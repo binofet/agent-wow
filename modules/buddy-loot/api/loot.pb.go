@@ -375,6 +375,7 @@ type State struct {
 	LastGather            *GatherReceipt `protobuf:"bytes,18,opt,name=last_gather,json=lastGather,proto3" json:"last_gather,omitempty"`
 	SessionId             string         `protobuf:"bytes,19,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	InventoryPaused       bool           `protobuf:"varint,20,opt,name=inventory_paused,json=inventoryPaused,proto3" json:"inventory_paused,omitempty"`
+	CapacityPause         *CapacityPause `protobuf:"bytes,21,opt,name=capacity_pause,json=capacityPause,proto3" json:"capacity_pause,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -549,6 +550,259 @@ func (x *State) GetInventoryPaused() bool {
 	return false
 }
 
+func (x *State) GetCapacityPause() *CapacityPause {
+	if x != nil {
+		return x.CapacityPause
+	}
+	return nil
+}
+
+// Recorded capacity refusal for one retained container operation. This is
+// evidence, not a native decision about when another attempt should start.
+type CapacityPause struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SourceGuid        uint64                 `protobuf:"varint,1,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
+	GatherId          uint64                 `protobuf:"varint,2,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,3,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	PauseToken        string                 `protobuf:"bytes,4,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CapacityPause) Reset() {
+	*x = CapacityPause{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapacityPause) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapacityPause) ProtoMessage() {}
+
+func (x *CapacityPause) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapacityPause.ProtoReflect.Descriptor instead.
+func (*CapacityPause) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CapacityPause) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
+func (x *CapacityPause) GetGatherId() uint64 {
+	if x != nil {
+		return x.GatherId
+	}
+	return 0
+}
+
+func (x *CapacityPause) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *CapacityPause) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
+}
+
+type ResumeSourceRequest struct {
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId                 string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid                  uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	SourceGuid                uint64                 `protobuf:"varint,3,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
+	GatherId                  uint64                 `protobuf:"varint,4,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
+	ExpectedInventoryRevision uint64                 `protobuf:"varint,5,opt,name=expected_inventory_revision,json=expectedInventoryRevision,proto3" json:"expected_inventory_revision,omitempty"`
+	PauseToken                string                 `protobuf:"bytes,6,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *ResumeSourceRequest) Reset() {
+	*x = ResumeSourceRequest{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeSourceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeSourceRequest) ProtoMessage() {}
+
+func (x *ResumeSourceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeSourceRequest.ProtoReflect.Descriptor instead.
+func (*ResumeSourceRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ResumeSourceRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ResumeSourceRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *ResumeSourceRequest) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
+func (x *ResumeSourceRequest) GetGatherId() uint64 {
+	if x != nil {
+		return x.GatherId
+	}
+	return 0
+}
+
+func (x *ResumeSourceRequest) GetExpectedInventoryRevision() uint64 {
+	if x != nil {
+		return x.ExpectedInventoryRevision
+	}
+	return 0
+}
+
+func (x *ResumeSourceRequest) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
+}
+
+type ResumeSourceReceipt struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid          uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	SourceGuid        uint64                 `protobuf:"varint,3,opt,name=source_guid,json=sourceGuid,proto3" json:"source_guid,omitempty"`
+	GatherId          uint64                 `protobuf:"varint,4,opt,name=gather_id,json=gatherId,proto3" json:"gather_id,omitempty"`
+	InventoryRevision uint64                 `protobuf:"varint,5,opt,name=inventory_revision,json=inventoryRevision,proto3" json:"inventory_revision,omitempty"`
+	Cleared           bool                   `protobuf:"varint,6,opt,name=cleared,proto3" json:"cleared,omitempty"`
+	PauseToken        string                 `protobuf:"bytes,7,opt,name=pause_token,json=pauseToken,proto3" json:"pause_token,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ResumeSourceReceipt) Reset() {
+	*x = ResumeSourceReceipt{}
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeSourceReceipt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeSourceReceipt) ProtoMessage() {}
+
+func (x *ResumeSourceReceipt) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeSourceReceipt.ProtoReflect.Descriptor instead.
+func (*ResumeSourceReceipt) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ResumeSourceReceipt) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ResumeSourceReceipt) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *ResumeSourceReceipt) GetSourceGuid() uint64 {
+	if x != nil {
+		return x.SourceGuid
+	}
+	return 0
+}
+
+func (x *ResumeSourceReceipt) GetGatherId() uint64 {
+	if x != nil {
+		return x.GatherId
+	}
+	return 0
+}
+
+func (x *ResumeSourceReceipt) GetInventoryRevision() uint64 {
+	if x != nil {
+		return x.InventoryRevision
+	}
+	return 0
+}
+
+func (x *ResumeSourceReceipt) GetCleared() bool {
+	if x != nil {
+		return x.Cleared
+	}
+	return false
+}
+
+func (x *ResumeSourceReceipt) GetPauseToken() string {
+	if x != nil {
+		return x.PauseToken
+	}
+	return ""
+}
+
 // Exact source identity, not a request for the native module to choose a corpse.
 type OpenCorpseRequest struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
@@ -565,7 +819,7 @@ type OpenCorpseRequest struct {
 
 func (x *OpenCorpseRequest) Reset() {
 	*x = OpenCorpseRequest{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -577,7 +831,7 @@ func (x *OpenCorpseRequest) String() string {
 func (*OpenCorpseRequest) ProtoMessage() {}
 
 func (x *OpenCorpseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[4]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -590,7 +844,7 @@ func (x *OpenCorpseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenCorpseRequest.ProtoReflect.Descriptor instead.
 func (*OpenCorpseRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{4}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *OpenCorpseRequest) GetSessionId() string {
@@ -655,7 +909,7 @@ type CloseCorpseRequest struct {
 
 func (x *CloseCorpseRequest) Reset() {
 	*x = CloseCorpseRequest{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -667,7 +921,7 @@ func (x *CloseCorpseRequest) String() string {
 func (*CloseCorpseRequest) ProtoMessage() {}
 
 func (x *CloseCorpseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[5]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -680,7 +934,7 @@ func (x *CloseCorpseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseCorpseRequest.ProtoReflect.Descriptor instead.
 func (*CloseCorpseRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{5}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CloseCorpseRequest) GetSessionId() string {
@@ -738,7 +992,7 @@ type CorpseOperation struct {
 
 func (x *CorpseOperation) Reset() {
 	*x = CorpseOperation{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -750,7 +1004,7 @@ func (x *CorpseOperation) String() string {
 func (*CorpseOperation) ProtoMessage() {}
 
 func (x *CorpseOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[6]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -763,7 +1017,7 @@ func (x *CorpseOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CorpseOperation.ProtoReflect.Descriptor instead.
 func (*CorpseOperation) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{6}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CorpseOperation) GetSessionId() string {
@@ -881,7 +1135,7 @@ type CorpseObservation struct {
 
 func (x *CorpseObservation) Reset() {
 	*x = CorpseObservation{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -893,7 +1147,7 @@ func (x *CorpseObservation) String() string {
 func (*CorpseObservation) ProtoMessage() {}
 
 func (x *CorpseObservation) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[7]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -906,7 +1160,7 @@ func (x *CorpseObservation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CorpseObservation.ProtoReflect.Descriptor instead.
 func (*CorpseObservation) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{7}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CorpseObservation) GetSessionId() string {
@@ -1067,7 +1321,7 @@ type QuestItemRequirement struct {
 
 func (x *QuestItemRequirement) Reset() {
 	*x = QuestItemRequirement{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[8]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1079,7 +1333,7 @@ func (x *QuestItemRequirement) String() string {
 func (*QuestItemRequirement) ProtoMessage() {}
 
 func (x *QuestItemRequirement) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[8]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1092,7 +1346,7 @@ func (x *QuestItemRequirement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuestItemRequirement.ProtoReflect.Descriptor instead.
 func (*QuestItemRequirement) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{8}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *QuestItemRequirement) GetQuestId() uint32 {
@@ -1126,7 +1380,7 @@ type OwnedItemCount struct {
 
 func (x *OwnedItemCount) Reset() {
 	*x = OwnedItemCount{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[9]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1138,7 +1392,7 @@ func (x *OwnedItemCount) String() string {
 func (*OwnedItemCount) ProtoMessage() {}
 
 func (x *OwnedItemCount) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[9]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1151,7 +1405,7 @@ func (x *OwnedItemCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnedItemCount.ProtoReflect.Descriptor instead.
 func (*OwnedItemCount) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{9}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *OwnedItemCount) GetItemId() uint32 {
@@ -1181,7 +1435,7 @@ type LootSlot struct {
 
 func (x *LootSlot) Reset() {
 	*x = LootSlot{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[10]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1193,7 +1447,7 @@ func (x *LootSlot) String() string {
 func (*LootSlot) ProtoMessage() {}
 
 func (x *LootSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[10]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1206,7 +1460,7 @@ func (x *LootSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LootSlot.ProtoReflect.Descriptor instead.
 func (*LootSlot) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{10}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LootSlot) GetSlot() uint32 {
@@ -1265,7 +1519,7 @@ type LootWindow struct {
 
 func (x *LootWindow) Reset() {
 	*x = LootWindow{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[11]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1277,7 +1531,7 @@ func (x *LootWindow) String() string {
 func (*LootWindow) ProtoMessage() {}
 
 func (x *LootWindow) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[11]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1290,7 +1544,7 @@ func (x *LootWindow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LootWindow.ProtoReflect.Descriptor instead.
 func (*LootWindow) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{11}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LootWindow) GetCorpseGuid() uint64 {
@@ -1403,7 +1657,7 @@ type TakeLootRequest struct {
 
 func (x *TakeLootRequest) Reset() {
 	*x = TakeLootRequest{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[12]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1415,7 +1669,7 @@ func (x *TakeLootRequest) String() string {
 func (*TakeLootRequest) ProtoMessage() {}
 
 func (x *TakeLootRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[12]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1428,7 +1682,7 @@ func (x *TakeLootRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TakeLootRequest.ProtoReflect.Descriptor instead.
 func (*TakeLootRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{12}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TakeLootRequest) GetSessionId() string {
@@ -1536,7 +1790,7 @@ type LootMutation struct {
 
 func (x *LootMutation) Reset() {
 	*x = LootMutation{}
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[13]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1548,7 +1802,7 @@ func (x *LootMutation) String() string {
 func (*LootMutation) ProtoMessage() {}
 
 func (x *LootMutation) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_loot_loot_proto_msgTypes[13]
+	mi := &file_modules_buddy_loot_loot_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1561,7 +1815,7 @@ func (x *LootMutation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LootMutation.ProtoReflect.Descriptor instead.
 func (*LootMutation) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{13}
+	return file_modules_buddy_loot_loot_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LootMutation) GetSessionId() string {
@@ -1733,7 +1987,7 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x1bbaseline_quest_log_revision\x18\r \x01(\x04R\x18baselineQuestLogRevision\x12=\n" +
 	"\x1bobserved_quest_log_revision\x18\x0e \x01(\x04R\x18observedQuestLogRevision\x12=\n" +
 	"\x1bown_quest_complete_observed\x18\x0f \x01(\bR\x18ownQuestCompleteObserved\x12\x16\n" +
-	"\x06reason\x18\x10 \x01(\tR\x06reason\"\x99\a\n" +
+	"\x06reason\x18\x10 \x01(\tR\x06reason\"\xe6\a\n" +
 	"\x05State\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x16\n" +
@@ -1757,7 +2011,36 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"lastGather\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x13 \x01(\tR\tsessionId\x12)\n" +
-	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused\"\xc7\x02\n" +
+	"\x10inventory_paused\x18\x14 \x01(\bR\x0finventoryPaused\x12K\n" +
+	"\x0ecapacity_pause\x18\x15 \x01(\v2$.warcraftbuddy.loot.v1.CapacityPauseR\rcapacityPause\"\x9d\x01\n" +
+	"\rCapacityPause\x12\x1f\n" +
+	"\vsource_guid\x18\x01 \x01(\x04R\n" +
+	"sourceGuid\x12\x1b\n" +
+	"\tgather_id\x18\x02 \x01(\x04R\bgatherId\x12-\n" +
+	"\x12inventory_revision\x18\x03 \x01(\x04R\x11inventoryRevision\x12\x1f\n" +
+	"\vpause_token\x18\x04 \x01(\tR\n" +
+	"pauseToken\"\xf0\x01\n" +
+	"\x13ResumeSourceRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vsource_guid\x18\x03 \x01(\x04R\n" +
+	"sourceGuid\x12\x1b\n" +
+	"\tgather_id\x18\x04 \x01(\x04R\bgatherId\x12>\n" +
+	"\x1bexpected_inventory_revision\x18\x05 \x01(\x04R\x19expectedInventoryRevision\x12\x1f\n" +
+	"\vpause_token\x18\x06 \x01(\tR\n" +
+	"pauseToken\"\xf9\x01\n" +
+	"\x13ResumeSourceReceipt\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
+	"\vsource_guid\x18\x03 \x01(\x04R\n" +
+	"sourceGuid\x12\x1b\n" +
+	"\tgather_id\x18\x04 \x01(\x04R\bgatherId\x12-\n" +
+	"\x12inventory_revision\x18\x05 \x01(\x04R\x11inventoryRevision\x12\x18\n" +
+	"\acleared\x18\x06 \x01(\bR\acleared\x12\x1f\n" +
+	"\vpause_token\x18\a \x01(\tR\n" +
+	"pauseToken\"\xc7\x02\n" +
 	"\x11OpenCorpseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -1902,7 +2185,7 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"\x12GATHER_ITEM_STORED\x10\x02\x12\x14\n" +
 	"\x10GATHER_CONFIRMED\x10\x03\x12\x1a\n" +
 	"\x16GATHER_SERVER_REJECTED\x10\x04\x12\x16\n" +
-	"\x12GATHER_UNCONFIRMED\x10\x052\xe9\x05\n" +
+	"\x12GATHER_UNCONFIRMED\x10\x052\xd1\x06\n" +
 	"\tBuddyLoot\x12L\n" +
 	"\x06Enable\x12$.warcraftbuddy.loot.v1.EnableRequest\x1a\x1c.warcraftbuddy.loot.v1.State\x12@\n" +
 	"\bGetState\x12\x16.google.protobuf.Empty\x1a\x1c.warcraftbuddy.loot.v1.State\x12R\n" +
@@ -1911,7 +2194,8 @@ const file_modules_buddy_loot_loot_proto_rawDesc = "" +
 	"OpenCorpse\x12(.warcraftbuddy.loot.v1.OpenCorpseRequest\x1a&.warcraftbuddy.loot.v1.CorpseOperation\x12`\n" +
 	"\vCloseCorpse\x12).warcraftbuddy.loot.v1.CloseCorpseRequest\x1a&.warcraftbuddy.loot.v1.CorpseOperation\x12X\n" +
 	"\tTakeMoney\x12&.warcraftbuddy.loot.v1.TakeLootRequest\x1a#.warcraftbuddy.loot.v1.LootMutation\x12W\n" +
-	"\bTakeSlot\x12&.warcraftbuddy.loot.v1.TakeLootRequest\x1a#.warcraftbuddy.loot.v1.LootMutation\x12C\n" +
+	"\bTakeSlot\x12&.warcraftbuddy.loot.v1.TakeLootRequest\x1a#.warcraftbuddy.loot.v1.LootMutation\x12f\n" +
+	"\fResumeSource\x12*.warcraftbuddy.loot.v1.ResumeSourceRequest\x1a*.warcraftbuddy.loot.v1.ResumeSourceReceipt\x12C\n" +
 	"\bOnPacket\x12\x1f.agentwow.module.v1.WorldPacket\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fBeforeLogout\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-loot/api;lootv1b\x06proto3"
 
@@ -1928,73 +2212,79 @@ func file_modules_buddy_loot_loot_proto_rawDescGZIP() []byte {
 }
 
 var file_modules_buddy_loot_loot_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_modules_buddy_loot_loot_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_modules_buddy_loot_loot_proto_goTypes = []any{
 	(GatherStatus)(0),            // 0: warcraftbuddy.loot.v1.GatherStatus
 	(*EnableRequest)(nil),        // 1: warcraftbuddy.loot.v1.EnableRequest
 	(*ItemReceipt)(nil),          // 2: warcraftbuddy.loot.v1.ItemReceipt
 	(*GatherReceipt)(nil),        // 3: warcraftbuddy.loot.v1.GatherReceipt
 	(*State)(nil),                // 4: warcraftbuddy.loot.v1.State
-	(*OpenCorpseRequest)(nil),    // 5: warcraftbuddy.loot.v1.OpenCorpseRequest
-	(*CloseCorpseRequest)(nil),   // 6: warcraftbuddy.loot.v1.CloseCorpseRequest
-	(*CorpseOperation)(nil),      // 7: warcraftbuddy.loot.v1.CorpseOperation
-	(*CorpseObservation)(nil),    // 8: warcraftbuddy.loot.v1.CorpseObservation
-	(*QuestItemRequirement)(nil), // 9: warcraftbuddy.loot.v1.QuestItemRequirement
-	(*OwnedItemCount)(nil),       // 10: warcraftbuddy.loot.v1.OwnedItemCount
-	(*LootSlot)(nil),             // 11: warcraftbuddy.loot.v1.LootSlot
-	(*LootWindow)(nil),           // 12: warcraftbuddy.loot.v1.LootWindow
-	(*TakeLootRequest)(nil),      // 13: warcraftbuddy.loot.v1.TakeLootRequest
-	(*LootMutation)(nil),         // 14: warcraftbuddy.loot.v1.LootMutation
-	(*api.PlayerState)(nil),      // 15: warcraftbuddy.world.v1.PlayerState
-	(*api1.State)(nil),           // 16: warcraftbuddy.actions.v1.State
-	(*api.CreatureState)(nil),    // 17: warcraftbuddy.world.v1.CreatureState
-	(*api.QuestLogEntry)(nil),    // 18: warcraftbuddy.world.v1.QuestLogEntry
-	(*api.GameObjectState)(nil),  // 19: warcraftbuddy.world.v1.GameObjectState
-	(*emptypb.Empty)(nil),        // 20: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),       // 21: agentwow.module.v1.WorldPacket
+	(*CapacityPause)(nil),        // 5: warcraftbuddy.loot.v1.CapacityPause
+	(*ResumeSourceRequest)(nil),  // 6: warcraftbuddy.loot.v1.ResumeSourceRequest
+	(*ResumeSourceReceipt)(nil),  // 7: warcraftbuddy.loot.v1.ResumeSourceReceipt
+	(*OpenCorpseRequest)(nil),    // 8: warcraftbuddy.loot.v1.OpenCorpseRequest
+	(*CloseCorpseRequest)(nil),   // 9: warcraftbuddy.loot.v1.CloseCorpseRequest
+	(*CorpseOperation)(nil),      // 10: warcraftbuddy.loot.v1.CorpseOperation
+	(*CorpseObservation)(nil),    // 11: warcraftbuddy.loot.v1.CorpseObservation
+	(*QuestItemRequirement)(nil), // 12: warcraftbuddy.loot.v1.QuestItemRequirement
+	(*OwnedItemCount)(nil),       // 13: warcraftbuddy.loot.v1.OwnedItemCount
+	(*LootSlot)(nil),             // 14: warcraftbuddy.loot.v1.LootSlot
+	(*LootWindow)(nil),           // 15: warcraftbuddy.loot.v1.LootWindow
+	(*TakeLootRequest)(nil),      // 16: warcraftbuddy.loot.v1.TakeLootRequest
+	(*LootMutation)(nil),         // 17: warcraftbuddy.loot.v1.LootMutation
+	(*api.PlayerState)(nil),      // 18: warcraftbuddy.world.v1.PlayerState
+	(*api1.State)(nil),           // 19: warcraftbuddy.actions.v1.State
+	(*api.CreatureState)(nil),    // 20: warcraftbuddy.world.v1.CreatureState
+	(*api.QuestLogEntry)(nil),    // 21: warcraftbuddy.world.v1.QuestLogEntry
+	(*api.GameObjectState)(nil),  // 22: warcraftbuddy.world.v1.GameObjectState
+	(*emptypb.Empty)(nil),        // 23: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),       // 24: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_loot_loot_proto_depIdxs = []int32{
 	0,  // 0: warcraftbuddy.loot.v1.GatherReceipt.status:type_name -> warcraftbuddy.loot.v1.GatherStatus
 	2,  // 1: warcraftbuddy.loot.v1.State.recent_items:type_name -> warcraftbuddy.loot.v1.ItemReceipt
 	3,  // 2: warcraftbuddy.loot.v1.State.last_gather:type_name -> warcraftbuddy.loot.v1.GatherReceipt
-	15, // 3: warcraftbuddy.loot.v1.CorpseObservation.self:type_name -> warcraftbuddy.world.v1.PlayerState
-	16, // 4: warcraftbuddy.loot.v1.CorpseObservation.actions:type_name -> warcraftbuddy.actions.v1.State
-	17, // 5: warcraftbuddy.loot.v1.CorpseObservation.corpses:type_name -> warcraftbuddy.world.v1.CreatureState
-	17, // 6: warcraftbuddy.loot.v1.CorpseObservation.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
-	4,  // 7: warcraftbuddy.loot.v1.CorpseObservation.state:type_name -> warcraftbuddy.loot.v1.State
-	7,  // 8: warcraftbuddy.loot.v1.CorpseObservation.operation:type_name -> warcraftbuddy.loot.v1.CorpseOperation
-	15, // 9: warcraftbuddy.loot.v1.CorpseObservation.owner:type_name -> warcraftbuddy.world.v1.PlayerState
-	17, // 10: warcraftbuddy.loot.v1.CorpseObservation.source_observation:type_name -> warcraftbuddy.world.v1.CreatureState
-	12, // 11: warcraftbuddy.loot.v1.CorpseObservation.window:type_name -> warcraftbuddy.loot.v1.LootWindow
-	18, // 12: warcraftbuddy.loot.v1.CorpseObservation.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
-	9,  // 13: warcraftbuddy.loot.v1.CorpseObservation.quest_requirements:type_name -> warcraftbuddy.loot.v1.QuestItemRequirement
-	10, // 14: warcraftbuddy.loot.v1.CorpseObservation.item_counts:type_name -> warcraftbuddy.loot.v1.OwnedItemCount
-	19, // 15: warcraftbuddy.loot.v1.CorpseObservation.source_object:type_name -> warcraftbuddy.world.v1.GameObjectState
-	11, // 16: warcraftbuddy.loot.v1.LootWindow.slots:type_name -> warcraftbuddy.loot.v1.LootSlot
-	14, // 17: warcraftbuddy.loot.v1.LootWindow.mutation:type_name -> warcraftbuddy.loot.v1.LootMutation
-	1,  // 18: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
-	20, // 19: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
-	20, // 20: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
-	5,  // 21: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
-	6,  // 22: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
-	13, // 23: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
-	13, // 24: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
-	21, // 25: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	20, // 26: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
-	4,  // 27: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
-	4,  // 28: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
-	8,  // 29: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
-	7,  // 30: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	7,  // 31: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
-	14, // 32: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:output_type -> warcraftbuddy.loot.v1.LootMutation
-	14, // 33: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:output_type -> warcraftbuddy.loot.v1.LootMutation
-	20, // 34: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
-	20, // 35: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
-	27, // [27:36] is the sub-list for method output_type
-	18, // [18:27] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	5,  // 3: warcraftbuddy.loot.v1.State.capacity_pause:type_name -> warcraftbuddy.loot.v1.CapacityPause
+	18, // 4: warcraftbuddy.loot.v1.CorpseObservation.self:type_name -> warcraftbuddy.world.v1.PlayerState
+	19, // 5: warcraftbuddy.loot.v1.CorpseObservation.actions:type_name -> warcraftbuddy.actions.v1.State
+	20, // 6: warcraftbuddy.loot.v1.CorpseObservation.corpses:type_name -> warcraftbuddy.world.v1.CreatureState
+	20, // 7: warcraftbuddy.loot.v1.CorpseObservation.nearby_creatures:type_name -> warcraftbuddy.world.v1.CreatureState
+	4,  // 8: warcraftbuddy.loot.v1.CorpseObservation.state:type_name -> warcraftbuddy.loot.v1.State
+	10, // 9: warcraftbuddy.loot.v1.CorpseObservation.operation:type_name -> warcraftbuddy.loot.v1.CorpseOperation
+	18, // 10: warcraftbuddy.loot.v1.CorpseObservation.owner:type_name -> warcraftbuddy.world.v1.PlayerState
+	20, // 11: warcraftbuddy.loot.v1.CorpseObservation.source_observation:type_name -> warcraftbuddy.world.v1.CreatureState
+	15, // 12: warcraftbuddy.loot.v1.CorpseObservation.window:type_name -> warcraftbuddy.loot.v1.LootWindow
+	21, // 13: warcraftbuddy.loot.v1.CorpseObservation.quest_log:type_name -> warcraftbuddy.world.v1.QuestLogEntry
+	12, // 14: warcraftbuddy.loot.v1.CorpseObservation.quest_requirements:type_name -> warcraftbuddy.loot.v1.QuestItemRequirement
+	13, // 15: warcraftbuddy.loot.v1.CorpseObservation.item_counts:type_name -> warcraftbuddy.loot.v1.OwnedItemCount
+	22, // 16: warcraftbuddy.loot.v1.CorpseObservation.source_object:type_name -> warcraftbuddy.world.v1.GameObjectState
+	14, // 17: warcraftbuddy.loot.v1.LootWindow.slots:type_name -> warcraftbuddy.loot.v1.LootSlot
+	17, // 18: warcraftbuddy.loot.v1.LootWindow.mutation:type_name -> warcraftbuddy.loot.v1.LootMutation
+	1,  // 19: warcraftbuddy.loot.v1.BuddyLoot.Enable:input_type -> warcraftbuddy.loot.v1.EnableRequest
+	23, // 20: warcraftbuddy.loot.v1.BuddyLoot.GetState:input_type -> google.protobuf.Empty
+	23, // 21: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:input_type -> google.protobuf.Empty
+	8,  // 22: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:input_type -> warcraftbuddy.loot.v1.OpenCorpseRequest
+	9,  // 23: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:input_type -> warcraftbuddy.loot.v1.CloseCorpseRequest
+	16, // 24: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
+	16, // 25: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:input_type -> warcraftbuddy.loot.v1.TakeLootRequest
+	6,  // 26: warcraftbuddy.loot.v1.BuddyLoot.ResumeSource:input_type -> warcraftbuddy.loot.v1.ResumeSourceRequest
+	24, // 27: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	23, // 28: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:input_type -> google.protobuf.Empty
+	4,  // 29: warcraftbuddy.loot.v1.BuddyLoot.Enable:output_type -> warcraftbuddy.loot.v1.State
+	4,  // 30: warcraftbuddy.loot.v1.BuddyLoot.GetState:output_type -> warcraftbuddy.loot.v1.State
+	11, // 31: warcraftbuddy.loot.v1.BuddyLoot.ObserveCorpses:output_type -> warcraftbuddy.loot.v1.CorpseObservation
+	10, // 32: warcraftbuddy.loot.v1.BuddyLoot.OpenCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	10, // 33: warcraftbuddy.loot.v1.BuddyLoot.CloseCorpse:output_type -> warcraftbuddy.loot.v1.CorpseOperation
+	17, // 34: warcraftbuddy.loot.v1.BuddyLoot.TakeMoney:output_type -> warcraftbuddy.loot.v1.LootMutation
+	17, // 35: warcraftbuddy.loot.v1.BuddyLoot.TakeSlot:output_type -> warcraftbuddy.loot.v1.LootMutation
+	7,  // 36: warcraftbuddy.loot.v1.BuddyLoot.ResumeSource:output_type -> warcraftbuddy.loot.v1.ResumeSourceReceipt
+	23, // 37: warcraftbuddy.loot.v1.BuddyLoot.OnPacket:output_type -> google.protobuf.Empty
+	23, // 38: warcraftbuddy.loot.v1.BuddyLoot.BeforeLogout:output_type -> google.protobuf.Empty
+	29, // [29:39] is the sub-list for method output_type
+	19, // [19:29] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_loot_loot_proto_init() }
@@ -2008,7 +2298,7 @@ func file_modules_buddy_loot_loot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_loot_loot_proto_rawDesc), len(file_modules_buddy_loot_loot_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

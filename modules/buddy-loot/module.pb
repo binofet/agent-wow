@@ -1595,7 +1595,7 @@ CreateItem+.warcraftbuddy.actions.v1.CreateItemRequest.warcraftbuddy.actions.
 CastBuff).warcraftbuddy.actions.v1.CastBuffRequest.warcraftbuddy.actions.v1.StateP
 Melee&.warcraftbuddy.actions.v1.MeleeRequest.warcraftbuddy.actions.v1.Stated
 SelfManaObservation.google.protobuf.Empty5.warcraftbuddy.actions.v1.SelfManaObservationResponseBDZBgithub.com/agent-wow/agent-wow/modules/buddy-actions/api;actionsv1bproto3
-ž7
+â=
 modules/buddy-loot/loot.protowarcraftbuddy.loot.v1api/module/v1/session.protogoogle/protobuf/empty.protomodules/buddy-world/world.proto#modules/buddy-actions/actions.proto")
 EnableRequest
 enabled (Renabled"Y
@@ -1621,7 +1621,7 @@ objectGuid!
 baseline_quest_log_revision (RbaselineQuestLogRevision=
 observed_quest_log_revision (RobservedQuestLogRevision=
 own_quest_complete_observed (RownQuestCompleteObserved
-reason (	Rreason"™
+reason (	Rreason"æ
 State
 enabled (Renabled
 phase (	Rphase
@@ -1645,7 +1645,36 @@ objectGuid!
 lastGather
 
 session_id (	R	sessionId)
-inventory_paused (RinventoryPaused"Ç
+inventory_paused (RinventoryPausedK
+capacity_pause (2$.warcraftbuddy.loot.v1.CapacityPauseRcapacityPause"
+CapacityPause
+source_guid (R
+sourceGuid
+	gather_id (RgatherId-
+inventory_revision (RinventoryRevision
+pause_token (	R
+pauseToken"ð
+ResumeSourceRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+source_guid (R
+sourceGuid
+	gather_id (RgatherId>
+expected_inventory_revision (RexpectedInventoryRevision
+pause_token (	R
+pauseToken"ù
+ResumeSourceReceipt
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+source_guid (R
+sourceGuid
+	gather_id (RgatherId-
+inventory_revision (RinventoryRevision
+cleared (Rcleared
+pause_token (	R
+pauseToken"Ç
 OpenCorpseRequest
 
 session_id (	R	sessionId
@@ -1790,7 +1819,7 @@ sourceGuid*—
 GATHER_ITEM_STORED
 GATHER_CONFIRMED
 GATHER_SERVER_REJECTED
-GATHER_UNCONFIRMED2é
+GATHER_UNCONFIRMED2Ñ
 	BuddyLootL
 Enable$.warcraftbuddy.loot.v1.EnableRequest.warcraftbuddy.loot.v1.State@
 GetState.google.protobuf.Empty.warcraftbuddy.loot.v1.StateR
@@ -1799,6 +1828,7 @@ sourceGuid*—
 OpenCorpse(.warcraftbuddy.loot.v1.OpenCorpseRequest&.warcraftbuddy.loot.v1.CorpseOperation`
 CloseCorpse).warcraftbuddy.loot.v1.CloseCorpseRequest&.warcraftbuddy.loot.v1.CorpseOperationX
 	TakeMoney&.warcraftbuddy.loot.v1.TakeLootRequest#.warcraftbuddy.loot.v1.LootMutationW
-TakeSlot&.warcraftbuddy.loot.v1.TakeLootRequest#.warcraftbuddy.loot.v1.LootMutationC
+TakeSlot&.warcraftbuddy.loot.v1.TakeLootRequest#.warcraftbuddy.loot.v1.LootMutationf
+ResumeSource*.warcraftbuddy.loot.v1.ResumeSourceRequest*.warcraftbuddy.loot.v1.ResumeSourceReceiptC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.Empty>
 BeforeLogout.google.protobuf.Empty.google.protobuf.EmptyB>Z<github.com/agent-wow/agent-wow/modules/buddy-loot/api;lootv1bproto3
