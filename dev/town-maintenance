@@ -19,6 +19,10 @@ base = importlib.util.module_from_spec(_spec)
 _loader.exec_module(base)
 Error, number, positive, token, item_guid = base.Error, base.number, base.positive, base.token, base.item_guid
 ROOT = Path(__file__).resolve().parent.parent
+_loader = importlib.machinery.SourceFileLoader("town_task_runtime", str(Path(__file__).with_name("task-runtime")))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+runtime = importlib.util.module_from_spec(_spec)
+_loader.exec_module(runtime)
 METHODS = {"buddy-inventory." + n for n in ("state", "discover", "move", "equip", "sell")} | {
     "buddy-mail.state", "buddy-mail.list", "buddy-mail.claim_bag_attachment"}
 TERMINAL = {"confirmed", "blocked", "server_rejected"}
@@ -256,8 +260,10 @@ class Journal(base.Journal):
 
 
 class Worker:
-    def __init__(self, rpc, guid, journal=None, now=time.monotonic, sleep=time.sleep):
+    def __init__(self, rpc, guid, journal=None, now=time.monotonic, sleep=time.sleep, bridge=None, bag_policy=None):
         self.rpc, self.guid, self.journal, self.now, self.sleep = rpc, positive(guid, 2**48-1), journal, now, sleep
+        self.bridge = bridge
+        self.bag_policy = Path(bag_policy) if bag_policy is not None else ROOT/"behaviors/bag-equipment.lua"
 
     def state(self):
         return checked_state(self.rpc.call("buddy-inventory.state", {}), self.guid)
@@ -282,6 +288,38 @@ class Worker:
         if len(found) != 1 or found[0].get("metadataKnown") is not True:
             raise Error("complete_exact_item_eligibility_required")
         return found[0]
+
+    def choose_bag(self, state, bags, slots):
+        candidates = [{"source": source, "containerSlots": number(self.eligible(state, source)["containerSlots"], 36)}
+                      for source in bag_candidates(state, slots)]
+        empty = [18+b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
+        identity = {"sessionId": state["sessionId"], "selfGuid": str(self.guid),
+                    "inventoryRevision": str(positive(state["inventoryRevision"]))}
+        if self.bridge is None:
+            self.bridge = runtime.Bridge(os.environ.get("BUDDY_LUAPOLICY_BINARY",
+                os.environ.get("BUDDY_LUAPOLICY_TEST_BINARY", ROOT/"data/bin/luapolicy")), ROOT/"modules")
+        try:
+            code = runtime.read_file(self.bag_policy, runtime.MAX_SOURCE).decode("utf-8")
+            decision = self.bridge.evaluate(code, {**identity, "candidates": candidates, "emptyEquipmentSlots": empty})
+        except (runtime.Error, OSError, UnicodeError) as exc:
+            raise Error("bag_policy_unavailable: " + str(exc)) from exc
+        if (not isinstance(decision, dict) or any(decision.get(k) != v for k, v in identity.items())
+                or decision.get("action") not in ("equip", "none")):
+            raise Error("bag_policy_output_invalid")
+        if decision["action"] == "none":
+            if (set(decision) != {"action", "reason", *identity}
+                    or not isinstance(decision["reason"], str) or not 1 <= len(decision["reason"]) <= 128):
+                raise Error("bag_policy_output_invalid")
+            return None
+        source = decision.get("source")
+        if (set(decision) != {"action", "source", "equipmentSlot", *identity}
+                or not isinstance(source, dict) or set(source) != {"bag", "slot", "itemGuid", "entry", "stackCount"}
+                or any(type(source.get(k)) is not int for k in ("bag", "slot", "entry", "stackCount"))
+                or not isinstance(source.get("itemGuid"), str)
+                or type(decision.get("equipmentSlot")) is not int or decision["equipmentSlot"] not in empty
+                or not any(source == row["source"] for row in candidates)):
+            raise Error("bag_policy_selection_unobserved")
+        return decision
 
     def discovery(self, vendor_guid=None):
         params = {} if vendor_guid is None else {"vendorGuid": str(positive(vendor_guid))}
@@ -535,10 +573,11 @@ class Worker:
             empty = [b for b in range(1, 5) if not number(bags[b].get("containerGuid", 0))]
             free = any(not number(i.get("itemGuid", 0)) and (b == 0 or number(bags[b].get("entry", 0)) == 41599) for (b, _), i in slots.items())
             candidates = bag_candidates(state, slots)
+            selection = self.choose_bag(state, bags, slots) if empty and candidates and counts["equip"] < 4 else None
             kind = ""
-            if empty and candidates and counts["equip"] < 4:
-                source = min(candidates, key=lambda i: (i["bag"], i["slot"]))
-                result = self.mutation("equip", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], equipment_slot=18+min(empty)); kind = "equip"
+            if selection:
+                source = selection["source"]
+                result = self.mutation("equip", state=state, source_bag=source["bag"], source_slot=source["slot"], item_guid=source["itemGuid"], equipment_slot=selection["equipmentSlot"]); kind = "equip"
             elif mailbox_guid and empty and free and counts["claim"] < 4:
                 result = self.claim_one(mailbox_guid)
                 if result["phase"] != "complete":
@@ -587,9 +626,10 @@ def main(argv=None):
         if name in ("claim-bags", "run"):
             p.add_argument("--mailbox-guid", required=name == "claim-bags")
             p.add_argument("--max-seconds", type=float, default=180)
+            p.add_argument("--bag-policy", type=Path, default=ROOT/"behaviors/bag-equipment.lua")
     args = parser.parse_args(argv)
     url, guid = base.rpc_url(args.rpc_url), positive(args.character_guid, 2**48-1)
-    rpc = RPC(url); worker = Worker(rpc, guid)
+    rpc = RPC(url); worker = Worker(rpc, guid, bag_policy=getattr(args, "bag_policy", None))
     if args.command == "state":
         result = worker.state()
     elif args.command == "discover":

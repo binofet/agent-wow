@@ -132,9 +132,9 @@ class FakeRPC:
 
 class TownTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name)/"private"/"town.json"
+        self.path = Path(self.temp.name).resolve()/"private"/"town.json"
         self.rpc = FakeRPC()
 
     def worker(self, action, **kwargs):
