@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const limitation = "Exact owned ordinary cloth/leather/mail/plate armor, mainhand daggers/maces and two-handed staves with an empty offhand; replacement retains the old item in its source slot. Conservative unenhanced armor/stat upgrades; weapon upgrades additionally require strictly higher physical DPS without lower stats or resistances. Empty-slot carried moves and ordinary general bags of 1-36 slots into empty bag equipment slots; safe-gray-junk vendor sales. No other weapons, offhand equipment, jewelry, special/scaling gear, bank, destruction or ambiguous retries. Equipment requires actual class/race/level/proficiency and newer exact equipment plus carried-inventory receipts; sales require wallet credit."
+const limitation = "Exact owned gear destinations and proficiency facts, with current Lua upgrade comparisons and slot preferences. Supported gear moves retain the displaced item in the source slot; equipment success needs newer exact equipment and inventory receipts. Two-handed swaps require an observed empty offhand. Bag moves and vendor sales retain their own exact ownership and receipt checks; uncertain transport is never success."
 
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -262,6 +262,7 @@ func (s *Service) observe(ctx context.Context, query *inventoryv1.DiscoverReques
 }
 func (s *Service) eligibilityLocked() {
 	s.state.Items = nil
+	s.state.GearContext = s.gearContextLocked()
 	s.state.ManaDrinkCount = nil
 	s.state.BuffFoodAvailable = false
 	if !s.known {
@@ -284,8 +285,8 @@ func (s *Service) eligibilityLocked() {
 		m := s.metadata[i.Entry]
 		r := &inventoryv1.ItemEligibility{Item: ref(i), MetadataKnown: m.known && i.MetadataKnown, SafeJunkSaleEligible: i.MetadataKnown && m.disposable() && m.sellPrice > 0, UnitSellPriceCopper: m.sellPrice, NormalBag: i.MetadataKnown && bagUsability(s.view.w, m) == "", ContainerSlots: m.containerSlots, Name: m.name}
 		r.Consumable = consumableMetadata(m, s.view.w.Self)
-		r.GearEquipmentSlot, r.ExpectedEquippedItemGuid, r.ConservativeUpgrade, r.GearBlockedReason = s.gearEligibilityLocked(i)
-		r.GearEquipEligible = r.GearBlockedReason == "" && s.ordinaryBagLocked(i.Bag)
+		r.GearFacts = s.gearFactsLocked(i)
+		r.GearBlockedReason = "lua_gear_evaluation_required"
 		if !i.MetadataKnown || !m.known {
 			r.BlockedReason = "complete_owned_item_metadata_pending"
 		} else if !r.SafeJunkSaleEligible && !r.NormalBag && !r.GearEquipEligible {
@@ -471,16 +472,22 @@ func (s *Service) gateLocked(op *operation, leased bool) string {
 		if s.view.w.SelfEquipmentRevision != r.BaselineEquipmentRevision {
 			return "equipment_revision_changed"
 		}
-		slot, displaced, upgrade, reason := s.gearEligibilityLocked(source)
-		if reason != "" {
-			return reason
+		equipment, known := equipmentView(s.view)
+		if !known {
+			return "complete_own_equipment_baseline_required"
 		}
-		if slot != r.EquipmentSlot || displaced != r.DisplacedItemGuid {
+		if r.EquipmentSlot >= uint32(len(equipment)) || equipment[r.EquipmentSlot].ItemGuid != r.DisplacedItemGuid {
 			return "exact_equipment_destination_changed"
 		}
+		if reason := s.exactGearDestinationLocked(source, r.EquipmentSlot, equipment); reason != "" {
+			return reason
+		}
 		request, ok := op.request.(*inventoryv1.EquipGearRequest)
-		if !ok || request.RequireConservativeUpgrade && !upgrade {
-			return "conservative_upgrade_not_proven"
+		if !ok {
+			return "exact_gear_request_required"
+		}
+		if request.RequireConservativeUpgrade {
+			return "current_lua_upgrade_evaluation_required"
 		}
 	case "sell":
 		if !m.disposable() || m.sellPrice == 0 || m.sellPrice != r.UnitSellPriceCopper {

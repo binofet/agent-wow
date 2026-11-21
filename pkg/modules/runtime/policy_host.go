@@ -28,6 +28,8 @@ type SessionPolicy struct {
 	dispatchDone       chan struct{}
 	encounterLeaseHeld bool // guarded by advance
 	followFallback     atomic.Pointer[policyFollowFallback]
+	gearEvaluation     atomic.Pointer[policyFollowFallback]
+	lastDispatch       atomic.Pointer[policyDispatchRecord]
 }
 
 // StartPolicy binds a runtime owned by the local host. The reflected attach
@@ -51,6 +53,7 @@ func (m *Manager) StartPolicyWithOptions(ctx context.Context, source string, opt
 	}
 	host := &SessionPolicy{vm: vm, manager: m, body: catalog.CharacterGUID, lifetime: m.ctx, source: source, builtin: source}
 	host.publishFollowFallback(source, vm.Status().Revision)
+	host.publishGearEvaluation(source, vm.Status().Revision)
 	m.mu.Lock()
 	if m.policyObserver != nil || m.closing || m.preparing || m.prepared || m.err != nil || m.ctx.Err() != nil ||
 		filepath.Base(m.dir) != catalog.SessionID || strconv.FormatUint(m.session.Identity.CharacterGUID, 10) != host.body {
@@ -165,6 +168,7 @@ func (p *SessionPolicy) Step(ctx context.Context, input map[string]any, resolve 
 	stop := context.AfterFunc(p.lifetime, cancel)
 	defer stop()
 	outcome, payload := dispatch.Send(modsession.WithWriteOrigin(dispatchCtx, origin))
+	p.publishDispatch(s, id, dispatch.Module, outcome, payload)
 	receipt := &behavior.ActionReceipt{SessionID: s.SessionID, ActionID: id, Outcome: outcome, Payload: payload}
 	if dispatch.spell != nil {
 		err = p.recordSpellTransport(dispatch.spell, receipt)
@@ -211,6 +215,7 @@ func (p *SessionPolicy) Reload(ctx context.Context, source, expectedRevision str
 	if err == nil {
 		p.source = source
 		p.publishFollowFallback(source, revision)
+		p.publishGearEvaluation(source, revision)
 	}
 	return revision, err
 }

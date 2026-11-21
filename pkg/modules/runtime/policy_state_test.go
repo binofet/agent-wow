@@ -67,7 +67,7 @@ return {on_event=function(e)return true end,
 			if method.Effect != "read" {
 				t.Fatal(method)
 			}
-			for _, field := range []string{"checkpoint", "latestDecision", "revision", "cursor", "clock"} {
+			for _, field := range []string{"checkpoint", "latestDecision", "lastDispatch", "revision", "cursor", "clock"} {
 				if method.Output["properties"].(map[string]any)[field] == nil {
 					t.Fatal("missing reflected output", field)
 				}

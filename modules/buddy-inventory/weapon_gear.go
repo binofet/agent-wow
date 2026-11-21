@@ -2,8 +2,6 @@ package buddyinventory
 
 import (
 	"math"
-
-	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 )
 
 // These ordinary weapon families have one supported destination: mainhand.
@@ -45,92 +43,4 @@ func (m itemMetadata) physicalWeaponDPS() (float64, bool) {
 	}
 	dps := damage * 1000 / float64(m.delay)
 	return dps, dps > 0 && !math.IsInf(dps, 0) && !math.IsNaN(dps)
-}
-
-func ordinaryWeaponStats(m itemMetadata) ([49]int32, bool) {
-	var out [49]int32
-	if m.statCount > uint32(len(m.stats)) {
-		return out, false
-	}
-	for n := uint32(0); n < m.statCount; n++ {
-		stat := m.stats[n]
-		if !knownUpgradeStat(stat.kind) || stat.value < 0 {
-			return out, false
-		}
-		out[stat.kind] = stat.value
-	}
-	return out, true
-}
-
-func conservativeWeaponUpgrade(candidate itemMetadata, carried *worldv1.BackpackSlot, current itemMetadata, equipped *worldv1.EquipmentSlotState) bool {
-	if !candidate.ordinaryMainhandWeapon() || !carried.EnhancementsKnown || carried.HasEnhancements {
-		return false
-	}
-	nextStats, ok := ordinaryWeaponStats(candidate)
-	if !ok {
-		return false
-	}
-	if equipped.ItemGuid == 0 {
-		return true
-	}
-	if !current.ordinaryMainhandWeapon() || !equipped.EnhancementsKnown || equipped.HasEnhancements || candidate.armor < current.armor {
-		return false
-	}
-	oldStats, ok := ordinaryWeaponStats(current)
-	if !ok {
-		return false
-	}
-	for n := range nextStats {
-		if nextStats[n] < oldStats[n] {
-			return false
-		}
-	}
-	for n := range candidate.resistances {
-		if candidate.resistances[n] < current.resistances[n] {
-			return false
-		}
-	}
-	nextDPS, _ := candidate.physicalWeaponDPS()
-	oldDPS, _ := current.physicalWeaponDPS()
-	return nextDPS > oldDPS
-}
-
-func weaponUpgradeForSlot(classID, slot uint32, candidate itemMetadata, carried *worldv1.BackpackSlot, current itemMetadata, equipped *worldv1.EquipmentSlotState) bool {
-	if conservativeWeaponUpgrade(candidate, carried, current, equipped) {
-		return true
-	}
-	if classID != 4 || slot != mainhandSlot && slot != offhandSlot ||
-		!candidate.oneHandDagger() || !current.oneHandDagger() || candidate.delay != current.delay ||
-		!carried.EnhancementsKnown || carried.HasEnhancements || !equipped.EnhancementsKnown || equipped.HasEnhancements ||
-		candidate.armor < current.armor {
-		return false
-	}
-	for i := range candidate.resistances {
-		if candidate.resistances[i] < current.resistances[i] {
-			return false
-		}
-	}
-	next, nextKnown := ordinaryWeaponStats(candidate)
-	old, oldKnown := ordinaryWeaponStats(current)
-	if !nextKnown || !oldKnown {
-		return false
-	}
-	var statCost float64
-	for i := range next {
-		loss := old[i] - next[i]
-		if loss <= 0 {
-			continue
-		}
-		switch i {
-		case 4, 38: // Strength, attack power. Rogues gain 1 AP per Strength; 14 AP gives 1 DPS.
-			statCost += float64(loss) / 14
-		case 19, 32: // Prefer raw weapon damage when it comfortably offsets a small crit-rating loss.
-			statCost += float64(loss) / 4
-		default:
-			return false
-		}
-	}
-	nextDPS, _ := candidate.physicalWeaponDPS()
-	oldDPS, _ := current.physicalWeaponDPS()
-	return nextDPS > oldDPS+statCost
 }

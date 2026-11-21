@@ -222,15 +222,24 @@ func TestFollowPolicyEditedPortalOrderReachesLeaseFallback(t *testing.T) {
 	s, f, req, ctx, advance := portalGoalFixture(t)
 	host := newFollowPolicySession(t, s, f)
 	s.UseHostFollowPolicy()
+	candidateReads := func() int {
+		count := 0
+		for _, input := range host.inputs {
+			if input["mode"] == "portal_catch_up" {
+				count++
+			}
+		}
+		return count
+	}
 	if _, err := s.SetPortalCatchup(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if active := s.portalCandidatesLocked(f.world, s.now()); len(active) != 2 || len(host.inputs) != 0 {
+	if active := s.portalCandidatesLocked(f.world, s.now()); len(active) != 2 || candidateReads() != 0 {
 		t.Fatal("fallback displaced the active host's finite candidates", active, host.inputs)
 	}
 	advance(encounterLeaseDuration)
 	before := s.portalCandidatesLocked(f.world, s.now())
-	if len(before) != 7 || len(host.inputs) != 1 {
+	if len(before) != 7 || candidateReads() != 1 {
 		t.Fatal("expired portal goal did not use the current shared source", before, host.inputs)
 	}
 	source := strings.Replace(behaviors.FollowFormationSource, "portal_side = {8,12,16}, {-6,6}", "portal_side = {8,12,16}, {6,-6}", 1)

@@ -1019,7 +1019,7 @@ type ItemDetails struct {
 	RequiredReputationRank    uint32                 `protobuf:"varint,27,opt,name=required_reputation_rank,json=requiredReputationRank,proto3" json:"required_reputation_rank,omitempty"`
 	RequiredHonorRank         uint32                 `protobuf:"varint,28,opt,name=required_honor_rank,json=requiredHonorRank,proto3" json:"required_honor_rank,omitempty"`
 	RequiredCityRank          uint32                 `protobuf:"varint,29,opt,name=required_city_rank,json=requiredCityRank,proto3" json:"required_city_rank,omitempty"`
-	// Full normal query proves otherwise unrepresented armor properties empty.
+	// Full normal query proves otherwise unrepresented armor/weapon properties empty.
 	// False is unknown/unsupported, never a zero-resistance comparison claim.
 	ArmorComparisonKnown bool              `protobuf:"varint,30,opt,name=armor_comparison_known,json=armorComparisonKnown,proto3" json:"armor_comparison_known,omitempty"`
 	RawTemplateFacts     *RawTemplateFacts `protobuf:"bytes,32,opt,name=raw_template_facts,json=rawTemplateFacts,proto3" json:"raw_template_facts,omitempty"`

@@ -158,7 +158,7 @@ func parseLookupItem(data []byte) (*tradev1.ItemDetails, error) {
 		item.Stats = append(item.Stats, &tradev1.ItemStat{Type: read(), Value: int32(read())})
 	}
 	scalingDistribution, scalingValue := read(), read()
-	comparisonKnown := meta.class == 4 && meta.containerSlots == 0 && scalingDistribution == 0 && scalingValue == 0
+	comparisonKnown := (meta.class == 4 || meta.class == 2) && meta.containerSlots == 0 && scalingDistribution == 0 && scalingValue == 0
 	for range 2 {
 		minimum, maximum, school := math.Float32frombits(read()), math.Float32frombits(read()), read()
 		if math.IsNaN(float64(minimum)) || math.IsInf(float64(minimum), 0) || math.IsNaN(float64(maximum)) || math.IsInf(float64(maximum), 0) || minimum < 0 || maximum < minimum || school > 6 {

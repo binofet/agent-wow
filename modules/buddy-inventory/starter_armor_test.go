@@ -1,7 +1,6 @@
 package buddyinventory
 
 import (
-	"context"
 	"encoding/binary"
 	"testing"
 
@@ -44,7 +43,7 @@ func starterBootGear(t *testing.T, entry uint32) (*Service, *fakeInventory, *inv
 	s.metadata[80] = m
 	s.queried[80] = true
 	f.w.InventoryBags[0].Slots[2].Entry = 80
-	st := stateInventory(t, s)
+	st := stateGear(t, s)
 	return s, f, &inventoryv1.EquipGearRequest{SessionId: "body", RequestId: "starter-boots",
 		ExpectedRevision: st.Revision, ExpectedInventoryRevision: st.InventoryRevision,
 		Source:        &inventoryv1.ItemRef{Slot: 2, ItemGuid: breechesGUID, Entry: 80, StackCount: 1},
@@ -59,7 +58,7 @@ func TestStarterArmorBootUpgradeRequiresNormalDisplacedItemProof(t *testing.T) {
 			if entry == 55 {
 				f.w.Self.ClassId = 8
 			}
-			st := stateInventory(t, s)
+			st := stateGear(t, s)
 			var eligible bool
 			for _, i := range st.Items {
 				if i.Item.Entry == 80 {
@@ -71,7 +70,7 @@ func TestStarterArmorBootUpgradeRequiresNormalDisplacedItemProof(t *testing.T) {
 			}
 			gearProof(s, f)
 			r.ExpectedRevision = st.Revision
-			if _, err := s.EquipGear(context.Background(), r); err != nil {
+			if _, err := equipGearPolicyTest(t, s, r); err != nil {
 				t.Fatal(err)
 			}
 			st = waitInventory(t, s)
@@ -164,8 +163,8 @@ func TestStarterArmorKeepsCandidateAndEnhancementGates(t *testing.T) {
 				m.armor = 0
 			}
 			s.metadata[80] = m
-			r.ExpectedRevision = stateInventory(t, s).Revision
-			if _, err := s.EquipGear(context.Background(), r); err == nil {
+			r.ExpectedRevision = stateGear(t, s).Revision
+			if _, err := equipGearPolicyTest(t, s, r); err == nil {
 				st := waitInventory(t, s)
 				if st.Operation.Status != "BLOCKED" {
 					t.Fatal("unsafe automatic equip accepted", st)

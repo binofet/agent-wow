@@ -24,41 +24,40 @@ func (m itemMetadata) oneHandDagger() bool {
 	return m.ordinaryMainhandWeapon() && m.subclass == 15 && m.inventoryType == 13
 }
 
-func equipmentSlots(w *worldv1.SnapshotResponse, m itemMetadata, equipment [19]*worldv1.EquipmentSlotState, templates map[uint32]itemMetadata) []uint32 {
-	if m.ordinaryRing() {
+// No ordering preference: enumerate legal physical destinations in slot order.
+func gearDestinationSlots(w *worldv1.SnapshotResponse, m itemMetadata, equipment [19]*worldv1.EquipmentSlotState, templates map[uint32]itemMetadata) []uint32 {
+	if !m.known {
+		return nil
+	}
+	if m.class == 4 && m.inventoryType == 11 {
 		if m.flags&uniqueEquippedFlag != 0 || m.maxCount == 1 {
 			for _, slot := range []uint32{firstFingerSlot, secondFingerSlot} {
-				if old := equipment[slot]; old.ItemGuid != 0 && (!old.MetadataKnown || old.Entry == m.entry) {
+				old := equipment[slot]
+				if old.ItemGuid != 0 && (!old.MetadataKnown || old.Entry == m.entry) {
 					return nil
 				}
 			}
 		}
-		return preferEmptySlot(equipment, firstFingerSlot, secondFingerSlot)
+		return []uint32{firstFingerSlot, secondFingerSlot}
 	}
-	if m.ordinaryMainhandWeapon() {
-		if m.oneHandDagger() && w.GetSelf().GetClassId() == 4 {
+	if m.class == 2 && m.weaponProficiency() != 0 {
+		if m.subclass == 15 && m.inventoryType == 13 {
 			main := equipment[mainhandSlot]
-			mainTemplate := templates[main.Entry]
-			// An unknown or two-handed main weapon cannot prove an offhand fit.
-			if main.ItemGuid == 0 || main.MetadataKnown && mainTemplate.known && mainTemplate.inventoryType != 17 {
-				off := equipment[offhandSlot]
-				skills, _ := ownedSkills(w)
-				if skills[dualWieldSkill] != 0 || off.MetadataKnown && templates[off.Entry].oneHandDagger() {
-					return preferEmptySlot(equipment, mainhandSlot, offhandSlot)
-				}
+			base := templates[main.Entry]
+			skills, _ := ownedSkills(w)
+			off := equipment[offhandSlot]
+			old := templates[off.Entry]
+			observedOffhandWeapon := off.MetadataKnown && old.known && old.class == 2 && old.subclass == 15 && old.inventoryType == 13
+			if (main.ItemGuid == 0 || main.MetadataKnown && base.known && base.inventoryType != 17) && (skills[dualWieldSkill] != 0 || observedOffhandWeapon) {
+				return []uint32{mainhandSlot, offhandSlot}
 			}
 		}
 		return []uint32{mainhandSlot}
 	}
-	if slot, ok := armorSlot(m); ok {
-		return []uint32{slot}
+	if m.class == 4 && m.subclass >= 1 && m.subclass <= 4 {
+		if slot, ok := armorSlot(m); ok {
+			return []uint32{slot}
+		}
 	}
 	return nil
-}
-
-func preferEmptySlot(equipment [19]*worldv1.EquipmentSlotState, first, second uint32) []uint32 {
-	if equipment[first].ItemGuid != 0 && equipment[second].ItemGuid == 0 {
-		return []uint32{second, first}
-	}
-	return []uint32{first, second}
 }

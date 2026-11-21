@@ -78,3 +78,6 @@ func cloneSessionValue(value any) any {
 		return value
 	}
 }
+
+// Options are immutable after construction and shared with pure source reads.
+func (s *Session) Options() SessionOptions { return s.options }
