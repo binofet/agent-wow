@@ -14,6 +14,7 @@ import (
 
 func TestStealthNeedsObservedCasterAuraStateAndActualOwnAura(t *testing.T) {
 	s, f, _ := rogueRig(t)
+	useStarterSemanticPolicy(t, s)
 	s.setKnownSpell(1784, true)
 	s.snapshot(context.Background())
 	f.world.Self.AuraStateKnown = false
