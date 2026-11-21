@@ -108,7 +108,7 @@ func TestInteractionLeasePausesAndResumesIntentExclusively(t *testing.T) {
 	}
 	f.world.Owner.Health = 50
 	learn(s)
-	blocked, _ := s.HealOnce(context.Background(), &emptypb.Empty{})
+	blocked, _ := testExactHeal(s, 2050, ownerGUID)
 	if blocked.CastPending || len(f.packets) != 2 {
 		t.Fatal("heal_once bypassed lease")
 	}

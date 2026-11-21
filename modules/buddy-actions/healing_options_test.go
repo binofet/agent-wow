@@ -33,17 +33,11 @@ func TestHostStandingHealingOwnsExactTargetAndRank(t *testing.T) {
 		}
 		ctx := context.Background()
 		s.Tick(ctx)
-		if !host {
-			if got := healingCastTarget(f); got != s.selfGUID {
-				t.Fatal("unconfigured client lost standing healing", got)
-			}
-			continue
-		}
 		if countPackets(f, opcode.CMSGCastSpell) != 0 {
 			t.Fatal("native standing selection competed with attached host", f.packets)
 		}
 		view, err := s.HealingOptions(ctx, &emptypb.Empty{})
-		if err != nil || !view.GetHostOwned() || !view.GetCaster().GetReady() || view.GetSessionId() != s.sessionID ||
+		if err != nil || view.GetHostOwned() != host || !view.GetCaster().GetReady() || view.GetSessionId() != s.sessionID ||
 			len(view.GetPatients()) != 3 || len(view.GetSpells()) != 2 || !view.Patients[2].UnderAttack || view.Patients[2].GetDistance() != 38 || view.Spells[0].GetMaxRange() != 40 {
 			t.Fatalf("healing facts %+v, %v", view, err)
 		}

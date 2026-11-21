@@ -585,27 +585,13 @@ func (s *Service) Assist(ctx context.Context, r *actionsv1.ToggleRequest) (*acti
 	return s.stateLocked(), nil
 }
 
+// HealOnce is preserved as a public compatibility input routed by the core
+// to the current attached Lua policy. This module never chooses its patient.
 func (s *Service) HealOnce(ctx context.Context, _ *emptypb.Empty) (*actionsv1.State, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, status.Error(codes.FailedPrecondition, "session is closing")
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
 	}
-	if s.independent {
-		return nil, status.Error(codes.FailedPrecondition, "owner healing is unavailable in independent mode")
-	}
-	s.expireInteractionLocked()
-	if s.state.InteractionOwner != "" {
-		s.state.Reason = "interaction_active_heal_once_blocked"
-		return s.stateLocked(), nil
-	}
-	snapshot, err := s.snapshot(ctx)
-	if err != nil {
-		s.state.Reason = "observations_unavailable"
-		return s.stateLocked(), nil
-	}
-	s.healLocked(ctx, snapshot)
-	return s.stateLocked(), nil
+	return nil, status.Error(codes.FailedPrecondition, "HealOnce requires the session Lua policy input route; exact callers use CastHeal")
 }
 
 func (s *Service) Status(ctx context.Context, _ *emptypb.Empty) (*actionsv1.State, error) {
@@ -1276,10 +1262,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.lastStep = now
 		return
 	}
-	if healer && (s.urgentSelfHealLocked(ctx, snapshot) || s.triageHealLocked(ctx, snapshot, true)) {
-		s.lastStep = now
-		return
-	}
 	if cleanse && s.cleanseTickLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
@@ -1474,10 +1456,6 @@ func (s *Service) Tick(ctx context.Context) {
 		s.state.Following = false
 		s.stopLocked(ctx)
 	}
-}
-
-func (s *Service) healLocked(ctx context.Context, snapshot *worldv1.SnapshotResponse) bool {
-	return s.triageHealLocked(ctx, snapshot, false)
 }
 
 func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emptypb.Empty, error) {

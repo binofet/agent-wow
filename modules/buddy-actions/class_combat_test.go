@@ -128,7 +128,7 @@ func TestActuallyLearnedHealDoesNotRequirePriestClassWhitelist(t *testing.T) {
 	f.world.Self.ClassId = 8
 	learnSpells(s, fireball, lesserHeal)
 	f.world.Owner.Health = 40
-	r, err := s.HealOnce(context.Background(), &emptypb.Empty{})
+	r, err := testExactHeal(s, 2050, ownerGUID)
 	if err != nil || r.HealAttempts != 1 || lastCast(f) != lesserHeal {
 		t.Fatal(r, err)
 	}

@@ -116,7 +116,7 @@ script_api:
   melee: {effect: mutation, description: Start autoattack on the selected observed creature independent of hit range or facing; stop the exact acknowledged own target}
   polymorph: {effect: mutation, description: Prepare or cast an exact learned Polymorph on a selected observed creature}
   sap: {effect: mutation, description: Prepare or cast an exact learned Sap on a selected observed creature}
-  heal_once: {effect: mutation, description: Attempt one learned healing spell on an injured observed party member or self}
+  heal_once: {effect: mutation, description: Queue a healing request in the current attached Lua policy; returned State acknowledges input rather than a cast. Exact callers use cast_heal}
   buffs: {effect: mutation}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}
