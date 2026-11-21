@@ -1195,7 +1195,6 @@ func (s *Service) Tick(ctx context.Context) {
 	if s.closed {
 		return
 	}
-	nativeEncounter := !s.hostEncounterActiveLocked()
 	// Lua remains the target policy across short stalls, reloads and lease
 	// expiry. Expiry fences its writes; it must not install a different target
 	// selector. Support and movement retain their separate ownership contracts.
@@ -1214,7 +1213,7 @@ func (s *Service) Tick(ctx context.Context) {
 	waterBreath := s.dueWaterBreathLocked()
 	if !s.state.Following && !support && !s.state.Assisting && !s.state.Buffing && !s.state.CastPending && !s.engage.active && !s.crowdControl.active && !cleanse && waterBreath.id == 0 {
 		s.stopLocked(ctx)
-		if nativeEncounter {
+		if nativeTargetPolicy {
 			s.stopAutoAttackLocked(ctx)
 		}
 		s.lastStep = s.now()
@@ -1276,10 +1275,6 @@ func (s *Service) Tick(ctx context.Context) {
 		return
 	}
 	if cleanse && s.cleanseTickLocked(ctx, snapshot) {
-		s.lastStep = now
-		return
-	}
-	if (nativeEncounter || !s.hostInterruptOwned) && s.interruptHealLocked(ctx, snapshot) {
 		s.lastStep = now
 		return
 	}
