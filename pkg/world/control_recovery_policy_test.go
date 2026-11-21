@@ -34,7 +34,7 @@ func TestControlRecoverySharedPolicyRankTuningReloadAndHealingAfterControl(t *te
 	}
 	d := step()
 	a, _ := d.Output["action"].(map[string]any)
-	if a["capability"] != "fear_break" || a["spellId"] != float64(18499) || a["targetGuid"] != obs.SelfGuid {
+	if a["capability"] != "fear_break" || a["spellId"] != float64(18499) || a["targetGuid"] != fallbackGUID(obs.SelfGuid) {
 		t.Fatal("native-like choice or healing displaced fear recovery", d.Output)
 	}
 	edited := strings.Replace(source, "spell_weights={}", "spell_weights={[59752]=10}", 1)

@@ -30,6 +30,8 @@ type supportAttempt struct {
 	cleanseLogObserved bool
 	policySpellToken   string
 	breakAuraRevision  uint64
+	breakAuraSlot      uint32
+	breakAura          observedBuffAura
 	breakItem          uint64
 }
 type resurrectionOffer struct {
@@ -382,7 +384,7 @@ func (s *Service) supportPacketLocked(code uint32, p []byte) (bool, error) {
 			delete(s.resurrectionBindings, op.owner)
 		}
 		if op.view.Capability == fearBreakCapability {
-			delete(s.controlBreakBindings, op.breakAuraRevision)
+			delete(s.controlBreakBindings, op.breakAuraSlot)
 		}
 	}
 	s.state.CastPending = false

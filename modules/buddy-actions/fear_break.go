@@ -76,30 +76,41 @@ func (s *Service) controlBreakCasterLocked(w *worldv1.SnapshotResponse) bool {
 // Snapshot all actual options without choosing a spell, rank, trinket or aura.
 func (s *Service) controlBreakObservationLocked(w *worldv1.SnapshotResponse) *actionsv1.ControlRecoveryObservation {
 	out := &actionsv1.ControlRecoveryObservation{FleeingKnown: w.GetSelf().GetUnitFlagsKnown(), Fleeing: w.GetSelf().GetUnitFlags()&fleeingUnitFlag != 0}
-	active := map[uint64]bool{}
 	if set := s.buffAuras[s.selfGUID]; set != nil {
 		for slot, a := range set.slots {
 			if s.isObservedFearLocked(a) {
-				active[a.revision] = true
 				out.FearAuras = append(out.FearAuras, &actionsv1.ObservedAura{Slot: uint32(slot), SpellId: a.spell, Revision: a.revision, Negative: true, MetadataKnown: true, DurationKnown: a.durationKnown, RemainingMs: a.remaining(s.now())})
 			}
 		}
 	}
-	for revision := range s.controlBreakBindings {
-		if !active[revision] {
-			delete(s.controlBreakBindings, revision)
+	// Revisions also advance on a same-application refresh. A changed duration
+	// cannot retire an unknown write; require observed removal/replacement of
+	// that exact slot/spell/caster before admitting a new application there.
+	for slot, prior := range s.controlBreakBindings {
+		current := observedBuffAura{}
+		if set := s.buffAuras[s.selfGUID]; set != nil {
+			current = set.slots[slot]
+		}
+		if !s.isObservedFearLocked(current) || current.spell != prior.spell || current.caster != prior.caster {
+			delete(s.controlBreakBindings, slot)
 		} else {
-			out.AttemptedAuraRevisions = append(out.AttemptedAuraRevisions, revision)
+			out.AttemptedAuraRevisions = append(out.AttemptedAuraRevisions, current.revision)
 		}
 	}
 	sort.Slice(out.AttemptedAuraRevisions, func(i, j int) bool { return out.AttemptedAuraRevisions[i] < out.AttemptedAuraRevisions[j] })
-	if op := s.supportOp; op != nil && op.view.Capability == fearBreakCapability && !active[op.breakAuraRevision] && op.breakAuraRevision != 0 {
-		if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
-			s.state.CastPending = false
-			s.pendingSpell, s.pendingTarget = 0, 0
+	if op := s.supportOp; op != nil && op.view.Capability == fearBreakCapability && op.breakAuraRevision != 0 {
+		current := observedBuffAura{}
+		if set := s.buffAuras[s.selfGUID]; set != nil {
+			current = set.slots[op.breakAuraSlot]
 		}
-		if !op.view.EffectObserved {
-			op.view.Phase = "observed_control_clear_effect_unverified"
+		if !s.isObservedFearLocked(current) || current.spell != op.breakAura.spell || current.caster != op.breakAura.caster {
+			if s.pendingSpell == op.view.SpellId && s.castCount == op.count {
+				s.state.CastPending = false
+				s.pendingSpell, s.pendingTarget = 0, 0
+			}
+			if !op.view.EffectObserved {
+				op.view.Phase = "observed_control_clear_effect_unverified"
+			}
 		}
 	}
 	caster := len(out.FearAuras) > 0 && s.controlBreakCasterLocked(w)
@@ -156,7 +167,10 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 		return nil, status.Error(codes.FailedPrecondition, "current observed fear required")
 	}
 	aura := set.slots[r.AuraSlot]
-	if aura.revision != r.AuraRevision || aura.spell != r.AuraSpellId || !s.isObservedFearLocked(aura) || s.controlBreakBindings[aura.revision] {
+	if aura.revision != r.AuraRevision || aura.spell != r.AuraSpellId || !s.isObservedFearLocked(aura) {
+		return nil, status.Error(codes.FailedPrecondition, "current unconsumed fear application required")
+	}
+	if prior, ok := s.controlBreakBindings[r.AuraSlot]; ok && prior.spell == aura.spell && prior.caster == aura.caster {
 		return nil, status.Error(codes.FailedPrecondition, "current unconsumed fear application required")
 	}
 	spell, learned := s.learnedContractsLocked()[r.SpellId]
@@ -186,10 +200,10 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 		return nil, status.FromContextError(err).Err()
 	}
 	if s.controlBreakBindings == nil {
-		s.controlBreakBindings = map[uint64]bool{}
+		s.controlBreakBindings = map[uint32]observedBuffAura{}
 	}
 	priorReady, priorSpell := s.fearBreakReady, s.spellReady[spell.ID]
-	s.controlBreakBindings[aura.revision] = true
+	s.controlBreakBindings[r.AuraSlot] = aura
 	s.reserveSpellCooldownLocked(spell)
 	if item != nil || spell.ID == humanBreakSpell {
 		s.fearBreakReady = s.now().Add(2 * time.Minute)
@@ -199,7 +213,7 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	s.castCount++
 	until := s.now().Add(3 * time.Second)
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: spell.ID, TargetGuid: s.selfGUID, Capability: fearBreakCapability, Phase: "waiting_server"},
-		owner: s.selfGUID, count: s.castCount, until: until, policySpellToken: modcb.PolicySpellToken(ctx), breakAuraRevision: aura.revision, breakItem: r.ItemGuid}
+		owner: s.selfGUID, count: s.castCount, until: until, policySpellToken: modcb.PolicySpellToken(ctx), breakAuraRevision: aura.revision, breakAuraSlot: r.AuraSlot, breakAura: aura, breakItem: r.ItemGuid}
 	s.state.CastPending = true
 	s.pendingSpell, s.pendingTarget = spell.ID, s.selfGUID
 	s.castUntil = until
@@ -210,7 +224,7 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	}
 	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), wire, payload)
 	if modcb.PacketWasNotDispatched(err) {
-		delete(s.controlBreakBindings, aura.revision)
+		delete(s.controlBreakBindings, r.AuraSlot)
 		s.fearBreakReady, s.spellReady[spell.ID] = priorReady, priorSpell
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0

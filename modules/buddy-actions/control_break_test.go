@@ -101,11 +101,22 @@ func TestControlBreakTypedNoWriteRearmsButUnknownWaitsForObservedApplication(t *
 	}
 	advance(4 * time.Second)
 	s.supportSnapshotLocked(f.world)
-	if s.state.CastPending || s.supportOp.view.Phase != "outcome_unconfirmed_no_retry" || !s.controlBreakBindings[r.AuraRevision] {
+	if s.state.CastPending || s.supportOp.view.Phase != "outcome_unconfirmed_no_retry" || s.controlBreakBindings[r.AuraSlot].spell != r.AuraSpellId {
 		t.Fatal("unknown cast either global-pending forever or replayable", s.stateLocked(), s.supportOp)
 	}
 	if _, err := s.BreakControl(context.Background(), r); err == nil || len(f.packets) != 1 {
 		t.Fatal("replayed same unknown application", err, f.packets)
+	}
+	// A same-slot/caster refresh has a new raw revision but is not proof that
+	// the uncertain prior application ended.
+	applyTestFear(s, 7399)
+	refreshed := exactFearRequest(s, humanBreakSpell)
+	projected := s.controlBreakObservationLocked(f.world)
+	if refreshed.AuraRevision == r.AuraRevision || len(projected.AttemptedAuraRevisions) != 1 || projected.AttemptedAuraRevisions[0] != refreshed.AuraRevision {
+		t.Fatal("refreshed active aura lost consumed proof", projected)
+	}
+	if _, err := s.BreakControl(context.Background(), refreshed); err == nil || len(f.packets) != 1 {
+		t.Fatal("refresh reopened unknown fear break", err, f.packets)
 	}
 	applyTestFear(s, 0)
 	s.controlBreakObservationLocked(f.world)
