@@ -55,7 +55,7 @@ func run() error {
 	if sessionID == "" || filepath.Base(sessionID) != sessionID || sessionID == "." || sessionID == ".." {
 		return errors.New("AGENT_WOW_SESSION_ID must be a single nonempty path component")
 	}
-	journal, journalErr := os.OpenFile(filepath.Join("/var/lib/buddy-combat-events", sessionID+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	journal, journalErr := openCombatJournal("/var/lib/buddy-combat-events", sessionID)
 	if journalErr == nil {
 		defer journal.Close()
 		service.ConfigureCombatJournal(sessionID, journal)
@@ -73,4 +73,10 @@ func run() error {
 		return nil
 	}
 	return err
+}
+
+// A module recreation must not append a new sequence starting at one to an old
+// session file. Keep that evidence intact and report a persistence gap instead.
+func openCombatJournal(directory, sessionID string) (*os.File, error) {
+	return os.OpenFile(filepath.Join(directory, sessionID+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 }
