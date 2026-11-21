@@ -524,7 +524,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-¡¦
+ÿµ
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
 ToggleRequest
 enabled (Renabled"™
@@ -762,7 +762,7 @@ corpseGuid8
 session_id (	R	sessionId
 	self_guid (RselfGuid
 death_epoch (R
-deathEpoch"ª
+deathEpoch"÷
 
 KnownSpell
 spell_id (RspellId%
@@ -793,7 +793,75 @@ power_type (R	powerType.
 requires_behind (RrequiresBehind,
 created_item_entry (RcreatedItemEntry.
 self_cast_supported (RselfCastSupported
-	channeled (R	channeled"¹
+	channeled (R	channeled4
+generic_cast_supported (RgenericCastSupported3
+classification_reason (	RclassificationReasonF
+	mechanics (2(.warcraftbuddy.actions.v1.SpellMechanicsR	mechanics
+passive (Rpassive"š
+
+SpellMechanics
+
+attributes (R
+attributes
+stances (Rstances
+stances_not (R
+stancesNot
+target_mask (R
+targetMask
+spell_focus (R
+spellFocus
+facing (Rfacing
+
+conditions (R
+conditions
+
+family_set (R	familySet!
+family_flags	 (RfamilyFlags$
+cost_per_level
+ (RcostPerLevel(
+power_per_second (RpowerPerSecond
+cast_min_ms (R	castMinMs$
+cast_per_level (RcastPerLevel!
+timing_known (RtimingKnown
+range_known (R
+rangeKnown*
+min_hostile_yards (RminHostileYards,
+min_friendly_yards (RminFriendlyYards*
+max_hostile_yards (RmaxHostileYards,
+max_friendly_yards (RmaxFriendlyYards
+cooldown_ms (R
+cooldownMs
+category (Rcategory0
+category_cooldown_ms (RcategoryCooldownMs
+gcd_ms (RgcdMs%
+duration_index (RdurationIndex6
+required_inventory_mask (RrequiredInventoryMask
+	rune_cost (RruneCostB
+reagents (2&.warcraftbuddy.actions.v1.SpellReagentRreagents
+totems (Rtotems?
+effects (2%.warcraftbuddy.actions.v1.SpellEffectReffects2
+requires_combo_points (RrequiresComboPoints-
+interrupts_casting (RinterruptsCasting'
+restores_health  (RrestoresHealth8
+provides_water_breathing! (RprovidesWaterBreathing"=
+SpellReagent
+item_id (RitemId
+count (Rcount"²
+SpellEffect
+kind (Rkind*
+target_selector_a (RtargetSelectorA*
+target_selector_b (RtargetSelectorB
+aura (Raura,
+triggered_spell_id (RtriggeredSpellId
+	period_ms (RperiodMs#
+chain_targets (RchainTargets!
+radius_index (RradiusIndex&
+created_item_id	 (RcreatedItemId
+points
+ (Rpoints
+dice (Rdice
+misc (Rmisc(
+points_per_level (RpointsPerLevel"¹
 SpellOperation
 spell_id (RspellId
 target_guid (R

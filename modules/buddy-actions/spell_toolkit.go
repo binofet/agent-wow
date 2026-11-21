@@ -125,7 +125,9 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		v := &actionsv1.KnownSpell{SpellId: id}
+		// Knowledge permits the normal cast protocol even if this catalog has no
+		// automatic selector for the spell (or no metadata for a newly learned ID).
+		v := &actionsv1.KnownSpell{SpellId: id, GenericCastSupported: true}
 		if r, ok := s.learnedContractsLocked()[id]; ok {
 			cap := r.Capability()
 			v.MetadataKnown = true
@@ -138,12 +140,18 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.CastTimeMs = r.CastMs
 			v.SelfCastSupported = supportsSelfCast(r)
 			v.Channeled = isChanneledSpell(r)
+			v.Passive = r.Passive()
+			v.GenericCastSupported = r.GenericCastSupported()
+			v.ClassificationReason = r.ClassificationReason()
+			v.Mechanics = reflectedSpellMechanics(r)
 			v.Capability = string(cap.Kind)
 			if cap.Kind == spellcatalog.CreateItem {
 				v.CreatedItemEntry = r.CreatedItem()
 			}
 			v.TargetRule = cap.Target
-			v.BlockedReason = cap.Blocked
+			if r.Passive() {
+				v.BlockedReason = "passive"
+			}
 			v.SelfOnly = cap.Target == "self"
 			v.RangeYards = float32(r.MaxHostile)
 			if cap.Target == "ally" || cap.Target == "dead_ally" {
@@ -154,7 +162,7 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 			v.RequiresStealth = r.Attrs[0]&0x20000 != 0
 			v.RequiresBehind = r.Behind
 		} else {
-			v.BlockedReason = "metadata_unknown"
+			v.ClassificationReason = "metadata_unknown"
 		}
 		if r := buffMetadata(id); r.id != 0 {
 			v.MetadataKnown = true
@@ -177,6 +185,35 @@ func (s *Service) SpellToolkit(ctx context.Context, _ *emptypb.Empty) (*actionsv
 		out.LastBuff = proto.Clone(&s.buffOp.view).(*actionsv1.BuffOperation)
 	}
 	return out, nil
+}
+
+func reflectedSpellMechanics(r spellcatalog.Spell) *actionsv1.SpellMechanics {
+	out := &actionsv1.SpellMechanics{
+		Attributes: append([]uint32(nil), r.Attrs[:]...), Stances: r.Stances, StancesNot: r.StancesNot,
+		TargetMask: r.TargetMask, SpellFocus: r.Focus, Facing: r.Facing,
+		Conditions: append([]uint32(nil), r.Conditions[:]...), FamilySet: r.FamilySet,
+		FamilyFlags: append([]uint32(nil), r.FamilyFlags[:]...), CostPerLevel: r.CostPerLevel,
+		PowerPerSecond: r.PerSecond, CastMinMs: r.CastMinMs, CastPerLevel: r.CastPerLevel,
+		TimingKnown: r.TimingKnown, RangeKnown: r.RangeKnown,
+		MinHostileYards: r.MinHostile, MinFriendlyYards: r.MinFriendly,
+		MaxHostileYards: r.MaxHostile, MaxFriendlyYards: r.MaxFriendly,
+		CooldownMs: r.CooldownMs, Category: r.Category, CategoryCooldownMs: r.CategoryCooldownMs,
+		GcdMs: r.GcdMs, DurationIndex: r.DurationIndex, RequiredInventoryMask: r.InventoryMask,
+		RuneCost: r.RuneCost, Totems: append([]uint32(nil), r.Totems...),
+		RequiresComboPoints: r.RequiresComboPoints(), InterruptsCasting: r.InterruptsCasting(),
+		RestoresHealth: r.IsHealing(), ProvidesWaterBreathing: r.ProvidesWaterBreathing(),
+	}
+	for _, reagent := range r.Reagents {
+		out.Reagents = append(out.Reagents, &actionsv1.SpellReagent{ItemId: reagent.ID, Count: reagent.Count})
+	}
+	for _, e := range r.Effects {
+		out.Effects = append(out.Effects, &actionsv1.SpellEffect{
+			Kind: e.Kind, TargetSelectorA: e.A, TargetSelectorB: e.B, Aura: e.Aura,
+			TriggeredSpellId: e.Trigger, PeriodMs: e.PeriodMs, ChainTargets: e.Chain, RadiusIndex: e.Radius,
+			CreatedItemId: e.ItemType, Points: e.Points, Dice: e.Dice, Misc: e.Misc, PointsPerLevel: e.PerLevel,
+		})
+	}
+	return out
 }
 func (s *Service) buffLeaseRemainingLocked() uint64 {
 	if s.state.Buffing && s.now().Before(s.buffUntil) {

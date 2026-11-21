@@ -275,6 +275,63 @@ message KnownSpell {
   uint32 created_item_entry = 20;
   bool self_cast_supported = 21;
   bool channeled = 22;
+  // Explicit learned casts do not require an automatic effect classification.
+  bool generic_cast_supported = 23;
+  string classification_reason = 24;
+  SpellMechanics mechanics = 25;
+  bool passive = 26;
+}
+// Raw catalog facts for scripts. Requirements are not a handler allowlist.
+message SpellMechanics {
+  repeated uint32 attributes = 1;
+  uint32 stances = 2;
+  uint32 stances_not = 3;
+  uint32 target_mask = 4;
+  uint32 spell_focus = 5;
+  uint32 facing = 6;
+  repeated uint32 conditions = 7;
+  uint32 family_set = 8;
+  repeated uint32 family_flags = 9;
+  uint32 cost_per_level = 10;
+  uint32 power_per_second = 11;
+  uint32 cast_min_ms = 12;
+  int32 cast_per_level = 13;
+  bool timing_known = 14;
+  bool range_known = 15;
+  double min_hostile_yards = 16;
+  double min_friendly_yards = 17;
+  double max_hostile_yards = 18;
+  double max_friendly_yards = 19;
+  uint32 cooldown_ms = 20;
+  uint32 category = 21;
+  uint32 category_cooldown_ms = 22;
+  uint32 gcd_ms = 23;
+  uint32 duration_index = 24;
+  uint32 required_inventory_mask = 25;
+  uint32 rune_cost = 26;
+  repeated SpellReagent reagents = 27;
+  repeated uint32 totems = 28;
+  repeated SpellEffect effects = 29;
+  bool requires_combo_points = 30;
+  bool interrupts_casting = 31;
+  bool restores_health = 32;
+  bool provides_water_breathing = 33;
+}
+message SpellReagent { uint32 item_id = 1; uint32 count = 2; }
+message SpellEffect {
+  uint32 kind = 1;
+  uint32 target_selector_a = 2;
+  uint32 target_selector_b = 3;
+  uint32 aura = 4;
+  uint32 triggered_spell_id = 5;
+  uint32 period_ms = 6;
+  uint32 chain_targets = 7;
+  uint32 radius_index = 8;
+  uint32 created_item_id = 9;
+  int32 points = 10;
+  int32 dice = 11;
+  int32 misc = 12;
+  double points_per_level = 13;
 }
 message SpellOperation {
   uint32 spell_id = 1;
