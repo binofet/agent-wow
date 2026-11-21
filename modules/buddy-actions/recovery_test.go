@@ -116,7 +116,7 @@ func countOpcode(f *fakeSession, op uint32) int {
 	return n
 }
 
-func TestRecoveryNormalReleaseRouteReclaimNeedsActualAliveAndRest(t *testing.T) {
+func TestRecoveryNormalReleaseRouteReclaimNeedsActualAlive(t *testing.T) {
 	s, f, advance := recoveryRig(t)
 	s.state.Following, s.state.Assisting = true, true
 	s.followUntil, s.assistUntil = s.now().Add(lease), s.now().Add(lease)
@@ -170,6 +170,7 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAliveAndRest(t *testing.T) 
 	p := f.world.Self
 	p.Alive = true
 	p.Health = 50
+	p.Power = 0
 	p.PlayerFlags = 0
 	p.MovementFlags = 0
 	p.RunSpeed = 7
@@ -178,14 +179,16 @@ func TestRecoveryNormalReleaseRouteReclaimNeedsActualAliveAndRest(t *testing.T) 
 	f.world.OwnCorpse = nil
 	f.mu.Unlock()
 	s.Tick(context.Background())
-	if !s.recovery.state.AliveObserved || !s.recovery.state.Active || s.recovery.state.Rested {
+	if !s.recovery.state.AliveObserved || s.recovery.state.Active || s.recovery.state.Rested ||
+		s.recovery.state.Phase != "alive_observed" || s.state.InteractionOwner != "" || !s.state.Following || !s.state.Assisting {
 		t.Fatal(s.stateLocked())
 	}
 	f.mu.Lock()
 	f.world.Self.Health = 100
 	f.mu.Unlock()
 	s.Tick(context.Background())
-	if s.recovery.state.Active || !s.recovery.state.Rested || s.recovery.state.Phase != "complete" || s.state.InteractionOwner != "" || !s.state.Following || !s.state.Assisting {
+	if s.recovery.state.Active || s.recovery.state.Rested || s.recovery.state.Phase != "alive_observed" ||
+		countOpcode(f, opcode.CMSGReclaimCorpse) != 1 || !s.state.Following || !s.state.Assisting {
 		t.Fatal(s.stateLocked())
 	}
 }
@@ -353,7 +356,7 @@ func TestRecoveryProtocolStrictFramesAtomicAndUnsolicitedQueryIgnored(t *testing
 	}
 }
 
-func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
+func TestRecoveryPreservesKnownExpiredTimerAndRetiresAliveCustody(t *testing.T) {
 	s, f, advance := recoveryRig(t)
 	recoveryObserve(t, s, opcode.SMSGCorpseReclaimDelay, binary.LittleEndian.AppendUint32(nil, 0))
 	advance(time.Second)
@@ -367,6 +370,7 @@ func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
 	s.Tick(context.Background())
 	f.world.Self.Alive = true
 	f.world.Self.Health = 50
+	f.world.Self.Power = 0
 	f.world.Self.PlayerFlags = 0
 	f.world.Self.MovementFlags = 0
 	f.world.Self.RunSpeed = 7
@@ -375,8 +379,8 @@ func TestRecoveryPreservesKnownExpiredTimerAndRestCustody(t *testing.T) {
 		s.Tick(context.Background())
 		state(t, s)
 	}
-	if s.state.InteractionOwner != "recovery" || !s.recovery.state.Active {
-		t.Fatal("rest custody expired", s.stateLocked())
+	if s.state.InteractionOwner != "" || s.recovery.state.Active || !s.recovery.state.AliveObserved || s.recovery.state.Rested {
+		t.Fatal("native resource thresholds retained an alive body", s.stateLocked())
 	}
 	s.state.InteractionOwner = "professions"
 	s.interactionToken = "replacement"
