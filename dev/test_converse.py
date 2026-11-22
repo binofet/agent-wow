@@ -3448,11 +3448,69 @@ class GMTaskFaultRepairTests(unittest.TestCase):
         self.loop.tick();state=self.brain.states[0]
         brain=object.__new__(converse.CodexBrain);brain.developer_workspace=self.repo
         self.assertTrue(brain.development_enabled(state))
+        self.assertEqual(state['current_request']['commission'],dict(kind='gm_task',goalId='a',
+            taskStateDir=str(self.folder),sessionId='aw-123',selfGuid='87',rpcUrl=self.rpc.url))
+        forged=copy.deepcopy(state);forged['current_request']['commission']['goalId']='another-goal'
+        self.assertFalse(brain.development_enabled(forged))
+        forged=copy.deepcopy(state);forged['current_request']=dict(forged['current_request'])
+        self.assertFalse(brain.development_enabled(forged))
         self.policy.write_text('return {repaired=true}')
         self.assertTrue(brain.development_enabled(state))
         with converse.gm_tasks.runtime.Store(self.folder) as store:
             data=store.load();data['identity']['sessionId']='aw-456';store.save(data)
         self.assertFalse(brain.development_enabled(state))
+
+    def test_actual_developer_request_continues_same_commission_despite_final_dispatch_flags(self):
+        # The fake Codex executable consumes the ACTUAL host prompt/command,
+        # then calls the real resume adapter with only process creation stubbed.
+        # This verifies the request boundary rather than matching instruction prose.
+        store=converse.gm_tasks.task_store(self.folder);data=store.load()
+        data['reservations']={'a:issued':{'outcome':'transport_unconfirmed'}};store.save(data)
+        before=(self.folder/'state.json').read_bytes()
+        marker=self.repo/'actual-resume-request.json';executable=self.repo/'fake-codex'
+        gm_file=Path(converse.__file__).with_name('gm_tasks.py')
+        program='''#!/usr/bin/env python3
+import importlib.util,json,pathlib,sys,types
+from unittest.mock import patch
+prompt=sys.stdin.read()
+print(json.dumps(dict(type='turn.started')),flush=True)
+state=json.loads(prompt.split('Current observations and control state JSON:\\n',1)[1].split('\\nConversation JSON:',1)[0])
+request=state['current_request'];commission=request['commission'];development=state['development']
+assert request['source']=='mission_fault' and request['controls_allowed'] is False and request['repair_requests_allowed'] is False
+assert commission['kind']=='gm_task' and commission['goalId']==state['mission_fault']['goalId']=='a'
+assert commission['taskStateDir']==state['mission_fault']['taskStateDir']
+assert commission['sessionId']==development['sessionId']=='aw-123'
+assert commission['selfGuid']==development['selfGuid']=='87' and commission['rpcUrl']==development['rpcUrl']
+assert 'bindings' in development['gmTasks'] and 'resume' in development['gmTasks']
+spec=importlib.util.spec_from_file_location('request_gm',GM_FILE)
+gm=importlib.util.module_from_spec(spec);spec.loader.exec_module(gm)
+attempt={}
+def start(argv,**kwargs):
+ attempt['argv']=argv
+ return types.SimpleNamespace(pid=54321)
+with patch.object(gm.subprocess,'Popen',side_effect=start):
+ result=gm.request_resume(commission['taskStateDir'])
+attempt.update(commission=commission,result=result,developerCommand='--approve-for-me' in sys.argv)
+pathlib.Path(MARKER).write_text(json.dumps(attempt))
+print(json.dumps(dict(type='item.completed',item=dict(id='same-task-resume',type='command_execution',status='completed',exit_code=0))),flush=True)
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps(dict(text='I resumed the existing task; completion still needs observation.',action='NONE',emote='NONE')))
+print(json.dumps(dict(type='turn.completed')),flush=True)
+'''.replace('GM_FILE',repr(str(gm_file))).replace('MARKER',repr(str(marker)))
+        executable.write_text(program);executable.chmod(0o700)
+        state_dir=converse.ensure_state(self.repo/'actual-brain')
+        with patch.object(converse,'checked_developer_workspace',side_effect=lambda p:Path(p)):
+            self.brain=converse.CodexBrain(executable,state_dir,timeout=5,developer_workspace=self.repo,
+                character_name='Lotharen',character_class='paladin')
+        self.loop=self.new_loop();self.loop.tick()
+        self.assertTrue(marker.exists(),self.statuses)
+        attempt=json.loads(marker.read_text());self.assertTrue(attempt['developerCommand'])
+        self.assertTrue(attempt['result']['started']);self.assertEqual(attempt['result']['completion'],'not_yet_observed')
+        argv=attempt['argv'];self.assertEqual(argv[argv.index('--state-dir')+1],str(self.folder))
+        self.assertEqual(argv[argv.index('--goal')+1],str(self.repo/'goal.json'))
+        self.assertEqual((self.folder/'state.json').read_bytes(),before)
+        self.assertEqual(self.brain.last_development_events['successfulCommands'],1)
+        self.assertEqual(self.statuses[-1]['phase'],'listening')
+        self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
 
 
 class DeveloperOutcomeRetentionTests(unittest.TestCase):
