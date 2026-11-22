@@ -21,6 +21,7 @@ base_url = "http://127.0.0.1:18765/v1"
 model = "nvidia/nemotron-3.5-super-vl"
 # No default reasoning override: model/provider support differs.
 # For Ollama, set local_provider, base_url and model explicitly.
+# Actors default to banter_seconds=0; set 120..3600 per actor to opt in.
 
 [actors.arlen]
 name = "Arlen"

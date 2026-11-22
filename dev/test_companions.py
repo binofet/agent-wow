@@ -67,7 +67,7 @@ class FakeChildren:
         return [row for row, _ in self.calls if len(row)>3 and Path(row[2]).name==kind and row[3]==command]
 
 
-class CompanionTests(unittest.TestCase):
+class LauncherTests(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -88,6 +88,42 @@ class CompanionTests(unittest.TestCase):
         self.assertNotIn("--reasoning-effort", planned["listener_run_if_unowned"])
         self.assertNotIn("--resume-whispers", planned["listener_run_if_unowned"])
         self.assertEqual(planned["native_start_if_stopped"][3], "start")
+        command = planned["listener_run_if_unowned"]
+        self.assertEqual(command[command.index("--banter-seconds") + 1], "0")
+
+    def test_banter_is_explicit_and_validated_before_child_changes(self):
+        self.raw["actors"]["mira"]["banter_seconds"] = 240
+        command = app.commands(app.normalize(self.raw)[0])["run"]
+        self.assertEqual(command[command.index("--banter-seconds") + 1], "240")
+        for value in (True, -1, 1, 119, 3601, float("nan"), float("inf")):
+            self.raw["actors"]["mira"]["banter_seconds"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(app.Error, "banter_seconds"):
+                app.normalize(self.raw)
+        self.assertFalse(self.runner.calls or self.runner.spawns)
+
+    def test_transport_validation_precedes_models_or_any_child(self):
+        invalid = [dict(provider="responses", base_url=url, model="claude", api_key_env="TEST_KEY")
+                   for url in ("http://gateway.example/v1", "http://127.0.0.2/v1", "http://127.0.0.1:0/v1",
+                               "http://127.0.0.1:65536/v1", "https://gateway.example/with space", "https://:bad/v1")]
+        invalid += [dict(model="two words"), dict(model="a" * 129), dict(model="/bad"),
+                    dict(base_url="http://127.0.0.2/v1"), dict(api_key_env="TEST_KEY")]
+        with mock.patch.object(app, "get_json", side_effect=AssertionError("no endpoint request")), \
+             mock.patch.object(app.subprocess, "run", side_effect=AssertionError("no child")):
+            for model in invalid:
+                raw = copy.deepcopy(self.raw)
+                raw["model"] = model
+                with self.subTest(model=model), self.assertRaises(app.Error):
+                    app.normalize(raw)
+        self.assertFalse(self.runner.calls or self.runner.spawns)
+
+    def test_supported_loopback_and_https_gateways_keep_exact_transport(self):
+        for url in ("http://127.0.0.1:18765/v1", "http://localhost:18765/v1", "http://[::1]:18765/v1"):
+            with self.subTest(url=url):
+                self.assertEqual(app.model_settings({}, dict(base_url=url))["base_url"], url)
+        model = app.model_settings({}, dict(provider="gemini", base_url="https://gateway.example/v1",
+                                           model="gemini-route", api_key_env="TEST_KEY"))
+        self.assertEqual(model["provider"], "responses")
+        self.assertEqual(model["base_url"], "https://gateway.example/v1")
 
     def test_start_once_then_repeated_start_reuses_both_owners(self):
         first = app.operate(self.actor, "start", self.runner)
