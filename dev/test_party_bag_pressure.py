@@ -44,6 +44,7 @@ class BagPressureTests(unittest.TestCase):
         self.calls = []
         self.lookup_available = True
         self.dispatch_error = None
+        self.water_pressure = {}
 
     def rpc(self, port, method, args):
         self.calls.append((port, method, args))
@@ -55,7 +56,8 @@ class BagPressureTests(unittest.TestCase):
 
     def tick(self, when=100, port=8088):
         with patch.object(bags.time, 'monotonic', return_value=when):
-            return bags.maintain_bag_pressure(self.rpc, self.views, self.attempts, self.entries)[port]
+            return bags.maintain_bag_pressure(self.rpc, self.views, self.attempts, self.entries,
+                water_pressure=self.water_pressure)[port]
 
     def test_rook_frees_only_gray_miscellaneous_with_exact_source(self):
         self.assertEqual(self.tick(), 'waiting_for_disposal')
@@ -86,6 +88,7 @@ class BagPressureTests(unittest.TestCase):
         self.views[8086] = snapshot(1, loot=False)
         self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
         self.views[8086]['inventory']['manaDrinkCount'] = 0
+        self.water_pressure['8086'] = True
         self.views[8086]['world']['self']['unitFlags'] = bags.IN_COMBAT
         self.assertEqual(self.tick(port=8086), 'waiting_for_safe_pause')
         self.assertEqual(self.calls, [])
@@ -107,20 +110,21 @@ class BagPressureTests(unittest.TestCase):
         self.assertEqual(self.tick(), 'room_available')
         self.assertEqual(self.calls, [])
 
-    def test_low_water_stock_reserves_slot_only_without_compatible_stack_room(self):
+    def test_only_current_shared_lua_water_pressure_authorizes_water_cleanup(self):
         arlen = self.views[8086] = snapshot(1, loot=False)
         arlen['inventory']['manaDrinkCount'] = 4
-        self.views[8087] = dict(spell_toolkit=dict(spells=[dict(
-            familyId=5504, capability='create_item', createdItemEntry=8077)]))
         slots = arlen['inventory']['inventoryBags'][0]['slots']
         slots[1].update(entry=8077, stackCount=4)
+        self.water_pressure['8086'] = False
         self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
         slots[1].update(entry=159)
+        self.water_pressure['8086'] = True
         self.assertEqual(self.tick(port=8086), 'waiting_for_disposal')
 
     def test_gray_armor_requires_no_upgrade_and_exact_equipped_comparison(self):
         arlen = self.views[8086] = snapshot(1, loot=False)
         arlen['inventory']['manaDrinkCount'] = 0
+        self.water_pressure['8086'] = True
         arlen['world'].update(selfEquipmentKnown=True, selfEquipment=[dict(
             slot=8, slotKnown=True, metadataKnown=True, itemGuid=str(GUID_BASE + 200), entry=100)])
         self.entries = bags.safe_junk_entries({'items': {

@@ -7,11 +7,10 @@ import json
 from pathlib import Path
 import signal
 import time
-import urllib.request
 
 from party_bag_pressure import maintain_bag_pressure, safe_junk_entries
 from party_mana_drink import maintain_drink
-from party_mana_supply import maintain_supply
+from party_mana_supply import maintain_supply, runtime
 
 CASTERS = {8086: "1", 8087: "4", 8402: "8"}
 PARTY = {**CASTERS, 8088: "5"}
@@ -29,18 +28,17 @@ class RPCError(RuntimeError):
     pass
 
 
+_RPC_CLIENTS = {}
+
+
 def rpc(port, method, params=None):
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/rpc",
-        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=1.5) as response:
-        reply = json.load(response)
-    if "error" in reply:
-        detail = reply["error"]
-        raise RPCError(detail.get("message", "game client rejected request"))
-    return reply["result"]
+    if port not in _RPC_CLIENTS:
+        _RPC_CLIENTS[port] = runtime.RPC(f"http://127.0.0.1:{port}/rpc",
+            request_bytes=8*1024*1024, response_bytes=8*1024*1024)
+    try:
+        return _RPC_CLIENTS[port].call(method, params or {}, timeout=1.5)
+    except runtime.Error as error:
+        raise RPCError(str(error)) from error
 
 
 def observe(port):
