@@ -31,6 +31,40 @@ func tradeConsentHostInput(sid, self string) map[string]any {
 	}}
 }
 
+func tradeServicePreparationHostInput(sid, self string) map[string]any {
+	input := tradeConsentHostInput(sid, self)
+	input["kind"] = "prepare_trade_service"
+	trade := input["trade"].(map[string]any)
+	trade["partnerAccepted"] = false
+	trade["partnerItems"] = []any{map[string]any{"slot": float64(6), "entry": float64(4632), "count": float64(1),
+		"itemGuid": "0", "name": "", "metadataKnown": false}}
+	input["service"] = map[string]any{"slot": float64(6), "entry": float64(4632), "count": float64(1), "wrapped": false, "lockId": float64(5), "partnerSpell": float64(0)}
+	input["attempt"] = map[string]any{
+		"item":      map[string]any{"entry": float64(0), "count": float64(0), "wrapped": false, "lockId": float64(0)},
+		"castCount": float64(0), "queued": false, "accepted": false, "castGo": false, "retry": false,
+		"deadlineKnown": false, "remainingMs": float64(0),
+	}
+	input["world"] = map[string]any{
+		"visitId": "7", "mapKnown": true, "mapId": float64(0),
+		"self": map[string]any{"guid": self, "present": true, "aliveKnown": true, "alive": true,
+			"mapKnown": true, "mapId": float64(0), "positionKnown": true, "positionRevision": "11",
+			"classKnown": true, "classId": float64(4), "unitFlagsKnown": true, "unitFlags": float64(0),
+			"movementFlagsKnown": true, "movementFlags": float64(0)},
+		"owner": map[string]any{"guid": "3", "present": true, "aliveKnown": true, "alive": true,
+			"mapKnown": true, "mapId": float64(0), "positionKnown": true, "positionRevision": "13",
+			"unitFlagsKnown": true, "unitFlags": float64(0), "x": float64(1), "y": float64(2), "z": float64(3)},
+		"skills": map[string]any{"known": true, "complete": true, "revision": "17", "rows": []any{
+			map[string]any{"slot": float64(5), "skillId": float64(633), "value": float64(75), "maxValue": float64(75),
+				"temporaryBonus": float64(0), "permanentBonus": float64(0)},
+		}},
+	}
+	input["spell"] = map[string]any{"sessionId": sid, "selfGuid": self, "spellbookKnown": true,
+		"spellbookRevision": "19", "present": true, "spellId": float64(1804), "metadataKnown": true, "castTimeMs": float64(5000)}
+	input["reference"] = map[string]any{"catalog": "client_build_12340_lockpicking", "lockId": float64(5), "known": true, "requiredSkillRank": float64(1)}
+	input["window"] = map[string]any{"deadlineKnown": true, "remainingMs": float64(30000)}
+	return input
+}
+
 func tradeConsentHostRequest(t *testing.T, input map[string]any) *modv1.InvokeModuleRequest {
 	t.Helper()
 	value, err := structpb.NewStruct(map[string]any{"sessionId": input["sessionId"], "selfGuid": input["selfGuid"], "input": input})
@@ -86,38 +120,60 @@ return actual`
 		t.Fatal(err)
 	}
 	input := tradeConsentHostInput(sid, "4")
-	check := func(revision, kind string) {
+	checkInput := func(currentInput map[string]any, revision, kind string) {
 		t.Helper()
 		before, err := host.vm.State(ctx)
 		if err != nil || len(before.Pending) != 1 {
 			t.Fatal("pure read lost pending fixture", before, err)
 		}
-		out := tradeConsentHostRead(t, m, input)
+		out := tradeConsentHostRead(t, m, currentInput)
 		decision := out["decision"].(map[string]any)
 		if len(out) != 3 || out["available"] != true || out["revision"] != revision || len(decision) != 2 || decision["kind"] != kind {
 			t.Fatal("actual current shared export was not used", out)
 		}
 		assertFollowFallbackState(t, host, before)
 	}
+	check := func(revision, kind string) { checkInput(input, revision, kind) }
 	initial := host.vm.Status().Revision
 	check(initial, "accept")
+	preparation := tradeServicePreparationHostInput(sid, "4")
+	checkInput(preparation, initial, "prepare")
+	const preparationTuning = "local prepare_owner_trade_services = true"
+	servicesDisabled := strings.Replace(source, preparationTuning, "local prepare_owner_trade_services = false", 1)
+	if servicesDisabled == source {
+		t.Fatal("actual shared preparation tuning was not edited")
+	}
+	servicesRevision, err := host.Reload(ctx, servicesDisabled, initial)
+	if err != nil || servicesRevision == initial {
+		t.Fatal("same-body service edit failed", servicesRevision, err)
+	}
+	checkInput(preparation, servicesRevision, "wait")
+	check(servicesRevision, "accept") // Preparation opt-out does not withdraw ordinary consent.
+	restored, err := host.Reload(ctx, source, servicesRevision)
+	if err != nil || restored != initial {
+		t.Fatal("restoring current source lost its original revision", restored, err)
+	}
+	checkInput(preparation, restored, "prepare")
+	check(restored, "accept")
 	// The native caller can be inside a dispatch holding advance. This read
 	// must not recurse into that persistent VM or request any module facts.
-	request := tradeConsentHostRequest(t, input)
 	bounded, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	done := make(chan error, 1)
-	host.advance.Lock()
-	go func() { _, err := m.invokeModule(bounded, "buddy-trade", request); done <- err }()
-	select {
-	case err := <-done:
-		host.advance.Unlock()
-		if err != nil {
-			t.Fatal(err)
+	for _, currentInput := range []map[string]any{input, preparation} {
+		request := tradeConsentHostRequest(t, currentInput)
+		done := make(chan error, 1)
+		host.advance.Lock()
+		go func() { _, err := m.invokeModule(bounded, "buddy-trade", request); done <- err }()
+		select {
+		case err := <-done:
+			host.advance.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			host.advance.Unlock()
+			t.Fatal("pure consent/preparation read waited for persistent dispatch")
 		}
-	case <-time.After(2 * time.Second):
-		host.advance.Unlock()
-		t.Fatal("pure consent read waited for persistent dispatch")
 	}
 	changed := strings.Replace(source, "local accept_owner_trades = true", "local accept_owner_trades = false", 1)
 	if changed == source {
@@ -128,6 +184,7 @@ return actual`
 		t.Fatal("same-body accepted edit failed", revision, err)
 	}
 	check(revision, "wait")
+	checkInput(preparation, revision, "prepare") // Ordinary opt-out does not disable service preparation.
 	if _, err := host.Reload(ctx, "return {", revision); err == nil {
 		t.Fatal("invalid candidate replaced current consent policy")
 	}
@@ -154,10 +211,12 @@ return actual`
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.invokeModule(ctx, "buddy-trade", request); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "current_trade_consent_fault") {
-		t.Fatal("faulted current source fell back to old consent", err)
+	for _, currentInput := range []map[string]any{input, preparation} {
+		if _, err := m.invokeModule(ctx, "buddy-trade", tradeConsentHostRequest(t, currentInput)); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "current_trade_consent_fault") {
+			t.Fatal("faulted current source fell back to old consent/preparation", err)
+		}
+		assertFollowFallbackState(t, host, before)
 	}
-	assertFollowFallbackState(t, host, before)
 	pending := host.vm.Outstanding()
 	if dispatches != 1 || len(pending) != 1 || pending[0].ActionID != receipt.ActionID || pending[0].Outcome != behavior.ActionUnknown {
 		t.Fatal("consent reads or source edits replayed/settled uncertainty", dispatches, pending)

@@ -1,6 +1,6 @@
 api_version: 1
 enabled: true
-description: Read-only bounded player, creature, quest-log, carried inventory and typed container and object observations
+description: Bounded world observations and scoped native spline completion reporting
 compose:
   file: compose.yaml
   service: module
@@ -10,6 +10,7 @@ rpc:
   combat_events: /warcraftbuddy.world.v1.BuddyWorld/CombatEvents
   snapshot: /warcraftbuddy.world.v1.BuddyWorld/Snapshot
   observe_client_movement: /warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement
+  complete_spline: /warcraftbuddy.world.v1.BuddyWorld/CompleteSpline
 packets:
   SMSG_LOGIN_VERIFY_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
   SMSG_NEW_WORLD: /warcraftbuddy.world.v1.BuddyWorld/OnPacket
@@ -75,3 +76,6 @@ packets:
 script_api:
   combat_events: {effect: read}
   snapshot: {effect: read}
+  complete_spline:
+    effect: mutation
+    description: Report one due scoped taxi spline using received MovementInfo and an inferred advertised endpoint; a transport write does not establish arrival.

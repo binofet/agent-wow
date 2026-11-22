@@ -10,14 +10,31 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.Protobuf.WellKnownTypesbproto3
-ß
-api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"?
+õ
+api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"å
 WorldPacket
 opcode (Ropcode
-payload (Rpayload"E
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"í
 SendPacketRequest
 opcode (Ropcode
-payload (Rpayload"5
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"’
+TransportScope#
+connection_id (	RconnectionId
+	self_guid (RselfGuid
+visit_bound (R
+visitBound%
+visit_revision (RvisitRevision
+map_id (RmapId'
+motion_revision (RmotionRevision&
+spline_id_known (RsplineIdKnown
+	spline_id (RsplineId'
+spline_revision	 (RsplineRevision4
+spline_source_revision
+ (RsplineSourceRevision#
+spline_active (RsplineActive0
+spline_source_opcode (RsplineSourceOpcode"5
 ClockResponse$
 client_time_ms (RclientTimeMs"u
 InvokeModuleRequest
@@ -31,7 +48,7 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-ùu
+ﬂÜ
 modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
@@ -180,7 +197,57 @@ elapsed_ms (R	elapsedMs+
 stopped (Rstopped
 cyclic (Rcyclic
 	map_known (RmapKnown
-map_id (RmapId"é
+map_id (RmapId"ì
+OwnMotionAuthority
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope
+reason (	Rreason2
+duration_remaining_ms	 (RdurationRemainingMs(
+unit_flags_known
+ (RunitFlagsKnown
+
+unit_flags (R	unitFlags.
+unit_flags_revision (RunitFlagsRevision)
+unit_flags_age_ms (RunitFlagsAgeMs7
+unit_flags_source_opcode (RunitFlagsSourceOpcode;
+unit_flags_motion_revision (RunitFlagsMotionRevision"⁄
+CompleteSplineRequest
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevision+
+expected_revision (RexpectedRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"√
+SplineCompletionOperation
+revision (Rrevision
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope
+pending (Rpending+
+transport_written	 (RtransportWritten+
+transport_unknown
+ (RtransportUnknown
+phase (	Rphase
+error (	Rerror6
+movement_image_inferred (RmovementImageInferred#
+arrival_known (RarrivalKnown
+	spline_id (RsplineId&
+spline_id_known (RsplineIdKnown2
+movement_image_source (	RmovementImageSource"Œ
+SplineCompletionObservation
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (RrevisionO
+	operation (21.warcraftbuddy.world.v1.SplineCompletionOperationR	operation"é
 EquipmentSlotState
 slot (Rslot
 
@@ -409,7 +476,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"Û
+permanent_bonus (RpermanentBonus"µ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -464,7 +531,9 @@ own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 player_corpses. (2#.warcraftbuddy.world.v1.CorpseStateRplayerCorpses%
 visit_revision/ (RvisitRevisionX
 self_movement_facts0 (2(.warcraftbuddy.world.v1.OwnMovementFactsRselfMovementFactsR
-self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts"q
+self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts^
+self_motion_authority2 (2*.warcraftbuddy.world.v1.OwnMotionAuthorityRselfMotionAuthority`
+spline_completion3 (23.warcraftbuddy.world.v1.SplineCompletionObservationRsplineCompletion"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -502,9 +571,10 @@ session_id (	R	sessionId
 next_sequence (RnextSequence
 has_more (RhasMore;
 events (2#.warcraftbuddy.world.v1.CombatEventRevents:
-gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2˚
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2Ò
 
-BuddyWorldi
+BuddyWorldt
+CompleteSpline-.warcraftbuddy.world.v1.CompleteSplineRequest3.warcraftbuddy.world.v1.SplineCompletionObservationi
 CombatEvents+.warcraftbuddy.world.v1.CombatEventsRequest,.warcraftbuddy.world.v1.CombatEventsResponse]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
 ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC

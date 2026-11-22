@@ -17,6 +17,7 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // Start launches modules in dependency order and waits for health. ctx governs startup only.
@@ -87,9 +88,10 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		inst.launch = l
 		inst.server = grpc.NewServer()
 		modv1.RegisterSessionServer(inst.server, modcb.New(m.ctx, name, modcb.Handlers{
-			SendPacket:   m.modulePacketWriter(filepath.Base(dir), name),
-			Clock:        m.session.Clock,
-			InvokeModule: m.invokeModule,
+			SendPacket:       m.modulePacketWriter(filepath.Base(dir), name),
+			SendScopedPacket: m.moduleScopedPacketWriter(filepath.Base(dir), name),
+			Clock:            m.session.Clock,
+			InvokeModule:     m.invokeModule,
 		}))
 		m.wg.Add(1)
 		go func() {
@@ -121,6 +123,19 @@ func (m *Manager) Start(ctx context.Context, session modsession.Session) error {
 		go func() { defer m.wg.Done(); m.pollHealth(name, inst) }()
 	}
 	return m.Err()
+}
+
+func (m *Manager) moduleScopedPacketWriter(sessionID, module string) func(context.Context, uint32, []byte, *modv1.TransportScope) error {
+	return func(ctx context.Context, opcode uint32, payload []byte, scope *modv1.TransportScope) error {
+		if scope == nil || m.session.SendScopedPacket == nil {
+			return modcb.PacketNotDispatchedError("transport scope is unsupported by this host")
+		}
+		if _, supplied := modcb.IncomingPolicySpell(ctx); supplied {
+			return modcb.PacketNotDispatchedError("scoped completion cannot claim a spell dispatch")
+		}
+		origin := modsession.WriteOrigin{SessionID: sessionID, Module: module, Writer: "module"}
+		return m.session.SendScopedPacket(modsession.WithWriteOrigin(ctx, origin), opcode, append([]byte(nil), payload...), proto.Clone(scope).(*modv1.TransportScope))
+	}
 }
 
 func (m *Manager) modulePacketWriter(sessionID, module string) func(context.Context, uint32, []byte) error {

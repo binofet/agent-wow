@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/status"
 )
@@ -31,6 +33,9 @@ type engine struct {
 	pingSequence, latency uint32
 	pings                 map[uint32]time.Time
 	movement              movementControl
+	transport             transportScopeState
+	writeSerial           uint64
+	beforeScopedWrite     func() error
 }
 
 func (e *engine) write(op uint32, body []byte) error {
@@ -38,7 +43,7 @@ func (e *engine) write(op uint32, body []byte) error {
 	return err
 }
 
-func (e *engine) writeContext(ctx context.Context, op uint32, body []byte) (GameplayWriteOutcome, bool, error) {
+func (e *engine) writeContext(ctx context.Context, op uint32, body []byte, scopes ...*modv1.TransportScope) (GameplayWriteOutcome, bool, error) {
 	deadline := time.Now().Add(e.timing.write)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
 		deadline = callerDeadline
@@ -46,13 +51,63 @@ func (e *engine) writeContext(ctx context.Context, op uint32, body []byte) (Game
 	if err := e.s.conn.SetWriteDeadline(deadline); err != nil {
 		return GameplayDeadlineFailed, false, err
 	}
+	var requested *modv1.TransportScope
+	if len(scopes) != 0 {
+		requested = scopes[0]
+	}
+	if requested != nil || op == opcode.CMSGMoveSplineDone {
+		for {
+			if !e.scopedWriteAvailable(ctx) {
+				return "", false, modcb.PacketNotDispatchedError("scoped completion requires the uncanceled current live world session")
+			}
+			serial := e.writeSerial
+			if e.beforeScopedWrite != nil {
+				if err := e.beforeScopedWrite(); err != nil {
+					return "", false, err
+				}
+			}
+			if serial == e.writeSerial {
+				break
+			}
+			// A protocol ACK issued while processing a ready inbound packet
+			// changed the socket deadline. Restore the caller's deadline and
+			// drain again before the final reservation; no callback follows it.
+			if err := e.s.conn.SetWriteDeadline(deadline); err != nil {
+				return GameplayDeadlineFailed, false, err
+			}
+		}
+		if !e.scopedWriteAvailable(ctx) {
+			return "", false, modcb.PacketNotDispatchedError("scoped completion requires the uncanceled current live world session")
+		}
+	}
+	// No callback, deadline setter or owner-state transition follows the final
+	// scope comparison and attempt reservation before entering WritePacket.
+	if err := e.transport.reserve(op, body, requested); err != nil {
+		return "", false, err
+	}
+	e.writeSerial++
 	anyBytes, err := e.s.conn.WritePacket(op, body)
 	if err != nil {
 		return GameplayWriteFailed, anyBytes, err
 	}
 	e.movement.sent(op, body, e.s.state.Character.GUID)
+	e.transport.sent(op)
+	e.publishTransportScope()
 	logPacket(e.s.logger, "write", op, len(body))
 	return GameplayWritten, anyBytes, nil
+}
+
+func (e *engine) scopedWriteAvailable(ctx context.Context) bool {
+	if ctx.Err() != nil || e.phase != InWorld || e.logout != nil || e.finalPackets != nil || e.s == nil ||
+		e.transport.scope == nil || e.s.state.Character.GUID != e.transport.scope.SelfGuid || e.s.ctx != nil && e.s.ctx.Err() != nil {
+		return false
+	}
+	select {
+	case <-e.s.abort:
+		return false
+	default:
+		return true
+	}
 }
 
 func (e *engine) timestamp() uint32 { return e.s.Clock() }
@@ -101,8 +156,36 @@ func (e *engine) loop(packets <-chan packet) error {
 				r.reply <- status.FromContextError(err).Err()
 				continue
 			}
-			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body)
-			if trace := e.s.gameplayTrace; trace != nil {
+			if (r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone) && (e.phase != InWorld || e.logout != nil || e.finalPackets != nil) {
+				r.reply <- modcb.PacketNotDispatchedError("scoped completion requires the current live world session")
+				continue
+			}
+			if r.transportScope != nil || r.op == opcode.CMSGMoveSplineDone {
+				e.beforeScopedWrite = func() error {
+					for packets != nil {
+						select {
+						case p := <-packets:
+							complete, err := e.processIncoming(p)
+							if err != nil {
+								return err
+							}
+							if complete {
+								packets = nil
+							}
+						default:
+							return nil
+						}
+					}
+					return nil
+				}
+			}
+			outcome, anyBytes, err := e.writeContext(r.ctx, r.op, r.body, r.transportScope)
+			e.beforeScopedWrite = nil
+			if modcb.PacketWasNotDispatched(err) {
+				r.reply <- err
+				continue
+			}
+			if trace := e.s.gameplayTrace; trace != nil && outcome != "" {
 				trace.record(r.ctx, e.s.state.Character.GUID, r.op, r.body, outcome, anyBytes)
 			}
 			r.reply <- err
@@ -172,35 +255,45 @@ func (e *engine) loop(packets <-chan packet) error {
 			// write; AzerothCore rejects clients which send pings too quickly.
 			ping.Reset(e.timing.ping)
 		case p := <-packets:
-			if p.err != nil {
-				select {
-				case <-e.s.abort:
-					return ErrClosed
-				default:
-				}
-				return fmt.Errorf("worldserver disconnected: %w", p.err)
-			}
-			complete, err := e.handle(p.opcode, p.body)
+			complete, err := e.processIncoming(p)
 			if err != nil {
-				return fmt.Errorf("world packet 0x%03x: %w", p.opcode, err)
-			}
-			if err := e.s.modules.Publish(p.opcode, p.body); err != nil {
 				return err
 			}
 			if complete {
-				// Do not discard a subscribed logout-complete packet by canceling
-				// workers immediately. Keep callback writes off this wait path.
 				packets = nil
-				flushed := make(chan error, 1)
-				e.finalPackets = flushed
-				e.s.workers.Add(1)
-				go func() {
-					defer e.s.workers.Done()
-					ctx, cancel := context.WithTimeout(e.s.ctx, 5*time.Second)
-					defer cancel()
-					flushed <- e.s.modules.FlushPackets(ctx)
-				}()
 			}
 		}
 	}
+}
+
+func (e *engine) processIncoming(p packet) (bool, error) {
+	if p.err != nil {
+		select {
+		case <-e.s.abort:
+			return false, ErrClosed
+		default:
+		}
+		return false, fmt.Errorf("worldserver disconnected: %w", p.err)
+	}
+	complete, err := e.handle(p.opcode, p.body)
+	if err != nil {
+		return false, fmt.Errorf("world packet 0x%03x: %w", p.opcode, err)
+	}
+	if err := e.publishObserved(p.opcode, p.body); err != nil {
+		return false, err
+	}
+	if complete {
+		// Keep callback writes serviced while subscribed logout-complete
+		// packets drain. The caller then disables further inbound processing.
+		flushed := make(chan error, 1)
+		e.finalPackets = flushed
+		e.s.workers.Add(1)
+		go func() {
+			defer e.s.workers.Done()
+			ctx, cancel := context.WithTimeout(e.s.ctx, 5*time.Second)
+			defer cancel()
+			flushed <- e.s.modules.FlushPackets(ctx)
+		}()
+	}
+	return complete, nil
 }

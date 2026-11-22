@@ -13,7 +13,9 @@ import (
 	buddyworld "github.com/agent-wow/agent-wow/modules/buddy-world"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/buddyidentity"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
@@ -28,6 +30,10 @@ func run() error {
 	socket := os.Getenv("AGENT_WOW_MODULE_SOCKET")
 	if socket == "" {
 		return errors.New("AGENT_WOW_MODULE_SOCKET is required; start through agent-wow char play")
+	}
+	sessionSocket := os.Getenv("AGENT_WOW_SESSION_SOCKET")
+	if sessionSocket == "" {
+		return errors.New("AGENT_WOW_SESSION_SOCKET is required; start through agent-wow char play")
 	}
 	identity, err := buddyidentity.Parse(os.Getenv("AGENT_WOW_CHARACTER_GUID"), os.Getenv("BUDDY_INDEPENDENT"))
 	if err != nil {
@@ -49,6 +55,12 @@ func run() error {
 	if identity.Independent() {
 		service = buddyworld.NewIndependentService(identity.SelfGUID)
 	}
+	connection, err := grpc.NewClient("unix://"+sessionSocket, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDisableRetry(), grpc.WithDefaultCallOptions(grpc.MaxRetryRPCBufferSize(0)))
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	service.ConfigureSession(modv1.NewSessionClient(connection))
 	// Retain raw combat evidence in a persistent named volume. Failure to
 	// persist is exposed by the public stream; it must not disconnect a player.
 	sessionID := os.Getenv("AGENT_WOW_SESSION_ID")
