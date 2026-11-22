@@ -134,6 +134,31 @@ class TestGMTaskHost(unittest.TestCase):
   self.assertIn('start',tools);self.assertIn('status',tools);self.assertIn('cancel',tools);self.assertIn('behaviors/gm-recovery.lua',tools['policy']);self.assertIn('broad rank-2',tools['instructions'])
   self.assertIn('execute',tools);self.assertIn('select',tools)
   self.assertIn('--select-guid',tools['execute']);self.assertIn('--session-id',tools['execute'])
+ def test_rejected_resume_preserves_goal_invocation_and_other_writer(self):
+  for refusal in ('changed_goal','changed_body','foreign_writer'):
+   with self.subTest(refusal=refusal),tempfile.TemporaryDirectory() as folder:
+    root=Path(folder).resolve();state=root/'task';goal=dict(id='original',members=[])
+    original_invocation=b'{"rpcUrl":"original","goal":"original-goal.json","policy":"original.lua"}'
+    with gm.task_store(state) as store:
+     store.save(dict(version=1,goal=goal,memory={},last=None,reservations={},holds={},
+       identity=dict(sessionId='aw-123',guid='87',rpcUrl='http://127.0.0.1:8090/rpc')))
+     store.write('invocation.json',original_invocation,gm.runtime.MAX_INPUT)
+    goal_path=root/'user-goal.json';goal_path.write_text(json.dumps(dict(goal,id='changed') if refusal=='changed_goal' else goal))
+    transport=root/'transport.json';cfg=dict(writerRoot=str(root/'writers'));transport.write_text(json.dumps(cfg))
+    sid='aw-456' if refusal=='changed_body' else 'aw-123'
+    rpc=types.SimpleNamespace(call=lambda *_:dict(sessionId=sid,selfGuid='87'))
+    writer=gm.task_store(gm.writer_folder(root,sid,cfg))
+    if refusal=='foreign_writer':
+     with writer:gm.claim_writer(writer,root/'other-task')
+     writer_before=(writer.folder/'state.json').read_bytes()
+    with patch.object(gm,'task_rpc',return_value=rpc),patch.object(gm,'SessionTransport'),patch.object(gm,'task_bridge'),patch.object(gm.Host,'run') as run:
+     with self.assertRaisesRegex(ValueError,{'changed_goal':'explicit task goal','changed_body':'another GM body','foreign_writer':'already owns'}[refusal]):
+      gm.main(['run','--state-dir',str(state),'--goal',str(goal_path),'--transport',str(transport),'--rpc-url','http://127.0.0.1:8090/rpc'])
+    run.assert_not_called()
+    self.assertEqual((state/'invocation.json').read_bytes(),original_invocation)
+    self.assertEqual(gm.task_store(state).load()['goal'],goal)
+    if refusal=='foreign_writer':self.assertEqual((writer.folder/'state.json').read_bytes(),writer_before)
+    else:self.assertFalse((writer.folder/'state.json').exists())
 
 class TestGMTaskCapacity(unittest.TestCase):
  def test_hold_reload_uses_explicit_rpc_budget_before_any_real_write(self):
