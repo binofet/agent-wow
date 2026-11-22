@@ -283,7 +283,7 @@ class GMTaskObservationTests(unittest.TestCase):
         (state/'cancel.json').write_text('{}')
         by_url={m['rpcUrl']:clients[str(m['guid'])] for m in self.goal['members'] if m.get('rpcUrl')}
         by_url[args[-1]]=self.gm;transport,bridge=Mock(),Mock()
-        with patch.object(gm,'task_rpc',side_effect=lambda url:by_url[url]),patch.object(gm,'SessionTransport',return_value=transport),patch.object(gm,'task_bridge',return_value=bridge),contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(gm,'task_rpc',side_effect=lambda url:by_url[url]),patch.object(gm,'SessionTransport',return_value=transport),patch.object(gm,'task_bridge',return_value=bridge),patch.object(gm.signal,'signal'),contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(gm.main(args),1) # cancellation is not a success claim
         saved=gm.task_store(state).load()
         self.assertTrue(saved['cancelled'] and saved['cleanupComplete'])
