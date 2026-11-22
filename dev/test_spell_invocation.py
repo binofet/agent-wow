@@ -25,7 +25,7 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             spellbookKnown=True,spells={},targets={},players={'4':dict(guid='4',present=True,
             aliveKnown=True,alive=True,mapKnown=True,mapId=0,positionKnown=True,x=1,y=2,z=3)})
 
-    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False,sequence="2"):
+    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False,sequence="2",clock_ms=1000):
         if composed:
             if checkpoint:
                 checkpoint=copy.deepcopy(checkpoint)
@@ -44,7 +44,7 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             body+='return {output={action=a,spellInvocation=s},checkpoint=p.export_state()}'
         value=dict(events=events or [],checkpoint=checkpoint,obs=obs or self.obs(),select=select,
             frame=dict(session_id='spell-body',cursor=sequence,pending=pending or [],
-                input=dict(kind='encounter',observationSequence=sequence),clock=dict(monotonicMs=1000,unixMs=1000)))
+                input=dict(kind='encounter',observationSequence=sequence),clock=dict(monotonicMs=clock_ms,unixMs=clock_ms)))
         return self.bridge.evaluate(setup+'return {decide=function(input) '+body+' end}',value)
 
     def events(self,spell=2120,**fields):
@@ -143,6 +143,176 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         obs.pop('interaction')
         selected=self.run_policy([self.encounter_event(obs,'3')],checkpoint=yielded['checkpoint'],composed=True,sequence='3')
         self.assertEqual(selected['output']['action']['capability'],'cast_spell')
+
+    def stationary_obs(self, moving=False, remaining=None, owner='spell:stationary-1'):
+        obs=self.obs()
+        obs['players']['4'].update(movementKnown=True,moving=moving)
+        obs['navigation']=dict(movementOwner={})
+        if remaining is not None:
+            obs['navigation']['movementOwner']=dict(active=True,owner=owner,remainingMs=str(remaining))
+        return obs
+
+    def stationary_request(self, **fields):
+        return dict(kind='command',sequence='3',value=dict(task='cast_spell',id='stationary-1',spellId=8427,
+            requirements=dict(stationary=True),targets=dict(mask=64,destination=dict(x=1,y=2,z=3)),**fields))
+
+    def prep_receipt(self, mode='acquire', outcome='confirmed', action_id='41', **payload):
+        data=dict(capability='movement_owner',mode=mode,owner='spell:stationary-1')
+        if mode!='release':data['result']=dict(token='exact-finite-token')
+        data.update(payload)
+        return dict(kind='action_result',receipt=dict(action_id=action_id,outcome=outcome,payload=data))
+
+    def prepared_cast(self):
+        obs=self.stationary_obs()
+        acquired=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)
+        self.assertEqual(acquired['output']['action']['mode'],'acquire')
+        obs=self.stationary_obs(remaining=2900)
+        cast=self.run_policy([self.prep_receipt(),self.encounter_event(obs,'4')],
+            checkpoint=acquired['checkpoint'],composed=True,obs=obs,sequence='4')
+        self.assertEqual(cast['output']['action']['capability'],'cast_spell')
+        return cast
+
+    def test_moving_ground_cast_stops_then_observes_stationary_acquires_and_casts(self):
+        obs=self.stationary_obs(moving=True)
+        first=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)
+        action=first['output']['action']
+        self.assertEqual(action['capability'],'stop_movement')
+        self.assertEqual(action['targetGuid'],'4')
+        self.assertNotIn('issued',first['checkpoint']['data']['spellInvocation']['data']['current'])
+        stop=dict(kind='action_result',receipt=dict(action_id='40',outcome='settled_unverified',
+            payload=dict(capability='stop_movement',target_guid='4',visit_id='1',transport_written=True)))
+        obs['navigation']['motionUnconfirmed']=True
+        uncertain=self.run_policy([stop,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],
+            composed=True,sequence='4')
+        self.assertNotIn('action',uncertain['output'])
+        repeat=self.run_policy([self.encounter_event(obs,'5')],checkpoint=uncertain['checkpoint'],composed=True,sequence='5')
+        self.assertNotIn('action',repeat['output']) # Unknown STOP is never replayed after reload.
+        obs=self.stationary_obs()
+        acquire=self.run_policy([self.encounter_event(obs,'6')],checkpoint=repeat['checkpoint'],composed=True,sequence='6')
+        self.assertEqual(acquire['output']['action']['mode'],'acquire')
+        self.assertEqual(acquire['output']['action']['leaseMs'],3000)
+        obs=self.stationary_obs(remaining=2900)
+        cast=self.run_policy([self.prep_receipt(),self.encounter_event(obs,'7')],checkpoint=acquire['checkpoint'],composed=True,sequence='7')
+        self.assertEqual(cast['output']['action']['capability'],'cast_spell')
+        self.assertEqual(cast['output']['action']['targets']['mask'],64)
+        self.assertTrue(cast['checkpoint']['data']['spellInvocation']['data']['current']['issued'])
+
+    def test_channel_pending_renews_finite_lease_and_end_releases_without_replaying(self):
+        cast=self.prepared_cast();pending=[dict(action_id='51',outcome='unknown')]
+        obs=self.stationary_obs(remaining=1000)
+        renew=self.run_policy([self.encounter_event(obs,'5')],checkpoint=cast['checkpoint'],pending=pending,
+            composed=True,sequence='5',clock_ms=3000)
+        self.assertEqual(renew['output']['action']['capability'],'movement_owner')
+        self.assertEqual(renew['output']['action']['mode'],'renew')
+        self.assertEqual(renew['output']['action']['token'],'exact-finite-token')
+        current=renew['checkpoint']['data']['spellInvocation']['data']['current']
+        self.assertTrue(current['issued']);self.assertEqual(current['actionId'],'51')
+        obs=self.stationary_obs(remaining=2900)
+        waiting=self.run_policy([self.prep_receipt('renew',action_id='52'),self.encounter_event(obs,'6')],
+            checkpoint=renew['checkpoint'],pending=pending,composed=True,sequence='6',clock_ms=3200)
+        self.assertNotIn('action',waiting['output'])
+        ended=dict(kind='action_result',receipt=dict(action_id='51',outcome='settled_unverified',
+            payload=dict(capability='cast_spell',spell_id=8427,phase='channel_ended')))
+        release=self.run_policy([ended,self.encounter_event(obs,'7')],checkpoint=waiting['checkpoint'],
+            composed=True,sequence='7',clock_ms=4000)
+        self.assertEqual(release['output']['action']['mode'],'release')
+        data=release['checkpoint']['data']['spellInvocation']['data']
+        self.assertNotIn('current',data);self.assertEqual(data['last']['receipt']['phase'],'channel_ended')
+        obs=self.stationary_obs()
+        done=self.run_policy([self.prep_receipt('release',action_id='53'),self.encounter_event(obs,'8'),self.stationary_request()],
+            checkpoint=release['checkpoint'],composed=True,sequence='8',clock_ms=4100)
+        self.assertNotIn('action',done['output'])
+        self.assertNotIn('releasing',done['checkpoint']['data']['spellInvocation']['data'])
+
+    def test_rejection_and_cancel_before_cast_release_only_the_owned_token(self):
+        cast=self.prepared_cast();obs=self.stationary_obs(remaining=2500)
+        rejection=dict(kind='action_result',receipt=dict(action_id='51',outcome='failed',
+            payload=dict(capability='cast_spell',spell_id=8427,phase='server_rejected_no_replay')))
+        release=self.run_policy([rejection,self.encounter_event(obs,'5')],checkpoint=cast['checkpoint'],composed=True,sequence='5')
+        self.assertEqual(release['output']['action']['mode'],'release')
+        self.assertEqual(release['output']['action']['token'],'exact-finite-token')
+        # Cancellation after a grant but before dispatch has the same finite cleanup.
+        start=self.run_policy([self.encounter_event(self.stationary_obs()),self.stationary_request()],composed=True)
+        cancel=dict(kind='command',value=dict(task='cancel_spell_request',id='stationary-1'))
+        stopped=self.run_policy([self.prep_receipt(),cancel,self.encounter_event(obs,'4')],checkpoint=start['checkpoint'],composed=True,sequence='4')
+        self.assertEqual(stopped['output']['action']['mode'],'release')
+        # A later owner's movement instruction is never released or reacquired.
+        other=self.stationary_obs(remaining=2500,owner='task:newer-owner')
+        replaced=self.run_policy([rejection,self.encounter_event(other,'5')],checkpoint=cast['checkpoint'],composed=True,sequence='5')
+        self.assertNotIn('action',replaced['output'])
+        self.assertNotIn('releasing',replaced['checkpoint']['data']['spellInvocation']['data'])
+
+    def test_cancel_transport_beats_renewal_but_original_channel_keeps_hold_until_end(self):
+        cast=self.prepared_cast();obs=self.stationary_obs(remaining=1000);pending=[dict(action_id='51',outcome='unknown')]
+        cancel=dict(kind='command',value=dict(task='cancel_spell',id='cancel-pending',spellId=8427,
+            expectedOperationRevision='987654321098765432',channel=True))
+        chosen=self.run_policy([cancel,self.encounter_event(obs,'5')],checkpoint=cast['checkpoint'],pending=pending,composed=True,sequence='5')
+        self.assertEqual(chosen['output']['action']['capability'],'cancel_spell')
+        prep=chosen['checkpoint']['data']['spellInvocation']['data']['current']['preparation']
+        self.assertNotIn('operation',prep) # Preempted renewal is not privately reserved.
+        receipt=dict(kind='action_result',receipt=dict(action_id='52',outcome='settled_unverified',
+            payload=dict(capability='cancel_spell',spell_id=8427,phase='cancel_transport_written')))
+        held=self.run_policy([receipt,self.encounter_event(obs,'6')],checkpoint=chosen['checkpoint'],pending=pending,composed=True,sequence='6')
+        self.assertEqual(held['output']['action']['mode'],'renew')
+        self.assertTrue(held['checkpoint']['data']['spellInvocation']['data']['current']['issued'])
+
+    def test_unknown_grant_allows_help_and_expiry_never_guesses_token_or_releases_later_owner(self):
+        obs=self.stationary_obs()
+        first=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)
+        obs=self.support_obs('near_heal');obs['navigation']=dict(movementOwner=dict(active=True,owner='spell:stationary-1',remainingMs='2000'))
+        unknown=self.prep_receipt(outcome='settled_unverified',result={})
+        helping=self.run_policy([unknown,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4',clock_ms=2000)
+        self.assertEqual(helping['output']['action']['capability'],'heal')
+        self.assertNotIn('token',helping['checkpoint']['data']['spellInvocation']['data']['current']['preparation'])
+        cancel=dict(kind='command',value=dict(task='cancel_spell_request',id='stationary-1'))
+        other=self.stationary_obs(remaining=3000,owner='task:later-instruction')
+        done=self.run_policy([cancel,self.encounter_event(other,'5')],checkpoint=helping['checkpoint'],composed=True,sequence='5',clock_ms=5000)
+        self.assertNotIn('action',done['output'])
+        self.assertNotIn('releasing',done['checkpoint']['data']['spellInvocation']['data'])
+
+    def test_death_visit_and_body_change_cleanup_does_not_touch_another_body(self):
+        cast=self.prepared_cast()
+        for change in ('dead','visit','body'):
+            with self.subTest(change=change):
+                obs=self.stationary_obs(remaining=2000)
+                if change=='dead':obs['players']['4']['alive']=False
+                elif change=='visit':obs['visitId']='2'
+                else:obs['sessionId']='replacement-body'
+                result=self.run_policy([self.encounter_event(obs,'5')],checkpoint=cast['checkpoint'],
+                    pending=[dict(action_id='51',outcome='unknown')],composed=True,sequence='5')
+                data=result['checkpoint']['data']['spellInvocation']['data']
+                if change=='body':
+                    self.assertNotIn('action',result['output'])
+                    # Current-body gate prevents all mutations; the old lease
+                    # expires natively instead of being sent to another body.
+                else:
+                    self.assertEqual(result['output']['action']['mode'],'release')
+                    self.assertEqual(result['output']['action']['token'],'exact-finite-token')
+                    self.assertNotIn('current',data)
+
+    def test_final_outer_release_does_not_reserve_unselected_preparation(self):
+        obs=self.support_obs('far_heal');obs['navigation']=dict(movementOwner={})
+        obs['interaction']=dict(owner='training',token='current-training-token')
+        first=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)
+        self.assertEqual(first['output']['action']['capability'],'release_interaction')
+        prep=first['checkpoint']['data']['spellInvocation']['data']['current']['preparation']
+        self.assertNotIn('operation',prep)
+        obs.pop('interaction')
+        selected=self.run_policy([self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4')
+        self.assertEqual(selected['output']['action']['capability'],'movement_owner')
+        self.assertEqual(selected['output']['action']['mode'],'acquire')
+
+    def test_requirement_facts_opt_in_without_class_ids_and_instant_moving_cast_stays_direct(self):
+        obs=self.stationary_obs(moving=True);obs['spells']={'4294967294':dict(castTimeMs=2000)}
+        request=dict(kind='command',value=dict(task='cast_spell',id='newly-learned',spellId=4294967294))
+        prepared=self.run_policy([self.encounter_event(obs),request],composed=True)
+        self.assertEqual(prepared['output']['action']['capability'],'stop_movement')
+        request['value']['requirements']=dict(stationary=False)
+        direct=self.run_policy([self.encounter_event(obs),request],composed=True)
+        self.assertEqual(direct['output']['action']['capability'],'cast_spell')
+        obs['spells']={};request['value'].pop('requirements')
+        instant=self.run_policy([self.encounter_event(obs),request],composed=True)
+        self.assertEqual(instant['output']['action']['capability'],'cast_spell')
 
     def test_ground_flamestrike_blizzard_implicit_explosion_and_unfamiliar_learned_id(self):
         point=dict(x=123.25,y=-45.5,z=18.0)
