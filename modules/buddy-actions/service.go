@@ -101,6 +101,7 @@ type Service struct {
 	movementOwner                              movementOwner
 	interactionToken                           string
 	interactionUntil                           time.Time
+	idleInteraction                            idleInteractionBinding
 	harvestGuardAt                             time.Time
 	assistUntil, nextAssist                    time.Time
 	pendingSpell                               uint32
