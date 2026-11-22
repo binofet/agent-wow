@@ -359,9 +359,32 @@ class Host:
         self.persist()
         if out.get('action'):self.dispatch(out['action'],observations)
         return out
+    def cancel_before_dispatch(self):
+        if not (self.stopping or (self.store.folder/'cancel.json').exists()):return None
+        self.stopping=True
+        # Before Lua has run or reserved a game action, only recorded policy
+        # holds need cleanup. Do not install more holds or observe an unheld,
+        # unavailable member merely to cancel the failed admission.
+        if self.data.get('reservations') or self.data.get('last') is not None or self.data.get('memory'):return None
+        identity=self.data.get('identity') or {}
+        live=self.rpc.call('buddy-actions.status',{});party=self.rpc.call('buddy-party.state',{})
+        if (str(live.get('selfGuid'))!='87' or identity.get('guid')!='87'
+                or live.get('sessionId')!=identity.get('sessionId') or party.get('sessionId')!=identity.get('sessionId')):
+            raise ValueError('current GM task body required before pre-dispatch cleanup')
+        errors=self.restore_holds()
+        out=dict(memory=self.data['memory'],phase='cancelled',cancelled=True,cleanupComplete=not errors,
+            done=False,success=False,error='policy_restore_incomplete' if errors else None,resumable=bool(errors))
+        self.data.update(out);self.persist();return out
     def run(self):
         try:
-            self.install_holds()
+            out=self.cancel_before_dispatch()
+            if out is not None:return out
+            try:self.install_holds()
+            except Exception:
+                # An explicit abort can arrive during partial installation.
+                out=self.cancel_before_dispatch()
+                if out is not None:return out
+                raise
             while True:
                 if (self.store.folder/'cancel.json').exists():self.stopping=True
                 out=self.step()
@@ -564,7 +587,6 @@ def main(argv=None):
     if not args.goal or not args.transport or not args.rpc_url:parser.error('run requires --goal, --transport and --rpc-url')
     goal=json.loads(args.goal.read_text());config=json.loads(args.transport.read_text())
     with task_store(args.state_dir.absolute()) as store:
-        store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
         rpc=task_rpc(args.rpc_url);sid=rpc.call('buddy-actions.status',{}).get('sessionId')
         host=Host(store,rpc,SessionTransport(rpc,config),task_bridge(args.policy_binary,ROOT/'modules'),goal,args.policy,ROOT/'behaviors/gm-recovery-hold.lua')
         identity=dict(sessionId=sid,guid='87',rpcUrl=args.rpc_url)
@@ -572,6 +594,7 @@ def main(argv=None):
         if prior is not None and prior!=identity:raise ValueError('task belongs to another GM body; inspect before recovery')
         with task_store(writer_folder(ROOT,sid,config).absolute()) as owner:
             owned=claim_writer(owner,store.folder)
+            store.write('invocation.json',json.dumps(invocation_from_args(args)).encode(),runtime.MAX_INPUT)
             host.data['identity']=identity;host.persist()
             for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:setattr(host,'stopping',True))
             result=host.run()
