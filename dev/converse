@@ -5,13 +5,14 @@ Usage: dev/converse run [--rpc-url http://127.0.0.1:8086/rpc]
        dev/converse status
        dev/converse stop
 
-Uses existing Codex CLI authentication. Account credentials are not needed here.
+Uses the existing Codex tool runner with its selected model transport.
 """
 
 import argparse
 import copy
 import datetime
 import fcntl
+from functools import lru_cache
 import hashlib
 import importlib.util
 import json
@@ -669,6 +670,14 @@ def explicit_reasoning_effort(value):
     if value is not None and value not in ('low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ConversationError('Explicit reasoning effort is invalid')
     return value
+
+
+@lru_cache(maxsize=1)
+def mana_supply_module():
+    spec = importlib.util.spec_from_file_location("companion_mana_supply", ROOT / "dev/party_mana_supply.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def task_runtime_module():
@@ -2201,7 +2210,62 @@ def registered_developer_workspace(guid, name):
     return Path(matches[0]["workspace"])
 
 
-def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None):
+def model_transport(provider="codex", *, model=None, base_url=None, local_provider=None, api_key_env=None):
+    """Bind one explicit transport; an unavailable provider never selects another."""
+    if provider not in ("codex", "local", "responses"):
+        raise ConversationError("Unsupported model provider")
+    if provider == "codex":
+        if any(value is not None for value in (base_url, local_provider, api_key_env)):
+            raise ConversationError("Model endpoint options require an explicit provider")
+        return dict(provider=provider)
+    if explicit_model(model) is None:
+        raise ConversationError("This model provider requires an explicit model")
+    if (not isinstance(base_url, str) or not 1 <= len(base_url) <= 2048
+            or any(char.isspace() or ord(char) < 32 for char in base_url)):
+        raise ConversationError("An explicit model base URL is required")
+    try:
+        parsed = urllib.parse.urlsplit(base_url)
+        port = parsed.port
+    except ValueError:
+        raise ConversationError("Invalid model base URL") from None
+    loopback = parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    if (not parsed.hostname or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or port is not None and not 0 < port < 65536
+            or parsed.scheme not in ("http", "https") or parsed.scheme == "http" and not loopback
+            or provider == "local" and not loopback):
+        raise ConversationError("Model base URL must use HTTPS or explicit loopback HTTP")
+    if provider == "local":
+        local_provider = local_provider or "lmstudio"
+        if local_provider not in ("lmstudio", "ollama") or api_key_env is not None:
+            raise ConversationError("Local models require LM Studio or Ollama without hosted credentials")
+    elif local_provider is not None:
+        raise ConversationError("Local provider is only valid for a local model")
+    if api_key_env is not None and (not isinstance(api_key_env, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", api_key_env) is None):
+        raise ConversationError("Model API key must name an environment variable")
+    return dict(provider=provider, baseURL=base_url.rstrip("/"),
+                localProvider=local_provider, apiKeyEnv=api_key_env)
+
+
+def codex_environment(transport):
+    if transport.get("provider") != "local":
+        return None  # Preserve the maintained CLI environment for other providers.
+    environment = os.environ.copy()
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_OSS_PORT",
+                 "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        environment.pop(name, None)
+    # Codex's built-in OSS providers read this explicit endpoint before their defaults.
+    environment["CODEX_OSS_BASE_URL"] = transport["baseURL"]
+    environment["NO_PROXY"] = environment["no_proxy"] = "127.0.0.1,localhost,::1"
+    return environment
+
+
+def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None, *, transport=None):
+    if transport is not None and not isinstance(transport, dict):
+        raise ConversationError("Invalid model transport")
+    configured = transport or dict(provider="codex")
+    transport = model_transport(configured.get("provider"), model=model, base_url=configured.get("baseURL"),
+        local_provider=configured.get("localProvider"), api_key_env=configured.get("apiKeyEnv"))
     command = [str(binary), "exec", "--ephemeral", "--ignore-user-config",
                "--skip-git-repo-check", "--color", "never",
                "--json", "--output-schema", str(schema), "--output-last-message", str(output),
@@ -2210,7 +2274,22 @@ def codex_command(binary, workspace, schema, output, developer=False, model=None
     if explicit_model(model) is not None: command.extend(("--model", model))
     if explicit_reasoning_effort(reasoning_effort) is not None:
         command.extend(("-c", 'model_reasoning_effort=' + json.dumps(reasoning_effort)))
-    command += ["--approve-for-me"] if developer else ["--sandbox", "read-only"]
+    provider = transport["provider"]
+    if provider == "local":
+        command.extend(("--oss", "--local-provider", transport["localProvider"],
+                        "-c", "model_provider=" + json.dumps(transport["localProvider"])))
+    elif provider == "responses":
+        command.extend(("-c", 'model_provider="buddy_responses"'))
+        for key, value in dict(name="Explicit Responses provider", base_url=transport["baseURL"],
+                wire_api="responses", requires_openai_auth=False).items():
+            command.extend(("-c", "model_providers.buddy_responses." + key + "=" + json.dumps(value)))
+        if transport["apiKeyEnv"] is not None:
+            command.extend(("-c", "model_providers.buddy_responses.env_key=" + json.dumps(transport["apiKeyEnv"])))
+    if provider == "codex":
+        command += ["--approve-for-me"] if developer else ["--sandbox", "read-only"]
+    else:
+        command.extend(("--sandbox", "workspace-write" if developer else "read-only",
+                        "-c", 'approval_policy="never"', "-c", 'approvals_reviewer="user"'))
     for feature in DISABLED_FEATURES:
         if developer and feature in DEVELOPER_FEATURES:
             continue
@@ -2343,11 +2422,13 @@ class CodexBrain:
             super().__init__(*args, **kwargs)
             self.owned_review_check = owned_review_check
 
-    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
+    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
         self.binary, self.state_dir = Path(binary), Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
         self.character_name, self.model = character_name, explicit_model(model)
+        self.transport = model_transport(provider, model=self.model, base_url=base_url,
+                                         local_provider=local_provider, api_key_env=api_key_env)
         self.gm_instructions = ""
         if character_name.casefold() == "lotharen":
             self.gm_instructions = gm_tasks.INSTRUCTIONS
@@ -2367,9 +2448,15 @@ class CodexBrain:
         self.last_request_id = None
 
     def model_selection(self):
-        return dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
+        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
                     configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
                     requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
+        transport = getattr(self, "transport", dict(provider="codex"))
+        selection.update(provider=transport["provider"])
+        if transport["provider"] != "codex":
+            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
+                             localProvider=transport["localProvider"])
+        return selection
 
     def development_enabled(self, state):
         if self.developer_workspace is None or not isinstance(state,dict): return False
@@ -2530,7 +2617,8 @@ class CodexBrain:
         finally:self._generation=None
 
     def _generate(self, history, control_state=None, cancelled=None):
-        if getattr(self, "included_usage_only", False):
+        transport = getattr(self, "transport", dict(provider="codex"))
+        if transport["provider"] == "codex" and getattr(self, "included_usage_only", False):
             self._generation['stage']='included_usage_check'
             try:
                 available = check_included_usage(self.binary)
@@ -2606,9 +2694,10 @@ class CodexBrain:
             with tempfile.TemporaryFile(dir=folder) as events, tempfile.TemporaryFile(dir=folder) as errors:
                 self._generation['stage']='spawning'
                 process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer,
-                                                        model=self.model, reasoning_effort=self.reasoning_effort),
+                                                        model=self.model, reasoning_effort=self.reasoning_effort,
+                                                        transport=transport),
                                            stdin=subprocess.PIPE, stdout=events, stderr=errors,
-                                           start_new_session=True)
+                                           start_new_session=True, env=codex_environment(transport))
                 self._generation['stage']='running'
                 progress=getattr(self,'_generation_progress',None) if developer else None
                 progress_at=0.0
@@ -2644,7 +2733,8 @@ class CodexBrain:
                         time.sleep(0.1)
                     if process.returncode:
                         reason='process_failed'
-                        raise ConversationError("Codex reply failed; verify codex login status")
+                        raise ConversationError("Codex reply failed; verify codex login status" if transport["provider"] == "codex"
+                            else "Selected model provider failed; no provider fallback was attempted")
                     if errors.tell() > limit:
                         reason='output_limit'
                         raise ConversationError("Codex output exceeds the limit")
@@ -2766,7 +2856,8 @@ def parse_lua_control_request(text):
 
 class BuddyControls:
     """Only fixed-owner game controls; the model never supplies RPC methods."""
-    def __init__(self, rpc, player_name="Joel", character_class="priest", owner_quest_context=None, character_guid=1):
+    def __init__(self, rpc, player_name="Joel", character_class="priest", owner_quest_context=None, character_guid=1,
+                 *, supply_state_dir=None, profile_identity=None):
         self.rpc, self.player_name = rpc, player_name
         self.character_class = character_class
         self.owner_quest_context = owner_quest_context
@@ -2791,6 +2882,96 @@ class BuddyControls:
         self.spellbook_observation, self.learned_spell_notice = None, None
         self.emote_catalog = {"available": False}
         self.mission_follow_binding = None
+        self.lua_water_supply = {}
+        self.water_supply_phase = "idle"
+        self.supply_state_dir = Path(supply_state_dir).absolute() if supply_state_dir is not None else None
+        self.supply_profile_identity = copy.deepcopy(profile_identity)
+        self._water_supply_loaded = False
+
+    def load_water_supply(self, supply):
+        identity = self.supply_profile_identity
+        if (self.supply_state_dir is None or not isinstance(identity, dict)
+                or identity.get("guid") != self.character_guid or identity.get("owner_guid") != supply.OWNER_GUID
+                or identity.get("rpc_url") != getattr(self.rpc, "url", None)
+                or identity.get("rpc_url") != f"http://127.0.0.1:{supply.MIRA}/rpc"):
+            raise ConversationError("Durable current-profile water supply state required")
+        if self._water_supply_loaded:
+            return
+        folder = ensure_state(self.supply_state_dir)
+        if folder.resolve() != folder:
+            raise ConversationError("Water supply profile directory cannot contain symlinks")
+        runtime = supply.runtime
+        path = folder / "mana-supply.json"
+        try:
+            record = runtime.decoded(runtime.read_file(path, runtime.MAX_STATE, True))
+        except FileNotFoundError:
+            record = {"version": 1, "profile": identity, "state": {}}
+        if (not isinstance(record, dict) or set(record) != {"version", "profile", "state"}
+                or type(record["version"]) is not int or record["version"] != 1
+                or record["profile"] != identity or not isinstance(record["state"], dict)):
+            raise ConversationError("Stored water supply profile binding is invalid; state retained")
+        self.lua_water_supply = record["state"]
+        self._water_supply_store = runtime.Store(folder)
+        self._water_supply_loaded = True
+
+    def persist_water_supply(self, state):
+        runtime = mana_supply_module().runtime
+        record = {"version": 1, "profile": self.supply_profile_identity, "state": state}
+        # Reuse the existing private bounded atomic/fsync writer. The listener
+        # already holds the exclusive profile run lock; this adds no worker.
+        self._water_supply_store.write("mana-supply.json", runtime.packed(record, runtime.MAX_STATE), runtime.MAX_STATE)
+
+    def maintain_water_supply(self, *, still_current):
+        """Drive one accepted Lua turn; native RPCs execute its exact choice."""
+        if self.character_guid != 4:
+            return
+        yielded = False
+        try:
+            supply = mana_supply_module()
+            self.load_water_supply(supply)
+            clients = getattr(self, "_water_supply_clients", None)
+            if clients is None:
+                clients = self._water_supply_clients = {
+                    port: supply.runtime.RPC(f"http://127.0.0.1:{port}/rpc",
+                        request_bytes=8*1024*1024, response_bytes=8*1024*1024)
+                    for port in (supply.MIRA, *supply.RECIPIENTS)}
+
+            def call(port, method, params):
+                nonlocal yielded
+                # Do not consume chat here. The next normal tick acknowledges
+                # the owner before doing any more background work.
+                if yielded or not still_current():
+                    yielded = True
+                    raise supply.NotDispatched("owner_input_pending")
+                return clients[port].call(method, params, timeout=1.5)
+
+            observations = {}
+            for port in clients:
+                try:
+                    view = {name: call(port, method, {}) for name, method in (
+                        ("world", "buddy-world.snapshot"), ("actions", "buddy-actions.status"),
+                        ("inventory", "buddy-inventory.state"), ("trade", "buddy-trade.state"),
+                        ("party", "buddy-party.state"))}
+                    try:
+                        view["journal"] = call(port, "buddy-quests.journal", {"refresh": False})
+                    except supply.runtime.Error:
+                        view["journal"] = {}  # Unknown protection facts forbid disposal.
+                    if port == supply.MIRA:
+                        view["spell_toolkit"] = call(port, "buddy-actions.spell_toolkit", {})
+                    observations[port] = view
+                except supply.runtime.Error:
+                    continue
+            # B's adapter commits Lua reservations before the write and retains
+            # uncertain receipts. Even a zero-send preemption must not clear it.
+            self.water_supply_phase = supply.maintain_supply(call, observations, self.lua_water_supply,
+                                                           persist=self.persist_water_supply)
+        except OwnerInputPending:
+            pass
+        except Exception as error:
+            self.water_supply_phase = "accepted_water_policy_unavailable"
+            self.lua_water_supply["error"] = str(error)
+        if yielded:
+            self.water_supply_phase = "yielded_to_owner"
 
     def observe_learned_spells(self, raw):
         """One factual same-body ID delta; eligibility/coalescing stays in Lua."""
@@ -2833,8 +3014,16 @@ class BuddyControls:
                 spellbookRevision=current['spellbookRevision'],spellIds=current['spellIds']),sort_keys=True).encode()).hexdigest()
 
     def refresh(self):
+        def call(method, params, *, before_write=None):
+            current = getattr(self, "_refresh_current", None)
+            if current is not None and (self._refresh_yielded or not current()):
+                self._refresh_yielded = True
+                raise OwnerInputPending("Fact refresh yielded to current owner input")
+            if before_write is not None:before_write()
+            return self.rpc.call(method, params)
+
         try:
-            party = self.rpc.call("buddy-party.state", {})
+            party = call("buddy-party.state", {})
             self.party_available = True
             session = party.get("sessionId", "")
             if not isinstance(session, str) or not 1 <= len(session) <= 128:
@@ -2873,15 +3062,15 @@ class BuddyControls:
                     proposal = None
                 if proposal is not None:
                     # Reserve before writing: a timeout cannot cause a repeated accept.
-                    self.attempted_invites.add(key)
-                    result = self.rpc.call("buddy-party.accept", {
-                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": inviter})
+                    result = call("buddy-party.accept", {
+                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": inviter},
+                        before_write=lambda: self.attempted_invites.add(key))
                     if result.get("transportWritten") is not True:
                         raise ConversationError("Party acceptance write was not confirmed")
         except ConversationError:
             self.party_available = False
         try:
-            self.actions = self.rpc.call("buddy-actions.status", {})
+            self.actions = call("buddy-actions.status", {})
             casts = integer(self.actions.get("serverCastGo", "0"), "completed cast counter")
             if self.previous_cast_go is not None and casts > self.previous_cast_go:
                 self.events.append("server_confirmed_spell_cast")
@@ -2892,13 +3081,13 @@ class BuddyControls:
         self.spell_toolkit, self.professions = {"available": False}, {"available": False}
         if self.actions_available:
             try:
-                raw = self.rpc.call("buddy-actions.spell_toolkit", {})
+                raw = call("buddy-actions.spell_toolkit", {})
                 self.spell_toolkit = spell_toolkit_context(raw, self.actions, self.character_guid)
                 if self.spell_toolkit.get('available') is True:self.observe_learned_spells(raw)
             except ConversationError:
                 pass
         try:
-            raw = self.rpc.call("buddy-professions.state", {})
+            raw = call("buddy-professions.state", {})
             self.professions = professions_context(raw, self.character_guid, self.actions.get("sessionId") if self.actions_available else None)
         except ConversationError:
             pass
@@ -2906,7 +3095,7 @@ class BuddyControls:
                              ("trade", "buddy-trade.state"), ("journal", "buddy-quests.journal"),
                              ("quest_items", "buddy-quest-items.state")):
             try:
-                setattr(self, name, self.rpc.call(method, {"refresh": False} if name == "journal" else {}))
+                setattr(self, name, call(method, {"refresh": False} if name == "journal" else {}))
                 if name == "quest_items":
                     value = self.quest_items
                     if (integer(value.get("selfGuid", 0)) != self.character_guid
@@ -2936,7 +3125,7 @@ class BuddyControls:
                     setattr(self, name + "_available", False)
         self.events = self.events[-8:]
         try:
-            raw = self.rpc.call("buddy-inventory.state", {})
+            raw = call("buddy-inventory.state", {})
             inventory = inventory_context(raw, self.character_guid)
             if inventory["sessionId"] != self.inventory_session:
                 self.inventory_names, self.inventory_session = {}, inventory["sessionId"]
@@ -2944,7 +3133,7 @@ class BuddyControls:
                                        if row.get("metadataKnown") and row["entry"] not in self.inventory_names))[:6]
             if missing:
                 try:
-                    reply = self.rpc.call("buddy-trade.lookup_items", {"itemIds": missing})
+                    reply = call("buddy-trade.lookup_items", {"itemIds": missing})
                     rows = reply.get("items", [])
                     if reply.get("sessionId") == self.inventory_session and isinstance(rows, list) and len(rows) <= 6:
                         for row in rows:
@@ -4128,12 +4317,13 @@ class Conversation:
                 self.brain._generation_context=previous_context
                 self.brain._generation_progress=previous_progress
 
-    def same_body(self):
+    def same_body(self, *, timeout=None):
         if not self.session_id:
             return True
         try:
-            result = self.rpc.call("buddy-chat.poll", {"afterSequence": str(self.cursor),
-                                                       "limit": 256, "sessionId": self.session_id})
+            params = {"afterSequence": str(self.cursor), "limit": 256, "sessionId": self.session_id}
+            result = (self.rpc.call("buddy-chat.poll", params) if timeout is None else
+                      self.rpc.call("buddy-chat.poll", params, timeout=timeout))
         except CursorReset:
             self.reset_body()
             return False
@@ -4162,16 +4352,30 @@ class Conversation:
         self.status(lastGmCommand={"outcome": outcome, "sessionId": game_session, "cursor": self.cursor})
         self.send_reply({"text": text, "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
 
-    def tick(self):
-        if self.controls:
+    def refresh_controls(self):
+        if not self.controls:
+            return True
+        guarded = isinstance(self.controls, BuddyControls)
+        if guarded:
+            self.controls._refresh_yielded = False
+            self.controls._refresh_current = lambda: not self.stopped() and self.same_body(timeout=.25)
+        try:
             self.controls.refresh()
-            poll_combat=getattr(self.controls,'poll_combat',None)
-            if callable(poll_combat):poll_combat()
-        self.poll_shared_quest()
+        finally:
+            if guarded:self.controls._refresh_current = None
+        if guarded and self.controls._refresh_yielded:
+            self.status(phase="listening", generationPhase="yielded_for_chat_refresh", cursor=self.cursor)
+            return False
+        poll_combat = getattr(self.controls, "poll_combat", None)
+        if callable(poll_combat):poll_combat()
+        return True
+
+    def tick(self):
         resumed = not self.initialized
         if not self.initialized:
             result = self.baseline()
             if result is None:
+                if self.refresh_controls():self.poll_shared_quest()
                 return
             # The retained packet is the latest unanswered owner whisper from
             # this live chat body. Apply ordinary ownership, development and
@@ -4234,16 +4438,22 @@ class Conversation:
                     "text": text, "sender_guid": str(sender), "development_whisper": True})
             elif (sender in self.party_agents and channel in ("PARTY", "PARTY_LEADER")
                   and named(text, self.character_name) and self.peer_remaining > 0
-                  and time.monotonic() < self.peer_until and time.monotonic() >= self.next_peer
-                  and self.peer_member(sender)):
+                  and time.monotonic() < self.peer_until and time.monotonic() >= self.next_peer):
                 selected.append({"speaker": self.party_agents[sender], "channel": channel, "text": text, "sender_guid": str(sender)})
         # Advance before model/RPC work: ambiguous writes must not cause retries.
         self.cursor = next_sequence
         if not selected:
+            if not self.refresh_controls():return
+            self.poll_shared_quest()
             self.status(phase="listening", cursor=self.cursor)
             if self.maybe_repair_mission():return
             if self.maybe_review_combat():return
             if self.maybe_review_learned_spells():return
+            if isinstance(self.controls, BuddyControls) and self.character_guid == 4:
+                self.controls.maintain_water_supply(still_current=lambda:
+                    not self.stopped() and self.same_body(timeout=.25))
+                self.status(waterSupplyPhase=self.controls.water_supply_phase)
+                if self.controls.water_supply_phase == "yielded_to_owner":return
             self.maybe_initiate()
             return
         if result.get("cursorLost", False):
@@ -4258,6 +4468,7 @@ class Conversation:
         peer = integer(selected[-1]["sender_guid"]) != self.player_guid
         sender = integer(selected[-1]["sender_guid"])
         development_whisper = peer and selected[-1].get("development_whisper") is True
+        if peer and not development_whisper and not self.peer_member(sender, fresh=True):return
         if peer:
             selected = selected[-1:]
             if not development_whisper:
@@ -4277,6 +4488,7 @@ class Conversation:
             current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
             retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
         if acknowledged is False:return
+        if not self.refresh_controls():return
         allow_gm = (not peer and not resumed and self.session_id and self.character_guid == 87
                     and self.player_guid == 3 and self.character_name.casefold() == "lotharen")
         if allow_gm:
@@ -5012,8 +5224,12 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
+    parser.add_argument("--model-provider", choices=("codex", "local", "responses"), default="codex")
+    parser.add_argument("--model-base-url", help="Explicit local or Responses API base URL")
+    parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
+    parser.add_argument("--model-api-key-env", help="Environment variable name for a custom Responses provider")
     parser.add_argument("--included-usage-only", action="store_true",
-                        help="Keep listening and start model replies only while included Codex usage is available")
+                        help="For the Codex provider, start replies only while included usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
@@ -5030,6 +5246,8 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
+    model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
+                    local_provider=args.local_provider, api_key_env=args.model_api_key_env)
     if (not 0.2 <= args.poll_seconds <= 10 or args.reply_timeout is not None and not 5 <= args.reply_timeout <= 180
             or not 1 <= args.max_replies <= 1000 or not 0 < args.max_hours <= 24
             or not 0 < args.player_guid < 2**48
@@ -5079,14 +5297,17 @@ def main(argv=None):
         workspace = args.developer_workspace
         if workspace is None:
             workspace = registered_developer_workspace(args.character_guid, args.character_name)
+        provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
+            base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
         brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           workspace, args.model, args.reasoning_effort)
+                           workspace, args.model, args.reasoning_effort, **provider_options)
         brain.included_usage_only = args.included_usage_only
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
         record["requestedReasoningEffort"] = brain.reasoning_effort
         record["modelSelection"] = brain.model_selection()
-        controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid)
+        controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid,
+                                 supply_state_dir=state, profile_identity=identity)
         conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
                                     controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers)
         deadline = time.monotonic() + args.max_hours * 3600

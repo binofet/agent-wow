@@ -1,0 +1,588 @@
+#!/usr/bin/env python3
+"""Start or inspect the configured companions using the maintained launchers.
+
+Examples:
+  dev/companions start --settings config/companions.example.toml --dry-run
+  dev/companions models --settings config/companions.toml
+  dev/companions start --settings config/companions.toml
+  dev/companions restart-chat --settings config/companions.toml --actor mira
+
+Settings are JSON or TOML. The default brain is local LM Studio; changing to
+Claude/Gemini requires an explicit Responses gateway, model route and key-env
+name. No provider fallback, downloads, native rebuild or automatic restart.
+restart-chat changes only the owned conversation listener, keeping the native
+body/session and journals. Cross-host migration/logout is an operator step.
+"""
+
+import argparse
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
+
+ROOT = Path(__file__).resolve().parent.parent
+LOCAL_MODEL = "nvidia/nemotron-3.5-super-vl"
+CLASS_IDS = {"warrior": 1, "paladin": 2, "hunter": 3, "rogue": 4, "priest": 5,
+             "deathknight": 6, "shaman": 7, "mage": 8, "warlock": 9, "druid": 11}
+NATIVE_ENV = {"AGENT_WOW_AUTHSERVER_HOST", "AGENT_WOW_AUTHSERVER_PORT"}
+PROVIDER_FLAGS = ("--model-provider", "--model-base-url", "--local-provider", "--model-api-key-env")
+
+
+class Error(Exception):
+    pass
+
+
+def strict_json(raw):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    return json.loads(raw, object_pairs_hook=unique,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+
+
+def text(value, label):
+    if not isinstance(value, str) or not value or any(c in value for c in "\0\r\n"):
+        raise Error(f"{label} must be a nonempty single-line string")
+    return value
+
+
+def keys(value, allowed, label):
+    if not isinstance(value, dict) or set(value) - set(allowed):
+        raise Error(f"{label} has unknown fields or is not an object")
+    return value
+
+
+def path_at(root, value):
+    value = Path(text(str(value), "path"))
+    if ".." in value.parts or str(value).startswith("~"):
+        raise Error("Use an absolute path or a repository-relative path without '..' or '~'")
+    return str(value if value.is_absolute() else Path(root) / value)
+
+
+def endpoint(value, local=False):
+    value = text(value, "model base URL").rstrip("/")
+    if len(value) > 2048 or any(c.isspace() or ord(c) < 32 for c in value):
+        raise Error("Invalid model base URL")
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        raise Error("Invalid model base URL") from None
+    loopback = parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    if (parsed.scheme not in ("http", "https") or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment
+            or port is not None and not 0 < port < 65536 or parsed.scheme == "http" and not loopback
+            or local and not loopback):
+        raise Error("Model base URL must use HTTPS or explicit loopback HTTP; local models require loopback")
+    return value
+
+
+def model_settings(base, override):
+    allowed = {"provider", "base_url", "model", "local_provider", "api_key_env", "reasoning_effort", "codex"}
+    keys(base, allowed, "model settings")
+    keys(override, allowed, "actor model override")
+    if "provider" in override and override["provider"] != base.get("provider", "local"):
+        if "model" not in override or override["provider"] != "codex" and "base_url" not in override:
+            raise Error("Changing provider requires an explicit model and base_url (Codex needs only model)")
+        base = {}
+    result = dict(provider="local", base_url="http://127.0.0.1:18765/v1", model=LOCAL_MODEL,
+                  local_provider="lmstudio", codex="codex")
+    result.update(base)
+    result.update(override)
+    route = result["provider"]
+    if route not in ("local", "codex", "responses", "claude", "anthropic", "gemini"):
+        raise Error("provider must be local, codex, responses, claude/anthropic, or gemini")
+    result["route"] = route
+    result["provider"] = "responses" if route in ("claude", "anthropic", "gemini") else route
+    if result["provider"] == "responses" and "base_url" not in dict(base, **override):
+        raise Error("Responses/Claude/Gemini needs an explicit gateway base_url; local is not a fallback")
+    if not isinstance(result.get("model"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", result["model"]):
+        raise Error("Explicit model identifier is invalid")
+    result["codex"] = text(result.get("codex"), "Codex executable")
+    if result["provider"] != "codex":
+        result["base_url"] = endpoint(result.get("base_url"), result["provider"] == "local")
+    else:
+        result.pop("base_url", None)
+    if result["local_provider"] not in ("lmstudio", "ollama"):
+        raise Error("local_provider must be lmstudio or ollama")
+    key = result.get("api_key_env")
+    if result["provider"] == "local" and key is not None:
+        raise Error("Local models do not accept hosted credentials")
+    if key is not None and (not isinstance(key, str) or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", key)):
+        raise Error("api_key_env must name an environment variable; never put a key in settings")
+    if result["provider"] == "responses" and not key:
+        raise Error("Responses/Claude/Gemini requires an explicit gateway base_url and api_key_env")
+    if result.get("reasoning_effort") not in (None, "low", "medium", "high", "xhigh", "max", "ultra"):
+        raise Error("Invalid reasoning_effort")
+    return result
+
+
+def normalize(raw):
+    keys(raw, {"version", "default_host", "hosts", "model", "native_env", "actors"}, "settings")
+    if raw.get("version") != 1:
+        raise Error("Settings version must be 1")
+    hosts = raw.get("hosts")
+    if not isinstance(hosts, dict) or not hosts:
+        raise Error("At least one host is required")
+    for name, host in hosts.items():
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+            raise Error("Host names must be lowercase slugs")
+        keys(host, {"root", "address", "user", "local", "python"}, "host")
+        if not Path(text(host.get("root"), "host root")).is_absolute():
+            raise Error("Host root must be absolute")
+        if type(host.get("local", False)) is not bool:
+            raise Error("host.local must be boolean")
+        for key in ("address", "user"):
+            if key in host and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", host[key]):
+                raise Error(f"Invalid host {key}")
+        text(host.get("python", "python3"), "host Python executable")
+    actors = raw.get("actors")
+    if not isinstance(actors, dict) or not actors:
+        raise Error("At least one actor is required")
+    result, bodies, ports, profiles, states = [], set(), set(), set(), set()
+    for slug, row in actors.items():
+        keys(row, {"enabled", "host", "name", "guid", "class", "profile", "native_profile", "native_port",
+                   "native", "native_env", "model", "state_dir", "workspace", "banter_seconds"}, "actor")
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", slug) or type(row.get("enabled", True)) is not bool:
+            raise Error("Invalid actor name or enabled flag")
+        host_name = row.get("host", raw.get("default_host"))
+        if host_name not in hosts:
+            raise Error(f"Actor {slug} has an unknown host")
+        host = dict(hosts[host_name], id=host_name)
+        root = host["root"]
+        name, guid, kind = row.get("name"), row.get("guid"), row.get("class")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z]{2,12}", name):
+            raise Error("Actor character name must contain 2..12 letters")
+        if type(guid) is not int or not 0 < guid < 2**48 or guid == 3 or kind not in CLASS_IDS:
+            raise Error("Actor GUID/class is invalid")
+        profile = row.get("profile", slug)
+        native_profile = row.get("native_profile", profile)
+        if any(not isinstance(p, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", p) for p in (profile, native_profile)):
+            raise Error("Profiles must be lowercase slugs")
+        port = row.get("native_port")
+        if type(port) is not int or not 1024 <= port <= 65535:
+            raise Error("native_port must be 1024..65535")
+        banter = row.get("banter_seconds", 0)
+        if type(banter) not in (int, float) or not (banter == 0 or 120 <= banter <= 3600):
+            raise Error("banter_seconds must be 0 (disabled) or 120..3600")
+        state_dir = path_at(root, row.get("state_dir", f"data/converse/{profile}"))
+        native = keys(row.get("native", {}), {"binary", "config", "config_dir", "data_dir", "module_dir",
+                       "required_methods", "catalog_revision"}, "native settings")
+        if bool(native.get("binary")) != bool(native.get("module_dir")):
+            raise Error("Native binary and module_dir overrides must be configured together")
+        methods = native.get("required_methods", ["buddy-actions.cast_spell", "buddy-actions.cancel_spell"])
+        if not isinstance(methods, list) or any(not isinstance(m, str) or not re.fullmatch(r"[a-z-]+\.[a-z_]+", m) for m in methods):
+            raise Error("required_methods must be public method names")
+        env = dict(raw.get("native_env", {}), **row.get("native_env", {}))
+        if set(env) - NATIVE_ENV:
+            raise Error("native_env permits only nonsecret authserver host/port overrides")
+        for key, value in env.items():
+            text(value, key)
+        if guid in bodies or (host_name, port) in ports or (host_name, native_profile) in profiles or (host_name, state_dir) in states:
+            raise Error("Every body, native port/profile and model state directory must have one owner")
+        bodies.add(guid); ports.add((host_name, port)); profiles.add((host_name, native_profile)); states.add((host_name, state_dir))
+        result.append(dict(id=slug, enabled=row.get("enabled", True), host=host, name=name, guid=guid, **{"class": kind},
+            profile=profile, native_profile=native_profile, native_port=port, native=native,
+            native_env=env, state_dir=state_dir, workspace=path_at(root, row["workspace"]) if row.get("workspace") else None,
+            banter_seconds=banter, model=model_settings(raw.get("model", {}), row.get("model", {}))))
+    return result
+
+
+def commands(actor):
+    root, python = actor["host"]["root"], actor["host"].get("python", "python3")
+    buddy = [python, "-B", str(Path(root) / "dev/buddy"), "{command}", "--profile", actor["native_profile"],
+             "--character-name", actor["name"], "--character-guid", str(actor["guid"]), "--rpc-port", str(actor["native_port"])]
+    for key in ("binary", "config", "config_dir", "data_dir", "module_dir"):
+        if key in actor["native"]:
+            buddy += ["--" + key.replace("_", "-"), path_at(root, actor["native"][key])]
+    converse = [python, "-B", str(Path(root) / "dev/converse"), "{command}", "--profile", actor["profile"],
+                "--character-name", actor["name"], "--character-class", actor["class"], "--character-guid", str(actor["guid"]),
+                "--rpc-url", f"http://127.0.0.1:{actor['native_port']}/rpc", "--state-dir", actor["state_dir"]]
+    model = actor["model"]
+    run = list(converse) + ["--persistent", "--banter-seconds", str(actor["banter_seconds"]),
+                            "--model-provider", model["provider"], "--model", model["model"]]
+    for key, flag in (("base_url", "--model-base-url"), ("api_key_env", "--model-api-key-env"),
+                      ("reasoning_effort", "--reasoning-effort"), ("codex", "--codex")):
+        if model.get(key):
+            run += [flag, model[key]]
+    if model["provider"] == "local":
+        run += ["--local-provider", model["local_provider"]]
+    if actor["workspace"]:
+        run += ["--developer-workspace", actor["workspace"]]
+    return dict(native=buddy, conversation=converse, run=run)
+
+
+def with_command(argv, command):
+    return [command if value == "{command}" else value for value in argv]
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise Error("Endpoint redirects are refused")
+
+
+def get_json(url, data=None, key_env=None):
+    headers = {"Content-Type": "application/json"}
+    if key_env:
+        value = os.environ.get(key_env)
+        if not value:
+            raise Error(f"Required environment variable {key_env} is unset; no provider fallback")
+        headers["Authorization"] = "Bearer " + value
+    request = urllib.request.Request(url, data=None if data is None else json.dumps(data).encode(), headers=headers)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(request, timeout=10) as response:
+            raw = response.read(16 * 1024 * 1024 + 1)
+        if len(raw) > 16 * 1024 * 1024:
+            raise Error("Endpoint response exceeds 16 MiB")
+        return strict_json(raw)
+    except (OSError, ValueError, urllib.error.URLError) as error:
+        raise Error("Configured endpoint is unavailable or returned invalid JSON; no fallback") from None
+
+
+def models(model):
+    if model["provider"] == "codex":
+        return dict(provider="codex", models=[], discovery="CLI-managed; no model request made")
+    result = get_json(model["base_url"] + "/models", key_env=model.get("api_key_env"))
+    rows = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in rows):
+        raise Error("Configured model endpoint did not return an OpenAI-compatible model list")
+    return dict(provider=model["provider"], route=model["route"], endpoint=model["base_url"],
+                models=[dict(id=row["id"]) for row in rows], selected=model["model"],
+                advertised=any(row["id"] == model["model"] for row in rows), inferenceVerified=False)
+
+
+class Runner:
+    def run(self, argv, actor, env=None):
+        result = subprocess.run(argv, cwd=actor["host"]["root"], env=None if env is None else dict(os.environ, **env),
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+        if result.returncode:
+            # Output may originate in a remote provider. Do not echo headers,
+            # credentials or an entire child transcript into another journal.
+            raise Error(f"Maintained {Path(argv[2]).name if len(argv)>2 else argv[0]} command failed (exit {result.returncode}); inspect its owned log")
+        return result.stdout
+
+    def spawn(self, argv, actor, log):
+        with os.fdopen(private_file(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as output:
+            return subprocess.Popen(argv, cwd=actor["host"]["root"], stdin=subprocess.DEVNULL,
+                stdout=output, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True).pid
+
+
+def private_file(path, flags):
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+        os.close(fd)
+        raise Error("Launcher state must be a regular file owned by this user")
+    return fd
+
+
+@contextlib.contextmanager
+def journal(actor):
+    folder = Path(actor["host"]["root"]) / "data/companions" / str(actor["guid"])
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if folder.is_symlink() or folder.stat().st_uid != os.getuid() or folder.stat().st_mode & 0o022:
+        raise Error("Launcher state directory ownership is unconfirmed")
+    with os.fdopen(private_file(folder / "lock", os.O_RDWR | os.O_CREAT), "r+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Error("Another launcher operation owns this body") from None
+        path = folder / "owner.json"
+        try:
+            with os.fdopen(private_file(path, os.O_RDONLY), "r") as source:
+                record = strict_json(source.read(1024 * 1024))
+        except FileNotFoundError:
+            record = {}
+        if not isinstance(record, dict):
+            raise Error("Launcher journal is not an object; left untouched")
+        identity = {key: actor[key] for key in ("name", "guid", "class", "profile", "native_profile", "native_port", "state_dir")}
+        if record and record.get("identity") != identity and record.get("phase") != "stopped":
+            raise Error("This body's existing launch record has different settings; left untouched")
+        def save(**fields):
+            record.update(identity=identity, updated=time.time(), **fields)
+            fd, temporary = tempfile.mkstemp(prefix=".owner-", dir=folder)
+            try:
+                with os.fdopen(fd, "w") as target:
+                    json.dump(record, target, allow_nan=False); target.write("\n"); target.flush(); os.fsync(target.fileno())
+                if path.is_symlink():
+                    raise Error("Launcher journal cannot be a symlink")
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+        yield record, save, folder
+
+
+def native_status(actor, runner):
+    result = runner.run(with_command(commands(actor)["native"], "status"), actor, actor["native_env"])
+    if re.search(r"^Running: (yes|no)$", result, re.M) is None:
+        raise Error("Maintained buddy status shape is unrecognized")
+    running = re.search(r"^Running: (yes|no)$", result, re.M).group(1) == "yes"
+    return dict(running=running,
+                ready=running and re.search(r"^Readiness: matching ready event observed$", result, re.M) is not None)
+
+
+def chat_status(actor, runner):
+    result = strict_json(runner.run(with_command(commands(actor)["conversation"], "status"), actor))
+    if not isinstance(result, dict) or type(result.get("running")) is not bool:
+        raise Error("Maintained converse status shape is unrecognized")
+    identity = result.get("character_identity")
+    if result["running"] and (not isinstance(identity, dict) or identity.get("guid") != actor["guid"] or
+            identity.get("profile") != actor["profile"] or identity.get("name") != actor["name"] or
+            identity.get("class") != actor["class"] or identity.get("owner_guid") != 3 or
+            identity.get("rpc_url") != f"http://127.0.0.1:{actor['native_port']}/rpc"):
+        raise Error("Existing listener identity is unconfirmed; left untouched")
+    return result
+
+
+def native_identity(actor, expected_methods=()):
+    url = f"http://127.0.0.1:{actor['native_port']}/rpc"
+    def call(method, params):
+        reply = get_json(url, dict(jsonrpc="2.0", id=1, method=method, params=params))
+        if not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0" or type(reply.get("id")) is not int or reply["id"] != 1 or "error" in reply or not isinstance(reply.get("result"), dict):
+            raise Error(f"Native readiness read {method} failed; no gameplay action sent")
+        return reply["result"]
+    catalog = call("session.describe", {})
+    sid, guid = catalog.get("sessionId"), catalog.get("characterGuid")
+    if not isinstance(sid, str) or not sid or guid != str(actor["guid"]):
+        raise Error("Native RPC is not this configured body")
+    observed = {row.get("name") for row in catalog.get("methods", []) if isinstance(row, dict)}
+    required = set(actor["native"].get("required_methods", ["buddy-actions.cast_spell", "buddy-actions.cancel_spell"])) | set(expected_methods)
+    if required - observed:
+        raise Error("Native catalog is missing required preserved methods: " + ", ".join(sorted(required-observed)))
+    revision = catalog.get("revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+        raise Error("Native catalog has no valid contract revision")
+    if actor["native"].get("catalog_revision") and revision != actor["native"]["catalog_revision"]:
+        raise Error("Native catalog revision differs from the configured release")
+    world, party = call("buddy-world.snapshot", {}), call("buddy-party.state", {})
+    own = world.get("self", {})
+    if str(own.get("guid")) != guid or own.get("present") is not True or party.get("sessionId") != sid:
+        raise Error("Native world/party identity changed during readiness")
+    attached = call("session.attach", dict(sessionId=sid, characterGuid=guid))
+    policy = attached.get("policy")
+    if attached.get("sessionId") != sid or attached.get("characterGuid") != guid or attached.get("revision") != revision or not isinstance(policy, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(policy.get("revision", ""))):
+        raise Error("This body has no identity-bound attached Lua policy")
+    return dict(sessionId=sid, characterGuid=guid, catalogRevision=revision, methods=sorted(observed),
+                policyRevision=policy["revision"], policyHealthy=policy.get("faulted") is not True)
+
+
+def selection_matches(status, model):
+    selected = status.get("modelSelection", {})
+    return (selected.get("provider") == model["provider"] and selected.get("requestedModel") == model["model"]
+            and (model["provider"] == "codex" or selected.get("baseURL") == model["base_url"])
+            and (model["provider"] != "local" or selected.get("localProvider") == model["local_provider"]))
+
+
+def wait_chat(actor, runner, running, sid=None, timeout=30):
+    deadline = time.monotonic() + timeout
+    while True:
+        status = chat_status(actor, runner)
+        if status["running"] == running and (not running or status.get("sessionId") == sid and status.get("phase") in ("listening", "thinking")):
+            return status
+        if time.monotonic() >= deadline:
+            raise Error("Listener readiness/exit is unconfirmed; existing processes and journals were preserved")
+        time.sleep(0.2)
+
+
+def child_exited(record):
+    pid = record.get("childPid")
+    if type(pid) is not int or pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)  # Read-only existence probe. Never signal/terminate a child here.
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        pass
+    return False
+
+
+def operate(actor, action, runner=None):
+    runner = runner or Runner()
+    planned = commands(actor)
+    with journal(actor) as (record, save, folder):
+        if action in ("start", "restart-chat"):
+            help_text = runner.run([actor["host"].get("python", "python3"), "-B", str(Path(actor["host"]["root"]) / "dev/converse"), "--help"], actor)
+            if any(flag not in help_text for flag in PROVIDER_FLAGS):
+                raise Error("Maintained converse lacks the configured provider interface; update the coherent host source first")
+            available = models(actor["model"])
+            if available.get("advertised") is False:
+                raise Error("Selected model is not advertised by the configured endpoint; no fallback or native restart")
+        native, chat = native_status(actor, runner), chat_status(actor, runner)
+        if action == "status":
+            body = native_identity(actor, record.get("methods", ())) if native["ready"] else None
+            return dict(actor=actor["id"], native=native, body=body, listener=chat,
+                        modelConfigMatches=selection_matches(chat, actor["model"]) if chat["running"] else False)
+        if action in ("stop", "restart-chat"):
+            previous_body = None
+            chat_stopped = False
+            if action == "restart-chat":
+                if not native["ready"]:
+                    raise Error("restart-chat requires the existing ready native body; it never reconnects one")
+                previous_body = native_identity(actor, record.get("methods", ()))
+                if chat["running"] and chat.get("sessionId") != previous_body["sessionId"]:
+                    raise Error("Existing listener belongs to an older native session; left untouched")
+            if chat["running"]:
+                runner.run(with_command(planned["conversation"], "stop"), actor)
+                chat = wait_chat(actor, runner, False)
+                chat_stopped = True
+            if action == "stop":
+                save(phase="stopping")
+                stopped = runner.run(with_command(planned["native"], "stop"), actor, actor["native_env"])
+                if native_status(actor, runner)["running"]:
+                    raise Error("Native stop is unconfirmed; no force signal or replay")
+                save(phase="stopped")
+                return dict(actor=actor["id"], nativeReady=False, listenerReady=False, stopped=True,
+                            logoutVerified="server logout completion and process exit verified" in stopped)
+            if not native["ready"]:
+                raise Error("restart-chat requires the existing ready native body; it never starts/reconnects one")
+        if not native["running"]:
+            if record.get("phase") in ("native_starting", "model_starting"):
+                raise Error("Previous launch outcome is unresolved; inspect maintained status/logs before a new start")
+            if chat["running"]:
+                raise Error("A listener already owns this body without a ready native; left untouched")
+            save(phase="native_starting", operation=uuid.uuid4().hex)
+            runner.run(with_command(planned["native"], "start"), actor, actor["native_env"])
+            native = native_status(actor, runner)
+        if not native["ready"]:
+            raise Error("Native is running without verified readiness; no restart or model launch")
+        body = native_identity(actor, record.get("methods", ()))
+        if action == "restart-chat" and body["sessionId"] != previous_body["sessionId"]:
+            raise Error("Native session changed during chat stop; no new listener or native restart")
+        if chat["running"]:
+            if chat.get("sessionId") != body["sessionId"] or not selection_matches(chat, actor["model"]) or record.get("model", actor["model"]) != actor["model"]:
+                raise Error("Owned listener body/model differs; use restart-chat explicitly; native was preserved")
+        else:
+            if record.get("phase") == "model_starting" and not (action == "restart-chat" and (chat_stopped or child_exited(record))):
+                raise Error("Previous listener launch is unresolved; inspect its preserved log before starting again")
+            save(phase="model_starting", sessionId=body["sessionId"], methods=body["methods"], model=actor["model"])
+            roster = []
+            for peer in actor.get("roster", []):
+                roster += ["--party-agent", f"{peer['name']}:{peer['guid']}"]
+            pid = runner.spawn(with_command(planned["run"], "run") + roster, actor, folder / "converse.log")
+            save(childPid=pid)
+            chat = wait_chat(actor, runner, True, body["sessionId"])
+            if not selection_matches(chat, actor["model"]):
+                raise Error("Started listener does not report the selected provider/model; preserved without fallback")
+        final = native_identity(actor, body["methods"])
+        if final["sessionId"] != body["sessionId"]:
+            raise Error("Native body changed during listener startup; no retry or gameplay action")
+        save(phase="running", sessionId=body["sessionId"], methods=body["methods"], model=actor["model"])
+        return dict(actor=actor["id"], nativeReady=True, listenerReady=True, body=final,
+                    modelAvailable=available.get("advertised"), inferenceVerified=False)
+
+
+def local_host(host):
+    return host.get("local") is True or host.get("address") in (None, "localhost", "127.0.0.1", "::1") or host["id"].lower() == socket.gethostname().split(".")[0].lower()
+
+
+def dry_plan(actor, action):
+    planned = commands(actor)
+    result = dict(native_status=with_command(planned["native"], "status"),
+                  listener_status=with_command(planned["conversation"], "status"))
+    if action == "start":
+        result["native_start_if_stopped"] = with_command(planned["native"], "start")
+    if action in ("start", "restart-chat"):
+        result["listener_run_if_unowned"] = with_command(planned["run"], "run")
+        result["identity_reads"] = ["session.describe", "buddy-world.snapshot", "buddy-party.state", "session.attach"]
+    if action in ("stop", "restart-chat"):
+        result["listener_stop"] = with_command(planned["conversation"], "stop")
+    if action == "stop":
+        result["native_stop"] = with_command(planned["native"], "stop")
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("command", choices=("start", "stop", "status", "models", "restart-chat"))
+    parser.add_argument("--settings", type=Path, default=ROOT / "config/companions.toml")
+    parser.add_argument("--actor", action="append", default=[], help="Configured actor name; repeat to select several")
+    parser.add_argument("--dry-run", action="store_true", help="Print exact plans without files, subprocesses, network or credentials")
+    parser.add_argument("--settings-stdin", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--on-host", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    try:
+        if args.settings_stdin:
+            raw = strict_json(sys.stdin.read())
+        else:
+            if args.settings.is_symlink():
+                raise Error("Settings must not be a symlink")
+            if not args.settings.is_file():
+                raise Error("Settings are missing; copy config/companions.example.toml to config/companions.toml and review its host/profiles, or pass --settings")
+            content = args.settings.read_text()
+            if args.settings.suffix.lower() == ".toml":
+                if tomllib is None:
+                    raise Error("TOML settings require Python3.11+; JSON settings also work")
+                raw = tomllib.loads(content)
+            else:
+                raw = strict_json(content)
+        actors = normalize(raw)
+        requested = set(args.actor)
+        if requested - {row["id"] for row in actors}:
+            raise Error("Unknown --actor name")
+        selected = [row for row in actors if row["id"] in requested or not requested and row["enabled"]]
+        if not selected:
+            raise Error("No enabled/selected actors")
+        for actor in selected:
+            actor["roster"] = [dict(name=p["name"], guid=p["guid"]) for p in actors if p["guid"] != actor["guid"]]
+        if args.dry_run:
+            result = [dict(actor=row["id"], host=row["host"], commands=dry_plan(row, args.command),
+                           nativeEnv=row["native_env"], model=row["model"], network=False, mutation=False) for row in selected]
+        else:
+            result = []
+            remote = {}
+            for actor in selected:
+                if args.on_host and actor["host"]["id"] != args.on_host:
+                    continue
+                if not local_host(actor["host"]):
+                    remote.setdefault(actor["host"]["id"], []).append(actor)
+                    continue
+                result.append(models(actor["model"]) if args.command == "models" else operate(actor, args.command))
+            for host_id, group in remote.items():
+                if args.on_host:
+                    raise Error("Configured host does not match this machine; no recursive SSH")
+                host = group[0]["host"]
+                target = (host.get("user", "") + "@" if host.get("user") else "") + host["address"]
+                command = [host.get("python", "python3"), "-B", str(Path(host["root"]) / "dev/companions"), args.command,
+                           "--settings-stdin", "--on-host", host_id]
+                for row in group:
+                    command += ["--actor", row["id"]]
+                child = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+                                        target, shlex.join(command)], input=json.dumps(raw), capture_output=True, text=True)
+                if child.returncode:
+                    raise Error(f"Host {host_id} operation failed; no fallback host or process replay")
+                result.extend(strict_json(child.stdout))
+        print(json.dumps(result, indent=2, allow_nan=False))
+        return 0
+    except (Error, OSError, ValueError, TypeError) as error:
+        print(f"companions: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

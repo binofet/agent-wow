@@ -846,6 +846,7 @@ return {decide=decide, on_event=on_event, export_state=export_state, import_stat
         follow_formation=encounter_formation and encounter_formation.decide,
         service_destination=encounter_formation and encounter_formation.service_destination,
         spell_learning_review=spell_invocation and spell_invocation.learning_review,
+        mana_supply_plan=encounter_mana_supply and function(input) return encounter_mana_supply.plan(input,encounter_disposal,encounter_gear) end,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
         trade_consent=encounter_trade_consent and encounter_trade_consent.decide,
         stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide,

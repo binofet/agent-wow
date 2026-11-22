@@ -1,0 +1,70 @@
+# Copy to companions.toml and select profiles already staged on the target.
+# This file contains no credentials and starts no gateway or model download.
+version = 1
+default_host = "laniakea"
+
+[hosts.laniakea]
+address = "192.168.1.152"
+user = "jmax"
+root = "/home/jmax/dev/agent-wow"
+python = "python3"
+# Set local=true only when running this script on this actual host if its
+# hostname differs from 'laniakea'. Otherwise the frontend delegates over SSH.
+
+[native_env]
+AGENT_WOW_AUTHSERVER_HOST = "10.247.37.1"
+
+[model]
+codex = "codex"                    # Executable on the target host's PATH
+provider = "local"
+local_provider = "lmstudio"
+base_url = "http://127.0.0.1:18765/v1"
+model = "nvidia/nemotron-3.5-super-vl"
+# No default reasoning override: model/provider support differs.
+# For Ollama, set local_provider, base_url and model explicitly.
+# Actors default to banter_seconds=0; set 120..3600 per actor to opt in.
+
+[actors.arlen]
+name = "Arlen"
+guid = 1
+class = "priest"
+profile = "default"
+native_profile = "default"
+native_port = 8086
+state_dir = "data/converse"
+
+[actors.mira]
+name = "Mira"
+guid = 4
+class = "mage"
+profile = "mira"
+native_port = 8087
+
+[actors.rook]
+name = "Rook"
+guid = 5
+class = "rogue"
+profile = "rook"
+native_port = 8088
+
+[actors.nixwick]
+name = "Nixwick"
+guid = 8
+class = "warlock"
+profile = "nixwick"
+native_profile = "alliance-nixwick"
+native_port = 8402
+
+# Optional per-actor paid route; opt in by uncommenting a complete override.
+# Existing endpoint/key must be configured; there is no local->paid fallback.
+# [actors.mira.model]
+# provider = "claude"                # Maps to --model-provider responses
+# base_url = "http://127.0.0.1:4000/v1"
+# model = "claude"                   # Exact alias exposed by your gateway
+# api_key_env = "LITELLM_API_KEY"     # Variable name, never its value
+#
+# Gemini uses provider="gemini" and an explicitly configured gateway alias.
+# Generic Responses gateways use provider="responses".
+# Existing Codex account mode requires explicit provider="codex" and model.
+# Native runtime-release.json remains authoritative for the coherent binary,
+# module directory, Lua source and private protocol contracts per profile.

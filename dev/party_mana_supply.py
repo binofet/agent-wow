@@ -1,260 +1,268 @@
-"""Stock the party's casters through Mira's normal conjure and trade RPCs."""
+"""Run the connected mage's accepted Lua supply policy through installed RPCs.
 
-import math
+These are the existing worker's configured client identities, not recipient,
+rank, stock, quantity, timing or trade-completion choices.
+"""
+import copy
+import hashlib
+import importlib.machinery
+import importlib.util
+import re
 import time
+from pathlib import Path
 
-MIRA = 8087
-RECIPIENTS = {8086: 1, 8402: 8}
-MIRA_GUID = 4
-OWNER_GUID = 3
-STOCK_MINIMUM = 5
-PEER_REORDER_THRESHOLD = 12
-IN_COMBAT = 0x80000
-
-
-def number(value):
-    return int(value or 0)
-
-
-def body_ready(player, guid):
-    return (number(player.get("guid")) == guid and player.get("present") is True
-            and player.get("aliveKnown") is True and player.get("alive") is True
-            and player.get("unitFlagsKnown") is True
-            and not number(player.get("unitFlags")) & IN_COMBAT)
+ROOT=Path(__file__).resolve().parent.parent
+_loader=importlib.machinery.SourceFileLoader('party_mana_runtime',str(ROOT/'dev/task-runtime'))
+_spec=importlib.util.spec_from_loader(_loader.name,_loader)
+runtime=importlib.util.module_from_spec(_spec)
+_loader.exec_module(runtime)
+MIRA=8087
+MIRA_GUID=4
+OWNER_GUID=3
+RECIPIENTS={8086:1,8402:8}
+VALUE_BYTES=8*1024*1024
 
 
-def ready_for_trade(observation, guid):
-    actions, trade = observation["actions"], observation["trade"]
-    session = actions.get("sessionId")
-    return (session and number(actions.get("selfGuid")) == guid
-            and trade.get("sessionId") == session and trade.get("phase") in ("IDLE", "COMPLETE")
-            and not trade.get("waterGiftArmed") and not observation.get("mana_rest_active")
-            and not any(actions.get(key) for key in (
-                "moving", "motionUnconfirmed", "traveling", "castPending", "interactionOwner",
-                "autoAttacking", "autoAttackRequested", "autoAttackUnconfirmed",
-            )))
+def _identity(view,guid):
+    actions=view.get('actions',{})
+    sid=actions.get('sessionId')
+    if (not isinstance(sid,str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid)
+            or str(actions.get('selfGuid'))!=str(guid)):
+        raise runtime.Error('current_supply_body_required')
+    return dict(sessionId=sid,characterGuid=str(guid))
 
 
-def group_identity(observation, self_guid):
-    party = observation["party"]
-    group = party.get("group", {})
-    if party.get("sessionId") != observation["actions"].get("sessionId"):
-        return None
-    if group.get("known") is not True or group.get("inGroup") is not True:
-        return None
-    members = {number(member.get("guid")): member for member in group.get("members", [])}
-    own, owner = members.get(self_guid, {}), members.get(OWNER_GUID, {})
-    if not (own.get("self") is True and own.get("online") is True and owner.get("online") is True):
-        return None
-    return group.get("groupGuid")
+def _catalog(rpc,port,identity):
+    catalog=rpc(port,'session.describe',{})
+    if (catalog.get('sessionId')!=identity['sessionId']
+            or str(catalog.get('characterGuid'))!=identity['characterGuid']
+            or not isinstance(catalog.get('methods'),list)
+            or not isinstance(catalog.get('messages'),dict)):
+        raise runtime.Error('current_installed_supply_catalog_required')
+    return catalog
 
 
-def stock_count(observation, guid):
-    inventory = observation["inventory"]
-    if (inventory.get("sessionId") == observation["actions"].get("sessionId")
-            and number(inventory.get("selfGuid")) == guid
-            and inventory.get("inventoryKnown") is True and "manaDrinkCount" in inventory):
-        return number(inventory["manaDrinkCount"])
-    return None
+def _metadata(rpc,mage,observations):
+    toolkit=mage.get('spell_toolkit')
+    if toolkit is None:toolkit=rpc(MIRA,'buddy-actions.spell_toolkit',{})
+    if (toolkit.get('sessionId')!=mage['actions']['sessionId']
+            or str(toolkit.get('selfGuid'))!=str(MIRA_GUID)):
+        raise runtime.Error('current_supply_spellbook_required')
+    # Collect every projected creation entry. Lua owns family/rank/eligibility.
+    entries={int(row['createdItemEntry']) for row in toolkit.get('spells',[])
+        if isinstance(row,dict) and row.get('createdItemEntry')}
+    for view in observations.values():
+        entries.update(int(row['entry']) for bag in view.get('inventory',{}).get('inventoryBags',[])
+            for row in bag.get('slots',[]) if isinstance(row,dict) and row.get('itemGuid') and row.get('entry'))
+    entries=sorted(entries)
+    rows={}
+    for start in range(0,len(entries),6): # The existing lookup RPC admits six IDs.
+        reply=rpc(MIRA,'buddy-trade.lookup_items',{'itemIds':entries[start:start+6]})
+        if reply.get('sessionId')!=mage['actions']['sessionId']:
+            raise runtime.Error('supply_template_body_changed')
+        for row in reply.get('items',[]):
+            if isinstance(row,dict) and row.get('itemId'):
+                rows[str(int(row['itemId']))]=copy.deepcopy(row)
+    return toolkit,rows
 
 
-def near(first, second):
-    if not (first.get("positionKnown") and second.get("positionKnown")
-            and first.get("mapKnown") and second.get("mapKnown")
-            and number(first.get("mapId")) == number(second.get("mapId"))):
-        return False
-    a, b = (tuple(row.get(axis, 0) for axis in ("x", "y", "z")) for row in (first, second))
-    return math.dist(a, b) <= 10
+def _source(rpc,identity):
+    view=rpc(MIRA,'session.policy_source',identity)
+    source,revision,generation=view.get('source'),view.get('revision'),str(view.get('generation',''))
+    limit=view.get('sourceLimitBytes',runtime.MAX_SOURCE)
+    if (view.get('sessionId')!=identity['sessionId'] or str(view.get('characterGuid'))!=identity['characterGuid']
+            or not isinstance(source,str) or not source or not re.fullmatch('[a-f0-9]{64}',str(revision))
+            or hashlib.sha256(source.encode()).hexdigest()!=revision or not re.fullmatch('[1-9][0-9]*',generation)
+            or type(limit) is not int or limit<=0 or len(source.encode())>limit):
+        raise runtime.Error('current_accepted_supply_source_required')
+    return source,dict(identity,revision=revision,generation=generation),limit
 
 
-def trade_position(observation):
-    position = observation["actions"].get("position", {})
-    if position:
-        return dict(position, positionKnown=position.get("known"))
-    return observation["world"].get("self", {})
+def _current_source(rpc,binding):
+    identity={key:binding[key] for key in ('sessionId','characterGuid')}
+    view=rpc(MIRA,'session.attach',identity)
+    policy=view.get('policy',{})
+    if (view.get('sessionId')!=binding['sessionId'] or str(view.get('characterGuid'))!=binding['characterGuid']
+            or policy.get('revision')!=binding['revision'] or str(policy.get('generation'))!=binding['generation']):
+        raise runtime.Error('supply_policy_changed_before_dispatch')
 
 
-def nearby_player(observation, guid):
-    return next((player for player in observation["world"].get("nearbyPlayers", [])
-                 if number(player.get("guid")) == guid and player.get("present") is True), {})
+def _validate_action(action,catalog,identity):
+    if (not isinstance(action,dict) or not isinstance(action.get('id'),str) or not action['id']
+            or not isinstance(action.get('method'),str) or not isinstance(action.get('params'),dict)):
+        raise runtime.Error('typed_supply_action_required')
+    rows=[row for row in catalog['methods'] if row.get('name')==action['method']]
+    if len(rows)!=1 or rows[0].get('effect') not in ('mutation','unspecified'):
+        raise runtime.Error('supply_method_not_advertised')
+    schema=catalog['messages'].get(rows[0].get('inputType'),{})
+    fields={row['name']:row for row in schema.get('fields',[]) if isinstance(row,dict) and isinstance(row.get('name'),str)}
+    params=action['params']
+    if not fields or set(params)-set(fields) or params.get('sessionId')!=identity['sessionId']:
+        raise runtime.Error('installed_supply_request_contract_required')
+    if 'selfGuid' in params and str(params['selfGuid'])!=identity['characterGuid']:
+        raise runtime.Error('supply_action_body_changed')
+    for key,value in params.items():
+        kind=fields[key].get('kind')
+        if fields[key].get('repeated') or fields[key].get('map'):
+            raise runtime.Error('unsupported_supply_request_shape')
+        if kind=='string':valid=isinstance(value,str)
+        elif kind in ('uint64','fixed64'):
+            valid=isinstance(value,str) and re.fullmatch(r'0|[1-9][0-9]{0,19}',value) and int(value)<2**64
+        elif kind in ('uint32','fixed32'):
+            valid=type(value) in (int,float) and int(value)==value and 0<=value<2**32
+        elif kind=='bool':valid=type(value) is bool
+        else:valid=False
+        if not valid:raise runtime.Error('installed_supply_field_type_required:'+key)
 
 
-def peer_ready(mira, recipient, guid, group):
-    return (ready_for_trade(recipient, guid) and group_identity(recipient, guid) == group
-            and body_ready(recipient["world"].get("self", {}), guid)
-            and near(trade_position(mira), nearby_player(mira, guid))
-            and near(trade_position(recipient), nearby_player(recipient, MIRA_GUID)))
+def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
+    mage=observations[MIRA];identity=_identity(mage,MIRA_GUID)
+    source,binding,limit=_source(rpc,identity)
+    views=copy.deepcopy({str(port):view for port,view in observations.items()})
+    identities={MIRA:identity}
+    for port,guid in RECIPIENTS.items():
+        if port in observations:identities[port]=_identity(observations[port],guid)
+    catalogs={str(port):_catalog(rpc,port,body) for port,body in identities.items()}
+    toolkit,metadata=_metadata(rpc,mage,observations);views[str(MIRA)]['spell_toolkit']=toolkit
+    wrapped=('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
+        'if type(policy.mana_supply_plan)~="function" then return {available=false} end '
+        'return {available=true,decision=policy.mana_supply_plan(input)} end}\n')
+    evaluator=bridge or runtime.Bridge(ROOT/'data/bin/luapolicy',ROOT/'modules',
+        source_bytes=max(limit,len(wrapped.encode())),value_bytes=VALUE_BYTES,execution_ms=1000)
+    result=evaluator.evaluate(wrapped,dict(observations=views,metadata=metadata,
+        catalogs={port:value['methods'] for port,value in catalogs.items()},
+        catalogMessages={port:value['messages'] for port,value in catalogs.items()},
+        bindings=dict(magePort=str(MIRA),mageGuid=str(MIRA_GUID),ownerGuid=str(OWNER_GUID),
+            recipients=[dict(port=str(port),guid=str(guid)) for port,guid in RECIPIENTS.items()]),
+        memory=copy.deepcopy(state.get('memory',{})),last=copy.deepcopy(state.get('last')),
+        nowMs=time.monotonic()*1000 if now_ms is None else now_ms,query=query,request=copy.deepcopy(state.get('request'))))
+    _current_source(rpc,binding)
+    if not isinstance(result,dict) or result.get('available') is not True:
+        raise runtime.Error('mana_supply_policy_export_unavailable')
+    return result.get('decision'),binding,identities
 
 
-def receiving_slots(observation):
-    return [slot for bag in observation["inventory"].get("inventoryBags", [])
-            if bag.get("contentsKnown") is True
-            and number(bag.get("slotCount")) == len(bag.get("slots", []))
-            for slot in bag.get("slots", [])]
-
-
-def receiving_capacity(slots, entry):
-    if any(not number(slot.get("itemGuid")) for slot in slots):
-        return 20
-    return sum(max(0, 20 - number(slot.get("stackCount"))) for slot in slots
-               if number(slot.get("entry")) == entry and slot.get("metadataKnown")
-               and number(slot.get("stackCount")) > 0)
-
-
-def water_ranks(rpc, mira):
-    session = mira["actions"]["sessionId"]
-    toolkit = mira.get("spell_toolkit") or rpc(MIRA, "buddy-actions.spell_toolkit", {})
-    if (toolkit.get("sessionId") != session or number(toolkit.get("selfGuid")) != MIRA_GUID
-            or toolkit.get("spellbookKnown") is not True):
-        return {}
-    ranks = {
-        number(spell["createdItemEntry"]): (number(spell.get("rank")), number(spell["spellId"]))
-        for spell in toolkit.get("spells", [])
-        if number(spell.get("familyId")) == 5504 and spell.get("capability") == "create_item"
-        and spell.get("createdItemEntry") and not spell.get("blockedReason")
-    }
-    entries = list(ranks)
-    required_level = {}
-    for start in range(0, len(entries), 6):
-        result = rpc(MIRA, "buddy-trade.lookup_items", {"itemIds": entries[start:start + 6]})
-        if result.get("sessionId") != session:
-            return {}
-        required_level.update((number(item.get("itemId")), number(item.get("requiredLevel")))
-                              for item in result.get("items", []) if item.get("available") is True)
-    return {item: (rank, spell, required_level[item]) for item, (rank, spell) in ranks.items()
-            if item in required_level}
-
-
-def carried_water(world, usable, spare, slots):
-    stacks = []
-    if world.get("backpackKnown") and number(world.get("backpackRevision")):
-        for item in world.get("backpack", []):
-            source = {"backpackRevision": world["backpackRevision"], "backpackSlot": number(item.get("slot"))}
-            stacks.append((item, source))
-    if world.get("inventoryKnown") and number(world.get("inventoryRevision")):
-        for bag in world.get("inventoryBags", []):
-            bag_id = number(bag.get("bag"))
-            if bag_id and bag.get("contentsKnown"):
-                for item in bag.get("slots", []):
-                    source = {"inventoryRevision": world["inventoryRevision"], "sourceBag": bag_id,
-                              "sourceSlot": number(item.get("slot"))}
-                    stacks.append((item, source))
-    eligible = [(item, source) for item, source in stacks if item.get("metadataKnown") is True
-                and number(item.get("entry")) in usable and number(item.get("itemGuid")) >> 48 == 0x4000
-                and 0 < number(item.get("stackCount")) <= min(
-                    20, spare, receiving_capacity(slots, number(item.get("entry"))))]
-    return max(eligible, key=lambda pair: (usable[number(pair[0]["entry"])][0],
-                                          number(pair[0]["stackCount"])), default=None)
-
-
-def give_water(rpc, mira, port, recipient, item, source):
-    recipient_trade = recipient["trade"]
-    terms = {"itemEntry": number(item["entry"]), "itemCount": number(item["stackCount"])}
-    armed = rpc(port, "buddy-trade.water_gift", dict(
-        terms, sessionId=recipient_trade["sessionId"], revision=recipient_trade.get("revision", "0"),
-        partnerGuid=str(MIRA_GUID),
-    ))
-    if armed.get("sessionId") != recipient_trade["sessionId"] or armed.get("waterGiftArmed") is not True:
-        return "water_gift_reservation_unconfirmed"
-    mira_trade = mira["trade"]
-    gift = rpc(MIRA, "buddy-trade.water_gift", dict(
-        terms, sessionId=mira_trade["sessionId"], revision=mira_trade.get("revision", "0"),
-        partnerGuid=str(RECIPIENTS[port]), expectedItemGuid=item["itemGuid"], **source,
-    ))
-    if gift.get("sessionId") == mira_trade["sessionId"] and gift.get("waterGiftArmed") is True:
-        return "water_trade_started"
-    return "water_trade_unconfirmed"
-
-
-def maintain_supply(rpc, observations, state):
-    """Run one bounded pass against fresh world, party, actions, inventory and trade snapshots."""
+def supply_space_pressure(rpc,observations,*,bridge=None):
+    """Read the same Lua stock/capacity decision for the existing bag worker."""
+    if MIRA not in observations:return {}
     try:
-        phase = supply_step(rpc, observations, state)
+        decision,_,identities=_evaluate(rpc,observations,{},bridge,None,'space_pressure')
+        pressure=decision.get('bagPressure') if isinstance(decision,dict) else None
+        if (not isinstance(pressure,dict) or set(pressure)-{str(port) for port in identities}
+                or any(type(value) is not bool for value in pressure.values())):
+            raise runtime.Error('bounded_supply_space_decision_required')
+        return pressure
+    except (runtime.Error,OSError,ValueError,TypeError,KeyError):
+        return {} # Unavailable policy never authorizes water-driven destruction.
+
+
+class PersistenceUnconfirmed(runtime.Error):
+    pass
+
+
+class NotDispatched(runtime.Error):
+    """Trusted caller signal ONLY before entering the selected client.call.
+
+    Never derive this signal from a transport exception or server status.
+    """
+    def __init__(self,reason='supply_not_dispatched'):
+        self.reason=reason if isinstance(reason,str) and re.fullmatch('[A-Za-z0-9_]{1,128}',reason) else 'supply_not_dispatched'
+        super().__init__(self.reason)
+
+
+def _not_dispatched(state,reason):
+    state['last']=dict(id=state['last']['id'],outcome='not_dispatched',reason=reason)
+
+
+def _persist(persist,state):
+    if persist is None:return # Existing in-memory callers retain their API.
+    try:
+        if not callable(persist) or persist(copy.deepcopy(state)) is False:
+            raise runtime.Error('supply_persistence_not_confirmed')
     except Exception as error:
-        phase = "water_supply_rpc_error"
-        state["error"] = str(error)
-    else:
-        state.pop("error", None)
-    state["phase"] = phase
-    return phase
+        raise PersistenceUnconfirmed('supply_persistence_unconfirmed') from error
 
 
-def supply_step(rpc, observations, state):
-    now = time.monotonic()
-    if now < state.get("next", 0):
-        return state.get("phase", "waiting_for_supply_tick")
-    state["next"] = now + 4
-    mira = observations.get(MIRA)
-    if not mira or not ready_for_trade(mira, MIRA_GUID):
-        return "mage_busy"
-    group = group_identity(mira, MIRA_GUID)
-    world = mira["world"]
-    if not group or not body_ready(world.get("self", {}), MIRA_GUID):
-        return "waiting_for_live_mage_and_party"
-    owner = world.get("owner", {})
-    if owner.get("present") and not body_ready(owner, OWNER_GUID):
-        return "waiting_for_party_combat_to_end"
-    own_stock = stock_count(mira, MIRA_GUID)
-    if own_stock is None:
-        return "waiting_for_mage_water_count"
-    peers = []
-    for port, guid in RECIPIENTS.items():
-        recipient = observations.get(port)
-        if not recipient or not peer_ready(mira, recipient, guid, group):
-            continue
-        drink_count = stock_count(recipient, guid)
-        player = recipient["world"]["self"]
-        if (drink_count is not None and drink_count < PEER_REORDER_THRESHOLD
-                and player.get("levelKnown") is True and player.get("powerKnown") is True
-                and number(player.get("powerType")) == 0 and number(player.get("maxPower")) > 0):
-            peers.append((drink_count, port, recipient, receiving_slots(recipient)))
-    if not peers and own_stock >= STOCK_MINIMUM:
-        return "water_stock_sufficient"
-    ranks = water_ranks(rpc, mira)
+def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None,persist=None):
+    """One Lua turn and at most one selected mutation.
 
-    def compatible(player):
-        level = number(player.get("level"))
-        return {item: rank for item, rank in ranks.items() if rank[2] <= level}
-
-    needs_bag_space = False
-    usable = {}
-    for drink_count, port, recipient, slots in sorted(peers):
-        available = compatible(recipient["world"]["self"])
-        if not available:
-            continue
-        # Help an empty caster immediately. Conjuring into the same stack
-        # cannot make it fit within a reserve, because the trade moves it whole.
-        spare = own_stock if drink_count == 0 else own_stock - STOCK_MINIMUM
-        stack = carried_water(world, available, spare, slots)
-        if stack:
-            return give_water(rpc, mira, port, recipient, *stack)
-        if any(not number(slot.get("itemGuid")) for slot in slots):
-            usable = available
-            break
-        needs_bag_space = True
-    if not usable and own_stock < STOCK_MINIMUM:
-        if world["self"].get("levelKnown") is not True:
-            return "waiting_for_caster_level"
-        usable = compatible(world["self"])
-    if not usable:
-        return "recipient_needs_bag_space" if needs_bag_space else "no_compatible_conjure_water_rank"
-    actions = mira["actions"]
-    last = actions.get("lastSpellOperation", {})
-    if last.get("capability") == "create_item" and last.get("phase") in (
-        "waiting_server", "waiting_created_item", "transport_unconfirmed_no_retry",
-    ):
-        return "conjure_pending"
-    own_slots = receiving_slots(mira)
-    has_room = {item: rank for item, rank in usable.items()
-                if receiving_capacity(own_slots, item) > 0}
-    if not has_room:
-        return "mage_needs_bag_space"
-    _, spell, _ = max(has_room.values())
-    if number(world["self"].get("power")) == 0:
-        return "waiting_for_mana_to_conjure"
-    result = rpc(MIRA, "buddy-actions.create_item", {
-        "sessionId": actions["sessionId"], "selfGuid": str(MIRA_GUID), "spellId": spell,
-    })
-    if result.get("sessionId") == actions["sessionId"]:
-        return "conjure_requested"
-    return "conjure_unconfirmed"
+    A persistent host supplies its existing atomic profile writer as persist.
+    It receives a detached FULL state and must return only after durable save,
+    or raise/return False. None keeps the older in-memory API; it provides no
+    restart guarantee. The host owns matching-state load and its single writer.
+    """
+    previous=copy.deepcopy(state)
+    reserved=False
+    rpc_entered=False
+    state.pop('spacePort',None)
+    try:
+        if MIRA not in observations:
+            state['phase']='waiting_for_current_mage';return state['phase']
+        decision,binding,identities=_evaluate(rpc,observations,state,bridge,now_ms)
+        if (not isinstance(decision,dict) or not isinstance(decision.get('memory'),dict)
+                or not isinstance(decision.get('phase'),str) or not re.fullmatch('[A-Za-z0-9_]{1,128}',decision['phase'])):
+            raise runtime.Error('bounded_supply_decision_required')
+        if decision.get('spacePort') is not None and decision['spacePort'] not in {str(port) for port in identities}:
+            raise runtime.Error('supply_space_observed_client_required')
+        action=decision.get('action')
+        if action is not None:
+            port=int(action.get('port',0))
+            if port not in identities:raise runtime.Error('supply_action_observed_client_required')
+            current=rpc(port,'buddy-actions.status',{})
+            if current.get('sessionId')!=identities[port]['sessionId'] or str(current.get('selfGuid'))!=identities[port]['characterGuid']:
+                raise runtime.Error('supply_body_changed_before_dispatch')
+            # Read the INSTALLED schema again at the actual mutation boundary.
+            catalog=_catalog(rpc,port,identities[port]);_validate_action(action,catalog,identities[port])
+            _current_source(rpc,binding)
+        proposed=copy.deepcopy(state)
+        proposed['memory']=decision['memory']
+        proposed['phase']=decision['phase'];proposed.pop('error',None)
+        proposed.pop('spacePort',None)
+        if decision.get('spacePort') is not None:proposed['spacePort']=decision['spacePort']
+        if action is not None:
+            proposed['last']=dict(id=action['id'],outcome='transport_unconfirmed')
+            state.clear();state.update(proposed)
+            reserved=True
+            _persist(persist,state) # Durable reservation/uncertainty BEFORE RPC.
+            _current_source(rpc,binding)
+            current=rpc(port,'buddy-actions.status',{})
+            if current.get('sessionId')!=identities[port]['sessionId'] or str(current.get('selfGuid'))!=identities[port]['characterGuid']:
+                raise NotDispatched('supply_body_changed_before_dispatch')
+            rpc_entered=True
+            reply=rpc(int(action['port']),action['method'],action['params'])
+            settled=copy.deepcopy(state)
+            settled['last']=dict(id=action['id'],outcome='rpc_result',result=reply)
+            _persist(persist,settled) # Never use an unpersisted reply next turn.
+            state.clear();state.update(settled)
+        else:
+            _persist(persist,proposed)
+            state.clear();state.update(proposed)
+        return state['phase']
+    except PersistenceUnconfirmed:
+        if not reserved:
+            state.clear();state.update(previous) # Do not drop prior custody.
+        elif not rpc_entered:
+            # Storage may contain the conservative pre-send reservation, but
+            # this process knows it never invoked the selected physical call.
+            _not_dispatched(state,'supply_reservation_not_persisted')
+        state['error']='supply_persistence_unconfirmed'
+        state['phase']='water_supply_persistence_unconfirmed'
+        return state['phase']
+    except NotDispatched as error:
+        if reserved:_not_dispatched(state,error.reason)
+        state['error']=error.reason;state['phase']='water_supply_not_dispatched'
+        if reserved:
+            try:_persist(persist,state)
+            except PersistenceUnconfirmed:
+                state['error']='supply_persistence_unconfirmed';state['phase']='water_supply_persistence_unconfirmed'
+        return state['phase']
+    except Exception as error:
+        # Admission/schema failures above commit no proposal and send nothing.
+        # A failed write keeps the Lua-issued private uncertainty, never replay.
+        if reserved and not rpc_entered:_not_dispatched(state,'supply_admission_changed_before_dispatch')
+        state['error']=str(error);state['phase']='water_supply_rpc_unconfirmed' if (state.get('last') or {}).get('outcome')=='transport_unconfirmed' else 'water_supply_unavailable'
+        if reserved:
+            try:_persist(persist,state) # The failed-write outcome remains unknown.
+            except PersistenceUnconfirmed:
+                state['error']='supply_persistence_unconfirmed';state['phase']='water_supply_persistence_unconfirmed'
+        return state['phase']

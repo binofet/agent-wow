@@ -86,6 +86,7 @@ class BagPressureTests(unittest.TestCase):
         self.views[8086] = snapshot(1, loot=False)
         self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
         self.views[8086]['inventory']['manaDrinkCount'] = 0
+        self.views[8086]['loot'].update(enabled=True,inventoryPaused=True)
         self.views[8086]['world']['self']['unitFlags'] = bags.IN_COMBAT
         self.assertEqual(self.tick(port=8086), 'waiting_for_safe_pause')
         self.assertEqual(self.calls, [])
@@ -107,19 +108,19 @@ class BagPressureTests(unittest.TestCase):
         self.assertEqual(self.tick(), 'room_available')
         self.assertEqual(self.calls, [])
 
-    def test_low_water_stock_reserves_slot_only_without_compatible_stack_room(self):
+    def test_water_only_pressure_belongs_to_supply_not_loot_cleanup(self):
         arlen = self.views[8086] = snapshot(1, loot=False)
+        self.views={8086:arlen}
         arlen['inventory']['manaDrinkCount'] = 4
-        self.views[8087] = dict(spell_toolkit=dict(spells=[dict(
-            familyId=5504, capability='create_item', createdItemEntry=8077)]))
         slots = arlen['inventory']['inventoryBags'][0]['slots']
         slots[1].update(entry=8077, stackCount=4)
         self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
         slots[1].update(entry=159)
-        self.assertEqual(self.tick(port=8086), 'waiting_for_disposal')
+        self.assertEqual(self.tick(port=8086), 'no_current_bag_pressure')
+        self.assertEqual(self.calls,[]) # Water disposal belongs to the shared supply planner.
 
     def test_gray_armor_requires_no_upgrade_and_exact_equipped_comparison(self):
-        arlen = self.views[8086] = snapshot(1, loot=False)
+        arlen = self.views[8086] = snapshot(1)
         arlen['inventory']['manaDrinkCount'] = 0
         arlen['world'].update(selfEquipmentKnown=True, selfEquipment=[dict(
             slot=8, slotKnown=True, metadataKnown=True, itemGuid=str(GUID_BASE + 200), entry=100)])
