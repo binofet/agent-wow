@@ -79,6 +79,7 @@ type Service struct {
 	spellOperationSequence                     uint64
 	spellOperationEpoch                        uint64
 	spellOperationEntropy                      io.Reader
+	talents                                    talentObservation
 	protectedCastCancelAttempted               bool
 	lastWorld                                  *worldv1.SnapshotResponse
 	posMap                                     uint32
@@ -1413,6 +1414,10 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 		return &emptypb.Empty{}, nil
 	}
 	switch packet.Opcode {
+	case opcode.SMSGTalentsInfo:
+		if err := s.observePlayerTalentsLocked(p); err != nil {
+			s.state.MalformedPackets++
+		}
 	case opcode.SMSGClientControlUpdate:
 		malformed = !s.clientControlPacketLocked(p)
 	case opcode.SMSGPartykilllog:
