@@ -47,7 +47,7 @@ func TestStarterNativeProductionWatchdogRejectsRestoredAuthoredFallback(t *testi
 	ctx := context.Background()
 	s, fake, _ := practiceRig(t, 4)
 	sid, self, until := s.sessionID, s.selfGUID, s.practiceUntil
-	questGoal := s.practiceQuestGoal
+	goalID, goalFrame, goalRevision := s.practiceGoalID, string(s.practiceGoal), s.practiceGoalRevision
 	target := fake.world.NearbyCreatures[0]
 	target.UnitFlagsKnown, target.DynamicFlagsKnown = true, true
 	point, known, _ := creaturePosition(target)
@@ -92,7 +92,7 @@ func TestStarterNativeProductionWatchdogRejectsRestoredAuthoredFallback(t *testi
 			t.Fatal("native watchdog failure restored offense authority or lost the attempted source", tick, status, s.starterSpells)
 		}
 		if s.sessionID != sid || s.selfGUID != self || fake.world.Self.Guid != self || !s.state.Practicing ||
-			s.practiceUntil != until || s.practiceQuestGoal != questGoal ||
+			s.practiceUntil != until || s.practiceGoalID != goalID || string(s.practiceGoal) != goalFrame || s.practiceGoalRevision != goalRevision ||
 			countPackets(fake, opcode.CMSGCastSpell) != 0 || countPackets(fake, opcode.CMSGAttackswing) != 0 ||
 			s.state.CastPending || s.pendingSpell != 0 || s.pendingTarget != 0 || s.state.AssistAttempts != 0 ||
 			s.state.ServerAssistGo != 0 || s.state.AssistDamageEvents != 0 || s.starterSpells.uncertainStrike != nil {
@@ -115,7 +115,7 @@ func TestStarterNativeProductionWatchdogRejectsRestoredAuthoredFallback(t *testi
 		t.Fatal("same body did not read the accepted corrective wait source", corrected, s.starterSpells)
 	}
 	s.Tick(ctx)
-	if !s.state.Practicing || s.practiceUntil != until || s.practiceQuestGoal != questGoal || s.practicePullStarted != failedStarted ||
+	if !s.state.Practicing || s.practiceUntil != until || s.practiceGoalID != goalID || string(s.practiceGoal) != goalFrame || s.practiceGoalRevision != goalRevision || s.practicePullStarted != failedStarted ||
 		s.practiceTarget != failedTarget || s.state.PracticePulls != failedPulls ||
 		countPackets(fake, opcode.CMSGCastSpell) != 0 || countPackets(fake, opcode.CMSGAttackswing) != 0 ||
 		s.state.CastPending || s.pendingSpell != 0 || s.pendingTarget != 0 || s.state.AssistAttempts != 0 ||

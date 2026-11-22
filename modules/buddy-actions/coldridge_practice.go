@@ -125,7 +125,7 @@ func (s *Service) startColdridgePracticeLocked(ctx context.Context, w *worldv1.S
 	} else if goal.questID == 182 {
 		s.state.PracticePhase = "waiting_for_safe_quest_182_pull"
 	}
-	s.practiceUntil, s.practiceQuestGoal = s.now().Add(10*time.Minute), true
+	s.practiceUntil = s.now().Add(10 * time.Minute)
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 	s.practiceRoute, s.practicePullStarted, s.failedAssistTarget = nil, false, 0
 	s.lastStep = s.now()
