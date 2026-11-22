@@ -444,7 +444,7 @@ class SupplyTest(unittest.TestCase):
             with supply.runtime.Store(Path(folder).resolve()) as store:
                 restored=store.load();self.rpc=original
                 self.assertEqual(restored['last']['outcome'],'transport_unconfirmed')
-                self.assertEqual(self.turn(restored,persist=store.save),'recipient_reservation_unconfirmed')
+                self.assertEqual(self.turn(restored,now=100,persist=store.save),'recipient_reservation_unconfirmed')
                 self.assertEqual(len(self.calls),1)
                 self.assertEqual(store.load()['memory']['pending'],restored['memory']['pending'])
 
@@ -528,6 +528,15 @@ class SupplyTest(unittest.TestCase):
         state={};self.assertEqual(self.turn(state,persist=save),'water_supply_unavailable')
         self.assertEqual(self.calls,[]);self.assertEqual(state['last']['outcome'],'not_dispatched')
         self.assertEqual(saved[-1]['last']['outcome'],'not_dispatched')
+
+    def test_durable_poll_clock_regression_does_not_disable_fresh_supply(self):
+        self.arlen['inventory']['manaDrinkCount']=16
+        with tempfile.TemporaryDirectory() as folder:
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                self.assertEqual(self.turn({},now=100000,persist=store.save),'water_stock_sufficient')
+                restored=store.load();self.arlen['inventory']['manaDrinkCount']=0
+                self.assertEqual(self.turn(restored,now=100,persist=store.save),'conjure_requested')
+                self.assertEqual(len(self.calls),1)
 
 
 if __name__=='__main__':unittest.main()
