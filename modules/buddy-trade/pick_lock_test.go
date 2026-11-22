@@ -15,10 +15,17 @@ import (
 func tradePickLockRig() (*Service, *fakeSession) {
 	s, f := fixture()
 	f.world.Self.ClassKnown, f.world.Self.ClassId = true, 4
+	f.world.VisitRevision = 1
+	f.world.Self.PositionKnown, f.world.Self.MovementFlagsKnown = true, true
+	f.world.Self.PositionRevision, f.world.Owner.PositionRevision = 1, 1
 	f.world.Self.UnitFlagsKnown, f.world.Owner.UnitFlagsKnown = true, true
-	f.world.SelfSkillsKnown = true
-	f.world.SelfSkills = []*worldv1.SkillState{{SkillId: 633, Value: 75}}
-	f.toolkit = &actionsv1.SpellToolkitState{SessionId: "session-A", SelfGuid: 1, SpellbookKnown: true,
+	f.world.SelfSkillsKnown, f.world.SelfSkillsRevision = true, 1
+	for slot := uint32(0); slot < 128; slot++ {
+		f.world.SelfSkills = append(f.world.SelfSkills, &worldv1.SkillState{Slot: slot})
+	}
+	f.world.SelfSkills[0] = &worldv1.SkillState{Slot: 0, SkillId: 633, Value: 75, MaxValue: 75}
+	f.actions.Position.Revision = 1
+	f.toolkit = &actionsv1.SpellToolkitState{SessionId: "session-A", SelfGuid: 1, SpellbookKnown: true, SpellbookRevision: 1,
 		Spells: []*actionsv1.KnownSpell{{SpellId: 1804, MetadataKnown: true, CastTimeMs: 5000}}}
 	openIncoming(s)
 	return s, f

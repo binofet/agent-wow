@@ -1,8 +1,12 @@
 import copy
+import contextlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('gm_task_observation_subject', Path(__file__).with_name('gm_tasks.py'))
 gm = importlib.util.module_from_spec(spec)
@@ -211,6 +215,122 @@ class GMTaskObservationTests(unittest.TestCase):
         self.host.install_holds()
         self.assertEqual(len([m for m,_ in self.gm.calls if m=='session.reload_policy']),1)
         self.assertEqual(len([m for m,_ in self.gm.calls if m=='buddy-actions.follow']),1)
+
+    def partial_hold_clients(self, abort=False):
+        self.goal['members'].extend([
+            dict(guid='4',name='Mira',rpcUrl='http://127.0.0.1:8087/rpc'),
+            dict(guid='5',name='Rook',rpcUrl='http://127.0.0.1:8088/rpc'),
+            dict(guid='8',name='Nixwick',rpcUrl='http://127.0.0.1:8089/rpc')])
+        clients={'87':self.gm,'1':self.member,'4':RPC('4','aw-mira',True),
+                 '5':RPC('5','aw-rook',True),'8':RPC('8','aw-nix',True)}
+        def unavailable(method,params):
+            clients['8'].calls.append((method,copy.deepcopy(params)))
+            if abort:self.host.stopping=True
+            raise TimeoutError('member 8 RPC unavailable')
+        clients['8'].call=unavailable
+        self.host.member_rpcs={g:r for g,r in clients.items() if g!='87'}
+        self.host.data['identity']=dict(sessionId=self.gm.sid,guid='87',rpcUrl='http://127.0.0.1:8090/rpc')
+        self.host.transport,self.host.bridge=Mock(),Mock()
+        return clients,{g:r.source for g,r in clients.items()}
+
+    def test_cancel_partial_holds_never_installs_or_observes_unheld_unavailable_member(self):
+        clients,original=self.partial_hold_clients()
+        goal=copy.deepcopy(self.goal)
+        with self.assertRaisesRegex(TimeoutError,'member 8'):self.host.run()
+        self.assertEqual(set(self.host.data['holds']),{'87','1','4','5'})
+        self.assertEqual(self.host.data['reservations'],{})
+        self.assertEqual(self.host.data['memory'],{})
+        self.assertIsNone(self.host.data['last'])
+        (self.host.store.folder/'cancel.json').write_text('{}')
+        out=self.host.run()
+        self.assertTrue(out['cancelled'] and out['cleanupComplete'])
+        self.assertFalse(out['done'] or out['success'] or out['resumable'])
+        self.assertEqual(len(clients['8'].calls),1,'cleanup retried the unheld client')
+        for guid in ('87','1','4','5'):
+            self.assertEqual(clients[guid].source,original[guid])
+            self.assertTrue(self.host.data['holds'][guid]['restored'])
+            reloads=[p for m,p in clients[guid].calls if m=='session.reload_policy']
+            self.assertEqual(len(reloads),2,'cleanup installed another hold')
+            self.assertEqual(reloads[-1]['source'],original[guid])
+        self.assertEqual([p['enabled'] for m,p in self.member.calls if m=='buddy-actions.follow'],[False,True])
+        self.assertEqual(self.host.data['goal'],goal)
+        self.host.bridge.evaluate.assert_not_called()
+        self.host.transport.gm.assert_not_called();self.host.transport.select.assert_not_called()
+
+    def test_abort_during_partial_hold_failure_restores_only_recorded_holds(self):
+        clients,original=self.partial_hold_clients(abort=True)
+        out=self.host.run()
+        self.assertTrue(out['cancelled'] and out['cleanupComplete'])
+        self.assertEqual(len(clients['8'].calls),1)
+        for guid in ('87','1','4','5'):self.assertEqual(clients[guid].source,original[guid])
+        self.host.bridge.evaluate.assert_not_called()
+        self.host.transport.gm.assert_not_called();self.host.transport.select.assert_not_called()
+
+    def test_cli_partial_cancel_releases_only_same_task_writer_and_preserves_invocation(self):
+        self.gm.sid=self.gm.status['sessionId']=self.gm.party['sessionId']='aw-123'
+        clients,_=self.partial_hold_clients()
+        with self.assertRaises(TimeoutError):self.host.run()
+        root=self.host.store.folder.resolve();state=root/'runtime';goal=root/'goal.json';config=root/'transport.json'
+        goal.write_text(json.dumps(self.goal));cfg=dict(writerRoot=str(root/'writers'));config.write_text(json.dumps(cfg))
+        args=['run','--state-dir',str(state),'--goal',str(goal),'--transport',str(config),'--rpc-url','http://127.0.0.1:8090/rpc']
+        invocation=dict(rpcUrl=args[-1],goal=str(goal),transport=str(config),
+            policy=str(gm.ROOT/'behaviors/gm-recovery.lua'),policyBinary=str(gm.ROOT/'data/bin/luapolicy'))
+        original_invocation=json.dumps(invocation).encode()
+        with gm.task_store(state) as store:
+            store.save(self.host.data);store.write('invocation.json',original_invocation,gm.runtime.MAX_INPUT)
+        writer=gm.task_store(gm.writer_folder(root,'aw-123',cfg))
+        with writer:gm.claim_writer(writer,state)
+        (state/'cancel.json').write_text('{}')
+        by_url={m['rpcUrl']:clients[str(m['guid'])] for m in self.goal['members'] if m.get('rpcUrl')}
+        by_url[args[-1]]=self.gm;transport,bridge=Mock(),Mock()
+        with patch.object(gm,'task_rpc',side_effect=lambda url:by_url[url]),patch.object(gm,'SessionTransport',return_value=transport),patch.object(gm,'task_bridge',return_value=bridge),patch.object(gm.signal,'signal'),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gm.main(args),1) # cancellation is not a success claim
+        saved=gm.task_store(state).load()
+        self.assertTrue(saved['cancelled'] and saved['cleanupComplete'])
+        self.assertFalse(writer.load()['active'])
+        self.assertEqual(writer.load()['stateDir'],str(state))
+        self.assertEqual((state/'invocation.json').read_bytes(),original_invocation)
+        self.assertEqual(saved['goal'],self.goal)
+        self.assertEqual(len(clients['8'].calls),1)
+        self.assertTrue(all(r['restored'] for r in saved['holds'].values()))
+        bridge.evaluate.assert_not_called();transport.gm.assert_not_called();transport.select.assert_not_called()
+
+    def test_partial_cancel_preserves_independently_changed_source_and_resumable_custody(self):
+        clients,_=self.partial_hold_clients()
+        with self.assertRaises(TimeoutError):self.host.run()
+        clients['4'].source,clients['4'].revision='new actor source','actor-revision'
+        (self.host.store.folder/'cancel.json').write_text('{}')
+        out=self.host.run()
+        self.assertFalse(out['cleanupComplete'] or out['success'])
+        self.assertTrue(out['resumable'])
+        self.assertEqual(out['error'],'policy_restore_incomplete')
+        self.assertEqual(clients['4'].source,'new actor source')
+        self.assertFalse(self.host.data['holds']['4'].get('restored',False))
+        self.assertEqual(len(clients['8'].calls),1)
+        self.host.transport.gm.assert_not_called()
+
+    def test_partial_cancel_rejects_replaced_gm_before_restoring_any_hold(self):
+        clients,_=self.partial_hold_clients()
+        with self.assertRaises(TimeoutError):self.host.run()
+        (self.host.store.folder/'cancel.json').write_text('{}')
+        self.gm.status['sessionId']=self.gm.party['sessionId']='aw-replaced'
+        with self.assertRaisesRegex(ValueError,'current GM task body'):self.host.run()
+        self.assertFalse(any(r.get('restored') for r in self.host.data['holds'].values()))
+        self.assertTrue(all(len([m for m,_ in clients[g].calls if m=='session.reload_policy'])==1 for g in ('87','1','4','5')))
+        self.host.transport.gm.assert_not_called()
+
+    def test_unknown_game_reservation_cannot_use_predispatch_cleanup(self):
+        clients,_=self.partial_hold_clients()
+        with self.assertRaises(TimeoutError):self.host.run()
+        receipt=dict(id='task:1',outcome='unconfirmed',sessionId='aw-gm')
+        self.host.data['reservations']={'task:1':copy.deepcopy(receipt)}
+        self.host.data['last']=copy.deepcopy(receipt)
+        (self.host.store.folder/'cancel.json').write_text('{}')
+        with self.assertRaises(TimeoutError):self.host.run()
+        self.assertEqual(self.host.data['reservations']['task:1'],receipt)
+        self.assertEqual(self.host.data['last'],receipt)
+        self.assertFalse(any(r.get('restored') for r in self.host.data['holds'].values()))
+        self.host.transport.gm.assert_not_called();self.host.transport.select.assert_not_called()
 
 
 if __name__ == '__main__':

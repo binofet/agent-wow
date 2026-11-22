@@ -167,6 +167,67 @@ message OwnSplineFacts {
   uint32 map_id = 22;
 }
 
+// Current parser/transport agreement, separate from retained historical facts
+// and legacy endpoint inference. A duration only determines ACK cadence.
+message OwnMotionAuthority {
+  bool known = 1;
+  uint64 self_guid = 2;
+  uint64 visit_revision = 3;
+  uint64 revision = 4;
+  uint64 movement_revision = 5;
+  uint64 spline_revision = 6;
+  agentwow.module.v1.TransportScope transport_scope = 7;
+  string reason = 8;
+  uint64 duration_remaining_ms = 9;
+  // Actual own UNIT_FIELD_FLAGS observations, not flags inferred from a timer.
+  bool unit_flags_known = 10;
+  uint32 unit_flags = 11;
+  uint64 unit_flags_revision = 12;
+  uint64 unit_flags_age_ms = 13;
+  uint32 unit_flags_source_opcode = 14;
+  uint64 unit_flags_motion_revision = 15;
+}
+
+message CompleteSplineRequest {
+  uint64 self_guid = 1;
+  uint64 visit_revision = 2;
+  uint64 authority_revision = 3;
+  uint64 movement_revision = 4;
+  uint64 spline_revision = 5;
+  uint64 expected_revision = 6;
+  agentwow.module.v1.TransportScope transport_scope = 7;
+}
+
+// One scoped protocol write. The constructed movement image is explicitly
+// inferred from received movement plus an advertised endpoint, never an actual
+// endpoint observation. Neither a successful write nor duration proves arrival.
+message SplineCompletionOperation {
+  uint64 revision = 1;
+  uint64 self_guid = 2;
+  uint64 visit_revision = 3;
+  uint64 authority_revision = 4;
+  uint64 movement_revision = 5;
+  uint64 spline_revision = 6;
+  agentwow.module.v1.TransportScope transport_scope = 7;
+  bool pending = 8;
+  bool transport_written = 9;
+  bool transport_unknown = 10;
+  string phase = 11;
+  string error = 12;
+  bool movement_image_inferred = 13;
+  bool arrival_known = 14;
+  uint32 spline_id = 15;
+  bool spline_id_known = 16;
+  string movement_image_source = 17;
+}
+
+message SplineCompletionObservation {
+  uint64 self_guid = 1;
+  uint64 visit_revision = 2;
+  uint64 revision = 3;
+  SplineCompletionOperation operation = 4;
+}
+
 // Private own equipment slots0..18; bags and bank slots are excluded.
 message EquipmentSlotState {
   uint32 slot = 1;
@@ -506,6 +567,8 @@ message SnapshotResponse {
   uint64 visit_revision = 47;
   OwnMovementFacts self_movement_facts = 48;
   OwnSplineFacts self_spline_facts = 49;
+  OwnMotionAuthority self_motion_authority = 50;
+  SplineCompletionObservation spline_completion = 51;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
@@ -553,6 +616,7 @@ message CombatEventsResponse {
 }
 
 service BuddyWorld {
+  rpc CompleteSpline(CompleteSplineRequest) returns (SplineCompletionObservation);
   rpc CombatEvents(CombatEventsRequest) returns (CombatEventsResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc ObserveClientMovement(ClientMovementRequest) returns (google.protobuf.Empty);

@@ -10,12 +10,38 @@ import "google/protobuf/empty.proto";
 message WorldPacket {
   uint32 opcode = 1;
   bytes payload = 2;
+  // Immutable transport correlation captured before this packet is queued.
+  // Absent on older hosts; absence never authorizes a scoped completion.
+  TransportScope transport_scope = 3;
 }
 
 // SendPacketRequest carries one outbound gameplay packet without transport framing.
 message SendPacketRequest {
   uint32 opcode = 1;
   bytes payload = 2;
+  // Optional for legacy gameplay packets; required for spline completion.
+  TransportScope transport_scope = 3;
+}
+
+// Transport-owned observations, not destination, route or arrival authority.
+// Spline fields describe the latest observed standalone own spline header.
+// A consumer must also validate the complete World parser's current facts at
+// motion_revision; CREATE-only or malformed source cannot reuse an old header.
+message TransportScope {
+  string connection_id = 1;
+  uint64 self_guid = 2;
+  bool visit_bound = 3;
+  uint64 visit_revision = 4;
+  uint32 map_id = 5;
+  uint64 motion_revision = 6;
+  bool spline_id_known = 7;
+  uint32 spline_id = 8;
+  // Advances for a distinct observed source, including reused ID zero.
+  // Exact header retransmissions coalesce and cannot restore a consumed write.
+  uint64 spline_revision = 9;
+  uint64 spline_source_revision = 10;
+  bool spline_active = 11;
+  uint32 spline_source_opcode = 12;
 }
 
 // ClockResponse samples the clock shared by modules and core time-sync replies.
