@@ -3738,6 +3738,7 @@ from test_gm_task_lifecycle import GMTaskLifecycleTests
 from test_self_edit import SpellInspectionTests
 from test_spell_invocation import SpellInvocationPolicyTests
 from test_spell_learning import SpellLearningTests
+from test_owner_acknowledgement import OwnerAcknowledgementTests
 
 if __name__ == "__main__":
     unittest.main()

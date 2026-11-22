@@ -1086,6 +1086,35 @@ def evaluate_spell_learning(source,frame,source_limit,*,binary=None):
     return evaluate_mission_repair(alias,frame,max(source_limit,len(alias.encode())),binary=binary)
 
 
+def owner_acknowledgement(folder, identity, session, sequence, outcome=None):
+    """Reserve current owner input before chat/model work; never rearm an unknown write."""
+    host=task_runtime_module()
+    try:
+        with host.Store(Path(folder)/'owner-acknowledgements',max_bytes=host.MAX_CONTROLLER_LIMIT) as store:
+            data=store.load()
+            if data is None:data=dict(version=1,identity=identity,streams={})
+            streams=data.get('streams')
+            if (data.get('version')!=1 or data.get('identity')!=identity or not isinstance(streams,dict)
+                    or any(not isinstance(sid,str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid)
+                        or not isinstance(row,dict) or set(row)!={'sequence','outcome'}
+                        or type(row['sequence']) is not int or row['sequence']<=0
+                        or row['outcome'] not in ('reserved','transport_written','transport_unconfirmed','not_started')
+                        for sid,row in streams.items())):
+                raise ConversationError('Owner acknowledgement reservations are unavailable')
+            row=streams.get(session)
+            if outcome is None:
+                if row and sequence<=row['sequence']:return 'already_reserved'
+                streams[session]=dict(sequence=sequence,outcome='reserved')
+            elif row and row['sequence']==sequence:
+                row['outcome']=outcome
+            else:
+                raise ConversationError('Owner acknowledgement reservation changed')
+            store.save(data) # Durable before sending chat or entering the model.
+            return outcome or 'reserved'
+    except host.Error as error:
+        raise ConversationError('Owner acknowledgement storage unavailable: '+str(error)) from error
+
+
 def addressed_names(text, names):
     # "Arlen, follow Mira" addresses Arlen. A conjunction can address several
     # characters; a later sentence can begin a separate named instruction.
@@ -3764,6 +3793,7 @@ class Conversation:
             poll_combat=getattr(self.controls,'poll_combat',None)
             if callable(poll_combat):poll_combat()
         self.poll_shared_quest()
+        resumed = not self.initialized
         if not self.initialized:
             result = self.baseline()
             if result is None:
@@ -3818,7 +3848,8 @@ class Conversation:
                 addressed = addressed_names(text, [self.character_name, *self.party_agents.values()])
                 if addressed and self.character_name.casefold() not in addressed:
                     continue
-                selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender)})
+                selected.append({"speaker": self.player_name, "channel": channel, "text": text, "sender_guid": str(sender),
+                    "sequence":sequence,"receiverGuid":message.get('receiverGuid','0')})
             elif (channel == "WHISPER" and sender in DEVELOPMENT_PEERS
                   and self.session_id and result.get("sessionId") == self.session_id
                   and getattr(self.brain, "developer_workspace", None) is not None):
@@ -3867,6 +3898,9 @@ class Conversation:
         request_text = selected[-1]["text"].strip()
         address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
         request = request_text[address.end():] if address else request_text
+        acknowledged=self.acknowledge_owner_request(selected[-1],channel,history_key,
+            current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None)
+        if acknowledged is False:return
         control_request = parse_lua_control_request(request)
         if not peer and isinstance(self.controls, BuddyControls) and control_request:
             expected_class = "rogue" if control_request["technique"] == "sap" else "mage"
@@ -3907,6 +3941,15 @@ class Conversation:
                 allow_silent=development_whisper and development.get("enabled") is True)
         except OwnerInputPending:
             return
+        except ConversationError:
+            if acknowledged in ('transport_written','transport_unconfirmed'):
+                try:
+                    if not self.stopped() and self.same_body():
+                        self.send_reply({'text':"I couldn't finish confirming that request. Its outcome still needs checking.",
+                            'emote':'NONE'},channel,target_guid=sender,history_key=history_key)
+                except ConversationError:
+                    self.status(ownerAcknowledgement='failure_reply_unconfirmed')
+            raise
         if development.get('enabled') is True and getattr(self.brain,'last_development_events',None) is not None:
             self.status(developmentEvents=dict(self.brain.last_development_events,sessionId=development['sessionId'],cursor=self.cursor))
         if self.stopped():
@@ -3947,6 +3990,40 @@ class Conversation:
         self.send_reply(reply, channel, target_guid=sender, history_key=history_key)
         if self.controls:
             self.controls.events.clear()
+
+    def acknowledge_owner_request(self, entry, channel, history_key, *, current, directly_addressed=False):
+        # This is receipt feedback on existing owner routing, not command or
+        # intent classification. Unaddressed public/party chatter stays quiet.
+        folder=getattr(self.brain,'state_dir',None)
+        text=entry['text'].lstrip()
+        private=entry['channel']=='WHISPER' and self.owner_whisper_recipient(entry)
+        if (not current or integer(entry['sender_guid'])!=self.player_guid or folder is None
+                or not self.session_id or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}',self.session_id)
+                or not (private or directly_addressed) or text.startswith(('"',"'",'`','>','“','‘'))):
+            return 'not_applicable'
+        if self.stopped():raise Stopped('Conversation stop requested')
+        if not self.same_body():return False
+        identity=dict(characterGuid=str(self.character_guid),ownerGuid=str(self.player_guid),rpcUrl=self.rpc.url)
+        session,sequence=self.session_id,entry['sequence']
+        reserve=owner_acknowledgement(folder,identity,session,sequence)
+        if reserve=='already_reserved':
+            self.status(phase='listening',ownerAcknowledgement='already_reserved',ownerRequestSequence=sequence)
+            return False # A restart is not permission to replay the owner work.
+        if self.stopped():
+            owner_acknowledgement(folder,identity,session,sequence,'not_started')
+            raise Stopped('Conversation stop requested')
+        if not self.same_body():
+            owner_acknowledgement(folder,identity,session,sequence,'not_started')
+            return False
+        try:
+            self.send_reply({'text':'Got it—give me a moment.','emote':'NONE'},channel,
+                target_guid=self.player_guid,history_key=history_key)
+            outcome='transport_written'
+        except ConversationError:
+            outcome='transport_unconfirmed'
+        owner_acknowledgement(folder,identity,session,sequence,outcome)
+        self.status(ownerAcknowledgement=outcome,ownerRequestSequence=sequence)
+        return outcome
 
     def peer_member(self, sender, fresh=False, expected_session=None):
         if not self.controls:
