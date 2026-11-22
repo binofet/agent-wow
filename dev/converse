@@ -2586,6 +2586,162 @@ class AgentBrain:
 
 
 
+class DirectBrain(AgentBrain):
+    """Conversation brain using model HTTP APIs and actor-bound native tools."""
+    def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen",
+                 character_class="priest", developer_workspace=None, model=None, *,
+                 provider="local", base_url=None, api_key_env=None):
+        super().__init__(state_dir, timeout, stopped, character_name, character_class,
+                         developer_workspace, model, None)
+        from direct_model import DirectModel
+        self.client = DirectModel(provider, self.model, base_url, api_key_env, timeout)
+        self.transport = dict(provider=provider, baseURL=self.client.base_url)
+        self.last_api_receipt = None
+        self.developer_persona = (PERSONA.replace("CHARACTER_NAME", character_name)
+            .replace("CHARACTER_CLASS", character_class) + """
+Your selected model is called directly through its API. There is no Codex CLI,
+shell agent or provider fallback. Use only the supplied function tools.
+Owner input takes priority. Preserve existing pending/unknown actions; never
+repeat a mutation because its response was lost. Game decisions and tuning
+belong in the same accepted Lua policy. You can inspect, save, patch, test and
+CAS-apply your own Lua, inspect learned spells, and deliver structured policy
+input through the supplied identity-bound tools. Read your current policy and
+installed capabilities first. Generic learned spells do not require a separate
+Go handler. A queued event, packet write or cast GO is not an observed effect.
+Workspace tools are restricted to their advertised files; no arbitrary shell,
+credentials, server internals or model changes are available. For a missing
+native mechanic report its exact installed contract and required capability.
+For an authorized whole-team GM recovery, use the maintained gm_task_start
+tool and inspect its task status, preserving its one-writer and cleanup guards.
+Do not replace that lifecycle with a lone revive. Teammates can collaborate on
+development but cannot authorize unrelated gameplay. Return final_reply only
+after your requested work or honest pending outcome; do not claim a tool effect
+without observations. Keep final action NONE after performing a tool action.
+""")
+        if character_name.casefold() == "lotharen":
+            self.developer_persona += LOTHAREN_REALM_INSTRUCTIONS
+
+    def model_selection(self):
+        reported = (self.last_api_receipt or {}).get("providerReportedModel")
+        return dict(provider=self.client.provider, requestedModel=self.model,
+            baseURL=self.client.base_url, execution="direct_api", codexInvoked=False,
+            configured=True, source="explicit_direct_api", effectiveModelKnown=bool(reported),
+            providerReportedModel=reported, requestedReasoningEffort=None, reasoningOverride=False)
+
+    def _generate(self, history, control_state=None, cancelled=None):
+        from direct_model import ModelError, Cancelled
+        state = control_state if isinstance(control_state, dict) else {}
+        request = state.get("current_request", {})
+        request = request if isinstance(request, dict) else {}
+        developer = self.development_enabled(state)
+        if request.get("source") in ("mission_fault", "combat_review", "spell_learning") and not developer:
+            raise ConversationError("Internal developer binding changed")
+        allow_gm = (self.character_name.casefold() == "lotharen" and request.get("source") == "owner"
+                    and state.get("gm_controls_available") is True)
+        allow_silent = developer and (request.get("source") in ("combat_review", "spell_learning")
+            or request.get("source") == "party_agent" and request.get("verifiedPeer") is True
+            and request.get("developmentWhisper") is True)
+        emotes = supported_emotes(state)
+        schema = dict(REPLY_SCHEMA, properties=dict(REPLY_SCHEMA["properties"],
+            emote={"type":"string", "enum":["NONE", *sorted(emotes)]}))
+        if allow_gm:
+            schema["properties"]["gm_command"] = {"type":"string", "maxLength":255}
+            schema["required"] = [*schema["required"], "gm_command"]
+        prompt_state = dict(state)
+        for key in ("shared_development", "model_selection", "shared_tasks", "server_admin"):
+            prompt_state.pop(key, None)
+        prompt_state["model_selection"] = self.model_selection()
+        development = state.get("development", {})
+        record = self.generation_record(development, None, None)
+        record.update(execution="direct_api", childPhase="api.request", outcome="running",
+                      turnStarted=True, counts={"completedTools":0, "failedTools":0})
+        serial = [0]
+        def interrupted():
+            return self.stopped() or bool(cancelled and cancelled())
+        def api_metadata():
+            raw = self.client.last_receipt or {}
+            keys = ("requestId", "execution", "provider", "requestedModel", "providerReportedModel",
+                    "outcome", "reason", "httpRequests", "httpStatus", "toolCalls", "transportErrorType")
+            result = {key: raw[key] for key in keys if key in raw}
+            if isinstance(raw.get("providerError"), dict): result["providerError"] = raw["providerError"]
+            return result
+        def publish():
+            self.last_development_events = dict(record["counts"]) if developer else None
+            record["receiptStored"] = True
+            self.last_development_result = dict(record)
+            try: write_json(self.state_dir / "development-events-last.json", record)
+            except Exception: record["receiptStored"] = False
+            callback = getattr(self, "_generation_progress", None)
+            if callable(callback): callback(record)
+        tools = None
+        if developer:
+            from direct_tools import DirectTools
+            tools = DirectTools(RPC(development["rpcUrl"]), development["sessionId"],
+                development["selfGuid"], self.developer_workspace, ROOT,
+                allowed=lambda: self.development_enabled(state) and not interrupted(),
+                cancelled=interrupted, request_id=self.last_request_id)
+            prompt_state["shared_development"] = companion_role_context(self.character_name)
+        def dispatch(name, arguments):
+            if tools is None or interrupted():
+                raise OwnerInputPending("Fresh owner input is waiting")
+            serial[0] += 1
+            identity = self.last_request_id + ":" + str(serial[0])
+            row = dict(itemId=identity, type="direct_function", name=name, status="unknown")
+            record["pendingTools"].append(identity)
+            record["tools"].append(row)
+            if len(record["tools"]) > 16:
+                record["tools"].pop(0); record["omittedTools"] += 1
+            record.update(childPhase="tool.dispatch", lastTool=row, actionOutcome="unknown")
+            publish()  # Retain an entered/unknown operation before the callback.
+            try:
+                result = tools.dispatch(name, arguments)
+            except BaseException as error:
+                row["errorType"] = type(error).__name__
+                record["counts"]["failedTools"] += 1
+                publish()
+                raise
+            row["status"] = "returned"
+            record["pendingTools"].remove(identity)
+            record["counts"]["completedTools"] += 1
+            publish()
+            return result
+        self._generation["stage"] = "api_request"
+        try:
+            value = self.client.generate(
+                (self.developer_persona if developer else self.persona)
+                    + (self.gm_instructions if allow_gm else ""),
+                [{"role":"user", "content":"Current observations and control state JSON:\n"
+                    + json.dumps(prompt_state, ensure_ascii=False)
+                    + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False)}],
+                schema, tools.tool_schemas() if tools is not None else [], dispatch,
+                cancelled=interrupted, request_id=self.last_request_id)
+            if interrupted():
+                raise OwnerInputPending("Fresh owner input is waiting")
+            reply = validate_reply(value, emotes, allow_silent=allow_silent, allow_gm=allow_gm)
+            record.update(outcome="completed", streamComplete=True, turnCompleted=True,
+                          childPhase="api.completed", actionOutcome="not_inferred_from_model_reply")
+            self.last_api_receipt = self.client.last_receipt
+            record["api"] = api_metadata()
+            publish()
+            return reply
+        except BaseException as error:
+            self.last_api_receipt = self.client.last_receipt
+            reason = ("stop_requested" if self.stopped() else "owner_input_waiting"
+                if isinstance(error, (Cancelled, OwnerInputPending)) else
+                error.reason if isinstance(error, ModelError) else type(error).__name__)
+            record.update(outcome="failed", reason=reason, errorType=type(error).__name__,
+                          childPhase="api.failed", api=api_metadata())
+            self.retain_failure(record)
+            publish()
+            if self.stopped(): raise Stopped("Conversation stop requested") from error
+            if isinstance(error, (Cancelled, OwnerInputPending)):
+                raise OwnerInputPending("Fresh owner input is waiting") from error
+            if isinstance(error, (KeyboardInterrupt, SystemExit)): raise
+            raise ConversationError("The selected model request did not finish: " + str(reason)) from error
+
+
+
+
 class CodexBrain(AgentBrain):
     def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
         super().__init__(state_dir, timeout, stopped, character_name, character_class, developer_workspace, model, reasoning_effort)
@@ -5263,7 +5419,7 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
-    parser.add_argument("--model-provider", choices=("codex", "local", "responses"), default="codex")
+    parser.add_argument("--model-provider", choices=("codex", "local", "openai", "claude", "gemini", "responses"), default="codex")
     parser.add_argument("--model-base-url", help="Explicit local or Responses API base URL")
     parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
     parser.add_argument("--model-api-key-env", help="Environment variable name for a custom Responses provider")
@@ -5285,8 +5441,12 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
-    model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
-                    local_provider=args.local_provider, api_key_env=args.model_api_key_env)
+    if args.model_provider in ("local", "openai", "claude", "gemini"):
+        from direct_model import DirectModel
+        DirectModel(args.model_provider, args.model, args.model_base_url, args.model_api_key_env, args.reply_timeout)
+    else:
+        model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
+                        local_provider=args.local_provider, api_key_env=args.model_api_key_env)
     if (not 0.2 <= args.poll_seconds <= 10 or args.reply_timeout is not None and not 5 <= args.reply_timeout <= 180
             or not 1 <= args.max_replies <= 1000 or not 0 < args.max_hours <= 24
             or not 0 < args.player_guid < 2**48
@@ -5339,10 +5499,15 @@ def main(argv=None):
         workspace = args.developer_workspace
         if workspace is None:
             workspace = registered_developer_workspace(args.character_guid, args.character_name)
-        provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
-            base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
-        brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           workspace, args.model, args.reasoning_effort, **provider_options)
+        if args.model_provider in ("local", "openai", "claude", "gemini"):
+            brain = DirectBrain(state, args.reply_timeout, stopped, args.character_name,
+                args.character_class, workspace, args.model, provider=args.model_provider,
+                base_url=args.model_base_url, api_key_env=args.model_api_key_env)
+        else:
+            provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
+                base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
+            brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
+                               workspace, args.model, args.reasoning_effort, **provider_options)
         brain.included_usage_only = args.included_usage_only
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
