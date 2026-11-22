@@ -3365,7 +3365,7 @@ from test_lua_control_bridge import LuaControlBridgeTests
 
 def load_tests(loader, tests, pattern):
     # Keep the existing CI entry point, including private combat evidence checks.
-    for name in ("test_combat_context", "test_combat_review"):
+    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics"):
         extra_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
         module = importlib.util.module_from_spec(extra_spec)
         extra_spec.loader.exec_module(module)
@@ -4094,10 +4094,6 @@ from test_spell_invocation import SpellInvocationPolicyTests
 from test_spell_learning import SpellLearningTests
 from test_owner_acknowledgement import OwnerAcknowledgementTests
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OwnerPreemptionTests(unittest.TestCase):
     def test_actual_model_process_cancels_and_keeps_already_written_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -4212,3 +4208,7 @@ class DevelopmentWhisperSilenceTests(unittest.TestCase):
         self.assertEqual(loop.replies,0)
         with self.assertRaises(converse.ConversationError):
             converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
