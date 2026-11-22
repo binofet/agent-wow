@@ -57,6 +57,38 @@ local function selected(obs,guid)
     local s=obs.selection
     return type(s)=="table" and (s.known==true or s.transportWritten==true) and same(s.targetGuid,guid)
 end
+-- Selection custody survives a resource becoming full without our refill.
+-- Reconcile that exact prior action before another member/stage can select.
+local function reconcile_selection(m,frame,now)
+    local pending=m.selectionWaiting
+    if not pending then return end
+    local last=frame.last
+    local matching=last and same(last.id,pending.id) and
+        (last.sessionId==nil or last.sessionId==m.gmSessionId)
+    local action=matching and last.action
+    if not pending.targetGuid and type(action)=="table" and action.kind=="select_target" and
+       find(m.members,action.targetGuid) then pending.targetGuid=tostring(action.targetGuid) end
+    local member=find(m.members,pending.targetGuid)
+    if not member then return result(m,"blocked_selection","selection_target_binding_unknown") end
+    if type(action)=="table" and (action.kind~="select_target" or not same(action.targetGuid,pending.targetGuid)) then
+        return result(m,"blocked_selection","selection_receipt_binding_changed")
+    end
+    local selection=frame.observations.selection or {}
+    local current=selection.sessionId==nil or selection.sessionId==m.gmSessionId
+    local observed=current and (selection.known==true and same(selection.targetGuid,pending.targetGuid) or
+        selection.observedTargetKnown==true and same(selection.observedTargetGuid,pending.targetGuid))
+    local written=matching and (last.outcome=="written" or last.outcome=="transport_written") and
+        current and selection.transportWritten==true and same(selection.targetGuid,pending.targetGuid)
+    local refused=matching and (last.outcome=="not_dispatched" or last.rejected==true)
+    if observed or written or refused then
+        m.selectionReconciled={id=pending.id,targetGuid=pending.targetGuid,stage=pending.stage,
+            reason=observed and "target_observed" or written and "selection_transport_written" or "selection_not_dispatched"}
+        m.selectionWaiting=nil
+        return
+    end
+    if now-pending.at>=m.effectTimeoutSeconds then return result(m,"blocked_selection","selection_not_observed:"..member.name) end
+    return result(m,"observing_selection_"..member.name)
+end
 local function issue(m,now,phase,action)
     m.serial=(m.serial or 0)+1
     action.id=m.taskId..":"..tostring(m.serial)
@@ -255,6 +287,7 @@ local function decide(frame)
         elseif stage=="revive" or stage=="health" or stage=="mana" then
             if not group_matches(obs.group,roster(m),m.originalLeader) then return result(m,"blocked_roster","original_party_not_restored") end
             if not colocated() then return result(m,"blocked_arrival","party_left_verified_destination") end
+            out=reconcile_selection(m,frame,now);if out then return out end
             m.memberIndex=m.memberIndex or 1
             local member=m.members[m.memberIndex]
             if not member then
@@ -289,11 +322,8 @@ local function decide(frame)
                     local maximum=stage=="health" and num(p.maxHp) or num(p.maxMana)
                     if not maximum or maximum<=0 then return result(m,"blocked_resources","natural_resource_maximum_unknown:"..member.name) end
                     if not selected(obs,member.guid) then
-                        if m.selectionWaiting then
-                            if now-m.selectionWaiting.at>=m.effectTimeoutSeconds then return result(m,"blocked_selection","selection_not_observed:"..member.name) end
-                            return result(m,"observing_selection_"..member.name)
-                        end
-                        m.serial=m.serial+1;local id=m.taskId..":"..m.serial;m.selectionWaiting={id=id,at=now}
+                        m.serial=m.serial+1;local id=m.taskId..":"..m.serial
+                        m.selectionWaiting={id=id,at=now,targetGuid=member.guid,stage=stage}
                         local r=result(m,"selecting_"..member.name);r.action={id=id,kind="select_target",targetGuid=member.guid};return r
                     end
                     m.selectionWaiting=nil
