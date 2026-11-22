@@ -72,9 +72,9 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	if !goal && !finishing {
 		return nil, nil, position{}, false
 	}
-	fresh, chosen, allowed := s.practiceTargetDecisionLocked(ctx, w, current)
+	fresh, chosen, choice, allowed := s.practiceTargetDecisionLocked(ctx, w, current)
 	point, known, _ = creaturePosition(chosen)
-	return fresh, chosen, point, allowed && chosen != nil && chosen.Guid == targetGUID && known && current()
+	return fresh, chosen, point, allowed && choice == "target" && chosen != nil && chosen.Guid == targetGUID && known && current()
 }
 
 func (s *Service) starterWeaponWriteAllowedLocked(ctx context.Context, targetGUID uint64, spell uint32) bool {

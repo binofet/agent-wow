@@ -233,6 +233,19 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.state.PracticePhase = "target_death_observed"
 		return
 	}
+	fresh, chosen, choice, valid := s.practiceTargetDecisionLocked(ctx, w, s.practiceApproachCurrentLocked(ctx, s.practiceTarget))
+	if !valid {
+		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
+		s.state.PracticePhase = "waiting_for_current_practice_target_policy"
+		s.state.Reason = s.starterSpells.failure()
+		return
+	}
+	if choice == "stop" {
+		s.stopPracticeLocked(ctx, "lua_target_choice_stopped")
+		return
+	}
+	w, target, self = fresh, chosen, fresh.Self
 	if s.practiceTarget == 0 {
 		s.stopLocked(ctx)
 		if self.UnitFlags&0x80000 != 0 || !s.stopAutoAttackLocked(ctx) {
@@ -249,14 +262,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			s.state.PracticePhase = "recovering_before_next_pull"
 			return
 		}
-		current := s.practiceApproachCurrentLocked(ctx, 0)
-		fresh, chosen, valid := s.practiceTargetDecisionLocked(ctx, w, current)
-		if !valid {
-			s.state.PracticePhase = "waiting_for_current_practice_target_policy"
-			s.state.Reason = s.starterSpells.failure()
-			return
-		}
-		w, target, self = fresh, chosen, fresh.Self
 		if target == nil {
 			s.state.PracticePhase = "waiting_for_observed_level_one_young_wolf"
 			return
@@ -265,15 +270,13 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 		s.practiceRoute, s.practicePullStarted, s.practiceReplans = nil, false, 0
 		s.practiceKillCredited = false
 	}
-	fresh, chosen, valid := s.practiceTargetDecisionLocked(ctx, w, s.practiceApproachCurrentLocked(ctx, s.practiceTarget))
-	if !valid || chosen == nil {
+	if target == nil {
 		s.stopLocked(ctx)
 		s.stopAutoAttackLocked(ctx)
 		s.state.PracticePhase = "waiting_for_current_practice_target_policy"
-		s.state.Reason = s.starterSpells.failure()
+		s.state.Reason = "practice_lua_target_choice_wait"
 		return
 	}
-	w, target, self = fresh, chosen, fresh.Self
 	if self.ClassId == 4 && !target.CombatReachKnown {
 		s.stopPracticeLocked(ctx, "target_melee_range_unknown")
 		return

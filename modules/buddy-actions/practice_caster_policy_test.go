@@ -216,7 +216,7 @@ func TestPracticeCasterLuaFinalPolicyReadRevalidatesCurrentFacts(t *testing.T) {
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
 					out, err := runtime.EvaluateContext(ctx, input)
-					if input["selection"] == practiceApproachSelection {
+					if input["selection"] == practiceApproachSelection || input["selection"] == practiceTargetSelection {
 						return true, runtime.Status().Revision, out, err
 					}
 					reads++
@@ -264,7 +264,7 @@ func TestPracticeCasterLuaFinalWorldReturnCannotExtendAuthority(t *testing.T) {
 				runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-					if input["selection"] != practiceApproachSelection {
+					if input["selection"] != practiceApproachSelection && input["selection"] != practiceTargetSelection {
 						reads++
 					}
 					out, err := runtime.EvaluateContext(ctx, input)

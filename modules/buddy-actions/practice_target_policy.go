@@ -45,7 +45,7 @@ func (s *Service) practiceTargetFactsLocked(w *worldv1.SnapshotResponse) (map[st
 			"entry": c.Entry, "present": c.Present, "mapKnown": c.MapKnown, "mapId": c.MapId,
 			"positionKnown": known, "positionRevision": strconv.FormatUint(c.PositionRevision, 10), "x": p.x, "y": p.y, "z": p.z,
 			"aliveKnown": c.AliveKnown, "alive": c.Alive, "healthKnown": c.HealthKnown, "health": c.Health, "maxHealth": c.MaxHealth,
-			"levelKnown": c.LevelKnown, "level": c.Level, "protected": s.targetProtection.blocks(c.Guid, s.now()), "npcFlags": c.NpcFlags, "unitFlags": c.UnitFlags, "unitFlags2": c.UnitFlags_2,
+			"unitFlagsKnown": c.UnitFlagsKnown, "levelKnown": c.LevelKnown, "level": c.Level, "protected": s.targetProtection.blocks(c.Guid, s.now()), "npcFlags": c.NpcFlags, "unitFlags": c.UnitFlags, "unitFlags2": c.UnitFlags_2,
 			"dynamicFlags": c.DynamicFlags, "attackVictimKnown": c.AttackVictimKnown, "attackVictimGuid": strconv.FormatUint(c.AttackVictimGuid, 10),
 			"attackAgeMs": c.AttackAgeMs, "targetKnown": c.TargetKnown, "targetGuid": strconv.FormatUint(c.TargetGuid, 10),
 		})
@@ -63,16 +63,41 @@ func (s *Service) practiceTargetFactsLocked(w *worldv1.SnapshotResponse) (map[st
 	}, true
 }
 
+// Elapsed observation age advances without a different server attack. Keep the
+// raw age available to Lua; compare the actual victim/spawn facts rather than
+// treating another millisecond as a new object or a changed observation event.
+func samePracticeTargetFacts(before, after map[string]any) bool {
+	stable := func(input map[string]any) map[string]any {
+		out := make(map[string]any, len(input))
+		for k, v := range input {
+			out[k] = v
+		}
+		rows := []any{}
+		for _, value := range input["candidates"].([]any) {
+			row := map[string]any{}
+			for k, v := range value.(map[string]any) {
+				if k != "attackAgeMs" {
+					row[k] = v
+				}
+			}
+			rows = append(rows, row)
+		}
+		out["candidates"] = rows
+		return out
+	}
+	return reflect.DeepEqual(stable(before), stable(after))
+}
+
 // The same accepted Lua selector chooses a new target and retains/rejects the
 // current target at physical write boundaries. No native nearest fallback.
-func (s *Service) practiceTargetDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, current func() bool) (*worldv1.SnapshotResponse, *worldv1.CreatureState, bool) {
+func (s *Service) practiceTargetDecisionLocked(ctx context.Context, w *worldv1.SnapshotResponse, current func() bool) (*worldv1.SnapshotResponse, *worldv1.CreatureState, string, bool) {
 	input, known := s.practiceTargetFactsLocked(w)
 	if !known || !current() {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	output := s.starterSpells.decide(ctx, input, s.behavior)
 	if !current() {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	var chosen struct {
 		Kind       string `json:"kind"`
@@ -82,31 +107,31 @@ func (s *Service) practiceTargetDecisionLocked(ctx context.Context, w *worldv1.S
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err != nil || output == nil || len(output) != 2 || decoder.Decode(&chosen) != nil ||
-		(chosen.Kind != "target" && chosen.Kind != "wait") {
+		(chosen.Kind != "target" && chosen.Kind != "wait" && chosen.Kind != "stop") {
 		if s.starterSpells.lastError == "" {
 			s.starterSpells.lastError = "invalid current practice target decision"
 		}
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	guid, err := strconv.ParseUint(chosen.TargetGuid, 10, 64)
 	if err != nil || chosen.TargetGuid != strconv.FormatUint(guid, 10) || (chosen.Kind == "target") != (guid != 0) ||
 		s.practiceTarget != 0 && chosen.Kind == "target" && guid != s.practiceTarget {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	fresh, err := s.snapshot(ctx, guid)
 	if err != nil || !current() || safePracticeCharacter(fresh, s.selfGUID) != "" || !s.refreshPositionLocked(fresh) {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	after, known := s.practiceTargetFactsLocked(fresh)
-	if !known || !reflect.DeepEqual(input, after) || !current() {
-		return nil, nil, false
+	if !known || !samePracticeTargetFacts(input, after) || !current() {
+		return nil, nil, "", false
 	}
 	if guid == 0 {
-		return fresh, nil, true
+		return fresh, nil, chosen.Kind, true
 	}
 	target := practiceTargetObservation(fresh, guid)
 	if !exactOffenseTarget(fresh, target, guid, nil) {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
 	// Only an actually supplied observation can become the chosen target.
 	supplied := false
@@ -119,7 +144,7 @@ func (s *Service) practiceTargetDecisionLocked(ctx context.Context, w *worldv1.S
 		supplied = true
 	}
 	if !supplied {
-		return nil, nil, false
+		return nil, nil, "", false
 	}
-	return fresh, target, true
+	return fresh, target, chosen.Kind, true
 }

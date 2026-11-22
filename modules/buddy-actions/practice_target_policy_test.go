@@ -27,7 +27,7 @@ func TestPracticeTargetChoiceUsesSameBodyLuaEditAndExactCastPacket(t *testing.T)
 	}
 	sid, body := s.sessionID, s.selfGUID
 	before := len(f.packets)
-	_, chosen, valid := s.practiceTargetDecisionLocked(ctx, f.world, s.practiceApproachCurrentLocked(ctx, 0))
+	_, chosen, _, valid := s.practiceTargetDecisionLocked(ctx, f.world, s.practiceApproachCurrentLocked(ctx, 0))
 	if !valid || chosen == nil || chosen.Guid != first.Guid || len(f.packets) != before {
 		t.Fatal("default Lua target plan", chosen, valid, s.starterSpells.failure())
 	}
@@ -84,9 +84,41 @@ func TestPracticeTargetFactsAndPostChoiceAdmissionNeverSelectAReplacement(t *tes
 				}
 				return true, "current-source", map[string]any{"kind": "target", "targetGuid": strconv.FormatUint(choice, 10)}, nil
 			}
-			_, chosen, valid := s.practiceTargetDecisionLocked(context.Background(), f.world, current)
+			_, chosen, _, valid := s.practiceTargetDecisionLocked(context.Background(), f.world, current)
 			if valid || chosen != nil || len(f.packets) != before {
 				t.Fatal("stale/foreign selection admitted or native fallback wrote", chosen, valid, f.packets)
+			}
+		})
+	}
+}
+
+func TestPracticeTargetDerivedAgeAdvancesWithoutAChangedSpawnOrVictim(t *testing.T) {
+	for _, change := range []string{"age", "victim", "spawn"} {
+		t.Run(change, func(t *testing.T) {
+			s, f, _ := practiceRig(t, 8)
+			if !s.refreshPositionLocked(f.world) {
+				t.Fatal("own pose unavailable")
+			}
+			target := f.world.NearbyCreatures[0]
+			s.practiceTarget, s.state.PracticeTargetGuid, s.practicePullStarted = target.Guid, target.Guid, true
+			target.AttackVictimKnown, target.AttackVictimGuid, target.AttackAgeMs = true, s.selfGUID, 100
+			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+				out, err := runtime.EvaluateContext(ctx, input)
+				switch change {
+				case "age":
+					target.AttackAgeMs++
+				case "victim":
+					target.AttackVictimGuid++
+				case "spawn":
+					target.Entry++
+				}
+				return true, runtime.Status().Revision, out, err
+			}
+			before := len(f.packets)
+			_, chosen, _, valid := s.practiceTargetDecisionLocked(context.Background(), f.world, s.practiceApproachCurrentLocked(context.Background(), target.Guid))
+			if valid != (change == "age") || valid && (chosen == nil || chosen.Guid != target.Guid) || len(f.packets) != before {
+				t.Fatal("elapsed age was mistaken for changed identity, or new facts were admitted", change, valid, chosen, f.packets)
 			}
 		})
 	}

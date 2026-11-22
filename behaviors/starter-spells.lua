@@ -130,6 +130,7 @@ end
 local function flag(value,mask) return math.floor((value or 0)/mask)%2==1 end
 local function practice_target(input,self)
     local wait={kind="wait",targetGuid="0"}
+    local stop={kind="stop",targetGuid="0"}
     local t=M.practice_targets
     if type(t)~="table" or type(t.entries)~="table" or type(t.area)~="table" or self.present~=true or self.mapKnown~=true or not pose(self) or
        type(t.search_yards)~="number" or t.search_yards~=t.search_yards or t.search_yards<0 or
@@ -144,7 +145,7 @@ local function practice_target(input,self)
         if type(c)~="table" or not guid(c.guid) or c.creatureObject~=true or c.present~=true or
            c.mapKnown~=true or c.mapId~=self.mapId or t.entries[c.entry]~=true or
            c.levelKnown~=true or not uint(c.level) or c.level<t.min_level or c.level>t.max_level or
-           c.healthKnown~=true or not uint(c.health) or not uint(c.maxHealth) or c.maxHealth==0 or
+           c.healthKnown~=true or c.unitFlagsKnown~=true or not uint(c.health) or not uint(c.maxHealth) or c.maxHealth==0 or
            c.health==0 or c.health>c.maxHealth or c.protected==true or c.aliveKnown~=true or c.alive~=true or not pose(c) or
            (c.npcFlags or 0)~=0 or flag(c.unitFlags2,1) then return false end
         for _,field in ipairs({"npcFlags","unitFlags","unitFlags2","dynamicFlags"}) do
@@ -160,7 +161,7 @@ local function practice_target(input,self)
         if type(c)~="table" then return wait end
         if c.present==true and c.aliveKnown==true and c.alive==true and
            c.attackVictimKnown==true and c.attackVictimGuid==input.selfGuid and
-           (c.attackAgeMs or 0)<=30000 and t.entries[c.entry]~=true then return wait end
+           (c.attackAgeMs or 0)<=30000 and t.entries[c.entry]~=true then return stop end
     end
     local best,score
     for _,c in ipairs(input.candidates) do
@@ -171,7 +172,7 @@ local function practice_target(input,self)
                    (not flag(c.dynamicFlags,4) or flag(c.dynamicFlags,8)) and c.guid~=input.failedTargetGuid then
                     return {kind="target",targetGuid=c.guid}
                 end
-                return wait
+                return not pose(c) and wait or stop
             end
         elseif valid and not flag(c.unitFlags,524288) and (c.dynamicFlags or 0)==0 and
            c.attackVictimKnown~=true and (c.targetKnown~=true or c.targetGuid==nil or c.targetGuid=="0") then
