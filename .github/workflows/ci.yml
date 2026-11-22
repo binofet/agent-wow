@@ -46,6 +46,9 @@ jobs:
       - name: Test buddy launcher lifecycle
         run: python3 -B dev/test_buddy.py
 
+      - name: Test companion settings and launcher lifecycle
+        run: python3 -B dev/test_companions.py
+
       - name: Build evaluator and test shared quest reward policy
         run: |
           go build -o data/bin/luapolicy ./cmd/luapolicy

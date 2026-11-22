@@ -1,0 +1,17 @@
+# Optional existing LiteLLM service. Local LM Studio does not use this file.
+# Official Responses translation: https://docs.litellm.ai/docs/harness/codex
+# Select upstream model IDs supported by your own accounts; aliases stay fixed.
+model_list:
+  - model_name: claude
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: gemini
+    litellm_params:
+      model: gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+router_settings:
+  num_retries: 0
+  fallbacks: []
