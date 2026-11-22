@@ -37,12 +37,13 @@ class SupplyTest(unittest.TestCase):
         binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',root/'data/bin/luapolicy'))
         if not binary.is_file():raise RuntimeError('Actual Lua evaluator required; set BUDDY_LUAPOLICY_TEST_BINARY')
         cls.root=root;cls.lua=(root/'behaviors/mana-supply.lua').read_text()
+        cls.dependencies='local disposal=(function()\n'+(root/'behaviors/item-disposal.lua').read_text()+'\nend)()\nlocal gear=(function()\n'+(root/'behaviors/gear.lua').read_text()+'\nend)()\n'
         cls.bridge=supply.runtime.Bridge(binary,root/'modules',value_bytes=supply.VALUE_BYTES,execution_ms=1000)
 
     def setUp(self):
         self.mira=observation(4,18,0);self.arlen=observation(1,0,3);self.nix=observation(8,16,4)
         self.observations={8086:self.arlen,8087:self.mira,8402:self.nix};self.calls=[]
-        self.source='local m=(function()\n'+self.lua+'\nend)()\nreturn {mana_supply_plan=m.plan}'
+        self.source=self.dependencies+'local m=(function()\n'+self.lua+'\nend)()\nreturn {mana_supply_plan=function(input)return m.plan(input,disposal,gear)end}'
         self.generation=1;self.gift_available=True;self.fail_method=None;self.replace_body=None
         self.toolkit=dict(sessionId='aw-4',selfGuid='4',spellbookKnown=True,spellbookRevision='7',spells=[
             dict(familyId=5504,createdItemEntry=item,rank=rank,spellId=spell)
@@ -61,9 +62,12 @@ class SupplyTest(unittest.TestCase):
         view=self.observations[port];guid=view['actions']['selfGuid']
         fields=lambda values:[dict(name=name,kind=kind) for name,kind in values]
         methods=[dict(name='buddy-actions.create_item',effect='mutation',inputType='CreateItem')]
+        methods.append(dict(name='buddy-trade.destroy_junk',effect='mutation',inputType='Junk'))
         if self.gift_available:methods.append(dict(name='buddy-trade.water_gift',effect='mutation',inputType='Gift'))
         return dict(sessionId=view['actions']['sessionId'],characterGuid=guid,revision='c'*64,methods=methods,
             messages=dict(CreateItem=dict(fields=fields([('sessionId','string'),('selfGuid','uint64'),('spellId','uint32')])),
+                Junk=dict(fields=fields([('sessionId','string'),('revision','uint64'),('backpackRevision','uint64'),
+                    ('backpackSlot','uint32'),('expectedItemGuid','uint64'),('inventoryRevision','uint64'),('sourceBag','uint32'),('sourceSlot','uint32')])),
                 Gift=dict(fields=fields([('sessionId','string'),('revision','uint64'),('partnerGuid','uint64'),
                     ('itemEntry','uint32'),('itemCount','uint32'),('expectedItemGuid','uint64'),
                     ('backpackRevision','uint64'),('backpackSlot','uint32'),('inventoryRevision','uint64'),
@@ -84,6 +88,7 @@ class SupplyTest(unittest.TestCase):
         if method=='buddy-trade.water_gift':
             view['trade'].update(waterGiftArmed=True,partnerGuid=params['partnerGuid'],revision=str(int(view['trade']['revision'])+1))
             return copy.deepcopy(view['trade'])
+        if method=='buddy-trade.destroy_junk':return copy.deepcopy(view['trade'])
         self.assertEqual(method,'buddy-actions.create_item')
         entry=next((row['createdItemEntry'] for row in self.toolkit['spells'] if row['spellId']==params['spellId']),0)
         return dict(actions,lastSpellOperation=dict(capability='create_item',spellId=params['spellId'],phase='waiting_server',
@@ -96,6 +101,17 @@ class SupplyTest(unittest.TestCase):
     def gift(self):
         state={};self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
         self.assertEqual(self.turn(state),'water_gift_offer_requested');return state
+
+    def cleanup_fixture(self):
+        carried(self.mira,2136,8)
+        row=self.arlen['inventory']['inventoryBags'][0]['slots'][0]
+        row.update(entry=900,stackCount=2,itemGuid=str(0x4000000000000042),metadataKnown=True,
+            enhancementsKnown=True,hasEnhancements=False)
+        self.metadata[900]=dict(itemId=900,available=True,itemClass=15,sellPrice=5,rawTemplateFacts={})
+        self.arlen['world'].update(selfQuestLogKnown=True,selfQuestLogRevision='7',selfQuestLog=[dict(slot=i) for i in range(25)])
+        self.arlen['journal']=dict(sessionId='aw-1',questLogRevision='7',entries=[])
+        self.arlen['trade'].update(backpackKnown=True,backpackRevision='5')
+        return row
 
     def test_carried_water_goes_to_empty_caster_through_two_correlated_lua_turns(self):
         carried(self.mira,2136,8);self.gift()
@@ -131,8 +147,7 @@ class SupplyTest(unittest.TestCase):
     def test_full_bags_and_observed_partial_stack_capacity(self):
         carried(self.mira,2136,6);row=self.arlen['inventory']['inventoryBags'][0]['slots'][0]
         row.update(entry=117,stackCount=5,metadataKnown=True,itemGuid='11')
-        state={};self.assertEqual(self.turn(state),'recipient_needs_bag_space');self.assertEqual(self.calls,[])
-        self.assertEqual(state['spacePort'],'8086')
+        state={};self.assertEqual(self.turn(state),'cleanup_facts_unknown_or_items_retained');self.assertEqual(self.calls,[])
         row.update(entry=2136,stackCount=8);self.arlen['inventory']['manaDrinkCount']=8
         self.gift();self.assertEqual(self.calls[1][2]['itemCount'],6)
 
@@ -140,7 +155,7 @@ class SupplyTest(unittest.TestCase):
         carried(self.mira,2136,6);self.arlen['inventory']['manaDrinkCount']=8
         self.arlen['inventory']['inventoryBags'][0]['slots'][0].update(entry=2136,stackCount=8,metadataKnown=True,itemGuid='14')
         self.metadata[2136]['rawTemplateFacts']={}
-        self.assertEqual(self.turn(),'recipient_needs_bag_space');self.assertEqual(self.calls,[])
+        self.assertEqual(self.turn(),'cleanup_facts_unknown_or_items_retained');self.assertEqual(self.calls,[])
         self.metadata[2136]['rawTemplateFacts']['maxStackCount']=0xFFFFFFFF
         self.gift();self.assertEqual(self.calls[-1][2]['itemCount'],6)
 
@@ -184,7 +199,7 @@ class SupplyTest(unittest.TestCase):
     def test_mage_needs_room_and_pending_native_conjure_is_not_repeated(self):
         self.mira['inventory']['manaDrinkCount']=0
         self.mira['inventory']['inventoryBags'][0]['slots'][0].update(entry=117,stackCount=3,metadataKnown=True,itemGuid='11')
-        state={};self.assertEqual(self.turn(state),'mage_needs_bag_space');self.assertEqual(state['spacePort'],'8087')
+        state={};self.assertEqual(self.turn(state),'cleanup_facts_unknown_or_items_retained')
         self.mira['inventory']['inventoryBags'][0]['slots'][0].update(entry=2288,stackCount=5)
         self.assertEqual(self.turn(),'conjure_requested');self.assertEqual(self.calls[-1][2]['spellId'],5505)
         self.calls.clear();self.mira['actions']['lastSpellOperation']=dict(capability='create_item',phase='waiting_created_item')
@@ -289,6 +304,70 @@ class SupplyTest(unittest.TestCase):
         self.source='return {}';self.generation+=1;state={}
         self.assertEqual(self.turn(state),'water_supply_unavailable')
         self.assertIn('mana_supply_policy_export_unavailable',state['error']);self.assertEqual(self.calls,[])
+
+    def test_shared_disposal_selects_exact_lowest_value_source_then_requires_native_removal_before_supply(self):
+        row=self.cleanup_fixture();state={}
+        self.arlen['inventory']['inventoryBags'][1].update(slotCount=1,slots=[dict(bag=1,slot=0,entry=901,stackCount=1,
+            itemGuid=str(0x4000000000000043),metadataKnown=True,enhancementsKnown=True)])
+        self.metadata[901]=dict(self.metadata[900],itemId=901,sellPrice=20)
+        self.assertEqual(self.turn(state),'cleanup_requested')
+        self.assertEqual(self.calls,[(8086,'buddy-trade.destroy_junk',dict(sessionId='aw-1',revision='2',
+            expectedItemGuid=row['itemGuid'],backpackRevision='5',backpackSlot=0))])
+        self.assertEqual(state['memory']['pending']['source']['stackCount'],2)
+        self.assertEqual(self.turn(state,now=90000),'awaiting_cleanup_effect');self.assertEqual(len(self.calls),1)
+        self.arlen['trade'].update(revision='3',lastJunkDisposal=dict(itemGuid=row['itemGuid'],entry=900,count=2,
+            backpackRevision='5',status='SERVER_SLOT_REMOVAL_CONFIRMED'))
+        self.assertEqual(self.turn(state),'awaiting_cleanup_effect') # Receipt without fresh actual removal is insufficient.
+        self.arlen['inventory']['inventoryBags'][0]['slots'][0]=dict(bag=0,slot=0)
+        self.arlen['inventory']['inventoryRevision']='6'
+        self.assertEqual(self.turn(state),'server_confirmed_cleanup')
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+
+    def test_cleanup_never_replays_unknown_write_or_uses_new_request_to_replace_it(self):
+        self.cleanup_fixture();state={};self.fail_method='buddy-trade.destroy_junk'
+        self.assertEqual(self.turn(state),'water_supply_rpc_unconfirmed')
+        state['request']=dict(id='other-water',sessionId='aw-4',groupGuid='77',recipientGuids=['8'])
+        self.source+='\n--same-body policy tune';self.generation+=1
+        self.assertEqual(self.turn(state,now=99999),'cleanup_outcome_unconfirmed');self.assertEqual(len(self.calls),1)
+
+    def test_cleanup_retains_quest_enhanced_functional_and_unknown_templates_without_python_fallback(self):
+        row=self.cleanup_fixture()
+        for edit in ('quest','enhanced','functional','unknown'):
+            with self.subTest(edit=edit):
+                before=copy.deepcopy(self.arlen);meta=copy.deepcopy(self.metadata[900])
+                if edit=='quest':
+                    self.arlen['world']['selfQuestLog'][0]['questId']=20
+                    self.arlen['journal']['entries']=[dict(questId=20,slot=0,logStateKnown=True,templateKnown=True,itemProtectionKnown=True,
+                        targets=[dict(kind='ITEM',targetId=900)])]
+                elif edit=='enhanced':self.arlen['inventory']['inventoryBags'][0]['slots'][0]['hasEnhancements']=True
+                elif edit=='functional':self.metadata[900]['hasSpell']=True
+                else:self.metadata[900].pop('rawTemplateFacts')
+                self.assertEqual(self.turn(),'cleanup_facts_unknown_or_items_retained');self.assertEqual(self.calls,[])
+                self.arlen.clear();self.arlen.update(before);self.metadata[900]=meta
+
+    def test_cleanup_uses_advertised_request_identity_and_context_guards_when_installed(self):
+        self.cleanup_fixture();original=self.catalog
+        def catalog(port):
+            value=original(port)
+            value['messages']['Junk']['fields'] += [dict(name=name,kind=kind) for name,kind in
+                [('requestId','string'),('expectedEquipmentRevision','uint64'),('expectedQuestLogRevision','uint64')]]
+            return value
+        self.catalog=catalog
+        self.arlen['world'].update(selfEquipmentKnown=True,selfEquipmentRevision='9')
+        self.arlen['inventory'].update(equipmentKnown=True,equipmentRevision='9')
+        state={};self.assertEqual(self.turn(state),'cleanup_requested')
+        params=self.calls[-1][2];self.assertEqual(params['expectedEquipmentRevision'],'9');self.assertEqual(params['expectedQuestLogRevision'],'7')
+        self.assertEqual(params['requestId'],state['memory']['pending']['requestId'])
+
+    def test_body_replacement_before_selected_cleanup_sends_no_packet(self):
+        self.cleanup_fixture();self.replace_body=8086;state={}
+        self.assertEqual(self.turn(state),'water_supply_unavailable');self.assertEqual(self.calls,[])
+
+    def test_lua_cleanup_defers_to_real_channel_or_inventory_custody(self):
+        self.cleanup_fixture();self.arlen['world']['self']['channelSpellId']=430
+        self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])
+        self.arlen['world']['self']['channelSpellId']=0;self.arlen['inventory']['active']=True
+        self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])
 
     def test_source_change_during_evaluation_or_body_change_before_write_sends_nothing(self):
         actual=self.bridge;outer=self

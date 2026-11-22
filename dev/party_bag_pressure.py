@@ -3,9 +3,6 @@
 import math
 import time
 
-from party_mana_supply import supply_space_pressure
-
-
 PARTY = {8086: 1, 8087: 4, 8088: 5, 8402: 8}
 LOOT_RANGE = 12
 COOLDOWN = 30
@@ -130,7 +127,7 @@ def verified_candidate(rpc, port, session, choices):
     return None, reason
 
 
-def step(rpc, views, attempts, safe_entries, port, guid, now, water_pressure):
+def step(rpc, views, attempts, safe_entries, port, guid, now):
     view = views.get(port, {})
     world, actions, inventory, trade, loot = (view.get(key, {}) for key in ('world', 'actions', 'inventory', 'trade', 'loot'))
     session = actions.get('sessionId')
@@ -159,10 +156,9 @@ def step(rpc, views, attempts, safe_entries, port, guid, now, water_pressure):
         return 'room_available'
     loot_needs_room = (loot.get('sessionId') == session and loot.get('enabled') is True
                        and loot.get('inventoryPaused') is True and nearby_loot(world, actions))
-    water_needs_room = water_pressure.get(str(port)) is True
-    if not loot_needs_room and not water_needs_room:
+    if not loot_needs_room:
         return 'no_current_bag_pressure'
-    if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active'):
+    if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active') or view.get('mana_supply_pending'):
         return 'waiting_for_safe_pause'
     if record and now < record['nextCheck']:
         return 'cooldown'
@@ -192,13 +188,12 @@ def step(rpc, views, attempts, safe_entries, port, guid, now, water_pressure):
     return 'waiting_for_disposal'
 
 
-def maintain_bag_pressure(rpc, observations, attempts, safe_entries, *, water_pressure=None):
+def maintain_bag_pressure(rpc, observations, attempts, safe_entries):
     """Tick public game-client endpoints with fresh observations; return per-port phases."""
     now, phases = time.monotonic(), {}
-    if water_pressure is None:water_pressure=supply_space_pressure(rpc,observations)
     for port, guid in PARTY.items():
         try:
-            phases[port] = step(rpc, observations, attempts, safe_entries, port, guid, now, water_pressure)
+            phases[port] = step(rpc, observations, attempts, safe_entries, port, guid, now)
         except (TypeError, ValueError, KeyError, AttributeError):
             phases[port] = 'invalid_inventory_observation'
         except Exception:

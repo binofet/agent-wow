@@ -26,6 +26,7 @@ local function free(v,guid)
     if not current(v,guid) then return false end
     local a,t=v.actions,v.trade
     return (t.phase=='IDLE' or t.phase=='COMPLETE') and not t.waterGiftArmed and not v.mana_rest_active
+        and not (v.inventory.active or v.inventory.closing) and n(((v.world or {}).self or {}).channelSpellId)==0
         and not(a.moving or a.motionUnconfirmed or a.traveling or a.castPending or (a.interactionOwner and a.interactionOwner~='')
             or a.autoAttacking or a.autoAttackRequested or a.autoAttackUnconfirmed)
 end
@@ -62,12 +63,49 @@ local function count(v,guid)
         and inv.manaDrinkCount~=nil then return n(inv.manaDrinkCount) end
 end
 local function slots(v)
-    local out={}
+    if (v.inventory or {}).inventoryKnown~=true or #(v.inventory.inventoryBags or {})~=5 then return nil end
+    local out={};local bags={}
     for _,bag in ipairs((v.inventory or {}).inventoryBags or {}) do
-        if bag.contentsKnown~=true or n(bag.slotCount)~=#(bag.slots or {}) then return nil end
-        for _,slot in ipairs(bag.slots or {}) do out[#out+1]=slot end
+        local key=id(n(bag.bag));local seen={}
+        if bags[key] or n(bag.bag)>4 or bag.slotKnown~=true or bag.contentsKnown~=true
+            or n(bag.slotCount)>36 or n(bag.slotCount)~=#(bag.slots or {}) then return nil end
+        bags[key]=true
+        for _,slot in ipairs(bag.slots or {}) do
+            local index=id(n(slot.slot))
+            if n(slot.bag)~=n(bag.bag) or n(slot.slot)>=n(bag.slotCount) or seen[index]
+                or n(slot.itemGuid)~=0 and (slot.metadataKnown~=true or n(slot.entry)==0 or n(slot.stackCount)==0) then return nil end
+            seen[index]=true;out[#out+1]=slot
+        end
     end
     return out
+end
+local function quest_safe(v,entry)
+    local w,j=v.world or {},v.journal or {}
+    if w.selfQuestLogKnown~=true or not after(w.selfQuestLogRevision,'0')
+        or j.sessionId~=v.actions.sessionId or id(j.questLogRevision)~=id(w.selfQuestLogRevision) then return false end
+    if #(w.selfQuestLog or {})~=25 then return false end
+    local active={};local covered={};local seen={}
+    for _,row in ipairs(w.selfQuestLog) do
+        local slot=n(row.slot);local key=id(slot)
+        if slot<0 or slot>24 or slot%1~=0 or seen[key] then return false end
+        seen[key]=true
+        if n(row.questId)>0 then
+            local quest=id(row.questId)
+            if active[quest]~=nil then return false end
+            active[quest]=slot
+        end
+    end
+    for _,row in ipairs(j.entries or {}) do
+        local key=id(row.questId)
+        if active[key]==nil or covered[key] or active[key]~=n(row.slot) or row.logStateKnown~=true
+            or row.templateKnown~=true or row.itemProtectionKnown~=true or row.failure and row.failure~='' then return false end
+        covered[key]=true
+        for _,target in ipairs(row.targets or {}) do
+            if (target.kind=='ITEM' or target.kind=='SOURCE_ITEM') and n(target.targetId)==entry then return false end
+        end
+    end
+    for key in pairs(active) do if not covered[key] then return false end end
+    return true
 end
 local function max_stack(meta)
     local raw=(meta.rawTemplateFacts or {}).maxStackCount
@@ -150,11 +188,68 @@ local function advertised(frame,port,method)
     end
     return false
 end
+local function request_field(frame,port,method,name)
+    for _,row in ipairs((frame.catalogs or {})[id(port)] or {}) do
+        if row.name==method then
+            local schema=((frame.catalogMessages or {})[id(port)] or {})[row.inputType] or {}
+            for _,field in ipairs(schema.fields or {}) do if field.name==name then return true end end
+        end
+    end
+    return false
+end
 local function issue(m,port,method,params,phase)
     m.sequence=n(m.sequence)+1
     local action={id=tostring(m.sequence),port=id(port),method=method,params=params}
     m.pending.actionId=action.id
     return result(m,phase,action)
+end
+
+local function cleanup(frame,m,port,disposal,gear)
+    local v=(frame.observations or {})[id(port)]
+    local rows=v and slots(v)
+    if not v or not rows or not free(v,v.actions.selfGuid) or not body(v.world.self,v.actions.selfGuid)
+        or not disposal or type(disposal.classify)~='function' then return result(m,'cleanup_facts_unknown') end
+    if v.world.inventoryKnown~=true or id(v.world.inventoryRevision)~=id(v.inventory.inventoryRevision) then return result(m,'cleanup_facts_unknown') end
+    for _,row in ipairs(rows) do if n(row.itemGuid)==0 then return result(m,'awaiting_inventory_space_observation') end end
+    local best
+    for _,row in ipairs(rows) do
+        local entry=n(row.entry);local meta=(frame.metadata or {})[id(entry)]
+        if meta and row.metadataKnown==true and row.enhancementsKnown==true and row.hasEnhancements~=true
+            and n(row.stackCount)>0 and n(meta.sellPrice)>0 and quest_safe(v,entry) then
+            local source={bag=n(row.bag),slot=n(row.slot),entry=entry,stackCount=n(row.stackCount),itemGuid=id(row.itemGuid)}
+            local context={source=source,carriedSource=row,world=v.world,inventory=v.inventory,journal=v.journal}
+            local decision=disposal.classify('owned_destroy',meta,context,gear)
+            if decision.status=='eligible' then
+                local value=n(meta.sellPrice)*source.stackCount
+                if not best or value<best.value or value==best.value and
+                    (source.bag<best.source.bag or source.bag==best.source.bag and source.slot<best.source.slot) then
+                    best={source=source,value=value}
+                end
+            end
+        end
+    end
+    if not best then return result(m,'cleanup_facts_unknown_or_items_retained') end
+    if not advertised(frame,port,'buddy-trade.destroy_junk') then return result(m,'cleanup_capability_unavailable') end
+    local source=best.source;local params={sessionId=v.actions.sessionId,revision=id(v.trade.revision),expectedItemGuid=source.itemGuid}
+    if source.bag==0 then
+        if not v.trade.backpackKnown or not v.trade.backpackRevision then return result(m,'cleanup_facts_unknown') end
+        params.backpackRevision=id(v.trade.backpackRevision);params.backpackSlot=source.slot
+    else
+        params.inventoryRevision=id(v.inventory.inventoryRevision);params.sourceBag=source.bag;params.sourceSlot=source.slot
+    end
+    if request_field(frame,port,'buddy-trade.destroy_junk','requestId') then
+        if v.world.selfEquipmentKnown~=true or not after(v.world.selfEquipmentRevision,'0')
+            or v.inventory.equipmentKnown~=true or id(v.inventory.equipmentRevision)~=id(v.world.selfEquipmentRevision) then
+            return result(m,'cleanup_facts_unknown')
+        end
+        params.requestId='water-space-'..v.actions.sessionId..'-'..tostring(math.floor(n(frame.nowMs)))..'-'..tostring(n(m.sequence)+1)
+        if request_field(frame,port,'buddy-trade.destroy_junk','expectedEquipmentRevision') then params.expectedEquipmentRevision=id(v.world.selfEquipmentRevision) end
+        if request_field(frame,port,'buddy-trade.destroy_junk','expectedQuestLogRevision') then params.expectedQuestLogRevision=id(v.world.selfQuestLogRevision) end
+    end
+    m.pending={kind='cleanup',mageSession=(frame.observations or {})[id(frame.bindings.magePort)].actions.sessionId,
+        actorPort=id(port),actorSession=v.actions.sessionId,source=source,inventoryRevision=id(v.inventory.inventoryRevision),
+        sourceRevision=params.inventoryRevision or params.backpackRevision,tradeRevision=id(v.trade.revision),ports={id(port)},requestId=params.requestId}
+    return issue(m,port,'buddy-trade.destroy_junk',params,'cleanup_requested')
 end
 
 local function space_pressure(frame,mage,b)
@@ -179,13 +274,30 @@ local function space_pressure(frame,mage,b)
     return out
 end
 
-function M.plan(frame)
+function M.plan(frame,disposal,gear)
     local m=frame.memory or {};local now=n(frame.nowMs);local b=frame.bindings or {}
     local views=frame.observations or {};local mage=views[id(b.magePort)];local guid=id(b.mageGuid)
     if not mage or not current(mage,guid) then return result(m,'waiting_for_current_mage') end
     if frame.query=='space_pressure' then return {bagPressure=space_pressure(frame,mage,b)} end
     local p=m.pending;local last=frame.last or {}
     if p then
+        if p.kind=='cleanup' then
+            local v=views[p.actorPort]
+            if not v then return result(m,'awaiting_cleanup_observations') end
+            if mage.actions.sessionId~=p.mageSession or v.actions.sessionId~=p.actorSession then m.pending=nil;return result(m,'previous_body_replaced') end
+            local receipt=(v.trade or {}).lastJunkDisposal or {}
+            local gone=true
+            for _,row in ipairs(slots(v) or {}) do if id(row.itemGuid)==p.source.itemGuid then gone=false end end
+            if current(v,v.actions.selfGuid) and slots(v) and id(receipt.itemGuid)==p.source.itemGuid
+                and n(receipt.entry)==p.source.entry and n(receipt.count)==p.source.stackCount
+                and id(p.source.bag==0 and receipt.backpackRevision or receipt.inventoryRevision)==p.sourceRevision
+                and (not p.requestId or receipt.requestId==p.requestId)
+                and receipt.status=='SERVER_SLOT_REMOVAL_CONFIRMED' and after(v.trade.revision,p.tradeRevision)
+                and after(v.inventory.inventoryRevision,p.inventoryRevision) and gone then
+                m.pending=nil;m.nextAtMs=now;return result(m,'server_confirmed_cleanup')
+            end
+            return result(m,last.id==p.actionId and last.outcome=='transport_unconfirmed' and 'cleanup_outcome_unconfirmed' or 'awaiting_cleanup_effect')
+        end
         local peer=p.recipientPort and views[p.recipientPort]
         if p.recipientSession and not peer then return result(m,'awaiting_recipient_observations') end
         if mage.actions.sessionId~=p.mageSession or p.recipientSession and (peer.actions or {}).sessionId~=p.recipientSession then
@@ -319,7 +431,7 @@ function M.plan(frame)
             m.pending={kind='gift',stage='receiver',mageSession=mage.actions.sessionId,recipientSession=peer.view.actions.sessionId,
                 recipientPort=peer.port,recipientGuid=peer.guid,itemGuid=id(stack.item.itemGuid),entry=stack.entry,count=stack.count,
                 source=stack.source,mageCompleted=id(mage.trade.completedTrades or '0'),recipientCompleted=id(peer.view.trade.completedTrades or '0'),
-                recipientRevision=id(peer.view.trade.revision),requestId=m.request and m.request.id}
+                recipientRevision=id(peer.view.trade.revision),requestId=m.request and m.request.id,ports={id(b.magePort),peer.port}}
             return issue(m,peer.port,'buddy-trade.water_gift',{sessionId=peer.view.trade.sessionId,
                 revision=id(peer.view.trade.revision),partnerGuid=guid,itemEntry=stack.entry,itemCount=stack.count},'recipient_water_reservation_requested')
         end
@@ -330,6 +442,7 @@ function M.plan(frame)
     end
     if not next(usable) and stock<M.stock_minimum then usable=compatible(all,world.self or {}) end
     if not next(usable) then
+        if needs_space then return cleanup(frame,m,needs_space,disposal,gear) end
         local out=result(m,needs_space and 'recipient_needs_bag_space' or 'no_compatible_conjure_water_rank')
         out.spacePort=needs_space or nil;return out
     end
@@ -346,6 +459,7 @@ function M.plan(frame)
         end
     end
     if not best then
+        if not room then return cleanup(frame,m,b.magePort,disposal,gear) end
         local out=result(m,room and 'waiting_for_mana_to_conjure' or 'mage_needs_bag_space')
         if not room then out.spacePort=id(b.magePort) end
         return out
@@ -354,7 +468,7 @@ function M.plan(frame)
     if world.inventoryKnown~=true or n(world.inventoryRevision)<=0 then return result(m,'waiting_for_complete_creation_inventory') end
     local entry
     for key,value in pairs(usable) do if value==best then entry=key end end
-    m.pending={kind='conjure',mageSession=mage.actions.sessionId,spellId=best.spellId,entry=entry,inventoryRevision=id(world.inventoryRevision)}
+    m.pending={kind='conjure',mageSession=mage.actions.sessionId,spellId=best.spellId,entry=entry,inventoryRevision=id(world.inventoryRevision),ports={id(b.magePort)}}
     return issue(m,b.magePort,'buddy-actions.create_item',{sessionId=mage.actions.sessionId,selfGuid=guid,spellId=best.spellId},'conjure_requested')
 end
 

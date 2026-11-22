@@ -58,6 +58,10 @@ def observe(port):
             view["loot"] = rpc(port, "buddy-loot.state")
         except (KeyError, OSError, ValueError, RPCError):
             view["loot"] = {}
+        try:
+            view["journal"] = rpc(port, "buddy-quests.journal", {"refresh":False})
+        except (KeyError, OSError, ValueError, RPCError):
+            view["journal"] = {} # Missing facts prevent cleanup, not water transfer.
         return view
     except (KeyError, OSError, ValueError, RPCError):
         return None
@@ -86,11 +90,14 @@ def run(state_dir):
                     drink = maintain_drink(rpc, views, rests)
                     for port, view in views.items():
                         view["mana_rest_active"] = port in rests
-                    bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
                     try:
                         water = maintain_supply(rpc, views, supply)
                     except (KeyError, OSError, ValueError, RPCError) as error:
                         water = str(error)
+                    held=(supply.get("memory",{}).get("pending") or {}).get("ports",[])
+                    for port,view in views.items():
+                        view["mana_supply_pending"]=str(port) in held
+                    bags = maintain_bag_pressure(rpc, views, bag_attempts, junk_entries)
                     status = {
                         "phases": {"drinking": drink, "water": water, "bag_space": bags},
                         "casters": {

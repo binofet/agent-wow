@@ -42,15 +42,19 @@ def _catalog(rpc,port,identity):
     return catalog
 
 
-def _metadata(rpc,mage):
+def _metadata(rpc,mage,observations):
     toolkit=mage.get('spell_toolkit')
     if toolkit is None:toolkit=rpc(MIRA,'buddy-actions.spell_toolkit',{})
     if (toolkit.get('sessionId')!=mage['actions']['sessionId']
             or str(toolkit.get('selfGuid'))!=str(MIRA_GUID)):
         raise runtime.Error('current_supply_spellbook_required')
     # Collect every projected creation entry. Lua owns family/rank/eligibility.
-    entries=sorted({int(row['createdItemEntry']) for row in toolkit.get('spells',[])
-        if isinstance(row,dict) and row.get('createdItemEntry')})
+    entries={int(row['createdItemEntry']) for row in toolkit.get('spells',[])
+        if isinstance(row,dict) and row.get('createdItemEntry')}
+    for view in observations.values():
+        entries.update(int(row['entry']) for bag in view.get('inventory',{}).get('inventoryBags',[])
+            for row in bag.get('slots',[]) if isinstance(row,dict) and row.get('itemGuid') and row.get('entry'))
+    entries=sorted(entries)
     rows={}
     for start in range(0,len(entries),6): # The existing lookup RPC admits six IDs.
         reply=rpc(MIRA,'buddy-trade.lookup_items',{'itemIds':entries[start:start+6]})
@@ -119,7 +123,7 @@ def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
     for port,guid in RECIPIENTS.items():
         if port in observations:identities[port]=_identity(observations[port],guid)
     catalogs={str(port):_catalog(rpc,port,body) for port,body in identities.items()}
-    toolkit,metadata=_metadata(rpc,mage);views[str(MIRA)]['spell_toolkit']=toolkit
+    toolkit,metadata=_metadata(rpc,mage,observations);views[str(MIRA)]['spell_toolkit']=toolkit
     wrapped=('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
         'if type(policy.mana_supply_plan)~="function" then return {available=false} end '
         'return {available=true,decision=policy.mana_supply_plan(input)} end}\n')
@@ -127,6 +131,7 @@ def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
         source_bytes=max(limit,len(wrapped.encode())),value_bytes=VALUE_BYTES,execution_ms=1000)
     result=evaluator.evaluate(wrapped,dict(observations=views,metadata=metadata,
         catalogs={port:value['methods'] for port,value in catalogs.items()},
+        catalogMessages={port:value['messages'] for port,value in catalogs.items()},
         bindings=dict(magePort=str(MIRA),mageGuid=str(MIRA_GUID),ownerGuid=str(OWNER_GUID),
             recipients=[dict(port=str(port),guid=str(guid)) for port,guid in RECIPIENTS.items()]),
         memory=copy.deepcopy(state.get('memory',{})),last=copy.deepcopy(state.get('last')),
@@ -153,6 +158,7 @@ def supply_space_pressure(rpc,observations,*,bridge=None):
 
 def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None):
     """One pure Lua turn and at most one selected mutation; no Python selector."""
+    state.pop('spacePort',None)
     try:
         if MIRA not in observations:
             state['phase']='waiting_for_current_mage';return state['phase']
