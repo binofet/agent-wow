@@ -125,11 +125,11 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             blocker.start(); self.addCleanup(blocker.stop)
 
     @contextlib.contextmanager
-    def rig(self, responses):
+    def rig(self, responses, *, developer=True):
         with FakeHTTP(responses) as http, patch.object(converse, "ROOT", self.workspace), \
              patch.object(converse, "RPC", side_effect=lambda url: self.rpc if url == self.rpc.url else
                           (_ for _ in ()).throw(converse.ConversationError("Foreign RPC"))):
-            brain = converse.DirectBrain(self.state, developer_workspace=self.workspace,
+            brain = converse.DirectBrain(self.state, developer_workspace=self.workspace if developer else None,
                 character_name="Mira", character_class="mage", model="fixture-requested-model",
                 provider="local", base_url=http.base)
             controls = types.SimpleNamespace(actions_available=True, party_available=True,
@@ -140,7 +140,7 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             loop.initialized, loop.session_id, loop.cursor = True, self.rpc.chat, 1
             state = dict(character=dict(guid="4"), development=loop.development_context("owner"),
                          current_request=dict(source="owner", senderGuid="3"))
-            self.assertTrue(brain.development_enabled(state))
+            self.assertEqual(brain.development_enabled(state), developer)
             yield loop, brain, state, http
 
     def test_real_tool_roundtrip_workspace_public_read_input_schema_and_progress(self):
@@ -266,6 +266,35 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             result = json.loads(http.requests[1]["body"]["messages"][-1]["content"])
             self.assertFalse(result["ok"])
             self.assertIn("current_body_changed", result["error"]["error"])
+
+    def test_direct_without_workspace_never_queues_legacy_repair_after_control_failure(self):
+        helper_dir = self.workspace / "dev"
+        helper_dir.mkdir()
+        (helper_dir / "task-runtime").write_bytes(Path(__file__).with_name("task-runtime").read_bytes())
+        self.rpc.new_owner = True
+        response = chat(("follow", "final_reply", dict(REPLY, action="FOLLOW")))
+        with self.rig([response], developer=False) as (loop, brain, _, http):
+            self.assertIsNone(brain.developer_workspace)
+            attempted = []
+            def refused(action, **kwargs):
+                attempted.append(action)
+                raise converse.ConversationError("Fixture control refusal")
+            loop.controls.refresh = lambda: None
+            loop.controls.context = lambda: {}
+            loop.controls.execute = refused
+            with patch.object(loop.controls, "report_problem", create=True,
+                              side_effect=AssertionError("No repair worker may be queued")) as repair:
+                loop.tick()
+                repair.assert_not_called()
+            self.assertEqual(attempted, ["FOLLOW"])
+            self.assertFalse(self.rpc.commands)
+            self.assertIn("No repair was queued", self.rpc.replies[-1]["text"])
+            request = http.requests[0]["body"]
+            self.assertIn('"repair_requests_allowed": false', request["messages"][1]["content"])
+            tools = {tool["function"]["name"]: tool["function"] for tool in request["tools"]}
+            self.assertEqual(set(tools), {"final_reply"})
+            self.assertNotIn("REPAIR_CONTROLLER", tools["final_reply"]["parameters"]["properties"]["action"]["enum"])
+            self.assertFalse(brain.model_selection()["codexInvoked"])
 
     def test_actual_converse_main_local_config_uses_direct_brain_and_emits_reply(self):
         self.rpc.owner_request = True
