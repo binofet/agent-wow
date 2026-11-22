@@ -22,11 +22,12 @@ local function policy_key()
     end
     return key
 end
-local function identity(s)
-    if type(s)~="string" or #s==0 or #s>20 or byte_at(s,1)==48 then return end
+local function identifier(s,zero)
+    if type(s)~="string" or #s==0 or #s>20 or #s>1 and byte_at(s,1)==48 or not zero and s=="0" then return end
     for i=1,#s do local b=byte_at(s,i);if b<48 or b>57 then return end end
-    return #s<20 or s<="18446744073709551615"
+    if #s<20 or s<="18446744073709551615" then return s end
 end
+local function identity(s) return identifier(s)~=nil end
 local function same(a,b)
     if type(a)~=type(b) then return false end
     if type(a)~="table" then return a==b end
@@ -52,7 +53,9 @@ local function menu(state)
        not identity(world.visitRevision) or flight.visitId~=world.visitRevision or
        not identity(op.revision) or flight.revision~=op.revision or op.sessionId~=body.sessionId or
        op.selfGuid~=body.selfGuid or op.visitId~=world.visitRevision or not identity(op.npcGuid) or
-       op.mode~="discover" or op.phase~="menu_observed" or op.menuKnown~=true or
+       not (op.mode=="discover" or op.mode=="arrival" and (flight.activation or {}).arrivalKnown==true and
+           flight.activation.pending~=true and op.activationRevision==flight.activation.revision) or
+       op.phase~="menu_observed" or op.menuKnown~=true or
        op.pending~=nil and op.pending~=false or op.transportWritten~=true and op.transportUnknown~=true or
        not positive(op.sourceNode) or type(op.knownNodes)~="table" or #op.knownNodes==0 or #op.knownNodes>448 then return end
     local fingerprint,previous="",0
@@ -189,4 +192,6 @@ end
 M.handler=handler
 M.menu_binding=menu
 M.policy_key=policy_key
+M.identifier=identifier
+M.same=same
 return M

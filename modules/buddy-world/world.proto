@@ -137,6 +137,8 @@ message OwnMovementFacts {
   // Exact detached received MovementInfo prefix, with no leading mover GUID.
   // This is evidence only; it grants no transport-write authority.
   bytes wire_image = 10;
+  // Correlation captured with this actual packet, never refreshed by Snapshot.
+  agentwow.module.v1.TransportScope transport_scope = 11;
 }
 
 // Latest own server spline header in the current visit. This is historical
@@ -219,6 +221,22 @@ message SplineCompletionOperation {
   uint32 spline_id = 15;
   bool spline_id_known = 16;
   string movement_image_source = 17;
+  // Retirement records new actual ground state, not ACK delivery or arrival.
+  bool retired = 18;
+  uint64 retirement_revision = 19;
+  uint64 retired_movement_revision = 20;
+  uint64 retired_unit_flags_revision = 21;
+  agentwow.module.v1.TransportScope retirement_scope = 22;
+}
+
+message RetireSplineCompletionRequest {
+  uint64 self_guid = 1;
+  uint64 visit_revision = 2;
+  uint64 expected_revision = 3;
+  uint64 authority_revision = 4;
+  uint64 movement_revision = 5;
+  uint64 unit_flags_revision = 6;
+  agentwow.module.v1.TransportScope transport_scope = 7;
 }
 
 message SplineCompletionObservation {
@@ -226,6 +244,10 @@ message SplineCompletionObservation {
   uint64 visit_revision = 2;
   uint64 revision = 3;
   SplineCompletionOperation operation = 4;
+  // Current continuity of the retired ground evidence, not a stored arrival.
+  bool retirement_current = 5;
+  // Current mechanical evidence admission, including sticky invalidation.
+  bool retirement_available = 6;
 }
 
 // Private own equipment slots0..18; bags and bank slots are excluded.
@@ -616,6 +638,7 @@ message CombatEventsResponse {
 }
 
 service BuddyWorld {
+  rpc RetireSplineCompletion(RetireSplineCompletionRequest) returns (SplineCompletionObservation);
   rpc CompleteSpline(CompleteSplineRequest) returns (SplineCompletionObservation);
   rpc CombatEvents(CombatEventsRequest) returns (CombatEventsResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
