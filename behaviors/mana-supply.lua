@@ -25,6 +25,12 @@ end
 local function free(v,guid)
     if not current(v,guid) then return false end
     local a,t=v.actions,v.trade
+    local function unresolved(receipt)
+        local phase=(receipt or {}).status
+        return phase=='AWAITING_SERVER_SLOT_UPDATE' or phase=='TRANSPORT_UNCONFIRMED_NO_RETRY' or phase=='UNCONFIRMED_NO_RETRY'
+    end
+    if unresolved(t.lastJunkDisposal) then return false end
+    for _,receipt in ipairs(t.junkOperations or {}) do if unresolved(receipt) then return false end end
     return (t.phase=='IDLE' or t.phase=='COMPLETE') and not t.waterGiftArmed and not v.mana_rest_active
         and not (v.inventory.active or v.inventory.closing) and n(((v.world or {}).self or {}).channelSpellId)==0
         and not(a.moving or a.motionUnconfirmed or a.traveling or a.castPending or (a.interactionOwner and a.interactionOwner~='')

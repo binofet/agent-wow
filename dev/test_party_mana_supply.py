@@ -381,6 +381,13 @@ class SupplyTest(unittest.TestCase):
         self.arlen['world']['self']['channelSpellId']=0;self.arlen['inventory']['active']=True
         self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])
 
+    def test_existing_native_uncertain_disposal_is_not_overwritten_by_fresh_supply_memory(self):
+        self.cleanup_fixture()
+        self.arlen['trade']['lastJunkDisposal']=dict(status='TRANSPORT_UNCONFIRMED_NO_RETRY')
+        self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])
+        self.mira['trade']['junkOperations']=[dict(status='UNCONFIRMED_NO_RETRY')]
+        self.assertEqual(self.turn(),'mage_busy');self.assertEqual(self.calls,[])
+
     def test_source_change_during_evaluation_or_body_change_before_write_sends_nothing(self):
         actual=self.bridge;outer=self
         class Change:
