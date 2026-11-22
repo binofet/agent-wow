@@ -347,7 +347,8 @@ func TestWorldTransferIgnoredNonmotionPacketPreservesPendingBaseline(t *testing.
 		t.Fatal(err)
 	}
 	ignored := ownMovementSnapshot(t, x.s)
-	if ignored.IgnoredPackets != before.IgnoredPackets+1 || !proto.Equal(before.WorldTransfer, ignored.WorldTransfer) {
+	old, current := before.WorldTransfer, ignored.WorldTransfer
+	if ignored.IgnoredPackets != before.IgnoredPackets+1 || x.s.worldTransfer.blocked || old.Revision != current.Revision || old.Known != current.Known || old.ContinuationKnown != current.ContinuationKnown || old.PredecessorQualified != current.PredecessorQualified || old.SelfGuid != current.SelfGuid || old.FromVisitRevision != current.FromVisitRevision || old.ToVisitRevision != current.ToVisitRevision || old.Reason != current.Reason || !proto.Equal(old.Core, current.Core) || !proto.Equal(old.PredecessorAuthority, current.PredecessorAuthority) || !proto.Equal(old.PredecessorCompletion, current.PredecessorCompletion) {
 		t.Fatal("ignored nonmotion packet poisoned the captured Pending context", before.WorldTransfer, ignored)
 	}
 	transferEntryPacket(t, x, edge)
