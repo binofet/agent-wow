@@ -2681,6 +2681,8 @@ without observations. Keep final action NONE after performing a tool action.
                 allowed=lambda: self.development_enabled(state) and not interrupted(),
                 cancelled=interrupted, request_id=self.last_request_id)
             prompt_state["shared_development"] = companion_role_context(self.character_name)
+            prompt_state["shared_tasks"] = mission_runtime_context(integer(development["selfGuid"]),
+                development["sessionId"], development["rpcUrl"])
         def dispatch(name, arguments):
             if tools is None or interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
