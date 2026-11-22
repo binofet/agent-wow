@@ -20,6 +20,12 @@ func TestFlightpathSettlementLuaKnownRefusalWaitsForExplicitRetryChoice(t *testi
 	packets := len(p.f.base.x.f.packets)
 	p.dispatch(action)
 	p.f.base.x.client.beforeWorld = nil
+	// dispatch's Status refresh also invokes World while the hook is active.
+	// Restore the actual observation before exercising a deliberate fresh retry.
+	p.refresh()
+	if p.f.base.x.f.world.NearbyCreatures[0].PositionAgeMs > 2000 {
+		t.Fatal("fixture did not restore the actual flightmaster observation")
+	}
 	refusal := p.f.base.x.observation(t).Operation
 	if refusal.Phase != "not_dispatched" || refusal.Pending || refusal.TransportWritten || refusal.TransportUnknown || len(p.f.base.x.f.packets) != packets {
 		t.Fatal("fixture did not establish a retained known zero-send refusal", refusal)
