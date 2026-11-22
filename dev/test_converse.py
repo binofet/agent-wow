@@ -3469,9 +3469,12 @@ class GMTaskFaultRepairTests(unittest.TestCase):
         before=(self.folder/'state.json').read_bytes()
         marker=self.repo/'actual-resume-request.json';executable=self.repo/'fake-codex'
         gm_file=Path(converse.__file__).with_name('gm_tasks.py')
+        bytecode=[Path(importlib.util.cache_from_source(str(path))) for path in (gm_file,gm_file.with_name('task-runtime'))]
+        bytecode_before={str(path):path.read_bytes() if path.exists() else None for path in bytecode}
         program='''#!/usr/bin/env python3
 import importlib.util,json,pathlib,sys,types
 from unittest.mock import patch
+sys.dont_write_bytecode=True
 prompt=sys.stdin.read()
 print(json.dumps(dict(type='turn.started')),flush=True)
 state=json.loads(prompt.split('Current observations and control state JSON:\\n',1)[1].split('\\nConversation JSON:',1)[0])
@@ -3508,6 +3511,7 @@ print(json.dumps(dict(type='turn.completed')),flush=True)
         argv=attempt['argv'];self.assertEqual(argv[argv.index('--state-dir')+1],str(self.folder))
         self.assertEqual(argv[argv.index('--goal')+1],str(self.repo/'goal.json'))
         self.assertEqual((self.folder/'state.json').read_bytes(),before)
+        self.assertEqual({str(path):path.read_bytes() if path.exists() else None for path in bytecode},bytecode_before)
         self.assertEqual(self.brain.last_development_events['successfulCommands'],1)
         self.assertEqual(self.statuses[-1]['phase'],'listening')
         self.assertFalse(any(m.startswith('buddy-actions.') and m!='buddy-actions.status' for m,p in self.calls))
