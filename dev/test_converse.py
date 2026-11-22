@@ -4094,10 +4094,6 @@ from test_spell_invocation import SpellInvocationPolicyTests
 from test_spell_learning import SpellLearningTests
 from test_owner_acknowledgement import OwnerAcknowledgementTests
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OwnerPreemptionTests(unittest.TestCase):
     def test_actual_model_process_cancels_and_keeps_already_written_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -4212,3 +4208,7 @@ class DevelopmentWhisperSilenceTests(unittest.TestCase):
         self.assertEqual(loop.replies,0)
         with self.assertRaises(converse.ConversationError):
             converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
