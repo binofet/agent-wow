@@ -32,6 +32,7 @@ def main():
         ("encounter_commands", behaviors / "encounter-commands.lua"),
         ("encounter_spell_invocation", behaviors / "spell-invocation.lua"),
         ("encounter_tasks", behaviors / "encounter-tasks.lua"),
+        ("encounter_loot_roll", behaviors / "loot-roll.lua"),
     ]
     if args.intent:
         modules.append(("encounter_intent", args.intent))
