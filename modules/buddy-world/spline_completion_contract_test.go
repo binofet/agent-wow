@@ -85,4 +85,19 @@ func TestCompleteSplinePublishedAliasRoutesCompiledService(t *testing.T) {
 	if !result.GetOperation().GetTransportWritten() || result.GetOperation().GetArrivalKnown() || len(x.f.packets) != 1 {
 		t.Fatal("public RPC did not preserve scoped attempt semantics", result, x.f.packets)
 	}
+	method, ok = module.RPC("retire_spline_completion")
+	if !ok || method.Path() != worldv1.BuddyWorld_RetireSplineCompletion_FullMethodName ||
+		method.Descriptor().Input().FullName() != "warcraftbuddy.world.v1.RetireSplineCompletionRequest" ||
+		module.Manifest().ScriptAPI["retire_spline_completion"].Effect != "mutation" {
+		t.Fatal("public retirement alias/descriptor/effect mismatch", method)
+	}
+	retirementGround(t, x, false)
+	result = new(worldv1.SplineCompletionObservation)
+	if err := conn.Invoke(ctx, method.Path(), retirementRequest(t, x), result); err != nil {
+		t.Fatal("published retirement RPC did not reach compiled handler", err)
+	}
+	if !result.GetRetirementCurrent() || !result.GetOperation().GetRetired() || result.GetOperation().GetPending() ||
+		result.GetOperation().GetArrivalKnown() || len(x.f.packets) != 1 {
+		t.Fatal("retirement route rewrote delivery or dispatched another report", result)
+	}
 }

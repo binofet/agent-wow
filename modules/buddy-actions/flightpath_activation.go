@@ -8,6 +8,7 @@ import (
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,9 +18,12 @@ import (
 // This separate monotonic slot retains one exact activation attempt. Expiry,
 // policy edits and visit changes never clear an uncertain or accepted flight.
 type flightpathActivationTracker struct {
-	revision  uint64
-	request   *actionsv1.FlightpathActivationRequest
-	operation *actionsv1.FlightpathActivationOperation
+	revision          uint64
+	request           *actionsv1.FlightpathActivationRequest
+	operation         *actionsv1.FlightpathActivationOperation
+	menu              *actionsv1.FlightpathOperation
+	settlementRequest *actionsv1.SettleFlightpathRequest
+	settlementResult  *actionsv1.FlightpathObservationResponse
 }
 
 func (s *Service) flightpathActivationObservationLocked(out *actionsv1.FlightpathObservationResponse) {
@@ -27,12 +31,16 @@ func (s *Service) flightpathActivationObservationLocked(out *actionsv1.Flightpat
 	if op := s.flightpathActivation.operation; op != nil {
 		out.Activation = proto.Clone(op).(*actionsv1.FlightpathActivationOperation)
 	}
+	if menu := s.flightpathActivation.menu; menu != nil {
+		out.ActivationMenu = proto.Clone(menu).(*actionsv1.FlightpathOperation)
+	}
 }
 
 func (s *Service) flightpathActivationMenuMatchesLocked(r *actionsv1.FlightpathActivationRequest, menu *actionsv1.FlightpathOperation) bool {
 	if s.flightpath.revision != r.MenuRevision || s.flightpath.operation != menu ||
 		!s.flightpathOperationCurrentLocked(menu) || menu.Revision != r.MenuRevision || menu.NpcGuid != r.NpcGuid ||
-		menu.Pending || menu.Mode != "discover" || menu.Phase != "menu_observed" || !menu.MenuKnown ||
+		menu.Pending || (menu.Mode != "discover" && (menu.Mode != "arrival" || menu.Revision != s.flightpath.certifiedArrivalMenuRevision)) ||
+		menu.Phase != "menu_observed" || !menu.MenuKnown ||
 		(!menu.TransportWritten && !menu.TransportUnknown) || menu.SourceNode != r.SourceNode || len(menu.KnownNodes) > 448 {
 		return false
 	}
@@ -92,6 +100,8 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	// a late refusal therefore still has one exact, retained zero-send receipt.
 	f.revision++
 	f.request = r
+	f.menu = proto.Clone(baselineMenu).(*actionsv1.FlightpathOperation)
+	f.settlementRequest, f.settlementResult = nil, nil
 	f.operation = &actionsv1.FlightpathActivationOperation{Revision: f.revision, SessionId: r.SessionId,
 		SelfGuid: r.SelfGuid, VisitId: r.VisitId, NpcGuid: r.NpcGuid, MenuRevision: r.MenuRevision,
 		SourceNode: r.SourceNode, DestinationNode: r.DestinationNode, Pending: true, Phase: "reserved"}
@@ -162,7 +172,7 @@ func decodeFlightpathActivationReply(payload []byte) (uint32, error) {
 // This reply has no identity; only the first reply after this slot's own send
 // entry can affect it. An accepted flight deliberately remains pending until a
 // future, separately qualified completion mechanic can provide actual proof.
-func (s *Service) flightpathActivationPacketLocked(opcodeID uint32, payload []byte) (bool, error) {
+func (s *Service) flightpathActivationPacketLocked(opcodeID uint32, payload []byte, scopes ...*modv1.TransportScope) (bool, error) {
 	if opcodeID != opcode.SMSGActivatetaxireply {
 		return false, nil
 	}
@@ -180,6 +190,9 @@ func (s *Service) flightpathActivationPacketLocked(opcodeID uint32, payload []by
 	switch {
 	case code == 0:
 		op.ActivationAccepted, op.Phase = true, "accepted_unsettled"
+		if len(scopes) != 0 {
+			op.AcceptanceScope = cloneFlightpathScope(scopes[0])
+		}
 	case code <= 12:
 		op.Pending, op.Phase = false, "server_rejected"
 	default:

@@ -612,12 +612,12 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(profile.status["phase"], "practicing_to_level_2")
 
     def test_objective_policy_failure_at_each_stage_cannot_patch_ownership_or_write(self):
-        for stage in ("classify","post_hold","loot","practice","before_quests","fallback"):
+        for stage in ("classify","post_hold","loot","practice","before_quests","quest_route","fallback"):
             profile,rpc,clock,_=self.rig()
             profile.autonomous,rpc.active,rpc.level,rpc.wolves_complete=True,{7,18,33},2,False
             if stage=="fallback":rpc.active,rpc.level={7,3903},1
             profile.tick()  # Establish the existing, observed follow hold.
-            if stage=="before_quests":rpc.wolves_complete=True
+            if stage in ("before_quests","quest_route"):rpc.wolves_complete=True
             before=len(self.mutate_calls(rpc))
             owned=profile.data["routine"]["practiceOwned"]
             original=sync.objective_policy.evaluate
@@ -829,6 +829,68 @@ class SyncTests(unittest.TestCase):
         profile.tick()
         self.assertEqual(rpc.calls[-1][0],"buddy-quests.turn_in")
         self.assertEqual(rpc.calls[-1][1]["questId"],33)
+
+    def test_route_source_edit_changes_bound_accept_without_replaying_ambiguous_request(self):
+        profile,rpc,clock,_=self.rig()
+        rpc.active,rpc.level={7},2
+        profile.tick()  # Real Lua route and pickup query the observed Willem.
+        self.assertEqual(self.mutate_calls(rpc)[-1][0],"buddy-quests.offer")
+        revision=rpc.offer["revision"]
+        source=sync.objective_policy.SOURCE.read_text()
+        edited=source.replace('if known and level>=2 then','if known and level>=3 then')
+        self.assertNotEqual(edited,source)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"starter-objectives.lua"
+            path.write_text(edited)
+            with patch.object(sync.objective_policy,"SOURCE",path):
+                rpc.apply_accept=False
+                rpc.error_on="buddy-quests.accept"
+                clock[0]+=10;profile.tick()
+                accepts=[p for m,p in rpc.calls if m=="buddy-quests.accept"]
+                self.assertEqual(accepts,[dict(sessionId=rpc.session,offerRevision=revision,
+                                             npcGuid=str(WILLEM),questId=5261)])
+                reserved=copy.deepcopy(profile.data["reservations"])
+                self.assertIn("accept:5261",reserved)
+                before=len(self.mutate_calls(rpc))
+                probes={k:v for k,v in profile.data.items() if k.endswith("ProbeSession")}
+                path.write_text("invalid Lua candidate")
+                clock[0]+=10;profile.tick()
+                self.assertEqual(profile.status["phase"],"waiting_for_shared_lua_starter_objective_policy")
+                self.assertEqual(profile.data["reservations"],reserved)
+                self.assertEqual({k:v for k,v in profile.data.items() if k.endswith("ProbeSession")},probes)
+                path.write_text(edited)
+                for row in rpc.offer["quests"]:row["acceptRequested"]=False
+                clock[0]+=10;profile.tick()
+                self.assertEqual(len(self.mutate_calls(rpc)),before)
+                self.assertEqual(profile.data["reservations"],reserved)
+        self.assertEqual(rpc.session,"quest-session")
+        self.assertIs(profile.rpc,rpc)
+
+    def test_route_rejects_out_of_goal_output_before_probe_or_reservation_mutation(self):
+        for fields in (dict(neededEntry=999),dict(rewardQuestId=33),dict(allowedQuestIds=[999]),
+                       dict(probes={"wolf":"yes"}),dict(probes={"unknown":True})):
+            profile,rpc,_,saved=self.rig()
+            original=sync.objective_policy.evaluate
+            choice=dict(kind="quest_route",neededEntry=823,rewardQuestId=0,allowedQuestIds=[783],probes={})|fields
+            def evaluate(value):
+                return dict(status="ready",choice=choice) if value["stage"]=="quest_route" else original(value)
+            with patch.object(sync.objective_policy,"evaluate",side_effect=evaluate):
+                with self.assertRaisesRegex(sync.Error,"outside the observed goal"):profile.tick()
+            self.assertFalse(self.mutate_calls(rpc))
+            self.assertFalse(saved)
+            self.assertFalse(profile.data["reservations"])
+            self.assertFalse(any(key.endswith("ProbeSession") for key in profile.data))
+
+    def test_route_probe_history_does_not_cross_body_sessions_or_confirm_rewards(self):
+        for current,expected in ((False,WILLEM),(True,EAGAN)):
+            profile,rpc,_,_=self.rig()
+            rpc.active,rpc.level={7,18},2
+            profile.data["eaganProbeSession"]=rpc.session if current else "previous-body"
+            profile.tick()
+            offered=[p for m,p in rpc.calls if m=="buddy-quests.offer"]
+            self.assertEqual(offered,[dict(sessionId=rpc.session,npcGuid=str(expected))])
+            self.assertFalse(profile.data["confirmedRewards"])
+            self.assertFalse(any(m=="buddy-quests.accept" for m,_ in rpc.calls))
 
     def test_unknown_actual_wolf_reward_choices_or_class_pause_without_claim(self):
         for guid,choices,unknown_class in ((1,[{"index":0,"itemId":999,"count":1},{"index":1,"itemId":6070,"count":1}],False),

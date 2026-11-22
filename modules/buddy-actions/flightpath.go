@@ -10,6 +10,7 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	modcb "github.com/agent-wow/agent-wow/pkg/modules/callback"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -21,10 +22,12 @@ import (
 // retry reads its reserved operation; a stale revision never writes again.
 // Policy reload, lease expiry and elapsed time do not erase uncertain sends.
 type flightpathTracker struct {
-	revision       uint64
-	request        *actionsv1.FlightpathQueryRequest
-	operation      *actionsv1.FlightpathOperation
-	expectLearning bool
+	revision                     uint64
+	request                      *actionsv1.FlightpathQueryRequest
+	operation                    *actionsv1.FlightpathOperation
+	expectLearning               bool
+	arrivalReplyScope            *modv1.TransportScope
+	certifiedArrivalMenuRevision uint64
 }
 
 func (s *Service) flightpathObservationLocked() *actionsv1.FlightpathObservationResponse {
@@ -118,7 +121,9 @@ func (s *Service) flightpathQueryGuardLocked(ctx context.Context, r *actionsv1.F
 func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.FlightpathQueryRequest) (*actionsv1.FlightpathObservationResponse, error) {
 	if request == nil || request.SessionId == "" || len(request.SessionId) > 128 || request.SelfGuid == 0 || request.VisitId == 0 ||
 		request.Token == "" || len(request.Token) > 128 || request.NpcGuid>>48 != 0xf130 || request.NpcGuid&0xffffff == 0 ||
-		(request.Mode != "status" && request.Mode != "discover") {
+		(request.Mode != "status" && request.Mode != "discover" && request.Mode != "arrival") ||
+		(request.Mode == "arrival" && (request.ActivationRevision == 0 || request.CompletionRevision == 0)) ||
+		(request.Mode != "arrival" && (request.ActivationRevision != 0 || request.CompletionRevision != 0)) {
 		return nil, status.Error(codes.InvalidArgument, "exact session body visit exploration token flightmaster and query mode required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -134,7 +139,11 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		}
 		return nil, status.Error(codes.Aborted, "flightpath query revision changed")
 	}
-	if s.flightpathActivation.operation.GetPending() {
+	if r.Mode == "arrival" {
+		if !s.flightpathAcceptedCurrentLocked(r.ActivationRevision) {
+			return nil, status.Error(codes.FailedPrecondition, "current accepted activation and actual acceptance scope required")
+		}
+	} else if s.flightpathActivation.operation.GetPending() {
 		return nil, status.Error(codes.FailedPrecondition, "flightpath activation remains unsettled; its menu custody is retained")
 	}
 	if f.operation.GetPending() {
@@ -148,6 +157,11 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 		return nil, status.Error(codes.FailedPrecondition, "current body visit and owned exploration token required")
 	}
 	expectLearning := false
+	activation := s.flightpathActivation.operation
+	var baselineActivation *actionsv1.FlightpathActivationOperation
+	if r.Mode == "arrival" {
+		baselineActivation = proto.Clone(activation).(*actionsv1.FlightpathActivationOperation)
+	}
 	if r.Mode == "discover" {
 		prior := f.operation
 		if !s.flightpathOperationCurrentLocked(prior) || prior.NpcGuid != r.NpcGuid ||
@@ -161,8 +175,12 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	// confused with an uncertain game send by the existing task-call ledger.
 	f.revision++
 	f.request, f.expectLearning = r, expectLearning
+	f.arrivalReplyScope = nil
 	f.operation = &actionsv1.FlightpathOperation{Revision: f.revision, SessionId: r.SessionId, SelfGuid: r.SelfGuid,
 		VisitId: r.VisitId, NpcGuid: r.NpcGuid, Mode: r.Mode, Pending: true, Phase: "reserved"}
+	if r.Mode == "arrival" {
+		f.operation.ActivationRevision, f.operation.CompletionRevision = r.ActivationRevision, r.CompletionRevision
+	}
 	op := f.operation
 	refuse := func(reason string) (*actionsv1.FlightpathObservationResponse, error) {
 		op.Pending, op.Phase, op.Error = false, "not_dispatched", boundedPolicyDiagnostic(reason, 240)
@@ -184,6 +202,15 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	if reason := s.flightpathQueryGuardLocked(ctx, r, w, now); reason != "" {
 		return refuse(reason)
 	}
+	if r.Mode == "arrival" {
+		if reason := s.flightpathRetiredWorldReasonLocked(r.ActivationRevision, r.CompletionRevision, w); reason != "" {
+			return refuse(reason)
+		}
+		if s.flightpathActivation.operation != activation || !proto.Equal(activation, baselineActivation) {
+			return refuse("flightpath_arrival_activation_changed")
+		}
+		op.TransportScope = cloneFlightpathScope(w.SelfMotionAuthority.TransportScope)
+	}
 	if f.revision != op.Revision || f.operation != op || f.request != r || !op.Pending {
 		return nil, status.Error(codes.Aborted, "flightpath query changed before transport")
 	}
@@ -191,7 +218,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 	payload := make([]byte, 8)
 	binary.LittleEndian.PutUint64(payload, r.NpcGuid)
 	opcodeID := uint32(opcode.CMSGTaxinodeStatusQuery)
-	if r.Mode == "discover" {
+	if r.Mode == "discover" || r.Mode == "arrival" {
 		opcodeID = opcode.CMSGTaxiqueryavailablenodes
 	}
 	if err := s.sendPacketLocked(ctx, opcodeID, payload); err != nil {
@@ -212,7 +239,7 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 // Only one reserved, still-current operation can consume a reply. Unsolicited,
 // foreign-NPC or old-visit packets cannot authorize another request. The
 // identity-free learning notice alone never produces a node ID or menu.
-func (s *Service) flightpathPacketLocked(opcodeID uint32, payload []byte) (bool, error) {
+func (s *Service) flightpathPacketLocked(opcodeID uint32, payload []byte, scopes ...*modv1.TransportScope) (bool, error) {
 	op := s.flightpath.operation
 	current := s.flightpathOperationCurrentLocked(op) && op.Pending &&
 		(op.Phase == "requested" || op.Phase == "transport_unknown")
@@ -223,6 +250,9 @@ func (s *Service) flightpathPacketLocked(opcodeID uint32, payload []byte) (bool,
 			return true, err
 		}
 		if !current || npc != op.NpcGuid {
+			return true, nil
+		}
+		if op.Mode == "arrival" {
 			return true, nil
 		}
 		op.StatusKnown, op.NodeKnown = true, known
@@ -253,10 +283,18 @@ func (s *Service) flightpathPacketLocked(opcodeID uint32, payload []byte) (bool,
 		if err != nil {
 			return true, err
 		}
-		if current && npc == op.NpcGuid && op.Mode == "discover" {
+		var scope *modv1.TransportScope
+		if len(scopes) != 0 {
+			scope = scopes[0]
+		}
+		arrival := current && op.Mode == "arrival" && s.flightpathArrivalReplyScopeLocked(op, scope)
+		if current && npc == op.NpcGuid && (op.Mode == "discover" || arrival) {
 			op.MenuKnown, op.SourceNode, op.KnownNodes = true, source, nodes
 			op.Pending = false
 			op.Phase = "menu_observed"
+			if arrival {
+				s.flightpath.arrivalReplyScope = cloneFlightpathScope(scope)
+			}
 		}
 		return true, nil
 	}
