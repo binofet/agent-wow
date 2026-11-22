@@ -12,6 +12,7 @@ import (
 
 func TestWarlockUsesAnInstantAfterInterruptionWithoutRefreshingActiveCurse(t *testing.T) {
 	s, f, target, advance := partyDefenseRig(t, 9)
+	useStarterSemanticPolicy(t, s)
 	const agony, bolt = 980, 705
 	learnSpells(s, agony, bolt)
 	self := f.world.Self
