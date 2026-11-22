@@ -267,6 +267,15 @@ class SupplyTest(unittest.TestCase):
         self.arlen['inventory']['sessionId']='aw-1'
         self.assertEqual(self.turn(state),'water_gift_offer_requested');self.assertEqual(len(self.calls),2)
 
+    def test_observed_finite_receiver_reservation_end_can_replan_before_any_donor_write(self):
+        carried(self.mira,2136,8);state={}
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        self.arlen['trade'].update(waterGiftArmed=False,phase='IDLE',revision='4')
+        self.assertEqual(self.turn(state),'recipient_reservation_ended_before_offer')
+        self.assertEqual(len(self.calls),1);self.assertNotIn('pending',state['memory'])
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        self.assertEqual([call[0] for call in self.calls],[8086,8086]) # No donor item write was replayed.
+
     def test_structured_current_party_request_is_lua_owned_and_completes_once_from_actual_trade(self):
         carried(self.mira,2136,8);self.arlen['inventory']['manaDrinkCount']=16
         self.assertEqual(self.turn(),'water_stock_sufficient')

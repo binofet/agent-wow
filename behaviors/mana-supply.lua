@@ -349,6 +349,11 @@ function M.plan(frame,disposal,gear)
             local receipt=last.result or {}
             if receipt.sessionId~=p.recipientSession or receipt.waterGiftArmed~=true or id(receipt.partnerGuid)~=guid
                 or not after(receipt.revision,p.recipientRevision) then return result(m,'recipient_reservation_unconfirmed') end
+            if peer.trade.waterGiftArmed~=true and peer.trade.phase=='IDLE' and after(peer.trade.revision,receipt.revision) then
+                -- The recipient's finite metadata ended before this task ever
+                -- proposed its donor write. An unknown arm reply stays above.
+                m.pending=nil;m.nextAtMs=now;return result(m,'recipient_reservation_ended_before_offer')
+            end
             if peer.trade.waterGiftArmed~=true or id(peer.trade.partnerGuid)~=guid or after(receipt.revision,peer.trade.revision) then
                 return result(m,'awaiting_recipient_reservation_observation')
             end
