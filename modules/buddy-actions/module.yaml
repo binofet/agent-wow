@@ -8,6 +8,8 @@ compose:
 grpc:
   descriptor_set: module.pb
 rpc:
+  talent_state: /warcraftbuddy.actions.v1.BuddyActions/TalentState
+  learn_talent: /warcraftbuddy.actions.v1.BuddyActions/LearnTalent
   cast_spell: /warcraftbuddy.actions.v1.BuddyActions/CastSpell
   cancel_spell: /warcraftbuddy.actions.v1.BuddyActions/CancelSpell
   flightpath_reference: /warcraftbuddy.actions.v1.BuddyActions/FlightpathReference
@@ -48,6 +50,7 @@ rpc:
   acquire_movement: /warcraftbuddy.actions.v1.BuddyActions/AcquireMovement
   release_movement: /warcraftbuddy.actions.v1.BuddyActions/ReleaseMovement
   acquire_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireInteraction
+  acquire_idle_interaction: /warcraftbuddy.actions.v1.BuddyActions/AcquireIdleInteraction
   release_interaction: /warcraftbuddy.actions.v1.BuddyActions/ReleaseInteraction
   approach_loot: /warcraftbuddy.actions.v1.BuddyActions/ApproachLoot
   approach_quest: /warcraftbuddy.actions.v1.BuddyActions/ApproachQuest
@@ -65,6 +68,7 @@ rpc:
   approach_corpse: /warcraftbuddy.actions.v1.BuddyActions/ApproachCorpse
   reclaim_corpse: /warcraftbuddy.actions.v1.BuddyActions/ReclaimCorpse
 packets:
+  SMSG_TALENTS_INFO: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_TAXINODE_STATUS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_NEW_TAXI_PATH: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SHOWTAXINODES: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -107,6 +111,8 @@ lifecycle:
   before_logout: /warcraftbuddy.actions.v1.BuddyActions/BeforeLogout
 
 script_api:
+  talent_state: {effect: read, description: Read complete normal player talent free-points/spec/rank/glyph facts and exact attempt receipts for the current body}
+  learn_talent: {effect: mutation, description: Spend one caller-selected normal talent/rank request against an exact current body/spec/revision; acknowledgement does not prove the rank was learned}
   cast_spell: {effect: mutation, description: 'Issue one normal cast of any exact learned spell with composable current-visit targets; server validates spell requirements and effects remain unverified'}
   cancel_spell: {effect: mutation, description: 'Cancel only the exact current owned cast or channel operation; an unknown cancellation is never replayed'}
   flightpath_reference: {effect: read, description: Read exact pinned node and outgoing path references; labels base prices and coordinates prove no live route fare or arrival}
@@ -148,6 +154,7 @@ script_api:
   buffs: {effect: mutation, description: 'Compatibility input: enable queues a useful-buff check in current Lua; disable clears legacy status while shared Lua maintenance stays active'}
   reload_behavior: {effect: mutation}
   acquire_interaction: {effect: mutation}
+  acquire_idle_interaction: {effect: mutation}
   release_interaction: {effect: mutation, description: 'Release the exact caller-selected interaction lease after normal STOP; optional session/body/visit guards bind current Lua requests'}
   approach_loot: {effect: mutation}
   approach_quest: {effect: mutation}
