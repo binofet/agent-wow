@@ -10,14 +10,31 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypbø¢GPBªGoogle.Protobuf.WellKnownTypesbproto3
-§
-api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"?
+›
+api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"Œ
 WorldPacket
 opcode (Ropcode
-payload (Rpayload"E
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"’
 SendPacketRequest
 opcode (Ropcode
-payload (Rpayload"5
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"Õ
+TransportScope#
+connection_id (	RconnectionId
+	self_guid (RselfGuid
+visit_bound (R
+visitBound%
+visit_revision (RvisitRevision
+map_id (RmapId'
+motion_revision (RmotionRevision&
+spline_id_known (RsplineIdKnown
+	spline_id (RsplineId'
+spline_revision	 (RsplineRevision4
+spline_source_revision
+ (RsplineSourceRevision#
+spline_active (RsplineActive0
+spline_source_opcode (RsplineSourceOpcode"5
 ClockResponse$
 client_time_ms (RclientTimeMs"u
 InvokeModuleRequest

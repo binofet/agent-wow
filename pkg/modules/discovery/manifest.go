@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/proto"
@@ -309,8 +310,7 @@ func loadDefinition(m Manifest) (*Definition, error) {
 			return nil, fmt.Errorf("%s must accept WorldPacket and return Empty", path)
 		}
 		// Reject a descriptor which shadows the shared packet's wire contract.
-		fields := md.descriptor.Input().Fields()
-		if fields.Len() != 2 || fields.ByNumber(1) == nil || fields.ByNumber(1).Kind() != protoreflect.Uint32Kind || fields.ByNumber(2) == nil || fields.ByNumber(2).Kind() != protoreflect.BytesKind || fields.ByNumber(1).IsList() || fields.ByNumber(2).IsList() {
+		if !compatibleWorldPacket(md.descriptor.Input()) {
 			return nil, errors.New("incompatible WorldPacket descriptor")
 		}
 		d.packets[op] = md
@@ -336,6 +336,25 @@ func loadDefinition(m Manifest) (*Definition, error) {
 		}
 	}
 	return d, nil
+}
+
+func compatibleWorldPacket(packet protoreflect.MessageDescriptor) bool {
+	fields := packet.Fields()
+	if fields.ByNumber(1) == nil || fields.ByNumber(1).Kind() != protoreflect.Uint32Kind || fields.ByNumber(2) == nil || fields.ByNumber(2).Kind() != protoreflect.BytesKind || fields.ByNumber(1).IsList() || fields.ByNumber(2).IsList() {
+		return false
+	}
+	if fields.Len() == 2 {
+		// Existing pinned modules keep their original packet contract. They
+		// receive no scope and cannot authorize the new completion mechanic.
+		return true
+	}
+	if fields.Len() != 3 || fields.ByNumber(3) == nil || fields.ByNumber(3).Message() == nil {
+		return false
+	}
+	want := modv1.File_api_module_v1_session_proto.Messages().ByName("WorldPacket")
+	// A matching message name alone must not admit a shadowed scope schema.
+	return proto.Equal(protodesc.ToDescriptorProto(packet), protodesc.ToDescriptorProto(want)) &&
+		proto.Equal(protodesc.ToDescriptorProto(fields.ByNumber(3).Message()), protodesc.ToDescriptorProto(want.Fields().ByNumber(3).Message()))
 }
 
 func parseOpcode(key string) (uint16, error) {

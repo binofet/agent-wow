@@ -61,6 +61,8 @@ func (s *observations) commitOwnMovementFacts(old observed, source uint32, now t
 		s.ownSpline = t
 	}
 	p.receivedMovement, p.receivedSpline = false, false
+	p.receivedUnitFlags, p.receivedOwnCreate, p.receivedMotionInvalid = false, false, false
+	p.receivedPosition = false
 	p.receivedMovementInfo, p.receivedSplineHeader = movementinfo.Info{}, observedTrajectory{}
 	clear(p.receivedMovementWire[:])
 	p.receivedMovementWireLen = 0

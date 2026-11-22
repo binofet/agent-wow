@@ -1,5 +1,5 @@
-// Package buddyworld retains read-only, bounded observations of a character and
-// its optional companion owner.
+// Package buddyworld retains bounded observations of a character and its
+// optional companion owner, and provides scoped spline completion reports.
 package buddyworld
 
 import (
@@ -56,6 +56,10 @@ type observed struct {
 	receivedMovementWireLen     uint8
 	receivedSpline              bool
 	receivedSplineHeader        observedTrajectory
+	receivedUnitFlags           bool
+	receivedOwnCreate           bool
+	receivedMotionInvalid       bool
+	receivedPosition            bool
 	cast                        observedCreatureCast
 	mainhandKnown               bool
 	mainhand                    uint64
@@ -78,6 +82,9 @@ type Service struct {
 	lastOpcode                   uint32
 	lastError                    string
 	combat                       combatJournal
+	session                      modv1.SessionClient
+	motion                       ownMotionAuthority
+	completion                   splineCompletionState
 }
 
 func NewService(selfGUID uint64) *Service {
@@ -164,6 +171,8 @@ func (s *Service) Snapshot(_ context.Context, request *worldv1.SnapshotRequest) 
 	}
 	r.SelfMovementFacts = s.state.ownMovement.snapshot(now)
 	r.SelfSplineFacts = s.state.ownSpline.snapshot(now)
+	r.SelfMotionAuthority = s.motionSnapshotLocked(now)
+	r.SplineCompletion = s.completionSnapshotLocked()
 	if owner := s.state.players[1]; owner.guid != 0 {
 		r.Owner = snapshot(owner, now)
 	}
@@ -196,11 +205,13 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 	observedAt := s.now()
 	handled, err := parsePacket(packet.Opcode, packet.Payload, &next, observedAt)
 	if err != nil {
+		s.invalidateMalformedMotionLocked(packet)
 		s.malformed++
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
 		next.commitOwnMovementFacts(old, packet.Opcode, observedAt)
+		s.observeMotionLocked(packet, old, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}
 		}
@@ -226,6 +237,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.state = next
 		s.observed++
 	} else {
+		s.observeUnsupportedMotionLocked(packet)
 		s.ignored++
 	}
 	return &emptypb.Empty{}, nil
