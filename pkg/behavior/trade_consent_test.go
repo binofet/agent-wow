@@ -182,7 +182,13 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := tradeConsentFixtureRuntime(t, source)
+			fixtureRuntime := tradeConsentFixtureRuntime
+			if name == "duplicate_slots" {
+				// Keep the observed instrumented semantic case separate from
+				// its unchanged real default-5ms CLI proof below.
+				fixtureRuntime = disposalArmorSemanticRuntime
+			}
+			r := fixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			edit(frame)
 			tradeConsentResult(t, r, source, frame, "wait")
