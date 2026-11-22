@@ -15,6 +15,7 @@ python = "python3"
 AGENT_WOW_AUTHSERVER_HOST = "10.247.37.1"
 
 [model]
+codex = "codex"                    # Executable on the target host's PATH
 provider = "local"
 local_provider = "lmstudio"
 base_url = "http://127.0.0.1:18765/v1"

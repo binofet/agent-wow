@@ -109,7 +109,7 @@ def model_settings(base, override):
             raise Error("Changing provider requires an explicit model and base_url (Codex needs only model)")
         base = {}
     result = dict(provider="local", base_url="http://127.0.0.1:18765/v1", model=LOCAL_MODEL,
-                  local_provider="lmstudio")
+                  local_provider="lmstudio", codex="codex")
     result.update(base)
     result.update(override)
     route = result["provider"]
@@ -121,6 +121,7 @@ def model_settings(base, override):
         raise Error("Responses/Claude/Gemini needs an explicit gateway base_url; local is not a fallback")
     if not isinstance(result.get("model"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", result["model"]):
         raise Error("Explicit model identifier is invalid")
+    result["codex"] = text(result.get("codex"), "Codex executable")
     if result["provider"] != "codex":
         result["base_url"] = endpoint(result.get("base_url"), result["provider"] == "local")
     else:

@@ -90,6 +90,13 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(planned["native_start_if_stopped"][3], "start")
         command = planned["listener_run_if_unowned"]
         self.assertEqual(command[command.index("--banter-seconds") + 1], "0")
+        self.assertEqual(command[command.index("--codex") + 1], "codex")
+
+    def test_explicit_target_codex_path_is_forwarded_without_legacy_default(self):
+        self.raw["model"] = dict(codex="/opt/bin/codex")
+        command = app.commands(app.normalize(self.raw)[0])["run"]
+        self.assertEqual(command[command.index("--codex") + 1], "/opt/bin/codex")
+        self.assertFalse(any("/Applications/" in argument for argument in command))
 
     def test_banter_is_explicit_and_validated_before_child_changes(self):
         self.raw["actors"]["mira"]["banter_seconds"] = 240
@@ -285,6 +292,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual([row["guid"] for row in actors], [1, 4, 5, 8])
         self.assertEqual(actors[-1]["native_profile"], "alliance-nixwick")
         self.assertTrue(all(row["model"]["provider"] == "local" for row in actors))
+        self.assertTrue(all(row["model"]["codex"] == "codex" for row in actors))
         self.assertTrue(all(row["native_env"]["AGENT_WOW_AUTHSERVER_HOST"] == "10.247.37.1" for row in actors))
 
 
