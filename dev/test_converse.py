@@ -2174,8 +2174,9 @@ class NixSharedQuestTests(unittest.TestCase):
         loop,rpc,events,brain=self.rig();loop.tick();loop.tick()
         writes=[p for m,p in rpc.calls if m=="buddy-quests.accept_shared"]
         self.assertEqual(writes,[dict(sessionId="aw-current-nix",shareSequence="1",sharerGuid="3",questId=9)])
-        self.assertLess(next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-quests.accept_shared"),
-                        next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-chat.poll"))
+        # Owner input/ACK discovery precedes background shared-quest work.
+        self.assertLess(next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-chat.poll"),
+                        next(i for i,c in enumerate(rpc.calls) if c[0]=="buddy-quests.accept_shared"))
         self.assertEqual(loop.session_id,"SeparateChatEpoch123")
         self.assertFalse(any(e.get("sharedQuestPhase")=="confirmed_in_own_quest_log" for e in events))
         rpc.state["questLog"][2]["questId"]=9;rpc.state["questLogRevision"]="8"
@@ -3365,7 +3366,7 @@ from test_lua_control_bridge import LuaControlBridgeTests
 
 def load_tests(loader, tests, pattern):
     # Keep the existing CI entry point, including private combat evidence checks.
-    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics"):
+    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics", "test_converse_mana_driver"):
         extra_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
         module = importlib.util.module_from_spec(extra_spec)
         extra_spec.loader.exec_module(module)

@@ -12,6 +12,7 @@ import argparse
 import copy
 import datetime
 import fcntl
+from functools import lru_cache
 import hashlib
 import importlib.util
 import json
@@ -669,6 +670,14 @@ def explicit_reasoning_effort(value):
     if value is not None and value not in ('low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
         raise ConversationError('Explicit reasoning effort is invalid')
     return value
+
+
+@lru_cache(maxsize=1)
+def mana_supply_module():
+    spec = importlib.util.spec_from_file_location("companion_mana_supply", ROOT / "dev/party_mana_supply.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def task_runtime_module():
@@ -2766,7 +2775,8 @@ def parse_lua_control_request(text):
 
 class BuddyControls:
     """Only fixed-owner game controls; the model never supplies RPC methods."""
-    def __init__(self, rpc, player_name="Joel", character_class="priest", owner_quest_context=None, character_guid=1):
+    def __init__(self, rpc, player_name="Joel", character_class="priest", owner_quest_context=None, character_guid=1,
+                 *, supply_state_dir=None, profile_identity=None):
         self.rpc, self.player_name = rpc, player_name
         self.character_class = character_class
         self.owner_quest_context = owner_quest_context
@@ -2791,6 +2801,96 @@ class BuddyControls:
         self.spellbook_observation, self.learned_spell_notice = None, None
         self.emote_catalog = {"available": False}
         self.mission_follow_binding = None
+        self.lua_water_supply = {}
+        self.water_supply_phase = "idle"
+        self.supply_state_dir = Path(supply_state_dir).absolute() if supply_state_dir is not None else None
+        self.supply_profile_identity = copy.deepcopy(profile_identity)
+        self._water_supply_loaded = False
+
+    def load_water_supply(self, supply):
+        identity = self.supply_profile_identity
+        if (self.supply_state_dir is None or not isinstance(identity, dict)
+                or identity.get("guid") != self.character_guid or identity.get("owner_guid") != supply.OWNER_GUID
+                or identity.get("rpc_url") != getattr(self.rpc, "url", None)
+                or identity.get("rpc_url") != f"http://127.0.0.1:{supply.MIRA}/rpc"):
+            raise ConversationError("Durable current-profile water supply state required")
+        if self._water_supply_loaded:
+            return
+        folder = ensure_state(self.supply_state_dir)
+        if folder.resolve() != folder:
+            raise ConversationError("Water supply profile directory cannot contain symlinks")
+        runtime = supply.runtime
+        path = folder / "mana-supply.json"
+        try:
+            record = runtime.decoded(runtime.read_file(path, runtime.MAX_STATE, True))
+        except FileNotFoundError:
+            record = {"version": 1, "profile": identity, "state": {}}
+        if (not isinstance(record, dict) or set(record) != {"version", "profile", "state"}
+                or type(record["version"]) is not int or record["version"] != 1
+                or record["profile"] != identity or not isinstance(record["state"], dict)):
+            raise ConversationError("Stored water supply profile binding is invalid; state retained")
+        self.lua_water_supply = record["state"]
+        self._water_supply_store = runtime.Store(folder)
+        self._water_supply_loaded = True
+
+    def persist_water_supply(self, state):
+        runtime = mana_supply_module().runtime
+        record = {"version": 1, "profile": self.supply_profile_identity, "state": state}
+        # Reuse the existing private bounded atomic/fsync writer. The listener
+        # already holds the exclusive profile run lock; this adds no worker.
+        self._water_supply_store.write("mana-supply.json", runtime.packed(record, runtime.MAX_STATE), runtime.MAX_STATE)
+
+    def maintain_water_supply(self, *, still_current):
+        """Drive one accepted Lua turn; native RPCs execute its exact choice."""
+        if self.character_guid != 4:
+            return
+        yielded = False
+        try:
+            supply = mana_supply_module()
+            self.load_water_supply(supply)
+            clients = getattr(self, "_water_supply_clients", None)
+            if clients is None:
+                clients = self._water_supply_clients = {
+                    port: supply.runtime.RPC(f"http://127.0.0.1:{port}/rpc",
+                        request_bytes=8*1024*1024, response_bytes=8*1024*1024)
+                    for port in (supply.MIRA, *supply.RECIPIENTS)}
+
+            def call(port, method, params):
+                nonlocal yielded
+                # Do not consume chat here. The next normal tick acknowledges
+                # the owner before doing any more background work.
+                if yielded or not still_current():
+                    yielded = True
+                    raise supply.NotDispatched("owner_input_pending")
+                return clients[port].call(method, params, timeout=1.5)
+
+            observations = {}
+            for port in clients:
+                try:
+                    view = {name: call(port, method, {}) for name, method in (
+                        ("world", "buddy-world.snapshot"), ("actions", "buddy-actions.status"),
+                        ("inventory", "buddy-inventory.state"), ("trade", "buddy-trade.state"),
+                        ("party", "buddy-party.state"))}
+                    try:
+                        view["journal"] = call(port, "buddy-quests.journal", {"refresh": False})
+                    except supply.runtime.Error:
+                        view["journal"] = {}  # Unknown protection facts forbid disposal.
+                    if port == supply.MIRA:
+                        view["spell_toolkit"] = call(port, "buddy-actions.spell_toolkit", {})
+                    observations[port] = view
+                except supply.runtime.Error:
+                    continue
+            # B's adapter commits Lua reservations before the write and retains
+            # uncertain receipts. Even a zero-send preemption must not clear it.
+            self.water_supply_phase = supply.maintain_supply(call, observations, self.lua_water_supply,
+                                                           persist=self.persist_water_supply)
+        except OwnerInputPending:
+            pass
+        except Exception as error:
+            self.water_supply_phase = "accepted_water_policy_unavailable"
+            self.lua_water_supply["error"] = str(error)
+        if yielded:
+            self.water_supply_phase = "yielded_to_owner"
 
     def observe_learned_spells(self, raw):
         """One factual same-body ID delta; eligibility/coalescing stays in Lua."""
@@ -2833,8 +2933,16 @@ class BuddyControls:
                 spellbookRevision=current['spellbookRevision'],spellIds=current['spellIds']),sort_keys=True).encode()).hexdigest()
 
     def refresh(self):
+        def call(method, params, *, before_write=None):
+            current = getattr(self, "_refresh_current", None)
+            if current is not None and (self._refresh_yielded or not current()):
+                self._refresh_yielded = True
+                raise OwnerInputPending("Fact refresh yielded to current owner input")
+            if before_write is not None:before_write()
+            return self.rpc.call(method, params)
+
         try:
-            party = self.rpc.call("buddy-party.state", {})
+            party = call("buddy-party.state", {})
             self.party_available = True
             session = party.get("sessionId", "")
             if not isinstance(session, str) or not 1 <= len(session) <= 128:
@@ -2873,15 +2981,15 @@ class BuddyControls:
                     proposal = None
                 if proposal is not None:
                     # Reserve before writing: a timeout cannot cause a repeated accept.
-                    self.attempted_invites.add(key)
-                    result = self.rpc.call("buddy-party.accept", {
-                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": inviter})
+                    result = call("buddy-party.accept", {
+                        "sessionId": session, "inviteSequence": str(sequence), "inviterName": inviter},
+                        before_write=lambda: self.attempted_invites.add(key))
                     if result.get("transportWritten") is not True:
                         raise ConversationError("Party acceptance write was not confirmed")
         except ConversationError:
             self.party_available = False
         try:
-            self.actions = self.rpc.call("buddy-actions.status", {})
+            self.actions = call("buddy-actions.status", {})
             casts = integer(self.actions.get("serverCastGo", "0"), "completed cast counter")
             if self.previous_cast_go is not None and casts > self.previous_cast_go:
                 self.events.append("server_confirmed_spell_cast")
@@ -2892,13 +3000,13 @@ class BuddyControls:
         self.spell_toolkit, self.professions = {"available": False}, {"available": False}
         if self.actions_available:
             try:
-                raw = self.rpc.call("buddy-actions.spell_toolkit", {})
+                raw = call("buddy-actions.spell_toolkit", {})
                 self.spell_toolkit = spell_toolkit_context(raw, self.actions, self.character_guid)
                 if self.spell_toolkit.get('available') is True:self.observe_learned_spells(raw)
             except ConversationError:
                 pass
         try:
-            raw = self.rpc.call("buddy-professions.state", {})
+            raw = call("buddy-professions.state", {})
             self.professions = professions_context(raw, self.character_guid, self.actions.get("sessionId") if self.actions_available else None)
         except ConversationError:
             pass
@@ -2906,7 +3014,7 @@ class BuddyControls:
                              ("trade", "buddy-trade.state"), ("journal", "buddy-quests.journal"),
                              ("quest_items", "buddy-quest-items.state")):
             try:
-                setattr(self, name, self.rpc.call(method, {"refresh": False} if name == "journal" else {}))
+                setattr(self, name, call(method, {"refresh": False} if name == "journal" else {}))
                 if name == "quest_items":
                     value = self.quest_items
                     if (integer(value.get("selfGuid", 0)) != self.character_guid
@@ -2936,7 +3044,7 @@ class BuddyControls:
                     setattr(self, name + "_available", False)
         self.events = self.events[-8:]
         try:
-            raw = self.rpc.call("buddy-inventory.state", {})
+            raw = call("buddy-inventory.state", {})
             inventory = inventory_context(raw, self.character_guid)
             if inventory["sessionId"] != self.inventory_session:
                 self.inventory_names, self.inventory_session = {}, inventory["sessionId"]
@@ -2944,7 +3052,7 @@ class BuddyControls:
                                        if row.get("metadataKnown") and row["entry"] not in self.inventory_names))[:6]
             if missing:
                 try:
-                    reply = self.rpc.call("buddy-trade.lookup_items", {"itemIds": missing})
+                    reply = call("buddy-trade.lookup_items", {"itemIds": missing})
                     rows = reply.get("items", [])
                     if reply.get("sessionId") == self.inventory_session and isinstance(rows, list) and len(rows) <= 6:
                         for row in rows:
@@ -4128,12 +4236,13 @@ class Conversation:
                 self.brain._generation_context=previous_context
                 self.brain._generation_progress=previous_progress
 
-    def same_body(self):
+    def same_body(self, *, timeout=None):
         if not self.session_id:
             return True
         try:
-            result = self.rpc.call("buddy-chat.poll", {"afterSequence": str(self.cursor),
-                                                       "limit": 256, "sessionId": self.session_id})
+            params = {"afterSequence": str(self.cursor), "limit": 256, "sessionId": self.session_id}
+            result = (self.rpc.call("buddy-chat.poll", params) if timeout is None else
+                      self.rpc.call("buddy-chat.poll", params, timeout=timeout))
         except CursorReset:
             self.reset_body()
             return False
@@ -4162,16 +4271,30 @@ class Conversation:
         self.status(lastGmCommand={"outcome": outcome, "sessionId": game_session, "cursor": self.cursor})
         self.send_reply({"text": text, "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
 
-    def tick(self):
-        if self.controls:
+    def refresh_controls(self):
+        if not self.controls:
+            return True
+        guarded = isinstance(self.controls, BuddyControls)
+        if guarded:
+            self.controls._refresh_yielded = False
+            self.controls._refresh_current = lambda: not self.stopped() and self.same_body(timeout=.25)
+        try:
             self.controls.refresh()
-            poll_combat=getattr(self.controls,'poll_combat',None)
-            if callable(poll_combat):poll_combat()
-        self.poll_shared_quest()
+        finally:
+            if guarded:self.controls._refresh_current = None
+        if guarded and self.controls._refresh_yielded:
+            self.status(phase="listening", generationPhase="yielded_for_chat_refresh", cursor=self.cursor)
+            return False
+        poll_combat = getattr(self.controls, "poll_combat", None)
+        if callable(poll_combat):poll_combat()
+        return True
+
+    def tick(self):
         resumed = not self.initialized
         if not self.initialized:
             result = self.baseline()
             if result is None:
+                if self.refresh_controls():self.poll_shared_quest()
                 return
             # The retained packet is the latest unanswered owner whisper from
             # this live chat body. Apply ordinary ownership, development and
@@ -4234,16 +4357,22 @@ class Conversation:
                     "text": text, "sender_guid": str(sender), "development_whisper": True})
             elif (sender in self.party_agents and channel in ("PARTY", "PARTY_LEADER")
                   and named(text, self.character_name) and self.peer_remaining > 0
-                  and time.monotonic() < self.peer_until and time.monotonic() >= self.next_peer
-                  and self.peer_member(sender)):
+                  and time.monotonic() < self.peer_until and time.monotonic() >= self.next_peer):
                 selected.append({"speaker": self.party_agents[sender], "channel": channel, "text": text, "sender_guid": str(sender)})
         # Advance before model/RPC work: ambiguous writes must not cause retries.
         self.cursor = next_sequence
         if not selected:
+            if not self.refresh_controls():return
+            self.poll_shared_quest()
             self.status(phase="listening", cursor=self.cursor)
             if self.maybe_repair_mission():return
             if self.maybe_review_combat():return
             if self.maybe_review_learned_spells():return
+            if isinstance(self.controls, BuddyControls) and self.character_guid == 4:
+                self.controls.maintain_water_supply(still_current=lambda:
+                    not self.stopped() and self.same_body(timeout=.25))
+                self.status(waterSupplyPhase=self.controls.water_supply_phase)
+                if self.controls.water_supply_phase == "yielded_to_owner":return
             self.maybe_initiate()
             return
         if result.get("cursorLost", False):
@@ -4258,6 +4387,7 @@ class Conversation:
         peer = integer(selected[-1]["sender_guid"]) != self.player_guid
         sender = integer(selected[-1]["sender_guid"])
         development_whisper = peer and selected[-1].get("development_whisper") is True
+        if peer and not development_whisper and not self.peer_member(sender, fresh=True):return
         if peer:
             selected = selected[-1:]
             if not development_whisper:
@@ -4277,6 +4407,7 @@ class Conversation:
             current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
             retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
         if acknowledged is False:return
+        if not self.refresh_controls():return
         allow_gm = (not peer and not resumed and self.session_id and self.character_guid == 87
                     and self.player_guid == 3 and self.character_name.casefold() == "lotharen")
         if allow_gm:
@@ -5086,7 +5217,8 @@ def main(argv=None):
         record["requestedModel"] = brain.model
         record["requestedReasoningEffort"] = brain.reasoning_effort
         record["modelSelection"] = brain.model_selection()
-        controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid)
+        controls = BuddyControls(rpc, args.player_name, args.character_class, args.owner_quest_context, args.character_guid,
+                                 supply_state_dir=state, profile_identity=identity)
         conversation = Conversation(rpc, brain, args.player_guid, status, stopped,
                                     controls=controls, banter_seconds=args.banter_seconds, player_name=args.player_name, character_name=args.character_name, character_class=args.character_class, character_guid=args.character_guid, party_agents=roster, resume_whispers=args.resume_whispers)
         deadline = time.monotonic() + args.max_hours * 3600

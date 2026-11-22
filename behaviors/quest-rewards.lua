@@ -6,6 +6,7 @@ local alliance = {[1]=true,[3]=true,[4]=true,[7]=true,[11]=true}
 local body_slots = {[1]=true,[3]=true,[5]=true,[6]=true,[7]=true,[8]=true,[9]=true,[10]=true,[20]=true}
 local common_slots = {[2]=true,[11]=true,[12]=true,[16]=true}
 local weapon_slots = {[13]=true,[15]=true,[17]=true,[21]=true,[25]=true,[26]=true}
+local cloth_casters = {[5]=true,[8]=true,[9]=true}
 local caster_stats = {[0]=.02,[1]=.01,[5]=4,[6]=3,[7]=2,[18]=3,[21]=3,[30]=3,[31]=3,[32]=3,[36]=3,[41]=2,[42]=5,[43]=3,[45]=5,[46]=1,[47]=1}
 local rogue_stats = {[1]=.01,[3]=4,[4]=2,[7]=2,[13]=1,[16]=3,[19]=3,[28]=3,[31]=3,[32]=3,[36]=3,[37]=3,[38]=2,[44]=2,[46]=1}
 local uint_fields = {
@@ -122,7 +123,7 @@ local function useful_score(item,input,proficiencies)
             if subclass~=0 and subclass~=1 and not (rogue and subclass==2) then return end
         elseif body_slots[slot] then
             if subclass~=1 and not (rogue and subclass==2) then return end
-        elseif not (slot==23 and (input.classId==5 or input.classId==8) and (subclass==0 or subclass==1)) then return end
+        elseif not (slot==23 and cloth_casters[input.classId] and (subclass==0 or subclass==1)) then return end
     elseif not weapon then return end
     local weights=rogue and rogue_stats or caster_stats
     local score=10+(item.armor or 0)*.15
@@ -313,7 +314,7 @@ local function decide(input)
     end
     local proficiencies={}
     if not vendor_only then
-        if input.classId~=4 and input.classId~=5 and input.classId~=8 then return result("pending","reward_class_unknown") end
+        if input.classId~=4 and not cloth_casters[input.classId] then return result("pending","reward_class_unknown") end
         if input.level~=nil and (not integer(input.level,255) or input.level==0) then return result("invalid","reward_level_invalid") end
         if input.raceId~=nil and not races[input.raceId] then return result("invalid","reward_race_invalid") end
         if not array(input.weaponSubclasses,21) then return result("invalid","reward_proficiencies_invalid") end

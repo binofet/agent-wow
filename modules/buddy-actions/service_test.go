@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agent-wow/agent-wow/behaviors"
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	partyv1 "github.com/agent-wow/agent-wow/modules/buddy-party/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"google.golang.org/grpc"
@@ -341,10 +343,23 @@ func TestHealTimeoutAndTransportErrorAreNotSuccessOrRetried(t *testing.T) {
 
 func TestHealAbortsOnUndispatchedStopThenRecoversWithoutReset(t *testing.T) {
 	s, f, _ := rig(t)
+	// Establish healthy movement for the STOP/clock/refusal assertions below.
+	// The separate production watchdog keeps its actual default5ms runtime.
+	runtime, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.Reload(behaviors.FollowFormationSource, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.formation.runtime = runtime
 	learn(s)
 	toggle(t, s, true)
 	f.world.Owner.Health = 100
 	s.Tick(context.Background())
+	if !s.state.Moving || len(f.packets) != 1 || f.packets[0].Opcode != opcode.MSGMoveStartForward {
+		t.Fatal("healthy follow did not establish the movement under test", s.stateLocked(), f.packets)
+	}
 	f.world.Owner.Health = 50
 	f.failClock = true
 	result, _ := testExactHeal(s, 2050, ownerGUID)

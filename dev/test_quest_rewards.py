@@ -54,6 +54,38 @@ class RewardTests(unittest.TestCase):
             self.assertIs(self.select(choices, rows, class_id)["choice"], choices[0])
         self.assertIs(self.select(choices, rows, 4)["choice"], choices[1])
 
+    def test_nixwick_warlock_keeps_caster_choices_and_actual_requirements(self):
+        choices = [offer(900, 3), offer(901, 1)]
+        for slot in (5, 23):  # Cloth chest and caster held-in-off-hand.
+            with self.subTest(slot=slot):
+                caster = item(900, itemClass=4, subclass=1, inventoryType=slot,
+                              allowableClass=1 << 8, allowableRace=1 << 6,
+                              requiredLevel=40, stats=[dict(type=5, value=10)], sellPrice=1)
+                leather = item(901, itemClass=4, subclass=2, inventoryType=5,
+                               armor=100, stats=[dict(type=3, value=20)], sellPrice=100)
+                rows = [caster, leather]
+                before = copy.deepcopy((choices, rows))
+                result = self.select(choices, rows, 9, level=40, race_id=7)
+                self.assertEqual(result["status"], "selected")
+                self.assertIs(result["choice"], choices[0])
+                self.assertIn("useful equipment", result["reason"])
+                self.assertEqual((choices, rows), before)
+                for restriction in (dict(requiredLevel=41), dict(requiredSpell=123),
+                                    dict(allowableClass=1 << 7), dict(allowableRace=1)):
+                    restricted = self.select([choices[0]], [caster | restriction], 9,
+                                             level=40, race_id=7)
+                    self.assertIn("sell value", restricted["reason"])
+                pending = self.select(choices, [caster, dict(itemId=901, pending=True)],
+                                      9, level=40, race_id=7)
+                self.assertEqual(pending["status"], "pending")
+                self.assertIsNone(pending["choice"])
+        staff = item(902, itemClass=2, subclass=10, inventoryType=17,
+                     delayMs=2000, damages=[dict(minimum=20, maximum=30)])
+        self.assertIn("sell value", self.select([offer(902)], [staff], 9)["reason"])
+        self.assertIn("useful equipment", self.select([offer(902)], [staff], 9,
+                                                      weapon_subclasses={10})["reason"])
+        self.assertIsNone(rewards.preferred_reward([offer(1159)], 18, 9))
+
     def test_weapon_requires_actual_subclass_proficiency(self):
         choices = [offer(40), offer(50, 1)]
         rows = [item(40, itemClass=2, subclass=15, inventoryType=13, sellPrice=1,
