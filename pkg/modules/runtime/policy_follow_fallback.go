@@ -113,6 +113,11 @@ func (p *policyFollowFallback) evaluate(ctx context.Context, input map[string]an
 			_, err = runtime.Reload(wrapped, "")
 		}
 		if err != nil {
+			if errors.Is(err, behavior.ErrExecutionBudget) {
+				// No pure runtime was published. Re-admit this accepted source
+				// on the next normal read, without an inline retry.
+				p.attempted = false
+			}
 			p.recordError(err)
 			return nil, err
 		}
