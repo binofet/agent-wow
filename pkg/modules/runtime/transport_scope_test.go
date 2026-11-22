@@ -53,7 +53,8 @@ func TestTransportScopePublicationKeepsCapturedMetadataDetachedInFIFO(t *testing
 	m := New(registry, nil, nil)
 	t.Cleanup(m.cancel)
 	scope := &modv1.TransportScope{ConnectionId: "source", SelfGuid: 1, MotionRevision: 10,
-		SplineIdKnown: true, SplineId: 0, SplineRevision: 2}
+		SplineIdKnown: true, SplineId: 0, SplineRevision: 2,
+		WorldTransfer: &modv1.ObservedWorldTransfer{Revision: 3, Phase: "pending", TargetMapKnown: true, TargetMapId: 530}}
 	if err := m.PublishObserved(0x236, []byte{1}, scope); err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +63,15 @@ func TestTransportScopePublicationKeepsCapturedMetadataDetachedInFIFO(t *testing
 		t.Fatal(err)
 	}
 	scope.ConnectionId, scope.MotionRevision = "caller-mutation", 99
+	scope.WorldTransfer.TargetMapId = 571
 	a, b := m.nextPacket(m.instances["a"]), m.nextPacket(m.instances["b"])
 	if a.TransportScope.ConnectionId != "source" || a.TransportScope.MotionRevision != 10 || !a.TransportScope.SplineIdKnown ||
-		a.TransportScope.SplineId != 0 || !proto.Equal(a, b) {
+		a.TransportScope.SplineId != 0 || a.TransportScope.WorldTransfer.TargetMapId != 530 || !proto.Equal(a, b) {
 		t.Fatal("publication refreshed or lost captured source metadata", a, b)
 	}
 	a.TransportScope.ConnectionId, a.Payload[0] = "subscriber-mutation", 9
-	if b.TransportScope.ConnectionId != "source" || b.Payload[0] != 1 {
+	a.TransportScope.WorldTransfer.Phase = "subscriber-mutation"
+	if b.TransportScope.ConnectionId != "source" || b.Payload[0] != 1 || b.TransportScope.WorldTransfer.Phase != "pending" {
 		t.Fatal("subscribers share mutable packet/scope state", a, b)
 	}
 	for _, name := range []string{"a", "b"} {

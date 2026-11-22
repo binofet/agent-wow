@@ -250,6 +250,33 @@ message SplineCompletionObservation {
   bool retirement_available = 6;
 }
 
+// Independently paired Core/World visit domains and current flight evidence.
+// ContinuationKnown describes a candidate observed continuation only; it does
+// not adopt a booking, release a pending report, or establish arrival.
+message WorldTransferObservation {
+  uint64 revision = 1;
+  bool known = 2;
+  string reason = 3;
+  uint64 self_guid = 4;
+  uint64 from_visit_revision = 5;
+  uint64 to_visit_revision = 6;
+  agentwow.module.v1.ObservedWorldTransfer core = 7;
+  SplineCompletionOperation predecessor_completion = 8;
+  OwnMotionAuthority predecessor_authority = 9;
+  bool predecessor_qualified = 10;
+  bool continuation_known = 11;
+  agentwow.module.v1.TransportScope current_scope = 12;
+  uint64 current_authority_revision = 13;
+  uint64 current_movement_revision = 14;
+  uint64 current_spline_revision = 15;
+  uint64 current_unit_flags_revision = 16;
+  uint64 current_unit_flags_motion_revision = 17;
+  bool current_unit_flags_known = 18;
+  uint32 current_unit_flags = 19;
+  bool arrival_known = 20;
+  bool booking_causality_known = 21;
+}
+
 // Private own equipment slots0..18; bags and bank slots are excluded.
 message EquipmentSlotState {
   uint32 slot = 1;
@@ -591,6 +618,7 @@ message SnapshotResponse {
   OwnSplineFacts self_spline_facts = 49;
   OwnMotionAuthority self_motion_authority = 50;
   SplineCompletionObservation spline_completion = 51;
+  WorldTransferObservation world_transfer = 52;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.

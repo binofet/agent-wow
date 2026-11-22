@@ -168,8 +168,11 @@ type TransportScope struct {
 	SplineSourceRevision uint64 `protobuf:"varint,10,opt,name=spline_source_revision,json=splineSourceRevision,proto3" json:"spline_source_revision,omitempty"`
 	SplineActive         bool   `protobuf:"varint,11,opt,name=spline_active,json=splineActive,proto3" json:"spline_active,omitempty"`
 	SplineSourceOpcode   uint32 `protobuf:"varint,12,opt,name=spline_source_opcode,json=splineSourceOpcode,proto3" json:"spline_source_opcode,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Latest immediate observed transfer edge. It proves neither taxi booking
+	// causality nor arrival and never replaces this scope's current binding.
+	WorldTransfer *ObservedWorldTransfer `protobuf:"bytes,13,opt,name=world_transfer,json=worldTransfer,proto3" json:"world_transfer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TransportScope) Reset() {
@@ -286,6 +289,260 @@ func (x *TransportScope) GetSplineSourceOpcode() uint32 {
 	return 0
 }
 
+func (x *TransportScope) GetWorldTransfer() *ObservedWorldTransfer {
+	if x != nil {
+		return x.WorldTransfer
+	}
+	return nil
+}
+
+// Flat owner-ordered protocol observations, not a route or a visit history.
+// Known requires an exact supported Pending, matching NewWorld and known ACK
+// write. There is no server acknowledgement of the ACK or booking identifier.
+type ObservedWorldTransfer struct {
+	state                          protoimpl.MessageState `protogen:"open.v1"`
+	Revision                       uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	Phase                          string                 `protobuf:"bytes,2,opt,name=phase,proto3" json:"phase,omitempty"`
+	Known                          bool                   `protobuf:"varint,3,opt,name=known,proto3" json:"known,omitempty"`
+	ConnectionId                   string                 `protobuf:"bytes,4,opt,name=connection_id,json=connectionId,proto3" json:"connection_id,omitempty"`
+	SelfGuid                       uint64                 `protobuf:"varint,5,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	FromVisitRevision              uint64                 `protobuf:"varint,6,opt,name=from_visit_revision,json=fromVisitRevision,proto3" json:"from_visit_revision,omitempty"`
+	FromMapId                      uint32                 `protobuf:"varint,7,opt,name=from_map_id,json=fromMapId,proto3" json:"from_map_id,omitempty"`
+	FromMotionRevision             uint64                 `protobuf:"varint,8,opt,name=from_motion_revision,json=fromMotionRevision,proto3" json:"from_motion_revision,omitempty"`
+	FromSplineIdKnown              bool                   `protobuf:"varint,9,opt,name=from_spline_id_known,json=fromSplineIdKnown,proto3" json:"from_spline_id_known,omitempty"`
+	FromSplineId                   uint32                 `protobuf:"varint,10,opt,name=from_spline_id,json=fromSplineId,proto3" json:"from_spline_id,omitempty"`
+	FromSplineRevision             uint64                 `protobuf:"varint,11,opt,name=from_spline_revision,json=fromSplineRevision,proto3" json:"from_spline_revision,omitempty"`
+	FromSplineSourceRevision       uint64                 `protobuf:"varint,12,opt,name=from_spline_source_revision,json=fromSplineSourceRevision,proto3" json:"from_spline_source_revision,omitempty"`
+	FromSplineSourceOpcode         uint32                 `protobuf:"varint,13,opt,name=from_spline_source_opcode,json=fromSplineSourceOpcode,proto3" json:"from_spline_source_opcode,omitempty"`
+	FromSplineActive               bool                   `protobuf:"varint,14,opt,name=from_spline_active,json=fromSplineActive,proto3" json:"from_spline_active,omitempty"`
+	PendingMotionRevision          uint64                 `protobuf:"varint,15,opt,name=pending_motion_revision,json=pendingMotionRevision,proto3" json:"pending_motion_revision,omitempty"`
+	TargetMapId                    uint32                 `protobuf:"varint,16,opt,name=target_map_id,json=targetMapId,proto3" json:"target_map_id,omitempty"`
+	ToVisitRevision                uint64                 `protobuf:"varint,17,opt,name=to_visit_revision,json=toVisitRevision,proto3" json:"to_visit_revision,omitempty"`
+	ToMapId                        uint32                 `protobuf:"varint,18,opt,name=to_map_id,json=toMapId,proto3" json:"to_map_id,omitempty"`
+	EntryMotionRevision            uint64                 `protobuf:"varint,19,opt,name=entry_motion_revision,json=entryMotionRevision,proto3" json:"entry_motion_revision,omitempty"`
+	WorldportAckMotionRevision     uint64                 `protobuf:"varint,20,opt,name=worldport_ack_motion_revision,json=worldportAckMotionRevision,proto3" json:"worldport_ack_motion_revision,omitempty"`
+	WorldportAckWritten            bool                   `protobuf:"varint,21,opt,name=worldport_ack_written,json=worldportAckWritten,proto3" json:"worldport_ack_written,omitempty"`
+	WorldportAckUnknown            bool                   `protobuf:"varint,22,opt,name=worldport_ack_unknown,json=worldportAckUnknown,proto3" json:"worldport_ack_unknown,omitempty"`
+	CompletionReportWritten        bool                   `protobuf:"varint,23,opt,name=completion_report_written,json=completionReportWritten,proto3" json:"completion_report_written,omitempty"`
+	CompletionReportMotionRevision uint64                 `protobuf:"varint,24,opt,name=completion_report_motion_revision,json=completionReportMotionRevision,proto3" json:"completion_report_motion_revision,omitempty"`
+	Reason                         string                 `protobuf:"bytes,25,opt,name=reason,proto3" json:"reason,omitempty"`
+	TargetMapKnown                 bool                   `protobuf:"varint,26,opt,name=target_map_known,json=targetMapKnown,proto3" json:"target_map_known,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
+}
+
+func (x *ObservedWorldTransfer) Reset() {
+	*x = ObservedWorldTransfer{}
+	mi := &file_api_module_v1_session_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObservedWorldTransfer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObservedWorldTransfer) ProtoMessage() {}
+
+func (x *ObservedWorldTransfer) ProtoReflect() protoreflect.Message {
+	mi := &file_api_module_v1_session_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObservedWorldTransfer.ProtoReflect.Descriptor instead.
+func (*ObservedWorldTransfer) Descriptor() ([]byte, []int) {
+	return file_api_module_v1_session_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ObservedWorldTransfer) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *ObservedWorldTransfer) GetKnown() bool {
+	if x != nil {
+		return x.Known
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetConnectionId() string {
+	if x != nil {
+		return x.ConnectionId
+	}
+	return ""
+}
+
+func (x *ObservedWorldTransfer) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromVisitRevision() uint64 {
+	if x != nil {
+		return x.FromVisitRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromMapId() uint32 {
+	if x != nil {
+		return x.FromMapId
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromMotionRevision() uint64 {
+	if x != nil {
+		return x.FromMotionRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineIdKnown() bool {
+	if x != nil {
+		return x.FromSplineIdKnown
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineId() uint32 {
+	if x != nil {
+		return x.FromSplineId
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineRevision() uint64 {
+	if x != nil {
+		return x.FromSplineRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineSourceRevision() uint64 {
+	if x != nil {
+		return x.FromSplineSourceRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineSourceOpcode() uint32 {
+	if x != nil {
+		return x.FromSplineSourceOpcode
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetFromSplineActive() bool {
+	if x != nil {
+		return x.FromSplineActive
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetPendingMotionRevision() uint64 {
+	if x != nil {
+		return x.PendingMotionRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetTargetMapId() uint32 {
+	if x != nil {
+		return x.TargetMapId
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetToVisitRevision() uint64 {
+	if x != nil {
+		return x.ToVisitRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetToMapId() uint32 {
+	if x != nil {
+		return x.ToMapId
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetEntryMotionRevision() uint64 {
+	if x != nil {
+		return x.EntryMotionRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetWorldportAckMotionRevision() uint64 {
+	if x != nil {
+		return x.WorldportAckMotionRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetWorldportAckWritten() bool {
+	if x != nil {
+		return x.WorldportAckWritten
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetWorldportAckUnknown() bool {
+	if x != nil {
+		return x.WorldportAckUnknown
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetCompletionReportWritten() bool {
+	if x != nil {
+		return x.CompletionReportWritten
+	}
+	return false
+}
+
+func (x *ObservedWorldTransfer) GetCompletionReportMotionRevision() uint64 {
+	if x != nil {
+		return x.CompletionReportMotionRevision
+	}
+	return 0
+}
+
+func (x *ObservedWorldTransfer) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ObservedWorldTransfer) GetTargetMapKnown() bool {
+	if x != nil {
+		return x.TargetMapKnown
+	}
+	return false
+}
+
 // ClockResponse samples the clock shared by modules and core time-sync replies.
 type ClockResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -297,7 +554,7 @@ type ClockResponse struct {
 
 func (x *ClockResponse) Reset() {
 	*x = ClockResponse{}
-	mi := &file_api_module_v1_session_proto_msgTypes[3]
+	mi := &file_api_module_v1_session_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -309,7 +566,7 @@ func (x *ClockResponse) String() string {
 func (*ClockResponse) ProtoMessage() {}
 
 func (x *ClockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_module_v1_session_proto_msgTypes[3]
+	mi := &file_api_module_v1_session_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -322,7 +579,7 @@ func (x *ClockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClockResponse.ProtoReflect.Descriptor instead.
 func (*ClockResponse) Descriptor() ([]byte, []int) {
-	return file_api_module_v1_session_proto_rawDescGZIP(), []int{3}
+	return file_api_module_v1_session_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ClockResponse) GetClientTimeMs() uint32 {
@@ -344,7 +601,7 @@ type InvokeModuleRequest struct {
 
 func (x *InvokeModuleRequest) Reset() {
 	*x = InvokeModuleRequest{}
-	mi := &file_api_module_v1_session_proto_msgTypes[4]
+	mi := &file_api_module_v1_session_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -356,7 +613,7 @@ func (x *InvokeModuleRequest) String() string {
 func (*InvokeModuleRequest) ProtoMessage() {}
 
 func (x *InvokeModuleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_module_v1_session_proto_msgTypes[4]
+	mi := &file_api_module_v1_session_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -369,7 +626,7 @@ func (x *InvokeModuleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InvokeModuleRequest.ProtoReflect.Descriptor instead.
 func (*InvokeModuleRequest) Descriptor() ([]byte, []int) {
-	return file_api_module_v1_session_proto_rawDescGZIP(), []int{4}
+	return file_api_module_v1_session_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InvokeModuleRequest) GetModule() string {
@@ -403,7 +660,7 @@ type InvokeModuleResponse struct {
 
 func (x *InvokeModuleResponse) Reset() {
 	*x = InvokeModuleResponse{}
-	mi := &file_api_module_v1_session_proto_msgTypes[5]
+	mi := &file_api_module_v1_session_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -415,7 +672,7 @@ func (x *InvokeModuleResponse) String() string {
 func (*InvokeModuleResponse) ProtoMessage() {}
 
 func (x *InvokeModuleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_module_v1_session_proto_msgTypes[5]
+	mi := &file_api_module_v1_session_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -428,7 +685,7 @@ func (x *InvokeModuleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InvokeModuleResponse.ProtoReflect.Descriptor instead.
 func (*InvokeModuleResponse) Descriptor() ([]byte, []int) {
-	return file_api_module_v1_session_proto_rawDescGZIP(), []int{5}
+	return file_api_module_v1_session_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *InvokeModuleResponse) GetResult() *anypb.Any {
@@ -450,7 +707,7 @@ const file_api_module_v1_session_proto_rawDesc = "" +
 	"\x11SendPacketRequest\x12\x16\n" +
 	"\x06opcode\x18\x01 \x01(\rR\x06opcode\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x12K\n" +
-	"\x0ftransport_scope\x18\x03 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\xd5\x03\n" +
+	"\x0ftransport_scope\x18\x03 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\xa7\x04\n" +
 	"\x0eTransportScope\x12#\n" +
 	"\rconnection_id\x18\x01 \x01(\tR\fconnectionId\x12\x1b\n" +
 	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x1f\n" +
@@ -465,7 +722,36 @@ const file_api_module_v1_session_proto_rawDesc = "" +
 	"\x16spline_source_revision\x18\n" +
 	" \x01(\x04R\x14splineSourceRevision\x12#\n" +
 	"\rspline_active\x18\v \x01(\bR\fsplineActive\x120\n" +
-	"\x14spline_source_opcode\x18\f \x01(\rR\x12splineSourceOpcode\"5\n" +
+	"\x14spline_source_opcode\x18\f \x01(\rR\x12splineSourceOpcode\x12P\n" +
+	"\x0eworld_transfer\x18\r \x01(\v2).agentwow.module.v1.ObservedWorldTransferR\rworldTransfer\"\xa0\t\n" +
+	"\x15ObservedWorldTransfer\x12\x1a\n" +
+	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x14\n" +
+	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x14\n" +
+	"\x05known\x18\x03 \x01(\bR\x05known\x12#\n" +
+	"\rconnection_id\x18\x04 \x01(\tR\fconnectionId\x12\x1b\n" +
+	"\tself_guid\x18\x05 \x01(\x04R\bselfGuid\x12.\n" +
+	"\x13from_visit_revision\x18\x06 \x01(\x04R\x11fromVisitRevision\x12\x1e\n" +
+	"\vfrom_map_id\x18\a \x01(\rR\tfromMapId\x120\n" +
+	"\x14from_motion_revision\x18\b \x01(\x04R\x12fromMotionRevision\x12/\n" +
+	"\x14from_spline_id_known\x18\t \x01(\bR\x11fromSplineIdKnown\x12$\n" +
+	"\x0efrom_spline_id\x18\n" +
+	" \x01(\rR\ffromSplineId\x120\n" +
+	"\x14from_spline_revision\x18\v \x01(\x04R\x12fromSplineRevision\x12=\n" +
+	"\x1bfrom_spline_source_revision\x18\f \x01(\x04R\x18fromSplineSourceRevision\x129\n" +
+	"\x19from_spline_source_opcode\x18\r \x01(\rR\x16fromSplineSourceOpcode\x12,\n" +
+	"\x12from_spline_active\x18\x0e \x01(\bR\x10fromSplineActive\x126\n" +
+	"\x17pending_motion_revision\x18\x0f \x01(\x04R\x15pendingMotionRevision\x12\"\n" +
+	"\rtarget_map_id\x18\x10 \x01(\rR\vtargetMapId\x12*\n" +
+	"\x11to_visit_revision\x18\x11 \x01(\x04R\x0ftoVisitRevision\x12\x1a\n" +
+	"\tto_map_id\x18\x12 \x01(\rR\atoMapId\x122\n" +
+	"\x15entry_motion_revision\x18\x13 \x01(\x04R\x13entryMotionRevision\x12A\n" +
+	"\x1dworldport_ack_motion_revision\x18\x14 \x01(\x04R\x1aworldportAckMotionRevision\x122\n" +
+	"\x15worldport_ack_written\x18\x15 \x01(\bR\x13worldportAckWritten\x122\n" +
+	"\x15worldport_ack_unknown\x18\x16 \x01(\bR\x13worldportAckUnknown\x12:\n" +
+	"\x19completion_report_written\x18\x17 \x01(\bR\x17completionReportWritten\x12I\n" +
+	"!completion_report_motion_revision\x18\x18 \x01(\x04R\x1ecompletionReportMotionRevision\x12\x16\n" +
+	"\x06reason\x18\x19 \x01(\tR\x06reason\x12(\n" +
+	"\x10target_map_known\x18\x1a \x01(\bR\x0etargetMapKnown\"5\n" +
 	"\rClockResponse\x12$\n" +
 	"\x0eclient_time_ms\x18\x01 \x01(\rR\fclientTimeMs\"u\n" +
 	"\x13InvokeModuleRequest\x12\x16\n" +
@@ -492,33 +778,35 @@ func file_api_module_v1_session_proto_rawDescGZIP() []byte {
 	return file_api_module_v1_session_proto_rawDescData
 }
 
-var file_api_module_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_api_module_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_api_module_v1_session_proto_goTypes = []any{
-	(*WorldPacket)(nil),          // 0: agentwow.module.v1.WorldPacket
-	(*SendPacketRequest)(nil),    // 1: agentwow.module.v1.SendPacketRequest
-	(*TransportScope)(nil),       // 2: agentwow.module.v1.TransportScope
-	(*ClockResponse)(nil),        // 3: agentwow.module.v1.ClockResponse
-	(*InvokeModuleRequest)(nil),  // 4: agentwow.module.v1.InvokeModuleRequest
-	(*InvokeModuleResponse)(nil), // 5: agentwow.module.v1.InvokeModuleResponse
-	(*anypb.Any)(nil),            // 6: google.protobuf.Any
-	(*emptypb.Empty)(nil),        // 7: google.protobuf.Empty
+	(*WorldPacket)(nil),           // 0: agentwow.module.v1.WorldPacket
+	(*SendPacketRequest)(nil),     // 1: agentwow.module.v1.SendPacketRequest
+	(*TransportScope)(nil),        // 2: agentwow.module.v1.TransportScope
+	(*ObservedWorldTransfer)(nil), // 3: agentwow.module.v1.ObservedWorldTransfer
+	(*ClockResponse)(nil),         // 4: agentwow.module.v1.ClockResponse
+	(*InvokeModuleRequest)(nil),   // 5: agentwow.module.v1.InvokeModuleRequest
+	(*InvokeModuleResponse)(nil),  // 6: agentwow.module.v1.InvokeModuleResponse
+	(*anypb.Any)(nil),             // 7: google.protobuf.Any
+	(*emptypb.Empty)(nil),         // 8: google.protobuf.Empty
 }
 var file_api_module_v1_session_proto_depIdxs = []int32{
 	2, // 0: agentwow.module.v1.WorldPacket.transport_scope:type_name -> agentwow.module.v1.TransportScope
 	2, // 1: agentwow.module.v1.SendPacketRequest.transport_scope:type_name -> agentwow.module.v1.TransportScope
-	6, // 2: agentwow.module.v1.InvokeModuleRequest.request:type_name -> google.protobuf.Any
-	6, // 3: agentwow.module.v1.InvokeModuleResponse.result:type_name -> google.protobuf.Any
-	1, // 4: agentwow.module.v1.Session.SendPacket:input_type -> agentwow.module.v1.SendPacketRequest
-	7, // 5: agentwow.module.v1.Session.GetClock:input_type -> google.protobuf.Empty
-	4, // 6: agentwow.module.v1.Session.InvokeModule:input_type -> agentwow.module.v1.InvokeModuleRequest
-	7, // 7: agentwow.module.v1.Session.SendPacket:output_type -> google.protobuf.Empty
-	3, // 8: agentwow.module.v1.Session.GetClock:output_type -> agentwow.module.v1.ClockResponse
-	5, // 9: agentwow.module.v1.Session.InvokeModule:output_type -> agentwow.module.v1.InvokeModuleResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	3, // 2: agentwow.module.v1.TransportScope.world_transfer:type_name -> agentwow.module.v1.ObservedWorldTransfer
+	7, // 3: agentwow.module.v1.InvokeModuleRequest.request:type_name -> google.protobuf.Any
+	7, // 4: agentwow.module.v1.InvokeModuleResponse.result:type_name -> google.protobuf.Any
+	1, // 5: agentwow.module.v1.Session.SendPacket:input_type -> agentwow.module.v1.SendPacketRequest
+	8, // 6: agentwow.module.v1.Session.GetClock:input_type -> google.protobuf.Empty
+	5, // 7: agentwow.module.v1.Session.InvokeModule:input_type -> agentwow.module.v1.InvokeModuleRequest
+	8, // 8: agentwow.module.v1.Session.SendPacket:output_type -> google.protobuf.Empty
+	4, // 9: agentwow.module.v1.Session.GetClock:output_type -> agentwow.module.v1.ClockResponse
+	6, // 10: agentwow.module.v1.Session.InvokeModule:output_type -> agentwow.module.v1.InvokeModuleResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_api_module_v1_session_proto_init() }
@@ -532,7 +820,7 @@ func file_api_module_v1_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_module_v1_session_proto_rawDesc), len(file_api_module_v1_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

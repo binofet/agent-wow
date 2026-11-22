@@ -29,6 +29,9 @@ type transportScopeState struct {
 	currentHeaderKnown          bool
 	consumed                    map[[32]byte]struct{}
 	consumedVisit               uint64
+	transfer                    worldTransferState
+	completionAttempt           *modv1.TransportScope
+	completionReport            *modv1.TransportScope
 }
 
 func newTransportScope(self uint64) (*modv1.TransportScope, error) {
@@ -136,7 +139,12 @@ func scopeWorldEntry(body []byte) (uint32, bool) {
 }
 
 func (t *transportScopeState) observe(op uint16, body []byte) {
-	if t.scope == nil || !transportMotionBarrier(uint32(op)) || transportClearlyForeign(op, body, t.scope.SelfGuid) || !t.advance(&t.scope.MotionRevision) {
+	t.observeTransferBefore(op, body)
+	if t.scope == nil || !transportMotionBarrier(uint32(op)) || transportClearlyForeign(op, body, t.scope.SelfGuid) {
+		return
+	}
+	defer t.observeTransferAfter(op, body)
+	if !t.advance(&t.scope.MotionRevision) {
 		return
 	}
 	switch op {
@@ -211,6 +219,9 @@ func (t *transportScopeState) sent(op uint32) {
 	if op == opcode.CMSGMoveSplineDone {
 		// Its attempt is already consumed. Reporting completion is neither a
 		// new motion source nor an observation that the server actually arrived.
+		if sameTransferSource(t.completionAttempt, t.scope) {
+			t.completionReport = transferSource(t.completionAttempt)
+		}
 		return
 	}
 	name := opcode.WorldName(op)
@@ -229,6 +240,9 @@ func (t *transportScopeState) sent(op uint32) {
 	// Keep the latest observed header as history; a local control/movement
 	// write cannot prove that this header still authorizes completion.
 	t.scope.SplineActive = false
+	if op != opcode.MSGMoveWorldportAck {
+		t.supersedePendingTransfer("outbound_motion_superseded_transfer")
+	}
 }
 
 // reserve is called only on the owner loop, immediately before transport.
@@ -274,6 +288,7 @@ func (t *transportScopeState) reserve(op uint32, payload []byte, requested *modv
 		t.consumed = make(map[[32]byte]struct{})
 	}
 	t.consumed[t.currentHeader] = struct{}{}
+	t.completionAttempt = transferSource(current)
 	return nil
 }
 
