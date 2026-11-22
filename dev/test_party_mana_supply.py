@@ -131,7 +131,8 @@ class SupplyTest(unittest.TestCase):
     def test_full_bags_and_observed_partial_stack_capacity(self):
         carried(self.mira,2136,6);row=self.arlen['inventory']['inventoryBags'][0]['slots'][0]
         row.update(entry=117,stackCount=5,metadataKnown=True,itemGuid='11')
-        self.assertEqual(self.turn(),'recipient_needs_bag_space');self.assertEqual(self.calls,[])
+        state={};self.assertEqual(self.turn(state),'recipient_needs_bag_space');self.assertEqual(self.calls,[])
+        self.assertEqual(state['spacePort'],'8086')
         row.update(entry=2136,stackCount=8);self.arlen['inventory']['manaDrinkCount']=8
         self.gift();self.assertEqual(self.calls[1][2]['itemCount'],6)
 
@@ -183,7 +184,7 @@ class SupplyTest(unittest.TestCase):
     def test_mage_needs_room_and_pending_native_conjure_is_not_repeated(self):
         self.mira['inventory']['manaDrinkCount']=0
         self.mira['inventory']['inventoryBags'][0]['slots'][0].update(entry=117,stackCount=3,metadataKnown=True,itemGuid='11')
-        self.assertEqual(self.turn(),'mage_needs_bag_space')
+        state={};self.assertEqual(self.turn(state),'mage_needs_bag_space');self.assertEqual(state['spacePort'],'8087')
         self.mira['inventory']['inventoryBags'][0]['slots'][0].update(entry=2288,stackCount=5)
         self.assertEqual(self.turn(),'conjure_requested');self.assertEqual(self.calls[-1][2]['spellId'],5505)
         self.calls.clear();self.mira['actions']['lastSpellOperation']=dict(capability='create_item',phase='waiting_created_item')

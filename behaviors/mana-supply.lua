@@ -326,10 +326,13 @@ function M.plan(frame)
         local empty=false
         for _,slot in ipairs(receiving or {}) do if n(slot.itemGuid)==0 then empty=true end end
         if empty and next(available) then usable=available;break end
-        if next(available) then needs_space=true end
+        if next(available) and not needs_space then needs_space=peer.port end
     end
     if not next(usable) and stock<M.stock_minimum then usable=compatible(all,world.self or {}) end
-    if not next(usable) then return result(m,needs_space and 'recipient_needs_bag_space' or 'no_compatible_conjure_water_rank') end
+    if not next(usable) then
+        local out=result(m,needs_space and 'recipient_needs_bag_space' or 'no_compatible_conjure_water_rank')
+        out.spacePort=needs_space or nil;return out
+    end
     local op=mage.actions.lastSpellOperation or {}
     if op.capability=='create_item' then
         if op.phase=='transport_unconfirmed_no_retry' or op.phase=='outcome_unconfirmed_no_retry' then return result(m,'conjure_outcome_unconfirmed') end
@@ -342,7 +345,11 @@ function M.plan(frame)
             if affordable(rank,world.self) and (not best or rank.rank>best.rank or rank.rank==best.rank and rank.spellId>best.spellId) then best=rank end
         end
     end
-    if not best then return result(m,room and 'waiting_for_mana_to_conjure' or 'mage_needs_bag_space') end
+    if not best then
+        local out=result(m,room and 'waiting_for_mana_to_conjure' or 'mage_needs_bag_space')
+        if not room then out.spacePort=id(b.magePort) end
+        return out
+    end
     if not advertised(frame,b.magePort,'buddy-actions.create_item') then return result(m,'create_item_capability_unavailable') end
     if world.inventoryKnown~=true or n(world.inventoryRevision)<=0 then return result(m,'waiting_for_complete_creation_inventory') end
     local entry

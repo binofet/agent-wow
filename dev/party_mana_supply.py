@@ -160,6 +160,8 @@ def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None):
         if (not isinstance(decision,dict) or not isinstance(decision.get('memory'),dict)
                 or not isinstance(decision.get('phase'),str) or not re.fullmatch('[A-Za-z0-9_]{1,128}',decision['phase'])):
             raise runtime.Error('bounded_supply_decision_required')
+        if decision.get('spacePort') is not None and decision['spacePort'] not in {str(port) for port in identities}:
+            raise runtime.Error('supply_space_observed_client_required')
         action=decision.get('action')
         if action is not None:
             port=int(action.get('port',0))
@@ -172,6 +174,8 @@ def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None):
             _current_source(rpc,binding)
         state['memory']=decision['memory'] # Commit authored reservation before write.
         state['phase']=decision['phase'];state.pop('error',None)
+        state.pop('spacePort',None)
+        if decision.get('spacePort') is not None:state['spacePort']=decision['spacePort']
         if action is not None:
             state['last']=dict(id=action['id'],outcome='transport_unconfirmed')
             reply=rpc(int(action['port']),action['method'],action['params'])
