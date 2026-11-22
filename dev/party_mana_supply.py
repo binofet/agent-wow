@@ -5,13 +5,17 @@ rank, stock, quantity, timing or trade-completion choices.
 """
 import copy
 import hashlib
+import importlib.machinery
+import importlib.util
 import re
 import time
 from pathlib import Path
 
-from town_policy import runtime
-
 ROOT=Path(__file__).resolve().parent.parent
+_loader=importlib.machinery.SourceFileLoader('party_mana_runtime',str(ROOT/'dev/task-runtime'))
+_spec=importlib.util.spec_from_loader(_loader.name,_loader)
+runtime=importlib.util.module_from_spec(_spec)
+_loader.exec_module(runtime)
 MIRA=8087
 MIRA_GUID=4
 OWNER_GUID=3
@@ -126,7 +130,7 @@ def _evaluate(rpc,observations,state,bridge,now_ms,query=None):
         bindings=dict(magePort=str(MIRA),mageGuid=str(MIRA_GUID),ownerGuid=str(OWNER_GUID),
             recipients=[dict(port=str(port),guid=str(guid)) for port,guid in RECIPIENTS.items()]),
         memory=copy.deepcopy(state.get('memory',{})),last=copy.deepcopy(state.get('last')),
-        nowMs=time.monotonic()*1000 if now_ms is None else now_ms,query=query))
+        nowMs=time.monotonic()*1000 if now_ms is None else now_ms,query=query,request=copy.deepcopy(state.get('request'))))
     _current_source(rpc,binding)
     if not isinstance(result,dict) or result.get('available') is not True:
         raise runtime.Error('mana_supply_policy_export_unavailable')

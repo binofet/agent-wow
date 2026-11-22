@@ -251,6 +251,27 @@ class SupplyTest(unittest.TestCase):
         self.arlen['inventory']['sessionId']='aw-1'
         self.assertEqual(self.turn(state),'water_gift_offer_requested');self.assertEqual(len(self.calls),2)
 
+    def test_structured_current_party_request_is_lua_owned_and_completes_once_from_actual_trade(self):
+        carried(self.mira,2136,8);self.arlen['inventory']['manaDrinkCount']=16
+        self.assertEqual(self.turn(),'water_stock_sufficient')
+        state={'request':dict(id='owner-water-1',sessionId='aw-4',groupGuid='77',recipientGuids=['1'])}
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        self.assertEqual(self.turn(state),'water_gift_offer_requested')
+        for view,partner in [(self.mira,'1'),(self.arlen,'4')]:
+            view['trade'].update(phase='COMPLETE',partnerGuid=partner,lastServerStatus=8,completedTrades='1',waterGiftArmed=False)
+        self.assertEqual(self.turn(state),'server_confirmed_peer_trade')
+        self.assertEqual(state['memory']['completedRequestId'],'owner-water-1');self.assertNotIn('request',state['memory'])
+        self.assertEqual(self.turn(state,now=5000),'water_stock_sufficient');self.assertEqual(len(self.calls),2)
+
+    def test_structured_request_cannot_use_a_previous_party_or_preempt_uncertain_transfer(self):
+        carried(self.mira,2136,8)
+        state={'request':dict(id='old-party',sessionId='aw-4',groupGuid='old',recipientGuids=['1'])}
+        self.assertEqual(self.turn(state),'requested_supply_body_or_party_changed');self.assertEqual(self.calls,[])
+        state={};self.fail_method='buddy-trade.water_gift'
+        self.assertEqual(self.turn(state),'water_supply_rpc_unconfirmed')
+        state['request']=dict(id='new-owner-request',sessionId='aw-4',groupGuid='77',recipientGuids=['8'])
+        self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed');self.assertEqual(len(self.calls),1)
+
     def test_same_session_lua_stock_and_recipient_tuning_is_the_actual_dispatch_choice(self):
         self.arlen['inventory']['manaDrinkCount']=16
         self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])

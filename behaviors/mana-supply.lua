@@ -251,9 +251,32 @@ function M.plan(frame)
             and after(a.completedTrades,p.mageCompleted) and after(c.completedTrades,p.recipientCompleted) then
             -- Completion belongs to the actual native transaction. Current stock
             -- is separate: drinking/loot/conjuring must not freeze this lifecycle.
+            if m.request and m.request.id==p.requestId then
+                m.request.remaining[p.recipientGuid]=nil
+                if not next(m.request.remaining) then m.completedRequestId=m.request.id;m.request=nil end
+            end
             m.pending=nil;m.nextAtMs=now+M.poll_ms;return result(m,'server_confirmed_peer_trade')
         end
         return result(m,last.id==p.actionId and last.outcome=='transport_unconfirmed' and 'water_gift_outcome_unconfirmed' or 'awaiting_peer_trade')
+    end
+    local request=frame.request
+    if type(request)=='table' and type(request.id)=='string' and #request.id>0 and #request.id<=128
+        and request.id~=m.completedRequestId and (not m.request or request.id~=m.request.id) then
+        if request.sessionId~=mage.actions.sessionId or id(request.groupGuid)~=group(mage,guid,b.ownerGuid) then
+            return result(m,'requested_supply_body_or_party_changed')
+        end
+        local remaining={}
+        for _,peer in ipairs(b.recipients or {}) do
+            for _,wanted in ipairs(request.recipientGuids or {}) do
+                if id(wanted)=='0' or id(wanted)==id(peer.guid) then remaining[id(peer.guid)]=true end
+            end
+        end
+        if not next(remaining) then return result(m,'requested_supply_recipient_unbound') end
+        m.request={id=request.id,sessionId=request.sessionId,groupGuid=id(request.groupGuid),remaining=remaining}
+        m.nextAtMs=now
+    end
+    if m.request and (m.request.sessionId~=mage.actions.sessionId or m.request.groupGuid~=group(mage,guid,b.ownerGuid)) then
+        m.request=nil;return result(m,'requested_supply_body_or_party_changed')
     end
     if now<n(m.nextAtMs) then return result(m,m.phase or 'waiting_for_supply_tick') end
     m.nextAtMs=now+M.poll_ms
@@ -268,12 +291,14 @@ function M.plan(frame)
         if v and free(v,recipient) and group(v,recipient,b.ownerGuid)==group_id and body(v.world.self,recipient)
             and near(position(mage),nearby(mage,recipient)) and near(position(v),nearby(v,guid)) then
             local amount=count(v,recipient);local player=v.world.self
-            if amount~=nil and amount<M.peer_reorder_threshold and player.levelKnown and player.powerKnown
+            local wanted=m.request and m.request.remaining[recipient]
+            if amount~=nil and (wanted or not m.request and amount<M.peer_reorder_threshold) and player.levelKnown and player.powerKnown
                 and n(player.powerType)==0 and n(player.maxPower)>0 then
                 peers[#peers+1]={view=v,port=id(binding.port),guid=recipient,count=amount,priority=n(M.recipient_priority[recipient])}
             end
         end
     end
+    if #peers==0 and m.request then return result(m,'awaiting_requested_water_recipient') end
     if #peers==0 and stock>=M.stock_minimum then return result(m,'water_stock_sufficient') end
     local all=ranks(mage,frame.metadata or {});local usable={};local needs_space=false
     local chosen={}
@@ -294,7 +319,7 @@ function M.plan(frame)
             m.pending={kind='gift',stage='receiver',mageSession=mage.actions.sessionId,recipientSession=peer.view.actions.sessionId,
                 recipientPort=peer.port,recipientGuid=peer.guid,itemGuid=id(stack.item.itemGuid),entry=stack.entry,count=stack.count,
                 source=stack.source,mageCompleted=id(mage.trade.completedTrades or '0'),recipientCompleted=id(peer.view.trade.completedTrades or '0'),
-                recipientRevision=id(peer.view.trade.revision)}
+                recipientRevision=id(peer.view.trade.revision),requestId=m.request and m.request.id}
             return issue(m,peer.port,'buddy-trade.water_gift',{sessionId=peer.view.trade.sessionId,
                 revision=id(peer.view.trade.revision),partnerGuid=guid,itemEntry=stack.entry,itemCount=stack.count},'recipient_water_reservation_requested')
         end
