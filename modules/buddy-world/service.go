@@ -210,7 +210,7 @@ func (s *Service) OnPacket(_ context.Context, packet *modv1.WorldPacket) (*empty
 		s.lastError = fmt.Sprintf("%s (opcode 0x%03x)", err.Error(), packet.Opcode)
 	} else if handled {
 		old, current := s.state.players[0], next.players[0]
-		next.commitOwnMovementFacts(old, packet.Opcode, observedAt)
+		next.commitOwnMovementFacts(old, packet.Opcode, observedAt, packet.TransportScope)
 		s.observeMotionLocked(packet, old, current, &next, observedAt)
 		if !current.present || !current.mapKnown || !current.positionKnown || old.positionRevision != current.positionRevision || old.mapKnown != current.mapKnown || old.mapID != current.mapID {
 			next.discovery = clientDiscoveryAnchor{}

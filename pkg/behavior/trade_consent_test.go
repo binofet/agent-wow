@@ -111,7 +111,13 @@ func TestTradeConsentDefaultOwnerAndConsentFacts(t *testing.T) {
 		{"other_session", func(f map[string]any) { f["trade"].(map[string]any)["sessionId"] = "replaced" }, "wait"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := tradeConsentFixtureRuntime(t, source)
+			fixtureRuntime := tradeConsentFixtureRuntime
+			if tc.name == "explicit_outgoing" {
+				// Separate the observed instrumented semantic case from its
+				// unchanged normal default-5ms CLI proof below.
+				fixtureRuntime = disposalArmorSemanticRuntime
+			}
+			r := fixtureRuntime(t, source)
 			frame := tradeConsentFrame()
 			tc.edit(frame)
 			tradeConsentResult(t, r, source, frame, tc.want)
@@ -183,7 +189,7 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
 			fixtureRuntime := tradeConsentFixtureRuntime
-			if name == "duplicate_slots" {
+			if name == "duplicate_slots" || name == "extra_item_fact" || name == "keyed_items" {
 				// Keep the observed instrumented semantic case separate from
 				// its unchanged real default-5ms CLI proof below.
 				fixtureRuntime = disposalArmorSemanticRuntime
