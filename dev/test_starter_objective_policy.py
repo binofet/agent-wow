@@ -1,7 +1,10 @@
 """Starter objective stages through the real local Lua bridge; no game RPCs."""
 
+import copy
+import hashlib
 import importlib.machinery
 import importlib.util
+import json
 import os
 from pathlib import Path
 import unittest
@@ -32,6 +35,25 @@ def facts(stage="post_hold", **fields):
                 loot=dict(known=True, enabled=True), actionInFlight=False) | fields
 
 
+def quest_route_facts(**fields):
+    value = facts("quest_route", **(dict(activeQuestIds=[7, 18]) | fields))
+    value["questRoute"] = dict(sessionId="quest-session", introProbeCurrent=False,
+        eaganProbeCurrent=False, wolfProbeCurrent=False,
+        givers=[dict(guid=str((0xf130 << 48) | (entry << 24) | 1), entry=entry)
+                for entry in (823, 197, 196)],
+        offer=dict(objectKnown=False, questsKnown=False, introQuestsKnown=False,
+                   npcGuid="0", expiresInMs="0", quests=[]))
+    return value
+
+
+def quest_route_menu(value, entry, quests=(), expires="30000"):
+    route = value["questRoute"]
+    guid = next(row["guid"] for row in route["givers"] if row["entry"] == entry)
+    route["offer"] = dict(objectKnown=True, questsKnown=True, introQuestsKnown=True,
+        npcGuid=guid, expiresInMs=expires, quests=[dict(questId=q, available=available) for q, available in quests])
+    return value
+
+
 @unittest.skipUnless(BINARY.is_file(), "set BUDDY_LUAPOLICY_TEST_BINARY to the local compiled bridge")
 class StarterObjectivePolicyTests(unittest.TestCase):
     def setUp(self):
@@ -49,6 +71,164 @@ class StarterObjectivePolicyTests(unittest.TestCase):
         if phase is not None:
             self.assertEqual(selected.get("phase"), phase, selected)
         return selected
+
+    def quest_route_choice(self, value, entry, allowed=(), reward=0, probes=None):
+        selected = self.choice(value, "quest_route")
+        self.assertEqual(set(selected), {"kind", "neededEntry", "rewardQuestId", "allowedQuestIds", "probes"})
+        self.assertEqual(selected["neededEntry"], entry, selected)
+        self.assertEqual(selected["rewardQuestId"], reward, selected)
+        # The actual Lua bridge represents an empty table as an object. This
+        # normalization accepts only that known empty-array representation.
+        actual = [] if selected["allowedQuestIds"] == {} else selected["allowedQuestIds"]
+        self.assertIsInstance(actual, list)
+        self.assertCountEqual(actual, allowed)
+        self.assertEqual(len(actual), len(set(actual)))
+        self.assertEqual(selected["probes"], probes or {}, selected)
+        return selected
+
+    def test_quest_route_preserves_intro_chain_level_gates_and_allowed_sets(self):
+        cases = [
+            ([], [], 1, 823, [783, 5261]),
+            ([], [], 2, 823, [783, 18, 3903, 5261]),
+            ([], [783], 2, 197, [7]),
+            ([7], [], 1, 823, [5261]),
+            ([7], [], 2, 823, [18, 3903, 5261]),
+            ([7, 18], [5261], 2, 196, [33]),
+            ([7], [33], 2, 823, [18, 3903]),
+            ([7, 18, 3903], [33], 2, 823, []),
+        ]
+        for active, confirmed, level, entry, allowed in cases:
+            with self.subTest(active=active, confirmed=confirmed, level=level):
+                self.quest_route_choice(quest_route_facts(activeQuestIds=active,
+                    confirmedQuestIds=confirmed, level=level), entry, allowed)
+        value = quest_route_facts(levelKnown=False, level=0)
+        self.quest_route_choice(value, 823, [5261])
+
+    def test_quest_route_reward_priority_requires_active_quests_and_actual_wolf_completion(self):
+        for active, complete, reward, entry in (
+                ([7, 783, 5261, 33], True, 783, 197),
+                ([7, 5261, 33], True, 5261, 196),
+                ([7, 33], True, 33, 196),
+                ([7, 33], False, 0, 823)):
+            with self.subTest(active=active, complete=complete):
+                value = quest_route_facts(activeQuestIds=active, wolfComplete=complete)
+                allowed = [] if entry == 197 else [33] if entry == 196 else [18, 3903, 5261]
+                self.quest_route_choice(value, entry, allowed, reward)
+        self.quest_route_choice(quest_route_facts(confirmedQuestIds=[783, 5261]), 196, [33])
+        value = quest_route_menu(quest_route_facts(activeQuestIds=[783]), 196)
+        self.quest_route_choice(value, 197, [7], reward=783) # A pending reward cannot become a wolf-history probe.
+
+    def test_quest_route_fresh_menus_reconcile_only_observed_missing_prerequisites(self):
+        value = quest_route_menu(quest_route_facts(activeQuestIds=[]), 823, [(783, False)])
+        self.quest_route_choice(value, 197, [7], probes={"intro": True})
+        value["questRoute"]["offer"]["quests"] = [dict(questId=783, available=True)]
+        self.quest_route_choice(value, 823, [783, 18, 3903, 5261])
+        value = quest_route_menu(quest_route_facts(), 823)
+        value["questRoute"]["wolfProbeCurrent"] = True
+        self.quest_route_choice(value, 196, [33], probes={"eagan": True, "wolf": False})
+        for available in (5261, 3903):
+            with self.subTest(offered=available):
+                self.quest_route_choice(quest_route_menu(quest_route_facts(), 823, [(available, True)]),
+                                        823, [3903, 5261])
+        value = quest_route_menu(quest_route_facts(confirmedQuestIds=[5261]), 196)
+        self.quest_route_choice(value, 823, [3903], probes={"wolf": True})
+        value["questRoute"]["offer"]["quests"] = [dict(questId=33, available=True)]
+        self.quest_route_choice(value, 196, [33])
+        value = quest_route_menu(quest_route_facts(activeQuestIds=[]), 823)
+        value["questRoute"]["offer"]["questsKnown"] = False
+        self.quest_route_choice(value, 197, [7], probes={"intro": True})
+        value["activeQuestIds"] = [7, 18]
+        self.quest_route_choice(value, 823, [3903, 5261]) # Intro's old default-empty rule cannot create an Eagan probe.
+
+    def test_quest_route_stale_unknown_and_unobserved_menus_cannot_set_probe_flags(self):
+        for probe in ("intro", "eagan", "wolf"):
+            for cause in ("expired", "unobserved", "wrong_entry", "unknown_object", "unknown_quests"):
+                with self.subTest(probe=probe, cause=cause):
+                    value = quest_route_facts(activeQuestIds=[] if probe == "intro" else [7, 18],
+                        confirmedQuestIds=[5261] if probe == "wolf" else [])
+                    quest_route_menu(value, 196 if probe == "wolf" else 823)
+                    route, offer = value["questRoute"], value["questRoute"]["offer"]
+                    if cause == "expired": offer["expiresInMs"] = "0"
+                    elif cause == "unobserved": route["givers"] = []
+                    elif cause == "wrong_entry":
+                        next(row for row in route["givers"] if row["guid"] == offer["npcGuid"])["entry"] = 197
+                    elif cause == "unknown_object": offer["objectKnown"] = False
+                    else: offer["questsKnown"] = offer["introQuestsKnown"] = False
+                    entry, allowed = ((196, [33]) if probe == "wolf" else
+                                      (823, [783, 18, 3903, 5261]) if probe == "intro" else (823, [3903, 5261]))
+                    self.quest_route_choice(value, entry, allowed)
+
+    def test_quest_route_current_probe_flags_are_body_scoped_evidence_not_reward_confirmation(self):
+        for flag, fields, current_entry, current_allowed, old_entry, old_allowed in (
+                ("introProbeCurrent", dict(activeQuestIds=[]), 197, [7], 823, [783, 18, 3903, 5261]),
+                ("eaganProbeCurrent", {}, 196, [33], 823, [3903, 5261]),
+                ("wolfProbeCurrent", dict(confirmedQuestIds=[5261]), 823, [3903], 196, [33])):
+            with self.subTest(flag=flag):
+                value = quest_route_facts(**fields)
+                value["questRoute"][flag] = True
+                self.quest_route_choice(value, current_entry, current_allowed)
+                # The adapter computes these booleans by equality with the
+                # current native SID; old-body markers enter policy as false.
+                value["questRoute"].update(sessionId="replacement-quest-session", **{flag: False})
+                self.quest_route_choice(value, old_entry, old_allowed)
+
+    def test_quest_route_guid_and_expiry_decimal_strings_preserve_uint64_identity(self):
+        maximum = "18446744073709551615"
+        for expires in ("0", "1", maximum):
+            with self.subTest(expires=expires):
+                value = quest_route_menu(quest_route_facts(activeQuestIds=[]), 823, expires=expires)
+                value["questRoute"]["givers"] = [dict(guid=maximum, entry=823)]
+                value["questRoute"]["offer"]["npcGuid"] = maximum
+                if expires == "0": self.quest_route_choice(value, 823, [783, 18, 3903, 5261])
+                else: self.quest_route_choice(value, 197, [7], probes={"intro": True})
+        value["questRoute"]["offer"]["npcGuid"] = "18446744073709551614"
+        self.quest_route_choice(value, 823, [783, 18, 3903, 5261]) # Adjacent uint64s must never merge through a float.
+
+    def test_quest_route_malformed_bounded_facts_fail_closed(self):
+        changes = [
+            lambda value: value.pop("questRoute"),
+            lambda value: value["questRoute"].update(sessionId=""),
+            lambda value: value["questRoute"].update(introProbeCurrent=1),
+            lambda value: value["questRoute"].update(eaganProbeCurrent="false"),
+            lambda value: value["questRoute"].update(wolfProbeCurrent=None),
+            lambda value: value["questRoute"].update(givers=False),
+            lambda value: value["questRoute"]["givers"][0].update(guid="0"),
+            lambda value: value["questRoute"]["givers"][0].update(guid="018446744073709551615"),
+            lambda value: value["questRoute"]["givers"][0].update(guid="18446744073709551616"),
+            lambda value: value["questRoute"]["givers"][0].update(entry=True),
+            lambda value: value["questRoute"]["givers"][0].update(entry=4294967296),
+            lambda value: value["questRoute"].update(offer=[]),
+            lambda value: value["questRoute"]["offer"].update(objectKnown="true"),
+            lambda value: value["questRoute"]["offer"].update(expiresInMs="18446744073709551616"),
+            lambda value: value["questRoute"]["offer"].update(quests=[dict(questId=7, available="true")]),
+            lambda value: value["questRoute"]["offer"].update(quests=[dict(questId=4294967296, available=True)]),
+            lambda value: value["questRoute"]["offer"].update(quests=[dict(questId=7, available=True)] * 33),
+        ]
+        for index, change in enumerate(changes):
+            with self.subTest(case=index):
+                value = quest_route_menu(quest_route_facts(activeQuestIds=[]), 823)
+                change(value)
+                result = self.bridge.evaluate(self.source, value)
+                self.assertEqual(result.get("status"), "invalid", result)
+                self.assertNotIn("choice", result)
+
+    def test_quest_route_actual_source_edit_changes_priority_on_same_bridge_without_frame_mutation(self):
+        value = quest_route_facts(activeQuestIds=[783, 5261])
+        before = copy.deepcopy(value)
+        self.quest_route_choice(value, 197, [7], reward=783)
+        expression = "for _,q in ipairs({783,5261,33}) do"
+        self.assertEqual(self.source.count(expression), 1)
+        edited = self.source.replace(expression, "for _,q in ipairs({5261,783,33}) do", 1)
+        self.assertNotEqual(hashlib.sha256(self.source.encode()).hexdigest(), hashlib.sha256(edited.encode()).hexdigest())
+        # Bridge.evaluate launches the normal evaluator with fresh source per
+        # call. This proves edit effect on one Bridge, not a VM reload/CAS API.
+        result = self.bridge.evaluate(edited, value)
+        self.assertEqual(result.get("status"), "ready", result)
+        self.assertEqual((result["choice"]["neededEntry"], result["choice"]["rewardQuestId"]), (196, 5261))
+        self.assertEqual(result["choice"]["allowedQuestIds"], [33])
+        self.quest_route_choice(value, 197, [7], reward=783)
+        self.assertEqual(value, before)
+        self.assertEqual(json.dumps(value, sort_keys=True), json.dumps(before, sort_keys=True))
 
     def test_only_actual_own_completion_releases_wolf_objectives(self):
         value = facts(objectiveCounts=[8, 8, 8, 8])
