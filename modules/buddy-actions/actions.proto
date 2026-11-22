@@ -201,6 +201,20 @@ message InteractionRequest {
   // Only professions and exploration may request it. Defense intent stays on.
   bool harvest = 4;
 }
+// Acquires or renews custody only when this exact observed body is already
+// physically idle. It never stops movement or attacks and never changes follow
+// intent. A distinct RPC prevents an older module from ignoring this contract.
+message IdleInteractionRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  // Same fixed coordination labels as InteractionRequest.
+  string owner = 4;
+  // Empty for a new lease; the exact current token is required for renewal.
+  string token = 5;
+  // 0 means15000; allowed1000..30000ms.
+  uint32 lease_ms = 6;
+}
 message InteractionRelease {
   string owner = 1;
   string token = 2;
@@ -1284,6 +1298,7 @@ service BuddyActions {
   rpc AcquireMovement(MovementOwnerRequest) returns (MovementOwnerLease);
   rpc ReleaseMovement(MovementOwnerRelease) returns (State);
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
+  rpc AcquireIdleInteraction(IdleInteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
