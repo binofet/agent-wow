@@ -2656,6 +2656,7 @@ without observations. Keep final action NONE after performing a tool action.
         record.update(execution="direct_api", childPhase="api.request", outcome="running",
                       turnStarted=True, counts={"completedTools":0, "failedTools":0})
         serial = [0]
+        mutation_entered = [False]
         def interrupted():
             return self.stopped() or bool(cancelled and cancelled())
         def api_metadata():
@@ -2687,6 +2688,9 @@ without observations. Keep final action NONE after performing a tool action.
             if tools is None or interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
             serial[0] += 1
+            if name in ("workspace_write", "workspace_patch", "policy_apply", "policy_input", "gm_task_start", "gm_task_cancel"):
+                mutation_entered[0] = True
+                record["mutationToolEntered"] = True
             identity = self.last_request_id + ":" + str(serial[0])
             row = dict(itemId=identity, type="direct_function", name=name, status="unknown")
             record["pendingTools"].append(identity)
@@ -2699,6 +2703,14 @@ without observations. Keep final action NONE after performing a tool action.
                 result = tools.dispatch(name, arguments)
             except BaseException as error:
                 row["errorType"] = type(error).__name__
+                receipt = getattr(error, "receipt", None)
+                if isinstance(receipt, dict):
+                    safe_keys = ("tool", "sessionId", "characterGuid", "outcome", "replayAllowed", "path",
+                        "expectedSHA256", "targetSHA256", "expectedRevision", "targetRevision",
+                        "valueSHA256", "taskId", "stateDir")
+                    row["unknownReceipt"] = {key: receipt[key] for key in safe_keys if key in receipt
+                        and (type(receipt[key]) in (bool, int) or isinstance(receipt[key], str)
+                             and len(receipt[key]) <= 512)}
                 record["counts"]["failedTools"] += 1
                 publish()
                 raise
@@ -2719,6 +2731,8 @@ without observations. Keep final action NONE after performing a tool action.
                 cancelled=interrupted, request_id=self.last_request_id)
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")
+            if mutation_entered[0] and (value.get("action", "NONE") != "NONE" or value.get("gm_command")):
+                raise ConversationError("A mutation tool already entered; a second reply action was refused")
             reply = validate_reply(value, emotes, allow_silent=allow_silent, allow_gm=allow_gm)
             record.update(outcome="completed", streamComplete=True, turnCompleted=True,
                           childPhase="api.completed", actionOutcome="not_inferred_from_model_reply")
