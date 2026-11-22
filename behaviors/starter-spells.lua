@@ -5,6 +5,8 @@ local healing = assert(encounter_healing)
 local starter_movement = encounter_movement
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
+M.practice_targets = {entries={[299]=true},min_level=1,max_level=1,search_yards=120,order="nearest",
+    area={min_x=-9599,max_x=-8400,min_y=-700,max_y=200,min_z=40,max_z=180}}
 
 local function decimal(value)
     if type(value) ~= "string" or #value == 0 or #value > 20 or #value>1 and byte_at(value, 1) == 48 or
@@ -125,6 +127,68 @@ local function weapon_choice(obs, target, self, override)
     return {kind="melee",spellId=0}
 end
 
+local function flag(value,mask) return math.floor((value or 0)/mask)%2==1 end
+local function practice_target(input,self)
+    local wait={kind="wait",targetGuid="0"}
+    local stop={kind="stop",targetGuid="0"}
+    local t=M.practice_targets
+    if type(t)~="table" or type(t.entries)~="table" or type(t.area)~="table" or self.present~=true or self.mapKnown~=true or not pose(self) or
+       type(t.search_yards)~="number" or t.search_yards~=t.search_yards or t.search_yards<0 or
+       t.search_yards==math.huge or (t.order~="nearest" and t.order~="farthest") or
+       not uint(t.min_level) or not uint(t.max_level) or t.min_level>t.max_level or
+       type(input.candidates)~="table" or not decimal(input.currentTargetGuid) then return wait end
+    local a=t.area
+    for _,key in ipairs({"min_x","max_x","min_y","max_y","min_z","max_z"}) do
+        if type(a[key])~="number" or a[key]-a[key]~=0 then return wait end
+    end
+    local function eligible(c,allow_unknown_position)
+        if type(c)~="table" or not guid(c.guid) or c.creatureObject~=true or c.present~=true or
+           c.mapKnown~=true or c.mapId~=self.mapId or t.entries[c.entry]~=true or
+           c.levelKnown~=true or not uint(c.level) or c.level<t.min_level or c.level>t.max_level or
+           c.healthKnown~=true or c.unitFlagsKnown~=true or not uint(c.health) or not uint(c.maxHealth) or c.maxHealth==0 or
+           c.health==0 or c.health>c.maxHealth or c.protected==true or c.aliveKnown~=true or c.alive~=true or
+           (c.npcFlags or 0)~=0 or flag(c.unitFlags2,1) then return false end
+        for _,field in ipairs({"npcFlags","unitFlags","unitFlags2","dynamicFlags"}) do
+            if not uint(c[field] or 0) then return false end
+        end
+        for _,mask in ipairs({2,128,256,65536,33554432,2147483648}) do
+            if flag(c.unitFlags,mask) then return false end
+        end
+        if not pose(c) then return allow_unknown_position==true end
+        local x,y,z=c.x or 0,c.y or 0,c.z or 0
+        return x>=a.min_x and x<=a.max_x and y>=a.min_y and y<=a.max_y and z>=a.min_z and z<=a.max_z
+    end
+    for _,c in ipairs(input.candidates) do
+        if type(c)~="table" then return wait end
+        if c.present==true and c.aliveKnown==true and c.alive==true and
+           c.attackVictimKnown==true and c.attackVictimGuid==input.selfGuid and
+           (c.attackAgeMs or 0)<=30000 and t.entries[c.entry]~=true then return stop end
+    end
+    local best,score
+    for _,c in ipairs(input.candidates) do
+        local valid=eligible(c)
+        if input.currentTargetGuid~="0" then
+            if c.guid==input.currentTargetGuid then
+                local allowed=(c.attackVictimKnown~=true or c.attackVictimGuid==input.selfGuid) and
+                    (not flag(c.dynamicFlags,4) or flag(c.dynamicFlags,8)) and c.guid~=input.failedTargetGuid
+                if valid and allowed then return {kind="target",targetGuid=c.guid} end
+                return not pose(c) and eligible(c,true) and allowed and wait or stop
+            end
+        elseif valid and not flag(c.unitFlags,524288) and (c.dynamicFlags or 0)==0 and
+           c.attackVictimKnown~=true and (c.targetKnown~=true or c.targetGuid==nil or c.targetGuid=="0") then
+            local dx,dy,dz=(c.x or 0)-(self.x or 0),(c.y or 0)-(self.y or 0),(c.z or 0)-(self.z or 0)
+            local d=dx*dx+dy*dy+dz*dz
+            if d<t.search_yards*t.search_yards and (not best or t.order=="nearest" and d<score or
+               t.order=="farthest" and d>score or d==score and (#c.guid<#best.guid or #c.guid==#best.guid and c.guid<best.guid)) then
+                best,score=c,d
+            end
+        end
+    end
+    if input.currentTargetGuid~="0" then return stop end
+    if best then return {kind="target",targetGuid=best.guid} end
+    return wait
+end
+
 function M.decide(input, override, movement)
     local wait=type(input)=="table" and input.selection=="practice_approach" and
         {kind="wait",standYards=0} or {kind="wait",spellId=0}
@@ -134,6 +198,10 @@ function M.decide(input, override, movement)
     if type(obs)~="table" or obs.sessionId~=input.sessionId or obs.selfGuid~=input.selfGuid or
        type(obs.players)~="table" then return wait end
     local self=obs.players[input.selfGuid]
+    if input.selection=="practice_target" then
+        if type(self)~="table" or self.guid~=input.selfGuid then return {kind="wait",targetGuid="0"} end
+        return practice_target(input,self)
+    end
     if input.selection=="practice_approach" then
         movement=movement or starter_movement
         if type(self)~="table" or self.guid~=input.selfGuid or type(target)~="table" or not guid(target.guid) or
