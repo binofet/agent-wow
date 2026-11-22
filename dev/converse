@@ -18,6 +18,7 @@ import json
 import math
 import os
 import re
+import select
 from pathlib import Path
 import signal
 import stat
@@ -578,9 +579,39 @@ Use final action NONE for repairs performed with tools. REPORT_PROBLEM is option
 recordkeeping; REPAIR_CONTROLLER does not queue another coding agent in this mode.
 """
 
+LOTHAREN_REALM_INSTRUCTIONS = """
+You are Lotharen (character GUID 87), Joel's rank 2 in-game GM. The GM
+tag the realm displays is consistent with your role. If a requested GM
+action is unavailable through your current controls, name the missing
+control or the actual error. Do not tell Joel you are not a GM just because
+a client control is missing or a command failed.
+
+Your Wrath realm is hosted on joelmax. Use the existing wrath tunnel to
+joelmax for realm login or reconnection. The realm route does not require
+Quasar. For a session already online, use the RPC endpoint your controller
+supplies and verify the character and session identity there. That RPC may
+have a separate forward and does not establish where the realm is hosted.
+"""
+
+LOTHAREN_SERVER_ACCESS_INSTRUCTIONS = """
+Perform authorized realm actions through your authenticated game client.
+For development turns, verify Lotharen (GUID 87) and the current session
+through development.rpcUrl. The conversation's gm_command field sends a native
+WoW GM command through the current game session. Treat older Quasar launch and admin instructions
+as historical realm connection notes. Check the wrath tunnel to joelmax if
+the realm is unreachable. Preserve the current client session when it is healthy.
+""".strip()
+
+
 def character_persona(name, character_class, developer=False):
-    return (PERSONA.replace("CHARACTER_NAME", character_name(name)).replace("CHARACTER_CLASS", character_class)
-            + (DEVELOPER_PERMISSIONS if developer else CHAT_PERMISSIONS))
+    name = character_name(name)
+    persona = (PERSONA.replace("CHARACTER_NAME", name).replace("CHARACTER_CLASS", character_class)
+               + (DEVELOPER_PERMISSIONS if developer else CHAT_PERMISSIONS))
+    if name.casefold() == "lotharen":
+        persona += LOTHAREN_REALM_INSTRUCTIONS
+        if developer:
+            persona += LOTHAREN_SERVER_ACCESS_INSTRUCTIONS
+    return persona
 
 
 def companion_role_context(name):
@@ -1932,6 +1963,74 @@ class Stopped(ConversationError):
     pass
 
 
+class IncludedUsageUnavailable(ConversationError):
+    """The listener can receive chat while model generation is paused."""
+
+
+def included_usage_available(result):
+    if result.get("ordinaryUsageAllowed") is not True:
+        return False
+    limits = result.get("rateLimitsByLimitId") or {}
+    limits = limits.get("codex") or result.get("rateLimits") or {}
+    primary = limits.get("primary")
+    if not isinstance(primary, dict) or limits.get("rateLimitReachedType") is not None:
+        return False
+    windows = [primary]
+    if limits.get("secondary") is not None:
+        windows.append(limits["secondary"])
+    return all(isinstance(window, dict) and type(window.get("usedPercent")) in (int, float)
+               and 0 <= window["usedPercent"] < 100 for window in windows)
+
+
+def check_included_usage(binary):
+    """Read the signed-in allowance through App Server before starting inference."""
+    process = subprocess.Popen([str(binary), "app-server", "--listen", "stdio://"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 5
+        buffered = bytearray()
+
+        def send(message):
+            process.stdin.write(json.dumps(message).encode() + b"\n")
+            process.stdin.flush()
+
+        def response(request_id):
+            while time.monotonic() < deadline and len(buffered) < 1048576:
+                newline = buffered.find(b"\n")
+                if newline >= 0:
+                    message = json.loads(buffered[:newline])
+                    del buffered[:newline + 1]
+                    if message.get("id") == request_id:
+                        return message.get("result") or {}
+                    continue
+                if not select.select([process.stdout], [], [], max(0, deadline - time.monotonic()))[0]:
+                    break
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffered.extend(chunk)
+            return {}
+
+        send({"id": 1, "method": "initialize", "params": {"clientInfo": {
+            "name": "warcraft-buddy", "title": "Warcraft Buddy", "version": "1"}}})
+        if not response(1):
+            return False
+        send({"method": "initialized"})
+        send({"id": 2, "method": "account/rateLimits/read"})
+        return included_usage_available(response(2))
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        try:
+            process.stdin.close()
+        finally:
+            process.stdout.close()
+
+
 def integer(value, label="counter"):
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ConversationError(f"Invalid {label} in chat response")
@@ -1960,8 +2059,10 @@ def plain_text(text, limit=255):
     return text
 
 
-def validate_reply(value, emotes=None, allow_silent=False):
+def validate_reply(value, emotes=None, allow_silent=False, allow_gm=False):
     allowed = {"text", "emote", "action", *NUMERIC_ARGS}
+    if allow_gm:
+        allowed.add("gm_command")
     if (not isinstance(value, dict) or not {"text", "emote"}.issubset(value)
             or not set(value).issubset(allowed)):
         raise ConversationError("Model response does not match the reply schema")
@@ -1975,6 +2076,12 @@ def validate_reply(value, emotes=None, allow_silent=False):
     if action not in ACTIONS:
         raise ConversationError("Model returned an unsupported game action")
     result = {"text": text, "emote": value["emote"], "action": action}
+    if "gm_command" in value:
+        command = value["gm_command"]
+        if not isinstance(command, str) or command and (
+                not valid_gm_command(command) or action != "NONE" or value["emote"] != "NONE"):
+            raise ConversationError("Model returned an invalid GM command")
+        result["gm_command"] = command
     for key in NUMERIC_ARGS:
         if key in value:
             arg = value[key]
@@ -1982,6 +2089,21 @@ def validate_reply(value, emotes=None, allow_silent=False):
                 raise ConversationError("Model returned an invalid numeric game argument")
             result[key] = arg
     return result
+
+
+def valid_gm_command(command):
+    return (isinstance(command, str) and re.fullmatch(r"\.[A-Za-z][ -~]{0,253}", command) is not None
+            and command == command.rstrip() and "|" not in command)
+
+
+def send_lotharen_gm(rpc, command):
+    if not valid_gm_command(command):
+        raise ConversationError("Give me one native WoW dot command.")
+    try:
+        config = json.loads((ROOT / "data/converse/lotharen/gm-transport.json").read_text())
+        return gm_tasks.single_command(rpc, config, command, ROOT)
+    except (OSError, ValueError, RuntimeError, gm_tasks.runtime.Error, subprocess.SubprocessError) as error:
+        raise ConversationError(str(error)) from error
 
 
 class RPC:
@@ -2226,11 +2348,21 @@ class CodexBrain:
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
         self.character_name, self.model = character_name, explicit_model(model)
+        self.gm_instructions = ""
+        if character_name.casefold() == "lotharen":
+            self.gm_instructions = gm_tasks.INSTRUCTIONS
+            try:
+                reference = Path(__file__).with_name("lotharen-gm-commands.txt").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                reference = ""
+            if reference:
+                self.gm_instructions += "\n" + reference
         self.reasoning_effort = explicit_reasoning_effort(reasoning_effort)
         self.developer_workspace = checked_developer_workspace(developer_workspace) if developer_workspace is not None else None
         self.developer_persona = character_persona(character_name, character_class, developer=True)
         self.last_development_events = None
         self.last_development_result = None
+        self.included_usage_only = False
         self.last_failure_receipt = None
         self.last_request_id = None
 
@@ -2398,11 +2530,21 @@ class CodexBrain:
         finally:self._generation=None
 
     def _generate(self, history, control_state=None, cancelled=None):
+        if getattr(self, "included_usage_only", False):
+            self._generation['stage']='included_usage_check'
+            try:
+                available = check_included_usage(self.binary)
+            except (OSError, ValueError, TypeError, AttributeError):
+                available = False
+            if not available:
+                raise IncludedUsageUnavailable("Included Codex usage unavailable")
         developer = self.development_enabled(control_state)
         if (isinstance(control_state,dict) and isinstance(control_state.get('current_request'),dict)
                 and control_state['current_request'].get('source') in ('mission_fault','combat_review','spell_learning') and not developer):
             raise ConversationError('Internal developer binding changed')
         request = (control_state or {}).get("current_request", {})
+        allow_gm = (self.character_name.casefold() == "lotharen" and request.get("source") == "owner"
+                    and (control_state or {}).get("gm_controls_available") is True)
         allow_silent = (developer and (request.get("source") in ("combat_review","spell_learning") or
             request.get("source") == "party_agent" and request.get("verifiedPeer") is True and request.get("developmentWhisper") is True))
         emotes = supported_emotes(control_state)
@@ -2418,6 +2560,9 @@ class CodexBrain:
             schema, output = folder / "schema.json", folder / "reply.json"
             reply_schema = dict(REPLY_SCHEMA, properties=dict(REPLY_SCHEMA["properties"],
                 emote={"type":"string", "enum":["NONE", *sorted(emotes)]}))
+            if allow_gm:
+                reply_schema["properties"]["gm_command"] = {"type": "string", "maxLength": 255}
+                reply_schema["required"] = [*reply_schema["required"], "gm_command"]
             schema.write_text(json.dumps(reply_schema))
             # Names already appear in the schema; do not pay for the full
             # ID/name table twice on every model turn.
@@ -2451,7 +2596,8 @@ class CodexBrain:
                     "requestSource": request.get("source"),
                     "combat": prompt_state["combat"],
                 })
-            prompt = ((self.developer_persona if developer else self.persona) + ownership + "\nCurrent observations and control state JSON:\n"
+            gm_instructions = self.gm_instructions if allow_gm else ""
+            prompt = ((self.developer_persona if developer else self.persona) + gm_instructions + ownership + "\nCurrent observations and control state JSON:\n"
                       + json.dumps(prompt_state, ensure_ascii=False)
                       + "\nConversation JSON:\n" + json.dumps(history, ensure_ascii=False))
             if cancelled and cancelled():
@@ -2518,7 +2664,7 @@ class CodexBrain:
                     except (ValueError, UnicodeError):
                         raise ConversationError("Codex reply is invalid JSON") from None
                     reason='reply_validation_failed'
-                    reply=validate_reply(value, emotes, allow_silent=allow_silent)
+                    reply=validate_reply(value, emotes, allow_silent=allow_silent, allow_gm=allow_gm)
                     reason=None
                     return reply
                 except BaseException as error:
@@ -3999,6 +4145,23 @@ class Conversation:
             return False
         return True
 
+    def run_gm_command(self, command, channel, sender, history_key):
+        if (self.stopped() or not self.session_id or self.character_guid != 87 or self.player_guid != 3 or sender != 3
+                or self.character_name.casefold() != "lotharen"):
+            raise ConversationError("GM commands require Lotharen's current owner request")
+        if not self.same_body():
+            return
+        game_session = ""
+        try:
+            game_session = send_lotharen_gm(self.rpc, command)
+            text = "My game client sent the GM command to the realm. I haven't confirmed the result yet."
+            outcome = "sent_to_realm"
+        except ConversationError as error:
+            text = str(error)
+            outcome = "send_unconfirmed"
+        self.status(lastGmCommand={"outcome": outcome, "sessionId": game_session, "cursor": self.cursor})
+        self.send_reply({"text": text, "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
+
     def tick(self):
         if self.controls:
             self.controls.refresh()
@@ -4114,6 +4277,13 @@ class Conversation:
             current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
             retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
         if acknowledged is False:return
+        allow_gm = (not peer and not resumed and self.session_id and self.character_guid == 87
+                    and self.player_guid == 3 and self.character_name.casefold() == "lotharen")
+        if allow_gm:
+            literal_gm_request = re.fullmatch(r"gm\s+(\..+)", request, re.IGNORECASE)
+            if literal_gm_request:
+                self.run_gm_command(literal_gm_request[1], channel, sender, history_key)
+                return
         control_request = parse_lua_control_request(request)
         if not peer and isinstance(self.controls, BuddyControls) and control_request:
             expected_class = "rogue" if control_request["technique"] == "sap" else "mage"
@@ -4149,10 +4319,18 @@ class Conversation:
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
             development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":True})
+        if allow_gm:
+            state["gm_controls_available"] = True
         try:
             reply = validate_reply(self.generate_reply(self.history[history_key], state),self.reply_emotes,
-                allow_silent=development_whisper and development.get("enabled") is True)
+                allow_silent=development_whisper and development.get("enabled") is True, allow_gm=bool(allow_gm))
         except OwnerInputPending:
+            return
+        except IncludedUsageUnavailable:
+            if not peer and channel == "WHISPER" and not self.stopped() and self.same_body():
+                self.send_reply({"text": "I heard you. My model replies are paused to protect your Codex credits.",
+                                 "emote": "NONE"}, channel, target_guid=sender, history_key=history_key)
+            self.status(phase="budget_paused", cursor=self.cursor)
             return
         except ConversationError:
             if acknowledged in ('transport_written','transport_unconfirmed'):
@@ -4167,6 +4345,9 @@ class Conversation:
             self.status(developmentEvents=dict(self.brain.last_development_events,sessionId=development['sessionId'],cursor=self.cursor))
         if self.stopped():
             raise Stopped("Conversation stop requested")
+        if reply.get("gm_command"):
+            self.run_gm_command(reply["gm_command"], channel, sender, history_key)
+            return
         # Generation may outlive a body reconnect. Drop all old-context writes,
         # including controller actions, before reaching a replacement session.
         if not self.same_body():
@@ -4831,6 +5012,8 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
+    parser.add_argument("--included-usage-only", action="store_true",
+                        help="Keep listening and start model replies only while included Codex usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
@@ -4843,6 +5026,7 @@ def main(argv=None):
         help="explicit total reply deadline; ordinary chat defaults to 120s, authorized development remains interruptible")
     parser.add_argument("--max-replies", type=int, default=200)
     parser.add_argument("--max-hours", type=float, default=8)
+    parser.add_argument("--persistent", action="store_true", help="Keep listening until explicitly stopped")
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
@@ -4876,7 +5060,8 @@ def main(argv=None):
         except BlockingIOError:
             raise ConversationError("Conversation is already running in this state directory") from None
         record = {"instance": uuid.uuid4().hex, "pid": os.getpid(), "phase": "starting",
-                  "started": time.time(), "replies": 0, "cursor": 0, "character_identity":identity}
+                  "started": time.time(), "replies": 0, "cursor": 0, "character_identity":identity,
+                  "persistent": args.persistent}
         local_stop = False
         def request_stop(signum, frame):
             nonlocal local_stop
@@ -4896,6 +5081,7 @@ def main(argv=None):
             workspace = registered_developer_workspace(args.character_guid, args.character_name)
         brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
                            workspace, args.model, args.reasoning_effort)
+        brain.included_usage_only = args.included_usage_only
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
         record["requestedReasoningEffort"] = brain.reasoning_effort
@@ -4908,7 +5094,7 @@ def main(argv=None):
         print(f"{args.character_name} ({args.character_class}) is listening for {args.player_name} and addressed roster party messages.", flush=True)
         print(f"Occasional conversation interval: {args.banter_seconds:g}s (0 disables). Stop with dev/converse stop.", flush=True)
         try:
-            while not stopped() and time.monotonic() < deadline and conversation.replies < args.max_replies:
+            while not stopped() and (args.persistent or (time.monotonic() < deadline and conversation.replies < args.max_replies)):
                 try:
                     conversation.tick()
                 except Stopped:
