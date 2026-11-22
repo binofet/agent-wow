@@ -57,6 +57,30 @@ end}`)
 	}
 }
 
+func TestRuntimeResourceCandidateDoesNotReturnAnOlderFallbackDecision(t *testing.T) {
+	r, err := NewWithOptions(SessionOptions{ExecutionLimit: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := load(t, r, `return {decide=function(input)return {kind="older_action"}end}`)
+	if _, err := r.Evaluate(nil); err != nil {
+		t.Fatal(err)
+	}
+	current := load(t, r, `return {decide=function(input)
+ if input.loop then while true do end end
+ return {kind="current_action"}
+end}`)
+	out, err := r.Evaluate(map[string]any{"loop": true})
+	state := r.Status()
+	if out != nil || !errors.Is(err, ErrExecutionBudget) || state.Revision != current ||
+		state.LastGoodRevision != older || state.QuarantinedRevision != "" || state.Failures != 0 || state.Evaluations != 2 {
+		t.Fatal("resource miss returned an old action, banned current code or retried the turn", out, err, state)
+	}
+	if out, err := r.Evaluate(nil); err != nil || out["kind"] != "current_action" || r.Status().Revision != current || r.Status().LastGoodRevision != current {
+		t.Fatal("later normal input did not use the accepted candidate", out, err, r.Status())
+	}
+}
+
 func TestRuntimeResourceTurnStillHonorsOuterDeadline(t *testing.T) {
 	r, err := NewWithOptions(SessionOptions{ExecutionLimit: time.Second})
 	if err != nil {
