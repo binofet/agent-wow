@@ -2226,6 +2226,11 @@ def codex_command(binary, workspace, schema, output, developer=False, model=None
     return command + ["-"]
 
 
+def receipt_identifier(value):
+    if not isinstance(value,str) or not value:return None
+    return value if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}",value) else "sha256:"+hashlib.sha256(value.encode('utf-8','surrogatepass')).hexdigest()
+
+
 def inspect_events(raw, developer=False, *, evidence=None):
     """Validate a complete CLI stream and reject unexpected tools/CLI errors.
 
@@ -2237,6 +2242,17 @@ def inspect_events(raw, developer=False, *, evidence=None):
     tools=[]
     valid=False
     last_kind=None
+    thread_id=turn_id=last_tool=None
+    error_events=[]
+    omitted_errors=0
+    def error_metadata(kind, value):
+        nonlocal omitted_errors
+        code=value.get('code') if isinstance(value,dict) else None
+        row=dict(eventType=kind)
+        if type(code) is int and -(2**31)<=code<2**31:row['code']=code
+        else:row['codeUnknown']=True
+        error_events.append(row)
+        if len(error_events)>4:error_events.pop(0);omitted_errors+=1
     try:
         for line in raw.splitlines():
             if not line.strip():
@@ -2249,6 +2265,9 @@ def inspect_events(raw, developer=False, *, evidence=None):
                 raise ConversationError("Codex returned an invalid event")
             kind = event.get("type")
             last_kind=kind if kind in ("item.started","item.updated","item.completed","turn.started","turn.completed","turn.failed","error","thread.started") else "unexpected"
+            if isinstance(event.get('thread_id'),str):thread_id=receipt_identifier(event['thread_id'])
+            if isinstance(event.get('turn_id'),str):turn_id=receipt_identifier(event['turn_id'])
+            if kind in ('turn.failed','error'):error_metadata(kind,event.get('error',event))
             if kind in ("item.started", "item.updated", "item.completed"):
                 item = event.get("item", {})
                 if (not turn_started and kind == "item.completed" and isinstance(item, dict)
@@ -2257,6 +2276,14 @@ def inspect_events(raw, developer=False, *, evidence=None):
                     # Installed CLI emits this diagnostic because we intentionally
                     # removed the code-mode host. No model turn/tools have begun.
                     continue
+                if isinstance(item,dict):
+                    if item.get('type') in ('command_execution','file_change','mcp_tool_call','web_search'):
+                        last_tool=dict(itemId=receipt_identifier(item.get('id')),type=item['type'],eventType=kind,
+                            status=item.get('status') if item.get('status') in ('completed','failed','in_progress') else 'unknown')
+                        code=item.get('exit_code')
+                        if type(code) is int and -(2**31)<=code<2**31:last_tool['exitCode']=code
+                        if isinstance(item.get('error'),dict):error_metadata(kind,item['error'])
+                    elif item.get('type')=='error':error_metadata(kind,item)
                 if developer and isinstance(item,dict) and item.get("type") in ("command_execution","file_change"):
                     identity=item.get("id")
                     if not turn_started or not isinstance(identity,str) or not 0<len(identity)<=128:
@@ -2271,7 +2298,7 @@ def inspect_events(raw, developer=False, *, evidence=None):
                             outcomes['successfulCommands' if code==0 and item['status']=='completed' else 'failedCommands']+=1
                         else:
                             outcomes['completedPatches' if item['status']=='completed' else 'failedPatches']+=1
-                        row=dict(itemId=identity if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}",identity) else "sha256:"+hashlib.sha256(identity.encode('utf-8','surrogatepass')).hexdigest(),type=item["type"],status=item["status"])
+                        row=dict(itemId=receipt_identifier(identity),type=item["type"],status=item["status"])
                         if item["type"]=="command_execution":
                             row["exitCode"]=code if code is None or -(2**31)<=code<2**31 else None
                         tools.append(row)
@@ -2293,13 +2320,14 @@ def inspect_events(raw, developer=False, *, evidence=None):
         valid=True
         return outcomes if developer else None
     finally:
-        if developer and evidence is not None:
-            ids=[value if re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}",value) else "sha256:"+hashlib.sha256(value.encode('utf-8','surrogatepass')).hexdigest() for value in pending]
+        if evidence is not None:
+            ids=[receipt_identifier(value) for value in pending]
             total=sum(outcomes.values())
             evidence.update(counts=outcomes,tools=tools,omittedTools=max(0,total-len(tools)),
                 pendingTools=sorted(ids)[:16],omittedPendingTools=max(0,len(ids)-16),
                 turnStarted=turn_started,turnCompleted=completed,streamComplete=valid,
-                lastEventType=last_kind)
+                lastEventType=last_kind,threadId=thread_id,turnId=turn_id,lastTool=last_tool,
+                errorEvents=error_events,omittedErrorEvents=omitted_errors)
 
 
 class CodexBrain:
@@ -2315,7 +2343,7 @@ class CodexBrain:
             super().__init__(*args, **kwargs)
             self.owned_review_check = owned_review_check
 
-    def __init__(self, binary, state_dir, timeout=120, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
+    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
         self.binary, self.state_dir = Path(binary), Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
@@ -2335,6 +2363,8 @@ class CodexBrain:
         self.last_development_events = None
         self.last_development_result = None
         self.included_usage_only = False
+        self.last_failure_receipt = None
+        self.last_request_id = None
 
     def model_selection(self):
         return dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
@@ -2391,30 +2421,117 @@ class CodexBrain:
         except (ConversationError,TypeError,ValueError,AttributeError):
             return False
 
-    def retain_development_events(self, events, errors, limit, development, reason, error_type, process):
-        """Keep typed dispositions privately; never retain tool text or replay it."""
-        record=dict(version=1,sessionId=development['sessionId'],selfGuid=str(development['selfGuid']),
-            recordedAtUnixMs=int(time.time()*1000),outcome='completed' if reason is None else 'failed',
-            reason=reason,errorType=error_type,processExitCode=process.returncode)
+    def generation_record(self, development, reason, error_type, process=None):
+        development=development if isinstance(development,dict) else {}
+        generation=getattr(self,'_generation',None) or {}
+        pid=getattr(process,'pid',None)
+        now=time.monotonic()
+        return dict(version=1,requestId=generation.get('requestId') or uuid.uuid4().hex,
+            sessionId=generation.get('sessionId',development.get('sessionId')),
+            chatSessionId=generation.get('chatSessionId'),
+            selfGuid=generation.get('selfGuid',str(development.get('selfGuid'))),
+            cursor=generation.get('cursor'),requestSource=generation.get('requestSource','unknown'),
+            recordedAtUnixMs=int(time.time()*1000),
+            elapsedMs=max(0,int((now-generation.get('started',now))*1000)),
+            outcome='completed' if reason is None else 'failed',reason=reason,errorType=error_type,
+            childPid=pid if type(pid) is int and pid>0 else None,
+            childStarted=process is not None,childReaped=process is not None and process.returncode is not None,
+            processExitCode=getattr(process,'returncode',None),
+            terminationRequested=generation.get('terminationRequested',False),
+            killRequested=generation.get('killRequested',False),
+            counts=dict(failedCommands=0,successfulCommands=0,failedPatches=0,completedPatches=0),
+            tools=[],pendingTools=[],streamComplete=False,turnStarted=False,turnCompleted=False,
+            omittedTools=0,omittedPendingTools=0,lastEventType=None,threadId=None,turnId=None,
+            errorEvents=[],omittedErrorEvents=0,actionOutcome='unknown',receiptStored=False)
+
+    def retain_failure(self, record):
+        # This is evidence only: never clear or retry a tool/game reservation.
+        self.last_failure_receipt=record
+        stored=False
         try:
-            events.seek(0);raw=events.read(limit+1)
+            folder=ensure_state(self.state_dir/'brain-failures')
+            record['receiptStored']=True
+            # Each receipt fits the existing reader; eight receipts bound disk use.
+            while len(json.dumps(record).encode())+1>8192:
+                if record.get('tools'):
+                    record['tools'].pop(0);record['omittedTools']+=1
+                elif record.get('pendingTools'):
+                    record['pendingTools'].pop();record['omittedPendingTools']+=1
+                elif record.get('errorEvents'):
+                    record['errorEvents'].pop(0);record['omittedErrorEvents']+=1
+                else:raise ConversationError('Failure receipt exceeds private limit')
+            write_json(folder/(record['requestId']+'.json'),record)
+            stored=True
+            paths=[p for p in folder.iterdir() if re.fullmatch(r'[a-f0-9]{32}\.json',p.name)]
+            for path in sorted(paths,key=lambda p:(p.lstat().st_mtime_ns,p.name))[:-8]:path.unlink()
+        except Exception as error:
+            record['receiptStored']=stored
+            record['retentionError']=type(error).__name__
+
+    def generation_snapshot(self, events, errors, limit, development, reason, error_type, process, developer):
+        record=self.generation_record(development,reason,error_type,process)
+        try:
+            events.flush()
+            raw=os.pread(events.fileno(),limit+1,0)
             record['eventBytesTruncated']=len(raw)>limit
             record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
             record['stderrBytes']=os.fstat(errors.fileno()).st_size
-            try:inspect_events(raw[:limit],developer=True,evidence=record)
+            try:inspect_events(raw[:limit],developer=developer,evidence=record)
             except ConversationError as error:record['streamError']=str(error)
             if record['eventBytesTruncated']:record['streamComplete']=False
+        except Exception as error:
+            record['retentionError']=type(error).__name__
+        record['childPhase']=record['lastEventType'] or ('process.started' if record['childStarted'] else 'not_started')
+        return record
+
+    def retain_development_events(self, events, errors, limit, development, reason, error_type, process, *, developer=True):
+        """Keep typed dispositions privately; never retain tool text or replay it."""
+        record=self.generation_snapshot(events,errors,limit,development,reason,error_type,process,developer)
+        if reason is not None:self.retain_failure(record)
+        if developer:
             self.last_development_events=dict(record['counts'])
             self.last_development_result=record
-            write_json(self.state_dir/'development-events-last.json',record)
-        except (OSError,ConversationError) as error:
-            # Evidence persistence must not change the completed write's outcome
-            # or replace the original model failure with an unrelated exception.
-            record['retentionError']=type(error).__name__
-            self.last_development_result=record
+            try:write_json(self.state_dir/'development-events-last.json',record)
+            except Exception as error:record['retentionError']=type(error).__name__
 
     def generate(self, history, control_state=None, cancelled=None):
+        # Reset before binding checks, cancellation or Popen can fail. A previous
+        # request's tools must never be attached to a new failure.
+        self.last_request_id=uuid.uuid4().hex
+        self.last_failure_receipt=self.last_development_events=self.last_development_result=None
+        state=control_state if isinstance(control_state,dict) else {}
+        development=state.get('development') if isinstance(state.get('development'),dict) else {}
+        character=state.get('character') if isinstance(state.get('character'),dict) else {}
+        context=getattr(self,'_generation_context',None)
+        context=context if isinstance(context,dict) else {}
+        sid=context.get('sessionId') or development.get('sessionId')
+        guid=context.get('selfGuid') or development.get('selfGuid') or character.get('guid')
+        guid=str(guid) if type(guid) in (int,str) else ''
+        request=state.get('current_request') if isinstance(state.get('current_request'),dict) else {}
+        source=request.get('source')
+        self._generation=dict(requestId=self.last_request_id,started=time.monotonic(),stage='binding_check',
+            sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else None,
+            chatSessionId=receipt_identifier(context.get('chatSessionId')),
+            selfGuid=guid if re.fullmatch(r'[0-9]{1,20}',guid) and 0<int(guid)<2**64 else None,
+            cursor=context.get('cursor') if type(context.get('cursor')) is int and 0<=context['cursor']<2**64 else None,
+            requestSource=source if source in ('owner','party_agent','mission_fault','combat_review','spell_learning','banter') else 'unknown')
+        try:
+            return self._generate(history,control_state,cancelled)
+        except BaseException as error:
+            if self.last_failure_receipt is None:
+                reason=('owner_input_waiting' if isinstance(error,OwnerInputPending) else
+                    'stop_requested' if isinstance(error,Stopped) else
+                    'process_spawn_failed' if self._generation['stage']=='spawning' else
+                    'developer_binding_changed' if self._generation['stage']=='binding_check' else 'preparation_failed')
+                record=self.generation_record(development,reason,type(error).__name__)
+                record['childPhase']='not_started'
+                self.retain_failure(record)
+            raise
+        finally:self._generation=None
+
+    def _generate(self, history, control_state=None, cancelled=None):
         if getattr(self, "included_usage_only", False):
+            self._generation['stage']='included_usage_check'
             try:
                 available = check_included_usage(self.binary)
             except (OSError, ValueError, TypeError, AttributeError):
@@ -2431,8 +2548,7 @@ class CodexBrain:
         allow_silent = (developer and (request.get("source") in ("combat_review","spell_learning") or
             request.get("source") == "party_agent" and request.get("verifiedPeer") is True and request.get("developmentWhisper") is True))
         emotes = supported_emotes(control_state)
-        self.last_development_events = None
-        self.last_development_result = None
+        self._generation['stage']='preparing'
         limit = 4*1024*1024 if developer else 1024*1024
         # Keep the empty working directory outside the repository's project
         # configuration ancestry. Schema/replies/events stay in private state.
@@ -2488,15 +2604,21 @@ class CodexBrain:
                 raise OwnerInputPending("Fresh owner input is waiting")
             # Files, rather than pipes, bound memory use and prevent pipe deadlock.
             with tempfile.TemporaryFile(dir=folder) as events, tempfile.TemporaryFile(dir=folder) as errors:
+                self._generation['stage']='spawning'
                 process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer,
                                                         model=self.model, reasoning_effort=self.reasoning_effort),
                                            stdin=subprocess.PIPE, stdout=events, stderr=errors,
                                            start_new_session=True)
+                self._generation['stage']='running'
+                progress=getattr(self,'_generation_progress',None) if developer else None
+                progress_at=0.0
+                progress_size=None
                 reason,error_type='process_io_failed',None
                 try:
                     process.stdin.write(prompt.encode())
                     process.stdin.close()
-                    deadline = time.monotonic() + self.timeout
+                    timeout=self.timeout if self.timeout is not None else (None if developer else 120)
+                    deadline=None if timeout is None else time.monotonic()+timeout
                     while process.poll() is None:
                         if self.stopped():
                             reason='stop_requested'
@@ -2504,12 +2626,21 @@ class CodexBrain:
                         if cancelled and cancelled():
                             reason='owner_input_waiting'
                             raise OwnerInputPending("Fresh owner input is waiting")
-                        if time.monotonic() >= deadline:
+                        if deadline is not None and time.monotonic() >= deadline:
                             reason='timeout'
                             raise ConversationError("Codex reply timed out")
                         if events.tell() > limit or errors.tell() > limit:
                             reason='output_limit'
                             raise ConversationError("Codex output exceeds the limit")
+                        if callable(progress) and time.monotonic()>=progress_at:
+                            progress_at=time.monotonic()+1
+                            size=os.fstat(events.fileno()).st_size
+                            if size!=progress_size:
+                                progress_size=size
+                                snapshot=self.generation_snapshot(events,errors,limit,prompt_state.get('development',{}),None,None,process,developer)
+                                snapshot['outcome']='in_progress'
+                                try:progress(snapshot)
+                                except Exception:pass
                         time.sleep(0.1)
                     if process.returncode:
                         reason='process_failed'
@@ -2542,6 +2673,7 @@ class CodexBrain:
                 finally:
                     try:
                         if process.poll() is None:
+                            self._generation['terminationRequested']=True
                             try:
                                 os.killpg(process.pid, signal.SIGTERM)
                             except ProcessLookupError:
@@ -2549,6 +2681,7 @@ class CodexBrain:
                             try:
                                 process.wait(timeout=2)
                             except subprocess.TimeoutExpired:
+                                self._generation['killRequested']=True
                                 try:
                                     os.killpg(process.pid, signal.SIGKILL)
                                 except ProcessLookupError:
@@ -2566,8 +2699,8 @@ class CodexBrain:
                                 reason,error_type='process_io_failed',type(error).__name__
                                 raise
                         finally:
-                            if developer:
-                                self.retain_development_events(events,errors,limit,prompt_state['development'],reason,error_type,process)
+                            if developer or reason is not None:
+                                self.retain_development_events(events,errors,limit,prompt_state.get('development',{}),reason,error_type,process,developer=developer)
 
 
 def queue_lua_control(controls, technique, mark=None, target_guid=None):
@@ -3912,6 +4045,27 @@ class Conversation:
                 return True
         return False
 
+    def publish_brain_evidence(self, context, previous_request, receipt, field):
+        if (not isinstance(receipt,dict) or receipt.get('requestId')==previous_request or
+                receipt.get('requestId')!=getattr(self.brain,'last_request_id',None) or
+                any(receipt.get(key)!=context.get(key) for key in ('sessionId','chatSessionId','selfGuid','cursor'))):
+            return
+        summary={key:receipt.get(key) for key in ('requestId','sessionId','chatSessionId','selfGuid','cursor',
+            'reason','childPhase','childPid','processExitCode','streamComplete','receiptStored','actionOutcome',
+            'outcome','threadId','turnId','lastTool','childStarted','childReaped')}
+        summary.update(counts=dict(receipt.get('counts',{})),
+            pendingToolCount=len(receipt.get('pendingTools',[]))+receipt.get('omittedPendingTools',0),
+            errorObserved=bool(receipt.get('errorEvents')),
+            currentBody=self.session_id==context['chatSessionId'] and str(self.character_guid)==context['selfGuid'])
+        fields={field:summary}
+        if field=='brainFailure':fields['brainProgress']=summary
+        try:self.status(**fields)
+        except Exception:return False  # Publication cannot replace the original failure.
+        return True
+
+    def publish_brain_failure(self, context, previous_request):
+        self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_failure_receipt',None),'brainFailure')
+
     def generate_reply(self, history, state, still_current=None):
         # One synchronous model process remains; a cheap read interrupts it
         # without advancing the chat cursor or undoing already-written code.
@@ -3940,14 +4094,39 @@ class Conversation:
                 # Unknown freshness cannot authorize a stale gameplay reply.
                 interrupt_reason[0] = "chat_freshness_unavailable"
                 return True
+        development=state.get('development',{}) if isinstance(state,dict) else {}
+        sid=development.get('sessionId') if isinstance(development,dict) else None
+        context=dict(sessionId=sid if isinstance(sid,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',sid) else self.session_id,
+            chatSessionId=self.session_id,selfGuid=str(self.character_guid),cursor=self.cursor)
+        previous_request=getattr(self.brain,'last_request_id',None)
+        previous_context=getattr(self.brain,'_generation_context',None)
+        previous_progress=getattr(self.brain,'_generation_progress',None)
+        if isinstance(self.brain,CodexBrain):
+            self.brain._generation_context=context
+            self.brain._generation_progress=lambda receipt:self.publish_brain_evidence(context,previous_request,receipt,'brainProgress')
         try:
             if isinstance(self.brain, CodexBrain):
-                return self.brain.generate(history, state, cancelled=cancelled)
-            return self.brain.generate(history, state)
+                reply=self.brain.generate(history, state, cancelled=cancelled)
+            else:reply=self.brain.generate(history, state)
         except OwnerInputPending:
+            self.publish_brain_failure(context,previous_request)
             self.status(phase="listening", generationPhase="yielded_to_owner" if interrupt_reason[0]=="owner_input_waiting" else "yielded_for_chat_refresh",
                         generationInterruptReason=interrupt_reason[0], cursor=self.cursor)
             raise
+        except BaseException:
+            self.publish_brain_failure(context,previous_request)
+            raise
+        else:
+            published=False
+            if isinstance(self.brain,CodexBrain):
+                published=bool(self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_development_result',None),'brainProgress'))
+            try:self.status(brainFailure=None,**({} if published else dict(brainProgress=None)))
+            except Exception:pass
+            return reply
+        finally:
+            if isinstance(self.brain,CodexBrain):
+                self.brain._generation_context=previous_context
+                self.brain._generation_progress=previous_progress
 
     def same_body(self):
         if not self.session_id:
@@ -4843,14 +5022,15 @@ def main(argv=None):
     parser.add_argument("--resume-whispers", action="store_true",
                         help="Handle the latest unanswered owner whisper in the current live chat body once")
     parser.add_argument("--poll-seconds", type=float, default=1)
-    parser.add_argument("--reply-timeout", type=float, default=120)
+    parser.add_argument("--reply-timeout", type=float, default=None,
+        help="explicit total reply deadline; ordinary chat defaults to 120s, authorized development remains interruptible")
     parser.add_argument("--max-replies", type=int, default=200)
     parser.add_argument("--max-hours", type=float, default=8)
     parser.add_argument("--persistent", action="store_true", help="Keep listening until explicitly stopped")
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
-    if (not 0.2 <= args.poll_seconds <= 10 or not 5 <= args.reply_timeout <= 180
+    if (not 0.2 <= args.poll_seconds <= 10 or args.reply_timeout is not None and not 5 <= args.reply_timeout <= 180
             or not 1 <= args.max_replies <= 1000 or not 0 < args.max_hours <= 24
             or not 0 < args.player_guid < 2**48
             or (args.banter_seconds != 0 and not 120 <= args.banter_seconds <= 3600)):
