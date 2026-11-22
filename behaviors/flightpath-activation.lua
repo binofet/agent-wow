@@ -1,16 +1,11 @@
 -- A parent owns the finite exploration lease and supplies explorationToken.
 -- This child composes the maintained planner and selects ONE normal hop.
 -- An activation receipt never establishes flight start, arrival or a fare.
-local M = {tuning={accept_unknown_fare=true}}
+local M = {tuning={accept_unknown_fare=true,complete_hops=true,continue_hops=true,retry_refused_queries=false}}
 local method="buddy-actions.activate_flightpath"
 local maximum="18446744073709551615"
 local function uint(n) return type(n)=="number" and n==n and n>=0 and n<=4294967295 and n==math.floor(n) end
-local function identifier(v,zero)
-    if type(v)~="string" or #v==0 or #v>20 or #v>1 and byte_at(v,1)==48 then return end
-    for i=1,#v do local b=byte_at(v,i);if b<48 or b>57 then return end end
-    if #v==20 and v>maximum or not zero and v=="0" then return end
-    return v
-end
+local identifier,same=planner.identifier,planner.same
 local function revision(v) if v==nil then return "0" end;return identifier(v,true) end
 local function successor(v)
     if v==maximum then return end
@@ -21,13 +16,6 @@ local function successor(v)
         out=tostring(n)..out
     end
     return carry==1 and "1"..out or out
-end
-local function same(a,b)
-    if type(a)~=type(b) then return false end
-    if type(a)~="table" then return a==b end
-    for k,v in pairs(a) do if not same(v,b[k]) then return false end end
-    for k in pairs(b) do if a[k]==nil then return false end end
-    return true
 end
 local function quiet(context)
     local a=context.observations.actions or {};local self=(context.observations.world or {}).self or {}
@@ -70,10 +58,7 @@ local function finish(context,frame,reason,op)
     frame.result=reason;frame.stage="complete";status(context,frame,reason,op)
 end
 local function request_parameters(request)
-    return {sessionId=request.sessionId,selfGuid=request.selfGuid,visitId=request.visitId,token=request.token,npcGuid=request.npcGuid,
-        sourceNode=request.sourceNode,destinationNode=request.destinationNode,menuRevision=request.menuRevision,
-        expectedRevision=request.expectedRevision,expectedCopperRevision=request.expectedCopperRevision,
-        expectedCopper=request.expectedCopper,acceptUnknownFare=request.acceptUnknownFare}
+    local out={};for key,value in pairs(request) do if key~="revision" then out[key]=value end end;return out
 end
 local function same_parameters(params,request)
     if type(params)~="table" then return false end
@@ -91,6 +76,154 @@ local function valid_token(v) return type(v)=="string" and #v>0 and #v<=128 end
 local function intent_changed(frame,params)
     return frame.destination~=params.destinationNode or frame.parentToken~=params.explorationToken or
         frame.goalFarePresent~=(params.acceptUnknownFare~=nil) or frame.goalFare~=params.acceptUnknownFare
+end
+local function newer(a,b)
+    a,b=revision(a),revision(b)
+    return a and b and (#a>#b or #a==#b and a>b)
+end
+local function source(a,b)
+    if not a or not b then return false end
+    for _,key in ipairs({"connectionId","selfGuid","visitRevision","splineRevision","splineSourceRevision","splineSourceOpcode"}) do
+        if a[key]==nil or a[key]~=b[key] then return false end
+    end
+    return a.visitBound==true and b.visitBound==true and (a.mapId or 0)==(b.mapId or 0) and
+        a.splineIdKnown==true and b.splineIdKnown==true and (a.splineId or 0)==(b.splineId or 0)
+end
+local function complete_match(op,request,expected)
+    if not op or op.revision~=expected or not request or not same(op.transportScope,request.transportScope) then return false end
+    for _,key in ipairs({"selfGuid","visitRevision","authorityRevision","movementRevision","splineRevision"}) do
+        if op[key]~=request[key] then return false end
+    end
+    return true
+end
+local methods={complete="buddy-world.complete_spline",retire="buddy-world.retire_spline_completion",
+               probe="buddy-actions.query_flightpath",settle="buddy-actions.settle_flightpath"}
+local after={complete="ground",retire="ground",probe="menu",settle="settled"}
+local function issue(frame,kind,params,expected)
+    frame.effect={kind=kind,params=params,revision=expected};frame.stage="effect"
+end
+local function ground(w,op)
+    local a,m,p=w.selfMotionAuthority or {},w.selfMovementFacts or {},w.self or {}
+    local i=m.info or {};local scope=a.transportScope
+    return scope and source(scope,op.transportScope) and source(m.transportScope,scope) and
+        m.known==true and m.selfGuid==op.selfGuid and m.visitRevision==op.visitRevision and
+        newer(m.revision,op.movementRevision) and newer(m.transportScope.motionRevision,op.transportScope.motionRevision) and
+        a.unitFlagsKnown==true and uint(a.unitFlags or 0) and math.floor((a.unitFlags or 0)/0x100000)%2==0 and
+        newer(a.unitFlagsMotionRevision,op.transportScope.motionRevision) and p.present==true and
+        p.aliveKnown==true and p.alive==true and p.positionKnown==true and p.positionInferred~=true and
+        (p.x or 0)==(i.x or 0) and (p.y or 0)==(i.y or 0) and (p.z or 0)==(i.z or 0)
+end
+local function world_binding(w)
+    local a=w.selfMotionAuthority or {}
+    return {selfGuid=(w.self or {}).guid,visitRevision=w.visitRevision,authorityRevision=a.revision,
+        movementRevision=(w.selfMovementFacts or {}).revision,unitFlagsRevision=a.unitFlagsRevision,transportScope=a.transportScope}
+end
+local function flightmaster(w)
+    local p=w.self or {};local best,distance
+    for _,npc in ipairs(w.nearbyCreatures or {}) do
+        if identifier(npc.guid) and npc.present==true and npc.aliveKnown==true and npc.alive==true and
+           npc.positionKnown==true and npc.mapKnown==true and (npc.mapId or 0)==(p.mapId or 0) and
+           uint(npc.npcFlags or 0) and math.floor((npc.npcFlags or 0)/0x2000)%2==1 then
+            local x,y,z=(npc.x or 0)-(p.x or 0),(npc.y or 0)-(p.y or 0),(npc.z or 0)-(p.z or 0)
+            local d=x*x+y*y+z*z
+            if d<=25 and math.abs(z)<=2.5 and (not distance or d<distance) then best,distance=npc.guid,d end
+        end
+    end
+    return best
+end
+local function progress(context,frame,flight,op)
+    local w=context.observations.world or {};local a=w.selfMotionAuthority or {};local c=w.splineCompletion or {}
+    local proof=c.operation or {};local binding=world_binding(w)
+    status(context,frame,frame.stage,op);context.memory.activation.flightStartedKnown=frame.completion~=nil
+    if w.visitRevision~=frame.request.visitId or (w.self or {}).guid~=frame.request.selfGuid or
+       (context.state.body or {}).sessionId~=frame.request.sessionId then return tasks.await(context,"flight_scope_replaced") end
+    if frame.stage=="effect" then
+        local e=frame.effect;local _,out=tasks.call(context,frame,methods[e.kind],e.params,"flight_"..e.kind)
+        if out then return out end;frame.stage=after[e.kind]
+    end
+    if frame.stage=="flight" then
+        if M.tuning.complete_hops~=true or a.known~=true or not a.transportScope or
+           a.transportScope.connectionId~=op.acceptanceScope.connectionId or
+           a.transportScope.visitRevision~=op.acceptanceScope.visitRevision or
+           not newer(a.transportScope.splineSourceRevision,op.acceptanceScope.motionRevision) or
+           revision(a.durationRemainingMs)~="0" then return tasks.await(context,"waiting_for_qualified_normal_spline") end
+        binding.unitFlagsRevision=nil;binding.splineRevision=a.splineRevision;binding.expectedRevision=revision(c.revision)
+        frame.completion=binding;frame.completionRevision=successor(binding.expectedRevision)
+        if not frame.completionRevision then return tasks.await(context,"completion_revision_unavailable") end
+        issue(frame,"complete",binding,frame.completionRevision);return
+    end
+    if frame.stage=="ground" then
+        if not complete_match(proof,frame.completion,frame.completionRevision) then return tasks.await(context,"waiting_for_exact_completion_receipt") end
+        if proof.phase=="not_dispatched" then
+            if a.known==true and a.transportScope and a.transportScope.splineRevision~=proof.transportScope.splineRevision then frame.stage="flight";return end
+            return tasks.await(context,"completion_refused_for_current_source")
+        end
+        if proof.retired==true then
+            if c.retirementCurrent~=true then return tasks.await(context,"retired_flight_source_unavailable") end
+            frame.stage="probe"
+        elseif c.retirementAvailable==true and ground(w,proof) then
+            binding.expectedRevision=revision(c.revision)
+            issue(frame,"retire",binding,successor(binding.expectedRevision));return
+        else return tasks.await(context,"actual_landing_evidence_unavailable") end
+    end
+    if frame.stage=="probe" then
+        local params=context.state.goal.params or {};local npc=flightmaster(w);local age=revision((w.self or {}).positionAgeMs)
+        if c.retirementCurrent~=true or not quiet(context) or not age or newer(age,"2000") or not npc or not valid_token(params.explorationToken) or
+           (context.observations.actions or {}).interactionOwner~="exploration" then return tasks.await(context,"waiting_for_arrival_menu_authority") end
+        local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=frame.request.visitId,
+            token=params.explorationToken,npcGuid=npc,mode="arrival",expectedRevision=revision(flight.revision),
+            activationRevision=frame.request.revision,completionRevision=c.revision}
+        issue(frame,"probe",request,successor(request.expectedRevision));return
+    end
+    if frame.stage=="menu" then
+        local menu=flight.operation or {};local e=frame.effect
+        if menu.revision==e.revision and menu.phase=="not_dispatched" then
+            if M.tuning.retry_refused_queries==true then frame.stage="probe";return end
+            return tasks.await(context,"arrival_query_not_dispatched")
+        end
+        if menu.revision~=e.revision or menu.npcGuid~=e.params.npcGuid or menu.activationRevision~=frame.request.revision or
+           menu.completionRevision~=c.revision or menu.menuKnown~=true or menu.pending==true or
+           menu.sourceNode~=frame.hop then return tasks.await(context,"waiting_for_actual_destination_menu") end
+        binding.visitId=binding.visitRevision;binding.visitRevision=nil;binding.sessionId=frame.request.sessionId
+        binding.activationRevision=frame.request.revision;binding.menuRevision=menu.revision;binding.completionRevision=c.revision
+        issue(frame,"settle",binding,frame.request.revision);return
+    end
+    if frame.stage=="settled" then
+        if op.pending==true or op.arrivalKnown~=true or op.phase~="observed_arrival" then return tasks.await(context,"waiting_for_native_arrival_settlement") end
+        status(context,frame,"arrived",op);context.memory.activation.arrivalKnown=true;context.memory.activation.flightStartedKnown=true
+        if frame.hop==(context.state.goal.params or {}).destinationNode then frame.result="arrived";frame.stage="complete"
+        elseif M.tuning.continue_hops==true then
+            context.memory.plan=nil;context.memory.stack[#context.memory.stack]={kind="flightpath_activation",stage="start",data={}}
+        else return tasks.await(context,"hop_arrived_continuation_disabled") end
+    end
+end
+local function effect_receipt(context,frame)
+    local e=frame.effect;if not e then return end
+    local w=context.observations.world or {};local c=w.splineCompletion or {}
+    local f=context.observations.flightpath or {};local op=c.operation
+    if e.kind=="complete" and complete_match(op,e.params,e.revision) and
+       (op.transportWritten==true or op.transportUnknown==true or op.phase=="not_dispatched") then return "world","splineCompletion.operation",op end
+    if e.kind=="retire" and op and op.retired==true and op.retirementRevision==e.revision and
+       op.retiredMovementRevision==e.params.movementRevision and op.retiredUnitFlagsRevision==e.params.unitFlagsRevision and
+       same(op.retirementScope,e.params.transportScope) then return "world","splineCompletion.operation",op end
+    if e.kind=="probe" then
+        op=f.operation
+        if op and op.revision==e.revision and op.npcGuid==e.params.npcGuid and op.mode=="arrival" and
+           op.activationRevision==e.params.activationRevision and op.completionRevision==e.params.completionRevision and
+           (op.transportWritten==true or op.transportUnknown==true or op.phase=="not_dispatched") then return "flightpath","operation",op end
+    end
+    if e.kind=="settle" and matches(f.activation,frame.request) and f.activation.arrivalKnown==true and f.activation.pending~=true and
+       (f.operation or {}).revision==e.params.menuRevision and c.revision==e.params.completionRevision then return "flightpath","activation",f.activation end
+end
+local function effect_parameters(params,expected)
+    if type(params)~="table" then return false end
+    for key in pairs(params) do if expected[key]==nil then return false end end
+    for key,value in pairs(expected) do
+        if key=="expectedRevision" then
+            if revision(params[key])~=value then return false end
+        elseif not same(params[key],value) then return false end
+    end
+    return true
 end
 local function handler(context,frame)
     if frame.stage=="complete" then tasks.pop(context,{status=frame.result});return end
@@ -159,7 +292,13 @@ local function handler(context,frame)
         if not matches(op,frame.request) or revision(flight.activationRevision)~=op.revision then return tasks.await(context,"waiting_for_exact_activation_receipt") end
         local result=terminal(op)
         if result then finish(context,frame,result,op)
+        elseif op.activationAccepted==true and op.replyKnown==true and (op.replyCode or 0)==0 and op.acceptanceScope then frame.stage="flight"
         else status(context,frame,op.phase or "activation_unsettled",op);return tasks.await(context,"activation_unsettled") end
+    end
+    if frame.request and frame.stage~="activate" and frame.stage~="observe" and frame.stage~="complete" then
+        local op=flight.activation
+        if not matches(op,frame.request) then return tasks.await(context,"waiting_for_exact_activation_receipt") end
+        return progress(context,frame,flight,op)
     end
     if frame.stage=="complete" then tasks.pop(context,{status=frame.result});return end
     return tasks.await(context,"waiting_for_activation_authority")
@@ -178,6 +317,22 @@ function M.decide(state)
            result then
             finish(context,frame,result,op)
             return tasks.resolve(context,frame,"flightpath","activation",op,"exact_native_activation_"..result)
+        end
+        if frame and frame.waiting and row and row.id==frame.waiting.id and row.effect=="mutation" and row.outcome=="pending" then
+            if row.method==method and frame.waiting.method==method and same_parameters(row.params,frame.request) and
+               matches(op,frame.request) and op.activationAccepted==true and op.replyKnown==true and
+               (op.replyCode or 0)==0 and op.acceptanceScope then
+                frame.stage="flight"
+                return tasks.resolve(context,frame,"flightpath","activation",op,"accepted_booking_still_reserved")
+            end
+            local e=frame.effect
+            if e and row.method==methods[e.kind] and frame.waiting.method==row.method and effect_parameters(row.params,e.params) then
+                local observation,path,receipt=effect_receipt(context,frame)
+                if observation then
+                    frame.stage=after[e.kind]
+                    return tasks.resolve(context,frame,observation,path,receipt,"native_receipt_delivery_state_retained")
+                end
+            end
         end
         return {memory=memory,phase="blocked_on_ambiguous_call",done=false}
     end
