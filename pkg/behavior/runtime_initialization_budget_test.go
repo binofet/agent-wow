@@ -21,9 +21,9 @@ func TestRuntimeExplicitInitializationBudgetDoesNotRelaxEvaluation(t *testing.T)
 		t.Fatal("initialization allowance changed the actual default evaluation deadline", err)
 	}
 	state := r.Status()
-	if state.Evaluations != 1 || state.Failures != 1 || state.QuarantinedRevision != revision ||
-		state.Revision != "" || state.LastGoodRevision != "" {
-		t.Fatal("watchdog source was retried, retained or replaced", state)
+	if state.Evaluations != 1 || state.Failures != 0 || state.QuarantinedRevision != "" ||
+		state.Revision != revision || state.LastGoodRevision != "" {
+		t.Fatal("resource turn was retried, quarantined or called successful", state)
 	}
 }
 
@@ -47,8 +47,8 @@ func TestRuntimeInitializationBudgetRemainsBoundedAndDefaultsArePreserved(t *tes
 				t.Fatal("standalone initialization lost its actual bounded deadline", err)
 			}
 			state := r.Status()
-			if state.Evaluations != 0 || state.Failures != 1 || state.QuarantinedRevision == "" || state.Revision != "" {
-				t.Fatal("failed initialization installed or evaluated a policy", state)
+			if state.Evaluations != 0 || state.Failures != 0 || state.QuarantinedRevision != "" || state.Revision != "" {
+				t.Fatal("bounded initialization installed, evaluated or quarantined source", state)
 			}
 		})
 	}
