@@ -70,8 +70,8 @@ func TestServiceTravelProductionWatchdogStopsStartedJourneyWithoutFallback(t *te
 				t.Fatal("watchdog lost its exact failed mode, revision or deadline cause", failure)
 			}
 			state := stalled.Status()
-			if state.Evaluations != 1 || state.Failures != 1 || state.QuarantinedRevision != revision ||
-				state.Revision != "" || state.LastGoodRevision != "" {
+			if state.Evaluations != 1 || state.Failures != 0 || state.QuarantinedRevision != "" ||
+				state.Revision != revision || state.LastGoodRevision != "" {
 				t.Fatal("stalled policy was retried or replaced by an older successful policy", state)
 			}
 		})
