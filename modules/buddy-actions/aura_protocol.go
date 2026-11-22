@@ -183,6 +183,7 @@ func (s *Service) auraPacketLocked(op uint32, p []byte) (bool, error) {
 		s.buffAuras = nil
 		s.ownDamageAuras = nil
 		s.targetProtection.reset()
+		s.finishSpellLifecycleLocked("world_transfer_outcome_unconfirmed")
 		s.finishCrowdControlLocked("world_transfer_outcome_unconfirmed")
 		s.finishItemCreationLocked("map_changed_outcome_unconfirmed")
 		if s.buffOp != nil && s.buffOp.view.Phase == "waiting_server" {

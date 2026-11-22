@@ -76,6 +76,31 @@ type Capability struct {
 	Blocked string
 }
 
+// Passive is a spellbook fact. It is distinct from whether an automatic
+// behavior recognizes the spell's effects or knows when to select it.
+func (s Spell) Passive() bool { return s.Attrs[0]&0x40 != 0 }
+
+// Channeled describes the server's cast lifecycle, not a requirement for a
+// spell-specific client handler. The server executes the effects and ticks.
+func (s Spell) Channeled() bool { return s.Attrs[1]&(0x4|0x40) != 0 }
+
+// GenericCastSupported describes the normal learned-spell transport. Effects,
+// target selectors, resources and material requirements are data for the caller
+// and the server, never a client effect-handler allowlist.
+func (s Spell) GenericCastSupported() bool { return s.ID != 0 && !s.Passive() }
+
+// ClassificationReason concerns the optional automatic-selection classifier,
+// not permission to invoke the generic cast action.
+func (s Spell) ClassificationReason() string {
+	if s.Passive() {
+		return "passive" // Not an active spell.
+	}
+	if s.Capability().Blocked != "" {
+		return "automatic_selection_unclassified"
+	}
+	return ""
+}
+
 // RequiresComboPoints is a mechanical spell attribute, not a rotation rule.
 func (s Spell) RequiresComboPoints() bool { return s.Attrs[1]&(0x100000|0x400000) != 0 }
 
@@ -169,8 +194,8 @@ func (s Spell) CreatedItem() uint32 {
 	return e.ItemType
 }
 
-// Capabilities match spell mechanics. Specialized handlers can further restrict their known spell families, ranks and effects.
-// Deliberately expose unsupported requirements rather than silently hiding them.
+// Capability classifies spells for existing automatic selectors. A missing
+// classification does not prevent an explicit generic learned-spell cast.
 func (s Spell) Capability() Capability {
 	fail := func(why string) Capability { return Capability{Blocked: why} }
 	if s.Attrs[0]&0x40 != 0 {

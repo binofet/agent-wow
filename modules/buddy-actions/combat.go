@@ -63,7 +63,7 @@ func manaBudget(p *worldv1.PlayerState, percent uint64) uint64 {
 }
 
 func (s *Service) setKnownSpell(spell uint32, known bool) {
-	if spell == 0 || spell > 0x7fffffff || known && !s.knownSpells[spell] && len(s.knownSpells) >= 4096 {
+	if spell == 0 || known && !s.knownSpells[spell] && len(s.knownSpells) >= 4096 {
 		return
 	}
 	if s.knownSpells == nil {

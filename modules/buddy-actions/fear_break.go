@@ -248,31 +248,12 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	if s.controlBreakBindings == nil {
 		s.controlBreakBindings = map[uint32]observedBuffAura{}
 	}
-	priorSpell := s.spellReady[spell.ID]
-	priorCategories := map[uint32]time.Time{}
-	if s.categoryReady == nil {
-		s.categoryReady = map[uint32]time.Time{}
-	}
-	reserveCategory := func(r spellcatalog.Spell) {
-		if r.Category == 0 || r.CategoryCooldownMs == 0 {
-			return
-		}
-		priorCategories[r.Category] = s.categoryReady[r.Category]
-		ready := s.now().Add(time.Duration(r.CategoryCooldownMs) * time.Millisecond)
-		if s.categoryReady[r.Category].Before(ready) {
-			s.categoryReady[r.Category] = ready
-		}
-	}
 	s.controlBreakBindings[r.AuraSlot] = aura
-	s.reserveSpellCooldownLocked(spell)
-	reserveCategory(spell)
-	if linked, ok := s.spellData.Lookup(controlBreakCooldownTrigger(spell.ID)); ok {
-		reserveCategory(linked)
-	}
+	cooldown := s.reserveControlBreakCooldownLocked(spell, w.VisitRevision)
 	s.castCount++
 	until := s.now().Add(3 * time.Second)
 	s.supportOp = &supportAttempt{view: actionsv1.SpellOperation{SpellId: spell.ID, TargetGuid: s.selfGUID, Capability: fearBreakCapability, Phase: "waiting_server"},
-		owner: s.selfGUID, count: s.castCount, until: until, policySpellToken: modcb.PolicySpellToken(ctx), breakAuraRevision: aura.revision, breakAuraSlot: r.AuraSlot, breakAura: aura, breakItem: r.ItemGuid}
+		owner: s.selfGUID, count: s.castCount, until: until, policySpellToken: modcb.PolicySpellToken(ctx), breakAuraRevision: aura.revision, breakAuraSlot: r.AuraSlot, breakAura: aura, breakItem: r.ItemGuid, cooldown: cooldown}
 	s.state.CastPending = true
 	s.pendingSpell, s.pendingTarget = spell.ID, s.selfGUID
 	s.castUntil = until
@@ -284,10 +265,7 @@ func (s *Service) BreakControl(ctx context.Context, r *actionsv1.BreakControlReq
 	err = s.sendPacketLocked(modcb.ForwardPolicySpell(ctx), wire, payload)
 	if modcb.PacketWasNotDispatched(err) {
 		delete(s.controlBreakBindings, r.AuraSlot)
-		s.spellReady[spell.ID] = priorSpell
-		for category, prior := range priorCategories {
-			s.categoryReady[category] = prior
-		}
+		s.releaseControlBreakCooldownLocked(cooldown)
 		s.state.CastPending = false
 		s.pendingSpell, s.pendingTarget = 0, 0
 		s.supportOp.view.Phase = "not_dispatched"

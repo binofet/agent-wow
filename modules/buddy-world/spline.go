@@ -8,10 +8,14 @@ import "time"
 type observedTrajectory struct {
 	known, destinationKnown, cyclic, relative, stopped bool
 	controlReturned                                    bool
+	idKnown                                            bool
+	kind                                               uint8
+	id                                                 uint32
 	duration, elapsed, flags                           uint32
 	at                                                 time.Time
 	destination                                        [3]float32
 	transport                                          uint64
+	transportKnown                                     bool
 	seat                                               int8
 }
 
@@ -41,14 +45,17 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 	if transport {
 		t.transport = c.guid()
 		t.seat = int8(c.u8())
+		t.transportKnown = true
 	}
 	toggle := c.u8()
 	start, err := point(c)
 	if err != nil {
 		return err
 	}
-	c.u32()
+	t.id = c.u32()
+	t.idKnown = true
 	kind := c.u8()
+	t.kind = kind
 	if c.err != nil {
 		return c.err
 	}
@@ -134,10 +141,12 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 		// The controller cannot steer or report a stable self pose while the
 		// server moves it. Keep the last spline for control-return recovery.
 		p.positionKnown = false
+		p.positionInferred = false
 		p.observedAt = now
 	} else if transport {
 		// Start and destination are transport-relative, not world coordinates.
 		p.positionKnown = false
+		p.positionInferred = false
 		p.observedAt = now
 	} else {
 		if err := position(p, start[0], start[1], start[2], p.orientation, now); err != nil {
@@ -156,6 +165,10 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 		p.movementFlags |= 0x08000000
 	}
 	p.trajectory = t
+	if p.isSelf {
+		p.receivedSpline = true
+		p.receivedSplineHeader = t
+	}
 	return nil
 }
 
@@ -173,6 +186,8 @@ func settleSelfSpline(p *observed, now time.Time) {
 	if err := position(p, t.destination[0], t.destination[1], t.destination[2], p.orientation, arrival); err != nil {
 		return
 	}
+	p.positionInferred = true
+	p.receivedPosition = false
 	if latestObservation.After(arrival) {
 		p.observedAt = latestObservation
 	}

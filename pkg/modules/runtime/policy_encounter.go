@@ -73,5 +73,5 @@ func (p *SessionPolicy) renewEncounterWriter(ctx context.Context, decision, acti
 }
 
 func (op *policySpell) hostile() bool {
-	return op.melee != nil || op.capability == "offense" || op.capability == "polymorph" || op.capability == "sap" || op.capability == "interrupt"
+	return op.genericRequest != nil || op.cancelRequest != nil || op.melee != nil || op.capability == "offense" || op.capability == "polymorph" || op.capability == "sap" || op.capability == "interrupt"
 }

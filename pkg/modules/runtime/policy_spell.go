@@ -52,6 +52,8 @@ type policySpell struct {
 	recovery       *policyRecovery
 	consumable     *policyConsumable
 	corpse         *policyCorpse
+	genericRequest *actionsv1.CastSpellRequest
+	cancelRequest  *actionsv1.CancelSpellRequest
 	token          string
 	origin         modsession.WriteOrigin
 	admitted       bool
@@ -63,6 +65,9 @@ type policySpell struct {
 
 func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch, error) {
 	capability, _ := action["capability"].(string)
+	if capability == "cast_spell" || capability == "cancel_spell" {
+		return p.resolveGenericSpell(action, capability == "cancel_spell")
+	}
 	if capability == "release_interaction" {
 		return p.resolveInteractionRelease(action)
 	}
@@ -237,6 +242,8 @@ func fieldMatchesValue(kind protoreflect.Kind, value protoreflect.Value) bool {
 		return kind == protoreflect.BoolKind
 	case float32:
 		return kind == protoreflect.FloatKind
+	case protoreflect.Message:
+		return kind == protoreflect.MessageKind
 	default:
 		return false
 	}
@@ -294,6 +301,14 @@ func (m *Manager) invokePolicySpell(ctx context.Context, inst *instance, md modd
 		// server movement effect, and has no future spell-effect receipt.
 		return behavior.ActionSettledUnverified, op.payload("interaction_released", op.written, false, false)
 	}
+	if op.cancelRequest != nil && err == nil && state.GetLastSpellOperation().GetOperationRevision() == op.cancelRequest.ExpectedOperationRevision && state.GetLastSpellOperation().GetCancelAttempted() && !op.attempted {
+		return behavior.ActionSettledUnverified, op.payload("cancel_already_attempted_no_replay", false, false, false)
+	}
+	if op.cancelRequest != nil && op.attempted {
+		// Cancellation transport never completes the original cast/channel.
+		// Its own finite action has no separate future effect reservation.
+		return behavior.ActionSettledUnverified, policyDispatchError(op.payload("cancel_transport_unverified", op.written, false, false), err)
+	}
 	switch {
 	case op.written:
 		return behavior.ActionTransportAccepted, policyDispatchError(op.payload("transport_written", true, false, false), err)
@@ -339,12 +354,18 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 
 	err := m.session.SendPacket(modsession.WithWriteOrigin(ctx, op.origin), code, payload)
 	spells.mu.Lock()
+	if (op.genericRequest != nil || op.cancelRequest != nil) && modcb.PacketWasNotDispatched(err) {
+		op.attempted = false
+	}
 	op.written = op.written || err == nil
 	spells.mu.Unlock()
 	return err
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.genericRequest != nil || op.cancelRequest != nil {
+		return op.matchesGenericPacket(code, payload)
+	}
 	if op.capability == "fear_break" && op.controlItem != 0 {
 		if code != opcode.CMSGUseItem || len(payload) != 24 || payload[0] != 255 || uint32(payload[1]) != op.controlSlot ||
 			binary.LittleEndian.Uint32(payload[3:]) != op.spell || binary.LittleEndian.Uint64(payload[7:]) != op.controlItem {
@@ -457,7 +478,7 @@ func (p *SessionPolicy) recordSpellTransport(op *policySpell, receipt *behavior.
 	if op.effect != nil && !(receipt.Outcome == behavior.ActionUnknown && op.effect.Outcome == behavior.ActionUnknown) {
 		spells.pending = append(spells.pending, op.effect)
 	}
-	if op.effect != nil || !op.attempted {
+	if op.effect != nil || !op.attempted || op.cancelRequest != nil {
 		delete(spells.active, op.token)
 	}
 	return spells.flush(p.vm)

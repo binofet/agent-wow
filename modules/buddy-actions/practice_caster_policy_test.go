@@ -215,8 +215,11 @@ func TestPracticeCasterLuaFinalPolicyReadRevalidatesCurrentFacts(t *testing.T) {
 				runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-					reads++
 					out, err := runtime.EvaluateContext(ctx, input)
+					if input["selection"] == practiceApproachSelection {
+						return true, runtime.Status().Revision, out, err
+					}
+					reads++
 					if reads == 2 {
 						switch mode {
 						case "mana":
@@ -261,7 +264,9 @@ func TestPracticeCasterLuaFinalWorldReturnCannotExtendAuthority(t *testing.T) {
 				runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 				reads := 0
 				s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-					reads++
+					if input["selection"] != practiceApproachSelection {
+						reads++
+					}
 					out, err := runtime.EvaluateContext(ctx, input)
 					return true, runtime.Status().Revision, out, err
 				}

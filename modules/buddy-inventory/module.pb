@@ -10,14 +10,31 @@
 EmptyB}
 com.google.protobufB
 EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.Protobuf.WellKnownTypesbproto3
-ß
-api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"?
+õ
+api/module/v1/session.protoagentwow.module.v1google/protobuf/any.protogoogle/protobuf/empty.proto"å
 WorldPacket
 opcode (Ropcode
-payload (Rpayload"E
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"í
 SendPacketRequest
 opcode (Ropcode
-payload (Rpayload"5
+payload (RpayloadK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"’
+TransportScope#
+connection_id (	RconnectionId
+	self_guid (RselfGuid
+visit_bound (R
+visitBound%
+visit_revision (RvisitRevision
+map_id (RmapId'
+motion_revision (RmotionRevision&
+spline_id_known (RsplineIdKnown
+	spline_id (RsplineId'
+spline_revision	 (RsplineRevision4
+spline_source_revision
+ (RsplineSourceRevision#
+spline_active (RsplineActive0
+spline_source_opcode (RsplineSourceOpcode"5
 ClockResponse$
 client_time_ms (RclientTimeMs"u
 InvokeModuleRequest
@@ -31,8 +48,8 @@ EmptyProtoPZ.google.golang.org/protobuf/types/known/emptypb¯¢GPB™Google.P
 SendPacket%.agentwow.module.v1.SendPacketRequest.google.protobuf.EmptyE
 GetClock.google.protobuf.Empty!.agentwow.module.v1.ClockResponsea
 InvokeModule'.agentwow.module.v1.InvokeModuleRequest(.agentwow.module.v1.InvokeModuleResponseB5Z3github.com/agent-wow/agent-wow/pkg/modules/v1;modv1bproto3
-«d
-modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"ˆ
+ﬂÜ
+modules/buddy-world/world.protowarcraftbuddy.world.v1api/module/v1/session.protogoogle/protobuf/empty.proto"£
 PlayerState
 guid (Rguid
 present (Rpresent
@@ -106,7 +123,131 @@ race_known9 (R	raceKnown
 race_id: (RraceId(
 aura_state_known; (RauraStateKnown
 
-aura_state< (R	auraState"é
+aura_state< (R	auraState+
+position_inferred= (RpositionInferred"◊
+MovementTransportFacts
+guid (Rguid
+x (Rx
+y (Ry
+z (Rz 
+orientation (Rorientation
+time (Rtime
+seat (Rseat
+time2_known (R
+time2Known
+time2	 (Rtime2"Ñ
+MovementJumpFacts
+velocity (Rvelocity
+	sin_angle (RsinAngle
+	cos_angle (RcosAngle
+xy_speed (RxySpeed"Ï
+MovementInfoFacts
+flags (Rflags
+extra_flags (R
+extraFlags
+time (Rtime
+x (Rx
+y (Ry
+z (Rz 
+orientation (RorientationL
+	transport (2..warcraftbuddy.world.v1.MovementTransportFactsR	transport
+pitch_known	 (R
+pitchKnown
+pitch
+ (Rpitch
+	fall_time (RfallTime=
+jump (2).warcraftbuddy.world.v1.MovementJumpFactsRjump4
+spline_elevation_known (RsplineElevationKnown)
+spline_elevation (RsplineElevation"÷
+OwnMovementFacts
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision#
+source_opcode (RsourceOpcode
+age_ms (RageMs
+	map_known (RmapKnown
+map_id (RmapId=
+info	 (2).warcraftbuddy.world.v1.MovementInfoFactsRinfo
+
+wire_image
+ (R	wireImage"œ
+OwnSplineFacts
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision#
+source_opcode (RsourceOpcode
+age_ms (RageMs
+id_known (RidKnown
+	spline_id (RsplineId
+flags	 (Rflags
+duration_ms
+ (R
+durationMs
+
+elapsed_ms (R	elapsedMs+
+destination_known (RdestinationKnown#
+destination_x (RdestinationX#
+destination_y (RdestinationY#
+destination_z (RdestinationZ-
+transport_relative (RtransportRelative%
+transport_guid (RtransportGuid%
+transport_seat (RtransportSeat
+stopped (Rstopped
+cyclic (Rcyclic
+	map_known (RmapKnown
+map_id (RmapId"ì
+OwnMotionAuthority
+known (Rknown
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (Rrevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope
+reason (	Rreason2
+duration_remaining_ms	 (RdurationRemainingMs(
+unit_flags_known
+ (RunitFlagsKnown
+
+unit_flags (R	unitFlags.
+unit_flags_revision (RunitFlagsRevision)
+unit_flags_age_ms (RunitFlagsAgeMs7
+unit_flags_source_opcode (RunitFlagsSourceOpcode;
+unit_flags_motion_revision (RunitFlagsMotionRevision"⁄
+CompleteSplineRequest
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevision+
+expected_revision (RexpectedRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope"√
+SplineCompletionOperation
+revision (Rrevision
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision-
+authority_revision (RauthorityRevision+
+movement_revision (RmovementRevision'
+spline_revision (RsplineRevisionK
+transport_scope (2".agentwow.module.v1.TransportScopeRtransportScope
+pending (Rpending+
+transport_written	 (RtransportWritten+
+transport_unknown
+ (RtransportUnknown
+phase (	Rphase
+error (	Rerror6
+movement_image_inferred (RmovementImageInferred#
+arrival_known (RarrivalKnown
+	spline_id (RsplineId&
+spline_id_known (RsplineIdKnown2
+movement_image_source (	RmovementImageSource"Œ
+SplineCompletionObservation
+	self_guid (RselfGuid%
+visit_revision (RvisitRevision
+revision (RrevisionO
+	operation (21.warcraftbuddy.world.v1.SplineCompletionOperationR	operation"é
 EquipmentSlotState
 slot (Rslot
 
@@ -335,7 +476,7 @@ SkillState
 value (Rvalue
 	max_value (RmaxValue'
 temporary_bonus (RtemporaryBonus'
-permanent_bonus (RpermanentBonus"≈
+permanent_bonus (RpermanentBonus"µ
 SnapshotResponse7
 self (2#.warcraftbuddy.world.v1.PlayerStateRself9
 owner (2#.warcraftbuddy.world.v1.PlayerStateRowner'
@@ -388,7 +529,11 @@ selfSkills@
 own_corpse, (2#.warcraftbuddy.world.v1.CorpseStateR	ownCorpseR
 discovery_anchor- (2'.warcraftbuddy.world.v1.DiscoveryAnchorRdiscoveryAnchorJ
 player_corpses. (2#.warcraftbuddy.world.v1.CorpseStateRplayerCorpses%
-visit_revision/ (RvisitRevision"q
+visit_revision/ (RvisitRevisionX
+self_movement_facts0 (2(.warcraftbuddy.world.v1.OwnMovementFactsRselfMovementFactsR
+self_spline_facts1 (2&.warcraftbuddy.world.v1.OwnSplineFactsRselfSplineFacts^
+self_motion_authority2 (2*.warcraftbuddy.world.v1.OwnMotionAuthorityRselfMotionAuthority`
+spline_completion3 (23.warcraftbuddy.world.v1.SplineCompletionObservationRsplineCompletion"q
 CombatEventsRequest
 
 session_id (	R	sessionId%
@@ -426,9 +571,10 @@ session_id (	R	sessionId
 next_sequence (RnextSequence
 has_more (RhasMore;
 events (2#.warcraftbuddy.world.v1.CombatEventRevents:
-gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2˚
+gaps (2&.warcraftbuddy.world.v1.CombatEventGapRgaps2Ò
 
-BuddyWorldi
+BuddyWorldt
+CompleteSpline-.warcraftbuddy.world.v1.CompleteSplineRequest3.warcraftbuddy.world.v1.SplineCompletionObservationi
 CombatEvents+.warcraftbuddy.world.v1.CombatEventsRequest,.warcraftbuddy.world.v1.CombatEventsResponse]
 Snapshot'.warcraftbuddy.world.v1.SnapshotRequest(.warcraftbuddy.world.v1.SnapshotResponse^
 ObserveClientMovement-.warcraftbuddy.world.v1.ClientMovementRequest.google.protobuf.EmptyC
@@ -524,8 +670,46 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-°¶
-#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto")
+Ì‹
+#modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"Ú
+SpellCastTargets
+mask (Rmask
+object_guid (R
+objectGuid
+	item_guid (RitemGuidC
+source (2+.warcraftbuddy.actions.v1.SpellCastLocationRsourceM
+destination (2+.warcraftbuddy.actions.v1.SpellCastLocationRdestination#
+string_target (	RstringTarget%
+trade_revision (RtradeRevision,
+trade_partner_guid (RtradePartnerGuid"d
+SpellCastLocation%
+transport_guid (RtransportGuid
+x (Rx
+y (Ry
+z (Rz"é
+SpellCastTrajectory
+	elevation (R	elevation
+speed (Rspeed'
+movement_opcode (RmovementOpcode
+movement (Rmovement"ô
+CastSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+spell_id (RspellIdD
+targets (2*.warcraftbuddy.actions.v1.SpellCastTargetsRtargetsM
+
+trajectory (2-.warcraftbuddy.actions.v1.SpellCastTrajectoryR
+trajectory"‡
+CancelSpellRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+spell_id (RspellId>
+expected_operation_revision (RexpectedOperationRevision
+visit_id (RvisitId
+channel (Rchannel")
 ToggleRequest
 enabled (Renabled"ô
 MovementOwnerRequest
@@ -762,7 +946,7 @@ corpseGuid8
 session_id (	R	sessionId
 	self_guid (RselfGuid
 death_epoch (R
-deathEpoch"™
+deathEpoch"˜
 
 KnownSpell
 spell_id (RspellId%
@@ -793,7 +977,78 @@ power_type (R	powerType.
 requires_behind (RrequiresBehind,
 created_item_entry (RcreatedItemEntry.
 self_cast_supported (RselfCastSupported
-	channeled (R	channeled"π
+	channeled (R	channeled4
+generic_cast_supported (RgenericCastSupported3
+classification_reason (	RclassificationReasonF
+	mechanics (2(.warcraftbuddy.actions.v1.SpellMechanicsR	mechanics
+passive (Rpassive"‡
+
+SpellMechanics
+
+attributes (R
+attributes
+stances (Rstances
+stances_not (R
+stancesNot
+target_mask (R
+targetMask
+spell_focus (R
+spellFocus
+facing (Rfacing
+
+conditions (R
+conditions
+
+family_set (R	familySet!
+family_flags	 (RfamilyFlags$
+cost_per_level
+ (RcostPerLevel(
+power_per_second (RpowerPerSecond
+cast_min_ms (R	castMinMs$
+cast_per_level (RcastPerLevel!
+timing_known (RtimingKnown
+range_known (R
+rangeKnown*
+min_hostile_yards (RminHostileYards,
+min_friendly_yards (RminFriendlyYards*
+max_hostile_yards (RmaxHostileYards,
+max_friendly_yards (RmaxFriendlyYards
+cooldown_ms (R
+cooldownMs
+category (Rcategory0
+category_cooldown_ms (RcategoryCooldownMs
+gcd_ms (RgcdMs%
+duration_index (RdurationIndex6
+required_inventory_mask (RrequiredInventoryMask
+	rune_cost (RruneCostB
+reagents (2&.warcraftbuddy.actions.v1.SpellReagentRreagents
+totems (Rtotems?
+effects (2%.warcraftbuddy.actions.v1.SpellEffectReffects2
+requires_combo_points (RrequiresComboPoints-
+interrupts_casting (RinterruptsCasting'
+restores_health  (RrestoresHealth8
+provides_water_breathing! (RprovidesWaterBreathing#
+learned_level" (RlearnedLevel
+dispel_type# (R
+dispelType"=
+SpellReagent
+item_id (RitemId
+count (Rcount"≤
+SpellEffect
+kind (Rkind*
+target_selector_a (RtargetSelectorA*
+target_selector_b (RtargetSelectorB
+aura (Raura,
+triggered_spell_id (RtriggeredSpellId
+	period_ms (RperiodMs#
+chain_targets (RchainTargets!
+radius_index (RradiusIndex&
+created_item_id	 (RcreatedItemId
+points
+ (Rpoints
+dice (Rdice
+misc (Rmisc(
+points_per_level (RpointsPerLevel"û
 SpellOperation
 spell_id (RspellId
 target_guid (R
@@ -814,7 +1069,12 @@ capability
 inventory_confirmed (RinventoryConfirmed'
 channel_started (RchannelStarted#
 channel_ended (RchannelEnded0
-channel_remaining_ms (RchannelRemainingMs"„
+channel_remaining_ms (RchannelRemainingMs-
+operation_revision (RoperationRevision
+visit_id (RvisitId)
+cancel_attempted (RcancelAttempted8
+cancel_transport_written (RcancelTransportWritten4
+cancel_outcome_unknown (RcancelOutcomeUnknown"„
 ObservedAura
 slot (Rslot
 spell_id (RspellId
@@ -1628,7 +1888,7 @@ sourceNode
 known_nodes (R
 knownNodes
 phase (	Rphase
-error (	Rerror"Ä
+error (	Rerror"ä
 FlightpathObservationResponse
 
 session_id (	R	sessionId
@@ -1637,10 +1897,117 @@ session_id (	R	sessionId
 revision (Rrevision
 visit_bound (R
 visitBoundK
-	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation2ø'
-BuddyActionsh
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation/
+activation_revision (RactivationRevisionW
+
+activation (27.warcraftbuddy.actions.v1.FlightpathActivationOperationR
+activation"÷
+FlightpathActivationRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+token (	Rtoken
+npc_guid (RnpcGuid
+source_node (R
+sourceNode)
+destination_node (RdestinationNode#
+menu_revision (RmenuRevision+
+expected_revision	 (RexpectedRevision8
+expected_copper_revision
+ (RexpectedCopperRevision'
+expected_copper (RexpectedCopper.
+accept_unknown_fare (RacceptUnknownFare"Í
+FlightpathActivationOperation
+revision (Rrevision
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+npc_guid (RnpcGuid#
+menu_revision (RmenuRevision
+source_node (R
+sourceNode)
+destination_node (RdestinationNode
+pending	 (Rpending+
+transport_written
+ (RtransportWritten+
+transport_unknown (RtransportUnknown
+phase (	Rphase
+error (	Rerror
+reply_known (R
+replyKnown
+
+reply_code (R	replyCode/
+activation_accepted (RactivationAccepted,
+money_before_known (RmoneyBeforeKnown.
+money_before_copper (RmoneyBeforeCopper2
+money_before_revision (RmoneyBeforeRevision&
+live_fare_known (RliveFareKnown(
+live_route_known (RliveRouteKnown0
+flight_started_known (RflightStartedKnown#
+arrival_known (RarrivalKnown"5
+FlightpathReferenceRequest
+node_id (RnodeId"∑
+FlightpathReferenceNode
+node_id (RnodeId
+map_id (RmapId
+x (Rx
+y (Ry
+z (Rz
+name (	Rname.
+map_reference_known (RmapReferenceKnown"è
+FlightpathReferencePath
+path_id (RpathId
+source_node (R
+sourceNode)
+destination_node (RdestinationNode2
+reference_base_copper (RreferenceBaseCopper2
+reference_price_known (RreferencePriceKnown'
+endpoints_known (RendpointsKnown"û
+FlightpathReferenceInfo
+format (Rformat#
+claimed_build (RclaimedBuild
+name_locale (	R
+nameLocale
+
+repository (	R
+repository'
+upstream_commit (	RupstreamCommit!
+nodes_sha256 (	RnodesSha256!
+paths_sha256 (	RpathsSha256
+
+map_sha256 (	R	mapSha256
+node_url	 (	RnodeUrl
+path_url
+ (	RpathUrl
+
+map_source (	R	mapSource
+
+node_count (R	nodeCount
+
+path_count (R	pathCount#
+unnamed_nodes (RunnamedNodes%
+unmapped_nodes (RunmappedNodes4
+invalid_endpoint_paths (RinvalidEndpointPaths8
+duplicate_endpoint_pairs (RduplicateEndpointPairs(
+zero_price_paths (RzeroPricePaths"ù
+FlightpathReferenceResponse%
+reference_only (RreferenceOnly
+
+node_found (R	nodeFoundE
+node (21.warcraftbuddy.actions.v1.FlightpathReferenceNodeRnodeX
+outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
+info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
+live_fare_known (RliveFareKnown(
+live_route_known (RliveRouteKnown2É+
+BuddyActionsX
+	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
+CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.StateÇ
+FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
-QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
+QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponseÑ
+ActivateFlightpath5.warcraftbuddy.actions.v1.FlightpathActivationRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`

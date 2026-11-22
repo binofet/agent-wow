@@ -264,12 +264,16 @@ func TestItemDisposalGrayArmorDestructionRequiresUnavailableContext(t *testing.T
 }
 
 func TestItemDisposalCASPolicyEditChangesSameRuntimeAndItem(t *testing.T) {
-	r := New()
 	source := disposalPolicySource(t)
-	first := load(t, r, source)
+	r := disposalArmorSemanticRuntime(t, source)
+	first := r.Status().Revision
 	item := disposalTemplate(t, false)
 	beforeJSON, _ := json.Marshal(item)
-	disposalResult(t, r, "vendor_sale", item, "eligible")
+	frame := map[string]any{"mode": "vendor_sale", "item": item}
+	original := disposalResult(t, r, "vendor_sale", item, "eligible")
+	if actual, err := evaluateDisposalProduction(t, source, frame); err != nil || !reflect.DeepEqual(actual, original) {
+		t.Fatal("default production classifier differs from the original semantic proposal", actual, original, err)
+	}
 	// The same exported classifier can be composed into an edited Lua policy.
 	// No game transport, character reconnect or compiled Go change is involved.
 	edited := "local classifier=(function()\n" + source + `
@@ -287,10 +291,16 @@ end}`
 	if out["reason"] != "edited_policy_retains_item" || r.Status().Revision != second {
 		t.Fatal(out, r.Status())
 	}
+	if actual, err := evaluateDisposalProduction(t, edited, frame); err != nil || !reflect.DeepEqual(actual, out) {
+		t.Fatal("default production classifier differs from the edited semantic proposal", actual, out, err)
+	}
 	if got, err := r.Reload(source, first); !errors.Is(err, ErrRevisionConflict) || got != second {
 		t.Fatal("stale source writer replaced the edited classifier", got, err)
 	}
-	disposalResult(t, r, "vendor_sale", item, "keep")
+	retained := disposalResult(t, r, "vendor_sale", item, "keep")
+	if actual, err := evaluateDisposalProduction(t, edited, frame); err != nil || !reflect.DeepEqual(actual, retained) {
+		t.Fatal("default production classifier differs after the rejected stale source writer", actual, retained, err)
+	}
 	afterJSON, _ := json.Marshal(item)
 	if !reflect.DeepEqual(beforeJSON, afterJSON) {
 		t.Fatal("classification changed its observed template input")

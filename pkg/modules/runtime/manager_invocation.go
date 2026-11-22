@@ -123,6 +123,9 @@ func (m *Manager) invokeModule(ctx context.Context, callerName string, req *modv
 	if req.GetModule() == modcb.DisposalPolicyModule && req.GetMethod() == modcb.DisposalPolicyMethod {
 		return m.readDisposalDecision(ctx, callerName, req)
 	}
+	if req.GetModule() == modcb.TradeConsentPolicyModule && req.GetMethod() == modcb.TradeConsentPolicyMethod {
+		return m.readTradeConsentDecision(ctx, callerName, req)
+	}
 	caller, ok := m.registry.Lookup(callerName)
 	if !ok || !caller.Requires(req.GetModule()) {
 		return nil, status.Error(codes.PermissionDenied, "target is not a directly declared dependency")

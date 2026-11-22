@@ -30,6 +30,52 @@ class RPC:
         return dict(selfGuid=self.guid, sessionId=self.sid, revision=self.revision)
 
 
+class SpellInspectionTests(unittest.TestCase):
+    def rpc(self):
+        class SpellRPC:
+            def __init__(self):self.calls=[];self.replacement=None
+            def call(self,method,params):
+                self.calls.append((method,params))
+                if method=='buddy-actions.status':return dict(sessionId=self.replacement or 'body-a',selfGuid='4')
+                if method=='buddy-actions.spell_toolkit':return dict(sessionId='body-a',selfGuid='4',spellbookKnown=True,
+                    spellbookRevision='9',spells=[dict(spellId=10,name='Blizzard',metadataKnown=True,channeled=True,
+                        genericCastSupported=True,classificationReason='automatic_selection_unclassified',
+                        mechanics=dict(targetMask=64,effects=[dict(targetSelectorA=8,targetSelectorB=0)])),
+                        dict(spellId=4294967294,metadataKnown=False,genericCastSupported=True,classificationReason='metadata_unknown')])
+                if method=='session.describe':return dict(sessionId='body-a',characterGuid='4',revision='catalog-1',
+                    methods=[dict(name='buddy-actions.cast_spell',inputType='CastSpellRequest',effect='mutation'),
+                        dict(name='buddy-actions.cast_self',inputType='SelfCastRequest',effect='mutation')],
+                    messages={'CastSpellRequest':dict(fields=[dict(name='targets',kind='message',type='Targets')]),
+                        'Targets':dict(fields=[dict(name='destination',kind='message',type='Position')]),
+                        'Position':dict(fields=[dict(name='x',kind='double')]),'SelfCastRequest':dict(fields=[])})
+                raise AssertionError('Unexpected mutation: '+method)
+        return SpellRPC()
+
+    def test_exact_learned_raw_mechanics_and_installed_cast_inputs_are_read_only(self):
+        rpc=self.rpc()
+        result=edit.inspect_spell(4,'body-a',rpc,10)
+        self.assertTrue(result['learned']);self.assertTrue(result['spell']['channeled'])
+        self.assertEqual(result['spell']['mechanics']['effects'][0]['targetSelectorA'],8)
+        self.assertEqual(set(result['castInputs']),{'CastSpellRequest','Targets','Position','SelfCastRequest'})
+        self.assertEqual([m for m,_ in rpc.calls],['buddy-actions.status','buddy-actions.spell_toolkit','session.describe','buddy-actions.status'])
+        unfamiliar=edit.inspect_spell(4,'body-a',rpc,4294967294)
+        self.assertTrue(unfamiliar['learned']);self.assertFalse(unfamiliar['spell']['metadataKnown'])
+        self.assertTrue(unfamiliar['spell']['genericCastSupported'])
+        self.assertFalse(edit.inspect_spell(4,'body-a',rpc,999)['learned'])
+
+    def test_foreign_body_and_replacement_fail_without_cast_or_reload(self):
+        rpc=self.rpc()
+        original=rpc.call
+        def call(method,params):
+            result=original(method,params)
+            if method=='session.describe':rpc.replacement='replacement'
+            return result
+        rpc.call=call
+        with self.assertRaisesRegex(edit.c.ConversationError,'body changed'):
+            edit.inspect_spell(4,'body-a',rpc,10)
+        self.assertFalse(any('cast_' in method or 'reload' in method for method,_ in rpc.calls))
+
+
 class SelfEditTests(unittest.TestCase):
     def test_composed_source_uses_reflected_host_budget_and_exact_readback(self):
         class SessionRPC(RPC):

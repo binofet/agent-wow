@@ -50,6 +50,112 @@ class RPC:
         raise AssertionError('No mutation is allowed: '+method)
 
 
+class TrainingRPC(RPC):
+    def __init__(self,source=None):
+        super().__init__(source)
+        self.state['revision']='7'
+    def call(self,method,params):
+        if method=='buddy-training.state':
+            self.calls.append((method,copy.deepcopy(params)))
+            return {k:v for k,v in self.state.items() if k not in ('selfGuid','inventoryRevision')}
+        return super().call(method,params)
+
+
+@unittest.skipUnless(BINARY.is_file(), 'build or provide the existing luapolicy evaluator')
+class TrainerDestinationTests(unittest.TestCase):
+    def setUp(self):
+        self.patch=patch.object(policy.runtime,'Bridge',side_effect=bridge_factory(policy.runtime.Bridge))
+        self.patch.start();self.addCleanup(self.patch.stop)
+
+    def rank(self,rpc,rows,scope='nearby',**options):
+        return policy.rank_trainers(rpc,copy.deepcopy(rpc.state),1,rows,scope,**options)
+
+    def test_actual_bundle_interaction_priority_range_ties_and_same_body_tuning(self):
+        source=subprocess.check_output(['python3','-B',str(ROOT/'dev/encounter-bundle')],text=True)
+        rpc=TrainingRPC(source)
+        rows=[(50.,VENDOR+3,False),(20.,VENDOR+2,False),(20.,VENDOR,False),
+            (101.,VENDOR+4,False),(2.,VENDOR+1,True)]
+        self.assertEqual(self.rank(rpc,rows),[(2.,VENDOR+1),(20.,VENDOR),(20.,VENDOR+2),(50.,VENDOR+3)])
+        self.assertEqual(self.rank(rpc,rows,'travel'),[(20.,VENDOR),(20.,VENDOR+2),(50.,VENDOR+3)])
+        rpc.source=source.replace('trainer_search_yards, trainer_interaction_yards = 100,4',
+            'trainer_search_yards, trainer_interaction_yards = 120,4').replace(
+            'trainer_prefer_nearest = true','trainer_prefer_nearest = false')
+        rpc.generation='2'
+        self.assertEqual(self.rank(rpc,rows),[(2.,VENDOR+1),(101.,VENDOR+4),(50.,VENDOR+3),(20.,VENDOR),(20.,VENDOR+2)])
+        self.assertEqual(rpc.state['sessionId'],'current-body')
+        self.assertTrue(all(m.startswith('session.') or m=='buddy-training.state' for m,_ in rpc.calls))
+
+    def test_training_revision_or_body_change_rejects_current_source_selection(self):
+        for field in ('revision','sessionId'):
+            rpc=TrainingRPC()
+            class Bridge:
+                def evaluate(self,source,value):
+                    rpc.state[field]='8' if field=='revision' else 'replacement'
+                    return dict(available=True,decision=dict(trainers=[str(VENDOR)]))
+            with self.subTest(field=field),self.assertRaisesRegex(policy.Error,'body_or_observation_changed'):
+                self.rank(rpc,[(20.,VENDOR,False)],bridge=Bridge())
+
+    def test_unsupported_trainer_export_never_falls_back_or_writes(self):
+        rpc=TrainingRPC('return {service_destination=function() return {} end}')
+        with self.assertRaisesRegex(policy.Error,'current_observed_trainers'):
+            self.rank(rpc,[(20.,VENDOR,False)])
+        self.assertTrue(all(m.startswith('session.') or m=='buddy-training.state' for m,_ in rpc.calls))
+
+    def test_maintenance_selects_lua_trainer_and_preserves_exact_pending_request(self):
+        import test_party_maintenance as maintenance
+        subject=maintenance.m
+        rpc=maintenance.RPC()
+        npc=int(rpc.offer['npcGuid'])
+        positions={npc:2.,npc+1:20.}
+        # The accepted policy deliberately ranks a travel candidate before a
+        # currently interactable trainer. Python must execute that first row.
+        rpc.policy_source=rpc.policy_source.replace(
+            'then before=candidate.interactable end','then before=other.interactable end')
+        rpc.world['self'].update(classKnown=True,classId=5,levelKnown=True,movementFlagsKnown=True)
+        rpc.world['owner'].update(mapKnown=True,positionKnown=True,movementFlagsKnown=True,x=0.,y=0.,z=0.)
+        original=rpc.call
+        def call(method,params):
+            if method=='buddy-training.discover':
+                rpc.calls.append((method,copy.deepcopy(params)))
+                rows=[]
+                for guid,x in positions.items():
+                    distance=abs(x-rpc.actions['position']['x'])
+                    rows.append(dict(creature=dict(guid=str(guid),entry=guid>>24&0xffffff,
+                        present=True,mapKnown=True,mapId=0,positionKnown=True,x=x,y=0.,z=0.,
+                        aliveKnown=True,alive=True,healthKnown=True,health=100,npcFlags=0x33),
+                        distanceKnown=True,distance=distance,interactable=distance<=4,
+                        blockedReason='' if distance<=4 else 'trainer_outside_conservative_range'))
+                return copy.deepcopy(dict(state=rpc.training,nearby=rows))
+            if method=='buddy-actions.travel_trainer':
+                rpc.offer['npcGuid']=params['npcGuid']
+                rpc.trainer_x=positions[int(params['npcGuid'])]
+            return original(method,params)
+        rpc.call=call
+        with patch.object(subject.town_policy.runtime,'Bridge',side_effect=bridge_factory(maintenance.TRAINER_BRIDGE)),\
+                patch.object(subject.c,'quest_task_snapshot',return_value=dict(active=False)),\
+                patch.object(subject.c,'area_quest_snapshot',return_value=dict(active=False)),\
+                patch.object(subject.c,'party_town_snapshot',return_value=dict(active=False)),\
+                patch.object(subject,'profession_active',return_value=False),\
+                patch.object(subject.harvest,'routine_locked',return_value=False):
+            saved=[]
+            actor=subject.Maintenance('Arlen',1,rpc,lambda row:saved.append(copy.deepcopy(row)),now=lambda:100.)
+            actor.tick()
+            self.assertEqual([p['npcGuid'] for m,p in rpc.calls if m=='buddy-actions.travel_trainer'],[str(npc+1)])
+            self.assertEqual([p['npcGuid'] for m,p in rpc.calls if m=='buddy-training.list'],[str(npc+1)])
+            self.assertEqual([p['npcGuid'] for m,p in rpc.calls if m=='buddy-training.buy'],[str(npc+1)])
+            self.assertEqual(saved[-1]['training'][-1]['status'],'reserved')
+            methods=[m for m,_ in rpc.calls]
+            self.assertLess(methods.index('buddy-actions.release_interaction'),methods.index('buddy-training.list'))
+            self.assertIsNone(rpc.token)
+            # A current ambiguous purchase remains bound to its exact NPC;
+            # changing ranking cannot silently move that request to a peer.
+            rpc.policy_source=rpc.policy_source.replace('trainer_prefer_nearest = true','trainer_prefer_nearest = false')
+            actor.next_query=0
+            actor.tick()
+            self.assertEqual(len([m for m,_ in rpc.calls if m=='buddy-training.buy']),1)
+            self.assertEqual(saved[-1]['training'][-1]['npc'],str(npc+1))
+
+
 @unittest.skipUnless(BINARY.is_file(), 'build or provide the existing luapolicy evaluator')
 class VendorDestinationTests(unittest.TestCase):
     def setUp(self):

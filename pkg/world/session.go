@@ -13,6 +13,7 @@ import (
 
 	"github.com/agent-wow/agent-wow/pkg/modules/runtime"
 	"github.com/agent-wow/agent-wow/pkg/modules/session"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 	"github.com/agent-wow/agent-wow/pkg/worldconn"
 	"google.golang.org/grpc/codes"
@@ -43,7 +44,8 @@ type Session struct {
 	workers      sync.WaitGroup
 	cleanupErr   error
 
-	gameplayTrace *GameplayTrace
+	gameplayTrace          *GameplayTrace
+	transportScopeSnapshot *modv1.TransportScope
 }
 
 // Options injects a session-owned module runtime and separate startup budgets.
@@ -57,10 +59,11 @@ type Options struct {
 	GameplayTrace *GameplayTrace
 }
 type writeRequest struct {
-	ctx   context.Context
-	op    uint32
-	body  []byte
-	reply chan error
+	ctx            context.Context
+	op             uint32
+	body           []byte
+	reply          chan error
+	transportScope *modv1.TransportScope
 }
 
 type logoutOperation struct {
@@ -109,13 +112,20 @@ func enter(ctx context.Context, conn *worldconn.Conn, realm Realm, character Cha
 	if opts.Modules == nil {
 		opts.Modules = modrt.New(nil, nil, logger)
 	}
+	initialScope, err := newTransportScope(character.GUID)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("create transport scope: %w", err)
+	}
 	lifetime, stop := context.WithCancel(context.Background())
 	s := &Session{conn: conn, logger: logger, gameplayTrace: opts.GameplayTrace, state: State{Status: EnteringWorld, Realm: realm, Character: character}, done: make(chan struct{}), abort: make(chan struct{}), logout: make(chan chan *logoutOperation), modules: opts.Modules, started: time.Now(), startLogin: make(chan struct{}), startupDone: make(chan struct{}), closed: make(chan struct{}), writes: make(chan writeRequest), ctx: lifetime, cancel: stop}
+	s.transportScopeSnapshot = initialScope
 	ready := make(chan struct{})
 	go s.run(ready, timing)
 	startup, endStartup := context.WithTimeout(ctx, opts.ModuleTimeout)
 	stopStartup := context.AfterFunc(lifetime, endStartup)
-	err := s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock})
+	err = s.modules.Start(startup, modsession.Session{Identity: modsession.Identity{CharacterGUID: character.GUID, CharacterName: character.Name, RealmID: realm.ID, RealmName: realm.Name}, SendPacket: s.SendPacket, Clock: s.Clock,
+		SendScopedPacket: s.SendScopedPacket, TransportScope: s.TransportScope})
 	endStartup()
 	stopStartup()
 	close(s.startupDone)
@@ -176,6 +186,16 @@ func (s *Session) InvokeJSON(ctx context.Context, method string, params json.Raw
 // Once the write starts its outcome can be unknown to a canceled caller; callers
 // must never retry it automatically.
 func (s *Session) SendPacket(ctx context.Context, op uint32, body []byte) error {
+	return s.sendPacket(ctx, op, body, nil)
+}
+
+// SendScopedPacket preserves the caller's exact scope until the owner-loop
+// final comparison. Only spline completion currently supports scoped writes.
+func (s *Session) SendScopedPacket(ctx context.Context, op uint32, body []byte, scope *modv1.TransportScope) error {
+	return s.sendPacket(ctx, op, body, scope)
+}
+
+func (s *Session) sendPacket(ctx context.Context, op uint32, body []byte, scope *modv1.TransportScope) error {
 	if err := ctx.Err(); err != nil {
 		return status.FromContextError(err).Err()
 	}
@@ -198,7 +218,7 @@ func (s *Session) SendPacket(ctx context.Context, op uint32, body []byte) error 
 	if !s.loginStarted.Load() {
 		return status.Error(codes.FailedPrecondition, "player login has not begun")
 	}
-	r := writeRequest{ctx: ctx, op: op, body: append([]byte(nil), body...), reply: make(chan error, 1)}
+	r := writeRequest{ctx: ctx, op: op, body: append([]byte(nil), body...), reply: make(chan error, 1), transportScope: cloneTransportScope(scope)}
 	select {
 	case <-s.done:
 		return status.Error(codes.FailedPrecondition, "session is closed")
@@ -280,7 +300,7 @@ func (s *Session) run(ready chan struct{}, timing timings) {
 			}
 		}
 	}()
-	e := &engine{s: s, timing: timing, ready: ready, phase: EnteringWorld, pings: make(map[uint32]time.Time)}
+	e := &engine{s: s, timing: timing, ready: ready, phase: EnteringWorld, pings: make(map[uint32]time.Time), transport: transportScopeState{scope: s.TransportScope()}}
 	err := e.loop(packets)
 	s.modules.Stop()
 	s.cancel()

@@ -10,6 +10,7 @@ import (
 	"math/bits"
 	"time"
 
+	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
 
@@ -125,10 +126,12 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 	if p != nil {
 		p.x, p.y, p.z, p.orientation = x, y, z, o
 		p.positionKnown = true
+		p.positionInferred = false
 		p.positionAt = now
 		p.positionRevision++
 		p.observedAt = now
 		p.trajectory = observedTrajectory{}
+		p.receivedPosition = p.isSelf
 	}
 	return nil
 }
@@ -138,6 +141,7 @@ func markAbsent(p *observed, now time.Time) {
 	}
 	p.present = false
 	p.positionKnown = false
+	p.positionInferred = false
 	p.movementKnown = false
 	p.mapKnown = false
 	p.observedAt = now
@@ -299,6 +303,9 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		if err := movement(c, p, now); err != nil {
 			return true, err
 		}
+		if p != nil && p.isSelf {
+			p.receivedMotionInvalid = true
+		}
 		return true, c.done()
 	case opcode.SMSGForceMoveRoot, opcode.SMSGForceMoveUnroot:
 		guid := c.guid()
@@ -313,6 +320,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 				p.movementFlags &^= 0x800
 			}
 			p.observedAt = now
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	case opcode.SMSGForceRunSpeedChange, opcode.SMSGForceWalkSpeedChange:
@@ -335,6 +343,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 				p.walkSpeed = speed
 			}
 			p.observedAt = now
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	case opcode.SMSGClientControlUpdate:
@@ -346,6 +355,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, errLayout
 		}
 		if p := &players[0]; guid != 0 && guid == p.guid {
+			p.receivedMotionInvalid = true
 			p.trajectory.controlReturned = enabled == 1
 			p.observedAt = now
 			settleSelfSpline(p, now)
@@ -360,6 +370,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 				return true, err
 			}
 			p.positionKnown = false
+			p.positionInferred = false
 			p.movementKnown = false
 			p.observedAt = now
 			p.trajectory = observedTrajectory{}
@@ -380,9 +391,11 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		}
 		if p := state.target(guid); p != nil {
 			p.positionKnown = false
+			p.positionInferred = false
 			p.movementKnown = false
 			p.observedAt = now
 			p.trajectory = observedTrajectory{}
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	}
@@ -420,36 +433,32 @@ func movementOpcode(op uint32) bool {
 }
 
 func movement(c *cursor, p *observed, now time.Time) error {
-	flags, extra, timestamp := c.u32(), c.u16(), c.u32()
-	x, y, z, o := c.f32(), c.f32(), c.f32(), c.f32()
-	if flags&0x200 != 0 {
-		c.guid()
-		c.skip(16 + 4 + 1)
-		if extra&0x400 != 0 {
-			c.skip(4)
-		}
-	}
-	if flags&0x02200000 != 0 || extra&0x20 != 0 {
-		c.skip(4)
-	}
-	c.skip(4) // fallTime is present even while standing.
-	if flags&0x1000 != 0 {
-		c.skip(16)
-	}
-	if flags&0x04000000 != 0 {
-		c.skip(4)
-	}
 	if c.err != nil {
 		return c.err
 	}
-	if err := position(p, x, y, z, o, now); err != nil {
+	start := c.off
+	info, consumed, err := movementinfo.DecodePrefix(c.b[start:])
+	if err != nil {
+		return errShort
+	}
+	c.skip(consumed)
+	// Preserve the existing World base-pose policy. Optional floats were
+	// previously skipped, so their validity qualifies only the new own facts.
+	if err := position(p, info.X, info.Y, info.Z, info.Orientation, now); err != nil {
 		return err
 	}
 	if p != nil {
 		p.movementKnown = true
-		p.movementFlags = flags
-		p.extraFlags = uint32(extra)
-		p.movementTime = timestamp
+		p.movementFlags = info.Flags
+		p.extraFlags = uint32(info.ExtraFlags)
+		p.movementTime = info.Time
+		if p.isSelf {
+			p.receivedMovement = true
+			p.receivedMovementInfo = info
+			clear(p.receivedMovementWire[:])
+			copy(p.receivedMovementWire[:], c.b[start:start+consumed])
+			p.receivedMovementWireLen = uint8(consumed)
+		}
 	}
 	return nil
 }
@@ -481,6 +490,8 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					self := guid == players[0].guid
 					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
+						p.receivedOwnCreate = true
+						p.receivedUnitFlags = true
 						p.questRevision++
 						p.backpackRevision++
 						for _, f := range []int{unitChannelObject, unitChannelObject + 1, unitChannelSpell, unitShapeshiftBytes} {
@@ -709,7 +720,8 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 	}
 	t.elapsed = c.u32()
 	t.duration = c.u32()
-	c.u32()
+	t.id = c.u32()
+	t.idKnown = true
 	for i := 0; i < 3; i++ {
 		if f := c.f32(); !validFloat(f) {
 			return errFloat
@@ -737,7 +749,16 @@ func splineCreate(c *cursor, p *observed, now time.Time) error {
 	t.destinationKnown = nodes > 0 && t.duration > 0 && !t.cyclic && t.flags&unsafeEndpointFlags == 0 && mode <= 1
 	if p != nil {
 		t.relative = p.movementFlags&0x200 != 0
+		if p.isSelf && t.relative && p.receivedMovement && p.receivedMovementInfo.TransportPresent {
+			t.transportKnown = true
+			t.transport = p.receivedMovementInfo.Transport.GUID
+			t.seat = p.receivedMovementInfo.Transport.Seat
+		}
 		p.trajectory = t
+		if p.isSelf {
+			p.receivedSpline = true
+			p.receivedSplineHeader = t
+		}
 	}
 	return c.err
 }
@@ -764,6 +785,9 @@ func values(c *cursor, p *observed, now time.Time) error {
 				return errBounds
 			}
 			if p != nil && p.isSelf {
+				if field == unitFlags {
+					p.receivedUnitFlags = true
+				}
 				if field >= playerEquipmentFirst && field < playerEquipmentFirst+equipmentSlots*2 {
 					slot, shift := (field-playerEquipmentFirst)/2, uint((field-playerEquipmentFirst)%2*32)
 					p.equipment[slot] = p.equipment[slot]&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift

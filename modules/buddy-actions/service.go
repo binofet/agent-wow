@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -75,6 +76,9 @@ type Service struct {
 	posKnown                                   bool
 	positionRevision                           uint64
 	castCount, cancelCastCount                 byte
+	spellOperationSequence                     uint64
+	spellOperationEpoch                        uint64
+	spellOperationEntropy                      io.Reader
 	protectedCastCancelAttempted               bool
 	lastWorld                                  *worldv1.SnapshotResponse
 	posMap                                     uint32
@@ -114,6 +118,7 @@ type Service struct {
 	spellCooldownBaselineKnown                 bool
 	weaponCombo                                comboObservation
 	categoryReady                              map[uint32]time.Time
+	serverSpellReady, serverCategoryReady      map[uint32]time.Time
 	controlBreakBindings                       map[uint32]observedBuffAura
 	supportOp                                  *supportAttempt
 	meleeOp                                    *meleeAttempt
@@ -177,6 +182,7 @@ type Service struct {
 	transportSequence                    uint64
 	lastTransportError                   error
 	flightpath                           flightpathTracker
+	flightpathActivation                 flightpathActivationTracker
 }
 
 func NewService(session sessionAPI, selfGUID uint64, sessionID ...string) *Service {
@@ -855,6 +861,15 @@ func (s *Service) writeMovementLocked(ctx context.Context, op uint32, p position
 			return false
 		}
 	}
+	if moving {
+		if guard, ok := ctx.Value(movementPrewriteGuardKey{}).(movementPrewriteGuard); ok {
+			var allowed bool
+			w, allowed = guard(ctx, w)
+			if !allowed {
+				return false
+			}
+		}
+	}
 	if snapshotErr != nil {
 		// Visibility/RPC loss must still permit one bounded STOP of movement
 		// already written at the last known position. It never permits travel.
@@ -1349,6 +1364,12 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	s.expireMeleeOperationLocked()
 	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)
+	if handled, err := s.flightpathActivationPacketLocked(packet.Opcode, p); handled {
+		if err != nil {
+			s.state.MalformedPackets++
+		}
+		return &emptypb.Empty{}, nil
+	}
 	if handled, err := s.flightpathPacketLocked(packet.Opcode, p); handled {
 		if err != nil {
 			s.state.MalformedPackets++
