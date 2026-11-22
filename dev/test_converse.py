@@ -2107,15 +2107,20 @@ class BoundaryTests(unittest.TestCase):
                             "pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'text':'Hi, Joel!','emote':'WAVE'}))\n"
                             "print(json.dumps({'type':'turn.completed'}))\n")
             fake.chmod(0o700)
-            reply = converse.CodexBrain(fake, folder).generate([{"speaker": "Joel", "text": "Hi"}])
+            brain = converse.CodexBrain(fake, folder)
+            reply = brain.generate([{"speaker": "Joel", "text": "Hi"}])
             self.assertEqual(reply, {"text": "Hi, Joel!", "emote": "WAVE", "action": "NONE"})
-            self.assertEqual(list(folder.iterdir()), [fake])
+            self.assertIsNone(brain.last_failure_receipt)
+            self.assertEqual([path for path in folder.iterdir() if path.name != 'brain-failures'], [fake])
             fake.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n")
             started = time.monotonic()
+            brain = converse.CodexBrain(fake, folder, timeout=0.15)
             with self.assertRaises(converse.ConversationError):
-                converse.CodexBrain(fake, folder, timeout=0.15).generate([])
+                brain.generate([])
             self.assertLess(time.monotonic() - started, 4)
-            self.assertEqual(list(folder.iterdir()), [fake])
+            self.assertCountEqual(list(folder.iterdir()), [fake, folder/'brain-failures'])
+            self.assertEqual(len(list((folder/'brain-failures').glob('*.json'))), 1)
+            self.assertEqual(brain.last_failure_receipt['reason'], 'timeout')
 
     def test_private_state_rejects_symlink_and_singleton_lock(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3518,16 +3523,34 @@ print(json.dumps(dict(type='turn.completed')),flush=True)
 
 
 class DeveloperOutcomeRetentionTests(unittest.TestCase):
-    def brain(self,folder,body,timeout=2):
+    def brain(self,folder,body,timeout=2,stream_prefix=None):
         repo=DeveloperBrainTests.repository(self,folder/'repo')
         state=converse.ensure_state(folder/'state')
         fake=folder/'fake-codex';calls=folder/'calls'
-        fake.write_text('#!/usr/bin/env python3\nimport json,pathlib,sys,time\n'
+        prefix=('print(json.dumps(dict(type="turn.started")),flush=True)\n'
+            if stream_prefix is None else stream_prefix)
+        fake.write_text('#!/usr/bin/env python3\nimport json,os,pathlib,sys,time\n'
             'sys.stdin.read()\n'+f'p=pathlib.Path({str(calls)!r});p.write_text(p.read_text()+"x" if p.exists() else "x")\n'
-            'print(json.dumps(dict(type="turn.started")),flush=True)\n'+body)
+            +prefix+body)
         fake.chmod(0o700)
         with patch.object(converse,'ROOT',repo):brain=converse.CodexBrain(fake,state,timeout=timeout,developer_workspace=repo)
         return brain,DeveloperBrainTests.state(self,repo),calls
+
+    def failure_receipt(self,brain):
+        self.assertRegex(brain.last_request_id, r'^[0-9a-f]{32}$')
+        folder=brain.state_dir/'brain-failures'
+        self.assertEqual(folder.stat().st_mode&0o777,0o700)
+        files=list(folder.glob('*.json'))
+        self.assertLessEqual(len(files),8)
+        for path in files:
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+            self.assertLessEqual(path.stat().st_size,8192)
+        path=folder/(brain.last_request_id+'.json')
+        record=converse.read_json(path)
+        self.assertEqual(record,brain.last_failure_receipt)
+        self.assertEqual(record['requestId'],brain.last_request_id)
+        self.assertEqual(record['actionOutcome'],'unknown')
+        return record
 
     def test_successful_tools_survive_timeout_without_replay_or_raw_text(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3537,14 +3560,17 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
                 'print(json.dumps(dict(type="item.completed",item=dict(id="cas1",type="command_execution",status="completed",exit_code=0,command="private source secret",aggregated_output="private credential secret"))),flush=True)\n'
                 'print(json.dumps(dict(type="item.completed",item=dict(id="patch1",type="file_change",status="completed",changes=["private source secret"]))),flush=True)\n'
                 'print(json.dumps(dict(type="item.started",item=dict(id="verify2",type="command_execution",command="private source secret"))),flush=True)\n'
-                f'pathlib.Path({str(ready)!r}).write_text("ready")\n'
-                'time.sleep(30)\n',timeout=.2)
-            clock_calls=[0]
-            def clock():
-                clock_calls[0]+=1
-                return 1 if clock_calls[0]>1 and ready.exists() else 0
-            with patch.object(converse.time,'monotonic',side_effect=clock):
-                with self.assertRaisesRegex(converse.ConversationError,'timed out'):brain.generate([],state)
+                f'pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))\n'
+                'time.sleep(30)\n',timeout=.2,stream_prefix=
+                'print(json.dumps(dict(type="thread.started",thread_id="thread-real-child")),flush=True)\n'
+                'print(json.dumps(dict(type="turn.started",turn_id="turn-real-child")),flush=True)\n')
+            logical=[0]
+            def cancelled():
+                if ready.exists():logical[0]=1
+                return False
+            with patch.object(converse.time,'monotonic',side_effect=lambda:logical[0]):
+                with self.assertRaisesRegex(converse.ConversationError,'timed out'):
+                    brain.generate([],state,cancelled=cancelled)
             path=brain.state_dir/'development-events-last.json';raw=path.read_text();record=converse.read_json(path)
             self.assertEqual(calls.read_text(),'x')
             self.assertEqual((record['sessionId'],record['selfGuid']),('aw-current','1'))
@@ -3558,13 +3584,23 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual(brain.last_development_result,record)
             self.assertNotIn('private',raw);self.assertNotIn('command"',raw)
             self.assertEqual(path.stat().st_mode&0o777,0o600)
-            self.assertEqual(list(brain.state_dir.iterdir()),[path])
+            self.assertCountEqual(list(brain.state_dir.iterdir()),[path,brain.state_dir/'brain-failures'])
+            failure=self.failure_receipt(brain)
+            self.assertEqual((failure['threadId'],failure['turnId']),('thread-real-child','turn-real-child'))
+            self.assertEqual(failure['childPid'],int(ready.read_text()))
+            self.assertTrue(failure['childStarted']);self.assertTrue(failure['childReaped'])
+            self.assertEqual(failure['childPhase'],'item.started')
+            self.assertEqual(failure['reason'],'timeout')
+            self.assertEqual(failure['pendingTools'],['verify2'])
+            self.assertEqual(failure['counts'],record['counts'])
+            self.assertEqual(failure['tools'],record['tools'])
+            self.assertNotIn('private',json.dumps(failure))
 
     def test_failed_cli_retains_command_failure_and_concrete_exit_without_error_dump(self):
         with tempfile.TemporaryDirectory() as temporary:
             brain,state,calls=self.brain(Path(temporary),
                 'print(json.dumps(dict(type="item.completed",item=dict(id="test1",type="command_execution",status="failed",exit_code=7))),flush=True)\n'
-                'print(json.dumps(dict(type="turn.failed",error=dict(message="private prompt/source credential"))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.failed",error=dict(code=-32601,message="private prompt/source credential"))),flush=True)\n'
                 'sys.stderr.write("private stderr credential")\n'
                 'sys.exit(9)\n')
             with self.assertRaisesRegex(converse.ConversationError,'reply failed'):brain.generate([],state)
@@ -3575,6 +3611,12 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual(record['tools'][0]['exitCode'],7)
             self.assertGreater(record['stderrBytes'],0)
             self.assertNotIn('private',json.dumps(record));self.assertEqual(calls.read_text(),'x')
+            failure=self.failure_receipt(brain)
+            self.assertEqual(failure['errorEvents'],[dict(eventType='turn.failed',code=-32601)])
+            self.assertEqual(failure['processExitCode'],9)
+            self.assertEqual(failure['counts']['failedCommands'],1)
+            self.assertEqual(failure['tools'][0]['exitCode'],7)
+            self.assertNotIn('private',json.dumps(failure))
 
     def test_incomplete_stream_keeps_prior_success_but_never_claims_complete_reply(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3589,6 +3631,34 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual(record['counts']['successfulCommands'],1)
             self.assertEqual(record['pendingTools'],['pending2'])
             self.assertEqual(record['processExitCode'],0);self.assertEqual(calls.read_text(),'x')
+
+    def test_nested_json_diagnostic_failure_preserves_original_child_failure_and_prior_tool(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="before-nested-json",type="command_execution",status="completed",exit_code=0,aggregated_output="private tool output"))),flush=True)\n'
+                'print("["*2000+"0"+"]"*2000,flush=True)\n'
+                'sys.exit(9)\n')
+            nested='['*2000+'0'+']'*2000
+            original_loads=converse.json.loads
+            def decode(value,*args,**kwargs):
+                # Python versions differ in native decoder recursion limits.
+                # Inject only this parent's bounded diagnostic-line failure;
+                # the real child and every other JSON decode stay unchanged.
+                if value==nested or value==nested.encode():raise RecursionError('injected diagnostic decoder recursion')
+                return original_loads(value,*args,**kwargs)
+            with patch.object(converse.json,'loads',side_effect=decode):
+                with self.assertRaisesRegex(converse.ConversationError,'reply failed'):
+                    brain.generate([],state)
+            record=self.failure_receipt(brain)
+            self.assertEqual((record['reason'],record['errorType']),('process_failed','ConversationError'))
+            self.assertEqual(record['retentionError'],'RecursionError')
+            self.assertEqual(record['processExitCode'],9)
+            self.assertTrue(record['childStarted']);self.assertTrue(record['childReaped'])
+            self.assertEqual(record['counts']['successfulCommands'],1)
+            self.assertEqual(record['tools'],[dict(itemId='before-nested-json',type='command_execution',status='completed',exitCode=0)])
+            self.assertEqual(brain.last_development_events['successfulCommands'],1)
+            self.assertNotIn('[[[[[[',json.dumps(record));self.assertNotIn('private',json.dumps(record))
+            self.assertEqual(calls.read_text(),'x')
 
     def test_complete_tools_are_separate_from_invalid_final_reply(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3616,6 +3686,8 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual((len(record['tools']),record['omittedTools']),(16,24))
             self.assertEqual(record['tools'][-1]['itemId'],'cmd39')
             self.assertEqual(brain.last_development_events,dict(failedCommands=0,successfulCommands=40,failedPatches=0,completedPatches=0))
+            self.assertRegex(brain.last_request_id,r'^[0-9a-f]{32}$')
+            self.assertIsNone(brain.last_failure_receipt)
 
     def test_maximum_tool_ids_and_pending_records_fit_existing_private_reader(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -3652,6 +3724,226 @@ class DeveloperOutcomeRetentionTests(unittest.TestCase):
             self.assertEqual(record['counts']['successfulCommands'],1)
             self.assertEqual(record['tools'][0]['itemId'],'cas-before-pipe-close')
             self.assertFalse(record['streamComplete'])
+
+    def test_failure_journal_rotates_and_never_retains_nonnumeric_codes_or_private_payloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="turn.failed",error=dict(code="private-code-secret",message="private prompt credential"))),flush=True)\n'
+                'sys.stderr.write("private stderr credential")\n'
+                'sys.exit(9)\n')
+            request_ids=[]
+            for _ in range(10):
+                with self.assertRaisesRegex(converse.ConversationError,'reply failed'):
+                    brain.generate([dict(speaker='Joel',text='private owner prompt secret')],state)
+                record=self.failure_receipt(brain)
+                request_ids.append(record['requestId'])
+                self.assertEqual(record['errorEvents'],[dict(eventType='turn.failed',codeUnknown=True)])
+                self.assertNotIn('private',json.dumps(record))
+                self.assertTrue(record['childReaped'])
+            self.assertEqual(len(set(request_ids)),10)
+            files=list((brain.state_dir/'brain-failures').glob('*.json'))
+            self.assertEqual(len(files),8)
+            self.assertEqual({path.stem for path in files},set(request_ids[-8:]))
+            self.assertEqual(calls.read_text(),'x'*10)
+
+    def test_ordinary_timeout_cancel_and_stop_keep_reaped_child_receipts(self):
+        for mode,reason,error in (('timeout','timeout',converse.ConversationError),
+                ('cancel','owner_input_waiting',converse.OwnerInputPending),
+                ('stop','stop_requested',converse.Stopped)):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temporary:
+                folder=Path(temporary);ready=folder/'ready'
+                brain,state,calls=self.brain(folder,
+                    f'pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))\n'
+                    'time.sleep(30)\n',timeout=.2)
+                brain.developer_workspace=None
+                state['development']['enabled']=False
+                if mode=='stop':brain.stopped=ready.exists
+                logical=[0]
+                def cancelled():
+                    if ready.exists():logical[0]=1
+                    return mode=='cancel' and ready.exists()
+                with patch.object(converse.time,'monotonic',side_effect=lambda:logical[0]):
+                    with self.assertRaises(error):brain.generate([],state,cancelled=cancelled)
+                record=self.failure_receipt(brain)
+                self.assertEqual(record['reason'],reason)
+                self.assertEqual(record['childPid'],int(ready.read_text()))
+                self.assertTrue(record['childStarted']);self.assertTrue(record['childReaped'])
+                self.assertEqual(record['childPhase'],'turn.started')
+                self.assertFalse(record.get('threadId'));self.assertFalse(record.get('turnId'))
+                self.assertEqual(record['tools'],[]);self.assertEqual(record['pendingTools'],[])
+                self.assertFalse(any(record['counts'].values()))
+                self.assertIsNone(brain.last_development_events)
+                self.assertFalse((brain.state_dir/'development-events-last.json').exists())
+                self.assertEqual(calls.read_text(),'x')
+
+    def test_prelaunch_failure_gets_fresh_identity_without_stale_tool_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            brain,state,calls=self.brain(Path(temporary),
+                'print(json.dumps(dict(type="item.completed",item=dict(id="old-edit",type="file_change",status="completed"))),flush=True)\n'
+                'print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Done.",emote="NONE")))\n')
+            self.assertEqual(brain.generate([],state)['text'],'Done.')
+            previous=brain.last_request_id
+            self.assertEqual(brain.last_development_result['tools'][0]['itemId'],'old-edit')
+            for mode,reason,error in (('cancel','owner_input_waiting',converse.OwnerInputPending),
+                    ('binding','developer_binding_changed',converse.ConversationError),
+                    ('spawn','process_spawn_failed',OSError)):
+                current=copy.deepcopy(state)
+                if mode=='binding':current['current_request']['source']='spell_learning'
+                with self.subTest(mode=mode),patch.object(converse.subprocess,'Popen',
+                        side_effect=OSError('private spawn path secret')) as launch:
+                    with self.assertRaises(error):
+                        brain.generate([],current,cancelled=(lambda:True) if mode=='cancel' else None)
+                self.assertEqual(launch.call_count,1 if mode=='spawn' else 0)
+                record=self.failure_receipt(brain)
+                self.assertNotEqual(record['requestId'],previous);previous=record['requestId']
+                self.assertEqual(record['reason'],reason)
+                self.assertFalse(record['childStarted']);self.assertFalse(record['childReaped'])
+                self.assertIsNone(record['childPid']);self.assertIsNone(record['processExitCode'])
+                self.assertEqual(record['childPhase'],'not_started')
+                self.assertEqual(record['tools'],[]);self.assertEqual(record['pendingTools'],[])
+                self.assertFalse(any(record['counts'].values()))
+                self.assertNotIn('old-edit',json.dumps(record));self.assertNotIn('private',json.dumps(record))
+            self.assertEqual(calls.read_text(),'x')
+            self.assertEqual(brain.generate([],state)['text'],'Done.')
+            self.assertNotEqual(brain.last_request_id,previous)
+            self.assertIsNone(brain.last_failure_receipt)
+            self.assertEqual(brain.last_development_events['completedPatches'],1)
+            self.assertEqual(calls.read_text(),'xx')
+            self.assertEqual(len(list((brain.state_dir/'brain-failures').glob('*.json'))),3)
+
+    def test_conversation_publishes_current_request_failure_with_original_native_and_chat_identity(self):
+        for mode in ('timeout','body_reset','owner_preempt'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as temporary:
+                folder=Path(temporary);ready=folder/'ready';finish=folder/'finish';child_pid=folder/'child-pid'
+                brain,state,calls=self.brain(folder,
+                    f'if pathlib.Path({str(finish)!r}).exists():\n'
+                    ' pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Done.",emote="NONE")))\n'
+                    ' print(json.dumps(dict(type="turn.completed")),flush=True)\n'
+                    'else:\n'
+                    f' pathlib.Path({str(child_pid)!r}).write_text(str(os.getpid()))\n'
+                    ' print(json.dumps(dict(type="item.started",item=dict(id="unknown-action",type="command_execution",command="private command secret"))),flush=True)\n'
+                    f' pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))\n'
+                    ' time.sleep(30)\n',timeout=.2 if mode=='timeout' else 5)
+                statuses=[];rpc_calls=[];active_progress=[]
+                def status(**fields):
+                    statuses.append(fields)
+                    progress=fields.get('brainProgress')
+                    if (mode=='owner_preempt' and isinstance(progress,dict) and not progress.get('childReaped')
+                            and (progress.get('lastTool') or {}).get('itemId')=='unknown-action'
+                            and progress.get('pendingToolCount',0)>0):
+                        self.assertTrue(progress['childStarted'])
+                        self.assertEqual(progress['childPid'],int(child_pid.read_text()))
+                        self.assertEqual(progress['requestId'],brain.last_request_id)
+                        self.assertEqual((progress['sessionId'],progress['chatSessionId']),('aw-current','chat-original'))
+                        self.assertEqual((progress['selfGuid'],progress['cursor']),('1',41))
+                        self.assertEqual(progress['lastTool']['eventType'],'item.started')
+                        self.assertNotIn(progress['outcome'],('completed','failed'))
+                        self.assertNotIn('private',json.dumps(progress))
+                        active_progress.append(copy.deepcopy(progress))
+                def call(method,params,timeout=None):
+                    self.assertEqual(method,'buddy-chat.poll')
+                    rpc_calls.append(copy.deepcopy(params))
+                    if mode=='owner_preempt' and active_progress:
+                        return poll([message(42,'New owner request',channel='WHISPER')],sessionId='chat-original')
+                    sid='chat-replaced' if mode=='body_reset' and ready.exists() else 'chat-original'
+                    return poll(latest=41,sessionId=sid)
+                rpc=types.SimpleNamespace(call=call,url='http://127.0.0.1:8086/rpc')
+                loop=converse.Conversation(rpc,brain,status=status)
+                loop.session_id='chat-original';loop.cursor=41;loop.initialized=True
+                current_request=state['current_request']
+                ready_clock_reads=[0]
+                def clock():
+                    if active_progress:return 2
+                    if ready.exists():
+                        ready_clock_reads[0]+=1
+                        return 0 if ready_clock_reads[0]==1 else 1
+                    return 0
+                with patch.object(converse.time,'monotonic',side_effect=clock):
+                    with self.assertRaises(converse.ConversationError if mode=='timeout' else converse.OwnerInputPending):
+                        loop.generate_reply([],state)
+                record=self.failure_receipt(brain)
+                summaries=[row['brainFailure'] for row in statuses if isinstance(row.get('brainFailure'),dict)]
+                self.assertTrue(summaries,statuses);summary=summaries[-1]
+                for value in (record,summary):
+                    self.assertEqual(value['requestId'],brain.last_request_id)
+                    self.assertEqual(value['sessionId'],'aw-current')
+                    self.assertEqual(value['chatSessionId'],'chat-original')
+                    self.assertEqual(value['selfGuid'],'1');self.assertEqual(value['cursor'],41)
+                    self.assertEqual(value['actionOutcome'],'unknown')
+                self.assertEqual(summary['currentBody'],mode!='body_reset')
+                self.assertEqual(record['pendingTools'],['unknown-action'])
+                self.assertIs(state['current_request'],current_request)
+                self.assertEqual(calls.read_text(),'x')
+                self.assertFalse(any('private' in json.dumps(row) for row in statuses))
+                if mode=='body_reset':
+                    self.assertEqual(loop.session_id,'')
+                elif mode=='owner_preempt':
+                    self.assertTrue(active_progress,statuses)
+                    self.assertEqual(loop.cursor,41) # Observation/preemption never consumes the new owner request.
+                    self.assertEqual(record['reason'],'owner_input_waiting')
+                    self.assertTrue(record['childReaped'])
+                    self.assertEqual(record['childPid'],active_progress[0]['childPid'])
+                    final=[row['brainProgress'] for row in statuses if isinstance(row.get('brainProgress'),dict)][-1]
+                    self.assertEqual(final['outcome'],'failed')
+                    self.assertEqual(final['requestId'],record['requestId'])
+                else:
+                    finish.write_text('complete next explicit request')
+                    self.assertEqual(loop.generate_reply([],state)['text'],'Done.')
+                    self.assertIsNone(brain.last_failure_receipt)
+                    self.assertTrue(any('brainFailure' in row and row['brainFailure'] is None for row in statuses))
+                    self.assertEqual(calls.read_text(),'xx')
+                    self.assertEqual(len(list((brain.state_dir/'brain-failures').glob('*.json'))),1)
+
+    def test_implicit_deadline_allows_authorized_productive_development_beyond_old_total_limit(self):
+        for developer in (True,False):
+            with self.subTest(developer=developer),tempfile.TemporaryDirectory() as temporary:
+                folder=Path(temporary);ready=folder/'ready';release=folder/'release';written=folder/'written.lua'
+                brain,state,calls=self.brain(folder,
+                    f'pathlib.Path({str(written)!r}).write_text("completed local source work")\n'
+                    'if "--approve-for-me" in sys.argv:\n'
+                    ' print(json.dumps(dict(type="item.completed",item=dict(id="productive-work",type="command_execution",status="completed",exit_code=0))),flush=True)\n'
+                    f'pathlib.Path({str(ready)!r}).write_text("ready")\n'
+                    'for _ in range(200):\n'
+                    f' if pathlib.Path({str(release)!r}).exists():break\n'
+                    ' time.sleep(.01)\n'
+                    'else:sys.exit(31)\n'
+                    'pathlib.Path(sys.argv[sys.argv.index("--output-last-message")+1]).write_text(json.dumps(dict(text="Done.",emote="NONE")))\n'
+                    'print(json.dumps(dict(type="turn.completed")),flush=True)\n',timeout=None)
+                if not developer:
+                    brain.developer_workspace=None;state['development']['enabled']=False
+                logical=[0];observed=[]
+                def cancelled():
+                    if ready.exists():
+                        logical[0]=200
+                        observed.append(converse.time.monotonic())
+                        if developer:release.write_text('continue the same child')
+                    return False
+                with patch.object(converse.time,'monotonic',side_effect=lambda:logical[0]):
+                    if developer:
+                        self.assertEqual(brain.generate([],state,cancelled=cancelled)['text'],'Done.')
+                    else:
+                        with self.assertRaisesRegex(converse.ConversationError,'timed out'):
+                            brain.generate([],state,cancelled=cancelled)
+                self.assertIn(200,observed)
+                self.assertEqual(written.read_text(),'completed local source work')
+                self.assertEqual(calls.read_text(),'x')
+                if developer:
+                    self.assertIsNone(brain.last_failure_receipt)
+                    self.assertEqual(brain.last_development_events['successfulCommands'],1)
+                else:
+                    self.assertEqual(self.failure_receipt(brain)['reason'],'timeout')
+
+    def test_cli_preserves_omitted_timeout_and_validates_only_explicit_limits(self):
+        class Parsed(Exception):pass
+        for arguments,want in (([],None),(['--reply-timeout','5'],5),(['--reply-timeout','180'],180)):
+            with self.subTest(arguments=arguments),patch.object(converse,'conversation_profile',side_effect=Parsed) as profile:
+                with self.assertRaises(Parsed):converse.main(['run',*arguments])
+                self.assertEqual(profile.call_args.args[0].reply_timeout,want)
+        for value in ('4','181'):
+            with self.subTest(value=value),patch.object(converse,'conversation_profile') as profile,patch.object(sys,'stderr'):
+                with self.assertRaises(SystemExit):converse.main(['run','--reply-timeout',value])
+                profile.assert_not_called()
 
 
 class PartyInvitationControlsTests(unittest.TestCase):
