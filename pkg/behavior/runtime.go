@@ -296,14 +296,14 @@ func evaluateWithLimits(parent context.Context, p *policy, input map[string]any,
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("chunk_initialize: %w", err)
 	}
 	state, err := toLua(L, input, &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: inputNodes})
 	if err != nil {
 		return nil, err
 	}
 	if err = watchdog.call(L, func() error { return L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, state) }); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decide: %w", err)
 	}
 	value, err := fromLua(L.Get(-1), &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: outputNodes}, map[*lua.LTable]bool{}, 0)
 	if err != nil {
