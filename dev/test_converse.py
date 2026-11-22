@@ -3365,7 +3365,7 @@ from test_lua_control_bridge import LuaControlBridgeTests
 
 def load_tests(loader, tests, pattern):
     # Keep the existing CI entry point, including private combat evidence checks.
-    for name in ("test_combat_context", "test_combat_review"):
+    for name in ("test_combat_context", "test_combat_review", "test_converse_host_mechanics"):
         extra_spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
         module = importlib.util.module_from_spec(extra_spec)
         extra_spec.loader.exec_module(module)
