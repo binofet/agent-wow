@@ -33,13 +33,13 @@ class FakeChildren:
         self.calls, self.spawns = [], []
         self.sid = "aw-fake"
         self.fail_start = False
-        self.selection = dict(provider=actor["model"]["provider"], requestedModel=actor["model"]["model"],
-                              baseURL=actor["model"].get("base_url"), localProvider=actor["model"]["local_provider"])
+        self.selection = dict(execution="direct_api", provider=actor["model"]["provider"],
+                              requestedModel=actor["model"]["model"], baseURL=actor["model"]["base_url"])
 
     def run(self, argv, actor, env=None):
         self.calls.append((list(argv), env))
         if argv[-1] == "--help":
-            return " ".join(app.PROVIDER_FLAGS)
+            return " ".join(app.PROVIDER_FLAGS) + " --model-provider {codex,local,openai,claude,gemini}"
         kind, command = Path(argv[2]).name, argv[3]
         if kind == "buddy":
             if command == "start":
@@ -60,8 +60,8 @@ class FakeChildren:
     def spawn(self, argv, actor, log):
         self.spawns.append(list(argv))
         self.chat = True
-        self.selection = dict(provider=actor["model"]["provider"], requestedModel=actor["model"]["model"],
-                              baseURL=actor["model"].get("base_url"), localProvider=actor["model"]["local_provider"])
+        self.selection = dict(execution="direct_api", provider=actor["model"]["provider"],
+                              requestedModel=actor["model"]["model"], baseURL=actor["model"]["base_url"])
         return 12345
 
     def commands(self, kind, command):
@@ -91,13 +91,25 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(planned["native_start_if_stopped"][3], "start")
         command = planned["listener_run_if_unowned"]
         self.assertEqual(command[command.index("--banter-seconds") + 1], "0")
-        self.assertEqual(command[command.index("--codex") + 1], "codex")
+        self.assertNotIn("--codex", command)
+        self.assertNotIn("--local-provider", command)
+        self.assertNotIn("--included-usage-only", command)
 
-    def test_explicit_target_codex_path_is_forwarded_without_legacy_default(self):
-        self.raw["model"] = dict(codex="/opt/bin/codex")
-        command = app.commands(app.normalize(self.raw)[0])["run"]
-        self.assertEqual(command[command.index("--codex") + 1], "/opt/bin/codex")
-        self.assertFalse(any("/Applications/" in argument for argument in command))
+    def test_each_direct_provider_forwards_exact_account_model_without_cli_or_gateway(self):
+        for provider, base in (("local", "http://127.0.0.1:18765/v1"), ("openai", "https://api.example/v1"),
+                               ("claude", "https://api.anthropic.com/v1"),
+                               ("gemini", "https://generativelanguage.googleapis.com/v1beta")):
+            with self.subTest(provider=provider):
+                self.raw["model"] = dict(provider=provider, base_url=base, model="account-model-fixture")
+                if provider != "local":
+                    self.raw["model"]["api_key_env"] = "TEST_ACCOUNT_KEY"
+                actor = app.normalize(self.raw)[0]
+                command = app.commands(actor)["run"]
+                self.assertEqual(command[command.index("--model-provider") + 1], provider)
+                self.assertEqual(command[command.index("--model-base-url") + 1], base)
+                self.assertEqual(command[command.index("--model") + 1], "account-model-fixture")
+                self.assertFalse({"--codex", "--local-provider", "--included-usage-only"} & set(command))
+                self.assertFalse(any("/Applications/" in argument for argument in command))
 
     def test_banter_is_explicit_and_validated_before_child_changes(self):
         self.raw["actors"]["mira"]["banter_seconds"] = 240
@@ -110,7 +122,7 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(self.runner.calls or self.runner.spawns)
 
     def test_transport_validation_precedes_models_or_any_child(self):
-        invalid = [dict(provider="responses", base_url=url, model="claude", api_key_env="TEST_KEY")
+        invalid = [dict(provider="openai", base_url=url, model="account-model-fixture", api_key_env="TEST_KEY")
                    for url in ("http://gateway.example/v1", "http://127.0.0.2/v1", "http://127.0.0.1:0/v1",
                                "http://127.0.0.1:65536/v1", "https://gateway.example/with space", "https://:bad/v1")]
         invalid += [dict(model="two words"), dict(model="a" * 129), dict(model="/bad"),
@@ -124,14 +136,14 @@ class LauncherTests(unittest.TestCase):
                     app.normalize(raw)
         self.assertFalse(self.runner.calls or self.runner.spawns)
 
-    def test_supported_loopback_and_https_gateways_keep_exact_transport(self):
+    def test_supported_loopback_and_https_endpoints_keep_exact_transport(self):
         for url in ("http://127.0.0.1:18765/v1", "http://localhost:18765/v1", "http://[::1]:18765/v1"):
             with self.subTest(url=url):
                 self.assertEqual(app.model_settings({}, dict(base_url=url))["base_url"], url)
-        model = app.model_settings({}, dict(provider="gemini", base_url="https://gateway.example/v1",
-                                           model="gemini-route", api_key_env="TEST_KEY"))
-        self.assertEqual(model["provider"], "responses")
-        self.assertEqual(model["base_url"], "https://gateway.example/v1")
+        model = app.model_settings({}, dict(provider="gemini", base_url="https://generativelanguage.googleapis.com/v1beta",
+                                           model="account-model-fixture", api_key_env="TEST_KEY"))
+        self.assertEqual(model["provider"], "gemini")
+        self.assertEqual(model["base_url"], "https://generativelanguage.googleapis.com/v1beta")
 
     def test_start_once_then_repeated_start_reuses_both_owners(self):
         first = app.operate(self.actor, "start", self.runner)
@@ -188,16 +200,64 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(self.runner.native)
         self.assertFalse(self.runner.commands("buddy", "stop"))
 
-    def test_gateway_missing_key_or_model_does_not_stop_running_chat(self):
+    def test_direct_vendor_missing_key_does_not_stop_running_chat(self):
         changed = copy.deepcopy(self.actor)
-        changed["model"] = app.model_settings({}, dict(provider="claude", base_url="http://127.0.0.1:4000/v1",
-                                                        model="claude", api_key_env="MISSING_TEST_GATEWAY_KEY"))
+        changed["model"] = app.model_settings({}, dict(provider="claude", base_url="https://api.anthropic.com/v1",
+                                                        model="account-model-fixture", api_key_env="MISSING_TEST_ACCOUNT_KEY"))
         self.runner.native = self.runner.chat = True
         self.discover.stop()
-        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(app.Error, "MISSING_TEST_GATEWAY_KEY"):
+        with mock.patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(app.Error, "MISSING_TEST_ACCOUNT_KEY"):
             app.operate(changed, "restart-chat", self.runner)
         self.assertFalse(self.runner.commands("converse", "stop"))
         self.assertFalse(self.runner.spawns)
+
+    def test_models_uses_only_selected_direct_endpoint_without_generation_or_fallback(self):
+        self.discover.stop()
+        for provider in ("local", "openai"):
+            model = dict(self.actor["model"], provider=provider)
+            if provider == "openai":
+                model.update(base_url="https://api.example/v1", api_key_env="TEST_ACCOUNT_KEY")
+            with self.subTest(provider=provider), mock.patch.object(app, "get_json", return_value=dict(
+                    data=[dict(id=app.LOCAL_MODEL)])) as request:
+                result = app.models(model)
+                request.assert_called_once_with(model["base_url"] + "/models", key_env=model.get("api_key_env"))
+                self.assertTrue(result["advertised"])
+                self.assertFalse(result["inferenceVerified"])
+        for provider in ("claude", "gemini"):
+            model = app.model_settings({}, dict(provider=provider, base_url="https://api.example/v1",
+                                               model="account-model-fixture", api_key_env="TEST_ACCOUNT_KEY"))
+            with self.subTest(provider=provider), mock.patch.dict(os.environ, {"TEST_ACCOUNT_KEY": "fixture-only"}), \
+                 mock.patch.object(app, "get_json", side_effect=AssertionError("no vendor model request")):
+                result = app.models(model)
+                self.assertEqual(result["provider"], provider)
+                self.assertIsNone(result["advertised"])
+                self.assertFalse(result["inferenceVerified"])
+        self.assertFalse(self.runner.calls or self.runner.spawns)
+
+    def test_old_cli_only_host_is_refused_before_native_or_model_mutation(self):
+        original = self.runner.run
+        def old_host(argv, actor, env=None):
+            if argv[-1] == "--help":
+                return " ".join(app.PROVIDER_FLAGS) + " --model-provider {codex,local,responses}"
+            return original(argv, actor, env)
+        self.runner.run = old_host
+        with mock.patch.object(app, "models") as discover:
+            with self.assertRaisesRegex(app.Error, "direct model API interface"):
+                app.operate(self.actor, "start", self.runner)
+            discover.assert_not_called()
+        self.assertFalse(self.runner.spawns or self.runner.commands("buddy", "start"))
+
+    def test_old_same_model_cli_listener_requires_explicit_chat_only_restart(self):
+        self.runner.native = self.runner.chat = True
+        self.runner.selection.pop("execution")
+        with self.assertRaisesRegex(app.Error, "restart-chat"):
+            app.operate(self.actor, "start", self.runner)
+        self.assertFalse(self.runner.spawns or self.runner.commands("converse", "stop"))
+        result = app.operate(self.actor, "restart-chat", self.runner)
+        self.assertEqual(result["body"]["sessionId"], "aw-fake")
+        self.assertEqual(len(self.runner.spawns), 1)
+        self.assertEqual(self.runner.selection["execution"], "direct_api")
+        self.assertFalse(self.runner.commands("buddy", "start") or self.runner.commands("buddy", "stop"))
 
     def test_unknown_listener_start_is_not_replayed_by_start_or_restart_chat(self):
         self.runner.native = True
@@ -283,6 +343,8 @@ class LauncherTests(unittest.TestCase):
     def test_invalid_or_secret_settings_fail_closed(self):
         for override in (dict(provider="unknown"), dict(provider="claude", model="claude"),
                          dict(provider="responses", model="route", api_key_env="KEY"),
+                         dict(provider="codex"), dict(codex="/opt/bin/codex"), dict(local_provider="lmstudio"),
+                         dict(provider="claude", base_url="https://api.anthropic.com/v1", model="REPLACE_WITH_YOUR_CLAUDE_MODEL_ID", api_key_env="KEY"),
                          dict(api_key="DO_NOT_PRINT_SECRET"), dict(base_url="http://example.com/v1")):
             with self.subTest(override=override), self.assertRaises(app.Error) as error:
                 app.model_settings({}, override)
@@ -316,7 +378,8 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual([row["guid"] for row in actors], [1, 4, 5, 8])
         self.assertEqual(actors[-1]["native_profile"], "alliance-nixwick")
         self.assertTrue(all(row["model"]["provider"] == "local" for row in actors))
-        self.assertTrue(all(row["model"]["codex"] == "codex" for row in actors))
+        for row in actors:
+            self.assertFalse({"codex", "local_provider"} & row["model"].keys())
         self.assertTrue(all(row["native_env"]["AGENT_WOW_AUTHSERVER_HOST"] == "10.247.37.1" for row in actors))
 
 
