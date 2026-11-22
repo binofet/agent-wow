@@ -1086,11 +1086,13 @@ def evaluate_spell_learning(source,frame,source_limit,*,binary=None):
     return evaluate_mission_repair(alias,frame,max(source_limit,len(alias.encode())),binary=binary)
 
 
-def owner_acknowledgement(folder, identity, session, sequence, outcome=None):
+def owner_acknowledgement(folder, identity, session, sequence, outcome=None, *, reserve=True):
     """Reserve current owner input before chat/model work; never rearm an unknown write."""
     host=task_runtime_module()
     try:
-        with host.Store(Path(folder)/'owner-acknowledgements',max_bytes=host.MAX_CONTROLLER_LIMIT) as store:
+        store=host.Store(Path(folder)/'owner-acknowledgements',max_bytes=host.MAX_CONTROLLER_LIMIT)
+        if not reserve and not store.folder.exists():return 'available'
+        with store:
             data=store.load()
             if data is None:data=dict(version=1,identity=identity,streams={})
             streams=data.get('streams')
@@ -1104,6 +1106,7 @@ def owner_acknowledgement(folder, identity, session, sequence, outcome=None):
             row=streams.get(session)
             if outcome is None:
                 if row and sequence<=row['sequence']:return 'already_reserved'
+                if not reserve:return 'available'
                 streams[session]=dict(sequence=sequence,outcome='reserved')
             elif row and row['sequence']==sequence:
                 row['outcome']=outcome
@@ -3997,7 +4000,7 @@ class Conversation:
         folder=getattr(self.brain,'state_dir',None)
         text=entry['text'].lstrip()
         private=entry['channel']=='WHISPER' and self.owner_whisper_recipient(entry)
-        if (not current or integer(entry['sender_guid'])!=self.player_guid or folder is None
+        if (integer(entry['sender_guid'])!=self.player_guid or folder is None
                 or not self.session_id or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}',self.session_id)
                 or not (private or directly_addressed) or text.startswith(('"',"'",'`','>','“','‘'))):
             return 'not_applicable'
@@ -4005,10 +4008,11 @@ class Conversation:
         if not self.same_body():return False
         identity=dict(characterGuid=str(self.character_guid),ownerGuid=str(self.player_guid),rpcUrl=self.rpc.url)
         session,sequence=self.session_id,entry['sequence']
-        reserve=owner_acknowledgement(folder,identity,session,sequence)
-        if reserve=='already_reserved':
+        reservation=owner_acknowledgement(folder,identity,session,sequence,reserve=current)
+        if reservation=='already_reserved':
             self.status(phase='listening',ownerAcknowledgement='already_reserved',ownerRequestSequence=sequence)
             return False # A restart is not permission to replay the owner work.
+        if not current:return 'not_applicable' # Never ACK an initial/retained/overflow input.
         if self.stopped():
             owner_acknowledgement(folder,identity,session,sequence,'not_started')
             raise Stopped('Conversation stop requested')

@@ -21,7 +21,7 @@ class OwnerAcknowledgementTests(unittest.TestCase):
         class RPC:
             url='http://127.0.0.1:8090/rpc'
             def __init__(rpc):
-                rpc.session='current-chat';rpc.rows=[];rpc.calls=[];rpc.ack_unknown=False
+                rpc.session='current-chat';rpc.rows=[];rpc.calls=[];rpc.ack_unknown=False;rpc.final_unknown=False
             def call(rpc,method,params,timeout=None):
                 rpc.calls.append((method,dict(params)))
                 if method=='buddy-chat.poll':
@@ -31,6 +31,8 @@ class OwnerAcknowledgementTests(unittest.TestCase):
                 if method=='buddy-chat.send':
                     if rpc.ack_unknown and params['text']==self.ack_text:
                         raise c.ConversationError('Chat transport outcome unknown')
+                    if rpc.final_unknown and params['text']!=self.ack_text:
+                        raise c.ConversationError('Final chat outcome unknown')
                     return dict(transportWritten=True)
                 raise AssertionError('No gameplay RPC is allowed: '+method)
         self.rpc=RPC()
@@ -93,6 +95,18 @@ class OwnerAcknowledgementTests(unittest.TestCase):
         record=json.loads((self.state/'owner-acknowledgements/state.json').read_text())
         self.assertEqual(record['streams']['current-chat'],dict(sequence=1,outcome='transport_unconfirmed'))
 
+    def test_real_retained_startup_does_not_repeat_work_after_both_chat_writes_are_unknown(self):
+        loop=self.loop();loop.tick();self.add();self.rpc.ack_unknown=True;self.rpc.final_unknown=True
+        with self.assertRaisesRegex(c.ConversationError,'Final chat outcome unknown'):loop.tick()
+        self.assertEqual(len(self.brain.calls),1);self.assertEqual(len(self.sends()),2)
+        # No WHISPER_INFORM was observed: the existing baseline legitimately
+        # returns this retained input, which must still consult its reservation.
+        restarted=self.loop(resume_whispers=True)
+        self.assertFalse(restarted.initialized)
+        restarted.tick()
+        self.assertEqual(len(self.brain.calls),1);self.assertEqual(len(self.sends()),2)
+        self.assertEqual(restarted.cursor,1)
+
     def test_known_team_quoted_unaddressed_foreign_and_stale_inputs_do_not_ack(self):
         # These retain existing conversation routing; only immediate receipt feedback is new.
         for text,channel,sender,fields in [
@@ -114,7 +128,7 @@ class OwnerAcknowledgementTests(unittest.TestCase):
         loop=self.loop();loop.tick();self.add('Lotharen, help us','PARTY');loop.tick()
         self.assertEqual(self.sends()[0]['channel'],'PARTY')
         self.assertEqual(self.sends()[0]['text'],self.ack_text)
-        self.rpc.rows=[];self.rpc.calls=[];self.add()
+        self.rpc.rows=[];self.rpc.calls=[];self.rpc.session='never-reserved-chat';self.add()
         loop=self.loop(resume_whispers=True)
         with patch.object(self.brain,'generate',return_value=dict(text='Current result needs checking.',action='NONE',emote='NONE')):
             loop.tick()
