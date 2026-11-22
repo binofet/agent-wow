@@ -14,7 +14,7 @@
 -- Its transport receipt never settles the original channel/effect ledger.
 -- The same shape accepts an unfamiliar learned uint32 ID without another Go
 -- handler. Read its reflected mechanics and use its actual target contract.
-local M={}
+local M={learning={quiet_ms=3000,stable_observations=2}}
 local state={seen={}}
 local proposed
 local proposed_cancel
@@ -174,6 +174,20 @@ end
 
 function M.export_state() return {version=1,data=copy(state)} end
 function M.pending() return state.current~=nil or state.cancel~=nil end
+-- A coalesced spellbook change is an observation, not a failed cast. The host
+-- only computes the actual ID delta; this accepted policy chooses when one
+-- ordinary private review should inspect the new abilities.
+function M.learning_review(input)
+    local notice=input.notice
+    if type(notice)~="table" or type(notice.spellIds)~="table" or #notice.spellIds==0 then
+        return {phase="no_new_learned_spells"}
+    end
+    if input.nowMs-notice.changedAtMs<M.learning.quiet_ms or
+       notice.stableObservations<M.learning.stable_observations then
+        return {phase="coalescing_learned_spells"}
+    end
+    return {phase="review_new_learned_spells",ready=true}
+end
 function M.import_state(checkpoint)
     if checkpoint.version~=1 or type(checkpoint.data)~="table" or type(checkpoint.data.seen)~="table" then return false end
     local task=checkpoint.data.current
