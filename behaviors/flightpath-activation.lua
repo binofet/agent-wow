@@ -146,7 +146,7 @@ local function progress(context,frame,flight,op)
            a.transportScope.connectionId~=op.acceptanceScope.connectionId or
            a.transportScope.visitRevision~=op.acceptanceScope.visitRevision or
            not newer(a.transportScope.splineSourceRevision,op.acceptanceScope.motionRevision) or
-           (a.durationRemainingMs or 0)~=0 then return tasks.await(context,"waiting_for_qualified_normal_spline") end
+           revision(a.durationRemainingMs)~="0" then return tasks.await(context,"waiting_for_qualified_normal_spline") end
         binding.unitFlagsRevision=nil;binding.splineRevision=a.splineRevision;binding.expectedRevision=revision(c.revision)
         frame.completion=binding;frame.completionRevision=successor(binding.expectedRevision)
         if not frame.completionRevision then return tasks.await(context,"completion_revision_unavailable") end
@@ -167,8 +167,8 @@ local function progress(context,frame,flight,op)
         else return tasks.await(context,"actual_landing_evidence_unavailable") end
     end
     if frame.stage=="probe" then
-        local params=context.state.goal.params or {};local npc=flightmaster(w)
-        if c.retirementCurrent~=true or not quiet(context) or ((w.self or {}).positionAgeMs or 0)>2000 or not npc or not valid_token(params.explorationToken) or
+        local params=context.state.goal.params or {};local npc=flightmaster(w);local age=revision((w.self or {}).positionAgeMs)
+        if c.retirementCurrent~=true or not quiet(context) or not age or newer(age,"2000") or not npc or not valid_token(params.explorationToken) or
            (context.observations.actions or {}).interactionOwner~="exploration" then return tasks.await(context,"waiting_for_arrival_menu_authority") end
         local request={sessionId=frame.request.sessionId,selfGuid=frame.request.selfGuid,visitId=frame.request.visitId,
             token=params.explorationToken,npcGuid=npc,mode="arrival",expectedRevision=revision(flight.revision),
