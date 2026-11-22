@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.machinery
 import importlib.util
 from pathlib import Path
@@ -8,6 +9,7 @@ import math
 import os
 import tempfile
 import types
+import subprocess
 from unittest.mock import patch
 from test_town_policy import service_source, source_reply, policy_reply, bridge_factory
 
@@ -15,6 +17,13 @@ loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__
 spec=importlib.util.spec_from_loader(loader.name,loader)
 m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 TRAINER_BRIDGE = m.town_policy.runtime.Bridge
+
+def maintenance_source():
+    # Keep the actual trainer export and compose the current stipend library;
+    # the critical connected tests below use the generated full encounter.
+    stipend=(Path(__file__).resolve().parent.parent/'behaviors/stipend-selection.lua').read_text()
+    return ('local services=(function()\n'+service_source()+'\nend)()\nlocal stipend=(function()\n'+stipend+
+        '\nend)()\nreturn {service_destination=services.service_destination,stipend_selection=stipend.decide}')
 
 class RPC:
     def __init__(self):
@@ -27,7 +36,7 @@ class RPC:
         self.offer={'revision':'2','npcGuid':'17379390965327856171','expiresInMs':'20000','spells':[
             {'spellId':123,'costCopper':100,'requiredLevel':4}]}
         self.training={'sessionId':'body1','copperKnown':True,'copper':10000,'offer':self.offer}
-        self.policy_source=service_source()
+        self.policy_source,self.generation=maintenance_source(),'1'
         self.mail={'sessionId':'body1','listKnown':True,'listCurrent':True,'listRevision':'2',
             'mailboxGuid':'17370300000000000001','stipends':[{'mailId':5,'copper':10000}]}
         self.claim={'mailId':5,'status':'CLAIM_CONFIRMED','serverAcknowledged':True,'walletIncreaseObserved':True,'confirmedCopper':10000}
@@ -38,9 +47,9 @@ class RPC:
     def call(self,method,params):
         self.calls.append((method,copy.deepcopy(params)))
         if method=='session.policy_source':
-            value=source_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']))
+            value=source_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']),self.generation)
         elif method=='session.attach':
-            value=policy_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']))
+            value=policy_reply(self.policy_source,dict(self.training,selfGuid=self.world['self']['guid']),self.generation)
         elif method=='buddy-world.snapshot':value=self.world
         elif method=='buddy-party.state':value={'group':self.group}
         elif method=='buddy-actions.status':value=self.actions
@@ -65,7 +74,7 @@ class RPC:
         elif method=='buddy-mail.state':value=dict(self.mail,lastClaim=self.claim)
         elif method=='buddy-mail.claim_stipend':
             if m.confirmed_mail(self.claim,params['mailId']):self.training['copper']+=10000
-            value={'lastClaim':self.claim}
+            value={'sessionId':self.mail['sessionId'],'lastClaim':self.claim}
         elif method=='buddy-actions.acquire_interaction':
             assert params=={'owner':'training','leaseMs':30000} and self.token is None
             self.token='exact-training-token';self.actions['interactionOwner']='training'
@@ -1002,6 +1011,301 @@ class HarvestStatusTests(unittest.TestCase):
         actor.data['training']=[dict(status='reserved')]
         m.harvest_after_maintenance(actor,worker,9)
         self.assertEqual(calls,['tick'])
+
+class StipendConnectedConsumerTests(unittest.TestCase):
+    """Connected accepted source chooses; native mail and the journal execute."""
+    tick=MaintenanceTests.tick
+    methods=MaintenanceTests.methods
+    box=MaintenanceTests.box
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bundle=subprocess.check_output(['python3','-B',str(m.ROOT/'dev/encounter-bundle')],text=True)
+        cls.stipend=(m.ROOT/'behaviors/stipend-selection.lua').read_text()
+        if cls.bundle.count(cls.stipend)!=1:
+            raise AssertionError('actual encounter bundle must contain exactly one current stipend module')
+
+    def setUp(self):
+        MaintenanceTests.setUp(self)
+        self.reset_case()
+
+    def reset_case(self):
+        self.rpc=RPC();self.rpc.policy_source=self.bundle
+        self.rpc.offer['spells']=[]
+        self.saved=[];self.now=[100]
+        self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:self.saved.append(copy.deepcopy(data)),now=lambda:self.now[0])
+        self.box()
+
+    def edit_source(self,source):
+        self.rpc.policy_source=source
+        self.rpc.generation=str(int(self.rpc.generation)+1)
+
+    def last_row_source(self):
+        marker='if row.copper == 10000 and selected == nil then selected = row end'
+        self.assertEqual(self.bundle.count(marker),1)
+        return self.bundle.replace(marker,'if row.copper == 10000 then selected = row end',1)
+
+    def assert_no_reservation_or_claim(self):
+        self.assertIsNone(self.agent.data['mail'])
+        self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+        self.assertEqual(self.saved,[])
+
+    def test_actual_full_bundle_selects_exact_request_and_reserves_before_native_call(self):
+        self.rpc.mail['stipends']=[dict(mailId=9,copper=10000),dict(mailId=5,copper=10000)]
+        selection=m.stipend_policy.choose(self.rpc,copy.deepcopy(self.rpc.mail),1)
+        self.assertEqual(selection['mailId'],'9')
+        self.assertEqual(selection['policySHA256'],hashlib.sha256(self.bundle.encode()).hexdigest())
+        self.assertTrue(m.stipend_policy.current(self.rpc,selection,1))
+        original=self.rpc.call
+        def observed_call(method,params):
+            if method=='buddy-mail.claim_stipend':
+                self.assertEqual(self.saved[-1]['mail']['status'],'reserved')
+                self.assertEqual({key:self.saved[-1]['mail'][key] for key in params},params)
+            return original(method,params)
+        self.rpc.call=observed_call
+        self.tick()
+        request=next(params for method,params in self.rpc.calls if method=='buddy-mail.claim_stipend')
+        self.assertEqual(request,dict(sessionId='body1',listRevision='2',mailboxGuid='17370300000000000001',mailId='9'))
+        self.assertEqual(self.agent.data['mail']['status'],'reserved')
+
+    def test_connected_source_edit_changes_next_selection_without_python_ranking(self):
+        self.rpc.mail['stipends']=[dict(mailId=5,copper=10000),dict(mailId=9,copper=10000)]
+        first=m.stipend_policy.choose(self.rpc,copy.deepcopy(self.rpc.mail),1)
+        self.assertEqual(first['mailId'],'5')
+        self.edit_source(self.last_row_source())
+        self.assertFalse(m.stipend_policy.current(self.rpc,first,1))
+        self.tick()
+        request=next(params for method,params in self.rpc.calls if method=='buddy-mail.claim_stipend')
+        self.assertEqual(request['mailId'],'9')
+        self.assertEqual(self.saved[-1]['mail']['policySHA256'],hashlib.sha256(self.rpc.policy_source.encode()).hexdigest())
+
+    def test_missing_export_fault_or_unobserved_lua_request_cannot_fallback(self):
+        export='stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide'
+        self.assertEqual(self.bundle.count(export),1)
+        self.assertEqual(self.bundle.count('mailId=selected.mailId'),1)
+        variants=(self.bundle.replace(export,'stipend_selection=false',1),
+            self.bundle+'\ninvalid =',self.bundle.replace('mailId=selected.mailId','mailId="999"',1))
+        for source in variants:
+            with self.subTest(source_length=len(source)):
+                self.reset_case();self.edit_source(source)
+                with self.assertRaises(m.Error):self.tick()
+                self.assert_no_reservation_or_claim()
+
+    def test_unknown_or_reserved_native_list_waits_and_bad_later_row_never_claims(self):
+        for field,value in (('listKnown',False),('listCurrent',False),('claimReserved',True),('operationInFlight',True)):
+            with self.subTest(field=field):
+                self.reset_case();self.rpc.mail[field]=value;self.tick();self.assert_no_reservation_or_claim()
+        self.reset_case();self.rpc.mail['stipends'].append(dict(mailId=6,copper=False))
+        try:self.tick()
+        except m.Error:pass
+        self.assert_no_reservation_or_claim()
+
+    def test_source_generation_body_or_mail_change_fences_before_reservation(self):
+        for mode in ('source','generation','body','list_revision','mailbox','later_row','reserved','reserved_type'):
+            with self.subTest(mode=mode):
+                self.reset_case();original=self.rpc.call;changed=[False]
+                def changing_read(method,params):
+                    if not changed[0] and method==('buddy-mail.state' if mode in ('list_revision','mailbox','later_row','reserved','reserved_type') else 'session.attach'):
+                        changed[0]=True
+                        if mode=='source':self.edit_source(self.last_row_source())
+                        elif mode=='generation':self.rpc.generation='2'
+                        elif mode=='body':self.rpc.world['self']['guid']='4'
+                        elif mode=='list_revision':self.rpc.mail['listRevision']='3'
+                        elif mode=='mailbox':self.rpc.mail['mailboxGuid']='17370300000000000002'
+                        elif mode=='later_row':self.rpc.mail['stipends'].append(dict(mailId=6,copper=10000))
+                        elif mode=='reserved_type':self.rpc.mail['claimReserved']=0
+                        else:self.rpc.mail['claimReserved']=True
+                    return original(method,params)
+                self.rpc.call=changing_read
+                with self.assertRaises(m.Error):self.tick()
+                self.assertTrue(changed[0]);self.assert_no_reservation_or_claim()
+
+    def test_source_change_after_real_evaluation_has_no_reservation(self):
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',m.ROOT/'data/bin/luapolicy'))
+        real=m.stipend_policy.runtime.Bridge(binary,m.ROOT/'modules',execution_ms=1000)
+        self.assertEqual(real.value_bytes,32768)
+        owner=self
+        class EditAfterEvaluation:
+            def evaluate(self,source,frame):
+                result=real.evaluate(source,frame)
+                owner.edit_source(owner.last_row_source())
+                return result
+        with patch.object(m.stipend_policy.runtime,'Bridge',return_value=EditAfterEvaluation()):
+            with self.assertRaises(m.Error):self.tick()
+        self.assert_no_reservation_or_claim()
+
+    def test_post_persist_source_or_mail_veto_keeps_reserved_unknown_without_attempt(self):
+        for mode in ('source','mail'):
+            with self.subTest(mode=mode):
+                self.reset_case()
+                self.rpc.claim={}
+                def save(data):
+                    self.saved.append(copy.deepcopy(data))
+                    if data['mail'] is not None:
+                        if mode=='source':self.edit_source(self.last_row_source())
+                        else:self.rpc.mail['listRevision']='3'
+                self.agent.save=save
+                with self.assertRaises(m.Error):self.tick()
+                self.assertEqual(self.agent.data['mail']['status'],'reserved')
+                self.assertEqual(self.saved[-1]['mail']['status'],'reserved')
+                self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+                self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:None,self.saved[-1],now=lambda:200)
+                self.agent.tick()
+                self.assertEqual(self.agent.data['mail']['status'],'reserved')
+                self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+
+    def test_unknown_native_claim_retains_custody_across_broken_export_and_restart(self):
+        self.rpc.claim=dict(mailId=5,status='CLAIM_REQUESTED');self.tick()
+        self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+        stored=copy.deepcopy(self.saved[-1]);self.assertEqual(stored['mail']['status'],'reserved')
+        broken=self.stipend.replace('return {decide=decide}',
+            'return {decide=function(input)error("broken stipend export")end}',1)
+        self.assertNotEqual(broken,self.stipend)
+        self.edit_source(self.bundle.replace(self.stipend,broken,1))
+        self.tick()
+        self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:None,stored,now=lambda:200)
+        self.agent.tick()
+        self.assertEqual(self.agent.data['mail']['status'],'reserved')
+        self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+        self.rpc.claim.update(status='CLAIM_CONFIRMED',serverAcknowledged=True,walletIncreaseObserved=True,confirmedCopper=10000)
+        self.agent.next_query=0;self.agent.tick()
+        self.assertEqual(self.agent.data['mail']['status'],'confirmed')
+        self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+
+    def test_wrong_or_missing_native_reply_session_keeps_reserved_across_tick_and_restart(self):
+        for response_session in ('different-body',None):
+            with self.subTest(response_session=response_session):
+                self.reset_case();original=self.rpc.call
+                def mismatched_reply(method,params):
+                    reply=original(method,params)
+                    if method=='buddy-mail.claim_stipend':
+                        if response_session is None:reply.pop('sessionId')
+                        else:reply['sessionId']=response_session
+                        # Later reads provide no matching receipt to settle the
+                        # reserved operation independently of this bad reply.
+                        self.rpc.claim={}
+                    return reply
+                self.rpc.call=mismatched_reply
+                self.tick()
+                self.assertEqual(self.agent.data['mail']['status'],'reserved')
+                self.assertEqual(self.saved[-1]['mail']['status'],'reserved')
+                self.assertEqual(len(self.saved),1)
+                self.tick()
+                stored=copy.deepcopy(self.saved[-1])
+                self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:None,stored,now=lambda:200)
+                self.agent.tick()
+                self.assertEqual(self.agent.data['mail']['status'],'reserved')
+                self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+
+
+class StipendSelectionTests(unittest.TestCase):
+    """Standalone source proof through the normal default-budget Lua CLI."""
+    @classmethod
+    def setUpClass(cls):
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',m.ROOT/'data/bin/luapolicy'))
+        if not binary.is_file() or not os.access(binary,os.X_OK):
+            raise RuntimeError('actual Lua evaluator required: set BUDDY_LUAPOLICY_TEST_BINARY or build data/bin/luapolicy')
+        cls.bridge=m.town_policy.runtime.Bridge(binary,m.ROOT/'modules')
+        if cls.bridge.execution_ms is not None or cls.bridge.value_bytes!=32768:
+            raise RuntimeError('stipend source proof requires unchanged default evaluation budgets')
+        cls.source=(m.ROOT/'behaviors/stipend-selection.lua').read_text()
+
+    def frame(self):
+        return dict(sessionId='stipend-session',selfGuid='1',mail=dict(sessionId='stipend-session',
+            listKnown=True,listCurrent=True,listRevision='2',mailboxGuid='17370300000000000001',
+            claimReserved=False,operationInFlight=False,stipends=[dict(mailId='5',copper=10000)]))
+
+    def evaluate(self,frame,source=None):
+        before=copy.deepcopy(frame)
+        result=self.bridge.evaluate(self.source if source is None else source,frame)
+        self.assertEqual(frame,before)
+        self.assertIsInstance(result,dict)
+        if result.get('kind')=='wait':
+            self.assertEqual(set(result),{'kind','reason'})
+            self.assertIsInstance(result['reason'],str)
+            self.assertTrue(1<=len(result['reason'])<=128)
+        else:
+            self.assertEqual(set(result),{'kind','sessionId','listRevision','mailboxGuid','mailId'})
+            self.assertEqual(result['kind'],'claim')
+            for key in ('sessionId','listRevision','mailboxGuid','mailId'):
+                self.assertIsInstance(result[key],str)
+        return result
+
+    def assert_wait(self,frame):
+        self.assertEqual(self.evaluate(frame)['kind'],'wait')
+
+    def test_first_actual_qualified_row_and_reordering_preserve_exact_request(self):
+        frame=self.frame()
+        frame['mail']['stipends']=[dict(mailId='12',copper=9999),dict(mailId='9',copper=10000),dict(mailId='5',copper=10000)]
+        self.assertEqual(self.evaluate(frame),dict(kind='claim',sessionId='stipend-session',listRevision='2',
+            mailboxGuid='17370300000000000001',mailId='9'))
+        frame['mail']['stipends'].reverse()
+        self.assertEqual(self.evaluate(frame)['mailId'],'5')
+        frame['mail']['stipends']=[dict(mailId='5',copper=9999)]
+        self.assert_wait(frame)
+
+    def test_actual_source_edit_changes_selection_or_disables_fresh_claim(self):
+        frame=self.frame();frame['mail']['stipends'].append(dict(mailId='9',copper=10000))
+        self.assertEqual(self.evaluate(frame)['mailId'],'5')
+        marker='if row.copper == 10000 and selected == nil then selected = row end'
+        self.assertEqual(self.source.count(marker),1,'actual first-row choice clause must remain explicit')
+        edited=self.source.replace(marker,'if row.copper == 10000 then selected = row end',1)
+        self.assertEqual(self.evaluate(frame,edited)['mailId'],'9')
+        tuning='local claim_training_stipend = true'
+        self.assertEqual(self.source.count(tuning),1)
+        disabled=self.source.replace(tuning,'local claim_training_stipend = false',1)
+        self.assertEqual(self.evaluate(frame,disabled),dict(kind='wait',reason='training_stipend_claim_disabled'))
+        self.assertEqual(self.evaluate(frame)['mailId'],'5')
+
+    def test_full_fifty_rows_and_all_later_rows_are_checked_before_selection(self):
+        frame=self.frame();frame['mail']['stipends']=[dict(mailId=str(i+1),copper=10000) for i in range(50)]
+        self.assertEqual(self.evaluate(frame)['mailId'],'1')
+        for bad in (dict(mailId='50',copper=False),dict(mailId='1',copper=10000),dict(mailId='50')):
+            with self.subTest(bad=bad):
+                invalid=copy.deepcopy(frame);invalid['mail']['stipends'][-1]=bad;self.assert_wait(invalid)
+        invalid=copy.deepcopy(frame);invalid['mail']['stipends'][-1]=None
+        with self.assertRaises(m.town_policy.runtime.BridgeFailure):self.bridge.evaluate(self.source,invalid)
+        frame['mail']['stipends'].append(dict(mailId='51',copper=10000));self.assert_wait(frame)
+
+    def test_current_known_unreserved_list_is_required(self):
+        for field,value in (('listKnown',False),('listCurrent',False),('claimReserved',True),('operationInFlight',True),
+                ('listKnown',1),('listCurrent','true'),('claimReserved',0),('operationInFlight',None)):
+            with self.subTest(field=field,value=value):
+                frame=self.frame();frame['mail'][field]=value;self.assert_wait(frame)
+        for field in ('sessionId','listKnown','listCurrent','listRevision','mailboxGuid','claimReserved','operationInFlight','stipends'):
+            with self.subTest(missing=field):
+                frame=self.frame();del frame['mail'][field];self.assert_wait(frame)
+
+    def test_canonical_full_uint64_identities_are_never_rounded(self):
+        frame=self.frame();frame['selfGuid']='18446744073709551613'
+        frame['mail'].update(listRevision='18446744073709551615',mailboxGuid='18446744073709551614',
+            stipends=[dict(mailId='4294967295',copper=10000)])
+        result=self.evaluate(frame)
+        self.assertEqual((result['listRevision'],result['mailboxGuid'],result['mailId']),
+            ('18446744073709551615','18446744073709551614','4294967295'))
+        for field in ('selfGuid','listRevision','mailboxGuid'):
+            for value in ('0','01','18446744073709551616',1,True,1.5):
+                with self.subTest(field=field,value=value):
+                    bad=copy.deepcopy(frame);(bad if field=='selfGuid' else bad['mail'])[field]=value;self.assert_wait(bad)
+        for value in ('0','01','4294967296',1,True,1.5):
+            with self.subTest(mailId=value):
+                bad=copy.deepcopy(frame);bad['mail']['stipends'][0]['mailId']=value;self.assert_wait(bad)
+
+    def test_malformed_shapes_or_body_mismatch_never_claim(self):
+        for mutate in (lambda frame:frame.update(eligible=True),lambda frame:frame.update(mail=False),
+                lambda frame:frame['mail'].update(sessionId='replaced'),lambda frame:frame['mail'].update(stipends={'1':dict(mailId='5',copper=10000)}),
+                lambda frame:frame['mail']['stipends'][0].update(eligible=True),lambda frame:frame['mail']['stipends'][0].update(copper=-1),
+                lambda frame:frame['mail']['stipends'][0].update(copper=4294967296),lambda frame:frame['mail']['stipends'][0].update(copper=10000.5)):
+            frame=self.frame();mutate(frame);self.assert_wait(frame)
+        for field,value in (('sessionId',''),('sessionId','s'*129),('selfGuid',None)):
+            frame=self.frame();frame[field]=value;self.assert_wait(frame)
+
+    def test_actual_evaluator_fault_has_no_stock_policy_fallback(self):
+        for source in ('return {decide=', 'return {decide=function()while true do end end}', 'return {}'):
+            with self.subTest(source=source):
+                with self.assertRaises(m.town_policy.runtime.Error):self.bridge.evaluate(source,self.frame())
+        self.assertEqual(self.evaluate(self.frame())['mailId'],'5')
+
 
 from test_town_policy import VendorDestinationTests, TrainerDestinationTests
 
