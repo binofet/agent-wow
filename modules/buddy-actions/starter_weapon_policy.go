@@ -31,10 +31,10 @@ func (s *Service) practiceWeaponAuthorityLocked(ctx context.Context, targetGUID 
 }
 
 func (s *Service) practiceOffenseAuthorityLocked(ctx context.Context, targetGUID uint64) (*worldv1.SnapshotResponse, *worldv1.CreatureState, position, bool) {
-	until := s.practiceUntil
+	until, generation := s.practiceUntil, s.practiceGoalRevision
 	current := func() bool {
 		return ctx.Err() == nil && s.state.Practicing && s.practicePullStarted && targetGUID == s.practiceTarget &&
-			s.practiceUntil == until && s.now().Before(until) && !s.closed && !s.clientControlLost && !s.clientControlRestoring &&
+			s.practiceUntil == until && s.practiceGoalRevision == generation && s.now().Before(until) && !s.closed && !s.clientControlLost && !s.clientControlRestoring &&
 			s.state.InteractionOwner == "" && !s.state.MotionUnconfirmed && !s.recovery.state.Active
 	}
 	return s.practiceTaskObservationsLocked(ctx, targetGUID, current)
@@ -66,12 +66,14 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	} else if self.PowerType != 0 || self.UnitFlags&0x2000 != 0 || self.ClassId == 5 && !s.state.KnownSmite || self.ClassId == 8 && !s.state.KnownFireball {
 		return nil, nil, position{}, false
 	}
-	active, incomplete := ownWolfQuest(w)
-	goal := incomplete && self.Level >= 1 && self.Level <= 5 || !active && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
-	finishing := s.practicePullStarted && self.UnitFlags&0x80000 != 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
-	if !goal && !finishing {
+	goal, newest, allowed := s.practiceGoalDecisionLocked(ctx, w, "tick", s.practiceGoalID, current)
+	if !allowed {
 		return nil, nil, position{}, false
 	}
+	if s.applyPracticeGoalBoundaryLocked(ctx, goal) {
+		return nil, nil, position{}, false
+	}
+	w = newest
 	fresh, chosen, choice, allowed := s.practiceTargetDecisionLocked(ctx, w, current)
 	point, known, _ = creaturePosition(chosen)
 	return fresh, chosen, point, allowed && choice == "target" && chosen != nil && chosen.Guid == targetGUID && known && current()

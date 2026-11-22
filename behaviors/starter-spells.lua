@@ -6,6 +6,8 @@ local starter_movement = encounter_movement
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
 M.practice_pull = {health_percent=95,mana_percent={[5]=45,[8]=40},energy=90}
+M.practice_goal = {quest_id=33,min_level=1,max_quest_level=5,xp_finish_level=2,writer_lease_ms=3000,
+    classes={[4]=true,[5]=true,[8]=true},xp_classes={[4]=true,[8]=true},finish_own_fight=true,attack_age_ms=30000}
 M.practice_targets = {entries={[299]=true},min_level=1,max_level=1,search_yards=120,order="nearest",
     area={min_x=-9599,max_x=-8400,min_y=-700,max_y=200,min_z=40,max_z=180}}
 
@@ -210,6 +212,112 @@ local function practice_target(input,self)
     return wait
 end
 
+local function practice_goal(input,self,obs)
+    local t=M.practice_goal
+    local task={}
+    local function result(kind,phase,stage)
+        task.stage=stage or task.stage
+        task.phase=phase
+        return {kind=kind,phase=phase,writerLeaseMs=kind=="finish" and 0 or (type(t)=="table" and t.writer_lease_ms or 0),task=task}
+    end
+    if type(t)~="table" or not uint(t.quest_id) or t.quest_id==0 or not uint(t.min_level) or
+       not uint(t.max_quest_level) or t.min_level>t.max_quest_level or not uint(t.xp_finish_level) or
+       not uint(t.writer_lease_ms) or t.writer_lease_ms==0 or
+       type(t.classes)~="table" or type(t.xp_classes)~="table" or type(t.finish_own_fight)~="boolean" or not uint(t.attack_age_ms) or
+       type(input.intentId)~="string" or input.intentId=="" or not decimal(obs.visitId) or
+       type(input.nowMonotonicMs)~="number" or input.nowMonotonicMs<0 or input.nowMonotonicMs%1~=0 then
+        return result("wait","practice_goal_facts_unknown")
+    end
+    if input.intent=="begin" then
+        task={id=input.intentId,sessionId=input.sessionId,selfGuid=input.selfGuid,visitId=obs.visitId,
+            startedMonotonicMs=input.nowMonotonicMs,stage="starting"}
+    else
+        local prior=input.task
+        if type(prior)~="table" or prior.id~=input.intentId or prior.sessionId~=input.sessionId or
+           prior.selfGuid~=input.selfGuid or prior.visitId~=obs.visitId then
+            return result("wait","practice_goal_identity_changed")
+        end
+        for key,value in pairs(prior) do task[key]=value end
+    end
+    if task.stage=="completed" or task.stage=="cancelled" or task.stage=="interrupted" then
+        return result("finish",task.phase,task.stage)
+    end
+    if input.intent=="cancel" then return result("finish","disabled","cancelled") end
+    if type(task.startedMonotonicMs)~="number" or task.startedMonotonicMs<0 or task.startedMonotonicMs%1~=0 or
+       input.nowMonotonicMs<task.startedMonotonicMs then return result("wait","practice_goal_clock_unknown") end
+    -- Legacy Begin carries no deadline. Only an explicitly supplied task
+    -- deadline can finish a goal on time; writer lease renewal is independent.
+    if task.deadlineMonotonicMs~=nil then
+        if type(task.deadlineMonotonicMs)~="number" or task.deadlineMonotonicMs<0 or task.deadlineMonotonicMs%1~=0 then
+            return result("wait","practice_goal_deadline_unknown")
+        end
+        if input.nowMonotonicMs>=task.deadlineMonotonicMs then return result("finish","explicit_deadline_reached","interrupted") end
+    end
+    if self.levelKnown~=true or not uint(self.level) or self.classKnown~=true or not uint(self.classId) then
+        return result("wait","own_state_unknown_or_unsafe")
+    end
+    if t.classes[self.classId]~=true then return result("finish","practice_class_not_selected","interrupted") end
+    -- A complete observed log distinguishes an absent/finished goal from a
+    -- missing observation. No resource refill or kill credit is inferred here.
+    local quests,quest_known={},obs.questLogKnown==true and type(obs.quests)=="table" and #obs.quests==25
+    if quest_known then
+        local slots={}
+        for key,q in pairs(obs.quests) do
+            local slot=type(q)=="table" and (q.slot or 0)
+            if not uint(key) or key<1 or key>25 or not uint(slot) or slot>24 or slots[slot] or
+               not uint(q.questId or 0) or not uint(q.state or 0) or
+               (q.failed~=nil and type(q.failed)~="boolean") or (q.complete~=nil and type(q.complete)~="boolean") then
+                quest_known=false;break
+            end
+            slots[slot]=true
+            if (q.questId or 0)~=0 then quests[q.questId]=q end
+        end
+    end
+    local quest_id=task.goal=="quest" and task.questId or t.quest_id
+    local q=quest_known and quests[quest_id] or nil
+    local active=q and q.failed~=true and not flag(q.state,2)
+    local incomplete=active and q.complete~=true and not flag(q.state,1)
+    if input.intent=="begin" then
+        if incomplete and self.level>=t.min_level and self.level<=t.max_quest_level then
+            task.goal,task.questId="quest",quest_id
+        elseif not active and t.xp_classes[self.classId]==true and self.level>=t.min_level and self.level<t.xp_finish_level then
+            task.goal="xp"
+        else
+            return result("finish","practice_goal_prerequisites_not_observed","interrupted")
+        end
+    elseif task.goal=="xp" and active then
+        task.goal,task.questId="quest",quest_id
+    end
+    if task.goal=="quest" and not quest_known then return result("wait","waiting_for_observed_quest_goal") end
+    local needed=task.goal=="quest" and incomplete and self.level>=t.min_level and self.level<=t.max_quest_level or
+        task.goal=="xp" and not active and t.xp_classes[self.classId]==true and self.level<t.xp_finish_level
+    local target
+    for _,c in ipairs(input.candidates or {}) do
+        if type(c)=="table" and c.guid==input.currentTargetGuid then target=c;break end
+    end
+    if needed then
+        if input.intent~="begin" and target and target.present==true and target.aliveKnown==true and target.alive==false and target.healthKnown==true and target.health==0 then
+            if input.castPending==true or input.castOutcomeUnknown==true then
+                return result("wait","waiting_for_original_spell_outcome","settling")
+            end
+            return result("advance","target_death_observed","seeking")
+        end
+        return result("continue",input.intent=="begin" and "waiting_for_safe_pull" or "fighting_observed_young_wolf",
+            input.currentTargetGuid=="0" and "seeking" or "engaged")
+    end
+    if t.finish_own_fight and input.pullStarted==true and flag(self.unitFlags,524288) and target and
+       target.present==true and target.aliveKnown==true and target.alive==true and target.healthKnown==true and
+       uint(target.health) and target.health>0 and target.attackVictimKnown==true and
+       target.attackVictimGuid==input.selfGuid and uint(target.attackAgeMs or 0) and (target.attackAgeMs or 0)<=t.attack_age_ms then
+        return result("finish_current",task.goal=="quest" and "finishing_current_fight_to_goal" or "finishing_current_fight_to_level2","finishing")
+    end
+    if task.goal=="xp" then return result("finish",t.xp_finish_level==2 and "level_two_observed" or "xp_level_goal_observed","completed") end
+    if active and not incomplete then return result("finish",quest_id==33 and "quest_33_completion_observed" or "quest_goal_completion_observed","completed") end
+    local why=quest_id==33 and (incomplete and "quest_33_level_limit" or "own_quest_33_absent_or_unknown") or
+        (incomplete and "quest_goal_level_limit" or "bound_quest_goal_absent")
+    return result("finish",why,"interrupted")
+end
+
 function M.decide(input, override, movement)
     local wait=type(input)=="table" and input.selection=="practice_approach" and
         {kind="wait",standYards=0} or {kind="wait",spellId=0}
@@ -219,6 +327,10 @@ function M.decide(input, override, movement)
     if type(obs)~="table" or obs.sessionId~=input.sessionId or obs.selfGuid~=input.selfGuid or
        type(obs.players)~="table" then return wait end
     local self=obs.players[input.selfGuid]
+    if input.selection=="practice_goal" then
+        if type(self)~="table" or self.guid~=input.selfGuid then return {kind="wait",phase="practice_goal_body_unknown",writerLeaseMs=0,task={}} end
+        return practice_goal(input,self,obs)
+    end
     if input.selection=="practice_target" then
         if type(self)~="table" or self.guid~=input.selfGuid then return {kind="wait",targetGuid="0"} end
         return practice_target(input,self)

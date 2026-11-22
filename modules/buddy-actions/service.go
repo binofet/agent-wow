@@ -154,7 +154,10 @@ type Service struct {
 	practiceRouteTarget                  position
 	practiceReplans                      int
 	practiceKillCredited                 bool
-	practiceQuestGoal                    bool
+	practiceGoalID                       string
+	practiceGoal                         []byte
+	practiceGoalRevision                 uint64
+	practiceClockOrigin                  time.Time
 	coldridgeGoal                        coldridgePracticeGoal
 	formation                            followFormation
 	starterSpells                        starterSpellPolicy
@@ -1159,7 +1162,7 @@ func (s *Service) Tick(ctx context.Context) {
 	}
 	s.expireInteractionLocked()
 	if s.state.InteractionOwner != "" {
-		if s.state.Practicing && !s.now().Before(s.practiceUntil) {
+		if s.state.Practicing && s.practiceGoalID == "" && !s.now().Before(s.practiceUntil) {
 			s.state.Practicing = false
 			s.state.PracticePhase = "goal_expired"
 		}

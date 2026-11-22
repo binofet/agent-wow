@@ -3,7 +3,6 @@ package buddyactions
 import (
 	"context"
 	"math"
-	"time"
 
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
@@ -72,7 +71,13 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 		return s.inactiveNativeEncounterLocked(r.Enabled)
 	}
 	if !r.Enabled {
-		s.autoStopping, s.state.AutoAttackUnconfirmed = false, false
+		if s.practiceGoalID != "" {
+			if w, err := s.snapshot(ctx, s.practiceTarget); err == nil && s.refreshPositionLocked(w) {
+				if goal, _, valid := s.practiceGoalDecisionLocked(ctx, w, "cancel", s.practiceGoalID, s.practiceGoalCurrentLocked(ctx)); valid {
+					s.commitPracticeGoalLocked(s.practiceGoalID, goal)
+				}
+			}
+		}
 		s.stopPracticeLocked(ctx, "disabled")
 		return s.stateLocked(), nil
 	}
@@ -81,21 +86,35 @@ func (s *Service) Practice(ctx context.Context, r *actionsv1.ToggleRequest) (*ac
 	}
 	w, err := s.snapshot(ctx)
 	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
-		return s.startColdridgePracticeLocked(ctx, w)
+		out, err := s.startColdridgePracticeLocked(ctx, w)
+		if err == nil {
+			s.practiceGoalID, s.practiceGoal = "", nil
+		}
+		return out, err
 	}
-	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !w.Self.LevelKnown || w.Self.Level < 1 || w.Self.Level > 5 || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) || !northshire(playerPosition(w.Self)) {
-		return nil, status.Error(codes.FailedPrecondition, "practice requires observed level1..5 supported class safely in Northshire")
-	}
-	active33, incomplete33 := ownWolfQuest(w)
-	if !incomplete33 && (active33 || w.Self.Level != 1 || w.Self.ClassId == 5) {
-		return nil, status.Error(codes.FailedPrecondition, "practice requires own incompletequest33 or level1 mage/rogue XP goal")
+	if err != nil || safeQuestCharacter(w, s.selfGUID) != "" || !w.Self.MapKnown || w.Self.MapId != 0 || !s.refreshPositionLocked(w) || !northshire(playerPosition(w.Self)) {
+		return nil, status.Error(codes.FailedPrecondition, "practice requires an observed safe body in its supported geometry region")
 	}
 	if !s.stopAutoAttackLocked(ctx) || !s.stopLocked(ctx) {
 		return nil, status.Error(codes.FailedPrecondition, "practice stop is unconfirmed")
 	}
-	s.state.Practicing, s.state.PracticePhase = true, "waiting_for_safe_pull"
-	s.practiceUntil = s.now().Add(10 * time.Minute)
-	s.practiceQuestGoal = incomplete33
+	id, err := newPracticeGoalID()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	if s.practiceClockOrigin.IsZero() {
+		s.practiceClockOrigin = s.now()
+	}
+	goal, _, valid := s.practiceGoalDecisionLocked(ctx, w, "begin", id, s.practiceGoalCurrentLocked(ctx))
+	if !valid || goal.Kind != "continue" {
+		why := goal.Phase
+		if why == "" {
+			why = s.starterSpells.failure()
+		}
+		return nil, status.Error(codes.FailedPrecondition, "current Lua Practice goal did not admit this intent: "+why)
+	}
+	s.commitPracticeGoalLocked(id, goal)
+	s.state.Practicing, s.state.PracticePhase = true, goal.Phase
 	s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
 	s.practiceRoute = nil
 	s.practicePullStarted = false
@@ -130,59 +149,48 @@ func practiceTargetObservation(w *worldv1.SnapshotResponse, guid uint64) *worldv
 }
 
 func (s *Service) practiceTickLocked(ctx context.Context) {
-	if !s.now().Before(s.practiceUntil) {
-		s.stopPracticeLocked(ctx, "goal_expired")
-		return
-	}
 	w, err := s.snapshot(ctx, s.practiceTarget)
-	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 {
+	if err == nil && w != nil && w.Self != nil && w.Self.ClassKnown && w.Self.ClassId == 9 && s.practiceGoalID == "" {
+		// Coldridge retains its separate legacy goal lifecycle in this slice.
+		if !s.now().Before(s.practiceUntil) {
+			s.stopPracticeLocked(ctx, "goal_expired")
+			return
+		}
 		s.coldridgePracticeTickLocked(ctx, w)
 		return
 	}
-	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !w.Self.LevelKnown || !w.Self.ClassKnown || (w.Self.ClassId != 4 && w.Self.ClassId != 5 && w.Self.ClassId != 8) {
+	if err != nil || safePracticeCharacter(w, s.selfGUID) != "" || !s.refreshPositionLocked(w) {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
 	}
+	if s.revokeReplacedPracticeGoalLocked(w) {
+		return
+	}
+	goal, fresh, valid := s.practiceGoalDecisionLocked(ctx, w, "tick", s.practiceGoalID, s.practiceGoalCurrentLocked(ctx))
+	if !valid {
+		s.stopLocked(ctx)
+		s.stopAutoAttackLocked(ctx)
+		s.state.PracticePhase = "waiting_for_current_practice_goal"
+		s.state.Reason = s.starterSpells.failure()
+		return
+	}
+	if s.applyPracticeGoalBoundaryLocked(ctx, goal) {
+		return
+	}
+	s.commitPracticeGoalLocked(s.practiceGoalID, goal)
+	w = fresh
 	self := w.Self
 	target := practiceTargetObservation(w, s.practiceTarget)
-	active33, incomplete33 := ownWolfQuest(w)
-	questNeeded := incomplete33 && self.Level >= 1 && self.Level <= 5
-	xpNeeded := !active33 && self.Level == 1 && self.ClassId != 5 && !s.practiceQuestGoal
-	if active33 {
-		s.practiceQuestGoal = true
-	}
-	finishing := false
-	if !questNeeded && !xpNeeded {
-		if s.practicePullStarted && self.UnitFlags&0x80000 != 0 && len(w.NearbyCreatures) <= 32 {
-			finishing = target != nil && target.AliveKnown && target.Alive && target.HealthKnown && target.Health > 0 && target.AttackVictimKnown && target.AttackVictimGuid == s.selfGUID && target.AttackAgeMs <= 30000
-		}
-		if !finishing {
-			why := "level_two_observed"
-			if s.practiceQuestGoal {
-				why = "quest_33_completion_observed"
-				if incomplete33 {
-					why = "quest_33_level_limit"
-				}
-				if !active33 {
-					why = "own_quest_33_absent_or_unknown"
-				}
-			}
-			s.stopPracticeLocked(ctx, why)
-			return
-		}
-		phase := "finishing_current_fight_to_level2"
-		if s.practiceQuestGoal {
-			phase = "finishing_current_fight_to_goal"
-		}
-		s.state.PracticePhase = phase
-		session, guid, until, targetGUID := s.sessionID, s.selfGUID, s.practiceUntil, s.practiceTarget
+	finishing := goal.Kind == "finish_current"
+	if finishing {
+		session, guid, id, generation, targetGUID := s.sessionID, s.selfGUID, s.practiceGoalID, s.practiceGoalRevision, s.practiceTarget
 		defer func() {
-			if s.state.Practicing && s.sessionID == session && s.selfGUID == guid && s.practiceUntil == until && s.practiceTarget == targetGUID {
-				s.state.PracticePhase = phase
+			if s.state.Practicing && s.sessionID == session && s.selfGUID == guid && s.practiceGoalID == id && s.practiceGoalRevision == generation && s.practiceTarget == targetGUID {
+				s.state.PracticePhase = goal.Phase
 			}
 		}()
 	}
-	if !questNeeded && !xpNeeded && !finishing || !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !s.refreshPositionLocked(w) || !northshire(s.pos) || s.state.MotionUnconfirmed {
+	if !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !northshire(s.pos) || s.state.MotionUnconfirmed {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
 	}
@@ -212,14 +220,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	}
 	if len(w.NearbyCreatures) > 32 {
 		s.stopPracticeLocked(ctx, "creature_observations_invalid")
-		return
-	}
-	if s.practiceTarget != 0 && target != nil && target.HealthKnown && target.Health == 0 && target.AliveKnown && !target.Alive {
-		s.stopLocked(ctx)
-		s.stopAutoAttackLocked(ctx)
-		s.practiceTarget, s.state.PracticeTargetGuid = 0, 0
-		s.practiceRoute, s.practicePullStarted = nil, false
-		s.state.PracticePhase = "target_death_observed"
 		return
 	}
 	fresh, chosen, choice, valid := s.practiceTargetDecisionLocked(ctx, w, s.practiceApproachCurrentLocked(ctx, s.practiceTarget))
@@ -326,13 +326,5 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	} else {
 		s.starterPracticeCasterLocked(ctx, w, target, targetPosition)
 	}
-	if finishing {
-		if s.practiceQuestGoal {
-			s.state.PracticePhase = "finishing_current_fight_to_goal"
-		} else {
-			s.state.PracticePhase = "finishing_current_fight_to_level2"
-		}
-	} else {
-		s.state.PracticePhase = "fighting_observed_young_wolf"
-	}
+	s.state.PracticePhase = goal.Phase
 }

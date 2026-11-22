@@ -28,12 +28,12 @@ type practiceApproachDecision struct {
 
 func (s *Service) practiceApproachCurrentLocked(ctx context.Context, target uint64) func() bool {
 	session, self, until := s.sessionID, s.selfGUID, s.practiceUntil
-	pulled, quest, host := s.practicePullStarted, s.practiceQuestGoal, s.hostEncounterKey
+	pulled, generation, host := s.practicePullStarted, s.practiceGoalRevision, s.hostEncounterKey
 	return func() bool {
 		return ctx.Err() == nil && s.sessionID == session && s.selfGUID == self && !s.closed &&
 			!s.clientControlLost && !s.clientControlRestoring && s.state.Practicing &&
 			s.practiceUntil == until && s.now().Before(until) && s.practiceTarget == target && s.state.PracticeTargetGuid == target &&
-			s.practicePullStarted == pulled && s.practiceQuestGoal == quest && s.hostEncounterKey == host && host == "" &&
+			s.practicePullStarted == pulled && s.practiceGoalRevision == generation && s.hostEncounterKey == host && host == "" &&
 			!s.fargodeep.active && !s.questApproaching && !s.recovery.state.Active && !s.state.Traveling && s.state.InteractionOwner == ""
 	}
 }
@@ -164,10 +164,6 @@ func (s *Service) practiceApproachLocked(ctx context.Context, original *worldv1.
 		if s.practiceRoute == nil || distance(s.practiceRouteTarget, point) > 2 {
 			if !s.stopLocked(ctx) || !current() {
 				return refuse()
-			}
-			if s.practiceReplans >= 3 {
-				s.stopPracticeLocked(ctx, "target_moved_beyond_route_budget")
-				return nil, nil, position{}, false
 			}
 			from, to := s.pos, point
 			path, err := s.navigationPath(ctx, s.navDataDir, from, to)

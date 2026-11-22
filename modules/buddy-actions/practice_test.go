@@ -94,9 +94,12 @@ func TestPracticeNeverPullsUnhealthyUnreadyWrongOrClaimedCreatures(t *testing.T)
 }
 
 func TestPracticeUsesNavigationForRogueApproachAndStopsAtLevelTwoOrDanger(t *testing.T) {
-	for _, mode := range []string{"level", "dead", "unknown", "expiry", "disable", "teleport"} {
+	for _, mode := range []string{"level", "dead", "unknown", "explicit_deadline", "disable", "teleport"} {
 		t.Run(mode, func(t *testing.T) {
 			s, f, advance := practiceRig(t, 4)
+			if mode == "explicit_deadline" {
+				installExplicitPracticeGoalDeadline(t, s)
+			}
 			f.world.NearbyCreatures[0].X = -8920
 			s.Tick(context.Background())
 			if !state(t, s).Moving || countPackets(f, opcode.CMSGAttackswing) != 0 {
@@ -110,7 +113,7 @@ func TestPracticeUsesNavigationForRogueApproachAndStopsAtLevelTwoOrDanger(t *tes
 				f.world.Self.Alive = false
 			case "unknown":
 				f.world.Self.LevelKnown = false
-			case "expiry":
+			case "explicit_deadline":
 				advance(11 * time.Minute)
 			case "disable":
 				s.Practice(context.Background(), &actionsv1.ToggleRequest{Enabled: false})
