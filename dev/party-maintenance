@@ -646,25 +646,29 @@ class Maintenance:
                     and confirmed_mail(state.get('lastClaim',{}),self.data['mail']['mailId'])):
                 self.data['mail']['status']='confirmed'
                 self.persist()
-        boxes = world.get('mailboxes', [])
-        mailbox_near = (pos.get('known') is True and pos.get('mapKnown') is True
-            and isinstance(boxes, list) and len(boxes) <= 32
-            and all(type(pos.get(k)) in (int,float) and math.isfinite(pos[k]) for k in ('x','y','z'))
-            and any(m.get('present') is True and m.get('positionKnown') is True and m.get('mapKnown') is True
-                and integer(m.get('mapId',0)) == integer(pos.get('mapId',0))
-                and all(type(m.get(k)) in (int,float) and math.isfinite(m[k]) for k in ('x','y','z'))
-                and sum((m[k]-pos[k])**2 for k in ('x','y','z')) <= 25 for m in boxes))
-        if mailbox_near and self.data['mail'] is None:
-            mail = self.rpc.call('buddy-mail.list', {})
+        mailbox = None
+        if self.data['mail'] is None:
+            try:mailbox = stipend_policy.mailbox_target(self.rpc, world, a, self.guid)
+            except stipend_policy.Error as error:raise Error(str(error)) from None
+        if mailbox is not None and mailbox['kind'] == 'list':
+            if not stipend_policy.mailbox_current(self.rpc, mailbox, self.guid):raise Error('mailbox_target_changed_before_list')
+            mail = self.rpc.call('buddy-mail.list', {'mailboxGuid': mailbox['mailboxGuid']})
+            if mail.get('sessionId') != mailbox['sessionId'] or mail.get('mailboxGuid') != mailbox['mailboxGuid']:
+                raise Error('mail_list_reply_does_not_match_selected_mailbox')
+            if not stipend_policy.mailbox_current(self.rpc, mailbox, self.guid):raise Error('mailbox_target_changed_after_list')
             try:selection = stipend_policy.choose(self.rpc, mail, self.guid)
             except stipend_policy.Error as error:raise Error(str(error)) from None
             if selection['kind'] == 'claim':
+                if (selection['policySHA256'] != mailbox['policySHA256'] or
+                        selection['_proof']['generation'] != mailbox['_proof']['generation']):
+                    raise Error('mailbox_policy_changed_before_claim_selection')
                 request = {key: selection[key] for key in ('sessionId','listRevision','mailboxGuid','mailId')}
                 if not stipend_policy.current(self.rpc, selection, self.guid):raise Error('stipend_policy_changed_before_reservation')
                 self.data['mail'] = dict(request, status='reserved', policySHA256=selection['policySHA256'],
                                          policyGeneration=selection['_proof']['generation'])
                 self.persist()  # A restart must not replay an ambiguous claim.
                 if not stipend_policy.current(self.rpc, selection, self.guid):raise Error('stipend_policy_changed_after_reservation_no_retry')
+                if not stipend_policy.mailbox_current(self.rpc, mailbox, self.guid):raise Error('mailbox_target_changed_after_reservation_no_retry')
                 claimed = self.rpc.call('buddy-mail.claim_stipend', request)
                 if claimed.get('sessionId') == request['sessionId'] and confirmed_mail(claimed.get('lastClaim', {}),request['mailId']):
                     self.data['mail']['status'] = 'confirmed'

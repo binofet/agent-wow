@@ -17,20 +17,27 @@ loader=importlib.machinery.SourceFileLoader('maintenance_test',str(Path(__file__
 spec=importlib.util.spec_from_loader(loader.name,loader)
 m=importlib.util.module_from_spec(spec);loader.exec_module(m)
 TRAINER_BRIDGE = m.town_policy.runtime.Bridge
+MAILBOX = 0xf110000000000000 | 142075 << 24 | 1
+
+
+def mailbox(guid=MAILBOX, x=0, **fields):
+    return dict(dict(guid=str(guid),entry=(int(guid)>>24)&0xffffff,present=True,typeKnown=True,
+        gameObjectType=19,mapKnown=True,mapId=0,positionKnown=True,x=x,y=0,z=0,positionRevision="1"),**fields)
 
 def maintenance_source():
     # Keep the actual trainer export and compose the current stipend library;
     # the critical connected tests below use the generated full encounter.
     stipend=(Path(__file__).resolve().parent.parent/'behaviors/stipend-selection.lua').read_text()
     return ('local services=(function()\n'+service_source()+'\nend)()\nlocal stipend=(function()\n'+stipend+
-        '\nend)()\nreturn {service_destination=services.service_destination,stipend_selection=stipend.decide}')
+        '\nend)()\nreturn {service_destination=services.service_destination,stipend_selection=stipend.decide,mailbox_target=stipend.mailbox_target}')
 
 class RPC:
     def __init__(self):
         self.calls=[]
-        self.world={'self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,'mapKnown':True,'levelKnown':True,'level':4},
+        self.world={'visitRevision':'1','self':{'guid':'1','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True,
+            'mapKnown':True,'positionKnown':True,'positionRevision':'1','x':0,'y':0,'z':0,'levelKnown':True,'level':4},
             'owner':{'guid':'3','present':True,'aliveKnown':True,'alive':True,'unitFlagsKnown':True}}
-        self.actions={'position':{'known':True,'mapKnown':True,'x':0,'y':0,'z':0}}
+        self.actions={'position':{'known':True,'mapKnown':True,'x':0,'y':0,'z':0,'revision':'1'}}
         self.group={'known':True,'inGroup':True,'leaderGuid':'3','members':[
             {'guid':'1','self':True,'online':True},{'guid':'3','name':'Joel','online':True}]}
         self.offer={'revision':'2','npcGuid':'17379390965327856171','expiresInMs':'20000','spells':[
@@ -38,7 +45,7 @@ class RPC:
         self.training={'sessionId':'body1','copperKnown':True,'copper':10000,'offer':self.offer}
         self.policy_source,self.generation=maintenance_source(),'1'
         self.mail={'sessionId':'body1','listKnown':True,'listCurrent':True,'listRevision':'2',
-            'mailboxGuid':'17370300000000000001','stipends':[{'mailId':5,'copper':10000}]}
+            'mailboxGuid':'17370386146390966273','stipends':[{'mailId':5,'copper':10000}]}
         self.claim={'mailId':5,'status':'CLAIM_CONFIRMED','serverAcknowledged':True,'walletIncreaseObserved':True,'confirmedCopper':10000}
         self.purchase={}
         self.fail_buy=False
@@ -70,7 +77,9 @@ class RPC:
             assert self.token is None,'trainer buy must acquire its own lease'
             if self.fail_buy:raise m.Error('uncertain write')
             value=self.training
-        elif method=='buddy-mail.list':value=self.mail
+        elif method=='buddy-mail.list':
+            assert set(params)=={'mailboxGuid'},'mail list must bind the observed Lua-selected mailbox'
+            self.mail['mailboxGuid']=params['mailboxGuid'];value=self.mail
         elif method=='buddy-mail.state':value=dict(self.mail,lastClaim=self.claim)
         elif method=='buddy-mail.claim_stipend':
             if m.confirmed_mail(self.claim,params['mailId']):self.training['copper']+=10000
@@ -167,7 +176,7 @@ class MaintenanceTests(unittest.TestCase):
     def tick(self):self.agent.tick();self.now[0]+=11
     def methods(self):return [x[0] for x in self.rpc.calls]
     def box(self,x=0):
-        self.rpc.world['mailboxes']=[{'present':True,'positionKnown':True,'mapKnown':True,'x':x,'y':0,'z':0}]
+        self.rpc.world['mailboxes']=[mailbox(x=x)]
     def travel_rig(self, owner_present=True):
         self.rpc.trainer_x=50.
         self.rpc.world['self'].update(classKnown=True,classId=5,levelKnown=True,movementFlagsKnown=True)
@@ -618,7 +627,7 @@ class MaintenanceTests(unittest.TestCase):
         self.rpc.fail_buy=True
         with self.assertRaises(m.Error):self.tick()
         self.agent=m.Maintenance('Arlen',1,self.rpc,lambda d:None,self.saved[-1],now=lambda:200)
-        self.rpc.training['sessionId']='body2';self.agent.tick()
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2';self.agent.tick()
         self.assertEqual(self.methods().count('buddy-training.buy'),1)
         self.assertEqual(self.agent.status['phase'],'waiting_for_training_confirmation')
     def test_success_needs_server_and_learning_then_next_spell(self):
@@ -754,7 +763,7 @@ class DurableClassTrainingTests(unittest.TestCase):
 
     def test_new_body_positive_trainer_knowledge_is_distinct_from_old_receipt(self):
         self.tick();old_session=self.agent.data['training'][-1]['session']
-        self.rpc.training['sessionId']='body2'
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2'
         self.rpc.offer['spells']=[dict(spellId=123,usable=2,costCopper=100),dict(spellId=124,costCopper=100)]
         self.tick()
         old=self.agent.data['training'][0]
@@ -773,7 +782,7 @@ class DurableClassTrainingTests(unittest.TestCase):
 
     def test_new_body_available_unavailable_missing_or_foreign_trainer_never_replays(self):
         for mode in ('available','unavailable','missing','foreign_npc'):
-            self.setUp();self.tick();self.rpc.training['sessionId']='body2'
+            self.setUp();self.tick();self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2'
             if mode=='unavailable':self.rpc.offer['spells'][0]['usable']=1
             elif mode=='missing':self.rpc.offer['spells']=[]
             elif mode=='foreign_npc':self.rpc.offer['npcGuid']=str(int(self.rpc.offer['npcGuid'])+1)
@@ -830,7 +839,7 @@ class DurableClassTrainingTests(unittest.TestCase):
         self.tick();self.receipt('SERVER_REJECTED');self.tick()
         stored=copy.deepcopy(self.saved[-1])
         self.agent=m.Maintenance('Arlen',1,self.rpc,self.agent.save,stored,now=lambda:self.now[0])
-        self.rpc.training['sessionId']='body2';self.tick()
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2';self.tick()
         self.assertEqual(self.methods().count('buddy-training.buy'),1)
         self.rpc.world['self']['level']=5;self.tick()
         self.assertEqual(self.methods().count('buddy-training.buy'),2)
@@ -881,7 +890,7 @@ class DurableClassTrainingTests(unittest.TestCase):
         self.assertFalse(m.harvest.maintenance_idle(self.agent))
         buy=next(p for method,p in self.rpc.calls if method=='buddy-training.buy')
         self.assertEqual((buy['maxSpendCopper'],buy['reserveCopper']),(9900,100))
-        self.rpc.training['sessionId']='body2'
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2'
         self.tick()
         self.assertEqual(self.agent.status['phase'],'waiting_for_training_confirmation')
         self.assertFalse(m.harvest.maintenance_idle(self.agent))
@@ -934,7 +943,7 @@ class ExhaustedTrainerTests(unittest.TestCase):
         self.tick();self.assertEqual(self.methods().count('buddy-training.list'),2)
         self.rpc.world['self']['level']=5
         self.tick();self.assertEqual(self.methods().count('buddy-training.list'),3)
-        self.rpc.training['sessionId']='body2'
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='body2'
         self.tick();self.assertEqual(self.methods().count('buddy-training.list'),4)
         self.assertEqual(self.agent.exhausted_body,'body2')
 
@@ -977,7 +986,7 @@ class ExhaustedTrainerTests(unittest.TestCase):
             self.agent.remember_exhausted_trainer(body,int(self.rpc.offer['npcGuid'])+n,world,state,
                 self.rpc.offer['spells'],set(),9900)
         self.assertEqual(len(self.agent.exhausted_trainers),128)
-        self.rpc.training['sessionId']='new-body';self.rpc.offer['expiresInMs']=0
+        self.rpc.training['sessionId']=self.rpc.mail['sessionId']='new-body';self.rpc.offer['expiresInMs']=0
         self.tick();self.assertFalse(self.agent.exhausted_trainers)
         self.assertEqual(self.agent.exhausted_body,'new-body')
 
@@ -1065,7 +1074,7 @@ class StipendConnectedConsumerTests(unittest.TestCase):
         self.rpc.call=observed_call
         self.tick()
         request=next(params for method,params in self.rpc.calls if method=='buddy-mail.claim_stipend')
-        self.assertEqual(request,dict(sessionId='body1',listRevision='2',mailboxGuid='17370300000000000001',mailId='9'))
+        self.assertEqual(request,dict(sessionId='body1',listRevision='2',mailboxGuid='17370386146390966273',mailId='9'))
         self.assertEqual(self.agent.data['mail']['status'],'reserved')
 
     def test_connected_source_edit_changes_next_selection_without_python_ranking(self):
@@ -1103,15 +1112,16 @@ class StipendConnectedConsumerTests(unittest.TestCase):
     def test_source_generation_body_or_mail_change_fences_before_reservation(self):
         for mode in ('source','generation','body','list_revision','mailbox','later_row','reserved','reserved_type'):
             with self.subTest(mode=mode):
-                self.reset_case();original=self.rpc.call;changed=[False]
+                self.reset_case();original=self.rpc.call;changed=[False];listed=[False]
                 def changing_read(method,params):
-                    if not changed[0] and method==('buddy-mail.state' if mode in ('list_revision','mailbox','later_row','reserved','reserved_type') else 'session.attach'):
+                    if method=='buddy-mail.list':listed[0]=True
+                    if listed[0] and not changed[0] and method==('buddy-mail.state' if mode in ('list_revision','mailbox','later_row','reserved','reserved_type') else 'session.attach'):
                         changed[0]=True
                         if mode=='source':self.edit_source(self.last_row_source())
                         elif mode=='generation':self.rpc.generation='2'
                         elif mode=='body':self.rpc.world['self']['guid']='4'
                         elif mode=='list_revision':self.rpc.mail['listRevision']='3'
-                        elif mode=='mailbox':self.rpc.mail['mailboxGuid']='17370300000000000002'
+                        elif mode=='mailbox':self.rpc.mail['mailboxGuid']='17370386146390966274'
                         elif mode=='later_row':self.rpc.mail['stipends'].append(dict(mailId=6,copper=10000))
                         elif mode=='reserved_type':self.rpc.mail['claimReserved']=0
                         else:self.rpc.mail['claimReserved']=True
@@ -1128,7 +1138,7 @@ class StipendConnectedConsumerTests(unittest.TestCase):
         class EditAfterEvaluation:
             def evaluate(self,source,frame):
                 result=real.evaluate(source,frame)
-                owner.edit_source(owner.last_row_source())
+                if 'mail' in frame:owner.edit_source(owner.last_row_source())
                 return result
         with patch.object(m.stipend_policy.runtime,'Bridge',return_value=EditAfterEvaluation()):
             with self.assertRaises(m.Error):self.tick()
@@ -1158,9 +1168,8 @@ class StipendConnectedConsumerTests(unittest.TestCase):
         self.rpc.claim=dict(mailId=5,status='CLAIM_REQUESTED');self.tick()
         self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
         stored=copy.deepcopy(self.saved[-1]);self.assertEqual(stored['mail']['status'],'reserved')
-        broken=self.stipend.replace('return {decide=decide}',
-            'return {decide=function(input)error("broken stipend export")end}',1)
-        self.assertNotEqual(broken,self.stipend)
+        broken=('local p=(function()\n'+self.stipend+'\nend)()\n'
+            'p.decide=function(input)error("broken stipend export")end return p')
         self.edit_source(self.bundle.replace(self.stipend,broken,1))
         self.tick()
         self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:None,stored,now=lambda:200)
@@ -1212,7 +1221,7 @@ class StipendSelectionTests(unittest.TestCase):
 
     def frame(self):
         return dict(sessionId='stipend-session',selfGuid='1',mail=dict(sessionId='stipend-session',
-            listKnown=True,listCurrent=True,listRevision='2',mailboxGuid='17370300000000000001',
+            listKnown=True,listCurrent=True,listRevision='2',mailboxGuid='17370386146390966273',
             claimReserved=False,operationInFlight=False,stipends=[dict(mailId='5',copper=10000)]))
 
     def evaluate(self,frame,source=None):
@@ -1238,7 +1247,7 @@ class StipendSelectionTests(unittest.TestCase):
         frame=self.frame()
         frame['mail']['stipends']=[dict(mailId='12',copper=9999),dict(mailId='9',copper=10000),dict(mailId='5',copper=10000)]
         self.assertEqual(self.evaluate(frame),dict(kind='claim',sessionId='stipend-session',listRevision='2',
-            mailboxGuid='17370300000000000001',mailId='9'))
+            mailboxGuid='17370386146390966273',mailId='9'))
         frame['mail']['stipends'].reverse()
         self.assertEqual(self.evaluate(frame)['mailId'],'5')
         frame['mail']['stipends']=[dict(mailId='5',copper=9999)]
@@ -1305,6 +1314,315 @@ class StipendSelectionTests(unittest.TestCase):
             with self.subTest(source=source):
                 with self.assertRaises(m.town_policy.runtime.Error):self.bridge.evaluate(source,self.frame())
         self.assertEqual(self.evaluate(self.frame())['mailId'],'5')
+
+
+class MailboxTargetTests(unittest.TestCase):
+    """The real pure selector runs through the unchanged default-5ms CLI."""
+    @classmethod
+    def setUpClass(cls):
+        binary=Path(os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY',m.ROOT/'data/bin/luapolicy'))
+        if not binary.is_file() or not os.access(binary,os.X_OK):
+            raise RuntimeError('actual Lua evaluator required for mailbox selection')
+        cls.bridge=m.stipend_policy.runtime.Bridge(binary,m.ROOT/'modules')
+        if cls.bridge.execution_ms is not None or cls.bridge.value_bytes!=32768:
+            raise RuntimeError('mailbox source proof requires unchanged default budgets')
+        cls.policy=(m.ROOT/'behaviors/stipend-selection.lua').read_text()
+
+    def frame(self):
+        return dict(sessionId='mailbox-session',selfGuid='1',visitId='7',
+            mail=dict(sessionId='mailbox-session',claimReserved=False,operationInFlight=False),
+            self=dict(guid='1',present=True,mapKnown=True,mapId=0,positionKnown=True,
+                positionRevision='11',aliveKnown=True,alive=True,unitFlagsKnown=True,unitFlags=0),
+            actions=dict(moving=False,motionUnconfirmed=False,
+                castPending=False,autoAttacking=False,autoAttackRequested=False,autoAttackUnconfirmed=False,
+                interactionOwner='',traveling=False,practicing=False,position=dict(known=True,mapKnown=True,
+                    mapId=0,x=0,y=0,z=0,estimated=True,revision='23')),
+            mailboxes=[mailbox()])
+
+    def evaluate(self,frame,source=None):
+        before=copy.deepcopy(frame)
+        code=self.policy if source is None else source
+        wrapped='local p=(function()\n'+code+'\nend)()\nreturn {decide=p.mailbox_target}'
+        result=self.bridge.evaluate(wrapped,frame)
+        self.assertEqual(frame,before)
+        self.assertIsInstance(result,dict)
+        if result.get('kind')=='wait':
+            self.assertEqual(set(result),{'kind','reason'})
+            self.assertIsInstance(result['reason'],str)
+            self.assertTrue(1<=len(result['reason'])<=128)
+        else:
+            self.assertEqual(set(result),{'kind','sessionId','selfGuid','visitId','mailboxGuid'})
+            self.assertEqual(result['kind'],'list')
+            for key in ('sessionId','selfGuid','visitId'):
+                self.assertEqual(result[key],frame[key])
+            self.assertIsInstance(result['mailboxGuid'],str)
+        return result
+
+    def assert_wait(self,frame):
+        self.assertEqual(self.evaluate(frame)['kind'],'wait')
+
+    def test_nearest_three_dimensional_mailbox_and_exact_high_guid_ties(self):
+        frame=self.frame()
+        first,second=mailbox(MAILBOX,x=1),mailbox(MAILBOX+1,x=0,z=1)
+        self.assertEqual(float(first['guid']),float(second['guid']))
+        for rows in ([second,first],[first,second]):
+            frame['mailboxes']=rows
+            self.assertEqual(self.evaluate(frame)['mailboxGuid'],str(MAILBOX))
+        frame['mailboxes']=[first,second,mailbox(MAILBOX+2,x=.5)]
+        self.assertEqual(self.evaluate(frame)['mailboxGuid'],str(MAILBOX+2))
+        frame['mailboxes']=[mailbox(x=3,y=4)]
+        self.assertEqual(self.evaluate(frame)['mailboxGuid'],str(MAILBOX))
+        frame['mailboxes']=[mailbox(z=5.01)]
+        self.assert_wait(frame)
+
+    def test_current_source_edits_change_rank_and_radius_without_a_python_choice(self):
+        frame=self.frame();frame['mailboxes']=[mailbox(x=1),mailbox(MAILBOX+1,x=4)]
+        self.assertEqual(self.evaluate(frame)['mailboxGuid'],str(MAILBOX))
+        rank='local prefer_nearest_mailbox = true'
+        self.assertEqual(self.policy.count(rank),1)
+        self.assertEqual(self.evaluate(frame,self.policy.replace(rank,
+            'local prefer_nearest_mailbox = false',1))['mailboxGuid'],str(MAILBOX+1))
+        radius='local mailbox_interaction_yards = 5'
+        self.assertEqual(self.policy.count(radius),1)
+        frame['mailboxes']=[mailbox(x=4)]
+        self.assertEqual(self.evaluate(frame,self.policy.replace(radius,
+            'local mailbox_interaction_yards = 3',1))['kind'],'wait')
+
+    def test_all_thirty_two_rows_are_validated_before_returning_an_earlier_choice(self):
+        frame=self.frame();frame['mailboxes']=[mailbox(MAILBOX+i,x=i) for i in range(32)]
+        self.assertEqual(self.evaluate(frame)['mailboxGuid'],str(MAILBOX))
+        for bad in (dict(frame['mailboxes'][-1],entry=True),dict(frame['mailboxes'][-1],guid=str(MAILBOX)),
+                dict(frame['mailboxes'][-1],positionRevision='01'),dict(frame['mailboxes'][-1],x='31')):
+            with self.subTest(bad=bad):
+                malformed=copy.deepcopy(frame);malformed['mailboxes'][-1]=bad;self.assert_wait(malformed)
+        frame['mailboxes'].append(mailbox(MAILBOX+32,x=32));self.assert_wait(frame)
+
+    def test_old_unknown_or_unusable_observations_never_supply_an_implicit_mailbox(self):
+        for fields in (dict(present=False),dict(typeKnown=False),dict(gameObjectType=0),
+                dict(mapKnown=False),dict(mapId=1),dict(positionKnown=False),dict(positionRevision='0')):
+            with self.subTest(fields=fields):
+                frame=self.frame();frame['mailboxes']=[mailbox(**fields)];self.assert_wait(frame)
+        for boxes in ([],[dict(present=True,mapKnown=True,positionKnown=True,x=0,y=0,z=0)]):
+            frame=self.frame();frame['mailboxes']=boxes;self.assert_wait(frame)
+        for mutate in (lambda f:f['self'].update(positionKnown=False),
+                lambda f:f['self'].update(unitFlagsKnown=False),
+                lambda f:f['actions']['position'].update(known=False),
+                lambda f:f['actions'].update(moving=True)):
+            frame=self.frame();mutate(frame);self.assert_wait(frame)
+
+    def test_raw_mail_custody_is_lua_eligibility_and_malformed_facts_never_select(self):
+        guard='if input.mail.claimReserved or input.mail.operationInFlight then return wait("mail_operation_reserved_or_busy") end'
+        self.assertEqual(self.policy.count(guard),1)
+        for field in ('claimReserved','operationInFlight'):
+            frame=self.frame();frame['mail'][field]=True
+            self.assertEqual(self.evaluate(frame),dict(kind='wait',reason='mail_operation_reserved_or_busy'))
+            self.assertEqual(self.evaluate(frame,self.policy.replace(guard,'-- editable query eligibility',1))['kind'],'list')
+        for fields in (dict(sessionId='other-body'),dict(claimReserved=0),dict(operationInFlight='false')):
+            frame=self.frame();frame['mail'].update(fields);self.assert_wait(frame)
+        frame=self.frame();del frame['mail'];self.assert_wait(frame)
+
+    def test_body_visit_revision_and_typed_frame_boundaries_are_exact(self):
+        frame=self.frame();frame['selfGuid']=frame['self']['guid']='18446744073709551615'
+        frame['visitId']='18446744073709551614'
+        self.assertEqual(self.evaluate(frame)['selfGuid'],'18446744073709551615')
+        for mutate in (lambda f:f.update(sessionId=''),lambda f:f['self'].update(guid='2'),
+                lambda f:f.update(visitId='0'),lambda f:f.update(visitId='01'),
+                lambda f:f.update(selfGuid='18446744073709551616'),
+                lambda f:f['actions']['position'].update(revision=True),
+                lambda f:f['self'].update(positionRevision=1),
+                lambda f:f.update(mailboxes={'1':mailbox()}),
+                lambda f:f['mailboxes'][0].update(gameObjectType=True),
+                lambda f:f.update(eligible=True)):
+            malformed=self.frame();mutate(malformed);self.assert_wait(malformed)
+        numeric_guid=self.frame();numeric_guid['mailboxes'][0]['guid']=MAILBOX
+        with self.assertRaisesRegex(m.stipend_policy.runtime.Error,'outside exact JSON integer range'):
+            self.evaluate(numeric_guid)
+        null_position=self.frame();null_position['mailboxes'][0]['x']=None
+        self.assert_wait(null_position)
+        for bad in (float('inf'),float('nan')):
+            malformed=self.frame();malformed['mailboxes'][0]['x']=bad
+            with self.subTest(non_json_position=bad),self.assertRaises(m.stipend_policy.runtime.Error):
+                self.evaluate(malformed)
+
+
+class MailboxTargetConsumerTests(unittest.TestCase):
+    tick=MaintenanceTests.tick
+    methods=MaintenanceTests.methods
+    box=MaintenanceTests.box
+    reset_case=StipendConnectedConsumerTests.reset_case
+    setUp=StipendConnectedConsumerTests.setUp
+    edit_source=StipendConnectedConsumerTests.edit_source
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bundle=subprocess.check_output(['python3','-B',str(m.ROOT/'dev/encounter-bundle')],text=True)
+        cls.stipend=(m.ROOT/'behaviors/stipend-selection.lua').read_text()
+        if cls.bundle.count(cls.stipend)!=1:
+            raise AssertionError('full accepted bundle must contain exactly one current mailbox/stipend module')
+
+    def assert_no_list_or_claim(self):
+        self.assertNotIn('buddy-mail.list',self.methods())
+        self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+        self.assertIsNone(self.agent.data['mail'])
+        self.assertEqual(self.saved,[])
+
+    def choose(self):
+        return m.stipend_policy.mailbox_target(self.rpc,copy.deepcopy(self.rpc.world),copy.deepcopy(self.rpc.actions),1)
+
+    def test_actual_full_bundle_lists_exact_selected_mailbox_and_ignores_stale_list_target(self):
+        # Actions may own an estimated pose with its independent local revision.
+        # Selection must bind these facts without inventing a server ACK.
+        self.rpc.actions['position'].update(estimated=True,revision='23')
+        self.rpc.world['self']['positionRevision']='11'
+        self.assertNotIn('sessionId',self.rpc.actions)
+        self.assertNotIn('selfGuid',self.rpc.actions)
+        self.rpc.world['mailboxes']=[mailbox(x=4),mailbox(MAILBOX+1,x=1)]
+        self.rpc.mail['mailboxGuid']=str(MAILBOX+99)
+        self.tick()
+        requests=[params for method,params in self.rpc.calls if method=='buddy-mail.list']
+        self.assertEqual(requests,[dict(mailboxGuid=str(MAILBOX+1))])
+        claim=next(params for method,params in self.rpc.calls if method=='buddy-mail.claim_stipend')
+        self.assertEqual(claim['mailboxGuid'],str(MAILBOX+1))
+        self.assertEqual(self.agent.data['mail']['status'],'confirmed')
+
+    def test_optional_actual_actions_identity_is_validated_when_present(self):
+        self.rpc.actions.update(sessionId='body1',selfGuid='1')
+        self.tick()
+        self.assertEqual([p for method,p in self.rpc.calls if method=='buddy-mail.list'],[dict(mailboxGuid=str(MAILBOX))])
+        for field,value in (('sessionId','other-body'),('sessionId',None),('sessionId',1),
+                ('selfGuid','4'),('selfGuid',None),('selfGuid',1),('selfGuid',True)):
+            with self.subTest(field=field,value=value):
+                self.reset_case();self.rpc.actions[field]=value
+                try:self.tick()
+                except m.Error:pass
+                self.assert_no_list_or_claim()
+
+    def test_same_consumer_uses_current_accepted_rank_and_radius_before_listing(self):
+        self.rpc.world['mailboxes']=[mailbox(x=1),mailbox(MAILBOX+1,x=4)]
+        selected=self.choose();self.assertEqual(selected['mailboxGuid'],str(MAILBOX))
+        rank='local prefer_nearest_mailbox = true';self.assertEqual(self.bundle.count(rank),1)
+        self.edit_source(self.bundle.replace(rank,'local prefer_nearest_mailbox = false',1))
+        self.assertFalse(m.stipend_policy.mailbox_current(self.rpc,selected,1))
+        self.tick()
+        self.assertEqual([p for method,p in self.rpc.calls if method=='buddy-mail.list'],[dict(mailboxGuid=str(MAILBOX+1))])
+        self.reset_case();self.box(4)
+        self.assertEqual(self.choose()['kind'],'list')
+        radius='local mailbox_interaction_yards = 5';self.assertEqual(self.bundle.count(radius),1)
+        self.edit_source(self.bundle.replace(radius,'local mailbox_interaction_yards = 3',1))
+        self.tick();self.assert_no_list_or_claim()
+
+    def test_malformed_later_rows_unknown_or_far_mailboxes_never_fall_back_to_empty_list(self):
+        for boxes in ([mailbox(x=40)],[mailbox(typeKnown=False)],
+                [dict(present=True,positionKnown=True,mapKnown=True,x=0,y=0,z=0)],
+                [mailbox(),mailbox(MAILBOX+1,entry=True)],
+                [mailbox(),mailbox()]):
+            with self.subTest(boxes=boxes):
+                self.reset_case();self.rpc.world['mailboxes']=boxes
+                try:self.tick()
+                except m.Error:pass
+                self.assert_no_list_or_claim()
+
+    def test_body_visit_position_mailbox_source_and_generation_drift_before_list_veto(self):
+        for mode in ('body','visit','position','own_position_revision','actions_position_revision','estimated',
+                'mailbox','source','generation'):
+            with self.subTest(mode=mode):
+                self.reset_case();original=m.stipend_policy.mailbox_target;changed=[]
+                def changed_after_choice(*args,**kwargs):
+                    selected=original(*args,**kwargs);self.assertEqual(selected['kind'],'list')
+                    changed.append(mode)
+                    if mode=='body':self.rpc.world['self']['guid']='4'
+                    elif mode=='visit':self.rpc.world['visitRevision']='2'
+                    elif mode=='position':self.rpc.actions['position']['x']=1
+                    elif mode=='own_position_revision':self.rpc.world['self']['positionRevision']='2'
+                    elif mode=='actions_position_revision':self.rpc.actions['position']['revision']='2'
+                    elif mode=='estimated':self.rpc.actions['position']['estimated']=True
+                    elif mode=='mailbox':self.rpc.world['mailboxes'][0]['positionRevision']='2'
+                    elif mode=='source':self.edit_source(self.bundle+'\n-- current accepted source edit\n')
+                    else:self.rpc.generation='2'
+                    return selected
+                with patch.object(m.stipend_policy,'mailbox_target',side_effect=changed_after_choice):
+                    try:self.tick()
+                    except m.Error:pass
+                self.assertEqual(changed,[mode]);self.assert_no_list_or_claim()
+
+    def test_accepted_lua_owns_busy_query_choice_while_claim_custody_stays_unchanged(self):
+        self.rpc.mail['claimReserved']=True
+        self.tick();self.assert_no_list_or_claim()
+        guard='if input.mail.claimReserved or input.mail.operationInFlight then return wait("mail_operation_reserved_or_busy") end'
+        self.assertEqual(self.bundle.count(guard),1)
+        self.edit_source(self.bundle.replace(guard,'-- permit an observed list query while claim capacity is used',1))
+        self.tick()
+        self.assertEqual([p for method,p in self.rpc.calls if method=='buddy-mail.list'],[dict(mailboxGuid=str(MAILBOX))])
+        self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+        self.assertIsNone(self.agent.data['mail']);self.assertEqual(self.saved,[])
+
+    def test_list_reply_session_or_mailbox_mismatch_never_reaches_stipend_claim(self):
+        for field,value in (('sessionId','other-body'),('mailboxGuid',str(MAILBOX+1)),('sessionId',None),('mailboxGuid',None)):
+            with self.subTest(field=field,value=value):
+                self.reset_case();original=self.rpc.call
+                def bad_reply(method,params):
+                    reply=original(method,params)
+                    if method=='buddy-mail.list':
+                        if value is None:reply.pop(field,None)
+                        else:reply[field]=value
+                    return reply
+                self.rpc.call=bad_reply
+                try:self.tick()
+                except m.Error:pass
+                self.assertEqual([p for method,p in self.rpc.calls if method=='buddy-mail.list'],[dict(mailboxGuid=str(MAILBOX))])
+                self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+                self.assertIsNone(self.agent.data['mail']);self.assertEqual(self.saved,[])
+
+    def test_post_list_fact_or_source_drift_is_rechecked_before_any_claim_reservation(self):
+        for mode in ('visit','source'):
+            with self.subTest(mode=mode):
+                self.reset_case();original=self.rpc.call
+                def move_after_listing(method,params):
+                    reply=original(method,params)
+                    if method=='buddy-mail.list':
+                        if mode=='visit':self.rpc.world['visitRevision']='2'
+                        else:self.edit_source(self.bundle+'\n-- source changed during list query\n')
+                    return reply
+                self.rpc.call=move_after_listing
+                try:self.tick()
+                except m.Error:pass
+                self.assertEqual(self.methods().count('buddy-mail.list'),1)
+                self.assertNotIn('buddy-mail.claim_stipend',self.methods())
+                self.assertIsNone(self.agent.data['mail']);self.assertEqual(self.saved,[])
+
+    def test_pending_claim_reconciles_without_reselecting_or_listing_after_source_loss(self):
+        self.rpc.claim=dict(mailId=5,status='CLAIM_REQUESTED');self.tick()
+        stored=copy.deepcopy(self.saved[-1])
+        self.assertEqual(stored['mail']['status'],'reserved')
+        self.edit_source('return {}')
+        with patch.object(m.stipend_policy,'mailbox_target',side_effect=AssertionError('pending claim must not reselect')):
+            try:self.tick()
+            except m.Error:pass
+            self.agent=m.Maintenance('Arlen',1,self.rpc,lambda data:None,stored,now=lambda:200)
+            try:self.agent.tick()
+            except m.Error:pass
+            self.assertEqual(self.agent.data['mail']['status'],'reserved')
+            self.rpc.claim.update(status='CLAIM_CONFIRMED',serverAcknowledged=True,
+                walletIncreaseObserved=True,confirmedCopper=10000)
+            self.agent.next_query=0
+            try:self.agent.tick()
+            except m.Error:pass
+            self.assertEqual(self.agent.data['mail']['status'],'confirmed')
+        self.assertEqual(self.methods().count('buddy-mail.list'),1)
+        self.assertEqual(self.methods().count('buddy-mail.claim_stipend'),1)
+
+    def test_missing_faulted_or_unobserved_mailbox_export_has_no_native_default(self):
+        export='mailbox_target=encounter_stipend_selection and encounter_stipend_selection.mailbox_target'
+        self.assertEqual(self.bundle.count(export),1)
+        wrapped='local p=(function()\n'+self.bundle+'\nend)()\np.mailbox_target=function(input) '
+        variants=(self.bundle.replace(export,'mailbox_target=false',1),self.bundle+'\ninvalid =',
+            wrapped+'error("mailbox export failure") end return p',
+            wrapped+'return {kind="list",sessionId=input.sessionId,selfGuid=input.selfGuid,visitId=input.visitId,mailboxGuid="'+str(MAILBOX+99)+'"} end return p')
+        for source in variants:
+            with self.subTest(source_length=len(source)):
+                self.reset_case();self.edit_source(source)
+                with self.assertRaises(m.Error):self.tick()
+                self.assert_no_list_or_claim()
 
 
 from test_town_policy import VendorDestinationTests, TrainerDestinationTests

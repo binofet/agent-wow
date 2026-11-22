@@ -125,3 +125,116 @@ def current(rpc, selection, self_guid):
         return True
     except Exception:
         return False
+
+
+def _mailbox_custody(mail):
+    if not isinstance(mail, dict):
+        raise Error('current_mail_identity_required')
+    facts = dict(sessionId=mail.get('sessionId'), claimReserved=mail.get('claimReserved', False),
+                 operationInFlight=mail.get('operationInFlight', False))
+    if (not isinstance(facts['sessionId'], str) or not 1 <= len(facts['sessionId']) <= 128
+            or type(facts['claimReserved']) is not bool or type(facts['operationInFlight']) is not bool):
+        raise Error('same_session_idle_mail_state_required')
+    return facts
+
+
+def _mailbox_frame(mail, world, actions, self_guid):
+    custody = _mailbox_custody(mail)
+    if not isinstance(world, dict) or not isinstance(actions, dict) or not isinstance(world.get('self'), dict):
+        raise Error('observed_mailbox_world_and_actions_required')
+    own, pos = world['self'], actions.get('position', {})
+    # Older responses may omit these fields. Actual reported identity may not
+    # contradict the Mail/World/accepted-source body that brackets this pose.
+    if ('sessionId' in actions and actions['sessionId'] != custody['sessionId'] or
+            'selfGuid' in actions and (not _decimal(actions['selfGuid'], 2**64-1)
+                or actions['selfGuid'] != str(self_guid) or actions['selfGuid'] != own.get('guid'))):
+        raise Error('reported_actions_identity_changed')
+    if not isinstance(pos, dict):
+        raise Error('observed_mailbox_position_required')
+    boxes = world.get('mailboxes', [])
+    if isinstance(boxes, list) and len(boxes) <= 32:
+        boxes = [dict(guid=row.get('guid', '0'), entry=row.get('entry', 0), present=row.get('present', False),
+                      typeKnown=row.get('typeKnown', False), gameObjectType=row.get('gameObjectType', 0),
+                      mapKnown=row.get('mapKnown', False), mapId=row.get('mapId', 0),
+                      positionKnown=row.get('positionKnown', False), x=row.get('x', 0), y=row.get('y', 0), z=row.get('z', 0),
+                      positionRevision=row.get('positionRevision', '0')) if isinstance(row, dict) else row for row in boxes]
+    body = dict(guid=own.get('guid', '0'), present=own.get('present', False), mapKnown=own.get('mapKnown', False),
+                mapId=own.get('mapId', 0), positionKnown=own.get('positionKnown', False),
+                positionRevision=own.get('positionRevision', '0'), aliveKnown=own.get('aliveKnown', False),
+                alive=own.get('alive', False), unitFlagsKnown=own.get('unitFlagsKnown', False), unitFlags=own.get('unitFlags', 0))
+    position = dict(known=pos.get('known', False), mapKnown=pos.get('mapKnown', False), mapId=pos.get('mapId', 0),
+                    x=pos.get('x', 0), y=pos.get('y', 0), z=pos.get('z', 0), estimated=pos.get('estimated', False),
+                    revision=pos.get('revision', '0'))
+    actor = {key: actions.get(key, False) for key in ('moving', 'motionUnconfirmed', 'castPending', 'autoAttacking',
+             'autoAttackRequested', 'autoAttackUnconfirmed', 'traveling', 'practicing')}
+    actor.update(interactionOwner=actions.get('interactionOwner', ''), position=position)
+    return dict(sessionId=custody['sessionId'], selfGuid=str(self_guid), visitId=world.get('visitRevision', '0'),
+                self=body, actions=actor, mailboxes=boxes, mail=custody), custody
+
+
+def mailbox_target(rpc, world, actions, self_guid, *, bridge=None):
+    """Read the accepted mailbox choice; no implicit native target fallback."""
+    try:
+        mail = rpc.call('buddy-mail.state', {})
+        frame, custody = _mailbox_frame(mail, world, actions, self_guid)
+        identity = dict(sessionId=frame['sessionId'], characterGuid=frame['selfGuid'])
+        if not _decimal(identity['characterGuid'], 2**64-1):
+            raise Error('current_mailbox_body_required')
+        source, revision, generation, limit = _accepted(rpc, identity)
+        wrapped = ('local policy=(function()\n'+source+'\nend)()\nreturn {decide=function(input) '
+            'if type(policy.mailbox_target)~="function" then return {available=false} end '
+            'return {available=true,decision=policy.mailbox_target(input)} end}\n')
+        bridge = bridge or runtime.Bridge(os.environ.get('BUDDY_LUAPOLICY_BINARY',
+            os.environ.get('BUDDY_LUAPOLICY_TEST_BINARY', ROOT/'data/bin/luapolicy')), ROOT/'modules',
+            source_bytes=max(limit, len(wrapped.encode())), execution_ms=1000)
+        result = bridge.evaluate(wrapped, frame)
+        if not isinstance(result, dict) or result.get('available') is not True:
+            raise Error('mailbox_target_export_unavailable')
+        decision = result.get('decision')
+        if not isinstance(decision, dict):
+            raise Error('bounded_mailbox_target_decision_required')
+        if decision.get('kind') == 'wait':
+            reason = decision.get('reason')
+            if set(decision) != {'kind', 'reason'} or not isinstance(reason, str) or not 1 <= len(reason) <= 128:
+                raise Error('bounded_mailbox_target_wait_required')
+        elif decision.get('kind') == 'list':
+            if (set(decision) != {'kind', 'sessionId', 'selfGuid', 'visitId', 'mailboxGuid'}
+                    or any(decision[key] != frame[key] for key in ('sessionId', 'selfGuid', 'visitId'))
+                    or not _decimal(decision.get('visitId'), 2**64-1)
+                    or not _decimal(decision.get('mailboxGuid'), 2**64-1)
+                    or not isinstance(frame['mailboxes'], list) or len(frame['mailboxes']) > 32
+                    or sum(isinstance(row, dict) and row.get('guid') == decision['mailboxGuid'] for row in frame['mailboxes']) != 1):
+                raise Error('lua_must_select_one_exact_observed_mailbox')
+        else:
+            raise Error('mailbox_target_list_or_wait_required')
+        selection = dict(decision, policySHA256=revision,
+                         _proof=dict(revision=revision, generation=generation, frame=frame, mailCustody=custody))
+        if decision['kind'] == 'list' and not mailbox_current(rpc, selection, self_guid):
+            raise Error('mailbox_source_body_visit_or_pose_changed')
+        return selection
+    except Exception as error:
+        raise Error('mailbox_policy_unavailable: ' + str(error)) from error
+
+
+def mailbox_current(rpc, selection, self_guid):
+    """Bounded asynchronous preflight; List has no atomic source/visit token."""
+    try:
+        proof, expected = selection['_proof'], selection['_proof']['frame']
+        if str(self_guid) != expected['selfGuid']:
+            return False
+        mail = rpc.call('buddy-mail.state', {})
+        world = rpc.call('buddy-world.snapshot', {})
+        actions = rpc.call('buddy-actions.status', {})
+        frame, custody = _mailbox_frame(mail, world, actions, self_guid)
+        if (json.dumps(frame, sort_keys=True, allow_nan=False) != json.dumps(expected, sort_keys=True, allow_nan=False)
+                or custody != proof['mailCustody']):
+            return False
+        identity = dict(sessionId=frame['sessionId'], characterGuid=frame['selfGuid'])
+        _, revision, generation, _ = _accepted(rpc, identity)
+        attached = rpc.call('session.attach', identity)
+        policy = attached.get('policy', {})
+        return (revision == proof['revision'] == selection['policySHA256'] and generation == proof['generation']
+                and attached.get('sessionId') == identity['sessionId'] and str(attached.get('characterGuid')) == identity['characterGuid']
+                and policy.get('revision') == revision and str(policy.get('generation')) == generation)
+    except Exception:
+        return False
