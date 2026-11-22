@@ -17,16 +17,17 @@ import (
 // One pure policy read binds this exact native window. The existing ACCEPT_SENT
 // reservation retains transport uncertainty; this is not another action ledger.
 type tradeConsentAdmission struct {
-	frame          *tradev1.State
-	sourceRevision string
-	token          string
-	until          time.Time
-	deadline       time.Time
-	service        tradeServiceItem
-	partnerSpell   uint32
-	pickLock       tradePickLock
-	mapKnown       bool
-	mapID          uint32
+	frame             *tradev1.State
+	sourceRevision    string
+	token             string
+	until             time.Time
+	deadline          time.Time
+	service           tradeServiceItem
+	partnerSpell      uint32
+	pickLock          tradePickLock
+	mapKnown          bool
+	mapID             uint32
+	lastLeasePosition *actionsv1.ClientPosition
 }
 
 func tradeConsentFrame(state *tradev1.State) (*tradev1.State, map[string]any, error) {
@@ -132,6 +133,10 @@ func (p *tradeConsentAdmission) renew(ctx context.Context, s *Service) error {
 	p.until = started.Add(time.Duration(lease.State.InteractionLeaseRemainingMs) * time.Millisecond)
 	if ctx.Err() != nil || !s.now().Before(p.until) {
 		return errors.New("trade_consent_renewal_exceeded_lease")
+	}
+	p.lastLeasePosition = nil
+	if lease.State.Position != nil {
+		p.lastLeasePosition = proto.Clone(lease.State.Position).(*actionsv1.ClientPosition)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ type observedTrajectory struct {
 	known, destinationKnown, cyclic, relative, stopped bool
 	controlReturned                                    bool
 	idKnown                                            bool
+	kind                                               uint8
 	id                                                 uint32
 	duration, elapsed, flags                           uint32
 	at                                                 time.Time
@@ -54,6 +55,7 @@ func monsterMove(c *cursor, p *observed, transport bool, now time.Time) error {
 	t.id = c.u32()
 	t.idKnown = true
 	kind := c.u8()
+	t.kind = kind
 	if c.err != nil {
 		return c.err
 	}
@@ -185,6 +187,7 @@ func settleSelfSpline(p *observed, now time.Time) {
 		return
 	}
 	p.positionInferred = true
+	p.receivedPosition = false
 	if latestObservation.After(arrival) {
 		p.observedAt = latestObservation
 	}

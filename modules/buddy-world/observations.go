@@ -57,6 +57,10 @@ func (s observations) clone() observations {
 		clear(s.players[i].receivedMovementWire[:])
 		s.players[i].receivedMovementWireLen = 0
 		s.players[i].receivedSpline = false
+		s.players[i].receivedUnitFlags = false
+		s.players[i].receivedOwnCreate = false
+		s.players[i].receivedMotionInvalid = false
+		s.players[i].receivedPosition = false
 	}
 	s.creatures = maps.Clone(s.creatures)
 	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)

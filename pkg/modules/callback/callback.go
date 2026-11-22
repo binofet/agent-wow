@@ -7,15 +7,17 @@ import (
 	"github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Handlers supplies concurrent session callbacks. Implementations enforce packet
 // policy, routing validation, deadlines, and lifecycle rules.
 type Handlers struct {
-	SendPacket   func(context.Context, uint32, []byte) error
-	Clock        func() uint32
-	InvokeModule func(context.Context, string, *modv1.InvokeModuleRequest) (*modv1.InvokeModuleResponse, error)
+	SendPacket       func(context.Context, uint32, []byte) error
+	SendScopedPacket func(context.Context, uint32, []byte, *modv1.TransportScope) error
+	Clock            func() uint32
+	InvokeModule     func(context.Context, string, *modv1.InvokeModuleRequest) (*modv1.InvokeModuleResponse, error)
 }
 
 // Server implements modv1.SessionServer for one module's callback endpoint.
@@ -37,6 +39,15 @@ func (s *Server) SendPacket(ctx context.Context, req *modv1.SendPacketRequest) (
 	}
 	if s.lifetime.Err() != nil {
 		return nil, status.Error(codes.FailedPrecondition, "session is closed")
+	}
+	if scope := req.GetTransportScope(); scope != nil {
+		if s.handlers.SendScopedPacket == nil {
+			return nil, PacketNotDispatchedError("transport scope is unsupported by this host")
+		}
+		if err := s.handlers.SendScopedPacket(ctx, req.GetOpcode(), append([]byte(nil), req.GetPayload()...), proto.Clone(scope).(*modv1.TransportScope)); err != nil {
+			return nil, err
+		}
+		return &emptypb.Empty{}, nil
 	}
 	if err := s.handlers.SendPacket(ctx, req.GetOpcode(), req.GetPayload()); err != nil {
 		return nil, err
