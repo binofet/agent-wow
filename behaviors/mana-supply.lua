@@ -184,7 +184,7 @@ local function result(memory,phase,action)
 end
 local function advertised(frame,port,method)
     for _,row in ipairs((frame.catalogs or {})[id(port)] or {}) do
-        if row.name==method and row.effect=='mutation' then return true end
+        if row.name==method and (row.effect=='mutation' or row.effect=='unspecified') then return true end
     end
     return false
 end

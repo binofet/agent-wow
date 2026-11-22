@@ -92,7 +92,7 @@ def _validate_action(action,catalog,identity):
             or not isinstance(action.get('method'),str) or not isinstance(action.get('params'),dict)):
         raise runtime.Error('typed_supply_action_required')
     rows=[row for row in catalog['methods'] if row.get('name')==action['method']]
-    if len(rows)!=1 or rows[0].get('effect')!='mutation':
+    if len(rows)!=1 or rows[0].get('effect') not in ('mutation','unspecified'):
         raise runtime.Error('supply_method_not_advertised')
     schema=catalog['messages'].get(rows[0].get('inputType'),{})
     fields={row['name']:row for row in schema.get('fields',[]) if isinstance(row,dict) and isinstance(row.get('name'),str)}

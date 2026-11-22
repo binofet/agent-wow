@@ -305,6 +305,18 @@ class SupplyTest(unittest.TestCase):
         self.assertEqual(self.turn(state),'water_supply_unavailable')
         self.assertIn('mana_supply_policy_export_unavailable',state['error']);self.assertEqual(self.calls,[])
 
+    def test_preserved_legacy_installed_methods_with_unspecified_effect_keep_typed_exact_dispatch(self):
+        original=self.catalog
+        def legacy(port):
+            catalog=original(port)
+            for method in catalog['methods']:
+                if method['name'].startswith('buddy-trade.'):method['effect']='unspecified'
+            return catalog
+        self.catalog=legacy;carried(self.mira,2136,8);self.gift()
+        self.assertEqual([call[1] for call in self.calls],['buddy-trade.water_gift','buddy-trade.water_gift'])
+        self.calls.clear();self.setUp();self.catalog=legacy;self.cleanup_fixture()
+        self.assertEqual(self.turn(),'cleanup_requested');self.assertEqual(self.calls[-1][1],'buddy-trade.destroy_junk')
+
     def test_shared_disposal_selects_exact_lowest_value_source_then_requires_native_removal_before_supply(self):
         row=self.cleanup_fixture();state={}
         self.arlen['inventory']['inventoryBags'][1].update(slotCount=1,slots=[dict(bag=1,slot=0,entry=901,stackCount=1,
