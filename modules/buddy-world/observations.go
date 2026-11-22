@@ -46,9 +46,18 @@ type observations struct {
 	discovery           clientDiscoveryAnchor
 	discoverySequence   uint64
 	castRevision        uint64
+	ownMovement         ownMovementObservation
+	ownSpline           ownSplineObservation
 }
 
 func (s observations) clone() observations {
+	s.ownMovement.wire = append([]byte(nil), s.ownMovement.wire...)
+	for i := range s.players {
+		s.players[i].receivedMovement = false
+		clear(s.players[i].receivedMovementWire[:])
+		s.players[i].receivedMovementWireLen = 0
+		s.players[i].receivedSpline = false
+	}
 	s.creatures = maps.Clone(s.creatures)
 	s.nearbyPlayers = maps.Clone(s.nearbyPlayers)
 	s.items = maps.Clone(s.items)

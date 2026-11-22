@@ -8,7 +8,8 @@ import "google/protobuf/empty.proto";
 
 // Read-only observations for the session character and fixed owner player 3.
 // Ages measure time since an actual observation, not a claim that an unchanged
-// stationary player disappeared. Positions are never predicted by this module.
+// stationary player disappeared. An inferred own spline endpoint is explicitly
+// marked; retained raw movement facts below are never refreshed by estimates.
 message PlayerState {
   uint64 guid = 1;
   bool present = 2;
@@ -73,6 +74,97 @@ message PlayerState {
   uint32 race_id = 58;
   bool aura_state_known = 59;
   uint32 aura_state = 60;
+  // Legacy own endpoint settlement after control return and spline duration.
+  // This pose is inferred, not a newly received server arrival observation.
+  bool position_inferred = 61;
+}
+
+// Conditional MovementInfo transport tail, including a signed seat and the
+// separately present interpolation time. A zero transport GUID is still data.
+message MovementTransportFacts {
+  uint64 guid = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  float orientation = 5;
+  uint32 time = 6;
+  sint32 seat = 7;
+  bool time2_known = 8;
+  uint32 time2 = 9;
+}
+
+message MovementJumpFacts {
+  float velocity = 1;
+  float sin_angle = 2;
+  float cos_angle = 3;
+  float xy_speed = 4;
+}
+
+// Complete observed 3.3.5a MovementInfo. Message presence distinguishes the
+// conditional transport and jump tails; zero values do not mean unknown.
+message MovementInfoFacts {
+  uint32 flags = 1;
+  uint32 extra_flags = 2;
+  uint32 time = 3;
+  float x = 4;
+  float y = 5;
+  float z = 6;
+  float orientation = 7;
+  MovementTransportFacts transport = 8;
+  bool pitch_known = 9;
+  float pitch = 10;
+  uint32 fall_time = 11;
+  MovementJumpFacts jump = 12;
+  bool spline_elevation_known = 13;
+  float spline_elevation = 14;
+}
+
+// Latest complete own MovementInfo received in the current World visit. This
+// historical observation is not an instruction, acknowledgement or arrival.
+// Snapshot reads, client writes and inferred endpoint settlement never refresh
+// its age/revision or rewrite its flags. Invalid optional floats leave known
+// false and omit info/wire_image without rejecting otherwise valid old poses.
+message OwnMovementFacts {
+  bool known = 1;
+  uint64 self_guid = 2;
+  uint64 visit_revision = 3;
+  uint64 revision = 4;
+  uint32 source_opcode = 5;
+  uint64 age_ms = 6;
+  bool map_known = 7;
+  uint32 map_id = 8;
+  MovementInfoFacts info = 9;
+  // Exact detached received MovementInfo prefix, with no leading mover GUID.
+  // This is evidence only; it grants no transport-write authority.
+  bytes wire_image = 10;
+}
+
+// Latest own server spline header in the current visit. This is historical
+// evidence, not a claim the spline remains active. ID is opaque: zero is valid,
+// and neither ID nor duration establishes flight acceptance or arrival.
+message OwnSplineFacts {
+  bool known = 1;
+  uint64 self_guid = 2;
+  uint64 visit_revision = 3;
+  uint64 revision = 4;
+  uint32 source_opcode = 5;
+  uint64 age_ms = 6;
+  bool id_known = 7;
+  uint32 spline_id = 8;
+  uint32 flags = 9;
+  uint32 duration_ms = 10;
+  uint32 elapsed_ms = 11;
+  bool destination_known = 12;
+  float destination_x = 13;
+  float destination_y = 14;
+  float destination_z = 15;
+  bool transport_relative = 16;
+  uint64 transport_guid = 17;
+  sint32 transport_seat = 18;
+  bool stopped = 19;
+  bool cyclic = 20;
+  bool map_known = 21;
+  uint32 map_id = 22;
 }
 
 // Private own equipment slots0..18; bags and bank slots are excluded.
@@ -412,6 +504,8 @@ message SnapshotResponse {
   // Session-local world visit. Advances on each valid login verification or
   // new-world packet, including a same-map transfer. Zero while unbound.
   uint64 visit_revision = 47;
+  OwnMovementFacts self_movement_facts = 48;
+  OwnSplineFacts self_spline_facts = 49;
 }
 
 // Passive server combat packet evidence for exactly one authenticated session.
