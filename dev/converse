@@ -2643,7 +2643,8 @@ without observations. Keep final action NONE after performing a tool action.
             and request.get("developmentWhisper") is True)
         emotes = supported_emotes(state)
         schema = dict(REPLY_SCHEMA, properties=dict(REPLY_SCHEMA["properties"],
-            emote={"type":"string", "enum":["NONE", *sorted(emotes)]}))
+            emote={"type":"string", "enum":["NONE", *sorted(emotes)]},
+            action={"type":"string", "enum":[value for value in ACTIONS if value != "REPAIR_CONTROLLER"]}))
         if allow_gm:
             schema["properties"]["gm_command"] = {"type":"string", "maxLength":255}
             schema["required"] = [*schema["required"], "gm_command"]
@@ -4741,7 +4742,7 @@ class Conversation:
             if not peer_verified: return
         development = self.development_context("party_agent" if peer else "owner",peer_verified)
         state = dict(state, character={"name":self.character_name,"class":self.character_class,"guid":str(self.character_guid)}, party_agents=[{"name":name,"guid":str(guid)} for guid,name in self.party_agents.items()],
-            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":True})
+            development=development,current_request={"source":"party_agent" if peer else "owner","senderGuid":str(sender),"verifiedPeer":peer_verified,"developmentWhisper":development_whisper,"controls_allowed":not peer,"repair_requests_allowed":not isinstance(self.brain,DirectBrain)})
         if allow_gm:
             state["gm_controls_available"] = True
         try:
@@ -4782,7 +4783,7 @@ class Conversation:
             if reply["text"] == "":
                 self.status(phase="listening", event="development_peer_silent", cursor=self.cursor)
                 return
-        direct = development.get("enabled") is True
+        direct = development.get("enabled") is True or isinstance(self.brain, DirectBrain)
         if direct and reply["action"]=="REPAIR_CONTROLLER":
             reply["action"]="NONE" # Direct generation owns the repair; no queued second agent.
         if self.controls and (not peer or reply["action"] in ("REPORT_PROBLEM","REPAIR_CONTROLLER")):
@@ -5436,12 +5437,12 @@ def main(argv=None):
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
     parser.add_argument("--model-provider", choices=("codex", "local", "openai", "claude", "gemini", "responses"), default="codex")
-    parser.add_argument("--model-base-url", help="Explicit local or Responses API base URL")
+    parser.add_argument("--model-base-url", help="Explicit base URL for the selected model API")
     parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
-    parser.add_argument("--model-api-key-env", help="Environment variable name for a custom Responses provider")
+    parser.add_argument("--model-api-key-env", help="Environment variable name for the selected provider key")
     parser.add_argument("--included-usage-only", action="store_true",
                         help="For the Codex provider, start replies only while included usage is available")
-    parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
+    parser.add_argument("--model", type=explicit_model, help="Explicit model ID for the selected provider")
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
     parser.add_argument("--developer-workspace",type=Path,
