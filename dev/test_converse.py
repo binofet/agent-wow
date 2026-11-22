@@ -4212,5 +4212,8 @@ class DevelopmentWhisperSilenceTests(unittest.TestCase):
             converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
 
 
+from test_companions import LauncherTests
+
+
 if __name__ == "__main__":
     unittest.main()
