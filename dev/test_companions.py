@@ -52,7 +52,8 @@ class FakeChildren:
         if command == "stop":
             self.chat = False
             return "Conversation stop requested"
-        return json.dumps(dict(running=self.chat, sessionId=self.sid, phase="listening", modelSelection=self.selection,
+        return json.dumps(dict(running=self.chat, coreSessionId=self.sid, coreCharacterGuid=str(actor["guid"]),
+            chatSessionId="chat-module-session", phase="listening", modelSelection=self.selection,
             character_identity=dict(profile=actor["profile"], name=actor["name"], **{"class": actor["class"]},
                                     guid=actor["guid"], owner_guid=3, rpc_url=f"http://127.0.0.1:{actor['native_port']}/rpc")))
 
@@ -219,6 +220,29 @@ class LauncherTests(unittest.TestCase):
              self.assertRaisesRegex(app.Error, "session changed"):
             app.operate(self.actor, "restart-chat", self.runner)
         self.assertFalse(self.runner.spawns)
+        self.assertFalse(self.runner.commands("buddy", "start") or self.runner.commands("buddy", "stop"))
+
+    def test_legacy_or_foreign_listener_identity_never_becomes_ready_or_restarts(self):
+        self.runner.native = self.runner.chat = True
+        original = self.runner.run
+        for change in (lambda value: value.pop("coreSessionId"),
+                       lambda value: value.update(coreSessionId="aw-foreign"),
+                       lambda value: value.update(coreCharacterGuid="8"),
+                       lambda value: value.update(chatSessionId=None)):
+            def status(argv, actor, env=None):
+                output = original(argv, actor, env)
+                if len(argv) > 3 and Path(argv[2]).name == "converse" and argv[3] == "status":
+                    value = json.loads(output)
+                    value["sessionId"] = "aw-fake"  # Old invented field must not establish readiness.
+                    change(value)
+                    return json.dumps(value)
+                return output
+            self.runner.run = status
+            with self.subTest(change=change), self.assertRaisesRegex(app.Error, "readiness/exit"):
+                app.wait_chat(self.actor, self.runner, True, "aw-fake", timeout=0)
+            with self.assertRaisesRegex(app.Error, "older native session"):
+                app.operate(self.actor, "restart-chat", self.runner)
+        self.assertFalse(self.runner.spawns or self.runner.commands("converse", "stop"))
         self.assertFalse(self.runner.commands("buddy", "start") or self.runner.commands("buddy", "stop"))
 
     def test_public_identity_reads_bind_body_session_contract_and_policy(self):
