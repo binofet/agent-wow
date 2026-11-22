@@ -270,6 +270,23 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         self.assertNotIn('action',done['output'])
         self.assertNotIn('releasing',done['checkpoint']['data']['spellInvocation']['data'])
 
+    def test_known_no_write_stop_retries_fresh_but_rejected_renewal_never_assumes_token(self):
+        obs=self.stationary_obs(moving=True)
+        first=self.run_policy([self.encounter_event(obs),self.stationary_request()],composed=True)
+        refused=dict(kind='action_result',receipt=dict(action_id='40',outcome='not_dispatched',
+            payload=dict(capability='stop_movement',target_guid='4',visit_id='1',transport_written=False)))
+        retry=self.run_policy([refused,self.encounter_event(obs,'4')],checkpoint=first['checkpoint'],composed=True,sequence='4')
+        self.assertEqual(retry['output']['action']['capability'],'stop_movement')
+        cast=self.prepared_cast();obs=self.stationary_obs(remaining=1000)
+        renewed=self.run_policy([self.encounter_event(obs,'5')],checkpoint=cast['checkpoint'],
+            pending=[dict(action_id='51',outcome='unknown')],composed=True,sequence='5')
+        # The same public owner label cannot prove our token survived a refusal.
+        denied=self.prep_receipt('renew',outcome='not_dispatched',action_id='52',error='token replaced')
+        held=self.run_policy([denied,self.encounter_event(obs,'6')],checkpoint=renewed['checkpoint'],
+            pending=[dict(action_id='51',outcome='unknown')],composed=True,sequence='6')
+        self.assertNotIn('action',held['output'])
+        self.assertNotIn('token',held['checkpoint']['data']['spellInvocation']['data']['current']['preparation'])
+
     def test_death_visit_and_body_change_cleanup_does_not_touch_another_body(self):
         cast=self.prepared_cast()
         for change in ('dead','visit','body'):

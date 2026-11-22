@@ -73,10 +73,10 @@ function M.on_event(event)
                     else prep.uncertainUntil=op.untilMs end
                 elseif r.outcome=="unknown" or r.outcome=="settled_unverified" then
                     prep.uncertainUntil=op.untilMs
-                elseif op.mode=="renew" then
-                    -- Keep the exact token until observation proves expiry or
-                    -- replacement. A refusal cannot manufacture a fresh grant.
-                    prep.refusal=p.error or r.outcome
+                elseif op.mode~="acquire" then
+                    -- A rejected token may have expired or been replaced.
+                    -- Never use it to infer ownership from a matching label.
+                    prep.token=nil;prep.refusal=p.error or r.outcome
                 end
             end
         end
