@@ -4093,6 +4093,7 @@ from test_self_edit import SpellInspectionTests
 from test_spell_invocation import SpellInvocationPolicyTests
 from test_spell_learning import SpellLearningTests
 from test_owner_acknowledgement import OwnerAcknowledgementTests
+from test_model_transport import ModelTransportTests
 
 class OwnerPreemptionTests(unittest.TestCase):
     def test_actual_model_process_cancels_and_keeps_already_written_files(self):
