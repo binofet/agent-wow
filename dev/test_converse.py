@@ -3714,6 +3714,7 @@ from test_gm_task_inspection import GMTaskInspectionTests
 from test_gm_task_lifecycle import GMTaskLifecycleTests
 from test_self_edit import SpellInspectionTests
 from test_spell_invocation import SpellInvocationPolicyTests
+from test_spell_learning import SpellLearningTests
 
 if __name__ == "__main__":
     unittest.main()
