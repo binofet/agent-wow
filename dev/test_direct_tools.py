@@ -182,6 +182,57 @@ class DirectToolTests(unittest.TestCase):
         self.assertFalse(self.tools.dispatch('policy_apply', dict(path='policy.lua', expected_revision=checksum(self.rpc.source)))['ok'])
         self.assertEqual(self.rpc.writes, [])
 
+    def test_owner_change_during_final_catalog_after_real_candidate_save_is_zero_write(self):
+        for change in ('cancel', 'authority'):
+            with self.subTest(change=change):
+                self.allowed, self.cancelled = True, False
+                candidate = self.rpc.source + '-- candidate ' + change + '\n'
+                path = 'candidate-' + change + '.lua'
+                self.assertTrue(self.write(path=path, content=candidate)['ok'])
+                saved = self.edit.DATA / '4' / (checksum(candidate) + '.lua')
+                self.assertFalse(saved.exists())
+                observed = []
+                def hook(method):
+                    # The real self-edit helper saves its candidate only after
+                    # its source reads, before its final admission catalog read.
+                    if method == 'session.describe' and saved.exists():
+                        observed.append(method)
+                        if change == 'cancel': self.cancelled = True
+                        else: self.allowed = False
+                self.rpc.hook = hook
+                before = self.rpc.source
+                result = self.tools.dispatch('policy_apply', dict(path=path,
+                    expected_revision=checksum(before)))
+                self.assertTrue(observed)
+                self.assertTrue(saved.exists())
+                self.assertFalse(result['ok'], result)
+                self.assertEqual(self.rpc.source, before)
+                self.assertEqual(self.rpc.writes, [])
+                self.assertIsNone(self.tools.unknown_receipt)
+                self.rpc.hook = None
+        self.allowed, self.cancelled = True, False
+
+    def test_workspace_cancel_during_final_catalog_or_temp_sync_never_replaces(self):
+        observed = []
+        def hook(method):
+            if method == 'session.describe' and (self.workspace/'.direct-tools-edit.lock').exists():
+                observed.append(method)
+                self.cancelled = True
+        self.rpc.hook = hook
+        self.assertFalse(self.write(path='catalog.lua')['ok'])
+        self.assertTrue(observed)
+        self.assertFalse((self.workspace/'catalog.lua').exists())
+        self.rpc.hook, self.cancelled = None, False
+        sync = os.fsync
+        def fsync(fd):
+            value = sync(fd)
+            if stat.S_ISREG(os.fstat(fd).st_mode): self.cancelled = True
+            return value
+        with mock.patch('direct_tools.os.fsync', side_effect=fsync):
+            self.assertFalse(self.write(path='sync.lua')['ok'])
+        self.assertFalse((self.workspace/'sync.lua').exists())
+        self.assertIsNone(self.tools.unknown_receipt)
+
     def test_actual_apply_lost_reply_halts_and_retains_exact_candidate(self):
         candidate = self.rpc.source + '-- actual new policy\n'
         self.assertTrue(self.write(content=candidate)['ok'])
@@ -306,6 +357,46 @@ class DirectToolTests(unittest.TestCase):
         self.rpc.sid = 'aw-456'
         self.assertFalse(tools.dispatch('gm_task_cancel', dict(task_id=folder.name))['ok'])
         self.assertEqual(len(calls), 1)
+
+    def test_gm_owner_cancel_during_catalog_after_real_reservation_is_zero_child(self):
+        runner = mock.Mock(side_effect=AssertionError('cancelled request cannot start a helper'))
+        tools = self.gm_tools(runner)
+        observed = []
+        def hook(method):
+            state_root = self.host/'data/converse/lotharen/gm-tasks'
+            if method == 'session.describe' and list(state_root.glob('direct-*/state.json')):
+                observed.append(method)
+                self.cancelled = True
+        tools.cancelled = lambda: self.cancelled
+        self.rpc.hook = hook
+        result = tools.dispatch('gm_task_start', dict(goal=dict(members=[])))
+        self.assertTrue(observed)
+        self.assertFalse(result['ok'], result)
+        runner.assert_not_called()
+        self.assertEqual(self.rpc.writes, [])
+        journal = next((self.host/'data/converse/lotharen/gm-tasks').glob('direct-*/state.json'))
+        retained = json.loads(journal.read_text())
+        self.assertEqual(retained['identity']['sessionId'], 'aw-123')
+        self.assertEqual(retained['reservations'], {})
+        self.assertIsNone(tools.unknown_receipt)
+
+    def test_lua_helper_cancel_observed_after_source_read_is_zero_child(self):
+        self.assertTrue(self.write()['ok'])
+        runner = mock.Mock(side_effect=AssertionError('cancelled request cannot evaluate'))
+        self.tools.runner = runner
+        source_read = []
+        read_file = self.tools._read_file
+        def read(path):
+            value = read_file(path)
+            source_read.append(path)
+            return value
+        self.tools._read_file = read
+        self.rpc.hook = lambda method: setattr(self, 'cancelled', True) if (
+            method == 'session.describe' and source_read) else None
+        result = self.tools.dispatch('lua_evaluate', dict(path='policy.lua', frame={}))
+        self.assertTrue(source_read)
+        self.assertFalse(result['ok'], result)
+        runner.assert_not_called()
 
     def test_gm_rejects_unobserved_member_and_non_gm(self):
         tools = self.gm_tools(mock.Mock(side_effect=AssertionError('no child permitted')))

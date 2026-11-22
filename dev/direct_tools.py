@@ -71,6 +71,7 @@ class _PolicyRPC:
         require(params.get("sessionId") == self.tools.session_id and
                 str(params.get("characterGuid", params.get("selfGuid"))) == self.tools.self_guid,
                 "policy_body_binding_changed")
+        self.tools._authorise()
         self.entered = True
         return self.tools.rpc.call(method, params, **kwargs)
 
@@ -237,6 +238,7 @@ class DirectTools:
                         "workspace_file_changed")
                 self._authorise()
                 self._catalog()
+                self._authorise()
                 temporary = ".direct-tools-" + os.urandom(12).hex()
                 fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=parent)
@@ -244,6 +246,7 @@ class DirectTools:
                     stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
+                self._authorise()
                 replacing = True
                 os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
                 temporary = None
@@ -326,12 +329,14 @@ class DirectTools:
         frame = packed(args["frame"])
         require(len(frame) <= self.max_bytes, "evaluation_frame_size_bound")
         self._catalog()
+        self._authorise()
         with tempfile.TemporaryDirectory(prefix="direct-lua-") as folder:
             path = Path(folder) / "policy.lua"
             path.write_bytes(source)
             command = [str(self._policy_binary()), "--mode", "evaluate", "--source", str(path),
                        "--source-bytes", str(self.max_bytes), "--value-bytes", str(self.max_bytes),
                        "--execution-ms", str(self.execution_ms)]
+            self._authorise()
             reply = self.runner(command, input=frame, capture_output=True, timeout=15, check=False)
         self._catalog()
         require(len(reply.stdout) <= self.max_bytes + 1, "evaluation_output_size_bound")
@@ -404,6 +409,7 @@ class DirectTools:
                        "--state-dir", str(folder)]
         self._authorise()
         self._catalog()
+        self._authorise()
         try:
             reply = self.runner(command, cwd=self.root, capture_output=True, timeout=15, check=False)
             require(reply.returncode == 0, "gm_task_helper_return_unconfirmed")
