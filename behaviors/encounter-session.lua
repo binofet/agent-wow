@@ -539,6 +539,14 @@ local function decide_encounter(frame)
         local result = movement.for_spell(obs, state.sequence, target, rank, options)
         return result.action
     end
+    -- A queued owner request gets one available turn before automatic help.
+    -- Pending/native uncertainty above remains fenced; final outer arbitration
+    -- alone commits the winner, so a close/release/roll cannot lose this task.
+    if spell_invocation then
+        local requested,status=spell_invocation.propose(frame,obs,state.sequence)
+        out.spellInvocation=status
+        if requested then out.action=requested;return out end
+    end
     local breaking = control_recovery and control_recovery.decide(frame,obs)
     if breaking then breaking.observationSequence=state.sequence;out.action=breaking;task_support_action=true;return out end
     local interrupt = support_policy and support_policy.interrupt(obs)
@@ -598,11 +606,6 @@ local function decide_encounter(frame)
         function(proposed)return not transient_tasks or transient_tasks.allow(task_view,obs,proposed) end) end
     out.controlStatus = command_status
     if command_action then out.action = command_action; return out end
-    if spell_invocation then
-        local requested,status=spell_invocation.propose(frame,obs,state.sequence)
-        out.spellInvocation=status
-        if requested then out.action=requested;return out end
-    end
     if active_melee then
         local held = targets[active_melee]
         if obs.targetProtectionOverflow == true or not alive(held) or held.protected or
