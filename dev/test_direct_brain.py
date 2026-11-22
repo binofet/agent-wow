@@ -1,6 +1,7 @@
 """Real direct brain/tool integration with local fake HTTP and public RPCs."""
 import contextlib
 import copy
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.machinery
 import importlib.util
@@ -211,7 +212,50 @@ class DirectBrainIntegrationTests(unittest.TestCase):
             self.assertEqual(receipt["actionOutcome"], "unknown")
             saved = json.loads((self.state / "brain-failures" / (receipt["requestId"] + ".json")).read_text())
             self.assertEqual(saved["pendingTools"], receipt["pendingTools"])
+            unknown = saved["tools"][0]["unknownReceipt"]
+            value_hash = hashlib.sha256(json.dumps(self.rpc.commands[0]["value"], allow_nan=False,
+                                                   separators=(",", ":")).encode()).hexdigest()
+            self.assertEqual(unknown["valueSHA256"], value_hash)
+            self.assertEqual((unknown["sessionId"], unknown["characterGuid"]), (self.rpc.core, "4"))
+            self.assertIs(unknown["replayAllowed"], False)
+            self.assertEqual(unknown["outcome"], "unconfirmed")
+            self.assertNotIn("value", unknown)
             self.assertTrue(any(value.get("brainFailure", {}).get("pendingToolCount") == 1 for value in self.statuses))
+
+    def test_mutating_tool_cannot_append_legacy_follow_but_read_only_tool_can(self):
+        helper_dir = self.workspace / "dev"
+        helper_dir.mkdir()
+        (helper_dir / "task-runtime").write_bytes(Path(__file__).with_name("task-runtime").read_bytes())
+        for mutation in (True, False):
+            with self.subTest(mutation=mutation):
+                self.state = self.folder / ("mutation-listener" if mutation else "read-listener")
+                self.state.mkdir(mode=0o700)
+                self.rpc = PublicRPC()
+                self.rpc.new_owner = True  # Current owner request2, consumed normally by tick.
+                command = dict(value=dict(task="fixture", id="exactly-once"))
+                tool = ("first", "policy_input", command) if mutation else (
+                    "first", "read_observation", dict(method="buddy-actions.status", params={}))
+                responses = [chat(tool), chat(("final-follow", "final_reply", dict(REPLY, action="FOLLOW")))]
+                with self.rig(responses) as (loop, brain, _, http):
+                    legacy_actions = []
+                    loop.controls.refresh = lambda: None
+                    loop.controls.context = lambda: {}
+                    loop.controls.execute = lambda action, **kw: legacy_actions.append(action)
+                    if mutation:
+                        with self.assertRaises(converse.ConversationError) as refused:
+                            loop.tick()
+                        self.assertIn("second reply action was refused", str(refused.exception.__cause__))
+                        self.assertEqual(len(self.rpc.commands), 1)
+                        self.assertFalse(legacy_actions)
+                        self.assertTrue(brain.last_failure_receipt["mutationToolEntered"])
+                        self.assertEqual(brain.last_failure_receipt["counts"]["completedTools"], 1)
+                        self.assertEqual(brain.last_failure_receipt["outcome"], "failed")
+                    else:
+                        loop.tick()
+                        self.assertFalse(self.rpc.commands)
+                        self.assertEqual(legacy_actions, ["FOLLOW"])
+                        self.assertEqual(brain.last_development_result["outcome"], "completed")
+                    self.assertEqual(len(http.requests), 2)
 
     def test_actual_tools_reject_replaced_body_before_a_policy_command(self):
         self.rpc.catalog_guid = "8"
