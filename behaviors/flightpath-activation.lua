@@ -1,7 +1,7 @@
 -- A parent owns the finite exploration lease and supplies explorationToken.
 -- This child composes the maintained planner and selects ONE normal hop.
 -- An activation receipt never establishes flight start, arrival or a fare.
-local M = {tuning={accept_unknown_fare=true,complete_hops=true,continue_hops=true}}
+local M = {tuning={accept_unknown_fare=true,complete_hops=true,continue_hops=true,retry_refused_queries=false}}
 local method="buddy-actions.activate_flightpath"
 local maximum="18446744073709551615"
 local function uint(n) return type(n)=="number" and n==n and n>=0 and n<=4294967295 and n==math.floor(n) end
@@ -177,7 +177,10 @@ local function progress(context,frame,flight,op)
     end
     if frame.stage=="menu" then
         local menu=flight.operation or {};local e=frame.effect
-        if menu.revision==e.revision and menu.phase=="not_dispatched" then frame.stage="probe";return end
+        if menu.revision==e.revision and menu.phase=="not_dispatched" then
+            if M.tuning.retry_refused_queries==true then frame.stage="probe";return end
+            return tasks.await(context,"arrival_query_not_dispatched")
+        end
         if menu.revision~=e.revision or menu.npcGuid~=e.params.npcGuid or menu.activationRevision~=frame.request.revision or
            menu.completionRevision~=c.revision or menu.menuKnown~=true or menu.pending==true or
            menu.sourceNode~=frame.hop then return tasks.await(context,"waiting_for_actual_destination_menu") end
