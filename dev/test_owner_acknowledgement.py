@@ -170,5 +170,39 @@ class OwnerAcknowledgementTests(unittest.TestCase):
         stop[0]=False;again=self.loop();again.initialized=True;again.session_id='current-chat';again.tick()
         self.assertEqual(self.sends(),[]);self.assertEqual(self.brain.calls,[])
 
+    def test_new_owner_whisper_interrupts_blocked_turn_without_consuming_it_then_acks_before_next_model(self):
+        entered=threading.Event();outer=self;errors=[]
+        class BusyBrain(c.CodexBrain):
+            def __init__(brain):
+                brain.state_dir=outer.state;brain.developer_workspace=None;brain.calls=[]
+            def generate(brain,history,state,cancelled=None):
+                brain.calls.append(list(history))
+                if len(brain.calls)==1:
+                    entered.set()
+                    # The production generate_reply callback polls chat while
+                    # the single old model turn is blocked. No second worker.
+                    for _ in range(150):
+                        if cancelled():raise c.OwnerInputPending('new owner input')
+                        threading.Event().wait(.02)
+                    raise AssertionError('Old turn waited instead of yielding to new owner input')
+                outer.assertEqual(sum(p['text']==outer.ack_text for p in outer.sends()),2)
+                outer.assertTrue(any(row['text']=='Actually stop and tell me your status' for row in history))
+                return dict(text='The previous result is unconfirmed; I am checking the new request.',action='NONE',emote='NONE')
+        self.brain=BusyBrain();loop=self.loop();loop.tick();self.add('Begin the slow request')
+        def run():
+            try:loop.tick()
+            except BaseException as error:errors.append(error)
+        worker=threading.Thread(target=run);worker.start()
+        try:
+            self.assertTrue(entered.wait(3));self.add('Actually stop and tell me your status')
+        finally:worker.join(4)
+        self.assertFalse(worker.is_alive());self.assertEqual(errors,[])
+        self.assertEqual(loop.cursor,1) # Interruption has NOT consumed the new input.
+        self.assertEqual(len(self.sends()),1);self.assertEqual(len(self.brain.calls),1)
+        loop.tick()
+        self.assertEqual(loop.cursor,2);self.assertEqual(len(self.brain.calls),2)
+        self.assertEqual([p['text'] for p in self.sends()],[self.ack_text,self.ack_text,
+            'The previous result is unconfirmed; I am checking the new request.'])
+
 
 if __name__=='__main__':unittest.main()
