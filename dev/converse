@@ -2409,12 +2409,14 @@ def inspect_events(raw, developer=False, *, evidence=None):
                 errorEvents=error_events,omittedErrorEvents=omitted_errors)
 
 
-class CodexBrain:
+class AgentBrain:
+    """Shared conversation authority and receipts, independent of model transport."""
     class _SpellLearningRequest(dict):
         """Only the same-body spellbook observer creates this internal cue."""
         def __init__(self,*args,owned_learning_check=None,**kwargs):
             super().__init__(*args,**kwargs)
             self.owned_learning_check=owned_learning_check
+
 
     class _CombatReviewRequest(dict):
         """Created only by this body's private combat observer, never chat JSON."""
@@ -2422,13 +2424,12 @@ class CodexBrain:
             super().__init__(*args, **kwargs)
             self.owned_review_check = owned_review_check
 
-    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
-        self.binary, self.state_dir = Path(binary), Path(state_dir)
+
+    def __init__(self, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
+        self.state_dir = Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
         self.character_name, self.model = character_name, explicit_model(model)
-        self.transport = model_transport(provider, model=self.model, base_url=base_url,
-                                         local_provider=local_provider, api_key_env=api_key_env)
         self.gm_instructions = ""
         if character_name.casefold() == "lotharen":
             self.gm_instructions = gm_tasks.INSTRUCTIONS
@@ -2447,16 +2448,6 @@ class CodexBrain:
         self.last_failure_receipt = None
         self.last_request_id = None
 
-    def model_selection(self):
-        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
-                    configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
-                    requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
-        transport = getattr(self, "transport", dict(provider="codex"))
-        selection.update(provider=transport["provider"])
-        if transport["provider"] != "codex":
-            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
-                             localProvider=transport["localProvider"])
-        return selection
 
     def development_enabled(self, state):
         if self.developer_workspace is None or not isinstance(state,dict): return False
@@ -2508,6 +2499,7 @@ class CodexBrain:
         except (ConversationError,TypeError,ValueError,AttributeError):
             return False
 
+
     def generation_record(self, development, reason, error_type, process=None):
         development=development if isinstance(development,dict) else {}
         generation=getattr(self,'_generation',None) or {}
@@ -2530,6 +2522,7 @@ class CodexBrain:
             tools=[],pendingTools=[],streamComplete=False,turnStarted=False,turnCompleted=False,
             omittedTools=0,omittedPendingTools=0,lastEventType=None,threadId=None,turnId=None,
             errorEvents=[],omittedErrorEvents=0,actionOutcome='unknown',receiptStored=False)
+
 
     def retain_failure(self, record):
         # This is evidence only: never clear or retry a tool/game reservation.
@@ -2555,31 +2548,6 @@ class CodexBrain:
             record['receiptStored']=stored
             record['retentionError']=type(error).__name__
 
-    def generation_snapshot(self, events, errors, limit, development, reason, error_type, process, developer):
-        record=self.generation_record(development,reason,error_type,process)
-        try:
-            events.flush()
-            raw=os.pread(events.fileno(),limit+1,0)
-            record['eventBytesTruncated']=len(raw)>limit
-            record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
-            record['stderrBytes']=os.fstat(errors.fileno()).st_size
-            try:inspect_events(raw[:limit],developer=developer,evidence=record)
-            except ConversationError as error:record['streamError']=str(error)
-            if record['eventBytesTruncated']:record['streamComplete']=False
-        except Exception as error:
-            record['retentionError']=type(error).__name__
-        record['childPhase']=record['lastEventType'] or ('process.started' if record['childStarted'] else 'not_started')
-        return record
-
-    def retain_development_events(self, events, errors, limit, development, reason, error_type, process, *, developer=True):
-        """Keep typed dispositions privately; never retain tool text or replay it."""
-        record=self.generation_snapshot(events,errors,limit,development,reason,error_type,process,developer)
-        if reason is not None:self.retain_failure(record)
-        if developer:
-            self.last_development_events=dict(record['counts'])
-            self.last_development_result=record
-            try:write_json(self.state_dir/'development-events-last.json',record)
-            except Exception as error:record['retentionError']=type(error).__name__
 
     def generate(self, history, control_state=None, cancelled=None):
         # Reset before binding checks, cancellation or Popen can fail. A previous
@@ -2615,6 +2583,55 @@ class CodexBrain:
                 self.retain_failure(record)
             raise
         finally:self._generation=None
+
+
+
+class CodexBrain(AgentBrain):
+    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
+        super().__init__(state_dir, timeout, stopped, character_name, character_class, developer_workspace, model, reasoning_effort)
+        self.binary = Path(binary)
+        self.transport = model_transport(provider, model=self.model, base_url=base_url,
+                                         local_provider=local_provider, api_key_env=api_key_env)
+
+    def model_selection(self):
+        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
+                    configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
+                    requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
+        transport = getattr(self, "transport", dict(provider="codex"))
+        selection.update(provider=transport["provider"])
+        if transport["provider"] != "codex":
+            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
+                             localProvider=transport["localProvider"])
+        return selection
+
+
+    def generation_snapshot(self, events, errors, limit, development, reason, error_type, process, developer):
+        record=self.generation_record(development,reason,error_type,process)
+        try:
+            events.flush()
+            raw=os.pread(events.fileno(),limit+1,0)
+            record['eventBytesTruncated']=len(raw)>limit
+            record['partialFinalLine']=bool(raw and not raw.endswith(b'\n'))
+            record['stderrBytes']=os.fstat(errors.fileno()).st_size
+            try:inspect_events(raw[:limit],developer=developer,evidence=record)
+            except ConversationError as error:record['streamError']=str(error)
+            if record['eventBytesTruncated']:record['streamComplete']=False
+        except Exception as error:
+            record['retentionError']=type(error).__name__
+        record['childPhase']=record['lastEventType'] or ('process.started' if record['childStarted'] else 'not_started')
+        return record
+
+
+    def retain_development_events(self, events, errors, limit, development, reason, error_type, process, *, developer=True):
+        """Keep typed dispositions privately; never retain tool text or replay it."""
+        record=self.generation_snapshot(events,errors,limit,development,reason,error_type,process,developer)
+        if reason is not None:self.retain_failure(record)
+        if developer:
+            self.last_development_events=dict(record['counts'])
+            self.last_development_result=record
+            try:write_json(self.state_dir/'development-events-last.json',record)
+            except Exception as error:record['retentionError']=type(error).__name__
+
 
     def _generate(self, history, control_state=None, cancelled=None):
         transport = getattr(self, "transport", dict(provider="codex"))
@@ -2791,6 +2808,9 @@ class CodexBrain:
                         finally:
                             if developer or reason is not None:
                                 self.retain_development_events(events,errors,limit,prompt_state.get('development',{}),reason,error_type,process,developer=developer)
+
+
+
 
 
 def queue_lua_control(controls, technique, mark=None, target_guid=None):
@@ -4308,11 +4328,11 @@ class Conversation:
         previous_request=getattr(self.brain,'last_request_id',None)
         previous_context=getattr(self.brain,'_generation_context',None)
         previous_progress=getattr(self.brain,'_generation_progress',None)
-        if isinstance(self.brain,CodexBrain):
+        if isinstance(self.brain,AgentBrain):
             self.brain._generation_context=context
             self.brain._generation_progress=lambda receipt:self.publish_brain_evidence(context,previous_request,receipt,'brainProgress')
         try:
-            if isinstance(self.brain, CodexBrain):
+            if isinstance(self.brain, AgentBrain):
                 reply=self.brain.generate(history, state, cancelled=cancelled)
             else:reply=self.brain.generate(history, state)
         except OwnerInputPending:
@@ -4325,13 +4345,13 @@ class Conversation:
             raise
         else:
             published=False
-            if isinstance(self.brain,CodexBrain):
+            if isinstance(self.brain,AgentBrain):
                 published=bool(self.publish_brain_evidence(context,previous_request,getattr(self.brain,'last_development_result',None),'brainProgress'))
             try:self.status(brainFailure=None,**({} if published else dict(brainProgress=None)))
             except Exception:pass
             return reply
         finally:
-            if isinstance(self.brain,CodexBrain):
+            if isinstance(self.brain,AgentBrain):
                 self.brain._generation_context=previous_context
                 self.brain._generation_progress=previous_progress
 
@@ -4977,7 +4997,7 @@ class Conversation:
             current=lambda:self.combat_review_current(self.character_guid,sid,development['rpcUrl'],key)
             if not current():return True
             state=dict(self.controls.context(),character=dict(name=self.character_name,**{'class':self.character_class},guid=str(self.character_guid)),
-                development=development,current_request=CodexBrain._CombatReviewRequest(source='combat_review',reviewKey=key,
+                development=development,current_request=AgentBrain._CombatReviewRequest(source='combat_review',reviewKey=key,
                     owned_review_check=self.combat_review_current,controls_allowed=False,repair_requests_allowed=False),
                 combat_review=dict(key=key,reason=candidate.get('reason')))
             if 'combat' not in state:state['combat']=tracker.context()
@@ -5067,7 +5087,7 @@ class Conversation:
             if pending.get('sessionId')!=self.session_id:self.reset_body();return True
             if integer(pending.get('latestSequence',0))!=self.cursor:return True
             state=dict(self.controls.context(),character=dict(name=self.character_name,**{'class':self.character_class},guid=str(self.character_guid)),
-                development=development,current_request=CodexBrain._SpellLearningRequest(source='spell_learning',noticeKey=key,
+                development=development,current_request=AgentBrain._SpellLearningRequest(source='spell_learning',noticeKey=key,
                     owned_learning_check=self.spell_learning_current,controls_allowed=False,repair_requests_allowed=False),
                 learned_spell_changes=notice)
             cue=dict(speaker='Own learned-spell observer',text=
