@@ -5,7 +5,7 @@ Usage: dev/converse run [--rpc-url http://127.0.0.1:8086/rpc]
        dev/converse status
        dev/converse stop
 
-Uses existing Codex CLI authentication. Account credentials are not needed here.
+Uses the existing Codex tool runner with its selected model transport.
 """
 
 import argparse
@@ -2210,7 +2210,62 @@ def registered_developer_workspace(guid, name):
     return Path(matches[0]["workspace"])
 
 
-def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None):
+def model_transport(provider="codex", *, model=None, base_url=None, local_provider=None, api_key_env=None):
+    """Bind one explicit transport; an unavailable provider never selects another."""
+    if provider not in ("codex", "local", "responses"):
+        raise ConversationError("Unsupported model provider")
+    if provider == "codex":
+        if any(value is not None for value in (base_url, local_provider, api_key_env)):
+            raise ConversationError("Model endpoint options require an explicit provider")
+        return dict(provider=provider)
+    if explicit_model(model) is None:
+        raise ConversationError("This model provider requires an explicit model")
+    if (not isinstance(base_url, str) or not 1 <= len(base_url) <= 2048
+            or any(char.isspace() or ord(char) < 32 for char in base_url)):
+        raise ConversationError("An explicit model base URL is required")
+    try:
+        parsed = urllib.parse.urlsplit(base_url)
+        port = parsed.port
+    except ValueError:
+        raise ConversationError("Invalid model base URL") from None
+    loopback = parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    if (not parsed.hostname or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment or port is not None and not 0 < port < 65536
+            or parsed.scheme not in ("http", "https") or parsed.scheme == "http" and not loopback
+            or provider == "local" and not loopback):
+        raise ConversationError("Model base URL must use HTTPS or explicit loopback HTTP")
+    if provider == "local":
+        local_provider = local_provider or "lmstudio"
+        if local_provider not in ("lmstudio", "ollama") or api_key_env is not None:
+            raise ConversationError("Local models require LM Studio or Ollama without hosted credentials")
+    elif local_provider is not None:
+        raise ConversationError("Local provider is only valid for a local model")
+    if api_key_env is not None and (not isinstance(api_key_env, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", api_key_env) is None):
+        raise ConversationError("Model API key must name an environment variable")
+    return dict(provider=provider, baseURL=base_url.rstrip("/"),
+                localProvider=local_provider, apiKeyEnv=api_key_env)
+
+
+def codex_environment(transport):
+    if transport.get("provider") != "local":
+        return None  # Preserve the maintained CLI environment for other providers.
+    environment = os.environ.copy()
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_OSS_PORT",
+                 "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        environment.pop(name, None)
+    # Codex's built-in OSS providers read this explicit endpoint before their defaults.
+    environment["CODEX_OSS_BASE_URL"] = transport["baseURL"]
+    environment["NO_PROXY"] = environment["no_proxy"] = "127.0.0.1,localhost,::1"
+    return environment
+
+
+def codex_command(binary, workspace, schema, output, developer=False, model=None, reasoning_effort=None, *, transport=None):
+    if transport is not None and not isinstance(transport, dict):
+        raise ConversationError("Invalid model transport")
+    configured = transport or dict(provider="codex")
+    transport = model_transport(configured.get("provider"), model=model, base_url=configured.get("baseURL"),
+        local_provider=configured.get("localProvider"), api_key_env=configured.get("apiKeyEnv"))
     command = [str(binary), "exec", "--ephemeral", "--ignore-user-config",
                "--skip-git-repo-check", "--color", "never",
                "--json", "--output-schema", str(schema), "--output-last-message", str(output),
@@ -2219,7 +2274,22 @@ def codex_command(binary, workspace, schema, output, developer=False, model=None
     if explicit_model(model) is not None: command.extend(("--model", model))
     if explicit_reasoning_effort(reasoning_effort) is not None:
         command.extend(("-c", 'model_reasoning_effort=' + json.dumps(reasoning_effort)))
-    command += ["--approve-for-me"] if developer else ["--sandbox", "read-only"]
+    provider = transport["provider"]
+    if provider == "local":
+        command.extend(("--oss", "--local-provider", transport["localProvider"],
+                        "-c", "model_provider=" + json.dumps(transport["localProvider"])))
+    elif provider == "responses":
+        command.extend(("-c", 'model_provider="buddy_responses"'))
+        for key, value in dict(name="Explicit Responses provider", base_url=transport["baseURL"],
+                wire_api="responses", requires_openai_auth=False).items():
+            command.extend(("-c", "model_providers.buddy_responses." + key + "=" + json.dumps(value)))
+        if transport["apiKeyEnv"] is not None:
+            command.extend(("-c", "model_providers.buddy_responses.env_key=" + json.dumps(transport["apiKeyEnv"])))
+    if provider == "codex":
+        command += ["--approve-for-me"] if developer else ["--sandbox", "read-only"]
+    else:
+        command.extend(("--sandbox", "workspace-write" if developer else "read-only",
+                        "-c", 'approval_policy="never"', "-c", 'approvals_reviewer="user"'))
     for feature in DISABLED_FEATURES:
         if developer and feature in DEVELOPER_FEATURES:
             continue
@@ -2352,11 +2422,13 @@ class CodexBrain:
             super().__init__(*args, **kwargs)
             self.owned_review_check = owned_review_check
 
-    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None):
+    def __init__(self, binary, state_dir, timeout=None, stopped=lambda: False, character_name="Arlen", character_class="priest", developer_workspace=None, model=None, reasoning_effort=None, *, provider="codex", base_url=None, local_provider=None, api_key_env=None):
         self.binary, self.state_dir = Path(binary), Path(state_dir)
         self.timeout, self.stopped = timeout, stopped
         self.persona = character_persona(character_name, character_class)
         self.character_name, self.model = character_name, explicit_model(model)
+        self.transport = model_transport(provider, model=self.model, base_url=base_url,
+                                         local_provider=local_provider, api_key_env=api_key_env)
         self.gm_instructions = ""
         if character_name.casefold() == "lotharen":
             self.gm_instructions = gm_tasks.INSTRUCTIONS
@@ -2376,9 +2448,15 @@ class CodexBrain:
         self.last_request_id = None
 
     def model_selection(self):
-        return dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
+        selection = dict(requestedModel=self.model, source='explicit_cli' if self.model is not None else 'cli_default_unpinned',
                     configured=self.model is not None, effectiveModelKnown=False, userConfigIgnored=True,
                     requestedReasoningEffort=self.reasoning_effort, reasoningOverride=self.reasoning_effort is not None)
+        transport = getattr(self, "transport", dict(provider="codex"))
+        selection.update(provider=transport["provider"])
+        if transport["provider"] != "codex":
+            selection.update(source="explicit_" + transport["provider"], baseURL=transport["baseURL"],
+                             localProvider=transport["localProvider"])
+        return selection
 
     def development_enabled(self, state):
         if self.developer_workspace is None or not isinstance(state,dict): return False
@@ -2539,7 +2617,8 @@ class CodexBrain:
         finally:self._generation=None
 
     def _generate(self, history, control_state=None, cancelled=None):
-        if getattr(self, "included_usage_only", False):
+        transport = getattr(self, "transport", dict(provider="codex"))
+        if transport["provider"] == "codex" and getattr(self, "included_usage_only", False):
             self._generation['stage']='included_usage_check'
             try:
                 available = check_included_usage(self.binary)
@@ -2615,9 +2694,10 @@ class CodexBrain:
             with tempfile.TemporaryFile(dir=folder) as events, tempfile.TemporaryFile(dir=folder) as errors:
                 self._generation['stage']='spawning'
                 process = subprocess.Popen(codex_command(self.binary, workspace, schema, output, developer=developer,
-                                                        model=self.model, reasoning_effort=self.reasoning_effort),
+                                                        model=self.model, reasoning_effort=self.reasoning_effort,
+                                                        transport=transport),
                                            stdin=subprocess.PIPE, stdout=events, stderr=errors,
-                                           start_new_session=True)
+                                           start_new_session=True, env=codex_environment(transport))
                 self._generation['stage']='running'
                 progress=getattr(self,'_generation_progress',None) if developer else None
                 progress_at=0.0
@@ -2653,7 +2733,8 @@ class CodexBrain:
                         time.sleep(0.1)
                     if process.returncode:
                         reason='process_failed'
-                        raise ConversationError("Codex reply failed; verify codex login status")
+                        raise ConversationError("Codex reply failed; verify codex login status" if transport["provider"] == "codex"
+                            else "Selected model provider failed; no provider fallback was attempted")
                     if errors.tell() > limit:
                         reason='output_limit'
                         raise ConversationError("Codex output exceeds the limit")
@@ -5143,8 +5224,12 @@ def main(argv=None):
     parser.add_argument("--rpc-url", default="http://127.0.0.1:8086/rpc")
     parser.add_argument("--player-guid", type=int, default=3)
     parser.add_argument("--codex", default=DEFAULT_CODEX)
+    parser.add_argument("--model-provider", choices=("codex", "local", "responses"), default="codex")
+    parser.add_argument("--model-base-url", help="Explicit local or Responses API base URL")
+    parser.add_argument("--local-provider", choices=("lmstudio", "ollama"))
+    parser.add_argument("--model-api-key-env", help="Environment variable name for a custom Responses provider")
     parser.add_argument("--included-usage-only", action="store_true",
-                        help="Keep listening and start model replies only while included Codex usage is available")
+                        help="For the Codex provider, start replies only while included usage is available")
     parser.add_argument("--model", type=explicit_model, help="Explicit Codex model override; omitted preserves the unpinned CLI default")
     parser.add_argument("--reasoning-effort", choices=('low', 'medium', 'high', 'xhigh', 'max', 'ultra'),
                         help="Explicit Codex reasoning effort; omitted preserves the CLI default")
@@ -5161,6 +5246,8 @@ def main(argv=None):
     parser.add_argument("--banter-seconds", type=float, default=180,
                         help="Minimum gap for occasional initiated conversation; 0 disables it (default 180)")
     args = parser.parse_args(argv)
+    model_transport(args.model_provider, model=args.model, base_url=args.model_base_url,
+                    local_provider=args.local_provider, api_key_env=args.model_api_key_env)
     if (not 0.2 <= args.poll_seconds <= 10 or args.reply_timeout is not None and not 5 <= args.reply_timeout <= 180
             or not 1 <= args.max_replies <= 1000 or not 0 < args.max_hours <= 24
             or not 0 < args.player_guid < 2**48
@@ -5210,8 +5297,10 @@ def main(argv=None):
         workspace = args.developer_workspace
         if workspace is None:
             workspace = registered_developer_workspace(args.character_guid, args.character_name)
+        provider_options = {} if args.model_provider == "codex" else dict(provider=args.model_provider,
+            base_url=args.model_base_url, local_provider=args.local_provider, api_key_env=args.model_api_key_env)
         brain = CodexBrain(args.codex, state, args.reply_timeout, stopped, args.character_name, args.character_class,
-                           workspace, args.model, args.reasoning_effort)
+                           workspace, args.model, args.reasoning_effort, **provider_options)
         brain.included_usage_only = args.included_usage_only
         record["developerWorkspace"] = str(brain.developer_workspace) if brain.developer_workspace is not None else None
         record["requestedModel"] = brain.model
