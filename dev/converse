@@ -3902,7 +3902,8 @@ class Conversation:
         address = re.match(re.escape(self.character_name) + r"[\s,]+", request_text, re.IGNORECASE)
         request = request_text[address.end():] if address else request_text
         acknowledged=self.acknowledge_owner_request(selected[-1],channel,history_key,
-            current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None)
+            current=not resumed and not result.get('cursorLost',False),directly_addressed=address is not None,
+            retained=resumed and channel=='WHISPER' and not result.get('cursorLost',False))
         if acknowledged is False:return
         control_request = parse_lua_control_request(request)
         if not peer and isinstance(self.controls, BuddyControls) and control_request:
@@ -3994,7 +3995,7 @@ class Conversation:
         if self.controls:
             self.controls.events.clear()
 
-    def acknowledge_owner_request(self, entry, channel, history_key, *, current, directly_addressed=False):
+    def acknowledge_owner_request(self, entry, channel, history_key, *, current, directly_addressed=False, retained=False):
         # This is receipt feedback on existing owner routing, not command or
         # intent classification. Unaddressed public/party chatter stays quiet.
         folder=getattr(self.brain,'state_dir',None)
@@ -4008,11 +4009,12 @@ class Conversation:
         if not self.same_body():return False
         identity=dict(characterGuid=str(self.character_guid),ownerGuid=str(self.player_guid),rpcUrl=self.rpc.url)
         session,sequence=self.session_id,entry['sequence']
-        reservation=owner_acknowledgement(folder,identity,session,sequence,reserve=current)
+        start=current or retained
+        reservation=owner_acknowledgement(folder,identity,session,sequence,reserve=start)
         if reservation=='already_reserved':
             self.status(phase='listening',ownerAcknowledgement='already_reserved',ownerRequestSequence=sequence)
             return False # A restart is not permission to replay the owner work.
-        if not current:return 'not_applicable' # Never ACK an initial/retained/overflow input.
+        if not start:return 'not_applicable' # An ordinary baseline/overflow never starts an ACK.
         if self.stopped():
             owner_acknowledgement(folder,identity,session,sequence,'not_started')
             raise Stopped('Conversation stop requested')

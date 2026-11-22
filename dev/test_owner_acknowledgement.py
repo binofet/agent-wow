@@ -124,15 +124,21 @@ class OwnerAcknowledgementTests(unittest.TestCase):
         self.rpc.rows=[];self.rpc.calls=[];self.add();loop=self.loop();loop.tick()
         self.assertEqual(self.sends(),[]);self.assertEqual(self.brain.calls,[])
 
-    def test_explicit_public_address_acks_but_retained_startup_input_does_not(self):
+    def test_explicit_public_address_and_never_reserved_retained_whisper_ack(self):
         loop=self.loop();loop.tick();self.add('Lotharen, help us','PARTY');loop.tick()
         self.assertEqual(self.sends()[0]['channel'],'PARTY')
         self.assertEqual(self.sends()[0]['text'],self.ack_text)
         self.rpc.rows=[];self.rpc.calls=[];self.rpc.session='never-reserved-chat';self.add()
         loop=self.loop(resume_whispers=True)
-        with patch.object(self.brain,'generate',return_value=dict(text='Current result needs checking.',action='NONE',emote='NONE')):
-            loop.tick()
-        self.assertEqual(len(self.sends()),1);self.assertNotEqual(self.sends()[0]['text'],self.ack_text)
+        loop.tick() # Existing --resume-whispers selects one current unanswered input.
+        self.assertEqual([p['text'] for p in self.sends()],[self.ack_text,'The recovery result still needs checking.'])
+
+    def test_resume_does_not_ack_or_replay_an_already_answered_owner_whisper(self):
+        self.add()
+        self.rpc.rows.append(dict(sequence='2',text='The team is back up.',channel='WHISPER_INFORM',
+            senderGuid='3',self=True))
+        loop=self.loop(resume_whispers=True);loop.tick()
+        self.assertEqual(self.sends(),[]);self.assertEqual(self.brain.calls,[])
 
     def test_new_owner_or_changed_body_before_ack_prevents_old_work(self):
         for changed in ('owner','body'):
