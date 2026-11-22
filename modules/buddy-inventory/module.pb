@@ -670,7 +670,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-íÜ
+Âë
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ò
 SpellCastTargets
 mask (Rmask
@@ -711,7 +711,61 @@ session_id (	R	sessionId
 visit_id (RvisitId
 channel (Rchannel")
 ToggleRequest
-enabled (Renabled"™
+enabled (Renabled"H
+
+TalentRank
+	talent_id (RtalentId
+
+rank_index (R	rankIndex"z
+
+TalentSpec
+index (Rindex>
+talents (2$.warcraftbuddy.actions.v1.TalentRankRtalents
+glyphs (Rglyphs"P
+TalentStateRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid"²
+TalentOperation
+
+request_id (	R	requestId
+phase (	Rphase+
+transport_written (RtransportWritten:
+transport_outcome_unknown (RtransportOutcomeUnknown6
+requested_rank_observed (RrequestedRankObserved+
+observed_revision (	RobservedRevision+
+expected_revision (	RexpectedRevision
+	talent_id (RtalentId
+
+rank_index	 (R	rankIndex
+
+spec_index
+ (R	specIndex
+error (	Rerror"‚
+TalentStateResponse
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+known (Rknown
+revision (	Rrevision
+free_points (R
+freePoints*
+active_spec_index (RactiveSpecIndex:
+specs (2$.warcraftbuddy.actions.v1.TalentSpecRspecsG
+	operation (2).warcraftbuddy.actions.v1.TalentOperationR	operation+
+observation_error	 (	RobservationError"÷
+LearnTalentRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid+
+expected_revision (	RexpectedRevision
+
+spec_index (R	specIndex
+	talent_id (RtalentId
+
+rank_index (R	rankIndex
+
+request_id (	R	requestId"™
 MovementOwnerRequest
 
 session_id (	R	sessionId
@@ -811,7 +865,15 @@ targetGuid!
 owner (	Rowner
 token (	Rtoken
 lease_ms (RleaseMs
-harvest (Rharvest"—
+harvest (Rharvest"¶
+IdleInteractionRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+owner (	Rowner
+token (	Rtoken
+lease_ms (RleaseMs"—
 InteractionRelease
 owner (	Rowner
 token (	Rtoken
@@ -2000,8 +2062,10 @@ node_found (R	nodeFoundE
 outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
 info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
 live_fare_known (RliveFareKnown(
-live_route_known (RliveRouteKnown2ƒ+
-BuddyActionsX
+live_route_known (RliveRouteKnown2Ó-
+BuddyActionsj
+TalentState,.warcraftbuddy.actions.v1.TalentStateRequest-.warcraftbuddy.actions.v1.TalentStateResponsej
+LearnTalent,.warcraftbuddy.actions.v1.LearnTalentRequest-.warcraftbuddy.actions.v1.TalentStateResponseX
 	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
 CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.State‚
 FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
@@ -2026,7 +2090,8 @@ node_found (R	nodeFoundE
 Behavior.google.protobuf.Empty(.warcraftbuddy.actions.v1.BehaviorStatuso
 AcquireMovement..warcraftbuddy.actions.v1.MovementOwnerRequest,.warcraftbuddy.actions.v1.MovementOwnerLeaseb
 ReleaseMovement..warcraftbuddy.actions.v1.MovementOwnerRelease.warcraftbuddy.actions.v1.Staten
-AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
+AcquireInteraction,.warcraftbuddy.actions.v1.InteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasev
+AcquireIdleInteraction0.warcraftbuddy.actions.v1.IdleInteractionRequest*.warcraftbuddy.actions.v1.InteractionLeasec
 ReleaseInteraction,.warcraftbuddy.actions.v1.InteractionRelease.warcraftbuddy.actions.v1.State^
 ApproachLoot-.warcraftbuddy.actions.v1.ApproachLootRequest.warcraftbuddy.actions.v1.State`
 ApproachQuest..warcraftbuddy.actions.v1.ApproachQuestRequest.warcraftbuddy.actions.v1.State^
