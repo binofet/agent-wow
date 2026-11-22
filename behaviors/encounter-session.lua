@@ -797,7 +797,7 @@ local function decide(frame)
     local out=decide_policy(frame)
     local current=policy_observation or observation
     if spell_invocation and current and host_can_decide(current) and current.sessionId==frame.session_id and
-       frame.input.observationSequence==state.sequence and current_visit(current) then
+       frame.input.observationSequence==state.sequence and state.settledAt~=state.sequence and current_visit(current) then
         local maintenance,status=spell_invocation.maintain(frame,current,state.sequence)
         out.spellInvocation=status or out.spellInvocation
         if maintenance then out.action=maintenance;out.followFormation=nil;out.portalCatchup=nil end

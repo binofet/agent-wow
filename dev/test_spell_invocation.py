@@ -207,9 +207,12 @@ class SpellInvocationPolicyTests(unittest.TestCase):
         self.assertEqual(renew['output']['action']['token'],'exact-finite-token')
         current=renew['checkpoint']['data']['spellInvocation']['data']['current']
         self.assertTrue(current['issued']);self.assertEqual(current['actionId'],'51')
+        stale=self.run_policy([self.prep_receipt('renew',action_id='52')],
+            checkpoint=renew['checkpoint'],pending=pending,composed=True,sequence='5',clock_ms=3100)
+        self.assertNotIn('action',stale['output']) # No renewal on the already-settled sample.
         obs=self.stationary_obs(remaining=2900)
-        waiting=self.run_policy([self.prep_receipt('renew',action_id='52'),self.encounter_event(obs,'6')],
-            checkpoint=renew['checkpoint'],pending=pending,composed=True,sequence='6',clock_ms=3200)
+        waiting=self.run_policy([self.encounter_event(obs,'6')],
+            checkpoint=stale['checkpoint'],pending=pending,composed=True,sequence='6',clock_ms=3200)
         self.assertNotIn('action',waiting['output'])
         ended=dict(kind='action_result',receipt=dict(action_id='51',outcome='settled_unverified',
             payload=dict(capability='cast_spell',spell_id=8427,phase='channel_ended')))
