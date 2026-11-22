@@ -30,6 +30,10 @@ _town_loader = importlib.machinery.SourceFileLoader('maintenance_town_policy', s
 _town_spec = importlib.util.spec_from_loader(_town_loader.name, _town_loader)
 town_policy = importlib.util.module_from_spec(_town_spec)
 _town_loader.exec_module(town_policy)
+_stipend_loader = importlib.machinery.SourceFileLoader('maintenance_stipend_policy', str(ROOT/'dev/stipend_policy.py'))
+_stipend_spec = importlib.util.spec_from_loader(_stipend_loader.name, _stipend_loader)
+stipend_policy = importlib.util.module_from_spec(_stipend_spec)
+_stipend_loader.exec_module(stipend_policy)
 c, Error, integer = sync.converse, sync.Error, sync.integer
 ROSTER = sync.ROSTER
 IDENTITY = {'version': 1, 'ownerGuid': 3, 'mode': 'training_stipend_and_class_training',
@@ -652,21 +656,21 @@ class Maintenance:
                 and sum((m[k]-pos[k])**2 for k in ('x','y','z')) <= 25 for m in boxes))
         if mailbox_near and self.data['mail'] is None:
             mail = self.rpc.call('buddy-mail.list', {})
-            if mail.get('listCurrent') is True and mail.get('listKnown') is True and not mail.get('claimReserved'):
-                rows = mail.get('stipends', [])
-                if rows and isinstance(rows, list) and len(rows) <= 50:
-                    row = rows[0]
-                    if integer(row.get('copper', 0)) == 10000 and integer(row.get('mailId', 0)) > 0:
-                        request = {'sessionId': sync.session_id(mail), 'listRevision': mail['listRevision'],
-                                   'mailboxGuid': mail['mailboxGuid'], 'mailId': row['mailId']}
-                        self.data['mail'] = dict(request, status='reserved')
-                        self.persist()  # A restart must not replay an ambiguous claim.
-                        receipt = self.rpc.call('buddy-mail.claim_stipend', request).get('lastClaim', {})
-                        if confirmed_mail(receipt,row['mailId']):
-                            self.data['mail']['status'] = 'confirmed'
-                            self.persist()
-                        self.status['phase'] = 'stipend_' + self.data['mail']['status']
-                        return
+            try:selection = stipend_policy.choose(self.rpc, mail, self.guid)
+            except stipend_policy.Error as error:raise Error(str(error)) from None
+            if selection['kind'] == 'claim':
+                request = {key: selection[key] for key in ('sessionId','listRevision','mailboxGuid','mailId')}
+                if not stipend_policy.current(self.rpc, selection, self.guid):raise Error('stipend_policy_changed_before_reservation')
+                self.data['mail'] = dict(request, status='reserved', policySHA256=selection['policySHA256'],
+                                         policyGeneration=selection['_proof']['generation'])
+                self.persist()  # A restart must not replay an ambiguous claim.
+                if not stipend_policy.current(self.rpc, selection, self.guid):raise Error('stipend_policy_changed_after_reservation_no_retry')
+                claimed = self.rpc.call('buddy-mail.claim_stipend', request)
+                if claimed.get('sessionId') == request['sessionId'] and confirmed_mail(claimed.get('lastClaim', {}),request['mailId']):
+                    self.data['mail']['status'] = 'confirmed'
+                    self.persist()
+                self.status['phase'] = 'stipend_' + self.data['mail']['status']
+                return
         pending=None
         if self.data['training'] and self.data['training'][-1]['status']=='reserved':
             pending=self.reconcile_training(self.rpc.call('buddy-training.state',{}))
