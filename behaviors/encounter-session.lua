@@ -836,6 +836,7 @@ return {decide=decide, on_event=on_event, export_state=export_state, import_stat
         mission_repair=encounter_mission_repair and encounter_mission_repair.decide,
         follow_formation=encounter_formation and encounter_formation.decide,
         service_destination=encounter_formation and encounter_formation.service_destination,
+        spell_learning_review=spell_invocation and spell_invocation.learning_review,
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
         trade_consent=encounter_trade_consent and encounter_trade_consent.decide,
         stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide,

@@ -9,6 +9,7 @@ Uses existing Codex CLI authentication. Account credentials are not needed here.
 """
 
 import argparse
+import copy
 import datetime
 import fcntl
 import hashlib
@@ -1078,6 +1079,13 @@ def named(text, name):
     return name.casefold() in {word.casefold() for word in re.findall(r"[^\W\d_]+", text)}
 
 
+def evaluate_spell_learning(source,frame,source_limit,*,binary=None):
+    # Reuse the existing bounded, pure accepted-source evaluator. This alias
+    # introduces no VM tick, callback or model/controller of its own.
+    alias='local p=(function()\n'+source+'\nend)()\nreturn {mission_repair=p.spell_learning_review}'
+    return evaluate_mission_repair(alias,frame,max(source_limit,len(alias.encode())),binary=binary)
+
+
 def addressed_names(text, names):
     # "Arlen, follow Mira" addresses Arlen. A conjunction can address several
     # characters; a later sentence can begin a separate named instruction.
@@ -2117,6 +2125,12 @@ def inspect_events(raw, developer=False, *, evidence=None):
 
 
 class CodexBrain:
+    class _SpellLearningRequest(dict):
+        """Only the same-body spellbook observer creates this internal cue."""
+        def __init__(self,*args,owned_learning_check=None,**kwargs):
+            super().__init__(*args,**kwargs)
+            self.owned_learning_check=owned_learning_check
+
     class _CombatReviewRequest(dict):
         """Created only by this body's private combat observer, never chat JSON."""
         def __init__(self, *args, owned_review_check=None, **kwargs):
@@ -2156,6 +2170,11 @@ class CodexBrain:
                 and development.get('enabled') is True and development.get('directDevelopment') is True
                 and development.get('workspace')==str(self.developer_workspace)
                 and callable(request.owned_review_check))
+        if isinstance(request,dict) and request.get('source')=='spell_learning':
+            allowed=(type(request) is self._SpellLearningRequest and isinstance(development,dict)
+                and development.get('enabled') is True and development.get('directDevelopment') is True
+                and development.get('workspace')==str(self.developer_workspace)
+                and callable(request.owned_learning_check))
         if not allowed: return False
         try:
             guid, owner = integer(development.get("selfGuid",0)), integer(development.get("ownerGuid",0))
@@ -2167,6 +2186,8 @@ class CodexBrain:
                 and (request["source"]!="owner" or str(owner)==request.get("senderGuid")))
             if current and request['source']=='combat_review':
                 return request.owned_review_check(guid, sid, development['rpcUrl'], request.get('reviewKey'))
+            if current and request['source']=='spell_learning':
+                return request.owned_learning_check(guid,sid,development['rpcUrl'],request.get('noticeKey'))
             if not current or request['source'] != 'mission_fault':
                 return current
             if request.owned_fault_check is not None:
@@ -2200,10 +2221,10 @@ class CodexBrain:
     def generate(self, history, control_state=None, cancelled=None):
         developer = self.development_enabled(control_state)
         if (isinstance(control_state,dict) and isinstance(control_state.get('current_request'),dict)
-                and control_state['current_request'].get('source') in ('mission_fault','combat_review') and not developer):
+                and control_state['current_request'].get('source') in ('mission_fault','combat_review','spell_learning') and not developer):
             raise ConversationError('Internal developer binding changed')
         request = (control_state or {}).get("current_request", {})
-        allow_silent = (developer and (request.get("source") == "combat_review" or
+        allow_silent = (developer and (request.get("source") in ("combat_review","spell_learning") or
             request.get("source") == "party_agent" and request.get("verifiedPeer") is True and request.get("developmentWhisper") is True))
         emotes = supported_emotes(control_state)
         self.last_development_events = None
@@ -2426,8 +2447,49 @@ class BuddyControls:
         self.quest_items, self.quest_items_available = {}, False
         self.inventory, self.inventory_names, self.inventory_session = {"available": False}, {}, ""
         self.spell_toolkit, self.professions = {"available": False}, {"available": False}
+        self.spellbook_observation, self.learned_spell_notice = None, None
         self.emote_catalog = {"available": False}
         self.mission_follow_binding = None
+
+    def observe_learned_spells(self, raw):
+        """One factual same-body ID delta; eligibility/coalescing stays in Lua."""
+        sid=raw['sessionId']
+        known=frozenset(integer(row['spellId']) for row in raw.get('spells',[]))
+        revision=str(integer(raw.get('spellbookRevision',0)))
+        previous=self.spellbook_observation
+        self.spellbook_observation=dict(sessionId=sid,ids=known,revision=revision)
+        if previous is None or previous['sessionId']!=sid:
+            self.learned_spell_notice=None
+            self.events=[e for e in self.events if e!='server_observed_new_learned_spells']
+            return  # Initial/reconnected complete snapshots are baselines.
+        added=known-previous['ids']
+        notice=self.learned_spell_notice
+        if added:
+            ids=set(notice['spellIds']) if notice else set()
+            ids=(ids|added)&known
+            notice=dict(sessionId=sid,selfGuid=str(self.character_guid),spellIds=sorted(ids),
+                spellbookRevision=revision,changedAtMs=time.monotonic()*1000,stableObservations=0)
+            self.learned_spell_notice=notice
+            if 'server_observed_new_learned_spells' not in self.events:self.events.append('server_observed_new_learned_spells')
+        elif notice:
+            notice['spellIds']=[spell for spell in notice['spellIds'] if spell in known]
+            notice['stableObservations']+=1
+            if not notice['spellIds']:self.learned_spell_notice=None;return
+        if self.learned_spell_notice:
+            notice=self.learned_spell_notice
+            notice['key']=hashlib.sha256(json.dumps(dict(kind='spell_learning',sessionId=sid,
+                spellbookRevision=notice['spellbookRevision'],spellIds=notice['spellIds']),sort_keys=True).encode()).hexdigest()
+
+    def acknowledge_learned_spells(self, notice):
+        current=self.learned_spell_notice
+        if not current or current['sessionId']!=notice['sessionId']:return
+        current['spellIds']=[spell for spell in current['spellIds'] if spell not in notice['spellIds']]
+        if not current['spellIds']:
+            self.learned_spell_notice=None
+            self.events=[e for e in self.events if e!='server_observed_new_learned_spells']
+        else:
+            current['key']=hashlib.sha256(json.dumps(dict(kind='spell_learning',sessionId=current['sessionId'],
+                spellbookRevision=current['spellbookRevision'],spellIds=current['spellIds']),sort_keys=True).encode()).hexdigest()
 
     def refresh(self):
         try:
@@ -2491,6 +2553,7 @@ class BuddyControls:
             try:
                 raw = self.rpc.call("buddy-actions.spell_toolkit", {})
                 self.spell_toolkit = spell_toolkit_context(raw, self.actions, self.character_guid)
+                if self.spell_toolkit.get('available') is True:self.observe_learned_spells(raw)
             except ConversationError:
                 pass
         try:
@@ -2608,6 +2671,7 @@ class BuddyControls:
                  "quest_execution": self.quest_items if self.quest_items_available else {"available": False},
                  "inventory": self.inventory,
                  "spell_toolkit": self.spell_toolkit,
+                 "learned_spell_changes": copy.deepcopy(self.learned_spell_notice),
                  "professions": self.professions,
                  "town_upkeep": party_town_snapshot(self.character_guid, body_session=self.inventory.get("sessionId")),
                  "party_maintenance": party_maintenance_snapshot(self.character_guid,self.quests.get('sessionId') if self.quests_available else None),
@@ -3434,10 +3498,11 @@ class Conversation:
         self.attached_target_observations = {}
         self.combat_review_active = None
         self.combat_reviewed = set()
+        self.spell_learning_active=None
 
     def development_context(self, source, peer_verified=False):
         workspace = getattr(self.brain,"developer_workspace",None)
-        if workspace is None or source not in ("owner","party_agent","mission_fault","combat_review") or (source=="party_agent" and not peer_verified):
+        if workspace is None or source not in ("owner","party_agent","mission_fault","combat_review","spell_learning") or (source=="party_agent" and not peer_verified):
             return {"enabled":False}
         controls = self.controls
         actions = getattr(controls,"actions",{})
@@ -3772,6 +3837,7 @@ class Conversation:
             self.status(phase="listening", cursor=self.cursor)
             if self.maybe_repair_mission():return
             if self.maybe_review_combat():return
+            if self.maybe_review_learned_spells():return
             self.maybe_initiate()
             return
         if result.get("cursorLost", False):
@@ -4230,6 +4296,97 @@ class Conversation:
             self.status(phase='listening',combatReviewPhase='unconfirmed')
         finally:
             self.combat_review_active=None
+        return True
+
+    def spell_learning_current(self,guid,sid,url,key):
+        if self.spell_learning_active!=(sid,key) or guid!=self.character_guid or url!=getattr(self.rpc,'url',None):return False
+        notice=getattr(self.controls,'learned_spell_notice',None)
+        if not notice or notice.get('sessionId')!=sid or notice.get('key')!=key:return False
+        actions=self.rpc.call('buddy-actions.status',{})
+        party=self.rpc.call('buddy-party.state',{})
+        return actions.get('sessionId')==sid and integer(actions.get('selfGuid',0))==guid and party.get('sessionId')==sid
+
+    def maybe_review_learned_spells(self):
+        # A single observation slot feeds the existing synchronous brain. No
+        # banter timer, per-rank jobs, worker or second repair queue is involved.
+        notice=copy.deepcopy(getattr(self.controls,'learned_spell_notice',None))
+        folder=getattr(self.brain,'state_dir',None)
+        if not notice or folder is None or not self.session_id:return False
+        development=self.development_context('spell_learning')
+        if not development.get('enabled') or notice.get('sessionId')!=development['sessionId']:return False
+        sid,key=development['sessionId'],notice['key']
+        reserved=False;started=False
+        # Same durable once-ledger implementation, separate evidence namespace:
+        # learning notices must not consume the mission repair policy's budget.
+        reservation_folder=Path(folder)/'learned-spell-notices'
+        try:
+            if reserve_mission_fault(reservation_folder,self.character_guid,development['rpcUrl'],key,reserve=False)=='already_reserved':
+                self.controls.acknowledge_learned_spells(notice);return False
+            identity=dict(sessionId=sid,characterGuid=str(self.character_guid))
+            view=self.rpc.call('session.policy_source',identity)
+            source,revision=view.get('source'),view.get('revision')
+            generation=str(view.get('generation',''))
+            limit=view.get('sourceLimitBytes',gm_tasks.SOURCE_BYTES)
+            if (view.get('sessionId')!=sid or str(view.get('characterGuid'))!=identity['characterGuid']
+                    or not isinstance(source,str) or not source or not re.fullmatch('[a-f0-9]{64}',str(revision))
+                    or hashlib.sha256(source.encode()).hexdigest()!=revision or not generation.isdecimal()
+                    or type(limit) is not int or limit<=0 or len(source.encode())>limit):
+                raise ConversationError('Current learned-spell review policy source is unavailable')
+            binding=dict(identity,revision=revision,generation=generation)
+            result=evaluate_spell_learning(source,dict(notice=notice,nowMs=time.monotonic()*1000),limit)
+            if not self.mission_repair_policy_current(binding):return False
+            if not isinstance(result,dict) or result.get('available') is not True:
+                self.status(spellLearningPhase='learning_policy_export_unavailable');return False
+            decision=result.get('decision')
+            if not isinstance(decision,dict) or not re.fullmatch('[a-z_0-9]{1,100}',str(decision.get('phase',''))):
+                raise ConversationError('Learned-spell review policy returned an invalid decision')
+            self.status(spellLearningPhase=decision['phase'],spellLearningKey=key)
+            if decision.get('ready') is not True:return False
+            pending=self.rpc.call('buddy-chat.poll',dict(afterSequence=str(self.cursor),limit=256,sessionId=self.session_id))
+            if pending.get('sessionId')!=self.session_id:self.reset_body();return True
+            if integer(pending.get('latestSequence',0))!=self.cursor:return True
+            self.spell_learning_active=(sid,key)
+            current=lambda:self.spell_learning_current(self.character_guid,sid,development['rpcUrl'],key)
+            if not current():return False
+            phase=reserve_mission_fault(reservation_folder,self.character_guid,development['rpcUrl'],key)
+            if phase!='reserved':return False
+            reserved=True
+            if not current() or not self.mission_repair_policy_current(binding):return True
+            pending=self.rpc.call('buddy-chat.poll',dict(afterSequence=str(self.cursor),limit=256,sessionId=self.session_id))
+            if pending.get('sessionId')!=self.session_id:self.reset_body();return True
+            if integer(pending.get('latestSequence',0))!=self.cursor:return True
+            state=dict(self.controls.context(),character=dict(name=self.character_name,**{'class':self.character_class},guid=str(self.character_guid)),
+                development=development,current_request=CodexBrain._SpellLearningRequest(source='spell_learning',noticeKey=key,
+                    owned_learning_check=self.spell_learning_current,controls_allowed=False,repair_requests_allowed=False),
+                learned_spell_changes=notice)
+            cue=dict(speaker='Own learned-spell observer',text=
+                'Your same-body spellbook gained the coalesced actual IDs in learned_spell_changes. Inspect their full rows '
+                'with development.policyCommands.spell and discover the installed generic cast contract. Classification is not cast availability. '
+                'The shared cast_spell handler already accepts unfamiliar learned IDs. When useful, update and test your own current Lua '
+                'through show/apply CAS in this same session; preserve every pending/unknown operation and unrelated policy. '
+                'Do not cast spells merely to test this notice or pull an enemy. A future owner request must work with at most a Lua edit, '
+                'without a new native effect handler, workshop or reconnect. Make no edit if the existing policy already suffices. '
+                'This is silent internal work: no chat/emote/GM RPCs, no new agent or model. Set final action NONE/emote NONE; empty text is allowed.')
+            if not current() or not self.mission_repair_policy_current(binding):return True
+            if self.stopped():raise Stopped('Conversation stop requested')
+            started=True
+            self.status(phase='thinking',spellLearningPhase='review_started',spellLearningKey=key)
+            validate_reply(self.generate_reply([cue],state,still_current=current),allow_silent=True)
+            finish_mission_fault(reservation_folder,self.character_guid,development['rpcUrl'],key,'model_returned')
+            reserved=False
+            still_current=current()
+            self.controls.acknowledge_learned_spells(notice)
+            self.status(phase='listening',spellLearningPhase='review_completed' if still_current else 'body_or_notice_changed_after_review',spellLearningKey=key)
+        except Stopped:raise
+        except OwnerInputPending:
+            self.status(phase='listening',spellLearningPhase='yielded_to_input')
+        except Exception:
+            self.status(phase='listening',spellLearningPhase='review_unconfirmed')
+        finally:
+            if reserved:
+                finish_mission_fault(reservation_folder,self.character_guid,development['rpcUrl'],key,'unknown' if started else 'not_started')
+                self.controls.acknowledge_learned_spells(notice)
+            self.spell_learning_active=None
         return True
 
     def maybe_initiate(self):
