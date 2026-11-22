@@ -287,6 +287,9 @@ function M.plan(frame,disposal,gear)
     if frame.query=='space_pressure' then return {bagPressure=space_pressure(frame,mage,b)} end
     local p=m.pending;local last=frame.last or {}
     if p then
+        if last.id==p.actionId and last.outcome=='not_dispatched' then
+            m.pending=nil;return result(m,last.reason or 'supply_not_dispatched')
+        end
         if p.kind=='cleanup' then
             local v=views[p.actorPort]
             if not v then return result(m,'awaiting_cleanup_observations') end
@@ -310,9 +313,6 @@ function M.plan(frame,disposal,gear)
             m.pending=nil;return result(m,'previous_body_replaced')
         end
         if peer and not current(peer,p.recipientGuid) then return result(m,'awaiting_current_recipient_body') end
-        if last.id==p.actionId and last.outcome=='not_dispatched' then
-            m.pending=nil;return result(m,last.reason or 'supply_not_dispatched')
-        end
         if p.kind=='conjure' then
             local receipt=(last.id==p.actionId and last.outcome=='rpc_result' and last.result or {}).lastSpellOperation or {}
             if last.id==p.actionId and last.outcome=='rpc_result' and receipt.capability=='create_item'
