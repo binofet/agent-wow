@@ -4002,7 +4002,7 @@ class BuddyControls:
 
 class Conversation:
     def __init__(self, rpc, brain, player_guid=3, status=lambda **kw: None, stopped=lambda: False, player_name="Joel", controls=None, banter_seconds=0, character_name="Arlen", character_class="priest", character_guid=1, party_agents=None, resume_whispers=False):
-        self.rpc, self.brain, self.player_guid, self.status = rpc, brain, player_guid, status
+        self.rpc, self.brain, self.player_guid, self._status_callback = rpc, brain, player_guid, status
         self.cursor = 0
         self.session_id = ""
         self.player_name = player_name
@@ -4029,6 +4029,24 @@ class Conversation:
         self.combat_review_active = None
         self.combat_reviewed = set()
         self.spell_learning_active=None
+
+    def status_identity(self):
+        # Core and Chat have distinct session identifiers. Publish only facts
+        # observed by this listener, never its configured or previous body SID.
+        controls = self.controls
+        actions = getattr(controls, "actions", {})
+        sid = actions.get("sessionId") if isinstance(actions, dict) else None
+        bound = (getattr(controls, "actions_available", False) is True
+            and getattr(controls, "party_available", False) is True
+            and isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", sid) is not None
+            and sid == getattr(controls, "party_session", None)
+            and str(actions.get("selfGuid")) == str(self.character_guid))
+        return dict(coreSessionId=sid if bound else None,
+                    coreCharacterGuid=str(self.character_guid) if bound else None,
+                    chatSessionId=self.session_id if self.initialized and self.session_id else None)
+
+    def status(self, **fields):
+        self._status_callback(**dict(fields, **self.status_identity()))
 
     def development_context(self, source, peer_verified=False):
         workspace = getattr(self.brain,"developer_workspace",None)
@@ -4368,6 +4386,7 @@ class Conversation:
             return False
         poll_combat = getattr(self.controls, "poll_combat", None)
         if callable(poll_combat):poll_combat()
+        self.status()  # First baseline status precedes these actual Core reads.
         return True
 
     def tick(self):
@@ -5281,6 +5300,7 @@ def main(argv=None):
                   "started": time.time(), "replies": 0, "cursor": 0, "character_identity":identity,
                   "persistent": args.persistent}
         local_stop = False
+        conversation = None
         def request_stop(signum, frame):
             nonlocal local_stop
             local_stop = True
@@ -5289,7 +5309,9 @@ def main(argv=None):
         def stopped():
             return local_stop or read_json(state / "stop.json").get("instance") == record["instance"]
         def status(**fields):
-            record.update(fields, updated=time.time())
+            binding = conversation.status_identity() if conversation is not None else dict(
+                coreSessionId=None, coreCharacterGuid=None, chatSessionId=None)
+            record.update(fields, **binding, updated=time.time())
             if fields.get("phase") in ("listening", "thinking"):
                 record.pop("error", None)
             write_json(state / "status.json", record)

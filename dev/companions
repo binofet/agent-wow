@@ -402,11 +402,18 @@ def wait_chat(actor, runner, running, sid=None, timeout=30):
     deadline = time.monotonic() + timeout
     while True:
         status = chat_status(actor, runner)
-        if status["running"] == running and (not running or status.get("sessionId") == sid and status.get("phase") in ("listening", "thinking")):
+        if status["running"] == running and (not running or listener_bound(status, actor, sid)
+                and status.get("phase") in ("listening", "thinking")):
             return status
         if time.monotonic() >= deadline:
             raise Error("Listener readiness/exit is unconfirmed; existing processes and journals were preserved")
         time.sleep(0.2)
+
+
+def listener_bound(status, actor, sid):
+    return (isinstance(sid, str) and bool(sid) and status.get("coreSessionId") == sid
+            and status.get("coreCharacterGuid") == str(actor["guid"])
+            and isinstance(status.get("chatSessionId"), str) and bool(status["chatSessionId"]))
 
 
 def child_exited(record):
@@ -445,7 +452,7 @@ def operate(actor, action, runner=None):
                 if not native["ready"]:
                     raise Error("restart-chat requires the existing ready native body; it never reconnects one")
                 previous_body = native_identity(actor, record.get("methods", ()))
-                if chat["running"] and chat.get("sessionId") != previous_body["sessionId"]:
+                if chat["running"] and not listener_bound(chat, actor, previous_body["sessionId"]):
                     raise Error("Existing listener belongs to an older native session; left untouched")
             if chat["running"]:
                 runner.run(with_command(planned["conversation"], "stop"), actor)
@@ -475,7 +482,7 @@ def operate(actor, action, runner=None):
         if action == "restart-chat" and body["sessionId"] != previous_body["sessionId"]:
             raise Error("Native session changed during chat stop; no new listener or native restart")
         if chat["running"]:
-            if chat.get("sessionId") != body["sessionId"] or not selection_matches(chat, actor["model"]) or record.get("model", actor["model"]) != actor["model"]:
+            if not listener_bound(chat, actor, body["sessionId"]) or not selection_matches(chat, actor["model"]) or record.get("model", actor["model"]) != actor["model"]:
                 raise Error("Owned listener body/model differs; use restart-chat explicitly; native was preserved")
         else:
             if record.get("phase") == "model_starting" and not (action == "restart-chat" and (chat_stopped or child_exited(record))):

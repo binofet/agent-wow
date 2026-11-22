@@ -4212,6 +4212,99 @@ class DevelopmentWhisperSilenceTests(unittest.TestCase):
             converse.validate_reply(dict(text='',action='FOLLOW',emote='NONE'),allow_silent=True)
 
 
+class ConversationReadinessTests(unittest.TestCase):
+    class RPC:
+        def __init__(self):
+            self.url = 'http://127.0.0.1:8087/rpc'
+            self.core = self.party = 'aw-native-current'
+            self.chat, self.guid = 'chat-module-current', '4'
+            self.calls = []
+            self.actions_unavailable = False
+
+        def call(self, method, params, timeout=None):
+            self.calls.append((method, copy.deepcopy(params)))
+            if method == 'buddy-chat.poll':
+                return poll(sessionId=self.chat)
+            if method == 'buddy-party.state':
+                return dict(sessionId=self.party)
+            if method == 'buddy-actions.status' and not self.actions_unavailable:
+                return dict(sessionId=self.core, selfGuid=self.guid)
+            raise converse.CapabilityUnavailable('Fixture capability unavailable')
+
+    def rig(self):
+        rpc, statuses = self.RPC(), []
+        controls = converse.BuddyControls(rpc, character_class='mage', character_guid=4)
+        loop = converse.Conversation(rpc, FakeBrain(), controls=controls, status=lambda **value: statuses.append(value),
+                                     character_name='Mira', character_class='mage', character_guid=4)
+        return loop, rpc, controls, statuses
+
+    def test_actual_first_tick_publishes_distinct_observed_core_and_chat(self):
+        loop, rpc, _, statuses = self.rig()
+        loop.tick()
+        self.assertIsNone(statuses[0]['coreSessionId'])  # Listening precedes first Core refresh.
+        self.assertEqual(statuses[-1]['coreSessionId'], rpc.core)
+        self.assertEqual(statuses[-1]['coreCharacterGuid'], '4')
+        self.assertEqual(statuses[-1]['chatSessionId'], rpc.chat)
+        self.assertNotEqual(rpc.core, rpc.chat)
+        self.assertTrue(all('sessionId' not in value for value in statuses))
+        self.assertTrue({'buddy-actions.status', 'buddy-party.state', 'buddy-chat.poll'} <= {m for m, _ in rpc.calls})
+
+    def test_foreign_missing_or_changed_core_observation_cannot_keep_readiness(self):
+        for change in (lambda rpc: setattr(rpc, 'guid', '8'), lambda rpc: setattr(rpc, 'party', 'aw-other'),
+                       lambda rpc: setattr(rpc, 'actions_unavailable', True)):
+            with self.subTest(change=change):
+                loop, rpc, _, statuses = self.rig()
+                loop.tick(); change(rpc); loop.refresh_controls()
+                self.assertIsNone(statuses[-1]['coreSessionId'])
+                self.assertIsNone(statuses[-1]['coreCharacterGuid'])
+                self.assertEqual(statuses[-1]['chatSessionId'], rpc.chat)
+        loop, _, _, statuses = self.rig()
+        loop.tick(); loop.reset_body()
+        self.assertIsNone(statuses[-1]['chatSessionId'])
+        self.assertEqual(statuses[-1]['phase'], 'reconnecting')
+
+    def test_actual_main_status_is_accepted_by_launcher_without_invented_session_field(self):
+        import contextlib
+        import io
+        from test_companions import app, settings
+        with real_temp_directory() as folder:
+            folder = Path(folder)
+            rpc = self.RPC()
+            actor = app.normalize(settings(folder))[0]
+            brain = FakeBrain()
+            brain.developer_workspace = brain.model = brain.reasoning_effort = None
+            brain.model_selection = lambda: dict(provider='local', requestedModel=app.LOCAL_MODEL,
+                                                  effectiveModelKnown=False)
+            arguments = ['--profile', 'mira', '--character-name', 'Mira', '--character-class', 'mage',
+                         '--character-guid', '4', '--rpc-url', rpc.url, '--state-dir', str(folder / 'chat')]
+            observed = []
+            def finish_after_real_tick(_):
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(converse.main(['status', *arguments]), 0)
+                status = json.loads(output.getvalue())  # Actual held lock + production status publisher.
+                observed.append(status)
+                runner = types.SimpleNamespace(run=lambda *args, **kw: output.getvalue())
+                ready = app.wait_chat(actor, runner, True, rpc.core, timeout=0)
+                self.assertEqual(ready['coreSessionId'], rpc.core)
+                self.assertEqual(ready['chatSessionId'], rpc.chat)
+                self.assertNotIn('sessionId', ready)
+                self.assertFalse(ready['modelSelection']['effectiveModelKnown'])
+                converse.write_json(folder / 'chat/stop.json', dict(instance=status['instance']))
+            with patch.object(converse, 'ROOT', folder), patch.object(converse, 'RPC', return_value=rpc), \
+                 patch.object(converse, 'CodexBrain', return_value=brain), patch.object(converse.signal, 'signal'), \
+                 patch.object(converse.time, 'sleep', side_effect=finish_after_real_tick), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(converse.main(['run', *arguments, '--persistent', '--banter-seconds', '0']), 0)
+            self.assertEqual(len(observed), 1)
+            self.assertTrue(observed[0]['running'])
+            self.assertEqual(observed[0]['character_identity']['guid'], 4)
+            self.assertTrue(all(m in ('buddy-chat.poll', 'buddy-party.state', 'buddy-actions.status',
+                                     'buddy-actions.spell_toolkit', 'buddy-professions.state', 'buddy-quests.state',
+                                     'buddy-loot.state', 'buddy-trade.state', 'buddy-quests.journal',
+                                     'buddy-quest-items.state', 'buddy-inventory.state', 'buddy-world.snapshot')
+                                for m, _ in rpc.calls))
+
+
 from test_companions import LauncherTests
 
 
