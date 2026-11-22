@@ -3,7 +3,6 @@ package buddytrade
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -330,13 +329,13 @@ func TestTradeServicePreparationUnknownTransportNeverReplays(t *testing.T) {
 			t.Fatal("fixture did not establish an unaccepted server-confirmed queue", s.pickLock)
 		}
 		state := s.snapshot()
-		if _, err := s.OfferGold(ctx, &tradev1.GoldRequest{SessionId: state.SessionId, Revision: state.Revision, Copper: 1}); err != nil {
+		source := f.world.Backpack[2]
+		if _, err := s.OfferItem(ctx, &tradev1.ItemRequest{SessionId: state.SessionId, Revision: state.Revision,
+			BackpackRevision: f.world.BackpackRevision, BackpackSlot: source.Slot, ExpectedItemGuid: source.ItemGuid, TradeSlot: 1}); err != nil {
 			t.Fatal("explicit own offer could not change the open window", err)
 		}
-		own := extended(false, 0, 0, 0, 0)
-		binary.LittleEndian.PutUint32(own[13:], 1)
-		packet(s, opcode.SMSGTradeStatusExtended, own)
-		if s.pickLock.item.entry != 0 || f.count(opcode.CMSGSetTradeGold) != 1 {
+		packet(s, opcode.SMSGTradeStatusExtended, extended(false, source.Entry, source.StackCount, 1, 0))
+		if s.pickLock.item.entry != 0 || f.count(opcode.CMSGSetTradeItem) != 1 {
 			t.Fatal("confirmed pre-accept queue removal did not retire only the old stage", s.pickLock)
 		}
 		s.Tick(ctx)
