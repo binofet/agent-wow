@@ -175,7 +175,7 @@ func TestNoGlobalOrClosureStateLeaksAcrossEvaluations(t *testing.T) {
 	}
 }
 
-func TestInfiniteLoopDeadlineAndFallback(t *testing.T) {
+func TestInfiniteLoopDeadlineDoesNotBanSourceOrRetryInline(t *testing.T) {
 	for _, chunkLoop := range []bool{false, true} {
 		t.Run(fmt.Sprint(chunkLoop), func(t *testing.T) {
 			r := New()
@@ -188,12 +188,15 @@ func TestInfiniteLoopDeadlineAndFallback(t *testing.T) {
 				source = `while true do end`
 			}
 			start := time.Now()
-			_, err := r.Reload(source, first)
-			if chunkLoop && err == nil || !chunkLoop && err != nil {
+			candidate, err := r.Reload(source, first)
+			if chunkLoop && !errors.Is(err, ErrExecutionBudget) || !chunkLoop && err != nil {
 				t.Fatal(err)
 			}
 			out, err := r.Evaluate(nil)
-			if err != nil || out["action"] != "hold" || r.Status().Revision != first || r.Status().Failures != 1 {
+			state := r.Status()
+			if chunkLoop && (err != nil || out["action"] != "hold" || state.Revision != first) ||
+				!chunkLoop && (out != nil || !errors.Is(err, ErrExecutionBudget) || state.Revision != candidate) ||
+				state.Failures != 0 || state.QuarantinedRevision != "" || state.LastGoodRevision != first || state.Evaluations != 2 {
 				t.Fatal(out, err, r.Status())
 			}
 			if time.Since(start) > time.Second {

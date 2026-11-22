@@ -1366,13 +1366,13 @@ func (s *Service) OnPacket(ctx context.Context, packet *modv1.WorldPacket) (*emp
 	s.expireMeleeOperationLocked()
 	s.meleeWorldBoundaryLocked(packet.Opcode, p)
 	s.observeEncounterVisitLocked(packet.Opcode, p)
-	if handled, err := s.flightpathActivationPacketLocked(packet.Opcode, p); handled {
+	if handled, err := s.flightpathActivationPacketLocked(packet.Opcode, p, packet.TransportScope); handled {
 		if err != nil {
 			s.state.MalformedPackets++
 		}
 		return &emptypb.Empty{}, nil
 	}
-	if handled, err := s.flightpathPacketLocked(packet.Opcode, p); handled {
+	if handled, err := s.flightpathPacketLocked(packet.Opcode, p, packet.TransportScope); handled {
 		if err != nil {
 			s.state.MalformedPackets++
 		}

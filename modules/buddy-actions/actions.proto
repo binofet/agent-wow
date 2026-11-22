@@ -1130,8 +1130,10 @@ message FlightpathQueryRequest {
   uint64 visit_id = 3;
   string token = 4; // current owned exploration interaction
   uint64 npc_guid = 5;
-  string mode = 6; // status or discover
+  string mode = 6; // status, discover, or an activation-bound arrival query
   uint64 expected_revision = 7;
+  uint64 activation_revision = 8;
+  uint64 completion_revision = 9;
 }
 message FlightpathOperation {
   uint64 revision = 1;
@@ -1155,6 +1157,9 @@ message FlightpathOperation {
   repeated uint32 known_nodes = 16;
   string phase = 17;
   string error = 18;
+  uint64 activation_revision = 19;
+  uint64 completion_revision = 20;
+  agentwow.module.v1.TransportScope transport_scope = 21;
 }
 message FlightpathObservationResponse {
   string session_id = 1;
@@ -1165,6 +1170,8 @@ message FlightpathObservationResponse {
   FlightpathOperation operation = 6;
   uint64 activation_revision = 7;
   FlightpathActivationOperation activation = 8;
+  // The booking's original menu remains immutable during an arrival query.
+  FlightpathOperation activation_menu = 9;
 }
 
 // One normal direct-hop activation selected by Lua. The actual menu identifies
@@ -1185,10 +1192,12 @@ message FlightpathActivationRequest {
   bool accept_unknown_fare = 12;
 }
 
-// An activation receipt, never a flight-start or arrival receipt. One current
+// Acceptance alone is never a flight-start or arrival receipt. One current
 // pending slot consumes the identity-free reply only after its own send. Plain
 // transport errors, unknown reply codes and accepted-but-unsettled flights keep
 // pending custody; neither elapsed time nor source/lease changes release it.
+// SettleFlightpath can record arrival only from a separately qualified actual
+// ground state and a fresh destination-node menu admitted by the realm.
 message FlightpathActivationOperation {
   uint64 revision = 1;
   string session_id = 2;
@@ -1215,6 +1224,22 @@ message FlightpathActivationOperation {
   bool live_route_known = 21;
   bool flight_started_known = 22;
   bool arrival_known = 23;
+  // Captured only from the accepted server reply0 packet. A pre-send clock or
+  // snapshot is not a causal activation boundary. Missing scope stays unknown.
+  agentwow.module.v1.TransportScope acceptance_scope = 24;
+}
+
+message SettleFlightpathRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  uint64 activation_revision = 4;
+  uint64 menu_revision = 5;
+  uint64 completion_revision = 6;
+  uint64 authority_revision = 7;
+  uint64 movement_revision = 8;
+  uint64 unit_flags_revision = 9;
+  agentwow.module.v1.TransportScope transport_scope = 10;
 }
 
 message FlightpathReferenceRequest { uint32 node_id = 1; }
@@ -1279,6 +1304,7 @@ service BuddyActions {
   rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
   rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
   rpc ActivateFlightpath(FlightpathActivationRequest) returns (FlightpathObservationResponse);
+  rpc SettleFlightpath(SettleFlightpathRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);

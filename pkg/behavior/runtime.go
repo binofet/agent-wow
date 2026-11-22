@@ -145,7 +145,8 @@ func (r *Runtime) Status() Status {
 // Reload compare-and-swaps the active revision. The initial expected revision
 // is empty. It validates the chunk in a fresh VM, requiring a returned table
 // containing decide=function(state). Decide is evaluated only on real input;
-// an error there quarantines the candidate and restores the last working policy.
+// a source fault there quarantines the candidate and restores the last working
+// policy. A wall-budget miss discards only that fresh VM, without banning code.
 func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -166,8 +167,16 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 	if err == nil {
 		budget := newExecutionBudget(context.Background(), r.initializationBudget())
 		err = budget.call(L, func() error { _, err := decisionFunction(L, fn); return err })
+		if err != nil {
+			err = fmt.Errorf("chunk_initialize: %w", err)
+		}
 	}
 	if err != nil {
+		if errors.Is(err, ErrExecutionBudget) {
+			// Wall-budget exhaustion cannot establish that source is invalid.
+			// The fresh VM is discarded; no candidate was published.
+			return r.status.Revision, fmt.Errorf("behavior initialization unavailable: %w", err)
+		}
 		r.failed(revision, err)
 		return r.status.Revision, fmt.Errorf("invalid behavior policy: %w", err)
 	}
@@ -177,8 +186,10 @@ func (r *Runtime) Reload(source, expectedRevision string) (string, error) {
 }
 
 // Evaluate returns a detached JSON object. Input validation failures leave the
-// policy intact. Policy errors restore and evaluate the last working policy
+// policy intact. Lua/output errors restore and evaluate the last working policy
 // against the original input, never the failed VM's possibly mutated table.
+// Resource exhaustion emits no result and retains the accepted source for a
+// later normal call. It does not trigger a fallback or same-call retry.
 func (r *Runtime) Evaluate(input map[string]any) (map[string]any, error) {
 	return r.EvaluateContext(context.Background(), input)
 }
@@ -205,6 +216,11 @@ func (r *Runtime) EvaluateContext(ctx context.Context, input map[string]any) (ma
 		r.status.LastGoodRevision = r.good.revision
 		return output, nil
 	}
+	if errors.Is(err, ErrExecutionBudget) {
+		// A later normal read starts a fresh VM under the same limits. Do not
+		// publish a partial result, retry here, or quarantine accepted source.
+		return nil, err
+	}
 	r.failed(r.active.revision, err)
 	if r.good == r.active {
 		r.good = nil
@@ -221,6 +237,9 @@ func (r *Runtime) EvaluateContext(ctx context.Context, input map[string]any) (ma
 		return nil, ctx.Err()
 	}
 	if fallbackErr != nil {
+		if errors.Is(fallbackErr, ErrExecutionBudget) {
+			return nil, fmt.Errorf("behavior fallback resource unavailable: %w", fallbackErr)
+		}
 		r.failed(r.active.revision, fallbackErr)
 		r.active, r.good = nil, nil
 		r.status.Revision, r.status.LastGoodRevision = "", ""
@@ -296,14 +315,14 @@ func evaluateWithLimits(parent context.Context, p *policy, input map[string]any,
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("chunk_initialize: %w", err)
 	}
 	state, err := toLua(L, input, &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: inputNodes})
 	if err != nil {
 		return nil, err
 	}
 	if err = watchdog.call(L, func() error { return L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}, state) }); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decide: %w", err)
 	}
 	value, err := fromLua(L.Get(-1), &budget{ctx: parent, byteLimit: byteLimit, nodeLimit: outputNodes}, map[*lua.LTable]bool{}, 0)
 	if err != nil {
