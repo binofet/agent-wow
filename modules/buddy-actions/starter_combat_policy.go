@@ -13,7 +13,14 @@ import (
 )
 
 func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worldv1.SnapshotResponse, target *worldv1.CreatureState) bool {
-	fail := func(reason string) bool { s.state.Reason = reason; s.stopAutoAttackLocked(ctx); return false }
+	fail := func(reason string) bool {
+		if !s.fargodeepAttemptCurrentLocked(ctx) {
+			return false
+		}
+		s.state.Reason = reason
+		s.stopAutoAttackLocked(ctx)
+		return false
+	}
 	if s.blockProtectedOffenseLocked(ctx, target.Guid) {
 		return false
 	}
@@ -42,6 +49,9 @@ func (s *Service) starterAssistObservedTargetLocked(ctx context.Context, w *worl
 		return fail("assist_target_outside_conservative_range")
 	}
 	decision := s.starterSpellDecisionLocked(ctx, w, target, targetPosition)
+	if !s.fargodeepAttemptCurrentLocked(ctx) {
+		return false
+	}
 	if !decision.valid {
 		return fail(s.starterSpells.failure())
 	}
@@ -199,6 +209,9 @@ func (s *Service) starterRogueAssistLocked(ctx context.Context, w *worldv1.Snaps
 		return true
 	}
 	decision := s.starterWeaponDecisionLocked(ctx, w, target, targetPosition)
+	if !s.fargodeepAttemptCurrentLocked(ctx) {
+		return false
+	}
 	if !decision.valid || decision.kind == "wait" {
 		s.state.Reason = s.starterSpells.failure()
 		return true
