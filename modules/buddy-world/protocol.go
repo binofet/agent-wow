@@ -131,6 +131,7 @@ func position(p *observed, x, y, z, o float32, now time.Time) error {
 		p.positionRevision++
 		p.observedAt = now
 		p.trajectory = observedTrajectory{}
+		p.receivedPosition = p.isSelf
 	}
 	return nil
 }
@@ -302,6 +303,9 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 		if err := movement(c, p, now); err != nil {
 			return true, err
 		}
+		if p != nil && p.isSelf {
+			p.receivedMotionInvalid = true
+		}
 		return true, c.done()
 	case opcode.SMSGForceMoveRoot, opcode.SMSGForceMoveUnroot:
 		guid := c.guid()
@@ -316,6 +320,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 				p.movementFlags &^= 0x800
 			}
 			p.observedAt = now
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	case opcode.SMSGForceRunSpeedChange, opcode.SMSGForceWalkSpeedChange:
@@ -338,6 +343,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 				p.walkSpeed = speed
 			}
 			p.observedAt = now
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	case opcode.SMSGClientControlUpdate:
@@ -349,6 +355,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			return true, errLayout
 		}
 		if p := &players[0]; guid != 0 && guid == p.guid {
+			p.receivedMotionInvalid = true
 			p.trajectory.controlReturned = enabled == 1
 			p.observedAt = now
 			settleSelfSpline(p, now)
@@ -388,6 +395,7 @@ func parsePacket(op uint32, payload []byte, state *observations, now time.Time) 
 			p.movementKnown = false
 			p.observedAt = now
 			p.trajectory = observedTrajectory{}
+			p.receivedMotionInvalid = p.isSelf
 		}
 		return true, nil
 	}
@@ -482,6 +490,8 @@ func updates(c *cursor, state *observations, now time.Time) error {
 					self := guid == players[0].guid
 					*p = observed{guid: guid, positionRevision: revision, present: true, isSelf: self, questLogKnown: self, questRevision: questRevision, backpackKnown: self, backpackRevision: backpackRevision, mainhandKnown: self, offhandKnown: self, copperKnown: self, skillsKnown: self, freePrimaryKnown: self, bagSlotsKnown: self, equipmentKnown: self, inventoryEpoch: inventoryEpoch}
 					if self {
+						p.receivedOwnCreate = true
+						p.receivedUnitFlags = true
 						p.questRevision++
 						p.backpackRevision++
 						for _, f := range []int{unitChannelObject, unitChannelObject + 1, unitChannelSpell, unitShapeshiftBytes} {
@@ -775,6 +785,9 @@ func values(c *cursor, p *observed, now time.Time) error {
 				return errBounds
 			}
 			if p != nil && p.isSelf {
+				if field == unitFlags {
+					p.receivedUnitFlags = true
+				}
 				if field >= playerEquipmentFirst && field < playerEquipmentFirst+equipmentSlots*2 {
 					slot, shift := (field-playerEquipmentFirst)/2, uint((field-playerEquipmentFirst)%2*32)
 					p.equipment[slot] = p.equipment[slot]&^(uint64(0xffffffff)<<shift) | uint64(v)<<shift

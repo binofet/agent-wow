@@ -21,6 +21,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyWorld_CompleteSpline_FullMethodName        = "/warcraftbuddy.world.v1.BuddyWorld/CompleteSpline"
 	BuddyWorld_CombatEvents_FullMethodName          = "/warcraftbuddy.world.v1.BuddyWorld/CombatEvents"
 	BuddyWorld_Snapshot_FullMethodName              = "/warcraftbuddy.world.v1.BuddyWorld/Snapshot"
 	BuddyWorld_ObserveClientMovement_FullMethodName = "/warcraftbuddy.world.v1.BuddyWorld/ObserveClientMovement"
@@ -31,6 +32,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyWorldClient interface {
+	CompleteSpline(ctx context.Context, in *CompleteSplineRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error)
 	CombatEvents(ctx context.Context, in *CombatEventsRequest, opts ...grpc.CallOption) (*CombatEventsResponse, error)
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
 	ObserveClientMovement(ctx context.Context, in *ClientMovementRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -43,6 +45,16 @@ type buddyWorldClient struct {
 
 func NewBuddyWorldClient(cc grpc.ClientConnInterface) BuddyWorldClient {
 	return &buddyWorldClient{cc}
+}
+
+func (c *buddyWorldClient) CompleteSpline(ctx context.Context, in *CompleteSplineRequest, opts ...grpc.CallOption) (*SplineCompletionObservation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SplineCompletionObservation)
+	err := c.cc.Invoke(ctx, BuddyWorld_CompleteSpline_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyWorldClient) CombatEvents(ctx context.Context, in *CombatEventsRequest, opts ...grpc.CallOption) (*CombatEventsResponse, error) {
@@ -89,6 +101,7 @@ func (c *buddyWorldClient) OnPacket(ctx context.Context, in *v1.WorldPacket, opt
 // All implementations must embed UnimplementedBuddyWorldServer
 // for forward compatibility.
 type BuddyWorldServer interface {
+	CompleteSpline(context.Context, *CompleteSplineRequest) (*SplineCompletionObservation, error)
 	CombatEvents(context.Context, *CombatEventsRequest) (*CombatEventsResponse, error)
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
 	ObserveClientMovement(context.Context, *ClientMovementRequest) (*emptypb.Empty, error)
@@ -103,6 +116,9 @@ type BuddyWorldServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyWorldServer struct{}
 
+func (UnimplementedBuddyWorldServer) CompleteSpline(context.Context, *CompleteSplineRequest) (*SplineCompletionObservation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CompleteSpline not implemented")
+}
 func (UnimplementedBuddyWorldServer) CombatEvents(context.Context, *CombatEventsRequest) (*CombatEventsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CombatEvents not implemented")
 }
@@ -134,6 +150,24 @@ func RegisterBuddyWorldServer(s grpc.ServiceRegistrar, srv BuddyWorldServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyWorld_ServiceDesc, srv)
+}
+
+func _BuddyWorld_CompleteSpline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteSplineRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyWorldServer).CompleteSpline(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyWorld_CompleteSpline_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyWorldServer).CompleteSpline(ctx, req.(*CompleteSplineRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyWorld_CombatEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -215,6 +249,10 @@ var BuddyWorld_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.world.v1.BuddyWorld",
 	HandlerType: (*BuddyWorldServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CompleteSpline",
+			Handler:    _BuddyWorld_CompleteSpline_Handler,
+		},
 		{
 			MethodName: "CombatEvents",
 			Handler:    _BuddyWorld_CombatEvents_Handler,
