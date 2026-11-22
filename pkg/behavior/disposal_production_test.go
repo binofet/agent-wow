@@ -3,6 +3,7 @@ package behavior
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"debug/buildinfo"
 	"encoding/json"
 	"errors"
@@ -243,9 +244,23 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 	command.Dir, command.Stdin, command.WaitDelay = root, bytes.NewReader(input), time.Second
 	out, diagnostic := &disposalBoundedOutput{limit: MaxJSONBytes + 1}, &disposalBoundedOutput{limit: 8192}
 	command.Stdout, command.Stderr = out, diagnostic
+	started := time.Now()
 	runErr := command.Run()
+	elapsed := time.Since(started)
 	processErr := ctx.Err()
 	cancel()
+	// These are whole-process measurements, including startup, compilation and
+	// conversion. They do not measure a Lua phase or establish its CPU cause.
+	// Hash only on failure; never include the source or observed frame itself.
+	failureEvidence := func() string {
+		cpu := "whole_process_cpu=unavailable"
+		if command.ProcessState != nil {
+			cpu = fmt.Sprintf("whole_process_user=%s; whole_process_system=%s",
+				command.ProcessState.UserTime(), command.ProcessState.SystemTime())
+		}
+		return fmt.Sprintf("revision=%s; source_sha256=%x; source_bytes=%d; input_sha256=%x; input_bytes=%d; whole_process_wall=%s; %s",
+			identity.revision, sha256.Sum256([]byte(source)), len(source), sha256.Sum256(input), len(input), elapsed, cpu)
+	}
 	after, statErr := os.Stat(binary)
 	current, identityErr := disposalCheckoutIdentity(root)
 	if statErr != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) ||
@@ -253,18 +268,22 @@ func evaluateDisposalProduction(t *testing.T, source string, frame map[string]an
 		setupFailure(errors.New("evaluator artifact or source checkout changed during the single invocation"))
 	}
 	if processErr != nil {
-		return nil, fmt.Errorf("production evaluator process: %w", processErr)
+		return nil, fmt.Errorf("production evaluator process (%s): %w", failureEvidence(), processErr)
 	}
 	if out.exceeded || diagnostic.exceeded {
-		return nil, errDisposalOutputLimit
+		return nil, fmt.Errorf("production evaluator (%s): %w", failureEvidence(), errDisposalOutputLimit)
 	}
 	if runErr != nil {
-		return nil, fmt.Errorf("production evaluator: %w; stderr=%q", runErr, diagnostic.String())
+		return nil, fmt.Errorf("production evaluator (%s): %w; stderr=%q", failureEvidence(), runErr, diagnostic.String())
 	}
 	if diagnostic.Len() != 0 {
-		return nil, fmt.Errorf("production evaluator unexpected stderr: %q", diagnostic.String())
+		return nil, fmt.Errorf("production evaluator (%s) unexpected stderr: %q", failureEvidence(), diagnostic.String())
 	}
-	return decodeDisposalProduct(out.Bytes())
+	result, err := decodeDisposalProduct(out.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("production evaluator (%s): %w", failureEvidence(), err)
+	}
+	return result, nil
 }
 
 func TestDisposalProductionArtifactIdentityRejectsWrongCohortAndInstrumentation(t *testing.T) {
@@ -336,5 +355,41 @@ func TestDisposalProductionEvaluatorUsesExactCurrentDefaults(t *testing.T) {
 		map[string]any{"value": "current-cohort"})
 	if err != nil || out["status"] != "keep" || out["value"] != "current-cohort" {
 		t.Fatal("single real production evaluator invocation failed", out, err)
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := disposalGit(root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, source, phase string
+	}{
+		{"initializer_watchdog", `while true do end`, "chunk_initialize:"},
+		{"decision_watchdog", `return {decide=function(input) while true do end end}`, "decide:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := map[string]any{"value": "watchdog-frame"}
+			out, err := evaluateDisposalProduction(t, tc.source, frame)
+			if err == nil || out != nil {
+				t.Fatal("actual default CLI watchdog returned a result", out, err)
+			}
+			input := []byte(`{"value":"watchdog-frame"}`)
+			for _, evidence := range []string{
+				tc.phase, "Lua execution budget exhausted (5ms configured)",
+				"revision=" + strings.TrimSpace(string(head)),
+				fmt.Sprintf("source_sha256=%x", sha256.Sum256([]byte(tc.source))),
+				fmt.Sprintf("source_bytes=%d", len(tc.source)),
+				fmt.Sprintf("input_sha256=%x", sha256.Sum256(input)),
+				fmt.Sprintf("input_bytes=%d", len(input)),
+				"whole_process_wall=", "whole_process_user=", "whole_process_system=",
+			} {
+				if !strings.Contains(err.Error(), evidence) {
+					t.Fatalf("actual watchdog failure omitted %q: %v", evidence, err)
+				}
+			}
+		})
 	}
 }
