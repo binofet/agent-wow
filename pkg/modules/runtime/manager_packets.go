@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -20,6 +21,16 @@ const packetTimeout = 5 * time.Second
 // also services the module callback writes needed to finish consumption.
 // A burst is buffered, not a reason to terminate an otherwise healthy session.
 func (m *Manager) Publish(op uint16, body []byte) error {
+	return m.publishObserved(op, body, nil)
+}
+
+// PublishObserved preserves the scope captured by the transport owner before
+// queueing. Subscriber lag cannot turn an older packet into current authority.
+func (m *Manager) PublishObserved(op uint16, body []byte, scope *modv1.TransportScope) error {
+	return m.publishObserved(op, body, scope)
+}
+
+func (m *Manager) publishObserved(op uint16, body []byte, scope *modv1.TransportScope) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing {
@@ -37,6 +48,9 @@ func (m *Manager) Publish(op uint16, body []byte) error {
 			continue
 		}
 		p := &modv1.WorldPacket{Opcode: uint32(op), Payload: bytesClone(body)}
+		if scope != nil {
+			p.TransportScope = proto.Clone(scope).(*modv1.TransportScope)
+		}
 		inst.queue = append(inst.queue, p)
 		inst.queuedBytes += len(body)
 		if m.pendingPackets == 0 {

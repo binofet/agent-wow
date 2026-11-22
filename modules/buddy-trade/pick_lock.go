@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
-	"github.com/agent-wow/agent-wow/pkg/gamecatalog"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
-	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 const (
@@ -44,23 +41,26 @@ func canPickTradeLock(w *worldv1.SnapshotResponse, required uint32) bool {
 	const combatOrCombatPet = 0x80000 | 0x2000
 	if !self.GetClassKnown() || self.GetClassId() != 4 || !self.GetAlive() ||
 		!self.GetUnitFlagsKnown() || self.GetUnitFlags()&combatOrCombatPet != 0 ||
-		!owner.GetAlive() || !owner.GetUnitFlagsKnown() || owner.GetUnitFlags()&combatOrCombatPet != 0 || !w.GetSelfSkillsKnown() {
+		!owner.GetAlive() || !owner.GetUnitFlagsKnown() || owner.GetUnitFlags()&combatOrCombatPet != 0 || !w.GetSelfSkillsKnown() || w.GetSelfSkillsRevision() == 0 {
 		return false
 	}
-	for _, skill := range w.GetSelfSkills() {
-		if skill.GetSkillId() == lockpickingSkill && skill.GetValue() != 0 {
-			value := int64(skill.GetValue()) + int64(skill.GetTemporaryBonus()) + int64(skill.GetPermanentBonus())
-			return value >= int64(required)
-		}
+	facts, skill := tradeServiceSkills(w)
+	if facts["complete"] != true || skill == nil || skill.Value == 0 {
+		return false
 	}
-	return false
+	value := int64(skill.Value) + int64(skill.TemporaryBonus) + int64(skill.PermanentBonus)
+	return value >= int64(required)
 }
 
+// True means an observed service window remains handled here, including a
+// policy wait or retained uncertain attempt. Only queued server proof lets the
+// ordinary consent branch proceed; no preparation failure falls back to Go.
 func (s *Service) prepareTradePickLock(ctx context.Context, w *worldv1.SnapshotResponse) bool {
 	s.mu.Lock()
-	item, revision := s.serviceItem, s.state.Revision
-	ready := s.state.Phase == "OPEN" && s.state.PartnerGuid == ownerGUID && !s.pendingCancel &&
-		s.partnerSpell == 0 && item.entry != 0 && item.count == 1 && !item.wrapped && (s.pickLock.item != item || s.pickLock.retry)
+	if s.serviceItem.entry == 0 || s.pickLock.queued && s.pickLock.item == s.serviceItem && !s.pickLock.retry && !s.pickLock.castGo {
+		s.mu.Unlock()
+		return false
+	}
 	if !s.pickLock.until.IsZero() && !s.now().Before(s.pickLock.until) {
 		s.pickLock.until = time.Time{}
 		if !s.pickLock.queued {
@@ -68,47 +68,61 @@ func (s *Service) prepareTradePickLock(ctx context.Context, w *worldv1.SnapshotR
 		}
 	}
 	s.mu.Unlock()
-	required, pickable := gamecatalog.LockpickingRequirement(item.lockID)
-	if !ready || !pickable || s.token == "" || !canPickTradeLock(w, required) {
-		return false
+	toolkit, err := s.serviceToolkit(ctx)
+	if err != nil {
+		s.servicePolicyWait("trade_service_spellbook_unavailable")
+		return true
 	}
-	toolkit := &actionsv1.SpellToolkitState{}
-	if err := s.invoke(ctx, "buddy-actions", "spell_toolkit", &emptypb.Empty{}, toolkit); err != nil ||
-		!toolkit.SpellbookKnown || toolkit.SessionId != s.state.SessionId || toolkit.SelfGuid != s.selfGUID {
-		return false
+	admission, reason := s.requestTradeService(ctx, w, toolkit)
+	if admission == nil {
+		s.servicePolicyWait(reason)
+		return true
 	}
-	var castTime time.Duration
-	for _, spell := range toolkit.Spells {
-		if spell.GetSpellId() == pickLockSpell && spell.GetMetadataKnown() {
-			castTime = time.Duration(spell.GetCastTimeMs()) * time.Millisecond
-			break
-		}
+	if err := admission.lease.renew(ctx, s); err != nil {
+		s.servicePolicyWait("trade_service_lease_unconfirmed")
+		return true
 	}
-	if castTime == 0 || s.nearby(ctx) != nil {
-		return false
+	if err := s.nearby(ctx); err != nil {
+		s.servicePolicyWait("trade_service_partner_not_nearby")
+		return true
+	}
+	currentToolkit, err := s.serviceToolkit(ctx)
+	if err != nil || admission.checkToolkit(currentToolkit) != nil {
+		s.servicePolicyWait("trade_service_spellbook_changed")
+		return true
+	}
+	// Nearby and Toolkit both cross Actions. Prove the exact same retained
+	// token again before the final authoritative observation.
+	if err := admission.lease.renew(ctx, s); err != nil {
+		s.servicePolicyWait("trade_service_lease_unconfirmed")
+		return true
 	}
 	fresh, err := s.world(ctx)
-	if err != nil || !canPickTradeLock(fresh, required) {
-		return false
+	if err != nil {
+		s.servicePolicyWait("trade_service_final_world_unavailable")
+		return true
 	}
 	s.mu.Lock()
-	if s.state.Revision != revision || s.state.Phase != "OPEN" || s.pendingCancel || s.serviceItem != item {
+	if !admission.readyLocked(ctx, s, fresh) {
 		s.mu.Unlock()
-		return false
+		s.servicePolicyWait("trade_service_context_changed_before_prepare")
+		return true
 	}
 	s.pickLockCount++
 	if s.pickLockCount == 0 {
 		s.pickLockCount++
 	}
 	count := s.pickLockCount
-	s.pickLock = tradePickLock{item: item, count: count, until: s.now().Add(castTime + 3*time.Second)}
+	s.pickLock = tradePickLock{item: admission.lease.service, count: count, until: admission.reserveAt.Add(admission.castTime + 3*time.Second)}
 	s.state.Reason = "preparing_trade_pick_lock"
 	s.mu.Unlock()
 	// The trade target is a packed slot number, not an item GUID.
 	p := append([]byte{count}, u32(pickLockSpell)...)
 	p = append(p, 0)
 	p = append(p, u32(targetFlagTradeItem)...)
-	_ = s.send(ctx, opcode.CMSGCastSpell, append(p, 1, nonTradedSlot))
+	if ctx.Err() == nil {
+		_ = s.send(ctx, opcode.CMSGCastSpell, append(p, 1, nonTradedSlot))
+	}
 	return true
 }
 
