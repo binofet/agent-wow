@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,8 @@ import (
 	actionsv1 "github.com/agent-wow/agent-wow/modules/buddy-actions/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -63,11 +66,8 @@ type activationPolicyFixture struct {
 func newActivationPolicyFixture(t *testing.T, source, destination uint32, known ...uint32) *activationPolicyFixture {
 	t.Helper()
 	base := newFlightpathPlanFixture(t, source, destination, known...)
-	// The menu is established through actual query/packet parsing above. End
-	// its fixture-only lease so the Lua task acquires its own finite token.
-	if _, err := base.x.s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{Owner: "exploration", Token: base.x.token}); err != nil {
-		t.Fatal(err)
-	}
+	// The fixture is the parent: retain its real finite exploration lease.
+	base.input["goal"].(map[string]any)["params"].(map[string]any)["explorationToken"] = base.x.token
 	r, err := behavior.NewWithOptions(behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +87,13 @@ func (f *activationPolicyFixture) refresh() {
 	observations["actions"] = flightpathPlanJSON(f.t, state(f.t, f.base.x.s))
 	observations["world"] = flightpathPlanJSON(f.t, f.base.x.f.world)
 	observations["flightpath"] = flightpathPlanJSON(f.t, f.base.x.observation(f.t))
+}
+
+func (f *activationPolicyFixture) assertParentCustody(token string) {
+	f.t.Helper()
+	if got := state(f.t, f.base.x.s); got.InteractionOwner != "exploration" || f.base.x.s.interactionToken != token {
+		f.t.Fatal("activation child changed the parent's exploration custody", got)
+	}
 }
 
 func (f *activationPolicyFixture) step() map[string]any {
@@ -121,13 +128,6 @@ func (f *activationPolicyFixture) dispatch(action map[string]any) map[string]any
 	}
 	f.mutations = append(f.mutations, method)
 	switch method {
-	case "buddy-actions.acquire_interaction":
-		request := &actionsv1.InteractionRequest{}
-		decode(request)
-		if request.Owner != "exploration" || !request.Harvest || request.LeaseMs != 15000 {
-			f.t.Fatal("Lua did not request finite guarded exploration custody", request)
-		}
-		response, callErr = f.base.x.s.AcquireInteraction(context.Background(), request)
 	case "buddy-actions.activate_flightpath":
 		request := &actionsv1.FlightpathActivationRequest{}
 		decode(request)
@@ -136,13 +136,6 @@ func (f *activationPolicyFixture) dispatch(action map[string]any) map[string]any
 			f.beforeActivate(request)
 		}
 		response, callErr = f.base.x.s.ActivateFlightpath(context.Background(), request)
-	case "buddy-actions.release_interaction":
-		request := &actionsv1.InteractionRelease{}
-		decode(request)
-		if request.SessionId != f.base.x.s.sessionID || request.SelfGuid != 1 || request.VisitId != 1 {
-			f.t.Fatal("Lua cleanup lost its captured session/body/visit binding", request)
-		}
-		response, callErr = f.base.x.s.ReleaseInteraction(context.Background(), request)
 	default:
 		f.t.Fatal("activation task attempted an unrelated action", action)
 	}
@@ -217,9 +210,10 @@ func TestFlightpathActivationLuaSelectsActualPlannedFirstHopAndKeepsAcceptanceUn
 	}
 	f.base.x.advance(20 * time.Second)
 	f.refresh() // Actual native lease expiry still cannot settle activation.
+	f.input["goal"].(map[string]any)["params"].(map[string]any)["explorationToken"] = "changed-after-issuance"
 	f.input["now"] = float64(1e12)
 	activationPolicyNoEffect(t, f.step())
-	if f.activationCall != 1 || len(f.mutations) != 2 || len(f.base.x.f.packets) != f.basePackets+1 {
+	if f.activationCall != 1 || len(f.mutations) != 1 || len(f.base.x.f.packets) != f.basePackets+1 {
 		t.Fatal("accepted/expired activation replayed or released custody with a STOP", f.activationCall, f.mutations, f.base.x.f.packets)
 	}
 }
@@ -246,7 +240,7 @@ func TestFlightpathActivationLuaUnknownTransportOrReplyCannotReplay(t *testing.T
 			f.refresh()
 			f.input["now"] = float64(1e12)
 			activationPolicyNoEffect(t, f.step())
-			if f.activationCall != 1 || len(f.mutations) != 2 || !proto.Equal(before, f.base.x.observation(t).Activation) {
+			if f.activationCall != 1 || len(f.mutations) != 1 || !proto.Equal(before, f.base.x.observation(t).Activation) {
 				t.Fatal("time, lease expiry or unrecognized reply cleared/replayed activation", before, f.mutations)
 			}
 		})
@@ -309,20 +303,16 @@ func TestFlightpathActivationLuaOnlyExactNotDispatchedResolvesLostHostReply(t *t
 				t.Fatal("exact typed zero-send receipt failed to reconcile only its original reservation", out)
 			}
 			f.input["pending"] = []any{}
-			release := f.step()["action"].(map[string]any)
-			if release["method"] != "buddy-actions.release_interaction" {
-				t.Fatal("zero-send refusal retried activation instead of cleanup", release)
-			}
-			f.dispatch(release)
 			out = f.step()
-			if out["done"] != true || f.activationCall != 1 || len(f.base.x.f.packets) != f.basePackets {
-				t.Fatal("zero-send cleanup replayed activation or failed to finish", out, f.mutations, f.base.x.f.packets)
+			if out["done"] != true || out["action"] != nil || f.activationCall != 1 || len(f.base.x.f.packets) != f.basePackets {
+				t.Fatal("zero-send child completion retried activation or changed parent custody", out, f.mutations, f.base.x.f.packets)
 			}
+			f.assertParentCustody(f.base.x.token)
 		})
 	}
 }
 
-func TestFlightpathActivationLuaKnownServerRejectionCleansUpWithoutRetry(t *testing.T) {
+func TestFlightpathActivationLuaKnownServerRejectionLeavesParentCustodyUnchanged(t *testing.T) {
 	for _, lostReply := range []bool{false, true} {
 		t.Run(map[bool]string{false: "normal_rpc", true: "lost_rpc"}[lostReply], func(t *testing.T) {
 			f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
@@ -339,24 +329,19 @@ func TestFlightpathActivationLuaKnownServerRejectionCleansUpWithoutRetry(t *test
 			if lostReply {
 				resolution, ok := out["resolve"].(map[string]any)
 				if !ok || resolution["id"] != action["id"] || resolution["path"] != "activation" || out["action"] != nil {
-					t.Fatal("exact known rejection failed to reconcile only its lost RPC", out)
+					t.Fatal("exact known rejection failed to reconcile its lost RPC", out)
 				}
 				f.input["pending"] = []any{}
 				out = f.step()
 			}
-			release := out["action"].(map[string]any)
-			if release["method"] != "buddy-actions.release_interaction" {
-				t.Fatal("known server rejection did not select own-token cleanup", out)
-			}
-			f.dispatch(release)
-			out = f.step()
-			if out["done"] != true || f.activationCall != 1 || !reflect.DeepEqual(f.mutations, []string{"buddy-actions.acquire_interaction", "buddy-actions.activate_flightpath", "buddy-actions.release_interaction"}) {
-				t.Fatal("server rejection became flight completion or automatic retry", out, f.mutations)
+			if out["done"] != true || out["action"] != nil || f.activationCall != 1 || !reflect.DeepEqual(f.mutations, []string{"buddy-actions.activate_flightpath"}) {
+				t.Fatal("server rejection retried activation or changed parent custody", out, f.mutations)
 			}
 			result := out["memory"].(map[string]any)["activation"].(map[string]any)
 			if result["phase"] != "server_rejected" || result["arrivalKnown"] != false || result["flightStartedKnown"] != false {
-				t.Fatal("server rejection fabricated flight completion", result)
+				t.Fatal(result)
 			}
+			f.assertParentCustody(f.base.x.token)
 		})
 	}
 }
@@ -455,19 +440,6 @@ func TestFlightpathActivationLuaSameSessionFareEditAndUnknownReservationSurviveC
 	if err != nil || !reflect.DeepEqual(before.Checkpoint, after.Checkpoint) || s.Status().SessionID != f.base.x.s.sessionID {
 		t.Fatal("fare CAS changed body or lost the bound child plan", before, after, err)
 	}
-	acquireDecision := decide()
-	acquire := acquireDecision.Output["action"].(map[string]any)
-	if acquire["method"] != "buddy-actions.acquire_interaction" {
-		t.Fatal("same-session Lua fare edit did not change the next choice", acquire)
-	}
-	acquireID, err := s.ReserveAction(acquireDecision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.dispatch(acquire)
-	if _, err := s.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: s.Status().SessionID, ActionID: acquireID, Outcome: behavior.ActionConfirmed}}); err != nil {
-		t.Fatal(err)
-	}
 	activationDecision := decide()
 	action := activationDecision.Output["action"].(map[string]any)
 	if action["method"] != "buddy-actions.activate_flightpath" {
@@ -524,72 +496,6 @@ func TestFlightpathActivationLuaCachedPlanMustMatchCurrentPlannerPolicy(t *testi
 	}
 }
 
-func TestFlightpathActivationLuaPlannerCASDuringAcquireConsumesOriginalThenCleansUp(t *testing.T) {
-	f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
-	s, err := behavior.NewSessionWithOptions(context.Background(), f.base.x.s.sessionID, activationPolicySessionSource(f.source), behavior.SessionOptions{ExecutionLimit: 100 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	decide := func() behavior.Decision {
-		t.Helper()
-		d, err := s.Decide(context.Background(), f.input)
-		if err != nil {
-			t.Fatal(err, s.Status())
-		}
-		return d
-	}
-	var original behavior.Decision
-	var acquire map[string]any
-	for tick := 0; tick < 30; tick++ {
-		d := decide()
-		if action, ok := d.Output["action"].(map[string]any); ok {
-			if action["method"] == "buddy-actions.acquire_interaction" {
-				original, acquire = d, action
-				break
-			}
-			f.dispatch(action)
-		}
-	}
-	if acquire == nil {
-		t.Fatal("fixture did not reach a pending original acquisition")
-	}
-	id, err := s.ReserveAction(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := s.State(context.Background())
-	if err != nil || len(before.Pending) != 1 {
-		t.Fatal("actual original acquisition was not reserved", before, err)
-	}
-	edited := strings.Replace(f.source, "excluded_path_ids={}", "excluded_path_ids={252}", 1)
-	if _, err := s.Reload(context.Background(), activationPolicySessionSource(edited), before.Status.Revision); err != nil {
-		t.Fatal(err)
-	}
-	activationPolicyNoEffect(t, decide().Output) // No original acquire reply yet.
-	if len(f.mutations) != 0 || f.activationCall != 0 {
-		t.Fatal("planner edit replayed acquisition or wrote the old hop", f.mutations)
-	}
-	f.dispatch(acquire)
-	if _, err := s.Enqueue(behavior.Event{Kind: "action_result", Receipt: &behavior.ActionReceipt{SessionID: s.Status().SessionID, ActionID: id, Outcome: behavior.ActionConfirmed}}); err != nil {
-		t.Fatal(err)
-	}
-	out := decide().Output
-	release, ok := out["action"].(map[string]any)
-	if !ok || release["method"] != "buddy-actions.release_interaction" || release["params"].(map[string]any)["token"] == "" {
-		t.Fatal("planner edit discarded the original acquisition or failed to clean its exact token", out)
-	}
-	f.dispatch(release)
-	out = decide().Output
-	if out["done"] != true || f.activationCall != 0 || len(f.base.x.f.packets) != f.basePackets {
-		t.Fatal("policy-change cleanup wrote the stale hop or failed to finish", out, f.mutations)
-	}
-	result := out["memory"].(map[string]any)["activation"].(map[string]any)
-	if result["phase"] != "planner_policy_changed" {
-		t.Fatal("task did not retain the reason it abandoned the old hop", result)
-	}
-}
-
 func TestFlightpathActivationLuaUnownedAbortDoesNotWaitForForeignLease(t *testing.T) {
 	f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
 	out := f.step()
@@ -606,28 +512,90 @@ func TestFlightpathActivationLuaUnownedAbortDoesNotWaitForForeignLease(t *testin
 	}
 }
 
-func TestFlightpathActivationLuaOldScopeConsumesAcquireWithoutReleasingNewBody(t *testing.T) {
-	f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
-	var acquire map[string]any
-	for tick := 0; tick < 30; tick++ {
-		out := f.step()
-		if action, ok := out["action"].(map[string]any); ok {
-			if action["method"] == "buddy-actions.acquire_interaction" {
-				acquire = action
-				break
+func TestFlightpathActivationLuaParentTokenIsRequiredAndCannotBeChanged(t *testing.T) {
+	for _, name := range []string{"missing", "expired", "changed_before_proposal"} {
+		t.Run(name, func(t *testing.T) {
+			f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
+			params := f.input["goal"].(map[string]any)["params"].(map[string]any)
+			switch name {
+			case "missing":
+				delete(params, "explorationToken")
+			case "expired":
+				f.base.x.advance(20 * time.Second)
+				f.refresh()
+			case "changed_before_proposal":
+				first := f.step()
+				if action, ok := first["action"].(map[string]any); !ok || action["method"] != "buddy-actions.flightpath_reference" {
+					t.Fatal("fixture did not capture parent intent before its pure read", first)
+				}
+				params["explorationToken"] = "a-different-parent-token"
 			}
-			f.dispatch(action)
-		}
+			out := f.step()
+			if out["action"] != nil || out["resolve"] != nil || len(f.mutations) != 0 || len(f.base.x.f.packets) != f.basePackets {
+				t.Fatal("missing/expired/changed parent intent invoked physical custody", out, f.mutations)
+			}
+			if name == "changed_before_proposal" {
+				if out["done"] != true {
+					t.Fatal("changed parent token did not end the unissued child", out)
+				}
+				f.assertParentCustody(f.base.x.token)
+			}
+		})
 	}
-	if acquire == nil {
-		t.Fatal("fixture did not preserve an original acquisition call")
+}
+
+func TestFlightpathActivationLuaForeignParentTokenCannotAcquireOrReplaceCustody(t *testing.T) {
+	f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
+	f.input["goal"].(map[string]any)["params"].(map[string]any)["explorationToken"] = "foreign-parent-token"
+	action := f.untilActivation()
+	b, err := json.Marshal(action["params"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	f.input["body"].(map[string]any)["selfGuid"] = "9"
-	activationPolicyNoEffect(t, f.step()) // Wait for the original body's call.
-	f.dispatch(acquire)                   // Its exact original reply arrives late.
+	request := &actionsv1.FlightpathActivationRequest{}
+	if err := protojson.Unmarshal(b, request); err != nil {
+		t.Fatal(err)
+	}
+	reads, packets := f.base.x.client.worldReads, len(f.base.x.f.packets)
+	if _, err := f.base.x.s.ActivateFlightpath(context.Background(), request); grpcstatus.Code(err) != codes.FailedPrecondition {
+		t.Fatal("native did not reject the supplied foreign parent token", err)
+	}
+	if f.base.x.client.worldReads != reads || len(f.base.x.f.packets) != packets || f.base.x.observation(t).ActivationRevision != 0 {
+		t.Fatal("foreign token reached World, transport or activation reservation")
+	}
+	f.input["pending"] = []any{activationPolicyPending(t, action)}
+	f.input["last"] = map[string]any{"id": action["id"], "method": action["method"], "effect": "mutation", "error": "native refused foreign parent token"}
+	activationPolicyNoEffect(t, f.step())
+	f.assertParentCustody(f.base.x.token)
+}
+
+func TestFlightpathActivationLuaSameMapVisitReplacementLeavesNewParentCustodyUntouched(t *testing.T) {
+	f := newActivationPolicyFixture(t, 12, 2, 2, 4, 12)
+	if first := f.step(); first["action"] == nil {
+		t.Fatal("fixture did not capture the original menu before its read", first)
+	}
+	// These are explicit parent actions around an actual Actions world-entry
+	// packet. The child must issue neither an acquisition nor cleanup afterward.
+	if _, err := f.base.x.s.ReleaseInteraction(context.Background(), &actionsv1.InteractionRelease{
+		Owner: "exploration", Token: f.base.x.token, SessionId: f.base.x.s.sessionID, SelfGuid: 1, VisitId: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	self := f.base.x.f.world.Self
+	entry := binary.LittleEndian.AppendUint32(nil, self.MapId)
+	for _, value := range []float32{self.X, self.Y, self.Z, self.Orientation} {
+		entry = binary.LittleEndian.AppendUint32(entry, math.Float32bits(value))
+	}
+	f.base.x.packet(t, opcode.SMSGNewWorld, entry)
+	f.base.x.f.world.VisitRevision = 2
+	lease, err := f.base.x.s.AcquireInteraction(context.Background(), &actionsv1.InteractionRequest{Owner: "exploration", LeaseMs: 15000})
+	if err != nil || lease.Token == "" || lease.Token == f.base.x.token {
+		t.Fatal("parent could not establish distinct current-visit custody", lease, err)
+	}
+	f.refresh()
 	out := f.step()
-	if out["done"] != true || out["action"] != nil || out["resolve"] != nil || f.activationCall != 0 ||
-		!reflect.DeepEqual(f.mutations, []string{"buddy-actions.acquire_interaction"}) || len(f.base.x.f.packets) != f.basePackets {
-		t.Fatal("late old-body acquisition was dropped, replayed or released into a new body", out, f.mutations)
+	if out["done"] != true || out["action"] != nil || out["resolve"] != nil || len(f.mutations) != 0 || len(f.base.x.f.packets) != f.basePackets {
+		t.Fatal("old-visit child changed controls or sent a packet into the new visit", out, f.mutations, f.base.x.f.packets)
 	}
+	f.assertParentCustody(lease.Token)
 }
