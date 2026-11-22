@@ -53,11 +53,9 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	self, target := w.Self, practiceTargetObservation(w, targetGUID)
 	point, known, _ := creaturePosition(target)
 	if !self.ClassKnown || (self.ClassId != 4 && self.ClassId != 5 && self.ClassId != 8) || !self.LevelKnown || !self.HealthKnown || !self.PowerKnown ||
-		!northshire(playerPosition(self)) || !northshire(s.pos) || !known || !northshire(point) ||
+		!northshire(playerPosition(self)) || !northshire(s.pos) || !known ||
 		!self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > .01 ||
-		!eligiblePracticeWolf(target) || !exactOffenseTarget(w, target, targetGUID, nil) || len(w.NearbyCreatures) > 32 ||
-		target.AttackVictimKnown && target.AttackVictimGuid != s.selfGUID || target.DynamicFlags&4 != 0 && target.DynamicFlags&8 == 0 ||
-		s.failedAssistTarget == targetGUID {
+		!exactOffenseTarget(w, target, targetGUID, nil) || len(w.NearbyCreatures) > 32 {
 		return nil, nil, position{}, false
 	}
 	if self.ClassId == 4 {
@@ -74,13 +72,9 @@ func (s *Service) practiceTaskObservationsLocked(ctx context.Context, targetGUID
 	if !goal && !finishing {
 		return nil, nil, position{}, false
 	}
-	for _, other := range w.NearbyCreatures {
-		if other != nil && other.Entry != 299 && other.Present && other.AliveKnown && other.Alive &&
-			other.AttackVictimKnown && other.AttackVictimGuid == s.selfGUID && other.AttackAgeMs <= 30000 {
-			return nil, nil, position{}, false
-		}
-	}
-	return w, target, point, current()
+	fresh, chosen, choice, allowed := s.practiceTargetDecisionLocked(ctx, w, current)
+	point, known, _ = creaturePosition(chosen)
+	return fresh, chosen, point, allowed && choice == "target" && chosen != nil && chosen.Guid == targetGUID && known && current()
 }
 
 func (s *Service) starterWeaponWriteAllowedLocked(ctx context.Context, targetGUID uint64, spell uint32) bool {

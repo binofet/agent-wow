@@ -24,10 +24,20 @@ func starterPullPlayer(input map[string]any) map[string]any {
 
 func editColdridgePullTuning(t *testing.T, source, old, replacement string) string {
 	t.Helper()
-	if strings.Count(source, old) != 1 {
+	const prefix = "M.coldridge_pull = {"
+	start := strings.Index(source, prefix)
+	if start < 0 {
+		t.Fatal("missing actual Coldridge tuning block")
+	}
+	end := strings.IndexByte(source[start:], '\n')
+	if end < 0 {
+		t.Fatal("missing Coldridge tuning boundary")
+	}
+	tuning := source[start : start+end]
+	if strings.Count(tuning, old) != 1 {
 		t.Fatalf("actual shared pull tuning is no longer uniquely editable: %q", old)
 	}
-	return strings.Replace(source, old, replacement, 1)
+	return source[:start] + strings.Replace(tuning, old, replacement, 1) + source[start+end:]
 }
 
 func TestStarterPullLuaTargetFreeInclusiveHealthAndCeilingManaBoundaries(t *testing.T) {
