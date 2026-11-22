@@ -44,6 +44,67 @@ local function practice(input,active)
     if input.now<input.nextMutationAt then return ready(wait()) end
     return ready({kind="enable_practice",practiceOwned=true})
 end
+local function quest_route(input,active,missing,confirmed,known,level,complete)
+    local r=input.questRoute
+    if type(r)~="table" or type(r.sessionId)~="string" or #r.sessionId<1 or #r.sessionId>128 or
+       type(r.introProbeCurrent)~="boolean" or type(r.eaganProbeCurrent)~="boolean" or
+       type(r.wolfProbeCurrent)~="boolean" or not array(r.givers,128) or type(r.offer)~="table" then return invalid() end
+    local giver={}
+    for _,row in ipairs(r.givers) do
+        if type(row)~="table" or not decimal(row.guid) or row.guid=="0" or
+           type(row.entry)~="number" or row.entry%1~=0 or row.entry<1 or row.entry>4294967295 then return invalid() end
+        giver[row.guid]=row.entry
+    end
+    local o=r.offer
+    if type(o.objectKnown)~="boolean" or type(o.questsKnown)~="boolean" or type(o.introQuestsKnown)~="boolean" or
+       not decimal(o.npcGuid) or not decimal(o.expiresInMs) or not array(o.quests,32) then return invalid() end
+    local offered={}
+    for _,row in ipairs(o.quests) do
+        if type(row)~="table" or type(row.questId)~="number" or row.questId%1~=0 or
+           row.questId<0 or row.questId>4294967295 or type(row.available)~="boolean" then return invalid() end
+        if row.available then offered[tostring(row.questId)]=true end
+    end
+    local reward=0
+    for _,q in ipairs({783,5261,33}) do
+        if active[tostring(q)] and (q~=33 or complete) then reward=q;break end
+    end
+    local needed=823
+    if reward~=0 then needed=reward==783 and 197 or 196
+    elseif missing["7"] then needed=confirmed["783"] and 197 or 823
+    elseif missing["3903"] and not confirmed["33"] and not r.wolfProbeCurrent and
+           (confirmed["5261"] or r.eaganProbeCurrent) then needed=196 end
+    local probes={}
+    local fresh=o.objectKnown and o.expiresInMs~="0"
+    if missing["7"] and not active["783"] then
+        if fresh and giver[o.npcGuid]==823 and o.introQuestsKnown and not offered["783"] then
+            probes.intro=true
+        end
+        if r.introProbeCurrent or probes.intro then needed=197 end
+    end
+    if active["7"] and missing["3903"] and not confirmed["5261"] and not confirmed["33"] and
+       not active["5261"] and not active["33"] and fresh and giver[o.npcGuid]==823 and
+       o.questsKnown and not offered["5261"] and not offered["3903"] then
+        probes.eagan,probes.wolf=true,false
+        needed=196
+    end
+    -- An empty fresh Eagan menu permits another Willem query. It never
+    -- manufactures reward confirmation or permission to accept an absent row.
+    if reward==0 and missing["3903"] and not active["5261"] and not active["33"] and
+       fresh and giver[o.npcGuid]==196 and o.questsKnown and not offered["33"] then
+        probes.wolf=true
+        needed=823
+    end
+    local allowed={}
+    if needed==197 and missing["7"] then allowed={7}
+    elseif needed==823 then
+        if missing["7"] then allowed[#allowed+1]=783 end
+        if known and level>=2 then
+            for _,q in ipairs({18,3903}) do if missing[tostring(q)] then allowed[#allowed+1]=q end end
+        end
+        if missing["3903"] and not confirmed["5261"] and not confirmed["33"] then allowed[#allowed+1]=5261 end
+    elseif needed==196 and missing["3903"] and not confirmed["33"] then allowed={33} end
+    return ready({kind="quest_route",neededEntry=needed,rewardQuestId=reward,allowedQuestIds=allowed,probes=probes})
+end
 function M.decide(input)
     if type(input)~="table" then return invalid() end
     local active,desired,confirmed=ids(input.activeQuestIds,25),ids(input.desiredQuestIds,25),ids(input.confirmedQuestIds,3)
@@ -61,7 +122,9 @@ function M.decide(input)
     if routine==nil then routine={} end
     if a==nil then a={} end
     if type(routine)~="table" or type(a)~="table" then return invalid() end
-    if input.stage=="classify" then
+    if input.stage=="quest_route" then
+        return quest_route(input,active,missing,confirmed,known,level,complete)
+    elseif input.stage=="classify" then
         if exact and not (input.autonomous and routine.practiceOwned==true) then
             return ready(wait("matched_requested_active_quest_ids"))
         end

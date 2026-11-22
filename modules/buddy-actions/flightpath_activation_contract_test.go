@@ -55,7 +55,8 @@ func TestFlightpathActivationPublishedContractsPreserveCurrentAPIs(t *testing.T)
 	for alias, name := range map[string]string{
 		"activate_flightpath": "ActivateFlightpath", "query_flightpath": "QueryFlightpath",
 		"flightpath_observation": "FlightpathObservation", "flightpath_reference": "FlightpathReference",
-		"cast_spell": "CastSpell", "cancel_spell": "CancelSpell", "break_control": "BreakControl",
+		"settle_flightpath": "SettleFlightpath",
+		"cast_spell":        "CastSpell", "cancel_spell": "CancelSpell", "break_control": "BreakControl",
 	} {
 		method, ok := actions.RPC(alias)
 		if !ok || method.Path() != "/warcraftbuddy.actions.v1.BuddyActions/"+name || api.Services().ByName("BuddyActions").Methods().ByName(method.Descriptor().Name()) == nil {
@@ -64,6 +65,9 @@ func TestFlightpathActivationPublishedContractsPreserveCurrentAPIs(t *testing.T)
 	}
 	if actions.Manifest().ScriptAPI["activate_flightpath"].Effect != moddisc.EffectMutation {
 		t.Fatal("potentially spending activation advertised as a read")
+	}
+	if actions.Manifest().ScriptAPI["settle_flightpath"].Effect != moddisc.EffectMutation {
+		t.Fatal("booking settlement must be advertised as a mutation")
 	}
 	method, ok := actions.Packet(opcode.SMSGActivatetaxireply)
 	if !ok || method.Path() != "/warcraftbuddy.actions.v1.BuddyActions/OnPacket" {
@@ -137,5 +141,46 @@ func TestFlightpathActivationPublishedRouteReachesOneCompiledWrite(t *testing.T)
 	if len(x.f.packets) != 3 || x.client.worldReads != 3 || x.client.sendCalls != 3 ||
 		x.f.packets[2].Opcode != opcode.CMSGActivatetaxi || string(x.f.packets[2].Payload) != string(want) || x.s.state.Traveling || x.s.state.Moving {
 		t.Fatal("activation did not issue exactly its one normal packet", x.f.packets)
+	}
+}
+
+func TestFlightpathSettlementPublishedRouteReachesCompiledStateOnlyHandler(t *testing.T) {
+	x := newFlightpathSettlementRig(t)
+	flightpathSettlementReady(t, x)
+	request := flightpathSettlementRequest(t, x)
+	registry, err := moddisc.Load("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, ok := registry.Lookup("buddy-actions")
+	if !ok {
+		t.Fatal("missing Actions manifest")
+	}
+	method, ok := module.RPC("settle_flightpath")
+	if !ok || method.Path() != actionsv1.BuddyActions_SettleFlightpath_FullMethodName ||
+		method.Descriptor().Input().FullName() != "warcraftbuddy.actions.v1.SettleFlightpathRequest" ||
+		method.Descriptor().Output().FullName() != "warcraftbuddy.actions.v1.FlightpathObservationResponse" {
+		t.Fatal("settlement alias disagrees with compiled API", method)
+	}
+	listener := bufconn.Listen(64 << 10)
+	server := grpc.NewServer()
+	actionsv1.RegisterBuddyActionsServer(server, x.s)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
+	conn, err := grpc.NewClient("passthrough:///settlement-contract", grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	before := len(x.f.packets)
+	response := new(actionsv1.FlightpathObservationResponse)
+	if err := conn.Invoke(ctx, method.Path(), request, response); err != nil {
+		t.Fatal("published settlement RPC did not reach the native handler", err)
+	}
+	if !response.GetActivation().GetArrivalKnown() || response.GetActivation().GetPending() || len(x.f.packets) != before {
+		t.Fatal("state-only settlement lost arrival proof or sent another booking", response, x.f.packets)
 	}
 }
