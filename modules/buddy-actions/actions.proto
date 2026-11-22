@@ -50,6 +50,46 @@ message CancelSpellRequest {
   bool channel = 6;
 }
 message ToggleRequest { bool enabled = 1; }
+// Complete ordinary SMSG_TALENTS_INFO player facts, not a recommended build.
+// Rank indexes are the zero-based Talent.dbc rank sent by the game protocol.
+message TalentRank { uint32 talent_id = 1; uint32 rank_index = 2; }
+message TalentSpec { uint32 index = 1; repeated TalentRank talents = 2; repeated uint32 glyphs = 3; }
+message TalentStateRequest { string session_id = 1; uint64 self_guid = 2; }
+message TalentOperation {
+  string request_id = 1;
+  string phase = 2;
+  bool transport_written = 3;
+  bool transport_outcome_unknown = 4;
+  bool requested_rank_observed = 5;
+  string observed_revision = 6;
+  string expected_revision = 7;
+  uint32 talent_id = 8;
+  uint32 rank_index = 9;
+  uint32 spec_index = 10;
+  string error = 11;
+}
+message TalentStateResponse {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  bool known = 3;
+  string revision = 4;
+  uint32 free_points = 5;
+  uint32 active_spec_index = 6;
+  repeated TalentSpec specs = 7;
+  TalentOperation operation = 8;
+  string observation_error = 9;
+}
+// One explicit normal CMSG_LEARN_TALENT. The caller supplies the talent/rank;
+// the server owns class, tree, prerequisite and available-point legality.
+message LearnTalentRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  string expected_revision = 3;
+  uint32 spec_index = 4;
+  uint32 talent_id = 5;
+  uint32 rank_index = 6;
+  string request_id = 7;
+}
 // Finite custody of idle/follow movement only. Does not disable standing
 // intents, healing, defense, casting or explicit actor movement capabilities.
 message MovementOwnerRequest {
@@ -160,6 +200,20 @@ message InteractionRequest {
   // Explicit non-destructive gathering/exploration guard; immutable per token.
   // Only professions and exploration may request it. Defense intent stays on.
   bool harvest = 4;
+}
+// Acquires or renews custody only when this exact observed body is already
+// physically idle. It never stops movement or attacks and never changes follow
+// intent. A distinct RPC prevents an older module from ignoring this contract.
+message IdleInteractionRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  // Same fixed coordination labels as InteractionRequest.
+  string owner = 4;
+  // Empty for a new lease; the exact current token is required for renewal.
+  string token = 5;
+  // 0 means15000; allowed1000..30000ms.
+  uint32 lease_ms = 6;
 }
 message InteractionRelease {
   string owner = 1;
@@ -1217,6 +1271,8 @@ message FlightpathReferenceResponse {
 }
 
 service BuddyActions {
+  rpc TalentState(TalentStateRequest) returns (TalentStateResponse);
+  rpc LearnTalent(LearnTalentRequest) returns (TalentStateResponse);
   rpc CastSpell(CastSpellRequest) returns (State);
   rpc CancelSpell(CancelSpellRequest) returns (State);
   rpc FlightpathReference(FlightpathReferenceRequest) returns (FlightpathReferenceResponse);
@@ -1242,6 +1298,7 @@ service BuddyActions {
   rpc AcquireMovement(MovementOwnerRequest) returns (MovementOwnerLease);
   rpc ReleaseMovement(MovementOwnerRelease) returns (State);
   rpc AcquireInteraction(InteractionRequest) returns (InteractionLease);
+  rpc AcquireIdleInteraction(IdleInteractionRequest) returns (InteractionLease);
   rpc ReleaseInteraction(InteractionRelease) returns (State);
   rpc ApproachLoot(ApproachLootRequest) returns (State);
   rpc ApproachQuest(ApproachQuestRequest) returns (State);
