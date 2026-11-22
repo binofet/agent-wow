@@ -87,7 +87,10 @@ func TestTalentChoiceChangesInSameLuaVMWithoutNativeBuildOrDefaultPlan(t *testin
 	// This is the existing generic task-runner DTO. The Lua author selects a
 	// build; the harness only validates/executes the selected normal request.
 	source := `local chosen=123
-return {decide=function(frame)
+	return {on_event=function()return true end,
+	export_state=function()return {version=1,data={}} end,
+	import_state=function(saved)return saved.version==1 end,
+	decide=function(frame)
  local t=frame.input
  if t.known~=true then return {phase="waiting_for_talent_facts"} end
  return {action={id="learn:"..chosen,method="buddy-actions.learn_talent",params={
