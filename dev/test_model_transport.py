@@ -73,6 +73,7 @@ class ModelTransportTests(unittest.TestCase):
             self.assertEqual(command[command.index("--model") + 1], self.model)
             self.assertEqual(command[command.index("--sandbox") + 1], "workspace-write" if developer else "read-only")
             settings = self.config(command)
+            self.assertEqual(settings["model_provider"], "lmstudio")
             self.assertEqual(settings["approval_policy"], "never")
             self.assertEqual(settings["approvals_reviewer"], "user")
             self.assertNotIn("--approve-for-me", command)

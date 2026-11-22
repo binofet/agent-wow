@@ -2267,7 +2267,8 @@ def codex_command(binary, workspace, schema, output, developer=False, model=None
         command.extend(("-c", 'model_reasoning_effort=' + json.dumps(reasoning_effort)))
     provider = transport["provider"]
     if provider == "local":
-        command.extend(("--oss", "--local-provider", transport["localProvider"]))
+        command.extend(("--oss", "--local-provider", transport["localProvider"],
+                        "-c", "model_provider=" + json.dumps(transport["localProvider"])))
     elif provider == "responses":
         command.extend(("-c", 'model_provider="buddy_responses"'))
         for key, value in dict(name="Explicit Responses provider", base_url=transport["baseURL"],
