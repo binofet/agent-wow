@@ -639,3 +639,54 @@ func TestGMRecoveryMaximumChangeAloneCannotReplayUnobservedRefill(t *testing.T) 
 		t.Fatal("uncertain old write was replayed after timeout", out)
 	}
 }
+
+func TestGMRecoveryResourceSelectionRetiresOnlyItsBoundPriorOutcome(t *testing.T) {
+	for _, scenario := range []string{"health_filled", "unknown_select", "legacy_stalled"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := gmRecoveryRig(t)
+			f.colocate(f.gm())
+			for _, row := range f.members {
+				p := row.(map[string]any)
+				f.colocate(p)
+				p["alive"], p["hp"], p["mana"] = true, 100, 100
+			}
+			f.member("Nixwick")["hp"] = 50
+			f.member("Arlen")["mana"] = 0
+			selected := recoveryAction(t, f.step(t))
+			if selected["kind"] != "select_target" || selected["targetGuid"] != "8" {
+				t.Fatal("expected Nix health selection", selected)
+			}
+			f.apply(t, selected)
+			f.member("Nixwick")["hp"] = 100 // Natural regeneration before the next task turn.
+			memory := f.frame["memory"].(map[string]any)
+			if scenario == "unknown_select" {
+				f.observations["selection"] = map[string]any{"known": true, "targetGuid": "3"}
+				f.frame["last"] = map[string]any{"id": selected["id"], "action": selected, "outcome": "unconfirmed"}
+				f.frame["now"] = 20
+				out := f.step(t)
+				if out["action"] != nil || out["error"] != "selection_not_observed:Nixwick" || memory["stage"] != "health" {
+					t.Fatal("unknown selection advanced/replayed or was attributed to Arlen", out)
+				}
+				f.observations["selection"] = map[string]any{"known": true, "targetGuid": "8"}
+			}
+			if scenario == "legacy_stalled" {
+				memory["stage"], memory["memberIndex"], memory["serial"] = "mana", 1, 20
+				memory["selectionWaiting"] = map[string]any{"id": "recover-1:20", "at": 1}
+				f.frame["last"] = map[string]any{"id": "recover-1:20", "outcome": "written", "action": map[string]any{"kind": "select_target", "targetGuid": "8"}}
+				f.observations["selection"] = map[string]any{"known": true, "targetGuid": "8"}
+			}
+			next := recoveryAction(t, f.step(t))
+			if next["kind"] != "select_target" || next["targetGuid"] != "1" || next["id"] == selected["id"] {
+				t.Fatal("retired Nix selection blocked or replayed before Arlen mana", next)
+			}
+			memory = f.frame["memory"].(map[string]any)
+			pending := memory["selectionWaiting"].(map[string]any)
+			if pending["targetGuid"] != "1" || pending["stage"] != "mana" || memory["stage"] != "mana" {
+				t.Fatal("new selection lacks its own resource/target binding", memory)
+			}
+			if scenario == "legacy_stalled" && next["id"] != "recover-1:21" {
+				t.Fatal("legacy action serial was not preserved", next)
+			}
+		})
+	}
+}
