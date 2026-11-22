@@ -71,6 +71,9 @@ func (p *SessionPolicy) resolveKnownSpell(action map[string]any) (PolicyDispatch
 	if capability == "release_interaction" {
 		return p.resolveInteractionRelease(action)
 	}
+	if capability == "acquire_idle_interaction" {
+		return p.resolveIdleInteraction(action)
+	}
 	if capability == "loot_resume_source" {
 		return p.resolveLootCapacityResume(action)
 	}
@@ -363,6 +366,9 @@ func (m *Manager) writePolicySpell(ctx context.Context, token, sessionID, module
 }
 
 func (op *policySpell) matchesActionPacket(code uint32, payload []byte) bool {
+	if op.capability == "acquire_idle_interaction" {
+		return false // Custody metadata cannot authorize any physical packet.
+	}
 	if op.genericRequest != nil || op.cancelRequest != nil {
 		return op.matchesGenericPacket(code, payload)
 	}
