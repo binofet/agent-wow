@@ -191,6 +191,7 @@ function M.plan(frame)
         if mage.actions.sessionId~=p.mageSession or p.recipientSession and (peer.actions or {}).sessionId~=p.recipientSession then
             m.pending=nil;return result(m,'previous_body_replaced')
         end
+        if peer and not current(peer,p.recipientGuid) then return result(m,'awaiting_current_recipient_body') end
         if last.id==p.actionId and last.outcome=='not_dispatched' then
             m.pending=nil;return result(m,last.reason or 'supply_not_dispatched')
         end
@@ -228,8 +229,11 @@ function M.plan(frame)
             if last.id~=p.actionId then return result(m,'awaiting_recipient_reservation') end
             if last.outcome~='rpc_result' then return result(m,'recipient_reservation_unconfirmed') end
             local receipt=last.result or {}
-            if receipt.sessionId~=p.recipientSession or receipt.waterGiftArmed~=true then return result(m,'recipient_reservation_unconfirmed') end
-            if peer.trade.waterGiftArmed~=true then return result(m,'awaiting_recipient_reservation_observation') end
+            if receipt.sessionId~=p.recipientSession or receipt.waterGiftArmed~=true or id(receipt.partnerGuid)~=guid
+                or not after(receipt.revision,p.recipientRevision) then return result(m,'recipient_reservation_unconfirmed') end
+            if peer.trade.waterGiftArmed~=true or id(peer.trade.partnerGuid)~=guid or after(receipt.revision,peer.trade.revision) then
+                return result(m,'awaiting_recipient_reservation_observation')
+            end
             if not body(mage.world.self,guid) or not body(peer.world.self,p.recipientGuid)
                 or not near(position(mage),nearby(mage,p.recipientGuid)) or not near(position(peer),nearby(peer,guid))
                 or (mage.actions or {}).castPending or (mage.actions or {}).moving then
@@ -289,7 +293,8 @@ function M.plan(frame)
             end
             m.pending={kind='gift',stage='receiver',mageSession=mage.actions.sessionId,recipientSession=peer.view.actions.sessionId,
                 recipientPort=peer.port,recipientGuid=peer.guid,itemGuid=id(stack.item.itemGuid),entry=stack.entry,count=stack.count,
-                source=stack.source,mageCompleted=id(mage.trade.completedTrades or '0'),recipientCompleted=id(peer.view.trade.completedTrades or '0')}
+                source=stack.source,mageCompleted=id(mage.trade.completedTrades or '0'),recipientCompleted=id(peer.view.trade.completedTrades or '0'),
+                recipientRevision=id(peer.view.trade.revision)}
             return issue(m,peer.port,'buddy-trade.water_gift',{sessionId=peer.view.trade.sessionId,
                 revision=id(peer.view.trade.revision),partnerGuid=guid,itemEntry=stack.entry,itemCount=stack.count},'recipient_water_reservation_requested')
         end

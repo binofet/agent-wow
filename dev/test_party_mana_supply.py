@@ -236,6 +236,21 @@ class SupplyTest(unittest.TestCase):
         self.observations[8086]=saved
         self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed');self.assertEqual(len(self.calls),1)
 
+    def test_receiver_reservation_requires_new_exact_partner_receipt_and_current_body_before_offer(self):
+        carried(self.mira,2136,8);state={}
+        self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
+        receipt=state['last']['result'];receipt['partnerGuid']='8'
+        self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed')
+        receipt['partnerGuid']='4';receipt['revision']='2'
+        self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed')
+        receipt['revision']='3';self.arlen['trade']['partnerGuid']='8'
+        self.assertEqual(self.turn(state),'awaiting_recipient_reservation_observation')
+        self.arlen['trade']['partnerGuid']='4';self.arlen['inventory']['sessionId']='old-body'
+        self.assertEqual(self.turn(state),'awaiting_current_recipient_body')
+        self.assertEqual(len(self.calls),1)
+        self.arlen['inventory']['sessionId']='aw-1'
+        self.assertEqual(self.turn(state),'water_gift_offer_requested');self.assertEqual(len(self.calls),2)
+
     def test_same_session_lua_stock_and_recipient_tuning_is_the_actual_dispatch_choice(self):
         self.arlen['inventory']['manaDrinkCount']=16
         self.assertEqual(self.turn(),'water_stock_sufficient');self.assertEqual(self.calls,[])
