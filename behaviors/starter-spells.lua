@@ -3,6 +3,7 @@
 local spells = assert(encounter_spells)
 local healing = assert(encounter_healing)
 local starter_movement = encounter_movement
+local starter_objectives = encounter_starter_objectives
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
 
@@ -125,7 +126,14 @@ local function weapon_choice(obs, target, self, override)
     return {kind="melee",spellId=0}
 end
 
-function M.decide(input, override, movement)
+function M.decide(input, override, movement, objectives)
+    if type(input)=="table" and input.selection=="fargodeep_pull_readiness" then
+        objectives=objectives or starter_objectives
+        if type(objectives)~="table" or type(objectives.decide)~="function" then
+            return {kind="wait",spellId=0,selection="fargodeep_pull_readiness"}
+        end
+        return objectives.decide(input)
+    end
     local wait=type(input)=="table" and input.selection=="practice_approach" and
         {kind="wait",standYards=0} or {kind="wait",spellId=0}
     if type(input)~="table" or type(input.sessionId)~="string" or #input.sessionId==0 or

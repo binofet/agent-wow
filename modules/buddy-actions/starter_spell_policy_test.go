@@ -166,9 +166,12 @@ func TestStarterSpellNativePrewriteReusesLuaAndRechecksPartyAfterRead(t *testing
 			runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
 			reads := 0
 			s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
-				reads++
+				spellRead := input["selection"] != fargodeepReadinessSelection
+				if spellRead {
+					reads++
+				}
 				out, err := runtime.EvaluateContext(ctx, input)
-				if reads == 2 {
+				if spellRead && reads == 2 {
 					if mode == "changed policy" {
 						out = map[string]any{"kind": "wait", "spellId": 0}
 					} else {

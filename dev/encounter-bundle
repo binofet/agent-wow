@@ -21,6 +21,7 @@ def main():
         ("encounter_corpse_loot", behaviors / "corpse-loot.lua"),
         ("encounter_spells", behaviors / "encounter-spells.lua"),
         ("encounter_healing", behaviors / "healing.lua"),
+        ("encounter_starter_objectives", behaviors / "starter-objectives.lua"),
         ("encounter_starter_spells", behaviors / "starter-spells.lua"),
         ("encounter_self_mana", behaviors / "self-mana.lua"),
         ("encounter_support", behaviors / "support.lua"),
