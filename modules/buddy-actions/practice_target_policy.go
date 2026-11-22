@@ -118,7 +118,13 @@ func (s *Service) practiceTargetDecisionLocked(ctx context.Context, w *worldv1.S
 		s.practiceTarget != 0 && chosen.Kind == "target" && guid != s.practiceTarget {
 		return nil, nil, "", false
 	}
-	fresh, err := s.snapshot(ctx, guid)
+	observedGuid := guid
+	if s.practiceTarget != 0 {
+		observedGuid = s.practiceTarget
+	}
+	// A stop/wait decision still binds the previously selected exact lookup;
+	// asking for zero would lose it when discovery is truncated.
+	fresh, err := s.snapshot(ctx, observedGuid)
 	if err != nil || !current() || safePracticeCharacter(fresh, s.selfGUID) != "" || !s.refreshPositionLocked(fresh) {
 		return nil, nil, "", false
 	}

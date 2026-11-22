@@ -123,3 +123,30 @@ func TestPracticeTargetDerivedAgeAdvancesWithoutAChangedSpawnOrVictim(t *testing
 		})
 	}
 }
+
+func TestPracticeTargetStopRevalidatesRetainedLookupOutsideDiscovery(t *testing.T) {
+	for _, change := range []string{"claim", "unsafe"} {
+		t.Run(change, func(t *testing.T) {
+			s, f, _, target := lookupPracticeRig(t)
+			if change == "claim" {
+				target.AttackVictimKnown, target.AttackVictimGuid = true, 3
+			} else {
+				target.UnitFlags = 2
+			}
+			w, err := s.snapshot(context.Background(), target.Guid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, lookups := len(f.packets), len(f.lookups)
+			_, chosen, kind, valid := s.practiceTargetDecisionLocked(context.Background(), w, s.practiceApproachCurrentLocked(context.Background(), target.Guid))
+			if !valid || chosen != nil || kind != "stop" || len(f.packets) != before {
+				t.Fatal("known rejected exact lookup lost stop choice", kind, valid, chosen, f.packets)
+			}
+			for _, guid := range f.lookups[lookups:] {
+				if guid != target.Guid {
+					t.Fatal("stopping selected body queried an unrelated target", guid)
+				}
+			}
+		})
+	}
+}
