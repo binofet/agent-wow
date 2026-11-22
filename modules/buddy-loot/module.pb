@@ -600,7 +600,7 @@ BuddyPartyF
 Leave$.warcraftbuddy.party.v1.LeaveRequest&.warcraftbuddy.party.v1.ActionResponsek
 RefreshRaidTargets-.warcraftbuddy.party.v1.RaidTargetListRequest&.warcraftbuddy.party.v1.ActionResponseC
 OnPacket.agentwow.module.v1.WorldPacket.google.protobuf.EmptyB@Z>github.com/agent-wow/agent-wow/modules/buddy-party/api;partyv1bproto3
-–Π
+νά
 #modules/buddy-actions/actions.protowarcraftbuddy.actions.v1api/module/v1/session.protomodules/buddy-party/party.protomodules/buddy-world/world.protogoogle/protobuf/empty.proto"ς
 SpellCastTargets
 mask (Rmask
@@ -1818,7 +1818,7 @@ sourceNode
 known_nodes (R
 knownNodes
 phase (	Rphase
-error (	Rerror"€
+error (	Rerror"
 FlightpathObservationResponse
 
 session_id (	R	sessionId
@@ -1827,7 +1827,56 @@ session_id (	R	sessionId
 revision (Rrevision
 visit_bound (R
 visitBoundK
-	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation"5
+	operation (2-.warcraftbuddy.actions.v1.FlightpathOperationR	operation/
+activation_revision (RactivationRevisionW
+
+activation (27.warcraftbuddy.actions.v1.FlightpathActivationOperationR
+activation"Φ
+FlightpathActivationRequest
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+token (	Rtoken
+npc_guid (RnpcGuid
+source_node (R
+sourceNode)
+destination_node (RdestinationNode#
+menu_revision (RmenuRevision+
+expected_revision	 (RexpectedRevision8
+expected_copper_revision
+ (RexpectedCopperRevision'
+expected_copper (RexpectedCopper.
+accept_unknown_fare (RacceptUnknownFare"κ
+FlightpathActivationOperation
+revision (Rrevision
+
+session_id (	R	sessionId
+	self_guid (RselfGuid
+visit_id (RvisitId
+npc_guid (RnpcGuid#
+menu_revision (RmenuRevision
+source_node (R
+sourceNode)
+destination_node (RdestinationNode
+pending	 (Rpending+
+transport_written
+ (RtransportWritten+
+transport_unknown (RtransportUnknown
+phase (	Rphase
+error (	Rerror
+reply_known (R
+replyKnown
+
+reply_code (R	replyCode/
+activation_accepted (RactivationAccepted,
+money_before_known (RmoneyBeforeKnown.
+money_before_copper (RmoneyBeforeCopper2
+money_before_revision (RmoneyBeforeRevision&
+live_fare_known (RliveFareKnown(
+live_route_known (RliveRouteKnown0
+flight_started_known (RflightStartedKnown#
+arrival_known (RarrivalKnown"5
 FlightpathReferenceRequest
 node_id (RnodeId"·
 FlightpathReferenceNode
@@ -1881,13 +1930,14 @@ node_found (R	nodeFoundE
 outgoing_paths (21.warcraftbuddy.actions.v1.FlightpathReferencePathRoutgoingPathsE
 info (21.warcraftbuddy.actions.v1.FlightpathReferenceInfoRinfo&
 live_fare_known (RliveFareKnown(
-live_route_known (RliveRouteKnown2ό)
+live_route_known (RliveRouteKnown2ƒ+
 BuddyActionsX
 	CastSpell*.warcraftbuddy.actions.v1.CastSpellRequest.warcraftbuddy.actions.v1.State\
 CancelSpell,.warcraftbuddy.actions.v1.CancelSpellRequest.warcraftbuddy.actions.v1.State‚
 FlightpathReference4.warcraftbuddy.actions.v1.FlightpathReferenceRequest5.warcraftbuddy.actions.v1.FlightpathReferenceResponseh
 FlightpathObservation.google.protobuf.Empty7.warcraftbuddy.actions.v1.FlightpathObservationResponse|
-QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
+QueryFlightpath0.warcraftbuddy.actions.v1.FlightpathQueryRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponse„
+ActivateFlightpath5.warcraftbuddy.actions.v1.FlightpathActivationRequest7.warcraftbuddy.actions.v1.FlightpathObservationResponsem
 SelectTarget-.warcraftbuddy.actions.v1.SelectTargetRequest..warcraftbuddy.actions.v1.SelectTargetResponseb
 ApproachTarget/.warcraftbuddy.actions.v1.ApproachTargetRequest.warcraftbuddy.actions.v1.StateZ
 MoveBody-.warcraftbuddy.actions.v1.BodyMovementRequest.warcraftbuddy.actions.v1.State`

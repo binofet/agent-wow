@@ -1109,6 +1109,58 @@ message FlightpathObservationResponse {
   uint64 revision = 4;
   bool visit_bound = 5;
   FlightpathOperation operation = 6;
+  uint64 activation_revision = 7;
+  FlightpathActivationOperation activation = 8;
+}
+
+// One normal direct-hop activation selected by Lua. The actual menu identifies
+// known nodes, not a route offer or fare. accept_unknown_fare acknowledges that
+// missing quote; it is not a maximum-spend guarantee or a reference-price claim.
+message FlightpathActivationRequest {
+  string session_id = 1;
+  uint64 self_guid = 2;
+  uint64 visit_id = 3;
+  string token = 4;
+  uint64 npc_guid = 5;
+  uint32 source_node = 6;
+  uint32 destination_node = 7;
+  uint64 menu_revision = 8;
+  uint64 expected_revision = 9;
+  uint64 expected_copper_revision = 10;
+  uint32 expected_copper = 11;
+  bool accept_unknown_fare = 12;
+}
+
+// An activation receipt, never a flight-start or arrival receipt. One current
+// pending slot consumes the identity-free reply only after its own send. Plain
+// transport errors, unknown reply codes and accepted-but-unsettled flights keep
+// pending custody; neither elapsed time nor source/lease changes release it.
+message FlightpathActivationOperation {
+  uint64 revision = 1;
+  string session_id = 2;
+  uint64 self_guid = 3;
+  uint64 visit_id = 4;
+  uint64 npc_guid = 5;
+  uint64 menu_revision = 6;
+  uint32 source_node = 7;
+  uint32 destination_node = 8;
+  bool pending = 9;
+  bool transport_written = 10;
+  bool transport_unknown = 11;
+  string phase = 12;
+  string error = 13;
+  bool reply_known = 14;
+  uint32 reply_code = 15;
+  bool activation_accepted = 16;
+  bool money_before_known = 17;
+  uint32 money_before_copper = 18;
+  uint64 money_before_revision = 19;
+  // The server performs further path, reputation, mount and eligibility checks.
+  // Neither known money nor static references establish a live quote or route.
+  bool live_fare_known = 20;
+  bool live_route_known = 21;
+  bool flight_started_known = 22;
+  bool arrival_known = 23;
 }
 
 message FlightpathReferenceRequest { uint32 node_id = 1; }
@@ -1170,6 +1222,7 @@ service BuddyActions {
   rpc FlightpathReference(FlightpathReferenceRequest) returns (FlightpathReferenceResponse);
   rpc FlightpathObservation(google.protobuf.Empty) returns (FlightpathObservationResponse);
   rpc QueryFlightpath(FlightpathQueryRequest) returns (FlightpathObservationResponse);
+  rpc ActivateFlightpath(FlightpathActivationRequest) returns (FlightpathObservationResponse);
   rpc SelectTarget(SelectTargetRequest) returns (SelectTargetResponse);
   rpc ApproachTarget(ApproachTargetRequest) returns (State);
   rpc MoveBody(BodyMovementRequest) returns (State);

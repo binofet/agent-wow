@@ -13,6 +13,7 @@ rpc:
   flightpath_reference: /warcraftbuddy.actions.v1.BuddyActions/FlightpathReference
   flightpath_observation: /warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation
   query_flightpath: /warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath
+  activate_flightpath: /warcraftbuddy.actions.v1.BuddyActions/ActivateFlightpath
   select_target: /warcraftbuddy.actions.v1.BuddyActions/SelectTarget
   approach_target: /warcraftbuddy.actions.v1.BuddyActions/ApproachTarget
   move_body: /warcraftbuddy.actions.v1.BuddyActions/MoveBody
@@ -67,6 +68,7 @@ packets:
   SMSG_TAXINODE_STATUS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_NEW_TAXI_PATH: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_SHOWTAXINODES: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
+  SMSG_ACTIVATETAXIREPLY: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_UPDATE_COMBO_POINTS: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_CLIENT_CONTROL_UPDATE: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
   SMSG_RESURRECT_REQUEST: /warcraftbuddy.actions.v1.BuddyActions/OnPacket
@@ -108,8 +110,9 @@ script_api:
   cast_spell: {effect: mutation, description: 'Issue one normal cast of any exact learned spell with composable current-visit targets; server validates spell requirements and effects remain unverified'}
   cancel_spell: {effect: mutation, description: 'Cancel only the exact current owned cast or channel operation; an unknown cancellation is never replayed'}
   flightpath_reference: {effect: read, description: Read exact pinned node and outgoing path references; labels base prices and coordinates prove no live route fare or arrival}
-  flightpath_observation: {effect: read, description: Observe the bound flightmaster query receipt; known nodes imply no route price or travel completion}
+  flightpath_observation: {effect: read, description: Observe bound flightmaster queries and activation custody; accepted activation proves no flight start fare or arrival}
   query_flightpath: {effect: mutation, description: Issue one exact status or learn-menu query to an observed nearby flightmaster under an exploration lease; never activates travel or spends money}
+  activate_flightpath: {effect: mutation, description: Request one Lua-selected direct flight hop with exact observed menu and wallet bindings and explicit unknown-fare acceptance; server may spend copper and unresolved attempts never replay}
   acquire_movement: {effect: mutation, description: Acquire or renew finite idle and follow movement custody while preserving healing defense casting and explicit actor movement}
   release_movement: {effect: mutation, description: Release the exact session body and owner movement token without changing standing follow intent}
   select_target: {effect: mutation, description: Set or clear normal client UI selection for one observed same-map unit or corpse; does not change the Lua combat queue}
