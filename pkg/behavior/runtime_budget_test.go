@@ -91,7 +91,7 @@ func TestRuntimeExecutionBudgetCannotResumeAnExhaustedAllowance(t *testing.T) {
 	}
 }
 
-func TestRuntimeBudgetExpiryStillQuarantinesRunawayWithoutPublishingMutatedInput(t *testing.T) {
+func TestRuntimeBudgetExpiryDiscardsTurnAndRecoversWithoutReload(t *testing.T) {
 	r, err := NewWithOptions(SessionOptions{ExecutionLimit: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +113,12 @@ end}`)
 		t.Fatal("the rejected VM mutated caller input", input)
 	}
 	state := r.Status()
-	if state.QuarantinedRevision != revision || state.Failures != 1 || state.Revision != "" {
-		t.Fatal("runaway policy was rearmed", state)
+	if state.QuarantinedRevision != "" || state.Failures != 0 || state.Revision != revision || state.LastGoodRevision != revision || state.Evaluations != 2 {
+		t.Fatal("resource exhaustion quarantined source or retried the failed turn", state)
+	}
+	delete(input, "loop")
+	if out, err := r.Evaluate(input); err != nil || out["value"] != float64(7) || r.Status().Revision != revision || r.Status().Evaluations != 3 {
+		t.Fatal("next normal input could not use the same source", out, err, r.Status())
 	}
 }
 
