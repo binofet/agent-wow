@@ -42,6 +42,6 @@ func TestFlightpathSettlementLuaKnownRefusalWaitsForExplicitRetryChoice(t *testi
 	action = p.until("buddy-actions.query_flightpath")
 	p.dispatch(action)
 	if len(p.f.base.x.f.packets) != packets+1 || p.f.activationCall != 1 || !p.f.base.x.observation(t).Activation.Pending {
-		t.Fatal("explicit retry repeated the booking or failed to issue just its fresh query", p.methods)
+		t.Fatalf("explicit retry: packets %d→%d, activation calls %d, view %s, methods %v", packets, len(p.f.base.x.f.packets), p.f.activationCall, p.f.base.x.observation(t), p.methods)
 	}
 }
