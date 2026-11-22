@@ -27,6 +27,7 @@ const (
 	BuddyActions_FlightpathObservation_FullMethodName = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathObservation"
 	BuddyActions_QueryFlightpath_FullMethodName       = "/warcraftbuddy.actions.v1.BuddyActions/QueryFlightpath"
 	BuddyActions_ActivateFlightpath_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/ActivateFlightpath"
+	BuddyActions_SettleFlightpath_FullMethodName      = "/warcraftbuddy.actions.v1.BuddyActions/SettleFlightpath"
 	BuddyActions_SelectTarget_FullMethodName          = "/warcraftbuddy.actions.v1.BuddyActions/SelectTarget"
 	BuddyActions_ApproachTarget_FullMethodName        = "/warcraftbuddy.actions.v1.BuddyActions/ApproachTarget"
 	BuddyActions_MoveBody_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/MoveBody"
@@ -91,6 +92,7 @@ type BuddyActionsClient interface {
 	FlightpathObservation(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	QueryFlightpath(ctx context.Context, in *FlightpathQueryRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	ActivateFlightpath(ctx context.Context, in *FlightpathActivationRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
+	SettleFlightpath(ctx context.Context, in *SettleFlightpathRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error)
 	SelectTarget(ctx context.Context, in *SelectTargetRequest, opts ...grpc.CallOption) (*SelectTargetResponse, error)
 	ApproachTarget(ctx context.Context, in *ApproachTargetRequest, opts ...grpc.CallOption) (*State, error)
 	MoveBody(ctx context.Context, in *BodyMovementRequest, opts ...grpc.CallOption) (*State, error)
@@ -209,6 +211,16 @@ func (c *buddyActionsClient) ActivateFlightpath(ctx context.Context, in *Flightp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FlightpathObservationResponse)
 	err := c.cc.Invoke(ctx, BuddyActions_ActivateFlightpath_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) SettleFlightpath(ctx context.Context, in *SettleFlightpathRequest, opts ...grpc.CallOption) (*FlightpathObservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FlightpathObservationResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_SettleFlightpath_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -745,6 +757,7 @@ type BuddyActionsServer interface {
 	FlightpathObservation(context.Context, *emptypb.Empty) (*FlightpathObservationResponse, error)
 	QueryFlightpath(context.Context, *FlightpathQueryRequest) (*FlightpathObservationResponse, error)
 	ActivateFlightpath(context.Context, *FlightpathActivationRequest) (*FlightpathObservationResponse, error)
+	SettleFlightpath(context.Context, *SettleFlightpathRequest) (*FlightpathObservationResponse, error)
 	SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error)
 	ApproachTarget(context.Context, *ApproachTargetRequest) (*State, error)
 	MoveBody(context.Context, *BodyMovementRequest) (*State, error)
@@ -826,6 +839,9 @@ func (UnimplementedBuddyActionsServer) QueryFlightpath(context.Context, *Flightp
 }
 func (UnimplementedBuddyActionsServer) ActivateFlightpath(context.Context, *FlightpathActivationRequest) (*FlightpathObservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ActivateFlightpath not implemented")
+}
+func (UnimplementedBuddyActionsServer) SettleFlightpath(context.Context, *SettleFlightpathRequest) (*FlightpathObservationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleFlightpath not implemented")
 }
 func (UnimplementedBuddyActionsServer) SelectTarget(context.Context, *SelectTargetRequest) (*SelectTargetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelectTarget not implemented")
@@ -1108,6 +1124,24 @@ func _BuddyActions_ActivateFlightpath_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BuddyActionsServer).ActivateFlightpath(ctx, req.(*FlightpathActivationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_SettleFlightpath_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SettleFlightpathRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).SettleFlightpath(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_SettleFlightpath_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).SettleFlightpath(ctx, req.(*SettleFlightpathRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2078,6 +2112,10 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ActivateFlightpath",
 			Handler:    _BuddyActions_ActivateFlightpath_Handler,
+		},
+		{
+			MethodName: "SettleFlightpath",
+			Handler:    _BuddyActions_SettleFlightpath_Handler,
 		},
 		{
 			MethodName: "SelectTarget",

@@ -40,10 +40,12 @@ type splinePhysicalKey struct {
 }
 
 type splineCompletionState struct {
-	revision  uint64
-	request   *worldv1.CompleteSplineRequest
-	operation *worldv1.SplineCompletionOperation
-	consumed  map[splinePhysicalKey]bool
+	revision          uint64
+	request           *worldv1.CompleteSplineRequest
+	operation         *worldv1.SplineCompletionOperation
+	consumed          map[splinePhysicalKey]bool
+	retirementBlocked bool
+	retirementRequest *worldv1.RetireSplineCompletionRequest
 }
 
 // ConfigureSession attaches the authenticated callback before serving RPCs.
@@ -92,12 +94,14 @@ func (s *Service) invalidateMalformedMotionLocked(packet *modv1.WorldPacket) {
 	// This must live outside observations' atomic rollback: an undecodable
 	// possible supersession cannot leave the previous completion proof current.
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
+		s.blockSplineRetirementLocked()
 		s.invalidateMotionLocked("malformed potential motion packet", true)
 	}
 }
 
 func (s *Service) observeUnsupportedMotionLocked(packet *modv1.WorldPacket) {
 	if potentialMotionOpcode(packet.Opcode) || packet.GetTransportScope().GetMotionRevision() != s.motion.scope.GetMotionRevision() {
+		s.blockSplineRetirementLocked()
 		s.invalidateMotionLocked("unsupported motion barrier", true)
 	}
 }
@@ -107,6 +111,7 @@ func (s *Service) observeMotionLocked(packet *modv1.WorldPacket, old, current ob
 	scope := packet.GetTransportScope()
 	bound := scopeMatchesSelf(scope, current, next.visitRevision)
 	continuous := bound && sameMotionVisit(m.scope, scope) && scope.MotionRevision >= m.scope.MotionRevision && scope.MotionRevision-m.scope.MotionRevision <= 1
+	s.observeSplineRetirementProofLocked(packet, current, next, bound, continuous)
 	if !continuous {
 		s.invalidateMotionLocked("motion scope gap or replaced visit", true)
 	}
@@ -186,6 +191,8 @@ func (s *Service) completionSnapshotLocked() *worldv1.SplineCompletionObservatio
 	r := &worldv1.SplineCompletionObservation{SelfGuid: s.state.players[0].guid, VisitRevision: s.state.visitRevision, Revision: s.completion.revision}
 	if s.completion.operation != nil {
 		r.Operation = proto.Clone(s.completion.operation).(*worldv1.SplineCompletionOperation)
+		r.RetirementAvailable = s.splineRetirementFactsFailureLocked() == ""
+		r.RetirementCurrent = r.Operation.Retired && r.RetirementAvailable
 	}
 	return r
 }
@@ -222,6 +229,7 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 		return nil, status.Error(codes.FailedPrecondition, "current due unconsumed standalone taxi spline is required")
 	}
 	c.revision++
+	c.retirementBlocked, c.retirementRequest = false, nil
 	c.request = proto.Clone(req).(*worldv1.CompleteSplineRequest)
 	c.operation = &worldv1.SplineCompletionOperation{Revision: c.revision, SelfGuid: req.SelfGuid, VisitRevision: req.VisitRevision, AuthorityRevision: req.AuthorityRevision, MovementRevision: req.MovementRevision, SplineRevision: req.SplineRevision, TransportScope: cloneMotionScope(req.TransportScope), Pending: true, Phase: "reserved", SplineIdKnown: true, SplineId: s.motion.header.id, MovementImageInferred: true, MovementImageSource: "received_movement_info_with_advertised_spline_endpoint"}
 	op := c.operation

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
+	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/movementinfo"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
 )
@@ -19,6 +20,9 @@ type ownMovementObservation struct {
 	mapID                 uint32
 	info                  movementinfo.Info
 	wire                  []byte
+	// Immutable after replacement; snapshots receive a detached clone. This
+	// scope belongs to this exact received image, not a later catchup packet.
+	scope *modv1.TransportScope
 }
 
 type ownSplineObservation struct {
@@ -33,7 +37,7 @@ type ownSplineObservation struct {
 
 // Called only after the whole packet was validated. Pending values are copied
 // into the packet clone and never escape a rejected packet or foreign mover.
-func (s *observations) commitOwnMovementFacts(old observed, source uint32, now time.Time) {
+func (s *observations) commitOwnMovementFacts(old observed, source uint32, now time.Time, scope *modv1.TransportScope) {
 	p := &s.players[0]
 	bound := p.guid != 0 && p.present && p.mapKnown && s.visitRevision != 0
 	visit := uint64(0)
@@ -48,6 +52,7 @@ func (s *observations) commitOwnMovementFacts(old observed, source uint32, now t
 		if p.receivedMovement && bound && p.receivedMovementInfo.AllFinite() {
 			m.known, m.info = true, p.receivedMovementInfo
 			m.wire = append([]byte(nil), p.receivedMovementWire[:p.receivedMovementWireLen]...)
+			m.scope = cloneMotionScope(scope)
 		}
 		s.ownMovement = m
 	}
@@ -88,6 +93,7 @@ func (m ownMovementObservation) snapshot(now time.Time) *worldv1.OwnMovementFact
 		r.Info.Jump = &worldv1.MovementJumpFacts{Velocity: j.Velocity, SinAngle: j.SinAngle, CosAngle: j.CosAngle, XySpeed: j.XYSpeed}
 	}
 	r.WireImage = append([]byte(nil), m.wire...)
+	r.TransportScope = cloneMotionScope(m.scope)
 	return r
 }
 

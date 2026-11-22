@@ -10287,16 +10287,18 @@ func (x *PolicyDecisionFailure) GetError() string {
 // money. A discover query can learn a node OR return a menu, never both by
 // assumption; a newly learned node needs a later explicit menu query.
 type FlightpathQueryRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SelfGuid         uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
-	VisitId          uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
-	Token            string                 `protobuf:"bytes,4,opt,name=token,proto3" json:"token,omitempty"` // current owned exploration interaction
-	NpcGuid          uint64                 `protobuf:"varint,5,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
-	Mode             string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"` // status or discover
-	ExpectedRevision uint64                 `protobuf:"varint,7,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid           uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	VisitId            uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
+	Token              string                 `protobuf:"bytes,4,opt,name=token,proto3" json:"token,omitempty"` // current owned exploration interaction
+	NpcGuid            uint64                 `protobuf:"varint,5,opt,name=npc_guid,json=npcGuid,proto3" json:"npc_guid,omitempty"`
+	Mode               string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"` // status, discover, or an activation-bound arrival query
+	ExpectedRevision   uint64                 `protobuf:"varint,7,opt,name=expected_revision,json=expectedRevision,proto3" json:"expected_revision,omitempty"`
+	ActivationRevision uint64                 `protobuf:"varint,8,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
+	CompletionRevision uint64                 `protobuf:"varint,9,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *FlightpathQueryRequest) Reset() {
@@ -10378,6 +10380,20 @@ func (x *FlightpathQueryRequest) GetExpectedRevision() uint64 {
 	return 0
 }
 
+func (x *FlightpathQueryRequest) GetActivationRevision() uint64 {
+	if x != nil {
+		return x.ActivationRevision
+	}
+	return 0
+}
+
+func (x *FlightpathQueryRequest) GetCompletionRevision() uint64 {
+	if x != nil {
+		return x.CompletionRevision
+	}
+	return 0
+}
+
 type FlightpathOperation struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Revision         uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
@@ -10398,11 +10414,14 @@ type FlightpathOperation struct {
 	MenuKnown  bool   `protobuf:"varint,14,opt,name=menu_known,json=menuKnown,proto3" json:"menu_known,omitempty"`
 	SourceNode uint32 `protobuf:"varint,15,opt,name=source_node,json=sourceNode,proto3" json:"source_node,omitempty"`
 	// Server mask facts only: no route edges, costs or arrival are implied.
-	KnownNodes    []uint32 `protobuf:"varint,16,rep,packed,name=known_nodes,json=knownNodes,proto3" json:"known_nodes,omitempty"`
-	Phase         string   `protobuf:"bytes,17,opt,name=phase,proto3" json:"phase,omitempty"`
-	Error         string   `protobuf:"bytes,18,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	KnownNodes         []uint32           `protobuf:"varint,16,rep,packed,name=known_nodes,json=knownNodes,proto3" json:"known_nodes,omitempty"`
+	Phase              string             `protobuf:"bytes,17,opt,name=phase,proto3" json:"phase,omitempty"`
+	Error              string             `protobuf:"bytes,18,opt,name=error,proto3" json:"error,omitempty"`
+	ActivationRevision uint64             `protobuf:"varint,19,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
+	CompletionRevision uint64             `protobuf:"varint,20,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
+	TransportScope     *v1.TransportScope `protobuf:"bytes,21,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *FlightpathOperation) Reset() {
@@ -10561,6 +10580,27 @@ func (x *FlightpathOperation) GetError() string {
 	return ""
 }
 
+func (x *FlightpathOperation) GetActivationRevision() uint64 {
+	if x != nil {
+		return x.ActivationRevision
+	}
+	return 0
+}
+
+func (x *FlightpathOperation) GetCompletionRevision() uint64 {
+	if x != nil {
+		return x.CompletionRevision
+	}
+	return 0
+}
+
+func (x *FlightpathOperation) GetTransportScope() *v1.TransportScope {
+	if x != nil {
+		return x.TransportScope
+	}
+	return nil
+}
+
 type FlightpathObservationResponse struct {
 	state              protoimpl.MessageState         `protogen:"open.v1"`
 	SessionId          string                         `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -10571,8 +10611,10 @@ type FlightpathObservationResponse struct {
 	Operation          *FlightpathOperation           `protobuf:"bytes,6,opt,name=operation,proto3" json:"operation,omitempty"`
 	ActivationRevision uint64                         `protobuf:"varint,7,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
 	Activation         *FlightpathActivationOperation `protobuf:"bytes,8,opt,name=activation,proto3" json:"activation,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The booking's original menu remains immutable during an arrival query.
+	ActivationMenu *FlightpathOperation `protobuf:"bytes,9,opt,name=activation_menu,json=activationMenu,proto3" json:"activation_menu,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *FlightpathObservationResponse) Reset() {
@@ -10657,6 +10699,13 @@ func (x *FlightpathObservationResponse) GetActivationRevision() uint64 {
 func (x *FlightpathObservationResponse) GetActivation() *FlightpathActivationOperation {
 	if x != nil {
 		return x.Activation
+	}
+	return nil
+}
+
+func (x *FlightpathObservationResponse) GetActivationMenu() *FlightpathOperation {
+	if x != nil {
+		return x.ActivationMenu
 	}
 	return nil
 }
@@ -10796,10 +10845,12 @@ func (x *FlightpathActivationRequest) GetAcceptUnknownFare() bool {
 	return false
 }
 
-// An activation receipt, never a flight-start or arrival receipt. One current
+// Acceptance alone is never a flight-start or arrival receipt. One current
 // pending slot consumes the identity-free reply only after its own send. Plain
 // transport errors, unknown reply codes and accepted-but-unsettled flights keep
 // pending custody; neither elapsed time nor source/lease changes release it.
+// SettleFlightpath can record arrival only from a separately qualified actual
+// ground state and a fresh destination-node menu admitted by the realm.
 type FlightpathActivationOperation struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Revision            uint64                 `protobuf:"varint,1,opt,name=revision,proto3" json:"revision,omitempty"`
@@ -10827,8 +10878,11 @@ type FlightpathActivationOperation struct {
 	LiveRouteKnown     bool `protobuf:"varint,21,opt,name=live_route_known,json=liveRouteKnown,proto3" json:"live_route_known,omitempty"`
 	FlightStartedKnown bool `protobuf:"varint,22,opt,name=flight_started_known,json=flightStartedKnown,proto3" json:"flight_started_known,omitempty"`
 	ArrivalKnown       bool `protobuf:"varint,23,opt,name=arrival_known,json=arrivalKnown,proto3" json:"arrival_known,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Captured only from the accepted server reply0 packet. A pre-send clock or
+	// snapshot is not a causal activation boundary. Missing scope stays unknown.
+	AcceptanceScope *v1.TransportScope `protobuf:"bytes,24,opt,name=acceptance_scope,json=acceptanceScope,proto3" json:"acceptance_scope,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *FlightpathActivationOperation) Reset() {
@@ -11022,6 +11076,129 @@ func (x *FlightpathActivationOperation) GetArrivalKnown() bool {
 	return false
 }
 
+func (x *FlightpathActivationOperation) GetAcceptanceScope() *v1.TransportScope {
+	if x != nil {
+		return x.AcceptanceScope
+	}
+	return nil
+}
+
+type SettleFlightpathRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SelfGuid           uint64                 `protobuf:"varint,2,opt,name=self_guid,json=selfGuid,proto3" json:"self_guid,omitempty"`
+	VisitId            uint64                 `protobuf:"varint,3,opt,name=visit_id,json=visitId,proto3" json:"visit_id,omitempty"`
+	ActivationRevision uint64                 `protobuf:"varint,4,opt,name=activation_revision,json=activationRevision,proto3" json:"activation_revision,omitempty"`
+	MenuRevision       uint64                 `protobuf:"varint,5,opt,name=menu_revision,json=menuRevision,proto3" json:"menu_revision,omitempty"`
+	CompletionRevision uint64                 `protobuf:"varint,6,opt,name=completion_revision,json=completionRevision,proto3" json:"completion_revision,omitempty"`
+	AuthorityRevision  uint64                 `protobuf:"varint,7,opt,name=authority_revision,json=authorityRevision,proto3" json:"authority_revision,omitempty"`
+	MovementRevision   uint64                 `protobuf:"varint,8,opt,name=movement_revision,json=movementRevision,proto3" json:"movement_revision,omitempty"`
+	UnitFlagsRevision  uint64                 `protobuf:"varint,9,opt,name=unit_flags_revision,json=unitFlagsRevision,proto3" json:"unit_flags_revision,omitempty"`
+	TransportScope     *v1.TransportScope     `protobuf:"bytes,10,opt,name=transport_scope,json=transportScope,proto3" json:"transport_scope,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *SettleFlightpathRequest) Reset() {
+	*x = SettleFlightpathRequest{}
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[102]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettleFlightpathRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettleFlightpathRequest) ProtoMessage() {}
+
+func (x *SettleFlightpathRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[102]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettleFlightpathRequest.ProtoReflect.Descriptor instead.
+func (*SettleFlightpathRequest) Descriptor() ([]byte, []int) {
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{102}
+}
+
+func (x *SettleFlightpathRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SettleFlightpathRequest) GetSelfGuid() uint64 {
+	if x != nil {
+		return x.SelfGuid
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetVisitId() uint64 {
+	if x != nil {
+		return x.VisitId
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetActivationRevision() uint64 {
+	if x != nil {
+		return x.ActivationRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetMenuRevision() uint64 {
+	if x != nil {
+		return x.MenuRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetCompletionRevision() uint64 {
+	if x != nil {
+		return x.CompletionRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetAuthorityRevision() uint64 {
+	if x != nil {
+		return x.AuthorityRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetMovementRevision() uint64 {
+	if x != nil {
+		return x.MovementRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetUnitFlagsRevision() uint64 {
+	if x != nil {
+		return x.UnitFlagsRevision
+	}
+	return 0
+}
+
+func (x *SettleFlightpathRequest) GetTransportScope() *v1.TransportScope {
+	if x != nil {
+		return x.TransportScope
+	}
+	return nil
+}
+
 type FlightpathReferenceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        uint32                 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -11031,7 +11208,7 @@ type FlightpathReferenceRequest struct {
 
 func (x *FlightpathReferenceRequest) Reset() {
 	*x = FlightpathReferenceRequest{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[102]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11043,7 +11220,7 @@ func (x *FlightpathReferenceRequest) String() string {
 func (*FlightpathReferenceRequest) ProtoMessage() {}
 
 func (x *FlightpathReferenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[102]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11056,7 +11233,7 @@ func (x *FlightpathReferenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlightpathReferenceRequest.ProtoReflect.Descriptor instead.
 func (*FlightpathReferenceRequest) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{102}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *FlightpathReferenceRequest) GetNodeId() uint32 {
@@ -11082,7 +11259,7 @@ type FlightpathReferenceNode struct {
 
 func (x *FlightpathReferenceNode) Reset() {
 	*x = FlightpathReferenceNode{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[103]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11094,7 +11271,7 @@ func (x *FlightpathReferenceNode) String() string {
 func (*FlightpathReferenceNode) ProtoMessage() {}
 
 func (x *FlightpathReferenceNode) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[103]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11107,7 +11284,7 @@ func (x *FlightpathReferenceNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlightpathReferenceNode.ProtoReflect.Descriptor instead.
 func (*FlightpathReferenceNode) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{103}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *FlightpathReferenceNode) GetNodeId() uint32 {
@@ -11174,7 +11351,7 @@ type FlightpathReferencePath struct {
 
 func (x *FlightpathReferencePath) Reset() {
 	*x = FlightpathReferencePath{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[104]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11186,7 +11363,7 @@ func (x *FlightpathReferencePath) String() string {
 func (*FlightpathReferencePath) ProtoMessage() {}
 
 func (x *FlightpathReferencePath) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[104]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11199,7 +11376,7 @@ func (x *FlightpathReferencePath) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlightpathReferencePath.ProtoReflect.Descriptor instead.
 func (*FlightpathReferencePath) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{104}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *FlightpathReferencePath) GetPathId() uint32 {
@@ -11270,7 +11447,7 @@ type FlightpathReferenceInfo struct {
 
 func (x *FlightpathReferenceInfo) Reset() {
 	*x = FlightpathReferenceInfo{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[105]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11282,7 +11459,7 @@ func (x *FlightpathReferenceInfo) String() string {
 func (*FlightpathReferenceInfo) ProtoMessage() {}
 
 func (x *FlightpathReferenceInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[105]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11295,7 +11472,7 @@ func (x *FlightpathReferenceInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlightpathReferenceInfo.ProtoReflect.Descriptor instead.
 func (*FlightpathReferenceInfo) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{105}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *FlightpathReferenceInfo) GetFormat() uint32 {
@@ -11442,7 +11619,7 @@ type FlightpathReferenceResponse struct {
 
 func (x *FlightpathReferenceResponse) Reset() {
 	*x = FlightpathReferenceResponse{}
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[106]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11454,7 +11631,7 @@ func (x *FlightpathReferenceResponse) String() string {
 func (*FlightpathReferenceResponse) ProtoMessage() {}
 
 func (x *FlightpathReferenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_modules_buddy_actions_actions_proto_msgTypes[106]
+	mi := &file_modules_buddy_actions_actions_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11467,7 +11644,7 @@ func (x *FlightpathReferenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FlightpathReferenceResponse.ProtoReflect.Descriptor instead.
 func (*FlightpathReferenceResponse) Descriptor() ([]byte, []int) {
-	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{106}
+	return file_modules_buddy_actions_actions_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *FlightpathReferenceResponse) GetReferenceOnly() bool {
@@ -12706,7 +12883,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x14\n" +
 	"\x05stage\x18\x02 \x01(\tR\x05stage\x12'\n" +
 	"\x0fsource_revision\x18\x03 \x01(\tR\x0esourceRevision\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xe1\x01\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xc3\x02\n" +
 	"\x16FlightpathQueryRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -12715,7 +12892,9 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x05token\x18\x04 \x01(\tR\x05token\x12\x19\n" +
 	"\bnpc_guid\x18\x05 \x01(\x04R\anpcGuid\x12\x12\n" +
 	"\x04mode\x18\x06 \x01(\tR\x04mode\x12+\n" +
-	"\x11expected_revision\x18\a \x01(\x04R\x10expectedRevision\"\xce\x04\n" +
+	"\x11expected_revision\x18\a \x01(\x04R\x10expectedRevision\x12/\n" +
+	"\x13activation_revision\x18\b \x01(\x04R\x12activationRevision\x12/\n" +
+	"\x13completion_revision\x18\t \x01(\x04R\x12completionRevision\"\xfd\x05\n" +
 	"\x13FlightpathOperation\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x1d\n" +
 	"\n" +
@@ -12740,7 +12919,10 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\vknown_nodes\x18\x10 \x03(\rR\n" +
 	"knownNodes\x12\x14\n" +
 	"\x05phase\x18\x11 \x01(\tR\x05phase\x12\x14\n" +
-	"\x05error\x18\x12 \x01(\tR\x05error\"\x8a\x03\n" +
+	"\x05error\x18\x12 \x01(\tR\x05error\x12/\n" +
+	"\x13activation_revision\x18\x13 \x01(\x04R\x12activationRevision\x12/\n" +
+	"\x13completion_revision\x18\x14 \x01(\x04R\x12completionRevision\x12K\n" +
+	"\x0ftransport_scope\x18\x15 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"\xe2\x03\n" +
 	"\x1dFlightpathObservationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -12753,7 +12935,8 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x13activation_revision\x18\a \x01(\x04R\x12activationRevision\x12W\n" +
 	"\n" +
 	"activation\x18\b \x01(\v27.warcraftbuddy.actions.v1.FlightpathActivationOperationR\n" +
-	"activation\"\xd6\x03\n" +
+	"activation\x12V\n" +
+	"\x0factivation_menu\x18\t \x01(\v2-.warcraftbuddy.actions.v1.FlightpathOperationR\x0eactivationMenu\"\xd6\x03\n" +
 	"\x1bFlightpathActivationRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
@@ -12769,7 +12952,7 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x18expected_copper_revision\x18\n" +
 	" \x01(\x04R\x16expectedCopperRevision\x12'\n" +
 	"\x0fexpected_copper\x18\v \x01(\rR\x0eexpectedCopper\x12.\n" +
-	"\x13accept_unknown_fare\x18\f \x01(\bR\x11acceptUnknownFare\"\xea\x06\n" +
+	"\x13accept_unknown_fare\x18\f \x01(\bR\x11acceptUnknownFare\"\xb9\a\n" +
 	"\x1dFlightpathActivationOperation\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12\x1d\n" +
 	"\n" +
@@ -12798,7 +12981,21 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0flive_fare_known\x18\x14 \x01(\bR\rliveFareKnown\x12(\n" +
 	"\x10live_route_known\x18\x15 \x01(\bR\x0eliveRouteKnown\x120\n" +
 	"\x14flight_started_known\x18\x16 \x01(\bR\x12flightStartedKnown\x12#\n" +
-	"\rarrival_known\x18\x17 \x01(\bR\farrivalKnown\"5\n" +
+	"\rarrival_known\x18\x17 \x01(\bR\farrivalKnown\x12M\n" +
+	"\x10acceptance_scope\x18\x18 \x01(\v2\".agentwow.module.v1.TransportScopeR\x0facceptanceScope\"\xd0\x03\n" +
+	"\x17SettleFlightpathRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tself_guid\x18\x02 \x01(\x04R\bselfGuid\x12\x19\n" +
+	"\bvisit_id\x18\x03 \x01(\x04R\avisitId\x12/\n" +
+	"\x13activation_revision\x18\x04 \x01(\x04R\x12activationRevision\x12#\n" +
+	"\rmenu_revision\x18\x05 \x01(\x04R\fmenuRevision\x12/\n" +
+	"\x13completion_revision\x18\x06 \x01(\x04R\x12completionRevision\x12-\n" +
+	"\x12authority_revision\x18\a \x01(\x04R\x11authorityRevision\x12+\n" +
+	"\x11movement_revision\x18\b \x01(\x04R\x10movementRevision\x12.\n" +
+	"\x13unit_flags_revision\x18\t \x01(\x04R\x11unitFlagsRevision\x12K\n" +
+	"\x0ftransport_scope\x18\n" +
+	" \x01(\v2\".agentwow.module.v1.TransportScopeR\x0etransportScope\"5\n" +
 	"\x1aFlightpathReferenceRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\rR\x06nodeId\"\xb7\x01\n" +
 	"\x17FlightpathReferenceNode\x12\x17\n" +
@@ -12852,14 +13049,15 @@ const file_modules_buddy_actions_actions_proto_rawDesc = "" +
 	"\x0eoutgoing_paths\x18\x04 \x03(\v21.warcraftbuddy.actions.v1.FlightpathReferencePathR\routgoingPaths\x12E\n" +
 	"\x04info\x18\x05 \x01(\v21.warcraftbuddy.actions.v1.FlightpathReferenceInfoR\x04info\x12&\n" +
 	"\x0flive_fare_known\x18\x06 \x01(\bR\rliveFareKnown\x12(\n" +
-	"\x10live_route_known\x18\a \x01(\bR\x0eliveRouteKnown2\x83+\n" +
+	"\x10live_route_known\x18\a \x01(\bR\x0eliveRouteKnown2\x83,\n" +
 	"\fBuddyActions\x12X\n" +
 	"\tCastSpell\x12*.warcraftbuddy.actions.v1.CastSpellRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12\\\n" +
 	"\vCancelSpell\x12,.warcraftbuddy.actions.v1.CancelSpellRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12\x82\x01\n" +
 	"\x13FlightpathReference\x124.warcraftbuddy.actions.v1.FlightpathReferenceRequest\x1a5.warcraftbuddy.actions.v1.FlightpathReferenceResponse\x12h\n" +
 	"\x15FlightpathObservation\x12\x16.google.protobuf.Empty\x1a7.warcraftbuddy.actions.v1.FlightpathObservationResponse\x12|\n" +
 	"\x0fQueryFlightpath\x120.warcraftbuddy.actions.v1.FlightpathQueryRequest\x1a7.warcraftbuddy.actions.v1.FlightpathObservationResponse\x12\x84\x01\n" +
-	"\x12ActivateFlightpath\x125.warcraftbuddy.actions.v1.FlightpathActivationRequest\x1a7.warcraftbuddy.actions.v1.FlightpathObservationResponse\x12m\n" +
+	"\x12ActivateFlightpath\x125.warcraftbuddy.actions.v1.FlightpathActivationRequest\x1a7.warcraftbuddy.actions.v1.FlightpathObservationResponse\x12~\n" +
+	"\x10SettleFlightpath\x121.warcraftbuddy.actions.v1.SettleFlightpathRequest\x1a7.warcraftbuddy.actions.v1.FlightpathObservationResponse\x12m\n" +
 	"\fSelectTarget\x12-.warcraftbuddy.actions.v1.SelectTargetRequest\x1a..warcraftbuddy.actions.v1.SelectTargetResponse\x12b\n" +
 	"\x0eApproachTarget\x12/.warcraftbuddy.actions.v1.ApproachTargetRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12Z\n" +
 	"\bMoveBody\x12-.warcraftbuddy.actions.v1.BodyMovementRequest\x1a\x1f.warcraftbuddy.actions.v1.State\x12`\n" +
@@ -12926,7 +13124,7 @@ func file_modules_buddy_actions_actions_proto_rawDescGZIP() []byte {
 	return file_modules_buddy_actions_actions_proto_rawDescData
 }
 
-var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 112)
+var file_modules_buddy_actions_actions_proto_msgTypes = make([]protoimpl.MessageInfo, 113)
 var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*SpellCastTargets)(nil),              // 0: warcraftbuddy.actions.v1.SpellCastTargets
 	(*SpellCastLocation)(nil),             // 1: warcraftbuddy.actions.v1.SpellCastLocation
@@ -13030,21 +13228,23 @@ var file_modules_buddy_actions_actions_proto_goTypes = []any{
 	(*FlightpathObservationResponse)(nil), // 99: warcraftbuddy.actions.v1.FlightpathObservationResponse
 	(*FlightpathActivationRequest)(nil),   // 100: warcraftbuddy.actions.v1.FlightpathActivationRequest
 	(*FlightpathActivationOperation)(nil), // 101: warcraftbuddy.actions.v1.FlightpathActivationOperation
-	(*FlightpathReferenceRequest)(nil),    // 102: warcraftbuddy.actions.v1.FlightpathReferenceRequest
-	(*FlightpathReferenceNode)(nil),       // 103: warcraftbuddy.actions.v1.FlightpathReferenceNode
-	(*FlightpathReferencePath)(nil),       // 104: warcraftbuddy.actions.v1.FlightpathReferencePath
-	(*FlightpathReferenceInfo)(nil),       // 105: warcraftbuddy.actions.v1.FlightpathReferenceInfo
-	(*FlightpathReferenceResponse)(nil),   // 106: warcraftbuddy.actions.v1.FlightpathReferenceResponse
-	nil,                                   // 107: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
-	nil,                                   // 108: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
-	nil,                                   // 109: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
-	nil,                                   // 110: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
-	nil,                                   // 111: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
-	(*api.Group)(nil),                     // 112: warcraftbuddy.party.v1.Group
-	(*api.RaidTargetState)(nil),           // 113: warcraftbuddy.party.v1.RaidTargetState
-	(*api1.CreatureTrajectory)(nil),       // 114: warcraftbuddy.world.v1.CreatureTrajectory
-	(*emptypb.Empty)(nil),                 // 115: google.protobuf.Empty
-	(*v1.WorldPacket)(nil),                // 116: agentwow.module.v1.WorldPacket
+	(*SettleFlightpathRequest)(nil),       // 102: warcraftbuddy.actions.v1.SettleFlightpathRequest
+	(*FlightpathReferenceRequest)(nil),    // 103: warcraftbuddy.actions.v1.FlightpathReferenceRequest
+	(*FlightpathReferenceNode)(nil),       // 104: warcraftbuddy.actions.v1.FlightpathReferenceNode
+	(*FlightpathReferencePath)(nil),       // 105: warcraftbuddy.actions.v1.FlightpathReferencePath
+	(*FlightpathReferenceInfo)(nil),       // 106: warcraftbuddy.actions.v1.FlightpathReferenceInfo
+	(*FlightpathReferenceResponse)(nil),   // 107: warcraftbuddy.actions.v1.FlightpathReferenceResponse
+	nil,                                   // 108: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
+	nil,                                   // 109: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
+	nil,                                   // 110: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
+	nil,                                   // 111: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
+	nil,                                   // 112: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
+	(*api.Group)(nil),                     // 113: warcraftbuddy.party.v1.Group
+	(*api.RaidTargetState)(nil),           // 114: warcraftbuddy.party.v1.RaidTargetState
+	(*api1.CreatureTrajectory)(nil),       // 115: warcraftbuddy.world.v1.CreatureTrajectory
+	(*v1.TransportScope)(nil),             // 116: agentwow.module.v1.TransportScope
+	(*emptypb.Empty)(nil),                 // 117: google.protobuf.Empty
+	(*v1.WorldPacket)(nil),                // 118: agentwow.module.v1.WorldPacket
 }
 var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	1,   // 0: warcraftbuddy.actions.v1.SpellCastTargets.source:type_name -> warcraftbuddy.actions.v1.SpellCastLocation
@@ -13089,11 +13289,11 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	62,  // 39: warcraftbuddy.actions.v1.SelfManaObservationResponse.threat:type_name -> warcraftbuddy.actions.v1.SelfManaThreat
 	63,  // 40: warcraftbuddy.actions.v1.SelfManaObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.SelfManaSpell
 	73,  // 41: warcraftbuddy.actions.v1.EncounterObservationResponse.party:type_name -> warcraftbuddy.actions.v1.EncounterParty
-	107, // 42: warcraftbuddy.actions.v1.EncounterObservationResponse.players:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
-	108, // 43: warcraftbuddy.actions.v1.EncounterObservationResponse.targets:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
-	109, // 44: warcraftbuddy.actions.v1.EncounterObservationResponse.engagement:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
+	108, // 42: warcraftbuddy.actions.v1.EncounterObservationResponse.players:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry
+	109, // 43: warcraftbuddy.actions.v1.EncounterObservationResponse.targets:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry
+	110, // 44: warcraftbuddy.actions.v1.EncounterObservationResponse.engagement:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry
 	46,  // 45: warcraftbuddy.actions.v1.EncounterObservationResponse.protected_auras:type_name -> warcraftbuddy.actions.v1.ProtectedTarget
-	110, // 46: warcraftbuddy.actions.v1.EncounterObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
+	111, // 46: warcraftbuddy.actions.v1.EncounterObservationResponse.spells:type_name -> warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry
 	92,  // 47: warcraftbuddy.actions.v1.EncounterObservationResponse.control_capabilities:type_name -> warcraftbuddy.actions.v1.EncounterControlCapability
 	59,  // 48: warcraftbuddy.actions.v1.EncounterObservationResponse.healing:type_name -> warcraftbuddy.actions.v1.HealingOptionsResponse
 	82,  // 49: warcraftbuddy.actions.v1.EncounterObservationResponse.target_movement:type_name -> warcraftbuddy.actions.v1.TargetMovementState
@@ -13110,150 +13310,156 @@ var file_modules_buddy_actions_actions_proto_depIdxs = []int32{
 	18,  // 60: warcraftbuddy.actions.v1.PortalFollowObservation.start:type_name -> warcraftbuddy.actions.v1.ClientPosition
 	18,  // 61: warcraftbuddy.actions.v1.PortalCatchupRequest.start:type_name -> warcraftbuddy.actions.v1.ClientPosition
 	70,  // 62: warcraftbuddy.actions.v1.PortalCatchupRequest.candidates:type_name -> warcraftbuddy.actions.v1.PortalPoint
-	112, // 63: warcraftbuddy.actions.v1.EncounterParty.group:type_name -> warcraftbuddy.party.v1.Group
-	113, // 64: warcraftbuddy.actions.v1.EncounterParty.raid_targets:type_name -> warcraftbuddy.party.v1.RaidTargetState
-	114, // 65: warcraftbuddy.actions.v1.EncounterCreature.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
+	113, // 63: warcraftbuddy.actions.v1.EncounterParty.group:type_name -> warcraftbuddy.party.v1.Group
+	114, // 64: warcraftbuddy.actions.v1.EncounterParty.raid_targets:type_name -> warcraftbuddy.party.v1.RaidTargetState
+	115, // 65: warcraftbuddy.actions.v1.EncounterCreature.trajectory:type_name -> warcraftbuddy.world.v1.CreatureTrajectory
 	76,  // 66: warcraftbuddy.actions.v1.EncounterCreature.attack_observation:type_name -> warcraftbuddy.actions.v1.EncounterAttackObservation
 	80,  // 67: warcraftbuddy.actions.v1.EncounterSpell.periodic_damage:type_name -> warcraftbuddy.actions.v1.EncounterPeriodicDamage
 	79,  // 68: warcraftbuddy.actions.v1.EncounterSpell.aura_effects:type_name -> warcraftbuddy.actions.v1.EncounterAuraEffect
 	87,  // 69: warcraftbuddy.actions.v1.EncounterSupport.resurrections:type_name -> warcraftbuddy.actions.v1.ResurrectionOption
 	88,  // 70: warcraftbuddy.actions.v1.EncounterSupport.interrupts:type_name -> warcraftbuddy.actions.v1.InterruptOption
 	41,  // 71: warcraftbuddy.actions.v1.EncounterSupport.player_auras:type_name -> warcraftbuddy.actions.v1.PlayerAuras
-	111, // 72: warcraftbuddy.actions.v1.EncounterSupport.aura_spells:type_name -> warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
+	112, // 72: warcraftbuddy.actions.v1.EncounterSupport.aura_spells:type_name -> warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry
 	84,  // 73: warcraftbuddy.actions.v1.EncounterSupport.control_recovery:type_name -> warcraftbuddy.actions.v1.ControlRecoveryObservation
 	40,  // 74: warcraftbuddy.actions.v1.ControlRecoveryObservation.fear_auras:type_name -> warcraftbuddy.actions.v1.ObservedAura
 	85,  // 75: warcraftbuddy.actions.v1.ControlRecoveryObservation.options:type_name -> warcraftbuddy.actions.v1.ControlBreakOption
-	98,  // 76: warcraftbuddy.actions.v1.FlightpathObservationResponse.operation:type_name -> warcraftbuddy.actions.v1.FlightpathOperation
-	101, // 77: warcraftbuddy.actions.v1.FlightpathObservationResponse.activation:type_name -> warcraftbuddy.actions.v1.FlightpathActivationOperation
-	103, // 78: warcraftbuddy.actions.v1.FlightpathReferenceResponse.node:type_name -> warcraftbuddy.actions.v1.FlightpathReferenceNode
-	104, // 79: warcraftbuddy.actions.v1.FlightpathReferenceResponse.outgoing_paths:type_name -> warcraftbuddy.actions.v1.FlightpathReferencePath
-	105, // 80: warcraftbuddy.actions.v1.FlightpathReferenceResponse.info:type_name -> warcraftbuddy.actions.v1.FlightpathReferenceInfo
-	74,  // 81: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterPlayer
-	75,  // 82: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterCreature
-	77,  // 83: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterEngagement
-	78,  // 84: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
-	78,  // 85: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
-	3,   // 86: warcraftbuddy.actions.v1.BuddyActions.CastSpell:input_type -> warcraftbuddy.actions.v1.CastSpellRequest
-	4,   // 87: warcraftbuddy.actions.v1.BuddyActions.CancelSpell:input_type -> warcraftbuddy.actions.v1.CancelSpellRequest
-	102, // 88: warcraftbuddy.actions.v1.BuddyActions.FlightpathReference:input_type -> warcraftbuddy.actions.v1.FlightpathReferenceRequest
-	115, // 89: warcraftbuddy.actions.v1.BuddyActions.FlightpathObservation:input_type -> google.protobuf.Empty
-	97,  // 90: warcraftbuddy.actions.v1.BuddyActions.QueryFlightpath:input_type -> warcraftbuddy.actions.v1.FlightpathQueryRequest
-	100, // 91: warcraftbuddy.actions.v1.BuddyActions.ActivateFlightpath:input_type -> warcraftbuddy.actions.v1.FlightpathActivationRequest
-	10,  // 92: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:input_type -> warcraftbuddy.actions.v1.SelectTargetRequest
-	81,  // 93: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:input_type -> warcraftbuddy.actions.v1.ApproachTargetRequest
-	66,  // 94: warcraftbuddy.actions.v1.BuddyActions.MoveBody:input_type -> warcraftbuddy.actions.v1.BodyMovementRequest
-	89,  // 95: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:input_type -> warcraftbuddy.actions.v1.InterruptCastRequest
-	86,  // 96: warcraftbuddy.actions.v1.BuddyActions.BreakControl:input_type -> warcraftbuddy.actions.v1.BreakControlRequest
-	68,  // 97: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:input_type -> warcraftbuddy.actions.v1.FollowFormationRequest
-	72,  // 98: warcraftbuddy.actions.v1.BuddyActions.SetPortalCatchup:input_type -> warcraftbuddy.actions.v1.PortalCatchupRequest
-	5,   // 99: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	5,   // 100: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	12,  // 101: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
-	115, // 102: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
-	115, // 103: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
-	5,   // 104: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	115, // 105: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
-	14,  // 106: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
-	115, // 107: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
-	6,   // 108: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRequest
-	7,   // 109: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRelease
-	19,  // 110: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
-	20,  // 111: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
-	22,  // 112: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
-	23,  // 113: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	23,  // 114: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	23,  // 115: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	23,  // 116: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
-	24,  // 117: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
-	25,  // 118: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
-	27,  // 119: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
-	5,   // 120: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	16,  // 121: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
-	5,   // 122: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
-	34,  // 123: warcraftbuddy.actions.v1.BuddyActions.ReleaseSpirit:input_type -> warcraftbuddy.actions.v1.DeathActionRequest
-	34,  // 124: warcraftbuddy.actions.v1.BuddyActions.QueryCorpse:input_type -> warcraftbuddy.actions.v1.DeathActionRequest
-	32,  // 125: warcraftbuddy.actions.v1.BuddyActions.ApproachCorpse:input_type -> warcraftbuddy.actions.v1.CorpseApproachRequest
-	33,  // 126: warcraftbuddy.actions.v1.BuddyActions.ReclaimCorpse:input_type -> warcraftbuddy.actions.v1.ReclaimCorpseRequest
-	116, // 127: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
-	115, // 128: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
-	93,  // 129: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
-	94,  // 130: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
-	95,  // 131: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
-	50,  // 132: warcraftbuddy.actions.v1.BuddyActions.CreateItem:input_type -> warcraftbuddy.actions.v1.CreateItemRequest
-	48,  // 133: warcraftbuddy.actions.v1.BuddyActions.Polymorph:input_type -> warcraftbuddy.actions.v1.PolymorphRequest
-	49,  // 134: warcraftbuddy.actions.v1.BuddyActions.Sap:input_type -> warcraftbuddy.actions.v1.SapRequest
-	51,  // 135: warcraftbuddy.actions.v1.BuddyActions.CastSelf:input_type -> warcraftbuddy.actions.v1.CastSelfRequest
-	115, // 136: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:input_type -> google.protobuf.Empty
-	115, // 137: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:input_type -> google.protobuf.Empty
-	52,  // 138: warcraftbuddy.actions.v1.BuddyActions.CastHeal:input_type -> warcraftbuddy.actions.v1.CastHealRequest
-	53,  // 139: warcraftbuddy.actions.v1.BuddyActions.CastOffense:input_type -> warcraftbuddy.actions.v1.CastOffenseRequest
-	91,  // 140: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:input_type -> warcraftbuddy.actions.v1.CastCleanseRequest
-	90,  // 141: warcraftbuddy.actions.v1.BuddyActions.CastBuff:input_type -> warcraftbuddy.actions.v1.CastBuffRequest
-	54,  // 142: warcraftbuddy.actions.v1.BuddyActions.Melee:input_type -> warcraftbuddy.actions.v1.MeleeRequest
-	115, // 143: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:input_type -> google.protobuf.Empty
-	44,  // 144: warcraftbuddy.actions.v1.BuddyActions.CastSpell:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 145: warcraftbuddy.actions.v1.BuddyActions.CancelSpell:output_type -> warcraftbuddy.actions.v1.State
-	106, // 146: warcraftbuddy.actions.v1.BuddyActions.FlightpathReference:output_type -> warcraftbuddy.actions.v1.FlightpathReferenceResponse
-	99,  // 147: warcraftbuddy.actions.v1.BuddyActions.FlightpathObservation:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
-	99,  // 148: warcraftbuddy.actions.v1.BuddyActions.QueryFlightpath:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
-	99,  // 149: warcraftbuddy.actions.v1.BuddyActions.ActivateFlightpath:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
-	11,  // 150: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:output_type -> warcraftbuddy.actions.v1.SelectTargetResponse
-	44,  // 151: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 152: warcraftbuddy.actions.v1.BuddyActions.MoveBody:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 153: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 154: warcraftbuddy.actions.v1.BuddyActions.BreakControl:output_type -> warcraftbuddy.actions.v1.State
-	115, // 155: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:output_type -> google.protobuf.Empty
-	115, // 156: warcraftbuddy.actions.v1.BuddyActions.SetPortalCatchup:output_type -> google.protobuf.Empty
-	44,  // 157: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 158: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 159: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 160: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 161: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 162: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
-	43,  // 163: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
-	15,  // 164: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	15,  // 165: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
-	9,   // 166: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:output_type -> warcraftbuddy.actions.v1.MovementOwnerLease
-	44,  // 167: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:output_type -> warcraftbuddy.actions.v1.State
-	28,  // 168: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
-	44,  // 169: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 170: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 171: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 172: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 173: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 174: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 175: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
-	26,  // 176: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
-	44,  // 177: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 178: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 179: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 180: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 181: warcraftbuddy.actions.v1.BuddyActions.ReleaseSpirit:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 182: warcraftbuddy.actions.v1.BuddyActions.QueryCorpse:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 183: warcraftbuddy.actions.v1.BuddyActions.ApproachCorpse:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 184: warcraftbuddy.actions.v1.BuddyActions.ReclaimCorpse:output_type -> warcraftbuddy.actions.v1.State
-	115, // 185: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
-	115, // 186: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
-	44,  // 187: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 188: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 189: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 190: warcraftbuddy.actions.v1.BuddyActions.CreateItem:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 191: warcraftbuddy.actions.v1.BuddyActions.Polymorph:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 192: warcraftbuddy.actions.v1.BuddyActions.Sap:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 193: warcraftbuddy.actions.v1.BuddyActions.CastSelf:output_type -> warcraftbuddy.actions.v1.State
-	59,  // 194: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:output_type -> warcraftbuddy.actions.v1.HealingOptionsResponse
-	65,  // 195: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:output_type -> warcraftbuddy.actions.v1.EncounterObservationResponse
-	44,  // 196: warcraftbuddy.actions.v1.BuddyActions.CastHeal:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 197: warcraftbuddy.actions.v1.BuddyActions.CastOffense:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 198: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 199: warcraftbuddy.actions.v1.BuddyActions.CastBuff:output_type -> warcraftbuddy.actions.v1.State
-	44,  // 200: warcraftbuddy.actions.v1.BuddyActions.Melee:output_type -> warcraftbuddy.actions.v1.State
-	64,  // 201: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:output_type -> warcraftbuddy.actions.v1.SelfManaObservationResponse
-	144, // [144:202] is the sub-list for method output_type
-	86,  // [86:144] is the sub-list for method input_type
-	86,  // [86:86] is the sub-list for extension type_name
-	86,  // [86:86] is the sub-list for extension extendee
-	0,   // [0:86] is the sub-list for field type_name
+	116, // 76: warcraftbuddy.actions.v1.FlightpathOperation.transport_scope:type_name -> agentwow.module.v1.TransportScope
+	98,  // 77: warcraftbuddy.actions.v1.FlightpathObservationResponse.operation:type_name -> warcraftbuddy.actions.v1.FlightpathOperation
+	101, // 78: warcraftbuddy.actions.v1.FlightpathObservationResponse.activation:type_name -> warcraftbuddy.actions.v1.FlightpathActivationOperation
+	98,  // 79: warcraftbuddy.actions.v1.FlightpathObservationResponse.activation_menu:type_name -> warcraftbuddy.actions.v1.FlightpathOperation
+	116, // 80: warcraftbuddy.actions.v1.FlightpathActivationOperation.acceptance_scope:type_name -> agentwow.module.v1.TransportScope
+	116, // 81: warcraftbuddy.actions.v1.SettleFlightpathRequest.transport_scope:type_name -> agentwow.module.v1.TransportScope
+	104, // 82: warcraftbuddy.actions.v1.FlightpathReferenceResponse.node:type_name -> warcraftbuddy.actions.v1.FlightpathReferenceNode
+	105, // 83: warcraftbuddy.actions.v1.FlightpathReferenceResponse.outgoing_paths:type_name -> warcraftbuddy.actions.v1.FlightpathReferencePath
+	106, // 84: warcraftbuddy.actions.v1.FlightpathReferenceResponse.info:type_name -> warcraftbuddy.actions.v1.FlightpathReferenceInfo
+	74,  // 85: warcraftbuddy.actions.v1.EncounterObservationResponse.PlayersEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterPlayer
+	75,  // 86: warcraftbuddy.actions.v1.EncounterObservationResponse.TargetsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterCreature
+	77,  // 87: warcraftbuddy.actions.v1.EncounterObservationResponse.EngagementEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterEngagement
+	78,  // 88: warcraftbuddy.actions.v1.EncounterObservationResponse.SpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
+	78,  // 89: warcraftbuddy.actions.v1.EncounterSupport.AuraSpellsEntry.value:type_name -> warcraftbuddy.actions.v1.EncounterSpell
+	3,   // 90: warcraftbuddy.actions.v1.BuddyActions.CastSpell:input_type -> warcraftbuddy.actions.v1.CastSpellRequest
+	4,   // 91: warcraftbuddy.actions.v1.BuddyActions.CancelSpell:input_type -> warcraftbuddy.actions.v1.CancelSpellRequest
+	103, // 92: warcraftbuddy.actions.v1.BuddyActions.FlightpathReference:input_type -> warcraftbuddy.actions.v1.FlightpathReferenceRequest
+	117, // 93: warcraftbuddy.actions.v1.BuddyActions.FlightpathObservation:input_type -> google.protobuf.Empty
+	97,  // 94: warcraftbuddy.actions.v1.BuddyActions.QueryFlightpath:input_type -> warcraftbuddy.actions.v1.FlightpathQueryRequest
+	100, // 95: warcraftbuddy.actions.v1.BuddyActions.ActivateFlightpath:input_type -> warcraftbuddy.actions.v1.FlightpathActivationRequest
+	102, // 96: warcraftbuddy.actions.v1.BuddyActions.SettleFlightpath:input_type -> warcraftbuddy.actions.v1.SettleFlightpathRequest
+	10,  // 97: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:input_type -> warcraftbuddy.actions.v1.SelectTargetRequest
+	81,  // 98: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:input_type -> warcraftbuddy.actions.v1.ApproachTargetRequest
+	66,  // 99: warcraftbuddy.actions.v1.BuddyActions.MoveBody:input_type -> warcraftbuddy.actions.v1.BodyMovementRequest
+	89,  // 100: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:input_type -> warcraftbuddy.actions.v1.InterruptCastRequest
+	86,  // 101: warcraftbuddy.actions.v1.BuddyActions.BreakControl:input_type -> warcraftbuddy.actions.v1.BreakControlRequest
+	68,  // 102: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:input_type -> warcraftbuddy.actions.v1.FollowFormationRequest
+	72,  // 103: warcraftbuddy.actions.v1.BuddyActions.SetPortalCatchup:input_type -> warcraftbuddy.actions.v1.PortalCatchupRequest
+	5,   // 104: warcraftbuddy.actions.v1.BuddyActions.Follow:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	5,   // 105: warcraftbuddy.actions.v1.BuddyActions.Assist:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	12,  // 106: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:input_type -> warcraftbuddy.actions.v1.EngageNPCRequest
+	117, // 107: warcraftbuddy.actions.v1.BuddyActions.HealOnce:input_type -> google.protobuf.Empty
+	117, // 108: warcraftbuddy.actions.v1.BuddyActions.Status:input_type -> google.protobuf.Empty
+	5,   // 109: warcraftbuddy.actions.v1.BuddyActions.Buffs:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	117, // 110: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:input_type -> google.protobuf.Empty
+	14,  // 111: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:input_type -> warcraftbuddy.actions.v1.BehaviorReloadRequest
+	117, // 112: warcraftbuddy.actions.v1.BuddyActions.Behavior:input_type -> google.protobuf.Empty
+	6,   // 113: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRequest
+	7,   // 114: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:input_type -> warcraftbuddy.actions.v1.MovementOwnerRelease
+	19,  // 115: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRequest
+	20,  // 116: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:input_type -> warcraftbuddy.actions.v1.InteractionRelease
+	22,  // 117: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:input_type -> warcraftbuddy.actions.v1.ApproachLootRequest
+	23,  // 118: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	23,  // 119: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	23,  // 120: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	23,  // 121: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:input_type -> warcraftbuddy.actions.v1.ApproachQuestRequest
+	24,  // 122: warcraftbuddy.actions.v1.BuddyActions.TravelTo:input_type -> warcraftbuddy.actions.v1.TravelToRequest
+	25,  // 123: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:input_type -> warcraftbuddy.actions.v1.PlanRouteLegRequest
+	27,  // 124: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:input_type -> warcraftbuddy.actions.v1.ExitCryptRequest
+	5,   // 125: warcraftbuddy.actions.v1.BuddyActions.Practice:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	16,  // 126: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:input_type -> warcraftbuddy.actions.v1.FargodeepEncounterRequest
+	5,   // 127: warcraftbuddy.actions.v1.BuddyActions.Recovery:input_type -> warcraftbuddy.actions.v1.ToggleRequest
+	34,  // 128: warcraftbuddy.actions.v1.BuddyActions.ReleaseSpirit:input_type -> warcraftbuddy.actions.v1.DeathActionRequest
+	34,  // 129: warcraftbuddy.actions.v1.BuddyActions.QueryCorpse:input_type -> warcraftbuddy.actions.v1.DeathActionRequest
+	32,  // 130: warcraftbuddy.actions.v1.BuddyActions.ApproachCorpse:input_type -> warcraftbuddy.actions.v1.CorpseApproachRequest
+	33,  // 131: warcraftbuddy.actions.v1.BuddyActions.ReclaimCorpse:input_type -> warcraftbuddy.actions.v1.ReclaimCorpseRequest
+	118, // 132: warcraftbuddy.actions.v1.BuddyActions.OnPacket:input_type -> agentwow.module.v1.WorldPacket
+	117, // 133: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:input_type -> google.protobuf.Empty
+	93,  // 134: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:input_type -> warcraftbuddy.actions.v1.ResurrectOnceRequest
+	94,  // 135: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:input_type -> warcraftbuddy.actions.v1.AcceptResurrectionRequest
+	95,  // 136: warcraftbuddy.actions.v1.BuddyActions.PickLock:input_type -> warcraftbuddy.actions.v1.PickLockRequest
+	50,  // 137: warcraftbuddy.actions.v1.BuddyActions.CreateItem:input_type -> warcraftbuddy.actions.v1.CreateItemRequest
+	48,  // 138: warcraftbuddy.actions.v1.BuddyActions.Polymorph:input_type -> warcraftbuddy.actions.v1.PolymorphRequest
+	49,  // 139: warcraftbuddy.actions.v1.BuddyActions.Sap:input_type -> warcraftbuddy.actions.v1.SapRequest
+	51,  // 140: warcraftbuddy.actions.v1.BuddyActions.CastSelf:input_type -> warcraftbuddy.actions.v1.CastSelfRequest
+	117, // 141: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:input_type -> google.protobuf.Empty
+	117, // 142: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:input_type -> google.protobuf.Empty
+	52,  // 143: warcraftbuddy.actions.v1.BuddyActions.CastHeal:input_type -> warcraftbuddy.actions.v1.CastHealRequest
+	53,  // 144: warcraftbuddy.actions.v1.BuddyActions.CastOffense:input_type -> warcraftbuddy.actions.v1.CastOffenseRequest
+	91,  // 145: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:input_type -> warcraftbuddy.actions.v1.CastCleanseRequest
+	90,  // 146: warcraftbuddy.actions.v1.BuddyActions.CastBuff:input_type -> warcraftbuddy.actions.v1.CastBuffRequest
+	54,  // 147: warcraftbuddy.actions.v1.BuddyActions.Melee:input_type -> warcraftbuddy.actions.v1.MeleeRequest
+	117, // 148: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:input_type -> google.protobuf.Empty
+	44,  // 149: warcraftbuddy.actions.v1.BuddyActions.CastSpell:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 150: warcraftbuddy.actions.v1.BuddyActions.CancelSpell:output_type -> warcraftbuddy.actions.v1.State
+	107, // 151: warcraftbuddy.actions.v1.BuddyActions.FlightpathReference:output_type -> warcraftbuddy.actions.v1.FlightpathReferenceResponse
+	99,  // 152: warcraftbuddy.actions.v1.BuddyActions.FlightpathObservation:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
+	99,  // 153: warcraftbuddy.actions.v1.BuddyActions.QueryFlightpath:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
+	99,  // 154: warcraftbuddy.actions.v1.BuddyActions.ActivateFlightpath:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
+	99,  // 155: warcraftbuddy.actions.v1.BuddyActions.SettleFlightpath:output_type -> warcraftbuddy.actions.v1.FlightpathObservationResponse
+	11,  // 156: warcraftbuddy.actions.v1.BuddyActions.SelectTarget:output_type -> warcraftbuddy.actions.v1.SelectTargetResponse
+	44,  // 157: warcraftbuddy.actions.v1.BuddyActions.ApproachTarget:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 158: warcraftbuddy.actions.v1.BuddyActions.MoveBody:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 159: warcraftbuddy.actions.v1.BuddyActions.InterruptCast:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 160: warcraftbuddy.actions.v1.BuddyActions.BreakControl:output_type -> warcraftbuddy.actions.v1.State
+	117, // 161: warcraftbuddy.actions.v1.BuddyActions.SetFollowFormation:output_type -> google.protobuf.Empty
+	117, // 162: warcraftbuddy.actions.v1.BuddyActions.SetPortalCatchup:output_type -> google.protobuf.Empty
+	44,  // 163: warcraftbuddy.actions.v1.BuddyActions.Follow:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 164: warcraftbuddy.actions.v1.BuddyActions.Assist:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 165: warcraftbuddy.actions.v1.BuddyActions.EngageNPC:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 166: warcraftbuddy.actions.v1.BuddyActions.HealOnce:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 167: warcraftbuddy.actions.v1.BuddyActions.Status:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 168: warcraftbuddy.actions.v1.BuddyActions.Buffs:output_type -> warcraftbuddy.actions.v1.State
+	43,  // 169: warcraftbuddy.actions.v1.BuddyActions.SpellToolkit:output_type -> warcraftbuddy.actions.v1.SpellToolkitState
+	15,  // 170: warcraftbuddy.actions.v1.BuddyActions.ReloadBehavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	15,  // 171: warcraftbuddy.actions.v1.BuddyActions.Behavior:output_type -> warcraftbuddy.actions.v1.BehaviorStatus
+	9,   // 172: warcraftbuddy.actions.v1.BuddyActions.AcquireMovement:output_type -> warcraftbuddy.actions.v1.MovementOwnerLease
+	44,  // 173: warcraftbuddy.actions.v1.BuddyActions.ReleaseMovement:output_type -> warcraftbuddy.actions.v1.State
+	28,  // 174: warcraftbuddy.actions.v1.BuddyActions.AcquireInteraction:output_type -> warcraftbuddy.actions.v1.InteractionLease
+	44,  // 175: warcraftbuddy.actions.v1.BuddyActions.ReleaseInteraction:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 176: warcraftbuddy.actions.v1.BuddyActions.ApproachLoot:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 177: warcraftbuddy.actions.v1.BuddyActions.ApproachQuest:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 178: warcraftbuddy.actions.v1.BuddyActions.TravelQuest:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 179: warcraftbuddy.actions.v1.BuddyActions.TravelTrainer:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 180: warcraftbuddy.actions.v1.BuddyActions.TravelVendor:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 181: warcraftbuddy.actions.v1.BuddyActions.TravelTo:output_type -> warcraftbuddy.actions.v1.State
+	26,  // 182: warcraftbuddy.actions.v1.BuddyActions.PlanRouteLeg:output_type -> warcraftbuddy.actions.v1.RouteLeg
+	44,  // 183: warcraftbuddy.actions.v1.BuddyActions.ExitCrypt:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 184: warcraftbuddy.actions.v1.BuddyActions.Practice:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 185: warcraftbuddy.actions.v1.BuddyActions.FargodeepEncounter:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 186: warcraftbuddy.actions.v1.BuddyActions.Recovery:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 187: warcraftbuddy.actions.v1.BuddyActions.ReleaseSpirit:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 188: warcraftbuddy.actions.v1.BuddyActions.QueryCorpse:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 189: warcraftbuddy.actions.v1.BuddyActions.ApproachCorpse:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 190: warcraftbuddy.actions.v1.BuddyActions.ReclaimCorpse:output_type -> warcraftbuddy.actions.v1.State
+	117, // 191: warcraftbuddy.actions.v1.BuddyActions.OnPacket:output_type -> google.protobuf.Empty
+	117, // 192: warcraftbuddy.actions.v1.BuddyActions.BeforeLogout:output_type -> google.protobuf.Empty
+	44,  // 193: warcraftbuddy.actions.v1.BuddyActions.ResurrectOnce:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 194: warcraftbuddy.actions.v1.BuddyActions.AcceptResurrection:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 195: warcraftbuddy.actions.v1.BuddyActions.PickLock:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 196: warcraftbuddy.actions.v1.BuddyActions.CreateItem:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 197: warcraftbuddy.actions.v1.BuddyActions.Polymorph:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 198: warcraftbuddy.actions.v1.BuddyActions.Sap:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 199: warcraftbuddy.actions.v1.BuddyActions.CastSelf:output_type -> warcraftbuddy.actions.v1.State
+	59,  // 200: warcraftbuddy.actions.v1.BuddyActions.HealingOptions:output_type -> warcraftbuddy.actions.v1.HealingOptionsResponse
+	65,  // 201: warcraftbuddy.actions.v1.BuddyActions.EncounterObservation:output_type -> warcraftbuddy.actions.v1.EncounterObservationResponse
+	44,  // 202: warcraftbuddy.actions.v1.BuddyActions.CastHeal:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 203: warcraftbuddy.actions.v1.BuddyActions.CastOffense:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 204: warcraftbuddy.actions.v1.BuddyActions.CastCleanse:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 205: warcraftbuddy.actions.v1.BuddyActions.CastBuff:output_type -> warcraftbuddy.actions.v1.State
+	44,  // 206: warcraftbuddy.actions.v1.BuddyActions.Melee:output_type -> warcraftbuddy.actions.v1.State
+	64,  // 207: warcraftbuddy.actions.v1.BuddyActions.SelfManaObservation:output_type -> warcraftbuddy.actions.v1.SelfManaObservationResponse
+	149, // [149:208] is the sub-list for method output_type
+	90,  // [90:149] is the sub-list for method input_type
+	90,  // [90:90] is the sub-list for extension type_name
+	90,  // [90:90] is the sub-list for extension extendee
+	0,   // [0:90] is the sub-list for field type_name
 }
 
 func init() { file_modules_buddy_actions_actions_proto_init() }
@@ -13278,7 +13484,7 @@ func file_modules_buddy_actions_actions_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_modules_buddy_actions_actions_proto_rawDesc), len(file_modules_buddy_actions_actions_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   112,
+			NumMessages:   113,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
