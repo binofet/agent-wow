@@ -23,6 +23,7 @@ def main():
         ("encounter_healing", behaviors / "healing.lua"),
         ("encounter_starter_spells", behaviors / "starter-spells.lua"),
         ("encounter_self_mana", behaviors / "self-mana.lua"),
+        ("encounter_mana_supply", behaviors / "mana-supply.lua"),
         ("encounter_support", behaviors / "support.lua"),
         ("encounter_control_recovery", behaviors / "control-recovery.lua"),
         ("encounter_consumables", behaviors / "consumables.lua"),

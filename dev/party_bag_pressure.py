@@ -3,11 +3,7 @@
 import math
 import time
 
-from party_mana_supply import MIRA, MIRA_GUID, PEER_REORDER_THRESHOLD, STOCK_MINIMUM, receiving_capacity
-
-
 PARTY = {8086: 1, 8087: 4, 8088: 5, 8402: 8}
-CASTERS = {1, 4, 8}
 LOOT_RANGE = 12
 COOLDOWN = 30
 RECHECK = 5
@@ -111,21 +107,6 @@ def candidates(world, inventory, slots, safe_entries):
     return sorted(choices)
 
 
-def water_needs_slot(views, guid, inventory, slots):
-    stock = inventory.get('manaDrinkCount')
-    if guid not in CASTERS or stock is None:
-        return False
-    if number(stock) == 0:
-        return True
-    if number(stock) >= (STOCK_MINIMUM if guid == MIRA_GUID else PEER_REORDER_THRESHOLD):
-        return False
-    toolkit = views.get(MIRA, {}).get('spell_toolkit', {})
-    conjured = {number(spell.get('createdItemEntry')) for spell in toolkit.get('spells', [])
-                if number(spell.get('familyId')) == 5504 and spell.get('capability') == 'create_item'
-                and not spell.get('blockedReason') and spell.get('createdItemEntry')}
-    return bool(conjured) and not any(receiving_capacity(slots.values(), entry) for entry in conjured)
-
-
 def verified_candidate(rpc, port, session, choices):
     ids = []
     for *_, entry, replacement in choices:
@@ -175,10 +156,9 @@ def step(rpc, views, attempts, safe_entries, port, guid, now):
         return 'room_available'
     loot_needs_room = (loot.get('sessionId') == session and loot.get('enabled') is True
                        and loot.get('inventoryPaused') is True and nearby_loot(world, actions))
-    water_needs_room = water_needs_slot(views, guid, inventory, slots)
-    if not loot_needs_room and not water_needs_room:
+    if not loot_needs_room:
         return 'no_current_bag_pressure'
-    if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active'):
+    if not can_dispose(world, actions, inventory, trade, guid) or view.get('mana_rest_active') or view.get('mana_supply_pending'):
         return 'waiting_for_safe_pause'
     if record and now < record['nextCheck']:
         return 'cooldown'
