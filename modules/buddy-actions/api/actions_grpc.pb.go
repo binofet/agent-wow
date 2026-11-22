@@ -21,6 +21,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BuddyActions_TalentState_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/TalentState"
+	BuddyActions_LearnTalent_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/LearnTalent"
 	BuddyActions_CastSpell_FullMethodName              = "/warcraftbuddy.actions.v1.BuddyActions/CastSpell"
 	BuddyActions_CancelSpell_FullMethodName            = "/warcraftbuddy.actions.v1.BuddyActions/CancelSpell"
 	BuddyActions_FlightpathReference_FullMethodName    = "/warcraftbuddy.actions.v1.BuddyActions/FlightpathReference"
@@ -87,6 +89,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BuddyActionsClient interface {
+	TalentState(ctx context.Context, in *TalentStateRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
+	LearnTalent(ctx context.Context, in *LearnTalentRequest, opts ...grpc.CallOption) (*TalentStateResponse, error)
 	CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error)
 	CancelSpell(ctx context.Context, in *CancelSpellRequest, opts ...grpc.CallOption) (*State, error)
 	FlightpathReference(ctx context.Context, in *FlightpathReferenceRequest, opts ...grpc.CallOption) (*FlightpathReferenceResponse, error)
@@ -157,6 +161,26 @@ type buddyActionsClient struct {
 
 func NewBuddyActionsClient(cc grpc.ClientConnInterface) BuddyActionsClient {
 	return &buddyActionsClient{cc}
+}
+
+func (c *buddyActionsClient) TalentState(ctx context.Context, in *TalentStateRequest, opts ...grpc.CallOption) (*TalentStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TalentStateResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_TalentState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *buddyActionsClient) LearnTalent(ctx context.Context, in *LearnTalentRequest, opts ...grpc.CallOption) (*TalentStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TalentStateResponse)
+	err := c.cc.Invoke(ctx, BuddyActions_LearnTalent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *buddyActionsClient) CastSpell(ctx context.Context, in *CastSpellRequest, opts ...grpc.CallOption) (*State, error) {
@@ -763,6 +787,8 @@ func (c *buddyActionsClient) SelfManaObservation(ctx context.Context, in *emptyp
 // All implementations must embed UnimplementedBuddyActionsServer
 // for forward compatibility.
 type BuddyActionsServer interface {
+	TalentState(context.Context, *TalentStateRequest) (*TalentStateResponse, error)
+	LearnTalent(context.Context, *LearnTalentRequest) (*TalentStateResponse, error)
 	CastSpell(context.Context, *CastSpellRequest) (*State, error)
 	CancelSpell(context.Context, *CancelSpellRequest) (*State, error)
 	FlightpathReference(context.Context, *FlightpathReferenceRequest) (*FlightpathReferenceResponse, error)
@@ -835,6 +861,12 @@ type BuddyActionsServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBuddyActionsServer struct{}
 
+func (UnimplementedBuddyActionsServer) TalentState(context.Context, *TalentStateRequest) (*TalentStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TalentState not implemented")
+}
+func (UnimplementedBuddyActionsServer) LearnTalent(context.Context, *LearnTalentRequest) (*TalentStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LearnTalent not implemented")
+}
 func (UnimplementedBuddyActionsServer) CastSpell(context.Context, *CastSpellRequest) (*State, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CastSpell not implemented")
 }
@@ -1034,6 +1066,42 @@ func RegisterBuddyActionsServer(s grpc.ServiceRegistrar, srv BuddyActionsServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BuddyActions_ServiceDesc, srv)
+}
+
+func _BuddyActions_TalentState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TalentStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).TalentState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_TalentState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).TalentState(ctx, req.(*TalentStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BuddyActions_LearnTalent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LearnTalentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BuddyActionsServer).LearnTalent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BuddyActions_LearnTalent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BuddyActionsServer).LearnTalent(ctx, req.(*LearnTalentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BuddyActions_CastSpell_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2123,6 +2191,14 @@ var BuddyActions_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "warcraftbuddy.actions.v1.BuddyActions",
 	HandlerType: (*BuddyActionsServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "TalentState",
+			Handler:    _BuddyActions_TalentState_Handler,
+		},
+		{
+			MethodName: "LearnTalent",
+			Handler:    _BuddyActions_LearnTalent_Handler,
+		},
 		{
 			MethodName: "CastSpell",
 			Handler:    _BuddyActions_CastSpell_Handler,
