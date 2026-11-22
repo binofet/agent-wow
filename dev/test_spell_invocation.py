@@ -25,11 +25,11 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             spellbookKnown=True,spells={},targets={},players={'4':dict(guid='4',present=True,
             aliveKnown=True,alive=True,mapKnown=True,mapId=0,positionKnown=True,x=1,y=2,z=3)})
 
-    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False):
+    def run_policy(self,events=None,checkpoint=None,obs=None,pending=None,select=True,composed=False,sequence="2"):
         if composed:
             if checkpoint:
                 checkpoint=copy.deepcopy(checkpoint)
-                checkpoint.update(session_id='spell-body',cursor='2',pending=pending or [])
+                checkpoint.update(session_id='spell-body',cursor=sequence,pending=pending or [])
             source=subprocess.check_output(['python3','-B',str(ROOT/'dev/encounter-bundle')],text=True)
             setup='local p=(function()\n'+source+'\nend)()\n'
             body='if input.checkpoint then assert(p.import_state(input.checkpoint)) end; '
@@ -43,13 +43,106 @@ class SpellInvocationPolicyTests(unittest.TestCase):
             body+='local a,s=p.propose(input.frame,input.obs,"2");if input.select then p.commit(a) end; '
             body+='return {output={action=a,spellInvocation=s},checkpoint=p.export_state()}'
         value=dict(events=events or [],checkpoint=checkpoint,obs=obs or self.obs(),select=select,
-            frame=dict(session_id='spell-body',cursor='2',pending=pending or [],
-                input=dict(kind='encounter',observationSequence='2'),clock=dict(monotonicMs=1000,unixMs=1000)))
+            frame=dict(session_id='spell-body',cursor=sequence,pending=pending or [],
+                input=dict(kind='encounter',observationSequence=sequence),clock=dict(monotonicMs=1000,unixMs=1000)))
         return self.bridge.evaluate(setup+'return {decide=function(input) '+body+' end}',value)
 
     def events(self,spell=2120,**fields):
         return [dict(kind='encounter_observation',sequence='2',value=self.obs()),
             dict(kind='command',sequence='3',value=dict(task='cast_spell',id='explicit-1',spellId=spell,**fields))]
+
+    def support_obs(self, mode):
+        obs=self.obs()
+        obs.update(worldObservationRevision='12',meleeKnown=True,
+            party=dict(group=dict(known=True,inGroup=True,groupGuid='99',leaderGuid='1',
+                members=[dict(guid='4',online=True),dict(guid='1',online=True)])))
+        patient=dict(guid='1',present=True,aliveKnown=True,alive=mode!='resurrect',healthKnown=True,
+            health=0 if mode=='resurrect' else 20,maxHealth=100,mapKnown=True,mapId=0,
+            positionKnown=True,x=51 if mode!='near_heal' else 6,y=2,z=3)
+        obs['players']['1']=patient
+        obs['players']['4'].update(classKnown=True,classId=2,movementKnown=True,healthKnown=True,health=100,maxHealth=100)
+        obs['targets']={'77':dict(guid='77',present=True,aliveKnown=True,alive=True,healthKnown=True,health=100,
+            maxHealth=100,mapKnown=True,mapId=0,positionKnown=True,x=80,y=2,z=3,unitFlagsKnown=True,unitFlags=0,
+            attackable=True)}
+        obs['targetMovement']=dict(targetGuid='1',visitId='1',rangeYards=30,requireLos=True,
+            ready=False,phase='follow_navigation_unavailable')
+        if mode=='resurrect':
+            obs['spells']={'7328':dict(known=True,ready=True,metadataKnown=True,capability='resurrect',maxRange=30)}
+            obs['support']=dict(casterInCombat=False,resurrections=[dict(patientGuid='1',castTargetGuid='1',
+                spellId=7328,rangeYards=30,ready=False,canApproach=True)])
+        else:
+            obs['spells']={'635':dict(known=True,ready=True,available=True,metadataKnown=True,capability='heal',maxRange=30)}
+            obs['healing']=dict(sessionId='spell-body',caster=dict(guid='4',ready=True,mana=100),
+                patients=[dict(guid='1',health=20,maxHealth=100,distance=5 if mode=='near_heal' else 50)],
+                spells=[dict(spellId=635,rank=1,level=1,cost=10,amount=50,castMs=1500,minRange=0,maxRange=30)])
+        return obs
+
+    def encounter_event(self,obs,sequence='2'):
+        return dict(kind='encounter_observation',sequence=sequence,value=obs)
+
+    def spell_request(self,id='owner-seal'):
+        return dict(kind='command',sequence='3',value=dict(task='cast_spell',id=id,spellId=21084))
+
+    def test_owner_spell_precedes_real_automatic_heal_and_unreachable_support_approaches(self):
+        for mode in ('far_heal','resurrect','near_heal'):
+            with self.subTest(mode=mode):
+                obs=self.support_obs(mode)
+                baseline=self.run_policy([self.encounter_event(obs)],composed=True)
+                auto=baseline['output']['action']
+                self.assertEqual(auto['capability'],'heal' if mode=='near_heal' else 'approach_target')
+                self.assertEqual(auto['targetGuid'],'1')
+                if mode!='near_heal':
+                    self.assertEqual(auto['rangeYards'],30);self.assertTrue(auto['requireLos'])
+                requested=self.run_policy([self.encounter_event(obs),self.spell_request()],composed=True)
+                self.assertEqual(requested['output']['action']['capability'],'cast_spell')
+                self.assertEqual(requested['output']['action']['spellId'],21084)
+                self.assertEqual(requested['output']['queue'],baseline['output']['queue'])
+                self.assertIn('77',[row['targetGuid'] for row in requested['output']['queue']])
+                self.assertTrue(requested['checkpoint']['data']['spellInvocation']['data']['current']['issued'])
+
+    def test_retained_request_survives_full_reload_pending_native_cast_then_gets_one_turn(self):
+        obs=self.support_obs('far_heal')
+        waiting=self.run_policy([self.encounter_event(obs),self.spell_request()],
+            pending=[dict(action_id='71',outcome='unknown')],composed=True)
+        self.assertNotIn('action',waiting['output'])
+        task=waiting['checkpoint']['data']['spellInvocation']['data']['current']
+        self.assertFalse(task.get('issued',False))
+        settled=dict(kind='action_result',sequence='4',receipt=dict(action_id='71',outcome='settled_unverified',
+            payload=dict(capability='heal',target_guid='1',spell_id=635)))
+        chosen=self.run_policy([settled,self.encounter_event(obs,'5')],checkpoint=waiting['checkpoint'],
+            composed=True,sequence='5')
+        self.assertEqual(chosen['output']['action']['capability'],'cast_spell')
+        self.assertEqual(chosen['output']['action']['spellId'],21084)
+        unknown=dict(kind='action_result',sequence='6',receipt=dict(action_id='72',outcome='unknown',
+            payload=dict(capability='cast_spell',spell_id=21084)))
+        held=self.run_policy([unknown,self.encounter_event(obs,'7')],checkpoint=chosen['checkpoint'],
+            pending=[dict(action_id='72',outcome='unknown')],composed=True,sequence='7')
+        self.assertNotIn('action',held['output'])
+        current=held['checkpoint']['data']['spellInvocation']['data']['current']
+        self.assertTrue(current['issued']);self.assertEqual(current['phase'],'outcome_unknown')
+
+    def test_automatic_help_resumes_after_one_explicit_failure_and_new_intent_gets_its_turn(self):
+        obs=self.support_obs('near_heal')
+        first=self.run_policy([self.encounter_event(obs),self.spell_request()],composed=True)
+        failure=dict(kind='action_result',sequence='4',receipt=dict(action_id='72',outcome='failed',
+            payload=dict(capability='cast_spell',spell_id=21084,phase='server_rejected_no_replay',failure=85)))
+        resumed=self.run_policy([failure,self.encounter_event(obs,'5')],checkpoint=first['checkpoint'],composed=True,sequence='5')
+        self.assertEqual(resumed['output']['action']['capability'],'heal')
+        self.assertNotIn('current',resumed['checkpoint']['data']['spellInvocation']['data'])
+        next_request=self.spell_request('owner-seal-after-full-mana')
+        next_request['sequence']='7'
+        fresh=self.run_policy([self.encounter_event(obs,'6'),next_request],checkpoint=resumed['checkpoint'],composed=True,sequence='6')
+        self.assertEqual(fresh['output']['action']['capability'],'cast_spell')
+
+    def test_final_outer_release_preempts_without_committing_or_losing_explicit_request(self):
+        obs=self.support_obs('far_heal');obs['interaction']=dict(owner='training',token='finite-owned-lease')
+        yielded=self.run_policy([self.encounter_event(obs),self.spell_request()],composed=True)
+        self.assertEqual(yielded['output']['action']['capability'],'release_interaction')
+        current=yielded['checkpoint']['data']['spellInvocation']['data']['current']
+        self.assertFalse(current.get('issued',False))
+        obs.pop('interaction')
+        selected=self.run_policy([self.encounter_event(obs,'3')],checkpoint=yielded['checkpoint'],composed=True,sequence='3')
+        self.assertEqual(selected['output']['action']['capability'],'cast_spell')
 
     def test_ground_flamestrike_blizzard_implicit_explosion_and_unfamiliar_learned_id(self):
         point=dict(x=123.25,y=-45.5,z=18.0)
