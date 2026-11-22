@@ -35,6 +35,7 @@ func (s *Service) flightpathObservationLocked() *actionsv1.FlightpathObservation
 	if s.flightpath.operation != nil {
 		out.Operation = proto.Clone(s.flightpath.operation).(*actionsv1.FlightpathOperation)
 	}
+	s.flightpathActivationObservationLocked(out)
 	return out
 }
 
@@ -132,6 +133,9 @@ func (s *Service) QueryFlightpath(ctx context.Context, request *actionsv1.Flight
 			return s.flightpathObservationLocked(), nil
 		}
 		return nil, status.Error(codes.Aborted, "flightpath query revision changed")
+	}
+	if s.flightpathActivation.operation.GetPending() {
+		return nil, status.Error(codes.FailedPrecondition, "flightpath activation remains unsettled; its menu custody is retained")
 	}
 	if f.operation.GetPending() {
 		return nil, status.Error(codes.FailedPrecondition, "previous flightpath query remains unresolved")

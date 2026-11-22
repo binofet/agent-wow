@@ -5,6 +5,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,17 @@ func gmRecoveryRig(t *testing.T) *gmRecoveryFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := New()
+	// Only instrumented fixture Reload gets an explicit initialization budget.
+	// The ordinary CLI proof below still initializes and decides at default 5ms.
+	r, err := NewWithInitializationLimit(SessionOptions{}, 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes, inputNodes, outputNodes := r.valueBudget()
+	if r.evaluationBudget() != EvaluationLimit || EvaluationLimit != 5*time.Millisecond ||
+		MaxJSONBytes != 32*1024 || bytes != MaxJSONBytes || inputNodes != MaxInputNodes || outputNodes != MaxNodes {
+		t.Fatal("fixture changed the actual evaluation or value budgets")
+	}
 	if _, err = r.Reload(string(source), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -254,6 +265,50 @@ func TestGMRecoveryUnknownOrUndispatchedWriteNeverRepeatsAndCanObserveLateEffect
 			a = recoveryAction(t, f.step(t))
 			if a["command"] != ".group remove Nixwick" {
 				t.Fatal("late observed effect could not resume", a)
+			}
+		})
+	}
+}
+
+func TestGMRecoveryProductionDefaultsPreserveUnknownWriteAndLateArrival(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "behaviors", "gm-recovery.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range []string{"transport_unconfirmed", "not_dispatched"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := gmRecoveryRig(t)
+			step := func() map[string]any {
+				t.Helper()
+				// The maintained helper verifies the ordinary, uninstrumented CLI
+				// is built from this clean HEAD. It supplies no budget overrides,
+				// retries or fallback: full source initialization and decide share
+				// the normal cumulative 5ms, with the normal 32KiB frame limit.
+				production, err := evaluateDisposalProduction(t, string(source), f.frame)
+				if err != nil {
+					t.Fatal("default production GM recovery failed", err)
+				}
+				semantic, err := evaluateGMRecoveryPolicy(f.runtime, f.frame)
+				if err != nil || !reflect.DeepEqual(production, semantic) {
+					t.Fatalf("default production result %v differs from semantic fixture %v: %v", production, semantic, err)
+				}
+				f.frame["memory"] = production["memory"]
+				return production
+			}
+			a := recoveryAction(t, step())
+			if a["command"] != ".go xyz 100 100 0 189" {
+				t.Fatal("unexpected first action", a)
+			}
+			f.frame["last"] = map[string]any{"id": a["id"], "outcome": outcome, "error": "unavailable"}
+			f.frame["now"] = 20
+			for i := 0; i < 2; i++ {
+				if out := step(); out["action"] != nil || out["done"] == true {
+					t.Fatal("ordinary CLI replayed an unresolved command", out)
+				}
+			}
+			f.colocate(f.gm())
+			if a := recoveryAction(t, step()); a["command"] != ".group remove Nixwick" {
+				t.Fatal("ordinary CLI failed to resume from observed late arrival", a)
 			}
 		})
 	}

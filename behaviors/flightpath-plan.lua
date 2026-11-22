@@ -186,4 +186,7 @@ function M.decide(state)
     end
     return tasks.run(state,{flightpath_plan=handler},"flightpath_plan")
 end
+M.handler=handler
+M.menu_binding=menu
+M.policy_key=policy_key
 return M
