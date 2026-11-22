@@ -192,7 +192,9 @@ func TestTradeConsentMalformedOrIncompleteFactsWait(t *testing.T) {
 
 func TestTradeConsentFullActualFrameIncludesServiceSlot(t *testing.T) {
 	source := tradeConsentSource(t)
-	r := tradeConsentFixtureRuntime(t, source)
+	// This full-frame semantic case uses an explicit budget under instrumentation.
+	// Every exact proposal still requires the real default CLI result below.
+	r := disposalArmorSemanticRuntime(t, source)
 	frame := tradeConsentFrame()
 	frame["selfGuid"] = "18446744073709551615"
 	tr := frame["trade"].(map[string]any)
