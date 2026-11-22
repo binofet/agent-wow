@@ -141,12 +141,12 @@ local function practice_target(input,self)
     for _,key in ipairs({"min_x","max_x","min_y","max_y","min_z","max_z"}) do
         if type(a[key])~="number" or a[key]-a[key]~=0 then return wait end
     end
-    local function eligible(c)
+    local function eligible(c,allow_unknown_position)
         if type(c)~="table" or not guid(c.guid) or c.creatureObject~=true or c.present~=true or
            c.mapKnown~=true or c.mapId~=self.mapId or t.entries[c.entry]~=true or
            c.levelKnown~=true or not uint(c.level) or c.level<t.min_level or c.level>t.max_level or
            c.healthKnown~=true or c.unitFlagsKnown~=true or not uint(c.health) or not uint(c.maxHealth) or c.maxHealth==0 or
-           c.health==0 or c.health>c.maxHealth or c.protected==true or c.aliveKnown~=true or c.alive~=true or not pose(c) or
+           c.health==0 or c.health>c.maxHealth or c.protected==true or c.aliveKnown~=true or c.alive~=true or
            (c.npcFlags or 0)~=0 or flag(c.unitFlags2,1) then return false end
         for _,field in ipairs({"npcFlags","unitFlags","unitFlags2","dynamicFlags"}) do
             if not uint(c[field] or 0) then return false end
@@ -154,6 +154,7 @@ local function practice_target(input,self)
         for _,mask in ipairs({2,128,256,65536,33554432,2147483648}) do
             if flag(c.unitFlags,mask) then return false end
         end
+        if not pose(c) then return allow_unknown_position==true end
         local x,y,z=c.x or 0,c.y or 0,c.z or 0
         return x>=a.min_x and x<=a.max_x and y>=a.min_y and y<=a.max_y and z>=a.min_z and z<=a.max_z
     end
@@ -168,11 +169,10 @@ local function practice_target(input,self)
         local valid=eligible(c)
         if input.currentTargetGuid~="0" then
             if c.guid==input.currentTargetGuid then
-                if valid and (c.attackVictimKnown~=true or c.attackVictimGuid==input.selfGuid) and
-                   (not flag(c.dynamicFlags,4) or flag(c.dynamicFlags,8)) and c.guid~=input.failedTargetGuid then
-                    return {kind="target",targetGuid=c.guid}
-                end
-                return not pose(c) and wait or stop
+                local allowed=(c.attackVictimKnown~=true or c.attackVictimGuid==input.selfGuid) and
+                    (not flag(c.dynamicFlags,4) or flag(c.dynamicFlags,8)) and c.guid~=input.failedTargetGuid
+                if valid and allowed then return {kind="target",targetGuid=c.guid} end
+                return not pose(c) and eligible(c,true) and allowed and wait or stop
             end
         elseif valid and not flag(c.unitFlags,524288) and (c.dynamicFlags or 0)==0 and
            c.attackVictimKnown~=true and (c.targetKnown~=true or c.targetGuid==nil or c.targetGuid=="0") then
@@ -184,6 +184,7 @@ local function practice_target(input,self)
             end
         end
     end
+    if input.currentTargetGuid~="0" then return stop end
     if best then return {kind="target",targetGuid=best.guid} end
     return wait
 end

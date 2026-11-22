@@ -59,6 +59,16 @@ class PracticeTargetPolicyTests(unittest.TestCase):
         for rows in [frame['candidates']+[attacker],[attacker]+frame['candidates']]:
             frame['candidates']=rows
             self.assertEqual(self.choose(frame),dict(kind='stop',targetGuid='0'))
+    def test_lua_distinguishes_missing_current_target_from_uncertain_position(self):
+        frame=self.frame();frame['currentTargetGuid']=frame['candidates'][0]['guid']
+        frame['candidates'][0]['positionKnown']=False
+        self.assertEqual(self.choose(frame),dict(kind='wait',targetGuid='0'))
+        frame['candidates'][0]['present']=False
+        self.assertEqual(self.choose(frame),dict(kind='stop',targetGuid='0'))
+        frame['candidates']=frame['candidates'][1:]
+        self.assertEqual(self.choose(frame),dict(kind='stop',targetGuid='0'))
+        frame['currentTargetGuid']='0'
+        self.assertEqual(self.choose(frame)['targetGuid'],frame['candidates'][0]['guid'])
     def test_equal_distance_uses_exact_guid_tie_break_not_input_order(self):
         frame=self.frame();frame['candidates'][1]['x']=frame['candidates'][0]['x']
         expected=frame['candidates'][0]['guid']

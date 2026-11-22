@@ -189,10 +189,6 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			}
 		}()
 	}
-	if s.practiceTarget != 0 && target == nil {
-		s.stopPracticeLocked(ctx, "selected_target_observation_unavailable")
-		return
-	}
 	if !questNeeded && !xpNeeded && !finishing || !self.HealthKnown || !self.PowerKnown || !northshire(playerPosition(self)) || !self.SpeedsKnown || math.Abs(float64(self.RunSpeed)-7) > 0.01 || !s.refreshPositionLocked(w) || !northshire(s.pos) || s.state.MotionUnconfirmed {
 		s.stopPracticeLocked(ctx, "own_state_unknown_or_unsafe")
 		return
