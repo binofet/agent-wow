@@ -5483,6 +5483,7 @@ def main(argv=None):
                   "persistent": args.persistent}
         local_stop = False
         conversation = None
+        brain = None
         def request_stop(signum, frame):
             nonlocal local_stop
             local_stop = True
@@ -5494,6 +5495,8 @@ def main(argv=None):
             binding = conversation.status_identity() if conversation is not None else dict(
                 coreSessionId=None, coreCharacterGuid=None, chatSessionId=None)
             record.update(fields, **binding, updated=time.time())
+            if isinstance(brain, DirectBrain):
+                record["modelSelection"] = brain.model_selection()
             if fields.get("phase") in ("listening", "thinking"):
                 record.pop("error", None)
             write_json(state / "status.json", record)
