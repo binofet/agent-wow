@@ -156,8 +156,44 @@ def supply_space_pressure(rpc,observations,*,bridge=None):
         return {} # Unavailable policy never authorizes water-driven destruction.
 
 
-def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None):
-    """One pure Lua turn and at most one selected mutation; no Python selector."""
+class PersistenceUnconfirmed(runtime.Error):
+    pass
+
+
+class NotDispatched(runtime.Error):
+    """Trusted caller signal ONLY before entering the selected client.call.
+
+    Never derive this signal from a transport exception or server status.
+    """
+    def __init__(self,reason='supply_not_dispatched'):
+        self.reason=reason if isinstance(reason,str) and re.fullmatch('[A-Za-z0-9_]{1,128}',reason) else 'supply_not_dispatched'
+        super().__init__(self.reason)
+
+
+def _not_dispatched(state,reason):
+    state['last']=dict(id=state['last']['id'],outcome='not_dispatched',reason=reason)
+
+
+def _persist(persist,state):
+    if persist is None:return # Existing in-memory callers retain their API.
+    try:
+        if not callable(persist) or persist(copy.deepcopy(state)) is False:
+            raise runtime.Error('supply_persistence_not_confirmed')
+    except Exception as error:
+        raise PersistenceUnconfirmed('supply_persistence_unconfirmed') from error
+
+
+def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None,persist=None):
+    """One Lua turn and at most one selected mutation.
+
+    A persistent host supplies its existing atomic profile writer as persist.
+    It receives a detached FULL state and must return only after durable save,
+    or raise/return False. None keeps the older in-memory API; it provides no
+    restart guarantee. The host owns matching-state load and its single writer.
+    """
+    previous=copy.deepcopy(state)
+    reserved=False
+    rpc_entered=False
     state.pop('spacePort',None)
     try:
         if MIRA not in observations:
@@ -178,17 +214,55 @@ def maintain_supply(rpc,observations,state,*,bridge=None,now_ms=None):
             # Read the INSTALLED schema again at the actual mutation boundary.
             catalog=_catalog(rpc,port,identities[port]);_validate_action(action,catalog,identities[port])
             _current_source(rpc,binding)
-        state['memory']=decision['memory'] # Commit authored reservation before write.
-        state['phase']=decision['phase'];state.pop('error',None)
-        state.pop('spacePort',None)
-        if decision.get('spacePort') is not None:state['spacePort']=decision['spacePort']
+        proposed=copy.deepcopy(state)
+        proposed['memory']=decision['memory']
+        proposed['phase']=decision['phase'];proposed.pop('error',None)
+        proposed.pop('spacePort',None)
+        if decision.get('spacePort') is not None:proposed['spacePort']=decision['spacePort']
         if action is not None:
-            state['last']=dict(id=action['id'],outcome='transport_unconfirmed')
+            proposed['last']=dict(id=action['id'],outcome='transport_unconfirmed')
+            state.clear();state.update(proposed)
+            reserved=True
+            _persist(persist,state) # Durable reservation/uncertainty BEFORE RPC.
+            _current_source(rpc,binding)
+            current=rpc(port,'buddy-actions.status',{})
+            if current.get('sessionId')!=identities[port]['sessionId'] or str(current.get('selfGuid'))!=identities[port]['characterGuid']:
+                raise NotDispatched('supply_body_changed_before_dispatch')
+            rpc_entered=True
             reply=rpc(int(action['port']),action['method'],action['params'])
-            state['last']=dict(id=action['id'],outcome='rpc_result',result=reply)
+            settled=copy.deepcopy(state)
+            settled['last']=dict(id=action['id'],outcome='rpc_result',result=reply)
+            _persist(persist,settled) # Never use an unpersisted reply next turn.
+            state.clear();state.update(settled)
+        else:
+            _persist(persist,proposed)
+            state.clear();state.update(proposed)
+        return state['phase']
+    except PersistenceUnconfirmed:
+        if not reserved:
+            state.clear();state.update(previous) # Do not drop prior custody.
+        elif not rpc_entered:
+            # Storage may contain the conservative pre-send reservation, but
+            # this process knows it never invoked the selected physical call.
+            _not_dispatched(state,'supply_reservation_not_persisted')
+        state['error']='supply_persistence_unconfirmed'
+        state['phase']='water_supply_persistence_unconfirmed'
+        return state['phase']
+    except NotDispatched as error:
+        if reserved:_not_dispatched(state,error.reason)
+        state['error']=error.reason;state['phase']='water_supply_not_dispatched'
+        if reserved:
+            try:_persist(persist,state)
+            except PersistenceUnconfirmed:
+                state['error']='supply_persistence_unconfirmed';state['phase']='water_supply_persistence_unconfirmed'
         return state['phase']
     except Exception as error:
         # Admission/schema failures above commit no proposal and send nothing.
         # A failed write keeps the Lua-issued private uncertainty, never replay.
+        if reserved and not rpc_entered:_not_dispatched(state,'supply_admission_changed_before_dispatch')
         state['error']=str(error);state['phase']='water_supply_rpc_unconfirmed' if (state.get('last') or {}).get('outcome')=='transport_unconfirmed' else 'water_supply_unavailable'
+        if reserved:
+            try:_persist(persist,state) # The failed-write outcome remains unknown.
+            except PersistenceUnconfirmed:
+                state['error']='supply_persistence_unconfirmed';state['phase']='water_supply_persistence_unconfirmed'
         return state['phase']

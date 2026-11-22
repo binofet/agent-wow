@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 import party_mana_supply as supply
@@ -94,9 +95,9 @@ class SupplyTest(unittest.TestCase):
         return dict(actions,lastSpellOperation=dict(capability='create_item',spellId=params['spellId'],phase='waiting_server',
             transportWritten=True,createdItemEntry=entry,baselineInventoryRevision=view['world']['inventoryRevision']))
 
-    def turn(self,state=None,now=1000,bridge=None):
+    def turn(self,state=None,now=1000,bridge=None,persist=None):
         return supply.maintain_supply(self.rpc,self.observations,state if state is not None else {},
-            bridge=bridge or self.bridge,now_ms=now)
+            bridge=bridge or self.bridge,now_ms=now,persist=persist)
 
     def gift(self):
         state={};self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
@@ -255,11 +256,12 @@ class SupplyTest(unittest.TestCase):
     def test_receiver_reservation_requires_new_exact_partner_receipt_and_current_body_before_offer(self):
         carried(self.mira,2136,8);state={}
         self.assertEqual(self.turn(state),'recipient_water_reservation_requested')
-        receipt=state['last']['result'];receipt['partnerGuid']='8'
+        receipt=lambda:state['last']['result']
+        receipt()['partnerGuid']='8'
         self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed')
-        receipt['partnerGuid']='4';receipt['revision']='2'
+        receipt()['partnerGuid']='4';receipt()['revision']='2'
         self.assertEqual(self.turn(state),'recipient_reservation_unconfirmed')
-        receipt['revision']='3';self.arlen['trade']['partnerGuid']='8'
+        receipt()['revision']='3';self.arlen['trade']['partnerGuid']='8'
         self.assertEqual(self.turn(state),'awaiting_recipient_reservation_observation')
         self.arlen['trade']['partnerGuid']='4';self.arlen['inventory']['sessionId']='old-body'
         self.assertEqual(self.turn(state),'awaiting_current_recipient_body')
@@ -412,6 +414,120 @@ class SupplyTest(unittest.TestCase):
         self.source=subprocess.check_output(['python3','-B',str(self.root/'dev/encounter-bundle')],text=True)
         self.generation+=1;self.assertEqual(self.turn(),'conjure_requested')
         self.assertEqual(self.calls[-1][2]['spellId'],5506)
+
+    def test_persistence_receives_detached_full_reservation_before_rpc_and_reply_after(self):
+        carried(self.mira,2136,8);state={'callerFact':'preserve'};saved=[];original=self.rpc
+        def save(value):
+            saved.append(copy.deepcopy(value))
+            value['callerFact']='writer-local-mutation'
+        def rpc(port,method,params):
+            if method=='buddy-trade.water_gift':
+                self.assertEqual(saved[-1]['last']['outcome'],'transport_unconfirmed')
+                self.assertEqual(saved[-1]['memory']['pending']['actionId'],saved[-1]['last']['id'])
+            return original(port,method,params)
+        self.rpc=rpc
+        self.assertEqual(self.turn(state,persist=save),'recipient_water_reservation_requested')
+        self.assertEqual([row['last']['outcome'] for row in saved],['transport_unconfirmed','rpc_result'])
+        self.assertEqual(state['callerFact'],'preserve');self.assertEqual(len(self.calls),1)
+
+    def test_actual_store_crash_after_native_write_reloads_unknown_and_never_replays(self):
+        class Crash(BaseException):pass
+        carried(self.mira,2136,8);original=self.rpc
+        def crash(port,method,params):
+            result=original(port,method,params)
+            if method=='buddy-trade.water_gift':raise Crash()
+            return result
+        self.rpc=crash
+        with tempfile.TemporaryDirectory() as folder:
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                with self.assertRaises(Crash):self.turn({},persist=store.save)
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                restored=store.load();self.rpc=original
+                self.assertEqual(restored['last']['outcome'],'transport_unconfirmed')
+                self.assertEqual(self.turn(restored,persist=store.save),'recipient_reservation_unconfirmed')
+                self.assertEqual(len(self.calls),1)
+                self.assertEqual(store.load()['memory']['pending'],restored['memory']['pending'])
+
+    def test_persistence_failure_before_rpc_sends_zero_and_retains_reservation(self):
+        carried(self.mira,2136,8);state={}
+        def failed(_):raise OSError('store write failed')
+        self.assertEqual(self.turn(state,persist=failed),'water_supply_persistence_unconfirmed')
+        self.assertEqual(self.calls,[]);self.assertIn('pending',state['memory'])
+        self.assertEqual(state['last']['outcome'],'not_dispatched')
+        self.assertEqual(self.turn(state,persist=lambda value:None),'supply_reservation_not_persisted')
+        self.assertNotIn('pending',state['memory'])
+        self.assertEqual(self.calls,[])
+
+    def test_reply_save_failure_keeps_only_durable_unknown_in_memory_and_store(self):
+        carried(self.mira,2136,8);state={}
+        with tempfile.TemporaryDirectory() as folder:
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                writes=[]
+                def save(value):
+                    writes.append(value['last']['outcome'])
+                    if len(writes)==2:raise OSError('reply fsync failed')
+                    store.save(value)
+                self.assertEqual(self.turn(state,persist=save),'water_supply_persistence_unconfirmed')
+                self.assertEqual(writes,['transport_unconfirmed','rpc_result'])
+                self.assertEqual(state['last']['outcome'],'transport_unconfirmed')
+                restored=store.load();self.assertEqual(restored['last']['outcome'],'transport_unconfirmed')
+                self.assertEqual(self.turn(restored,persist=store.save),'recipient_reservation_unconfirmed')
+                self.assertEqual(len(self.calls),1)
+
+    def test_failed_native_reply_persists_unknown_outcome_without_replay(self):
+        carried(self.mira,2136,8);self.fail_method='buddy-trade.water_gift'
+        with tempfile.TemporaryDirectory() as folder:
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                self.assertEqual(self.turn({},persist=store.save),'water_supply_rpc_unconfirmed')
+                restored=store.load();self.assertEqual(restored['phase'],'water_supply_rpc_unconfirmed')
+                self.assertEqual(restored['last']['outcome'],'transport_unconfirmed')
+                self.assertEqual(self.turn(restored,persist=store.save),'recipient_reservation_unconfirmed')
+                self.assertEqual(len(self.calls),1)
+
+    def test_observed_completion_is_not_committed_in_ram_if_its_save_fails(self):
+        state={};self.assertEqual(self.turn(state),'conjure_requested')
+        prior=copy.deepcopy(state['memory']['pending'])
+        self.mira['actions']['lastSpellOperation']=dict(capability='create_item',spellId=5506,phase='confirmed_item',
+            createdItemEntry=2136,baselineInventoryRevision='5',observedInventoryRevision='6',serverCastGo=True,
+            effectObserved=True,inventoryConfirmed=True,itemPushObserved=True)
+        def fail(_):return False
+        self.assertEqual(self.turn(state,persist=fail),'water_supply_persistence_unconfirmed')
+        self.assertEqual(state['memory']['pending'],prior);self.assertEqual(len(self.calls),1)
+
+    def test_known_no_send_cleanup_settles_only_on_normal_read_after_durable_save(self):
+        self.cleanup_fixture();state={}
+        def fail(_):raise OSError('fsync failed')
+        self.assertEqual(self.turn(state,persist=fail),'water_supply_persistence_unconfirmed')
+        self.assertEqual(state['last']['outcome'],'not_dispatched');self.assertIn('pending',state['memory'])
+        self.assertEqual(self.turn(state,persist=fail),'water_supply_persistence_unconfirmed')
+        self.assertIn('pending',state['memory']);self.assertEqual(self.calls,[])
+        self.assertEqual(self.turn(state,persist=lambda value:None),'supply_reservation_not_persisted')
+        self.assertNotIn('pending',state['memory']);self.assertEqual(self.calls,[])
+        self.assertEqual(self.turn(state,now=5000,persist=lambda value:None),'cleanup_requested')
+        self.assertEqual(len(self.calls),1)
+
+    def test_typed_owner_refusal_before_client_call_persists_no_send_without_inline_retry(self):
+        carried(self.mira,2136,8);original=self.rpc
+        def refused(port,method,params):
+            if method=='buddy-trade.water_gift':raise supply.NotDispatched('owner_intent_superseded')
+            return original(port,method,params)
+        self.rpc=refused
+        with tempfile.TemporaryDirectory() as folder:
+            with supply.runtime.Store(Path(folder).resolve()) as store:
+                state={};self.assertEqual(self.turn(state,persist=store.save),'water_supply_not_dispatched')
+                self.assertEqual(store.load()['last']['outcome'],'not_dispatched');self.assertEqual(self.calls,[])
+                self.assertEqual(self.turn(state,persist=store.save),'owner_intent_superseded')
+                self.assertNotIn('pending',state['memory']);self.assertEqual(self.calls,[])
+
+    def test_source_change_during_reservation_save_never_enters_selected_rpc(self):
+        carried(self.mira,2136,8);saved=[]
+        def save(value):
+            saved.append(copy.deepcopy(value))
+            if value.get('last',{}).get('outcome')=='transport_unconfirmed':
+                self.source+='\n-- source replaced during fsync';self.generation+=1
+        state={};self.assertEqual(self.turn(state,persist=save),'water_supply_unavailable')
+        self.assertEqual(self.calls,[]);self.assertEqual(state['last']['outcome'],'not_dispatched')
+        self.assertEqual(saved[-1]['last']['outcome'],'not_dispatched')
 
 
 if __name__=='__main__':unittest.main()
