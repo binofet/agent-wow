@@ -282,6 +282,10 @@ end
 
 function M.plan(frame,disposal,gear)
     local m=frame.memory or {};local now=n(frame.nowMs);local b=frame.bindings or {}
+    -- Caller monotonic time can restart while a remote body stays online.
+    -- Re-arm only scheduling; issued/uncertain custody below remains intact.
+    if m.lastNowMs and now<n(m.lastNowMs) then m.nextAtMs=now end
+    m.lastNowMs=now
     local views=frame.observations or {};local mage=views[id(b.magePort)];local guid=id(b.mageGuid)
     if not mage or not current(mage,guid) then return result(m,'waiting_for_current_mage') end
     if frame.query=='space_pressure' then return {bagPressure=space_pressure(frame,mage,b)} end
