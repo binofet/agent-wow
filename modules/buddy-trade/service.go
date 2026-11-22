@@ -592,7 +592,8 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 				s.state.Phase = "OPEN"
 				s.state.PartnerAccepted = false
 				s.state.AcceptTransportWritten = false
-				s.pickLock.accepted = false
+				// Reopening alone does not prove the prior service had no effect.
+				// Preserve custody until an exact TRY_AGAIN or changed service.
 			}
 		case 8:
 			if s.state.PartnerGuid == ownerGUID && s.state.Phase == "ACCEPT_SENT" {
@@ -671,9 +672,15 @@ func (s *Service) OnPacket(_ context.Context, p *modv1.WorldPacket) (*emptypb.Em
 				s.pickLock.until = time.Time{}
 				s.state.Reason = "trade_pick_lock_staged_waiting_for_joel"
 			} else if s.pickLock.queued {
-				// AzerothCore removes a queued spell if trade changes. Stage
-				// it again only after rechecking the current service slot.
-				s.pickLock = tradePickLock{}
+				if !s.pickLock.accepted && !s.pickLock.castGo {
+					// A confirmed queue was canceled before any acceptance or
+					// effect; a new preparation may stage the new own terms.
+					s.pickLock = tradePickLock{}
+				} else {
+					// Queue removal after ACCEPT/GO cannot erase uncertainty
+					// or effect proof and silently authorize another CAST.
+					s.pickLock.queued = false
+				}
 			}
 		}
 	case opcode.SMSGCastFailed, opcode.SMSGSpellGo:
