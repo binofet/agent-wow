@@ -150,3 +150,34 @@ func TestPracticeTargetStopRevalidatesRetainedLookupOutsideDiscovery(t *testing.
 		})
 	}
 }
+
+func TestPracticeTargetFreshSameVictimAttackResetRequiresNewLuaChoice(t *testing.T) {
+	s, f, _ := practiceRig(t, 8)
+	if !s.refreshPositionLocked(f.world) {
+		t.Fatal("own pose unavailable")
+	}
+	target := f.world.NearbyCreatures[0]
+	s.practiceTarget, s.state.PracticeTargetGuid, s.practicePullStarted = target.Guid, target.Guid, true
+	attacker := proto.Clone(target).(*worldv1.CreatureState)
+	attacker.Guid++
+	attacker.Entry = 69
+	attacker.AttackVictimKnown, attacker.AttackVictimGuid, attacker.AttackAgeMs = true, s.selfGUID, 30001
+	f.world.NearbyCreatures = append(f.world.NearbyCreatures, attacker)
+	runtime := starterLuaRuntime(t, behaviors.StarterSpellSource)
+	s.starterSpells.remote = func(ctx context.Context, input map[string]any) (bool, string, map[string]any, error) {
+		out, err := runtime.EvaluateContext(ctx, input)
+		attacker.AttackAgeMs = 0 // New actual attack after Lua saw the old stale attack.
+		return true, runtime.Status().Revision, out, err
+	}
+	before := len(f.packets)
+	current := s.practiceApproachCurrentLocked(context.Background(), target.Guid)
+	_, chosen, _, valid := s.practiceTargetDecisionLocked(context.Background(), f.world, current)
+	if valid || chosen != nil || len(f.packets) != before {
+		t.Fatal("same-victim refresh bypassed post-read observation guard", chosen, valid, f.packets)
+	}
+	// Once Lua observes the fresh incoming attack, its existing policy stops.
+	_, chosen, kind, valid := s.practiceTargetDecisionLocked(context.Background(), f.world, current)
+	if !valid || chosen != nil || kind != "stop" || len(f.packets) != before {
+		t.Fatal("fresh Lua did not own the incoming-attack choice", kind, valid, chosen, f.packets)
+	}
+}

@@ -67,6 +67,19 @@ func (s *Service) practiceTargetFactsLocked(w *worldv1.SnapshotResponse) (map[st
 // raw age available to Lua; compare the actual victim/spawn facts rather than
 // treating another millisecond as a new object or a changed observation event.
 func samePracticeTargetFacts(before, after map[string]any) bool {
+	oldRows, newRows := before["candidates"].([]any), after["candidates"].([]any)
+	if len(oldRows) != len(newRows) {
+		return false
+	}
+	for i, value := range oldRows {
+		oldAge, oldKnown := value.(map[string]any)["attackAgeMs"].(uint64)
+		newAge, newKnown := newRows[i].(map[string]any)["attackAgeMs"].(uint64)
+		// A reset can be a new attack against the same victim. That event
+		// needs a new Lua decision; no player freshness threshold lives here.
+		if !oldKnown || !newKnown || newAge < oldAge {
+			return false
+		}
+	}
 	stable := func(input map[string]any) map[string]any {
 		out := make(map[string]any, len(input))
 		for k, v := range input {
