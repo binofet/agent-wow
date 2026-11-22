@@ -1,6 +1,8 @@
 -- Choose from the native mail service's qualified training-stipend facts.
 -- The caller retains exact request binding, durable custody and server receipts.
 local claim_training_stipend = true
+local mailbox_interaction_yards = 5
+local prefer_nearest_mailbox = true
 local UINT32 = 4294967295
 
 local function decimal(value, maximum)
@@ -67,4 +69,85 @@ local function decide(input)
     mailboxGuid=mail.mailboxGuid, mailId=selected.mailId}
 end
 
-return {decide=decide}
+local TARGET = {sessionId=true, selfGuid=true, visitId=true, self=true, actions=true, mailboxes=true, mail=true}
+local CUSTODY = {sessionId=true, claimReserved=true, operationInFlight=true}
+local SELF = {guid=true, present=true, mapKnown=true, mapId=true, positionKnown=true, positionRevision=true,
+  aliveKnown=true, alive=true, unitFlagsKnown=true, unitFlags=true}
+local ACTIONS = {moving=true, motionUnconfirmed=true, castPending=true,
+  autoAttacking=true, autoAttackRequested=true, autoAttackUnconfirmed=true, interactionOwner=true,
+  traveling=true, practicing=true, position=true}
+local POSITION = {known=true, mapKnown=true, mapId=true, x=true, y=true, z=true, estimated=true, revision=true}
+local BOX = {guid=true, entry=true, present=true, typeKnown=true, gameObjectType=true, mapKnown=true,
+  mapId=true, positionKnown=true, x=true, y=true, z=true, positionRevision=true}
+local IDLE = {"moving", "motionUnconfirmed", "castPending", "autoAttacking", "autoAttackRequested",
+  "autoAttackUnconfirmed", "traveling", "practicing"}
+
+local function coordinate(value)
+  return type(value) == "number" and value == value and value > -40000 and value < 40000
+end
+
+local function smaller_guid(a, b)
+  return #a < #b or #a == #b and a < b
+end
+
+local function mailbox_target(input)
+  if not object(input, TARGET, 7) or type(input.sessionId) ~= "string" or #input.sessionId == 0 or
+      #input.sessionId > 128 or not decimal(input.selfGuid, U64) or not decimal(input.visitId, U64) then
+    return wait("current_mailbox_body_and_visit_required")
+  end
+  local own, actions = input.self, input.actions
+  if not object(input.mail, CUSTODY, 3) or input.mail.sessionId ~= input.sessionId or
+      type(input.mail.claimReserved) ~= "boolean" or type(input.mail.operationInFlight) ~= "boolean" or
+      not object(own, SELF, 10) or own.guid ~= input.selfGuid or type(own.present) ~= "boolean" or
+      type(own.mapKnown) ~= "boolean" or not uint(own.mapId, UINT32) or type(own.positionKnown) ~= "boolean" or
+      not decimal(own.positionRevision, U64) or type(own.aliveKnown) ~= "boolean" or type(own.alive) ~= "boolean" or
+      type(own.unitFlagsKnown) ~= "boolean" or not uint(own.unitFlags, UINT32) or
+      not object(actions, ACTIONS, 10) or
+      type(actions.interactionOwner) ~= "string" or #actions.interactionOwner > 128 then
+    return wait("current_mailbox_body_and_pose_required")
+  end
+  for _, key in ipairs(IDLE) do
+    if type(actions[key]) ~= "boolean" then return wait("current_mailbox_idle_facts_required") end
+  end
+  local pos = actions.position
+  if not object(pos, POSITION, 8) or type(pos.known) ~= "boolean" or type(pos.mapKnown) ~= "boolean" or
+      not uint(pos.mapId, UINT32) or not coordinate(pos.x) or not coordinate(pos.y) or not coordinate(pos.z) or
+      type(pos.estimated) ~= "boolean" or not decimal(pos.revision, U64) or
+      type(input.mailboxes) ~= "table" or #input.mailboxes > 32 then return wait("current_mailbox_pose_and_rows_required") end
+  local seen, count = {}, 0
+  for index, row in pairs(input.mailboxes) do
+    if not uint(index, #input.mailboxes) or index == 0 or not object(row, BOX, 12) or
+        not decimal(row.guid, U64) or seen[row.guid] or not uint(row.entry, UINT32) or
+        type(row.present) ~= "boolean" or type(row.typeKnown) ~= "boolean" or not uint(row.gameObjectType, UINT32) or
+        type(row.mapKnown) ~= "boolean" or not uint(row.mapId, UINT32) or type(row.positionKnown) ~= "boolean" or
+        not coordinate(row.x) or not coordinate(row.y) or not coordinate(row.z) or
+        not (row.positionRevision == "0" or decimal(row.positionRevision, U64)) or
+        row.positionKnown and not decimal(row.positionRevision, U64) then return wait("complete_mailbox_rows_required") end
+    seen[row.guid], count = true, count + 1
+  end
+  if count ~= #input.mailboxes then return wait("complete_mailbox_rows_required") end
+  if input.mail.claimReserved or input.mail.operationInFlight then return wait("mail_operation_reserved_or_busy") end
+  if not own.present or not own.mapKnown or not own.positionKnown or not own.aliveKnown or not own.alive or
+      not own.unitFlagsKnown or not pos.known or not pos.mapKnown or pos.mapId ~= own.mapId then
+    return wait("known_same_map_mailbox_pose_required")
+  end
+  for _, key in ipairs(IDLE) do if actions[key] then return wait("idle_mailbox_pose_required") end end
+  if actions.interactionOwner ~= "" then return wait("idle_mailbox_pose_required") end
+  if not coordinate(mailbox_interaction_yards) or mailbox_interaction_yards <= 0 or mailbox_interaction_yards > 5 or
+      type(prefer_nearest_mailbox) ~= "boolean" then return wait("bounded_mailbox_policy_required") end
+  local selected, distance
+  for _, row in ipairs(input.mailboxes) do
+    if row.present and row.typeKnown and row.gameObjectType == 19 and row.entry > 0 and
+        row.mapKnown and row.mapId == pos.mapId and row.positionKnown then
+      local dx, dy, dz = row.x-pos.x, row.y-pos.y, row.z-pos.z
+      local d = dx*dx + dy*dy + dz*dz
+      if d <= mailbox_interaction_yards*mailbox_interaction_yards and (selected == nil or
+          prefer_nearest_mailbox and d < distance or not prefer_nearest_mailbox and d > distance or
+          d == distance and smaller_guid(row.guid, selected.guid)) then selected, distance = row, d end
+    end
+  end
+  if selected == nil then return wait("no_observed_in_range_mailbox") end
+  return {kind="list", sessionId=input.sessionId, selfGuid=input.selfGuid, visitId=input.visitId, mailboxGuid=selected.guid}
+end
+
+return {decide=decide, mailbox_target=mailbox_target}
