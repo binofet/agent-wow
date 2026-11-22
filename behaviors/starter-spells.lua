@@ -5,6 +5,7 @@ local healing = assert(encounter_healing)
 local starter_movement = encounter_movement
 local M = {}
 M.coldridge_pull = {health_percent=95, base_mana_percent=60}
+M.practice_pull = {health_percent=95,mana_percent={[5]=45,[8]=40},energy=90}
 M.practice_targets = {entries={[299]=true},min_level=1,max_level=1,search_yards=120,order="nearest",
     area={min_x=-9599,max_x=-8400,min_y=-700,max_y=200,min_z=40,max_z=180}}
 
@@ -33,6 +34,26 @@ local function pull_readiness(self)
     -- uint32 observations multiplied by a percentage remain exact Lua numbers.
     local mana=math.floor((self.baseMana*tuning.base_mana_percent+99)/100)
     if self.health*100<self.maxHealth*tuning.health_percent or self.power<mana then return wait end
+    return {kind="ready",spellId=0}
+end
+
+local function practice_pull_readiness(self)
+    local wait={kind="wait",spellId=0}
+    local t=M.practice_pull
+    if type(t)~="table" or not uint(t.health_percent) or t.health_percent>100 or
+       self.classKnown~=true or self.healthKnown~=true or not uint(self.health) or
+       not uint(self.maxHealth) or self.maxHealth==0 or self.health>self.maxHealth or
+       self.powerKnown~=true or not uint(self.power) then return wait end
+    if self.health*100<self.maxHealth*t.health_percent then return wait end
+    if self.classId==4 then
+        if self.powerType~=3 or not uint(t.energy) or self.power<t.energy then return wait end
+    else
+        local percent=type(t.mana_percent)=="table" and t.mana_percent[self.classId]
+        if self.powerType~=0 or not uint(percent) or percent>100 then return wait end
+        local base=self.baseManaKnown==true and self.baseMana or self.maxPower
+        if self.baseManaKnown==true and base==0 then base=self.maxPower end
+        if not uint(base) or self.power<math.floor((base*percent+99)/100) then return wait end
+    end
     return {kind="ready",spellId=0}
 end
 
@@ -214,6 +235,7 @@ function M.decide(input, override, movement)
        not uint(self.classId) or self.classId==0 or self.powerKnown~=true or
        not uint(self.power) or not uint(self.powerType) then return wait end
     if input.selection=="coldridge_pull_readiness" then return pull_readiness(self) end
+    if input.selection=="practice_pull_readiness" then return practice_pull_readiness(self) end
     if type(obs.spells)~="table" or type(target)~="table" or not guid(target.guid) or
        not pose(self) or not pose(target) then return wait end
     if input.selection~=nil then

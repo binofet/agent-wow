@@ -76,4 +76,59 @@ class PracticeTargetPolicyTests(unittest.TestCase):
         frame['candidates'].reverse()
         self.assertEqual(self.choose(frame)['targetGuid'],expected)
 
+    def pull_frame(self, class_id=8):
+        frame=self.frame()
+        frame['selection']='practice_pull_readiness'
+        for key in ('candidates','currentTargetGuid','failedTargetGuid'):
+            del frame[key]
+        frame['observation']['players']['4'].update(classKnown=True,classId=class_id,
+            healthKnown=True,health=100,maxHealth=100,powerKnown=True,
+            powerType=3 if class_id==4 else 0,power=100,maxPower=100,
+            baseManaKnown=True,baseMana=100)
+        return frame
+
+    def test_pull_resource_defaults_and_known_base_mana_fallback(self):
+        for class_id,threshold in ((4,90),(5,45),(8,40)):
+            frame=self.pull_frame(class_id)
+            self.assertEqual(self.choose(frame),dict(kind='ready',spellId=0))
+            player=frame['observation']['players']['4']
+            player['power']=threshold-1
+            self.assertEqual(self.choose(frame),dict(kind='wait',spellId=0))
+            player['power']=threshold
+            self.assertEqual(self.choose(frame),dict(kind='ready',spellId=0))
+            player['health']=94
+            self.assertEqual(self.choose(frame),dict(kind='wait',spellId=0))
+        frame=self.pull_frame(5)
+        player=frame['observation']['players']['4']
+        player.update(baseMana=101,power=45)
+        self.assertEqual(self.choose(frame)['kind'],'wait')
+        player['power']=46
+        self.assertEqual(self.choose(frame)['kind'],'ready')
+        for known,base in ((False,100),(True,0)):
+            player.update(baseManaKnown=known,baseMana=base,maxPower=200,power=89)
+            self.assertEqual(self.choose(frame)['kind'],'wait')
+            player['power']=90
+            self.assertEqual(self.choose(frame)['kind'],'ready')
+
+    def test_pull_thresholds_are_shared_source_choices_and_need_no_spell_or_target(self):
+        old='health_percent=95,mana_percent={[5]=45,[8]=40},energy=90'
+        self.assertEqual(self.source.count(old),1)
+        edited=self.source.replace(old,'health_percent=60,mana_percent={[5]=30,[8]=30},energy=50')
+        for class_id in (4,5,8):
+            frame=self.pull_frame(class_id)
+            frame['observation']['players']['4'].update(health=70,power=50 if class_id==4 else 35)
+            before=copy.deepcopy(frame)
+            self.assertEqual(self.choose(frame)['kind'],'wait')
+            self.assertEqual(self.choose(frame,edited),dict(kind='ready',spellId=0))
+            self.assertEqual(frame,before)
+
+    def test_pull_unknown_or_inconsistent_resources_never_authorize(self):
+        for changed in (dict(healthKnown=False),dict(health=0),dict(maxHealth=0),dict(health=101),
+                        dict(powerKnown=False),dict(power=-1),dict(powerType=3),
+                        dict(classKnown=False),dict(classId=9),dict(baseManaKnown=False,maxPower=-1)):
+            with self.subTest(changed=changed):
+                frame=self.pull_frame()
+                frame['observation']['players']['4'].update(changed)
+                self.assertEqual(self.choose(frame),dict(kind='wait',spellId=0))
+
 if __name__=='__main__':unittest.main()

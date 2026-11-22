@@ -43,13 +43,6 @@ func ownWolfQuest(w *worldv1.SnapshotResponse) (active, incomplete bool) {
 	return active, incomplete
 }
 
-func practicePullBudget(p *worldv1.PlayerState) uint64 {
-	if p.ClassId == 5 {
-		return manaBudget(p, 45)
-	}
-	return manaBudget(p, 40)
-}
-
 func (s *Service) stopPracticeLocked(ctx context.Context, why string) {
 	s.state.Practicing = false
 	s.state.PracticePhase = why
@@ -248,16 +241,19 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 			s.state.PracticePhase = "waiting_out_of_combat"
 			return
 		}
-		ready := self.MaxHealth > 0 && uint64(self.Health)*100 >= uint64(self.MaxHealth)*95
-		if self.ClassId != 4 {
-			ready = ready && self.PowerType == 0 && uint64(self.Power) >= practicePullBudget(self)
-		} else {
-			ready = ready && self.PowerType == 3 && self.Power >= 90
-		}
-		if !ready {
-			s.state.PracticePhase = "recovering_before_next_pull"
+		current := s.practiceApproachCurrentLocked(ctx, 0)
+		readiness, observed := s.starterPracticePullDecisionLocked(ctx, w, current)
+		if !current() {
 			return
 		}
+		if !readiness.valid || readiness.kind != "ready" {
+			s.state.PracticePhase = "recovering_before_next_pull"
+			if !readiness.valid {
+				s.state.Reason = s.starterSpells.failure()
+			}
+			return
+		}
+		w, self = observed, observed.Self
 		if target == nil {
 			s.state.PracticePhase = "waiting_for_observed_level_one_young_wolf"
 			return
@@ -301,9 +297,23 @@ func (s *Service) practiceTickLocked(ctx context.Context) {
 	}
 	self = w.Self
 	if !s.practicePullStarted {
-		// Recheck the pull prerequisites after approach/plan time; a previously
-		// healthy ready observation does not authorize a later weakened pull.
-		if self.UnitFlags&0x80000 != 0 || uint64(self.Health)*100 < uint64(self.MaxHealth)*95 || self.ClassId != 4 && uint64(self.Power) < practicePullBudget(self) || self.ClassId == 4 && self.Power < 90 {
+		// Re-run the same resource policy after approach/STOP time, with its
+		// own final observation check. An earlier ready result cannot authorize
+		// a later weakened pull.
+		current := s.practiceApproachCurrentLocked(ctx, s.practiceTarget)
+		readiness, observed := s.starterPracticePullDecisionLocked(ctx, w, current)
+		if !current() {
+			return
+		}
+		if !readiness.valid || readiness.kind != "ready" {
+			s.state.PracticePhase = "recovering_before_next_pull"
+			if !readiness.valid {
+				s.state.Reason = s.starterSpells.failure()
+			}
+			return
+		}
+		w, self = observed, observed.Self
+		if self.UnitFlags&0x80000 != 0 {
 			s.stopPracticeLocked(ctx, "pull_prerequisites_changed")
 			return
 		}
