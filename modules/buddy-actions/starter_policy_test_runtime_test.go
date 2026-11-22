@@ -2,6 +2,7 @@ package buddyactions
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,10 +83,12 @@ func TestStarterNativeProductionWatchdogRejectsRestoredAuthoredFallback(t *testi
 	for tick := 0; tick < 2; tick++ {
 		s.Tick(ctx)
 		status := authored.Status()
-		if status.Revision != acceptedA.Revision || status.LastGoodRevision != acceptedA.Revision ||
-			status.QuarantinedRevision != acceptedB.Revision || status.Failures != good.Failures+1 || status.LastError == "" ||
-			s.starterSpells.failedAuthored != authored || s.starterSpells.revision != acceptedB.Revision ||
-			s.starterSpells.authoredFailedRevision != acceptedB.Revision || s.starterSpells.authoredError == "" {
+		if status.Revision != acceptedB.Revision || status.LastGoodRevision != acceptedA.Revision ||
+			status.QuarantinedRevision != "" || status.Failures != good.Failures || status.LastError != "" ||
+			s.starterSpells.failedAuthored != nil || s.starterSpells.revision != acceptedB.Revision ||
+			s.starterSpells.authoredFailedRevision != "" || s.starterSpells.authoredError != "" ||
+			!strings.Contains(s.starterSpells.lastError, "(5ms configured)") ||
+			!strings.Contains(s.starterSpells.lastError, "context deadline exceeded") {
 			t.Fatal("native watchdog failure restored offense authority or lost the attempted source", tick, status, s.starterSpells)
 		}
 		if s.sessionID != sid || s.selfGUID != self || fake.world.Self.Guid != self || !s.state.Practicing ||
@@ -101,7 +104,7 @@ func TestStarterNativeProductionWatchdogRejectsRestoredAuthoredFallback(t *testi
 	failedTarget, failedPulls, failedStarted := s.practiceTarget, s.state.PracticePulls, s.practicePullStarted
 	const sourceC = `return {decide=function(input)return {kind="wait",spellId=0}end}`
 	acceptedC, err := s.ReloadBehavior(ctx, &actionsv1.BehaviorReloadRequest{
-		SessionId: sid, SelfGuid: self, ExpectedRevision: acceptedA.Revision, Source: sourceC})
+		SessionId: sid, SelfGuid: self, ExpectedRevision: acceptedB.Revision, Source: sourceC})
 	if err != nil || acceptedC == nil || acceptedC.Revision == acceptedA.Revision || acceptedC.Revision == acceptedB.Revision ||
 		s.behavior != authored || s.starterSpells.failedAuthored != nil || s.starterSpells.authoredError != "" ||
 		s.starterSpells.authoredFailedRevision != "" {
