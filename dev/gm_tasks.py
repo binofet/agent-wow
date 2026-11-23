@@ -174,7 +174,7 @@ def execute_command(rpc,config,command=None,root=ROOT,*,select_guid=None,expecte
         raise ValueError('GM body changed; inspect the current session before acting')
     with task_store(writer_folder(root,sid,config).absolute()) as owner:
         claim_writer(owner)
-        transport=SessionTransport(rpc,config,before_send=before_send)
+        transport=SessionTransport(rpc,config) if before_send is None else SessionTransport(rpc,config,before_send=before_send)
         if select_guid is not None:transport.select(select_guid,sid)
         if command is not None:transport.gm(command,sid)
     return dict(sessionId=sid,selectedGuid=select_guid,command=command,
