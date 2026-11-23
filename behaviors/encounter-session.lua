@@ -850,6 +850,16 @@ return {decide=decide, on_event=on_event, export_state=export_state, import_stat
         gear_evaluation=encounter_gear and encounter_gear.evaluate,
         trade_consent=encounter_trade_consent and encounter_trade_consent.decide,
         stipend_selection=encounter_stipend_selection and encounter_stipend_selection.decide,
+        quest_reward_choice=encounter_quest_rewards and function(input)
+            if type(input)~="table" then return encounter_quest_rewards.decide(input) end
+            local preference={}
+            for key,value in pairs(input) do preference[key]=value end
+            preference.mode="offer_preference"
+            local choice=encounter_quest_rewards.decide(preference)
+            if choice.status=="selected" then return choice end
+            if input.items==nil then return {status="pending",reason="reward_item_metadata_required"} end
+            return encounter_quest_rewards.decide(input)
+        end,
         mailbox_target=encounter_stipend_selection and encounter_stipend_selection.mailbox_target,
         disposal_evaluation=encounter_disposal and function(input)
             if type(input)~="table" then return encounter_disposal.decide(input) end
