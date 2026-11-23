@@ -150,6 +150,10 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertIn('a command write is not arrival proof',guide)
         self.assertIn('Current realm help, permissions and teleport/instance admission',guide)
         self.assertIn('Keep the old messages and every entered action/unknown receipt',guide)
+        self.assertIn('feedback.messages and feedback.systemMessages',guide)
+        self.assertIn('feedback.readMore to continue reading',guide)
+        self.assertIn('chat_read() defaults to the current monotonic cursor',guide)
+        self.assertIn('after_sequence="0" is ONLY old history, not a fresh command response',guide)
         self.assertFalse(self.rpc.packets)
 
     def test_named_location_forms_keep_exact_native_text_and_do_not_claim_arrival(self):
@@ -176,6 +180,79 @@ class GMCommandEvidenceTests(unittest.TestCase):
         self.assertFalse(feedback['commandSuccessKnown']);self.assertFalse(row['gameEffectClaimed'])
         self.assertEqual([params for method,params in self.rpc.calls if method=='buddy-chat.poll'],[
             dict(afterSequence='0',limit=1,sessionId=self.rpc.chat_sid),dict(afterSequence='10',limit=256,sessionId=self.rpc.chat_sid)])
+
+    def test_proven_no_selection_read_queries_allow_fresh_operations_but_cache_exact_operation(self):
+        for index,command in enumerate(('.lookup teleport Fixture','.group list','.group list Joel')):
+            with self.subTest(command=command):
+                operation='query:'+str(index)
+                first=self.execute(command,operation=operation)
+                count=len(self.rpc.packets)
+                cached=self.execute(command,operation=operation)
+                self.assertTrue(cached['result']['historicalReceipt'])
+                self.assertEqual(len(self.rpc.packets),count)
+                second=self.execute(command,operation=operation+':new')
+                self.assertTrue(first['result']['commandTransportWritten'])
+                self.assertTrue(second['result']['commandTransportWritten'])
+                self.assertEqual(len(self.rpc.packets),count+1)
+                self.assertFalse(second['result']['gameEffectClaimed'])
+                self.assertEqual(second['result']['feedback']['correlation'],'temporal_only')
+                self.assertFalse(second['result']['feedback']['commandSuccessKnown'])
+        self.assertEqual(len(self.rpc.commands),6)
+        self.assertTrue(all(code==0x95 for code,_ in self.rpc.packets))
+
+    def test_read_query_unknown_exact_operation_still_cannot_replay(self):
+        for index,command in enumerate(('.lookup teleport Fixture','.group list')):
+            with self.subTest(command=command):
+                self.tools=self.make_tools();self.rpc.post_failure='transport'
+                operation='unknown-query:'+str(index)
+                with self.assertRaises(direct_tools.ToolOutcomeUnknown):self.execute(command,operation=operation)
+                count=len(self.rpc.packets);self.tools=self.make_tools()
+                with self.assertRaises(direct_tools.ToolOutcomeUnknown):self.execute(command,operation=operation)
+                self.assertEqual(len(self.rpc.packets),count)
+
+    def test_selected_queries_and_unproven_siblings_keep_semantic_repeat_guard(self):
+        cases=[('.lookup teleport Fixture','3'),('.group list','3'),
+               ('.lookup spell Fixture',None),('.lookup tele Fixture',None),
+               ('.lookup teleport',None),('.group leader Joel',None),
+               ('.group join Joel Mira',None),('.group remove Joel',None),('.group list Joel Extra',None)]
+        for index,(command,selected) in enumerate(cases):
+            with self.subTest(command=command,selected=selected):
+                first=self.execute(command,selected,operation='guard:'+str(index))
+                self.assertTrue(first['result']['commandTransportWritten'],first)
+                count=len(self.rpc.packets)
+                blocked=self.execute(command,selected,operation='guard:'+str(index)+':new')
+                self.assertTrue(blocked['ok'],blocked)
+                self.assertFalse(blocked['result']['commandTransportWritten'])
+                self.assertEqual(len(self.rpc.packets),count)
+
+    def test_legacy_raw_query_receipts_do_not_block_first_task_and_stay_unchanged(self):
+        with mock.patch.object(direct_tools.DirectTools,'_gm_read_query',return_value=False):
+            self.assertTrue(self.execute('.lookup teleport Fixture',operation='legacy:1')['result']['commandTransportWritten'])
+            self.assertTrue(self.execute('.group list',operation='legacy:2')['result']['commandTransportWritten'])
+        root=self.host/'data/converse/lotharen/gm-commands'
+        before={path:path.read_bytes() for path in root.glob('*/state.json')}
+        runner=mock.Mock(return_value=subprocess.CompletedProcess([],0,b'{"started":true}',b''))
+        self.tools.runner=runner
+        goal=dict(members=[dict(guid='3',name='Joel')],player=dict(guid='3',name='Joel'))
+        with mock.patch.object(self.gm,'task_bridge',return_value=object()), \
+             mock.patch.object(self.gm,'admit_goal',return_value=dict(accepted=True)) as admission, \
+             mock.patch.object(self.gm.Host,'install_holds',side_effect=AssertionError('No physical task execution')):
+            result=self.tools.dispatch('gm_task_start',dict(goal=goal))
+        self.assertTrue(result['ok'],result);self.assertTrue(result['result']['result']['started'])
+        runner.assert_called_once();admission.assert_called_once()
+        self.assertEqual({path:path.read_bytes() for path in root.glob('*/state.json')},before)
+        self.assertEqual(self.rpc.commands,['.lookup teleport Fixture','.group list'])
+
+    def test_legacy_selected_query_and_real_mutation_still_block_new_task(self):
+        for selected in (None,'3'):
+            with self.subTest(selected=selected):
+                self.tools=self.make_tools();self.tools.request_id='pending:'+str(selected)
+                command='.revive Joel' if selected is None else '.group list'
+                self.assertTrue(self.execute(command,selected,operation='pending:'+str(selected))['result']['commandTransportWritten'])
+                with mock.patch.object(self.gm,'task_bridge',side_effect=AssertionError('Must block before bridge')):
+                    result=self.tools.dispatch('gm_task_start',dict(goal=dict(members=[])))
+                self.assertTrue(result['ok'],result);self.assertFalse(result['result']['started'])
+                self.assertIn('same_request_direct_intent_unsettled',result['result']['completion'])
 
     def test_delayed_system_collects_after_empty_and_other_chat_without_resending_command(self):
         self.rpc.feedback_enabled=False
