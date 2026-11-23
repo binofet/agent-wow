@@ -26,7 +26,10 @@ TOOLS AND INDEPENDENT EXAMPLES
   group membership or UI selection. It checks the connected target and target security before repair.
   Sources: cs_gear.cpp HandleGearRepairCommand and ChatCommandTags.cpp PlayerIdentifier::TryConsume
   at the reference pin below. This is source-supported syntax, not a verified repair on this realm.
-  Read current feedback and repair evidence before claiming success; keep existing no-replay receipts.
+  A fresh, matching named-repair SYSTEM acknowledgement may be reported as SERVER-REPORTED completion:
+  this public handler emits it after DurabilityRepairAll. Independent durability observation is distinct;
+  no position or party query is required for that acknowledgement. This is not a general rule that
+  SYSTEM text proves game effects; keep existing no-replay receipts and all unknown outcomes.
 - gm_execute returns collected feedback inline when available in
   feedback.messages and feedback.systemMessages; retain feedback.status and no-reply/unknown distinctions. Use
   feedback.readMore to continue reading. chat_read() defaults to the current monotonic cursor;

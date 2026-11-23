@@ -1910,6 +1910,8 @@ class BoundaryTests(unittest.TestCase):
             self.assertIn(shortcut, page['value'])
             for fact in ('omitting select_guid', 'requires no movement', 'group membership or UI selection',
                          'target security', 'source-supported syntax, not a verified repair on this realm',
+                         'SERVER-REPORTED completion', 'Independent durability observation is distinct',
+                         'no position or party query is required', 'not a general rule',
                          'keep existing no-replay receipts'):
                 self.assertIn(fact, page['value'])
             self.assertLessEqual(len(packed(dict(ok=True, result=page))), READ_PAGE_BYTES)
