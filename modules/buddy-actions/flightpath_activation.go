@@ -31,6 +31,8 @@ type flightpathActivationTracker struct {
 	transferAdoption   *worldv1.SplineTransferAdoption
 	transferActivation *actionsv1.FlightpathActivationOperation
 	transferAttempt    *actionsv1.FlightpathTransferAttempt
+	transferBooking    uint64
+	transferHistory    []flightpathTransferResult
 }
 
 func (s *Service) flightpathActivationObservationLocked(out *actionsv1.FlightpathObservationResponse) {
@@ -94,6 +96,9 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	if f.operation.GetPending() {
 		return nil, status.Error(codes.FailedPrecondition, "previous flightpath activation remains unresolved")
 	}
+	if f.operation.GetCurrentSegment() != nil && !f.operation.GetArrivalKnown() {
+		return nil, status.Error(codes.FailedPrecondition, "transferred booking requires observed arrival before replacement")
+	}
 	if f.revision == math.MaxUint64 {
 		return nil, status.Error(codes.ResourceExhausted, "flightpath activation revision exhausted")
 	}
@@ -112,10 +117,12 @@ func (s *Service) ActivateFlightpath(ctx context.Context, request *actionsv1.Fli
 	f.request = r
 	f.menu = proto.Clone(baselineMenu).(*actionsv1.FlightpathOperation)
 	f.settlementRequest, f.settlementResult = nil, nil
+	f.archiveTransferResult()
 	f.transferRequest, f.transferInvoked, f.transferResult = nil, false, nil
 	f.transferAdoption = nil
 	f.transferActivation = nil
 	f.transferAttempt = nil
+	f.transferBooking = 0
 	f.operation = &actionsv1.FlightpathActivationOperation{Revision: f.revision, SessionId: r.SessionId,
 		SelfGuid: r.SelfGuid, VisitId: r.VisitId, NpcGuid: r.NpcGuid, MenuRevision: r.MenuRevision,
 		SourceNode: r.SourceNode, DestinationNode: r.DestinationNode, Pending: true, Phase: "reserved"}

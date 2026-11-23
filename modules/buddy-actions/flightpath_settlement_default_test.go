@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	worldv1 "github.com/agent-wow/agent-wow/modules/buddy-world/api"
 	"github.com/agent-wow/agent-wow/pkg/behavior"
 	modv1 "github.com/agent-wow/agent-wow/pkg/modules/v1"
 	"github.com/agent-wow/agent-wow/pkg/opcode"
+	"google.golang.org/protobuf/proto"
 )
 
 // The maintained CI builds this ordinary CLI before its race suite. This test
@@ -156,5 +158,44 @@ func TestFlightpathTransferDefaultCLIUsesActualAdoptionAndContinuationFrames(t *
 		if !reached {
 			t.Fatal("bounded fixture did not reach transfer default frame", method)
 		}
+	}
+}
+
+func TestFlightpathAdjacentContinuationDefaultCLIUsesLatestFrames(t *testing.T) {
+	p, client, _ := newTransferPolicyFixture(t, true, true)
+	p.dispatch(p.until("buddy-actions.adopt_flightpath_transfer"))
+	p.dispatch(p.until("buddy-world.complete_spline"))
+	old := proto.Clone(p.f.base.x.f.world.SplineCompletion.Operation).(*worldv1.SplineCompletionOperation)
+	transferPolicyAdjacent(p, old)
+	parity := flightpathDefaultCLIParity(t, p.f.source)
+	for _, method := range []string{"buddy-actions.adopt_flightpath_transfer", "buddy-world.complete_spline"} {
+		reached := false
+		for i := 0; i < 1000; i++ {
+			input, err := json.Marshal(p.f.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := p.step()
+			if action, ok := out["action"].(map[string]any); ok {
+				if action["method"] != method {
+					t.Fatal("unexpected later transfer action", action)
+				}
+				parity(input, out)
+				if method == "buddy-actions.adopt_flightpath_transfer" {
+					p.dispatch(action)
+				}
+				reached = true
+				break
+			}
+			if out["done"] == true || out["resolve"] != nil {
+				t.Fatal("later transfer ended before expected action", out)
+			}
+		}
+		if !reached {
+			t.Fatal("bounded fixture did not reach later default frame", method)
+		}
+	}
+	if client.adoptCalls != 2 || p.f.activationCall != 1 {
+		t.Fatal("later default flow replayed a handoff or booked again", client.adoptCalls, p.f.activationCall)
 	}
 }

@@ -39,6 +39,19 @@ type splinePhysicalKey struct {
 	visit, spline uint64
 }
 
+// Requests are immutable; keep the original operation pointer so any captured
+// callback still classifies only its own attempt after the active slot moves.
+type splineCompletionRecord struct {
+	request           *worldv1.CompleteSplineRequest
+	operation         *worldv1.SplineCompletionOperation
+	retirementRequest *worldv1.RetireSplineCompletionRequest
+}
+
+type splineTransferRecord struct {
+	request  *worldv1.AdoptSplineTransferRequest
+	adoption *worldv1.SplineTransferAdoption
+}
+
 type splineCompletionState struct {
 	revision                   uint64
 	request                    *worldv1.CompleteSplineRequest
@@ -50,6 +63,18 @@ type splineCompletionState struct {
 	transferAdoption           *worldv1.SplineTransferAdoption
 	transferPredecessor        *worldv1.SplineCompletionOperation
 	transferPredecessorRequest *worldv1.CompleteSplineRequest
+	completionArchive          map[uint64]splineCompletionRecord
+	transferArchive            map[uint64]splineTransferRecord
+}
+
+func (c *splineCompletionState) archiveOperation() {
+	if c.request == nil || c.operation == nil {
+		return
+	}
+	if c.completionArchive == nil {
+		c.completionArchive = make(map[uint64]splineCompletionRecord)
+	}
+	c.completionArchive[c.request.ExpectedRevision] = splineCompletionRecord{c.request, c.operation, c.retirementRequest}
 }
 
 // ConfigureSession attaches the authenticated callback before serving RPCs.
@@ -237,8 +262,8 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 	req = proto.Clone(req).(*worldv1.CompleteSplineRequest)
 	s.mu.Lock()
 	c := &s.completion
-	if c.transferPredecessorRequest != nil && proto.Equal(c.transferPredecessorRequest, req) {
-		r := completionBoundObservation(c.transferPredecessor)
+	if old, ok := c.completionArchive[req.ExpectedRevision]; ok && proto.Equal(old.request, req) {
+		r := completionBoundObservation(old.operation)
 		s.mu.Unlock()
 		return r, nil
 	}
@@ -267,6 +292,7 @@ func (s *Service) CompleteSpline(ctx context.Context, req *worldv1.CompleteSplin
 		s.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "current due unconsumed standalone taxi spline is required")
 	}
+	c.archiveOperation()
 	c.revision++
 	c.retirementBlocked, c.retirementRequest = false, nil
 	c.request = proto.Clone(req).(*worldv1.CompleteSplineRequest)
