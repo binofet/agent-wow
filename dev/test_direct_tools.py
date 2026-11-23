@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import stat
@@ -122,6 +123,123 @@ class DirectToolTests(unittest.TestCase):
         return DirectTools(self.rpc, self.rpc.sid, self.rpc.guid, self.workspace, self.host,
             allowed=lambda: self.allowed, cancelled=lambda: self.cancelled,
             helpers={"self-edit": self.edit}, chat_session_id=chat_session_id)
+
+    def legacy_poll_catalog(self):
+        # Build the fixture from the maintained public .proto, not the adapter's
+        # expected tuple table. Legacy catalogs omit Poll's read declaration.
+        catalog = self.rpc.catalog()
+        prefix = 'buddy-chat::warcraftbuddy.chat.v1.'
+        proto = (ROOT/'modules/buddy-chat/chat.proto').read_text()
+        for name in ('PollRequest', 'PollResponse', 'Message'):
+            body = re.search(r'message '+name+r' \{(.*?)\n\}', proto, re.S).group(1)
+            fields = []
+            for repeated, kind, field, number in re.findall(r'(repeated\s+)?(\w+)\s+(\w+)\s*=\s*(\d+)\s*;', body):
+                json_name = re.sub(r'_([a-z])', lambda match: match[1].upper(), field)
+                scalar = kind in ('uint64','uint32','int32','bool','string')
+                fields.append(dict(name=json_name,number=int(number),kind=kind if scalar else 'enum' if kind=='Channel' else 'message',
+                    type=kind if scalar else prefix+kind,repeated=bool(repeated),map=False,optional=False,required=False))
+            catalog['messages'][prefix+name] = dict(protobufName='warcraftbuddy.chat.v1.'+name,syntax='proto3',fields=fields)
+        metadata = next(row for row in catalog['methods'] if row['name']=='buddy-chat.poll')
+        metadata.update(module='buddy-chat',path='/warcraftbuddy.chat.v1.BuddyChat/Poll',
+            inputType=prefix+'PollRequest',outputType=prefix+'PollResponse',effect='unspecified')
+        return catalog
+
+    def test_typed_chat_read_accepts_exact_legacy_contract_without_generic_effect_bypass(self):
+        catalog = self.legacy_poll_catalog()
+        tools = self.chat_tools(self.rpc.chat_sid)
+        with mock.patch.object(self.rpc,'catalog',return_value=catalog):
+            generic = tools.dispatch('read_observation',dict(method='buddy-chat.poll',params={}))
+            self.assertFalse(generic['ok']);self.assertIn('use chat_read',generic['error']['error'])
+            self.assertFalse(any(method=='buddy-chat.poll' for method,_ in self.rpc.calls))
+            first = tools.dispatch('chat_read',dict(after_sequence='9',limit=12))
+            again = tools.dispatch('chat_read',dict(after_sequence='9',limit=12))
+            self.assertTrue(first['ok'],first);self.assertEqual(first,again)
+            self.assertEqual(first['result']['messages'][0]['text'],'Actual system feedback')
+            self.assertEqual([params for method,params in self.rpc.calls if method=='buddy-chat.poll'],
+                [dict(afterSequence='9',limit=12,sessionId=self.rpc.chat_sid)]*2)
+            # An unrelated undeclared RPC still has exactly the generic guard.
+            self.assertFalse(tools.dispatch('read_observation',dict(method='buddy-trade.state',params={}))['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_gm_command_reference_is_present_without_any_private_reference_file(self):
+        tools = self.gm_tools(mock.Mock())
+        self.assertFalse((self.host/'dev/lotharen-gm-commands.txt').exists())
+        description = next(row['function']['description'] for row in tools.tool_schemas()
+                           if row['function']['name']=='gm_execute')
+        for form in ('.go xyz <x> <y> <z> [mapId] [orientation]', '.appear <playerName>',
+                     '.summon <playerName>', '.gps <playerName>', 'selected unit takes precedence',
+                     'atomic select_guid', '.help <command>', 'chat_read', 'BEFORE'):
+            self.assertIn(form,description)
+        self.assertFalse(self.rpc.writes)
+
+    def test_typed_chat_reader_rejects_spoofed_route_signature_effect_and_identity(self):
+        original = self.legacy_poll_catalog()
+        prefix = 'buddy-chat::warcraftbuddy.chat.v1.'
+        for change in ('path','module','inputType','outputType','effect','missing','inputfield','outputfield','messagefield'):
+            with self.subTest(change=change):
+                catalog = copy.deepcopy(original)
+                row = next(row for row in catalog['methods'] if row['name']=='buddy-chat.poll')
+                if change in ('path','module','inputType','outputType'):row[change]='wrong-mutation-contract'
+                elif change=='effect':row['effect']='mutation'
+                elif change=='missing':catalog['methods'].remove(row)
+                else:
+                    name={'inputfield':'PollRequest','outputfield':'PollResponse','messagefield':'Message'}[change]
+                    catalog['messages'][prefix+name]['fields'][0]['kind']='string'
+                self.rpc.calls.clear()
+                with mock.patch.object(self.rpc,'catalog',return_value=catalog):
+                    result = self.chat_tools(self.rpc.chat_sid).dispatch('chat_read',{})
+                self.assertFalse(result['ok'],result)
+                self.assertFalse(any(method=='buddy-chat.poll' for method,_ in self.rpc.calls))
+        with mock.patch.object(self.rpc,'catalog',return_value=original):
+            for args in (dict(method='buddy-chat.send'),dict(session_id=self.rpc.sid),dict(limit=True),
+                         dict(limit=257),dict(after_sequence=str(2**64))):
+                self.rpc.calls.clear()
+                self.assertFalse(self.chat_tools(self.rpc.chat_sid).dispatch('chat_read',args)['ok'])
+                self.assertFalse(any(method=='buddy-chat.poll' for method,_ in self.rpc.calls))
+            self.assertFalse(self.chat_tools(None).dispatch('chat_read',{})['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_typed_chat_reader_rechecks_core_chat_and_catalog_after_nonconsuming_poll(self):
+        original = self.legacy_poll_catalog()
+        for change in ('core','chat','catalog'):
+            with self.subTest(change=change):
+                self.rpc.sid,self.rpc.chat_sid='aw-123','chat-distinct-456'
+                catalog=copy.deepcopy(original)
+                tools=self.chat_tools(self.rpc.chat_sid)
+                original_call=self.rpc.call
+                def call(method,params,**kwargs):
+                    value=original_call(method,params,**kwargs)
+                    if method=='buddy-chat.poll':
+                        if change=='core':catalog['sessionId']='aw-replacement'
+                        elif change=='chat':value['sessionId']='chat-replacement'
+                        else:catalog['revision']='new-contract-revision'
+                    return value
+                with mock.patch.object(self.rpc,'catalog',side_effect=lambda:copy.deepcopy(catalog)),mock.patch.object(self.rpc,'call',side_effect=call):
+                    self.assertFalse(tools.dispatch('chat_read',{})['ok'])
+        self.assertFalse(self.rpc.writes)
+
+    def test_actual_fake_api_reads_legacy_system_feedback_through_typed_tool(self):
+        from direct_model import DirectModel
+        from test_direct_model import FakeHTTP, chat
+        catalog = self.legacy_poll_catalog()
+        tools = self.chat_tools(self.rpc.chat_sid)
+        reply = dict(choices=[dict(finish_reason='stop',message=dict(role='assistant',content='I can read the realm feedback.'))])
+        with mock.patch.object(self.rpc,'catalog',return_value=catalog),FakeHTTP([
+                chat(('feedback','chat_read',dict(after_sequence='9',limit=20))),reply]) as server:
+            client = DirectModel('local','fixture',server.base+'/v1')
+            result = client.generate('Use current factual feedback.',[dict(role='user',content='What did the realm reply?')],
+                None,tools.tool_schemas(),tools.dispatch,natural=True,conversation_key='bound-core-and-chat',
+                read_only_tools={'chat_read'})
+            self.assertEqual(result['text'],'I can read the realm feedback.')
+            wire = server.requests[1]['body']['messages'][-1]
+            self.assertEqual(wire['role'],'tool')
+            feedback = json.loads(wire['content'])
+            self.assertTrue(feedback['ok'])
+            self.assertEqual(feedback['result']['sessionId'],self.rpc.chat_sid)
+            self.assertEqual(feedback['result']['messages'][0]['text'],'Actual system feedback')
+        self.assertEqual([params for method,params in self.rpc.calls if method=='buddy-chat.poll'],
+                         [dict(afterSequence='9',limit=20,sessionId=self.rpc.chat_sid)])
+        self.assertFalse(self.rpc.writes)
 
     def test_chat_poll_uses_trusted_distinct_chat_session_and_keeps_core_reads_bound(self):
         tools = self.chat_tools(self.rpc.chat_sid)

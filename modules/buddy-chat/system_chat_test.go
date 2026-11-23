@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -107,6 +108,10 @@ func TestSystemDiagnosticsPollWithoutSendOrOwnerAuthority(t *testing.T) {
 	result, err := client.Poll(ctx, &chatv1.PollRequest{})
 	if err != nil || len(result.Messages) != 5 || result.MalformedPackets != 1 || result.NextSequence != 5 {
 		t.Fatalf("system diagnostics not observable through existing Poll: %v, %v", result, err)
+	}
+	repeated, err := client.Poll(ctx, &chatv1.PollRequest{SessionId: result.SessionId})
+	if err != nil || !proto.Equal(result, repeated) {
+		t.Fatalf("Poll consumed or changed feedback rather than reading it: %v, %v", repeated, err)
 	}
 	for _, m := range result.Messages[:3] {
 		if m.SenderGuid != 0 || m.Channel != chatv1.Channel_CHANNEL_UNSPECIFIED || m.Self {

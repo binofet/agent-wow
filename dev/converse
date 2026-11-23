@@ -2800,7 +2800,7 @@ class DirectBrain(AgentBrain):
                 cancelled=interrupted, request_id=self.last_request_id, progress=api_progress,
                 natural=True, transcript_path=transcript_path, conversation_key=conversation_key,
                 assistant_text=getattr(self, "_assistant_text", None),
-                read_only_tools={"context_read", "session_catalog", "read_observation", "spell_inspect",
+                read_only_tools={"context_read", "chat_read", "session_catalog", "read_observation", "spell_inspect",
                     "workspace_read", "lua_evaluate", "gm_task_status", "gm_current_task", "gm_inspect"})
             if interrupted():
                 raise OwnerInputPending("Fresh owner input is waiting")

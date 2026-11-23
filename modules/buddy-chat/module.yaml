@@ -19,5 +19,6 @@ packets:
   SMSG_GM_MESSAGECHAT: /warcraftbuddy.chat.v1.BuddyChat/OnPacket
 
 script_api:
+  poll: {effect: read}
   owner_feed: {effect: read}
   emotes: {effect: read}
