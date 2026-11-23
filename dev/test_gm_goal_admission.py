@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ class ReadOnlyClient:
         self.guid, self.sid, self.group = str(guid), 'aw-'+str(guid), copy.deepcopy(group)
         self.url = 'http://127.0.0.1:'+str(8000+int(guid))+'/rpc'
         self.calls, self.hook = [], None
+        self.owner=dict(guid='3',present=False)
 
     def call(self, method, params, **kwargs):
         self.calls.append((method, copy.deepcopy(params)))
@@ -30,7 +32,7 @@ class ReadOnlyClient:
         if method == 'session.describe':
             result = dict(sessionId=self.sid, characterGuid=self.guid, revision='catalog', methods=[], hostMethods=[], messages={})
         elif method == 'buddy-actions.status': result = dict(sessionId=self.sid, selfGuid=self.guid)
-        elif method == 'buddy-world.snapshot': result = dict(self=own, owner=dict(guid='3', present=False), nearbyPlayers=[], nearbyCreatures=[])
+        elif method == 'buddy-world.snapshot': result = dict(self=own, owner=copy.deepcopy(self.owner), nearbyPlayers=[], nearbyCreatures=[])
         elif method == 'buddy-party.state': result = dict(sessionId=self.sid, group=copy.deepcopy(self.group))
         else: raise AssertionError('Admission attempted a non-observation RPC: '+method)
         if self.hook: self.hook(method)
@@ -110,6 +112,76 @@ class GMGoalAdmissionTests(unittest.TestCase):
         self.assertFalse((self.root/'data/converse/lotharen/gm-tasks').exists());runner.assert_not_called()
         self.assertIsNone(gm.task_store(self.root/'writers'/self.gm.sid).load())
         good=tools.dispatch('gm_task_start',dict(goal=self.goal));self.assertTrue(good['ok'],good);runner.assert_called_once()
+
+    def acknowledged_command(self, tools, command='.revive Joel'):
+        from test_gm_command_evidence import packet
+        self.gm.owner=dict(guid='3',present=True,aliveKnown=True,alive=False,healthKnown=True,health=0,maxHealth=100,
+            mapKnown=True,mapId=349,positionKnown=True,x=0,y=0,z=0,vitalsAgeMs='284517')
+        tools.context=dict(gm_observation_primer=dict(observation=dict(result=dict(clients=[dict(group=self.arlen.group)]))))
+        packets=[]
+        def send(argv,**kwargs):
+            opcode,body=packet(kwargs['input']);packets.append((opcode,body))
+            self.assertEqual(opcode,0x95);self.assertIn(command.encode()+b'\0',body)
+            return subprocess.CompletedProcess(argv,0,b'grpc-status: 0\r\n',b'')
+        with patch.object(gm.subprocess,'run',side_effect=send):
+            result=tools.dispatch('gm_execute',dict(command=command),operation_id=tools.request_id+':1')
+        self.assertTrue(result['ok'],result);self.assertTrue(result['result']['commandTransportWritten'])
+        self.assertFalse(result['result']['gameEffectClaimed']);self.assertEqual(len(packets),1)
+        return result
+
+    def test_valid_new_task_cannot_bypass_acknowledged_direct_intent_before_bridge_or_files(self):
+        self.assertTrue(self.preview(self.goal)['accepted'])  # The task is valid independently of custody.
+        runner=Mock();tools=self.tools(runner=runner)
+        original=self.acknowledged_command(tools)
+        command_root=self.root/'data/converse/lotharen/gm-commands'
+        before={str(path):path.read_bytes() for path in command_root.glob('*/state.json')}
+        with patch.object(gm,'task_bridge',side_effect=AssertionError('Must stop before a missing/started bridge')), \
+                patch.object(gm.Host,'install_holds',side_effect=AssertionError('No holds')):
+            blocked=tools.dispatch('gm_task_start',dict(goal=self.goal))
+        self.assertTrue(blocked['ok'],blocked);self.assertFalse(blocked['result']['started'])
+        self.assertTrue(blocked['result']['repeatAdmission']['priorCommandTransportWritten'])
+        self.assertEqual(blocked['result']['repeatAdmission']['priorOperationId'],'synthetic-owner:1')
+        self.assertFalse((self.root/'data/converse/lotharen/gm-tasks').exists());runner.assert_not_called()
+        self.assertEqual({str(path):path.read_bytes() for path in command_root.glob('*/state.json')},before)
+        self.assertTrue(original['result']['commandTransportWritten'])
+
+    def test_changed_known_context_or_fresh_owner_intent_admits_the_real_valid_task(self):
+        for change in ('known_life','fresh_owner'):
+            with self.subTest(change=change):
+                runner=Mock(return_value=type('Result',(),dict(returncode=0,stdout=b'{"started":true}'))())
+                tools=self.tools(runner=runner);tools.request_id='owner-'+change
+                self.acknowledged_command(tools)
+                if change=='known_life':self.gm.owner['alive']=True
+                else:tools.request_id='new-owner-intent'
+                result=tools.dispatch('gm_task_start',dict(goal=self.goal))
+                self.assertTrue(result['ok'],result);self.assertTrue(result['result']['result']['started'])
+                runner.assert_called_once()
+
+    def test_direct_receipt_arriving_during_pure_admission_is_rechecked_before_files(self):
+        runner=Mock();tools=self.tools(runner=runner);actual_admit=gm.admit_goal
+        def admitted(*args,**kwargs):
+            result=actual_admit(*args,**kwargs)
+            self.assertTrue(result['accepted']);self.acknowledged_command(tools)
+            return result
+        with patch.object(gm,'admit_goal',side_effect=admitted):
+            result=tools.dispatch('gm_task_start',dict(goal=self.goal))
+        self.assertTrue(result['ok'],result);self.assertFalse(result['result']['started'])
+        self.assertFalse((self.root/'data/converse/lotharen/gm-tasks').exists());runner.assert_not_called()
+
+    def test_pure_query_and_known_no_send_receipts_do_not_block_a_valid_task(self):
+        for kind in ('read','no_send'):
+            with self.subTest(kind=kind):
+                runner=Mock(return_value=type('Result',(),dict(returncode=0,stdout=b'{"started":true}'))())
+                tools=self.tools(runner=runner);tools.request_id='eligible-'+kind
+                if kind=='read':self.acknowledged_command(tools,'.help revive')
+                else:
+                    error=ValueError('final prewrite refusal');error.packet_dispatched=False
+                    with patch.object(gm.SessionTransport,'gm',side_effect=error):
+                        refused=tools.dispatch('gm_execute',dict(command='.revive Joel'),operation_id=tools.request_id+':1')
+                    self.assertTrue(refused['ok'],refused);self.assertFalse(refused['result']['commandTransportWritten'])
+                result=tools.dispatch('gm_task_start',dict(goal=self.goal))
+                self.assertTrue(result['ok'],result);self.assertTrue(result['result']['result']['started'])
+                runner.assert_called_once()
 
     def test_owner_or_body_changes_during_preflight_are_zero_child_and_goal_reservation(self):
         for change in ('owner','body'):

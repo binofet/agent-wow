@@ -717,6 +717,10 @@ class DirectTools:
         if subject['guid'] is not None:
             matched=[name for name,guids in names.items() if guids=={subject['guid']}]
             if len(matched)==1:subject['name']=matched[0]
+        return dict(family=family,command=normalized,subject=subject,context=self._gm_intent_context(family,subject,world,group))
+
+    @staticmethod
+    def _gm_intent_context(family, subject, world, group):
         players=[world.get('self',{}),world.get('owner',{}),*world.get('nearbyPlayers',[])]
         target_row=next((row for row in players if str(row.get('guid'))==subject['guid'] and row.get('present') is True),{})
         def pose(row):
@@ -724,10 +728,9 @@ class DirectTools:
             return dict(known=known,**({key:row.get(key,0) for key in ('mapId','x','y','z')} if known else {}))
         roster=dict(known=group.get('known') is True,inGroup=group.get('inGroup',False),
             leaderGuid=str(group.get('leaderGuid',0)),members=sorted(str(row['guid']) for row in group.get('members',[]) if row.get('guid')))
-        context=dict(life=dict(known=target_row.get('aliveKnown') is True,
+        return dict(life=dict(known=target_row.get('aliveKnown') is True,
             alive=target_row.get('alive',False) if target_row.get('aliveKnown') is True else None)) if family=='revive' else \
             dict(roster=roster,destination=pose(world.get('self',{})),subject=pose(target_row)) if family in ('summon','groupsummon','appear','transport') else {}
-        return dict(family=family,command=normalized,subject=subject,context=context)
 
     @staticmethod
     def _same_gm_intent(left, right):
@@ -773,6 +776,30 @@ class DirectTools:
                 gameEffectClaimed=False,context=intent.get('context'),
                 guidance='Read current facts and retain the original receipt. ACK, SYSTEM text, selection, ages and revisions do not authorize repeating the effect.'),ordinal
         return None,ordinal
+
+    def _gm_task_intent_admission(self, gm):
+        """A new autonomous task cannot bypass this request's direct receipts."""
+        root=self.root/'data/converse/lotharen/gm-commands'
+        if not root.exists():return None
+        with gm.task_store(gm.writer_folder(self.root,self.session_id,self._gm_config())) as writer:
+            gm.claim_writer(writer)
+            for candidate in sorted(root.iterdir()):
+                if not re.fullmatch('[a-f0-9]{64}',candidate.name):continue
+                row=gm.task_store(candidate).load()
+                if not row or row.get('identity')!=dict(sessionId=self.session_id,guid='87',rpcUrl=self.rpc.url) \
+                        or row.get('requestId')!=self.request_id or row.get('knownNotDispatched') is True:continue
+                previous=row.get('commandIntent')
+                if not previous or (row.get('result') or {}).get('commandTransportWritten') is False:continue
+                world=self.rpc.call('buddy-world.snapshot',{})
+                party=self.rpc.call('buddy-party.state',{})
+                require(str(world.get('self',{}).get('guid'))=='87' and world.get('self',{}).get('present') is True
+                        and party.get('sessionId')==self.session_id,'current_gm_command_context_required')
+                self._catalog();self._authorise_gm()
+                current=dict(previous,context=self._gm_intent_context(previous['family'],previous['subject'],world,party.get('group') or {}))
+                blocked,_=self._gm_prior_intent(gm,current,root/'task-admission')
+                if blocked is not None:return blocked
+            self._catalog();self._authorise_gm()
+        return None
 
     def _gm_execute(self, gm, args, operation_id=None):
         self._authorise_gm()
@@ -888,6 +915,10 @@ class DirectTools:
             goal = copy.deepcopy(args["goal"])
             require(isinstance(goal, dict), "gm_goal_object_required")
             gm.goal_containers(goal)
+            pending=self._gm_task_intent_admission(gm)
+            if pending is not None:
+                return dict(started=False,completion='same_request_direct_intent_unsettled; no task created or queued',
+                    repeatAdmission=pending,gameEffectClaimed=False)
             task_id = "direct-" + sha((self.session_id + "\0" + self.request_id).encode())[:24]
             folder = self._gm_folder(task_id)
             require(not folder.exists() and not folder.is_symlink(), "gm_request_already_reserved")
@@ -909,6 +940,10 @@ class DirectTools:
                 +("; "+str(admission["detail"]) if admission and admission.get("detail") else ""))
             self._catalog()
             self._authorise_gm()
+            pending=self._gm_task_intent_admission(gm)
+            if pending is not None:
+                return dict(started=False,completion='same_request_direct_intent_unsettled; no task created or queued',
+                    repeatAdmission=pending,gameEffectClaimed=False)
             folder.mkdir(mode=0o700, parents=True, exist_ok=False)
             goal_path = folder / "goal.json"
             with goal_path.open("xb") as output:
