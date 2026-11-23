@@ -39,7 +39,7 @@ class FakeChildren:
     def run(self, argv, actor, env=None):
         self.calls.append((list(argv), env))
         if argv[-1] == "--help":
-            return " ".join(app.PROVIDER_FLAGS) + " --model-provider {codex,local,openai,claude,gemini}"
+            return " ".join(app.PROVIDER_FLAGS) + " --model-provider {codex,local,openai,claude,gemini} --continue-owner-whisper"
         kind, command = Path(argv[2]).name, argv[3]
         if kind == "buddy":
             if command == "start":
@@ -172,6 +172,48 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(self.runner.commands("buddy", "stop"))
         self.assertEqual(len(self.runner.spawns), 2)
         self.assertEqual(len(self.runner.commands("converse", "stop")), 1)
+
+    def test_exact_owner_continuation_uses_only_one_managed_chat_restart(self):
+        app.operate(self.actor, 'start', self.runner)
+        original = copy.deepcopy(self.actor)
+        binding = ['aw-fake', 'chat-module-session', '109', 'a'*32]
+        result = app.operate(self.actor, 'restart-chat', self.runner, continue_owner_whisper=binding)
+        self.assertEqual(self.runner.spawns[-1][-5:], ['--continue-owner-whisper', *binding])
+        self.assertTrue(result['listenerInitialized'])
+        self.assertEqual(len(self.runner.commands('buddy', 'start')), 1)
+        self.assertFalse(self.runner.commands('buddy', 'stop'))
+        self.assertEqual(len(self.runner.commands('converse', 'stop')), 1)
+        self.assertEqual(self.actor, original) # Never persist automatic replay in settings.
+
+    def test_continuation_rejects_wrong_body_or_unsupported_host_before_chat_stop(self):
+        self.runner.native = self.runner.chat = True
+        for binding in (['aw-foreign', 'chat-module-session', '109', 'a'*32], ['aw-fake', 'chat-old', '109', 'a'*32]):
+            with self.subTest(binding=binding), self.assertRaisesRegex(app.Error, 'body differs'):
+                app.operate(self.actor, 'restart-chat', self.runner, continue_owner_whisper=binding)
+        original = self.runner.run
+        def old_host(argv, actor, env=None):
+            return original(argv, actor, env).replace('--continue-owner-whisper', '')
+        self.runner.run = old_host
+        with self.assertRaisesRegex(app.Error, 'lacks exact owner continuation'):
+            app.operate(self.actor, 'restart-chat', self.runner, continue_owner_whisper=['aw-fake','chat-module-session','109','a'*32])
+        self.assertFalse(self.runner.commands('converse', 'stop') or self.runner.spawns)
+
+    def test_continuation_cli_is_explicit_one_actor_and_dry_plan_preserves_exact_flag(self):
+        import contextlib
+        source = self.root / 'settings.json'
+        source.write_text(json.dumps(self.raw))
+        flag = ['--continue-owner-whisper','aw-fake','chat-module-session','109','a'*32]
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(app.main(['restart-chat','--settings',str(source),'--actor','mira','--dry-run',*flag]),0)
+        plan = json.loads(output.getvalue())[0]['commands']
+        self.assertEqual(plan['listener_run_if_unowned'][-5:], flag)
+        self.assertNotIn('native_start_if_stopped',plan)
+        with mock.patch.object(app, 'operate', return_value={}) as operate, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app.main(['restart-chat','--settings',str(source),'--actor','mira',*flag]),0)
+            self.assertEqual(operate.call_args.kwargs['continue_owner_whisper'],flag[1:])
+        with mock.patch.object(app, 'operate') as operate, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(app.main(['start','--settings',str(source),'--actor','mira',*flag]),1)
+            operate.assert_not_called()
 
     def test_native_start_unknown_is_not_replayed_and_old_journals_remain(self):
         self.runner.fail_start = True

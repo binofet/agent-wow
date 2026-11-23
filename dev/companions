@@ -431,15 +431,30 @@ def child_exited(record):
     return False
 
 
-def operate(actor, action, runner=None):
+def continuation_arguments(value):
+    if value is None:return None
+    if (not isinstance(value, (list, tuple)) or len(value) != 4
+            or any(not isinstance(sid, str) or re.fullmatch(r'[A-Za-z0-9._-]{1,128}', sid) is None for sid in value[:2])
+            or not isinstance(value[2], str) or re.fullmatch(r'[1-9][0-9]{0,19}', value[2]) is None
+            or int(value[2]) >= 2**64 or not isinstance(value[3], str) or re.fullmatch(r'[a-f0-9]{32}', value[3]) is None):
+        raise Error('Owner continuation requires exact Core/Chat sessions and a positive uint64 sequence')
+    return list(value)
+
+
+def operate(actor, action, runner=None, continue_owner_whisper=None):
+    continuation = continuation_arguments(continue_owner_whisper)
+    if continuation is not None and action != 'restart-chat':raise Error('Owner continuation requires restart-chat')
     runner = runner or Runner()
     planned = commands(actor)
+    if continuation is not None:planned['run'] += ['--continue-owner-whisper', *continuation]
     with journal(actor) as (record, save, folder):
         if action in ("start", "restart-chat"):
             help_text = runner.run([actor["host"].get("python", "python3"), "-B", str(Path(actor["host"]["root"]) / "dev/converse"), "--help"], actor)
             choices = re.search(r"--model-provider\s+\{([^}]+)\}", help_text)
             if any(flag not in help_text for flag in PROVIDER_FLAGS) or not choices or not DIRECT_PROVIDERS <= set(choices[1].split(",")):
                 raise Error("Maintained converse lacks the direct model API interface; update the coherent host source first")
+            if continuation is not None and '--continue-owner-whisper' not in help_text:
+                raise Error('Maintained converse lacks exact owner continuation; existing listener was preserved')
             available = models(actor["model"])
             if available.get("advertised") is False:
                 raise Error("Selected model is not advertised by the configured endpoint; no fallback or native restart")
@@ -463,6 +478,9 @@ def operate(actor, action, runner=None):
                 if not native["launcherInitialized"]:
                     raise Error("restart-chat requires the existing initialized native process; it never reconnects one")
                 previous_body = native_identity(actor, record.get("methods", ()))
+                if continuation is not None and (previous_body['sessionId'] != continuation[0]
+                        or chat['running'] and chat.get('chatSessionId') != continuation[1]):
+                    raise Error('Explicit continuation body differs from the current listener; left untouched')
                 if chat["running"] and not listener_bound(chat, actor, previous_body["sessionId"]):
                     raise Error("Existing listener belongs to an older native session; left untouched")
             if chat["running"]:
@@ -523,8 +541,9 @@ def local_host(host):
     return host.get("local") is True or host.get("address") in (None, "localhost", "127.0.0.1", "::1") or host["id"].lower() == socket.gethostname().split(".")[0].lower()
 
 
-def dry_plan(actor, action):
+def dry_plan(actor, action, continue_owner_whisper=None):
     planned = commands(actor)
+    if continue_owner_whisper is not None:planned['run'] += ['--continue-owner-whisper', *continue_owner_whisper]
     result = dict(native_status=with_command(planned["native"], "status"),
                   listener_status=with_command(planned["conversation"], "status"))
     if action == "start":
@@ -547,6 +566,8 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="Print exact plans without files, subprocesses, network or credentials")
     parser.add_argument("--settings-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--on-host", help=argparse.SUPPRESS)
+    parser.add_argument('--continue-owner-whisper', nargs=4, metavar=('CORE_SESSION','CHAT_SESSION','SEQUENCE','ORIGINAL_REQUEST_ID'),
+                        help='Explicit one-actor chat restart continuing one genuine retained owner whisper')
     args = parser.parse_args(argv)
     try:
         if args.settings_stdin:
@@ -570,10 +591,13 @@ def main(argv=None):
         selected = [row for row in actors if row["id"] in requested or not requested and row["enabled"]]
         if not selected:
             raise Error("No enabled/selected actors")
+        continuation = continuation_arguments(args.continue_owner_whisper)
+        if continuation is not None and (args.command != 'restart-chat' or len(selected) != 1):
+            raise Error('Owner continuation requires restart-chat with exactly one selected actor')
         for actor in selected:
             actor["roster"] = [dict(name=p["name"], guid=p["guid"]) for p in actors if p["guid"] != actor["guid"]]
         if args.dry_run:
-            result = [dict(actor=row["id"], host=row["host"], commands=dry_plan(row, args.command),
+            result = [dict(actor=row["id"], host=row["host"], commands=dry_plan(row, args.command, continuation),
                            nativeEnv=row["native_env"], model=row["model"], network=False, mutation=False) for row in selected]
         else:
             result = []
@@ -584,7 +608,7 @@ def main(argv=None):
                 if not local_host(actor["host"]):
                     remote.setdefault(actor["host"]["id"], []).append(actor)
                     continue
-                result.append(models(actor["model"]) if args.command == "models" else operate(actor, args.command))
+                result.append(models(actor["model"]) if args.command == "models" else operate(actor, args.command, continue_owner_whisper=continuation))
             for host_id, group in remote.items():
                 if args.on_host:
                     raise Error("Configured host does not match this machine; no recursive SSH")
@@ -594,6 +618,7 @@ def main(argv=None):
                            "--settings-stdin", "--on-host", host_id]
                 for row in group:
                     command += ["--actor", row["id"]]
+                if continuation is not None:command += ['--continue-owner-whisper', *continuation]
                 child = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
                                         target, shlex.join(command)], input=json.dumps(raw), capture_output=True, text=True)
                 if child.returncode:
